@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% block title %}FLoRA — Dashboard{% endblock %}
+
+{% block head %}
+<style>
+.dash-grid   { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
+               gap:12px; padding:20px 24px 0; }
+.kpi-card    { background:white; border-radius:8px; border:1px solid #e2e8f0;
+               padding:16px; text-align:center; }
+.kpi-num     { font-size:32px; font-weight:700; line-height:1.1; }
+.kpi-label   { font-size:11px; color:#6b7280; text-transform:uppercase;
+               letter-spacing:.05em; margin-top:4px; }
+.section     { padding:16px 24px; }
+.section h2  { font-size:13px; font-weight:700; color:#374151;
+               text-transform:uppercase; letter-spacing:.05em; margin-bottom:10px; }
+.stat-table  { width:100%; border-collapse:collapse; background:white;
+               border-radius:8px; border:1px solid #e2e8f0; overflow:hidden;
+               font-size:13px; }
+.stat-table th { padding:8px 12px; text-align:left; background:#f8fafc;
+                 font-weight:600; color:#6b7280; font-size:11px;
+                 text-transform:uppercase; border-bottom:1px solid #e2e8f0; }
+.stat-table td { padding:8px 12px; border-bottom:1px solid #f1f5f9; }
+.stat-table tr:last-child td { border-bottom:none; }
+.bar-wrap  { height:8px; background:#e2e8f0; border-radius:99px; overflow:hidden;
+             min-width:80px; display:inline-block; vertical-align:middle; }
+.bar-fill  { height:100%; border-radius:99px; }
+.two-col-dash { display:grid; grid-template-columns:1fr 1fr; gap:16px;
+                padding:0 24px 20px; }
+@media(max-width:700px){ .two-col-dash{ grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div style="background:white;border-bottom:1px solid #e2e8f0;padding:12px 24px;
+            display:flex;align-items:center;gap:10px">
+  <span style="font-size:13px;font-weight:700;color:#374151">Batch Dashboard</span>
+  <button class="btn btn-secondary" style="font-size:12px;padding:5px 12px"
+          onclick="loadStats()">&#8635; Refresh</button>
+  <span id="dash-status" style="font-size:12px;color:#6b7280"></span>
+</div>
+
+<!-- KPI row -->
+<div class="dash-grid" id="kpi-row">
+  <div class="kpi-card">
+    <div class="kpi-num" id="kpi-total" style="color:#1e293b">—</div>
+    <div class="kpi-label">Total candidates</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-num" id="kpi-processed" style="color:#2563eb">—</div>
+    <div class="kpi-label">Processed</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-num" id="kpi-pending" style="color:#9ca3af">—</div>
+    <div class="kpi-label">Pending</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-num" id="kpi-resolved" style="color:#16a34a">—</div>
+    <div class="kpi-label">Resolved</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-num" id="kpi-unresolved" style="color:#ea580c">—</div>
+    <div class="kpi-label">Unresolved</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-num" id="kpi-pdf-cached" style="color:#16a34a">—</div>
+    <div class="kpi-label">PDF cached</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-num" id="kpi-pdf-url" style="color:#2563eb">—</div>
+    <div class="kpi-label">URL only (no cache)</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-num" id="kpi-pdf-none" style="color:#9ca3af">—</div>
+    <div class="kpi-label">No PDF / URL</div>
+  </div>
+</div>
+
+<!-- Tables row -->
+<div class="two-col-dash" style="margin-top:16px">
+
+  <!-- Resolution method -->
+  <div>
+    <div class="section" style="padding-bottom:0">
+      <h2>Resolution method breakdown</h2>
+    </div>
+    <div style="padding:0 24px 8px">
+      <table class="stat-table" id="tbl-method">
+        <thead><tr><th>Method</th><th style="text-align:right">Count</th><th>Share</th></tr></thead>
+        <tbody id="tbody-method"><tr><td colspan="3" style="color:#9ca3af">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- FLoRA tag -->
+  <div>
+    <div class="section" style="padding-bottom:0">
+      <h2>FLoRA comparison tag</h2>
+    </div>
+    <div style="padding:0 24px 8px">
+      <table class="stat-table" id="tbl-flora">
+        <thead><tr><th>Tag</th><th style="text-align:right">Count</th><th>Share</th></tr></thead>
+        <tbody id="tbody-flora"><tr><td colspan="3" style="color:#9ca3af">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<!-- LLM confidence -->
+<div style="padding:0 24px 24px">
+  <div class="section" style="padding:0 0 8px">
+    <h2>LLM confidence distribution</h2>
+  </div>
+  <table class="stat-table" style="max-width:480px" id="tbl-llm">
+    <thead><tr><th>Confidence</th><th style="text-align:right">Count</th><th>Share</th></tr></thead>
+    <tbody id="tbody-llm"><tr><td colspan="3" style="color:#9ca3af">Loading…</td></tr></tbody>
+  </table>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const $ = id => document.getElementById(id);
+
+const METHOD_LABELS = {
+  single_candidate_after_requery: "Single match (OpenAlex re-query)",
+  same_author_year_title_overlap: "Same author+year · title overlap",
+  grobid_ref_match              : "PDF reference list match",
+  llm_gemini                    : "Gemini (LLM)",
+  llm_openai                    : "OpenAI GPT (LLM)",
+  llm_abstract_gemini           : "Abstract-only · Gemini",
+  llm_abstract_openai           : "Abstract-only · OpenAI",
+  no_candidates_found           : "No candidates found",
+  needs_fulltext                : "Needs full-text (unresolved)",
+  grobid_ref_no_match           : "PDF refs — no match",
+  llm_failed                    : "LLM failed",
+  none                          : "Not processed",
+};
+
+const FLORA_TAG_LABELS = {
+  confirms_flora    : "Confirms FLoRA",
+  updated_from_flora: "Updated from FLoRA",
+  new               : "New — not in FLoRA",
+  unresolved        : "Unresolved",
+};
+
+const METHOD_COLORS = {
+  single_candidate_after_requery: "#16a34a",
+  same_author_year_title_overlap: "#16a34a",
+  grobid_ref_match              : "#16a34a",
+  llm_gemini                    : "#7c3aed",
+  llm_openai                    : "#2563eb",
+  llm_abstract_gemini           : "#7c3aed",
+  llm_abstract_openai           : "#2563eb",
+  no_candidates_found           : "#ea580c",
+  needs_fulltext                : "#ea580c",
+  grobid_ref_no_match           : "#ea580c",
+  llm_failed                    : "#dc2626",
+  none                          : "#9ca3af",
+};
+
+const FLORA_COLORS = {
+  confirms_flora    : "#16a34a",
+  updated_from_flora: "#ea580c",
+  new               : "#2563eb",
+  unresolved        : "#dc2626",
+};
+
+const CONF_COLORS = { high: "#16a34a", medium: "#2563eb", low: "#ea580c" };
+
+function bar(count, total, color) {
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  return `<div class="bar-wrap" style="width:90px">
+    <div class="bar-fill" style="width:${pct}%;background:${color || "#2563eb"}"></div>
+  </div> <span style="font-size:11px;color:#6b7280;margin-left:4px">${pct}%</span>`;
+}
+
+function buildTable(tbodyId, counts, labelMap, colorMap) {
+  const tbody = $(tbodyId);
+  const total = Object.values(counts).reduce((s, n) => s + n, 0);
+  if (total === 0) { tbody.innerHTML = '<tr><td colspan="3" style="color:#9ca3af">No data yet</td></tr>'; return; }
+
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  tbody.innerHTML = sorted.map(([key, n]) => {
+    const label = (labelMap && labelMap[key]) || key || "—";
+    const color = (colorMap && colorMap[key]) || "#6b7280";
+    return `<tr>
+      <td><span class="pill" style="background:${color}22;color:${color};border:1px solid ${color}55;
+             font-size:11px;padding:2px 7px;border-radius:99px;font-weight:600">${label}</span></td>
+      <td style="text-align:right;font-weight:600">${n}</td>
+      <td>${bar(n, total, color)}</td>
+    </tr>`;
+  }).join("");
+}
+
+async function loadStats() {
+  $("dash-status").textContent = "Loading…";
+  try {
+    const resp = await fetch("/api/dashboard/stats");
+    const d    = await resp.json();
+
+    $("kpi-total").textContent     = d.total_candidates;
+    $("kpi-processed").textContent = d.processed;
+    $("kpi-pending").textContent   = d.pending;
+    $("kpi-resolved").textContent  = d.resolved;
+    $("kpi-unresolved").textContent= d.unresolved;
+    $("kpi-pdf-cached").textContent= d.pdf_cached;
+    $("kpi-pdf-url").textContent   = d.pdf_url_only;
+    $("kpi-pdf-none").textContent  = d.pdf_none;
+
+    buildTable("tbody-method", d.method_counts,    METHOD_LABELS, METHOD_COLORS);
+    buildTable("tbody-flora",  d.flora_tag_counts,  FLORA_TAG_LABELS, FLORA_COLORS);
+    buildTable("tbody-llm",    d.llm_conf_counts,   {high:"High",medium:"Medium",low:"Low"}, CONF_COLORS);
+
+    $("dash-status").textContent = "Updated " + new Date().toLocaleTimeString();
+  } catch (e) {
+    $("dash-status").textContent = "Error: " + e.message;
+  }
+}
+
+window.addEventListener("DOMContentLoaded", loadStats);
+</script>
+{% endblock %}

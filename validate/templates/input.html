@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}FLoRA — Input{% endblock %}
+
+{% block head %}
+<style>
+.input-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px;
+              padding:20px 24px; }
+@media(max-width:700px){ .input-grid{ grid-template-columns:1fr; } }
+.input-card { background:white; border-radius:8px; border:1px solid #e2e8f0;
+              overflow:hidden; }
+.input-card-header { padding:14px 18px; border-bottom:1px solid #e2e8f0;
+                     display:flex; align-items:center; gap:10px; }
+.input-card-header h2 { font-size:14px; font-weight:700; color:#1e293b; margin:0; }
+.input-card-body { padding:18px; }
+.count-badge { font-size:28px; font-weight:700; }
+.count-label { font-size:11px; color:#6b7280; text-transform:uppercase;
+               letter-spacing:.05em; margin-bottom:12px; }
+.input-card-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px;
+                      padding-top:14px; border-top:1px solid #f1f5f9; }
+.threshold-row { display:flex; align-items:center; gap:8px; margin-bottom:14px; }
+.threshold-row label { font-size:12px; color:#374151; font-weight:600; }
+.threshold-input { width:80px; border:1px solid #cbd5e1; border-radius:6px;
+                   padding:5px 10px; font-size:14px; text-align:center; }
+.threshold-input:focus { outline:none; border-color:#2563eb;
+                          box-shadow:0 0 0 3px #dbeafe; }
+.status-line { font-size:12px; color:#6b7280; min-height:18px; margin-top:8px; }
+.pipeline-link { font-size:12px; color:#2563eb; text-decoration:none;
+                 display:flex; align-items:center; gap:4px; }
+.pipeline-link:hover { text-decoration:underline; }
+.desc-text { font-size:12px; color:#475569; line-height:1.6; margin-bottom:14px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div style="background:white;border-bottom:1px solid #e2e8f0;padding:12px 24px;
+            display:flex;align-items:center;gap:10px">
+  <span style="font-size:13px;font-weight:700;color:#374151">Pipeline Input</span>
+  <span style="font-size:12px;color:#6b7280">Generate and export input datasets for each pipeline</span>
+</div>
+
+<div class="input-grid">
+
+  <!-- ── Section 1: Multiple Matches ── -->
+  <div class="input-card">
+    <div class="input-card-header">
+      <span class="badge" style="background:#2563eb;color:white;padding:2px 8px;
+            border-radius:99px;font-size:10px;font-weight:700">PIPELINE 1</span>
+      <h2>Multiple Matches</h2>
+    </div>
+    <div class="input-card-body">
+      <p class="desc-text">
+        Filters the FLoRA entry sheet for DOIs where <code>prep_notes</code> starts with
+        <code>openalex:</code>, then finds the subset of <code>openalex_candidates.csv</code>
+        rows where <code>match_source = openalex_references</code> and
+        <code>match_status = multiple_matches</code>.
+      </p>
+
+      <div>
+        <div class="count-badge" id="m-count" style="color:#2563eb">—</div>
+        <div class="count-label">candidates loaded</div>
+      </div>
+
+      <div class="status-line" id="m-status"></div>
+
+      <div class="input-card-actions">
+        <button class="btn btn-primary" onclick="generateMatches()" id="btn-gen-matches">
+          &#8635; Generate
+        </button>
+        <a href="/api/input/download-matches" class="btn btn-secondary"
+           id="btn-dl-matches" style="text-decoration:none">
+          &#11015; Export CSV
+        </a>
+        <a href="/batch" class="pipeline-link" style="margin-left:auto">
+          &#9654; Go to Multiple Matches pipeline &#8594;
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 2: Multiple Originals ── -->
+  <div class="input-card">
+    <div class="input-card-header">
+      <span class="badge" style="background:#7c3aed;color:white;padding:2px 8px;
+            border-radius:99px;font-size:10px;font-weight:700">PIPELINE 2</span>
+      <h2>Multiple Originals</h2>
+    </div>
+    <div class="input-card-body">
+      <p class="desc-text">
+        Samples unique random DOIs from <code>all_replications.csv</code> where
+        <code>multi_target = True</code> and <code>validation_status</code> is
+        <code>llm_confirmed</code> or <code>needs_review</code>. These are studies that may target more than
+        one original study. Set the threshold to control how many are sampled.
+      </p>
+
+      <div class="threshold-row">
+        <label for="threshold-input">Sample size (threshold):</label>
+        <input type="number" id="threshold-input" class="threshold-input"
+               value="20" min="1" max="500"/>
+        <span id="avail-label" style="font-size:11px;color:#9ca3af"></span>
+      </div>
+
+      <div>
+        <div class="count-badge" id="o-count" style="color:#7c3aed">—</div>
+        <div class="count-label">candidates loaded</div>
+      </div>
+
+      <div class="status-line" id="o-status"></div>
+
+      <div class="input-card-actions">
+        <button class="btn" style="background:#7c3aed;color:white"
+                onclick="generateOriginals()" id="btn-gen-originals">
+          &#8635; Generate
+        </button>
+        <a href="/api/input/download-originals" class="btn btn-secondary"
+           id="btn-dl-originals" style="text-decoration:none">
+          &#11015; Export CSV
+        </a>
+        <a href="/multi-originals" class="pipeline-link" style="margin-left:auto">
+          &#9654; Go to Multiple Originals pipeline &#8594;
+        </a>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const $ = id => document.getElementById(id);
+
+async function loadCounts() {
+  try {
+    const resp = await fetch("/api/input/counts");
+    const d    = await resp.json();
+    $("m-count").textContent = d.matches_count   ?? "—";
+    $("o-count").textContent = d.originals_count ?? "—";
+  } catch (_) {}
+}
+
+async function generateMatches() {
+  const btn = $("btn-gen-matches");
+  btn.disabled = true;
+  $("m-status").textContent = "Reloading source data…";
+  try {
+    const resp = await fetch("/api/input/generate-matches", { method: "POST" });
+    const d    = await resp.json();
+    if (d.error) {
+      $("m-status").textContent = "Error: " + d.error;
+    } else {
+      $("m-count").textContent  = d.count;
+      $("m-status").textContent = "\u2713 " + d.count + " candidates generated";
+    }
+  } catch (e) {
+    $("m-status").textContent = "Error: " + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function generateOriginals() {
+  const threshold = parseInt($("threshold-input").value) || 20;
+  const btn = $("btn-gen-originals");
+  btn.disabled = true;
+  $("o-status").textContent = "Sampling from all_replications.csv…";
+  try {
+    const resp = await fetch("/api/input/generate-originals", {
+      method : "POST",
+      headers: { "Content-Type": "application/json" },
+      body   : JSON.stringify({ threshold }),
+    });
+    const d = await resp.json();
+    if (d.error) {
+      $("o-status").textContent = "Error: " + d.error;
+    } else {
+      $("o-count").textContent  = d.count;
+      $("avail-label").textContent = d.total_available + " total available";
+      $("o-status").textContent = "\u2713 " + d.count + " sampled (of " + d.total_available + " eligible)";
+    }
+  } catch (e) {
+    $("o-status").textContent = "Error: " + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+window.addEventListener("DOMContentLoaded", loadCounts);
+</script>
+{% endblock %}

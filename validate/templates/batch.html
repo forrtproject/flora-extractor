@@ -1,0 +1,986 @@
+{% extends "base.html" %}
+{% block title %}FLoRA — Multiple Matches{% endblock %}
+
+{% block content %}
+
+<!-- Phase 1: Data refresh -->
+<div class="phase-bar">
+  <span class="phase-label">Phase 1 &mdash; Candidates</span>
+  <button id="btn-refresh" class="btn btn-secondary" onclick="refreshCandidates()">&#8635; Refresh Candidates</button>
+  <span id="refresh-msg" class="phase-msg"></span>
+</div>
+
+<!-- Phase 2: Pipeline run -->
+<div class="toolbar">
+  <span class="phase-label">Phase 2 &mdash; Pipeline</span>
+  <div style="display:inline-block;position:relative">
+    <button id="btn-run" class="btn btn-primary" onclick="toggleRunMenu(event)">&#9654; Run &#9660;</button>
+    <div id="run-menu" style="display:none;position:absolute;top:calc(100% + 4px);left:0;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:200;min-width:180px;padding:4px">
+      <button onclick="pickRun('all')"        style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#9654; All</button>
+      <button onclick="pickRun('smart')"      style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#9654; Smart Run <span style="font-size:10px;color:#6b7280">(skip &#10003; OK)</span></button>
+      <button id="btn-run-selected" onclick="pickRun('selected')" style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#9654; Selected <span id="selected-count"></span></button>
+    </div>
+  </div>
+  <button id="btn-stop" class="btn btn-red" onclick="stopBatch()" style="display:none">&#9632; Stop</button>
+  <div class="progress-wrap" id="progress-wrap" style="display:none">
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+    <span class="progress-label" id="progress-label">0 / 0</span>
+  </div>
+</div>
+
+<!-- Export bar -->
+<div class="export-bar">
+  <span class="phase-label">Export</span>
+
+  <div style="display:inline-block;position:relative">
+    <button class="btn btn-green"     onclick="toggleExportMenu('review',event)">&#11015; Review &#9660;</button>
+    <div id="em-review" style="display:none;position:absolute;top:calc(100% + 4px);left:0;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:200;min-width:150px;padding:4px">
+      <button onclick="exportRows('review','csv')"  style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#128196; CSV</button>
+      <button onclick="exportRows('review','xlsx')" style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#128202; Excel (.xlsx)</button>
+      <button onclick="exportRows('review','pdf')"  style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#128438; PDF</button>
+    </div>
+  </div>
+
+  <div style="display:inline-block;position:relative">
+    <button class="btn btn-secondary" onclick="toggleExportMenu('all',event)">&#11015; All Columns &#9660;</button>
+    <div id="em-all" style="display:none;position:absolute;top:calc(100% + 4px);left:0;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:200;min-width:150px;padding:4px">
+      <button onclick="exportRows('all','csv')"  style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#128196; CSV</button>
+      <button onclick="exportRows('all','xlsx')" style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#128202; Excel (.xlsx)</button>
+      <button onclick="exportRows('all','pdf')"  style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#128438; PDF</button>
+    </div>
+  </div>
+
+  <div style="display:inline-block;position:relative">
+    <button class="btn btn-secondary" onclick="toggleExportMenu('minimal',event)">&#11015; Minimal &#9660;</button>
+    <div id="em-minimal" style="display:none;position:absolute;top:calc(100% + 4px);left:0;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:200;min-width:150px;padding:4px">
+      <button onclick="exportRows('minimal','csv')"  style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#128196; CSV</button>
+      <button onclick="exportRows('minimal','xlsx')" style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#128202; Excel (.xlsx)</button>
+      <button onclick="exportRows('minimal','pdf')"  style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#128438; PDF</button>
+    </div>
+  </div>
+
+  <div style="display:inline-block;position:relative">
+    <button class="btn btn-secondary" onclick="toggleExportMenu('selected',event)" title="Exports checked rows, or all visible rows if none are checked">&#11015; Selected &#9660;</button>
+    <div id="em-selected" style="display:none;position:absolute;top:calc(100% + 4px);left:0;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:200;min-width:150px;padding:4px">
+      <button onclick="exportRows('selected','csv')"  style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#128196; CSV</button>
+      <button onclick="exportRows('selected','xlsx')" style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#128202; Excel (.xlsx)</button>
+      <button onclick="exportRows('selected','pdf')"  style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#128438; PDF</button>
+    </div>
+  </div>
+
+  <span id="export-msg"></span>
+</div>
+
+<!-- Stats strip -->
+<div class="stats" id="stats-strip" style="display:none">
+  <div class="stat"><div class="dot dot-green"></div><strong id="cnt-resolved">0</strong>&nbsp;resolved</div>
+  <div class="stat"><div class="dot dot-orange"></div><strong id="cnt-unresolved">0</strong>&nbsp;unresolved</div>
+  <div class="stat"><div class="dot dot-blue"></div><strong id="cnt-running">0</strong>&nbsp;running</div>
+  <div class="stat"><div class="dot dot-gray"></div><strong id="cnt-pending">0</strong>&nbsp;pending</div>
+  <span id="filter-count"></span>
+</div>
+
+<!-- Search + select-all bar -->
+<div class="search-bar">
+  <input id="search-input" type="text" placeholder="Search DOI or study title..." oninput="applyFilters()"/>
+  <button class="btn btn-secondary" onclick="clearFilters()" style="white-space:nowrap">&#10005; Clear filters</button>
+  <label>
+    <input type="checkbox" id="chk-all-visible" onchange="toggleSelectAll(this.checked)"/> Select all visible
+  </label>
+</div>
+
+<!-- Table -->
+<div class="table-wrap">
+  <div id="loading" style="text-align:center;padding:40px;color:#6b7280">Loading candidates...</div>
+  <table class="batch-table" id="batch-table" style="display:none">
+    <thead>
+      <tr>
+        <th class="chk-col"><input type="checkbox" id="hdr-chk" title="Select all visible" onchange="toggleSelectAll(this.checked)"/></th>
+        <th>#</th>
+        <th>DOI (doi_r)</th>
+        <th>Study Title</th>
+        <th>Year</th>
+        <th>Status</th>
+        <th>Method</th>
+        <th>Matched Original</th>
+        <th>FLoRA Tag</th>
+        <th>FLoRA Status</th>
+        <th>Val.</th>
+        <th>PDF</th>
+      </tr>
+      <tr class="filter-row" id="filter-row">
+        <th></th>
+        <th></th>
+        <th><input  class="col-filter" id="f-doi"     type="text"   placeholder="DOI..."    oninput="applyFilters()"/></th>
+        <th><input  class="col-filter" id="f-title"   type="text"   placeholder="Title..."  oninput="applyFilters()"/></th>
+        <th><input  class="col-filter" id="f-year"    type="text"   placeholder="Year"       oninput="applyFilters()" style="width:52px"/></th>
+        <th style="position:relative">
+          <button id="f-status-btn" class="col-filter" onclick="_msToggle('status',event)"
+            style="width:100%;text-align:left;background:#fff;border:1px solid #e2e8f0;border-radius:4px;padding:3px 6px;font-size:11px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">All</button>
+          <div id="f-status-menu" style="display:none;position:absolute;top:calc(100% + 2px);left:0;z-index:300;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);min-width:160px;padding:0 0 4px;max-height:240px;overflow-y:auto"></div>
+        </th>
+        <th style="position:relative">
+          <button id="f-method-btn" class="col-filter" onclick="_msToggle('method',event)"
+            style="width:100%;text-align:left;background:#fff;border:1px solid #e2e8f0;border-radius:4px;padding:3px 6px;font-size:11px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">All methods</button>
+          <div id="f-method-menu" style="display:none;position:absolute;top:calc(100% + 2px);left:0;z-index:300;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);min-width:180px;padding:0 0 4px;max-height:260px;overflow-y:auto"></div>
+        </th>
+        <th><input  class="col-filter" id="f-matched" type="text"   placeholder="Title..."  oninput="applyFilters()"/></th>
+        <th style="position:relative">
+          <button id="f-flora-btn" class="col-filter" onclick="_msToggle('flora',event)"
+            style="width:100%;text-align:left;background:#fff;border:1px solid #e2e8f0;border-radius:4px;padding:3px 6px;font-size:11px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">All tags</button>
+          <div id="f-flora-menu" style="display:none;position:absolute;top:calc(100% + 2px);left:0;z-index:300;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);min-width:180px;padding:0 0 4px;max-height:240px;overflow-y:auto"></div>
+        </th>
+        <th style="position:relative">
+          <button id="f-valstatus-btn" class="col-filter" onclick="_msToggle('valstatus',event)"
+            style="width:100%;text-align:left;background:#fff;border:1px solid #e2e8f0;border-radius:4px;padding:3px 6px;font-size:11px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">All statuses</button>
+          <div id="f-valstatus-menu" style="display:none;position:absolute;top:calc(100% + 2px);left:0;z-index:300;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);min-width:200px;padding:0 0 4px;max-height:260px;overflow-y:auto"></div>
+        </th>
+        <th style="position:relative">
+          <button id="f-userval-btn" class="col-filter" onclick="_msToggle('userval',event)"
+            style="width:100%;text-align:left;background:#fff;border:1px solid #e2e8f0;border-radius:4px;padding:3px 6px;font-size:11px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">All</button>
+          <div id="f-userval-menu" style="display:none;position:absolute;top:calc(100% + 2px);left:0;z-index:300;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);min-width:170px;padding:0 0 4px;max-height:240px;overflow-y:auto"></div>
+        </th>
+        <th style="position:relative">
+          <button id="f-pdf-btn" class="col-filter" onclick="_msToggle('pdf',event)"
+            style="width:100%;text-align:left;background:#fff;border:1px solid #e2e8f0;border-radius:4px;padding:3px 6px;font-size:11px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">All</button>
+          <div id="f-pdf-menu" style="display:none;position:absolute;top:calc(100% + 2px);left:0;z-index:300;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);min-width:180px;padding:0 0 4px;max-height:240px;overflow-y:auto"></div>
+        </th>
+      </tr>
+    </thead>
+    <tbody id="batch-tbody"></tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='render.js') }}"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" crossorigin="anonymous"></script>
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let candidates        = [];   // full list from /api/batch/candidates
+let expanded          = {};   // doi_r -> bool
+let selected          = {};   // doi_r -> bool
+const multiFilters = {
+  status   : new Set(),
+  method   : new Set(),
+  flora    : new Set(),
+  valstatus: new Set(),
+  userval  : new Set(),
+  pdf      : new Set(),
+};
+const _MS_KEYS = ['status','method','flora','valstatus','userval','pdf'];
+
+// ── DOM helper ───────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+
+// ── Label maps ───────────────────────────────────────────────────────────────
+const STATUS_LABELS = {
+  resolved  : { label: "\u2713 Resolved",       cls: "pill-green"  },
+  unresolved: { label: "\u26a0 Unresolved",     cls: "pill-orange" },
+  running   : { label: "\u29d6 Running\u2026",  cls: "pill-spin"   },
+  pending   : { label: "\u2014 Pending",        cls: "pill-gray"   },
+};
+
+const FLORA_TAG_LABELS = {
+  confirms_flora    : { label: "Confirms FLoRA",         cls: "pill-green"  },
+  updated_from_flora: { label: "Updated from FLoRA",     cls: "pill-orange" },
+  new               : { label: "New \u2014 not in FLoRA",cls: "pill-blue"   },
+  unresolved        : { label: "\u2014",                 cls: "pill-gray"   },
+};
+
+const VAL_STATUS_LABELS = {
+  validated       : { label: "validated",        cls: "pill-green"  },
+  llm_confirmed   : { label: "llm_confirmed",    cls: "pill-purple" },
+  rule_based_high : { label: "rule_based_high",  cls: "pill-blue"   },
+  manual_entry    : { label: "manual_entry",     cls: "pill-blue"   },
+  needs_review    : { label: "needs_review",     cls: "pill-orange" },
+  false_positive  : { label: "false_positive",   cls: "pill-red"    },
+  already_in_flora: { label: "already_in_flora", cls: "pill-gray"   },
+};
+
+const METHOD_SHORT = {
+  single_candidate_after_requery : "Single match",
+  same_author_year_title_overlap : "Author+year",
+  grobid_ref_match               : "PDF refs",
+  llm_gemini                     : "Gemini",
+  llm_openai                     : "OpenAI",
+  llm_abstract_gemini            : "Abstract\u00b7Gemini",
+  llm_abstract_openai            : "Abstract\u00b7OpenAI",
+  no_candidates_found            : "No candidates",
+  needs_fulltext                 : "Needs fulltext",
+  grobid_ref_no_match            : "PDF\u2014no match",
+  llm_failed                     : "LLM failed",
+  none                           : "\u2014",
+};
+
+function pillHtml(text, cls) {
+  return '<span class="pill ' + cls + '">' + text + '</span>';
+}
+
+// ── On load ───────────────────────────────────────────────────────────────────
+window.addEventListener("DOMContentLoaded", loadCandidates);
+
+async function loadCandidates() {
+  try {
+    const resp = await fetch("/api/batch/candidates");
+    candidates = await resp.json();
+    $("loading").style.display = "none";
+    if (candidates.length === 0) {
+      $("loading").textContent = "No candidates found. Check that source CSV files exist and click Refresh Candidates.";
+      $("loading").style.display = "block";
+      return;
+    }
+    populateFilterDropdowns();
+    renderTable();
+    $("batch-table").style.display = "table";
+    $("stats-strip").style.display = "flex";
+    applyFilters();
+    updateStats();
+  } catch (e) {
+    $("loading").textContent = "Error loading candidates: " + e.message;
+  }
+}
+
+// ── Populate filter dropdowns from data ─────────────────────────────────────
+function populateFilterDropdowns() {
+  const methods   = [...new Set(candidates.map(c => c.resolution_method).filter(Boolean))].sort();
+  const floraTags = [...new Set(candidates.map(c => c.flora_tag).filter(Boolean))].sort();
+  const floraSt   = [...new Set(candidates.map(c => c.flora_validation_status || ''))].sort();
+
+  _msBuild('status', [
+    { value:'resolved',   label:'✓ Resolved' },
+    { value:'unresolved', label:'⚠ Unresolved' },
+    { value:'pending',    label:'— Pending' },
+    { value:'running',    label:'⧖ Running…' },
+  ], 'All');
+
+  _msBuild('method',
+    methods.map(m => ({ value: m, label: METHOD_SHORT[m] || m })),
+    'All methods');
+
+  _msBuild('flora',
+    floraTags.map(t => ({ value: t, label: (FLORA_TAG_LABELS[t] || {}).label || t })),
+    'All tags');
+
+  _msBuild('valstatus',
+    [{ value:'_blank', label:'— (blank)' }].concat(floraSt.filter(s => s).map(s => ({ value: s, label: s }))),
+    'All statuses');
+
+  _msBuild('userval', [
+    { value:'successful', label:'✓ OK' },
+    { value:'failed',     label:'✗ Failed' },
+    { value:'recheck',    label:'↵ Recheck' },
+    { value:'_none',      label:'Not validated' },
+  ], 'All');
+
+  _msBuild('pdf', [
+    { value:'has_pdf',  label:'Has cached PDF' },
+    { value:'url_only', label:'URL only (no cache)' },
+    { value:'no_pdf',   label:'No PDF / URL' },
+  ], 'All');
+}
+
+// ── Table rendering ───────────────────────────────────────────────────────────
+function renderTable() {
+  const tbody = $("batch-tbody");
+  tbody.innerHTML = "";
+  candidates.forEach((c, i) => {
+    tbody.appendChild(makeDataRow(c, i + 1));
+    tbody.appendChild(makeDetailRow(c.doi_r));
+  });
+}
+
+function _valCellHtml(status) {
+  if (status === "successful") return '<span class="pill pill-green"  style="font-size:10px;padding:1px 6px">&#10003; OK</span>';
+  if (status === "failed")     return '<span class="pill pill-red"    style="font-size:10px;padding:1px 6px">&#10007; Fail</span>';
+  if (status === "recheck")    return '<span class="pill pill-orange" style="font-size:10px;padding:1px 6px">&#8635; Check</span>';
+  return '<span style="color:#9ca3af;font-size:11px">—</span>';
+}
+
+function makeDataRow(c, num) {
+  const st   = STATUS_LABELS[c.status]             || STATUS_LABELS.pending;
+  const ft   = FLORA_TAG_LABELS[c.flora_tag]       || { label: "\u2014", cls: "pill-gray" };
+  const floraValSt = c.flora_validation_status || "";
+  const meth = METHOD_SHORT[c.resolution_method]   || (c.resolution_method || "\u2014");
+
+  const tr = document.createElement("tr");
+  tr.className = "data-row"
+    + (expanded[c.doi_r] ? " expanded" : "")
+    + (selected[c.doi_r] ? " row-selected" : "");
+  const eid = CSS.escape(c.doi_r);
+  tr.id = "row-" + eid;
+  tr.setAttribute("data-doi", c.doi_r);
+
+  const study    = c.study_r || "";
+  const origText = c.resolved_title_o || "\u2014";
+  const truncTitle = study.length > 52    ? study.slice(0, 52)    + "\u2026" : study;
+  const truncOrig  = origText.length > 38 ? origText.slice(0, 38) + "\u2026" : origText;
+
+  let pdfCell;
+  if (c.pdf_serve_url) {
+    pdfCell = '<a class="pdf-btn" href="' + c.pdf_serve_url + '" target="_blank"'
+      + ' onclick="event.stopPropagation()" style="font-size:11px;padding:3px 8px">&#128196; PDF</a>';
+  } else if (c.pdf_url) {
+    pdfCell = '<a href="' + c.pdf_url + '" target="_blank" onclick="event.stopPropagation()"'
+      + ' style="font-size:11px;color:var(--blue)">URL only</a>';
+  } else {
+    pdfCell = '<span style="color:#9ca3af;font-size:11px">\u2014</span>';
+  }
+
+  const methodCell = c.resolution_method
+    ? pillHtml(meth, "pill-gray")
+    : '<span style="color:#9ca3af">\u2014</span>';
+
+  tr.innerHTML =
+    '<td class="chk-col" onclick="event.stopPropagation()">'
+      + '<input type="checkbox" class="row-chk" data-doi="' + c.doi_r + '"'
+      + (selected[c.doi_r] ? ' checked' : '')
+      + ' onchange="onRowCheck(this)"/></td>'
+    + '<td style="color:#9ca3af;font-size:11px">' + num + '</td>'
+    + '<td class="mono"><span class="chev">&#9658;</span>' + c.doi_r + '</td>'
+    + '<td title="' + study.replace(/"/g,'&quot;') + '">' + truncTitle + '</td>'
+    + '<td>' + (c.year_r || "\u2014") + '</td>'
+    + '<td>' + pillHtml(st.label, st.cls) + '</td>'
+    + '<td>' + methodCell + '</td>'
+    + '<td title="' + (c.resolved_title_o||"").replace(/"/g,'&quot;') + '">' + truncOrig + '</td>'
+    + '<td>' + (c.flora_tag ? pillHtml(ft.label, ft.cls) : "\u2014") + '</td>'
+    + '<td>' + (floraValSt ? '<span style="font-size:11px;color:#475569">' + floraValSt.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</span>' : '<span style="color:#9ca3af">\u2014</span>') + '</td>'
+    + '<td id="val-cell-' + eid + '">' + _valCellHtml(c.user_val_status) + '</td>'
+    + '<td>' + pdfCell + '</td>';
+
+  tr.onclick = () => toggleRow(c.doi_r);
+  return tr;
+}
+
+function makeDetailRow(doi_r) {
+  const tr = document.createElement("tr");
+  tr.className     = "detail-row";
+  tr.id            = "detail-" + CSS.escape(doi_r);
+  tr.style.display = expanded[doi_r] ? "" : "none";
+  tr.innerHTML = '<td colspan="13"><div class="detail-panel" id="panel-' + CSS.escape(doi_r) + '">'
+    + '<p style="padding:12px 0;color:#6b7280">Loading result...</p></div></td>';
+  return tr;
+}
+
+// ── Filtering ─────────────────────────────────────────────────────────────────
+function applyFilters() {
+  const search  = ($('search-input').value  || '').toLowerCase().trim();
+  const fDoi    = ($('f-doi').value         || '').toLowerCase();
+  const fTitle  = ($('f-title').value       || '').toLowerCase();
+  const fYear   = ($('f-year').value        || '').trim();
+  const fMatch  = ($('f-matched').value     || '').toLowerCase();
+
+  let visCount = 0;
+  candidates.forEach(c => {
+    const dataRow   = $('row-'    + CSS.escape(c.doi_r));
+    const detailRow = $('detail-' + CSS.escape(c.doi_r));
+    if (!dataRow) return;
+
+    let show = true;
+    const doi   = (c.doi_r    || '').toLowerCase();
+    const title = (c.study_r  || '').toLowerCase();
+
+    if (show && search && !(doi.includes(search) || title.includes(search)))  show = false;
+    if (show && fDoi   && !doi.includes(fDoi))                                show = false;
+    if (show && fTitle && !title.includes(fTitle))                            show = false;
+    if (show && fYear  && c.year_r !== fYear)                                 show = false;
+    if (show && fMatch && !(c.resolved_title_o||'').toLowerCase().includes(fMatch)) show = false;
+
+    if (show && multiFilters.status.size > 0 && !multiFilters.status.has(c.status || ''))            show = false;
+    if (show && multiFilters.method.size > 0 && !multiFilters.method.has(c.resolution_method || '')) show = false;
+    if (show && multiFilters.flora.size  > 0 && !multiFilters.flora.has(c.flora_tag || ''))          show = false;
+    if (show && multiFilters.valstatus.size > 0) {
+      const val = (c.flora_validation_status || '').trim();
+      if (!multiFilters.valstatus.has(val || '_blank')) show = false;
+    }
+    if (show && multiFilters.userval.size > 0) {
+      const uv = c.user_val_status || '';
+      if (!multiFilters.userval.has(uv || '_none')) show = false;
+    }
+    if (show && multiFilters.pdf.size > 0) {
+      const pk = c.pdf_serve_url ? 'has_pdf' : c.pdf_url ? 'url_only' : 'no_pdf';
+      if (!multiFilters.pdf.has(pk)) show = false;
+    }
+
+    dataRow.style.display = show ? '' : 'none';
+    if (detailRow) detailRow.style.display = (show && expanded[c.doi_r]) ? '' : 'none';
+    if (show) visCount++;
+  });
+
+  $('filter-count').textContent = visCount < candidates.length
+    ? 'Showing ' + visCount + ' of ' + candidates.length : '';
+
+  updateSelectedCount();
+}
+
+function clearFilters() {
+  $('search-input').value = '';
+  ['f-doi','f-title','f-year','f-matched'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+  _MS_KEYS.forEach(k => _msClear(k, false));
+  applyFilters();
+}
+
+// ── Checkbox / selection ──────────────────────────────────────────────────────
+function onRowCheck(chk) {
+  const doi = chk.getAttribute("data-doi");
+  selected[doi] = chk.checked;
+  const row = $("row-" + CSS.escape(doi));
+  if (row) row.classList.toggle("row-selected", chk.checked);
+  updateSelectedCount();
+}
+
+function toggleSelectAll(checked) {
+  document.querySelectorAll(".data-row").forEach(tr => {
+    if (tr.style.display === "none") return;
+    const doi = tr.getAttribute("data-doi");
+    if (!doi) return;
+    selected[doi] = checked;
+    tr.classList.toggle("row-selected", checked);
+    const chk = tr.querySelector(".row-chk");
+    if (chk) chk.checked = checked;
+  });
+  $("hdr-chk").checked = checked;
+  if ($("chk-all-visible")) $("chk-all-visible").checked = checked;
+  updateSelectedCount();
+}
+
+function updateSelectedCount() {
+  const n   = Object.values(selected).filter(Boolean).length;
+  const el  = $("selected-count");
+  if (el) el.textContent = n > 0 ? "(" + n + ")" : "";
+
+  const visible  = [...document.querySelectorAll(".data-row")].filter(r => r.style.display !== "none");
+  const checked  = visible.filter(r => { const c = r.querySelector(".row-chk"); return c && c.checked; });
+  const hdr = $("hdr-chk");
+  if (hdr) {
+    hdr.indeterminate = checked.length > 0 && checked.length < visible.length;
+    hdr.checked       = visible.length > 0 && checked.length === visible.length;
+  }
+}
+
+function getSelectedDois() {
+  return Object.entries(selected).filter(([,v]) => v).map(([k]) => k);
+}
+
+// ── Stats strip ───────────────────────────────────────────────────────────────
+function updateStats() {
+  let resolved = 0, unresolved = 0, running = 0, pending = 0;
+  candidates.forEach(c => {
+    if      (c.status === "resolved")   resolved++;
+    else if (c.status === "unresolved") unresolved++;
+    else if (c.status === "running")    running++;
+    else                                pending++;
+  });
+  $("cnt-resolved").textContent   = resolved;
+  $("cnt-unresolved").textContent = unresolved;
+  $("cnt-running").textContent    = running;
+  $("cnt-pending").textContent    = pending;
+}
+
+// ── Panel header with view-toggle button ──────────────────────────────────────
+function _panelHeader(doi_r) {
+  const eid     = CSS.escape(doi_r);
+  const doiEsc  = doi_r.replace(/'/g, "\\'");
+  return '<div style="display:flex;gap:8px;align-items:center;padding:10px 0 8px">'
+    + '<span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Pipeline result</span>'
+    + '<button class="btn btn-secondary" style="padding:3px 10px;font-size:11px;margin-left:auto" '
+    + 'onclick="togglePanelView(\'' + doiEsc + '\')" '
+    + 'id="log-btn-' + eid + '">&#128195; Full Log</button>'
+    + '<button class="btn btn-secondary" style="padding:3px 10px;font-size:11px" '
+    + 'id="copy-btn-' + eid + '" title="Copy Claude-friendly debug summary to clipboard" '
+    + 'onclick="onCopyDebug(\'' + doiEsc + '\', this)">&#128203; Copy Debug</button>'
+    + '<button class="btn btn-secondary" style="padding:3px 10px;font-size:11px" '
+    + 'id="val-btn-' + eid + '" '
+    + 'onclick="toggleValSection(\'' + doiEsc + '\')"'
+    + '>&#10003; Validate</button>'
+    + '</div>';
+}
+
+async function onCopyDebug(doi_r, btn) {
+  const panel  = document.getElementById("panel-" + CSS.escape(doi_r));
+  if (!panel) return;
+  const result = JSON.parse(panel.dataset.resultJson || "{}");
+  const ok     = await copyDebugToClipboard(result);
+  const prev   = btn.textContent;
+  btn.textContent = ok ? "✓ Copied!" : "✗ Failed";
+  setTimeout(() => { btn.textContent = prev; }, 2000);
+}
+
+function togglePanelView(doi_r) {
+  const panel = $("panel-" + CSS.escape(doi_r));
+  const btn   = $("log-btn-" + CSS.escape(doi_r));
+  if (!panel || !btn) return;
+  const result = JSON.parse(panel.dataset.resultJson || "{}");
+  const _vsEl  = document.getElementById("val-section-" + CSS.escape(doi_r));
+  const wasOpen = _vsEl ? _vsEl.style.display !== "none" : false;
+  if (panel.dataset.view === "formatted") {
+    panel.dataset.view = "log";
+    btn.textContent = "\u2756 Formatted View";
+    panel.innerHTML = _valSection(doi_r) + _panelHeader(doi_r) + buildRawLogHTML(result);
+    _restoreValOpen(doi_r, wasOpen);
+  } else {
+    panel.dataset.view = "formatted";
+    btn.textContent = "\uD83D\uDCC3 Full Log";
+    panel.innerHTML = _valSection(doi_r) + _panelHeader(doi_r) + buildResultsHTML(result);
+    _restoreValOpen(doi_r, wasOpen);
+  }
+}
+
+// ── Row expansion ─────────────────────────────────────────────────────────────
+async function toggleRow(doi_r) {
+  const dataRow   = $("row-"    + CSS.escape(doi_r));
+  const detailRow = $("detail-" + CSS.escape(doi_r));
+  if (!dataRow || !detailRow) return;
+
+  const isOpen = expanded[doi_r];
+  expanded[doi_r]         = !isOpen;
+  dataRow.classList.toggle("expanded", !isOpen);
+  detailRow.style.display = (!isOpen && dataRow.style.display !== "none") ? "" : "none";
+
+  if (!isOpen) {
+    try {
+      const resp   = await fetch("/api/batch/result/" + encodeURIComponent(doi_r));
+      const result = await resp.json();
+      const panel  = $("panel-" + CSS.escape(doi_r));
+      if (!panel) return;
+      if (result.error) {
+        panel.innerHTML = '<p style="padding:12px 0;color:#ea580c">Result not yet available &mdash; run the pipeline first.</p>';
+      } else {
+        panel.dataset.resultJson = JSON.stringify(result);
+        panel.dataset.view = "formatted";
+        panel.innerHTML = _valSection(doi_r) + _panelHeader(doi_r) + buildResultsHTML(result);
+      }
+    } catch (e) {
+      const panel = $("panel-" + CSS.escape(doi_r));
+      if (panel) panel.innerHTML = '<p style="padding:12px 0;color:#dc2626">Error: ' + e.message + '</p>';
+    }
+  }
+}
+
+// ── Phase 1: Refresh candidates ───────────────────────────────────────────────
+async function refreshCandidates() {
+  $("btn-refresh").disabled    = true;
+  $("refresh-msg").textContent = "Reloading source data...";
+  try {
+    const resp = await fetch("/api/batch/refresh", { method: "POST" });
+    const data = await resp.json();
+    if (data.error) {
+      $("refresh-msg").textContent = "Error: " + data.error;
+      return;
+    }
+    $("refresh-msg").textContent = "\u2713 " + data.count + " candidates loaded";
+
+    // Reload table
+    expanded = {}; selected = {};
+    const resp2 = await fetch("/api/batch/candidates");
+    candidates  = await resp2.json();
+    if (candidates.length > 0) {
+      populateFilterDropdowns();
+      renderTable();
+      $("batch-table").style.display = "table";
+      $("stats-strip").style.display = "flex";
+      applyFilters();
+      updateStats();
+    }
+  } catch (e) {
+    $("refresh-msg").textContent = "Error: " + e.message;
+  } finally {
+    $("btn-refresh").disabled = false;
+  }
+}
+
+// ── Phase 2: Batch runner (SSE via fetch ReadableStream) ──────────────────────
+async function startBatch(mode) {
+  const dois = mode === "selected" ? getSelectedDois() : [];
+  if (mode === "selected" && dois.length === 0) {
+    $("export-msg").textContent = "No DOIs selected.";
+    setTimeout(() => { $("export-msg").textContent = ""; }, 3000);
+    return;
+  }
+
+  // Always force=true: re-run LLM + GROBID, keep cached PDF
+  const force = true;
+  const runBtns = ["btn-run", "btn-refresh"];
+  runBtns.forEach(id => { const el = $(id); if (el) el.disabled = true; });
+  $("btn-stop").style.display      = "inline-block";
+  $("progress-wrap").style.display = "flex";
+  $("export-msg").textContent      = "";
+
+  try {
+    const resp = await fetch("/api/batch/run", {
+      method : "POST",
+      headers: { "Content-Type": "application/json" },
+      body   : JSON.stringify({ mode, dois, force }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json();
+      $("export-msg").textContent = "Cannot start: " + (err.error || resp.statusText);
+      return;
+    }
+
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let   buffer  = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop();
+      for (const chunk of chunks) {
+        if (!chunk.startsWith("data: ")) continue;
+        try { handleBatchEvent(JSON.parse(chunk.slice(6))); } catch (_) {}
+      }
+    }
+  } catch (e) {
+    console.error("Batch SSE error:", e);
+  } finally {
+    ["btn-run", "btn-refresh"].forEach(id => {
+      const el = $(id); if (el) el.disabled = false;
+    });
+    $("btn-stop").style.display      = "none";
+    $("progress-wrap").style.display = "none";
+  }
+}
+
+function handleBatchEvent(event) {
+  if (event.type === "heartbeat") return;
+
+  if (event.type === "progress" || event.type === "error") {
+    const pct = Math.round((event.index / event.total) * 100);
+    $("progress-fill").style.width  = pct + "%";
+    $("progress-label").textContent = event.index + " / " + event.total;
+
+    const cand = candidates.find(c => c.doi_r === event.doi);
+    if (cand && event.result) {
+      const r = event.result;
+      cand.status            = (r.resolved_doi_o || r.resolved_title_o) ? "resolved" : "unresolved";
+      cand.resolution_method = r.resolution_method || "";
+      cand.resolved_title_o  = r.resolved_title_o  || "";
+      cand.resolved_doi_o    = r.resolved_doi_o    || "";
+      cand.flora_tag         = r.flora_tag         || "";
+      cand.pdf_serve_url     = r.pdf_serve_url     || "";
+      cand.pdf_ok            = !!(r.pdf_ok);
+      cand.pdf_url           = r.pdf_url           || "";
+      cand.pdf_source        = r.pdf_source        || "";
+      cand.llm_source        = r.llm_source        || "";
+      cand.validation_status       = r.validation_status       || cand.validation_status       || "";
+      cand.flora_validation_status = r.flora_validation_status || cand.flora_validation_status || "";
+      cand.has_result        = true;
+
+      const idx    = candidates.indexOf(cand) + 1;
+      const tbody  = $("batch-tbody");
+      const oldRow = $("row-" + CSS.escape(event.doi));
+      if (oldRow) {
+        const newRow = makeDataRow(cand, idx);
+        tbody.replaceChild(newRow, oldRow);
+      }
+    } else if (event.type === "error" && cand) {
+      cand.status = "unresolved";
+    }
+    applyFilters();
+    updateStats();
+  }
+
+  if (event.type === "done") {
+    $("progress-label").textContent = "Done \u2014 " + event.resolved + " / " + event.total + " resolved";
+    populateFilterDropdowns();
+  }
+
+  if (event.type === "stopped") {
+    $("progress-label").textContent = "Stopped.";
+  }
+}
+
+// ── Stop ──────────────────────────────────────────────────────────────────────
+async function stopBatch() {
+  await fetch("/api/batch/stop", { method: "POST" });
+}
+
+// ── Validation panel ──────────────────────────────────────────────────────────
+function _valSection(doi_r) {
+  const eid     = CSS.escape(doi_r);
+  const doiEsc  = doi_r.replace(/'/g, "\\'");
+  const cand    = candidates.find(c => c.doi_r === doi_r) || {};
+  const status  = cand.user_val_status  || "";
+  const comment = (cand.user_val_comment || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;");
+  const isOpen  = !!status;
+  const badge   = status === "successful" ? '<span class="pill pill-green"  style="font-size:10px;padding:1px 6px">&#10003; Successful</span>'
+                : status === "failed"     ? '<span class="pill pill-red"    style="font-size:10px;padding:1px 6px">&#10007; Failed</span>'
+                : status === "recheck"    ? '<span class="pill pill-orange" style="font-size:10px;padding:1px 6px">&#8635; Recheck</span>'
+                : "";
+  return '<div id="val-section-' + eid + '" style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:8px;background:#f8fafc;' + (isOpen ? '' : 'display:none') + '">'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
+    +   '<span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Validation</span>'
+    +   badge
+    + '</div>'
+    + '<div style="display:flex;gap:20px;margin-bottom:8px">'
+    +   '<label style="font-size:12px;cursor:pointer;display:flex;align-items:center;gap:4px"><input type="radio" name="val-' + doi_r + '" value="successful"' + (status==="successful"?" checked":"") + '> &#10003; Successful</label>'
+    +   '<label style="font-size:12px;cursor:pointer;display:flex;align-items:center;gap:4px"><input type="radio" name="val-' + doi_r + '" value="failed"' + (status==="failed"?" checked":"") + '> &#10007; Failed</label>'
+    +   '<label style="font-size:12px;cursor:pointer;display:flex;align-items:center;gap:4px"><input type="radio" name="val-' + doi_r + '" value="recheck"' + (status==="recheck"?" checked":"") + '> &#8635; Recheck</label>'
+    + '</div>'
+    + '<textarea id="val-comment-' + eid + '" rows="2" style="width:100%;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:6px 8px;resize:vertical;box-sizing:border-box;font-family:inherit" placeholder="Note — e.g. correct DOI, why this resolution is wrong...">' + comment + '</textarea>'
+    + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">'
+    +   '<button class="btn btn-secondary" style="font-size:11px;padding:3px 12px" onclick="saveValidation(\'' + doiEsc + '\')">Save</button>'
+    +   '<button class="btn btn-primary" style="font-size:11px;padding:3px 12px" id="rerun-val-' + eid + '" onclick="rerunWithComment(\'' + doiEsc + '\')"' + (status==="successful"?" disabled":"") + '>&#8635; Re-run</button>'
+    +   '<span id="val-msg-' + eid + '" style="font-size:11px;color:#475569;flex:1"></span>'
+    + '</div>'
+    + '</div>';
+}
+
+function _restoreValOpen(doi_r, wasOpen) {
+  const vs = document.getElementById("val-section-" + CSS.escape(doi_r));
+  if (vs) vs.style.display = wasOpen ? "" : "none";
+}
+
+function toggleValSection(doi_r) {
+  const vs = document.getElementById("val-section-" + CSS.escape(doi_r));
+  if (vs) vs.style.display = vs.style.display === "none" ? "" : "none";
+}
+
+async function saveValidation(doi_r) {
+  const eid     = CSS.escape(doi_r);
+  const msgEl   = document.getElementById("val-msg-" + eid);
+  const checked = [...document.getElementsByName('val-' + doi_r)].find(r => r.checked);
+  if (!checked) { if (msgEl) msgEl.textContent = "Select a status first."; return; }
+  const status  = checked.value;
+  const comment = (document.getElementById("val-comment-" + eid) || {}).value || "";
+  try {
+    const resp = await fetch("/api/batch/validate", {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({doi_r, validation_status: status, comment}),
+    });
+    const data = await resp.json();
+    if (!data.ok) { if (msgEl) msgEl.textContent = "Error saving."; return; }
+    const cand = candidates.find(c => c.doi_r === doi_r);
+    if (cand) { cand.user_val_status = status; cand.user_val_comment = comment; }
+    const cell = document.getElementById("val-cell-" + eid);
+    if (cell) cell.innerHTML = _valCellHtml(status);
+    const rerunBtn = document.getElementById("rerun-val-" + eid);
+    if (rerunBtn) rerunBtn.disabled = (status === "successful");
+    if (msgEl) { msgEl.textContent = "\u2713 Saved"; setTimeout(() => { msgEl.textContent = ""; }, 2000); }
+  } catch(e) { if (msgEl) msgEl.textContent = "Error: " + e.message; }
+}
+
+async function rerunWithComment(doi_r) {
+  const eid   = CSS.escape(doi_r);
+  const msgEl = document.getElementById("val-msg-" + eid);
+  const btn   = document.getElementById("rerun-val-" + eid);
+  const comment = (document.getElementById("val-comment-" + eid) || {}).value || "";
+  if (btn) btn.disabled = true;
+  if (msgEl) msgEl.innerHTML = '<span class="spinner"></span> Running\u2026';
+  try {
+    const resp = await fetch("/api/batch/run_doi", {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({doi_r, validation_comment: comment}),
+    });
+    const data = await resp.json();
+    if (data.error) { if (msgEl) msgEl.textContent = "Error: " + data.error; return; }
+    const cand = candidates.find(c => c.doi_r === doi_r);
+    if (cand) {
+      const r = data;
+      cand.status            = (r.resolved_doi_o || r.resolved_title_o) ? "resolved" : "unresolved";
+      cand.resolution_method = r.resolution_method || "";
+      cand.resolved_title_o  = r.resolved_title_o  || "";
+      cand.resolved_doi_o    = r.resolved_doi_o    || "";
+      cand.flora_tag         = r.flora_tag         || "";
+      cand.pdf_serve_url     = r.pdf_serve_url     || "";
+      cand.pdf_ok            = !!(r.pdf_ok);
+      cand.pdf_url           = r.pdf_url           || "";
+      cand.pdf_source        = r.pdf_source        || "";
+      cand.llm_source        = r.llm_source        || "";
+      cand.flora_validation_status = r.flora_validation_status || cand.flora_validation_status || "";
+      cand.has_result = true;
+      const idx2 = candidates.indexOf(cand) + 1;
+      const oldRow = document.getElementById("row-" + eid);
+      if (oldRow) { const newRow = makeDataRow(cand, idx2); oldRow.parentNode.replaceChild(newRow, oldRow); }
+    }
+    const panel = document.getElementById("panel-" + eid);
+    if (panel) {
+      panel.dataset.resultJson = JSON.stringify(data);
+      panel.dataset.view = "formatted";
+      panel.innerHTML = _valSection(doi_r) + _panelHeader(doi_r) + buildResultsHTML(data);
+      _restoreValOpen(doi_r, true);
+    }
+    if (msgEl) msgEl.textContent = "\u21ba Rerun complete \u2713";
+    applyFilters(); updateStats();
+  } catch(e) { if (msgEl) msgEl.textContent = "Error: " + e.message; }
+  finally {
+    const checked = [...document.getElementsByName('val-' + doi_r)].find(r => r.checked);
+    const st = checked ? checked.value : "";
+    if (btn) btn.disabled = (st === "successful");
+  }
+}
+
+// ── Multi-select filters ─────────────────────────────────────────────────────
+function _msToggle(key, e) {
+  e.stopPropagation();
+  const menu = document.getElementById('f-' + key + '-menu');
+  if (!menu) return;
+  const isOpen = menu.style.display !== 'none';
+  _MS_KEYS.forEach(k => { const m = document.getElementById('f-' + k + '-menu'); if (m) m.style.display = 'none'; });
+  if (!isOpen) {
+    menu.style.left = '0';
+    menu.style.right = 'auto';
+    menu.style.display = '';
+    const rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth - 8) {
+      menu.style.left = 'auto';
+      menu.style.right = '0';
+    }
+  }
+}
+
+function _msBuild(key, items, allLabel) {
+  const menu = document.getElementById('f-' + key + '-menu');
+  if (!menu) return;
+  const btn = document.getElementById('f-' + key + '-btn');
+  if (btn) btn.dataset.alllabel = allLabel;
+  const sel = multiFilters[key];
+  let html = '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px 4px;border-bottom:1px solid #f1f5f9;position:sticky;top:0;background:#fff;z-index:1">'
+    + '<label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:5px;color:#475569">'
+    + '<input type="checkbox" class="ms-all-' + key + '" onchange="_msToggleAll(\'' + key + '\',this)"> (Select All)</label>'
+    + '<button onclick="_msClear(\'' + key + '\',true)" style="font-size:10px;color:#94a3b8;background:none;border:none;cursor:pointer;padding:0" '
+    + 'onmouseover="this.style.color=\'var(--blue)\'" onmouseout="this.style.color=\'#94a3b8\'">Clear</button>'
+    + '</div>';
+  items.forEach(function(item) {
+    const checked  = sel.has(item.value) ? ' checked' : '';
+    const escLabel = item.label.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+    const escValue = item.value.replace(/"/g,'&quot;');
+    html += '<label style="display:flex;align-items:center;gap:6px;padding:4px 10px;font-size:11px;cursor:pointer;white-space:nowrap" '
+      + 'onmouseover="this.style.background=\'#f8fafc\'" onmouseout="this.style.background=\'\'">'
+      + '<input type="checkbox" class="ms-item-' + key + '" value="' + escValue + '" onchange="_msChange(\'' + key + '\')"' + checked + '> '
+      + escLabel + '</label>';
+  });
+  menu.innerHTML = html;
+  menu.style.width = 'max-content';
+  _msSyncAll(key);
+  _msUpdateBtn(key);
+}
+
+function _msChange(key) {
+  multiFilters[key].clear();
+  document.querySelectorAll('.ms-item-' + key + ':checked').forEach(cb => multiFilters[key].add(cb.value));
+  _msSyncAll(key);
+  _msUpdateBtn(key);
+  applyFilters();
+}
+
+function _msToggleAll(key, allCb) {
+  multiFilters[key].clear();
+  document.querySelectorAll('.ms-item-' + key).forEach(cb => {
+    cb.checked = allCb.checked;
+    if (allCb.checked) multiFilters[key].add(cb.value);
+  });
+  _msUpdateBtn(key);
+  applyFilters();
+}
+
+function _msClear(key, andApply) {
+  multiFilters[key].clear();
+  document.querySelectorAll('.ms-item-' + key).forEach(cb => { cb.checked = false; });
+  _msSyncAll(key);
+  _msUpdateBtn(key);
+  if (andApply) applyFilters();
+}
+
+function _msSyncAll(key) {
+  const allCb = document.querySelector('.ms-all-' + key);
+  if (!allCb) return;
+  const items = document.querySelectorAll('.ms-item-' + key);
+  const n = multiFilters[key].size;
+  allCb.indeterminate = n > 0 && n < items.length;
+  allCb.checked       = items.length > 0 && n === items.length;
+}
+
+function _msUpdateBtn(key) {
+  const btn = document.getElementById('f-' + key + '-btn');
+  if (!btn) return;
+  const allLabel = btn.dataset.alllabel || 'All';
+  const sel = multiFilters[key];
+  if (sel.size === 0) {
+    btn.textContent = allLabel;
+    btn.style.color = '';
+  } else if (sel.size === 1) {
+    const v = [...sel][0];
+    const item = document.querySelector('.ms-item-' + key + '[value="' + v.replace(/"/g,'&quot;') + '"]');
+    btn.textContent = item ? item.closest('label').textContent.trim() : v;
+    btn.style.color = 'var(--blue)';
+  } else {
+    btn.textContent = sel.size + ' selected';
+    btn.style.color = 'var(--blue)';
+  }
+}
+
+// ── Run menu ──────────────────────────────────────────────────────────────────
+const _ALL_EXPORT_MENUS = ['review','all','minimal','selected'];
+
+function toggleRunMenu(e) {
+  e.stopPropagation();
+  const m = $('run-menu');
+  if (m) m.style.display = m.style.display === 'none' ? '' : 'none';
+}
+
+function pickRun(mode) {
+  const m = $('run-menu');
+  if (m) m.style.display = 'none';
+  startBatch(mode);
+}
+
+// ── Export menus ──────────────────────────────────────────────────────────────
+function toggleExportMenu(type, e) {
+  e.stopPropagation();
+  _ALL_EXPORT_MENUS.forEach(t => {
+    const m = $('em-' + t);
+    if (m) m.style.display = (t === type && m.style.display === 'none') ? '' : 'none';
+  });
+}
+
+function getVisibleDois() {
+  return [...document.querySelectorAll('.data-row')]
+    .filter(r => r.style.display !== 'none')
+    .map(r => r.getAttribute('data-doi'))
+    .filter(Boolean);
+}
+
+async function exportRows(type, format) {
+  // Close all menus
+  _ALL_EXPORT_MENUS.forEach(t => { const m = $('em-' + t); if (m) m.style.display = 'none'; });
+
+  let dois = [];
+  if (type === 'selected') {
+    dois = getSelectedDois();
+    if (dois.length === 0) dois = getVisibleDois();
+    if (dois.length === 0) { $('export-msg').textContent = 'No rows to export.'; return; }
+  } else if (type === 'minimal') {
+    dois = getVisibleDois();
+  }
+
+  $('export-msg').textContent = 'Exporting…';
+  try {
+    const resp = await fetch('/api/batch/export', {
+      method : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body   : JSON.stringify({ type, format, dois }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      $('export-msg').textContent = 'Error: ' + data.error;
+    } else {
+      $('export-msg').textContent = '✓ Saved ' + data.rows + ' rows → data/' + data.filename;
+      setTimeout(() => { $('export-msg').textContent = ''; }, 5000);
+    }
+  } catch (e) {
+    $('export-msg').textContent = 'Export failed: ' + e.message;
+  }
+}
+
+document.addEventListener('click', () => {
+  const rm = $('run-menu'); if (rm) rm.style.display = 'none';
+  _ALL_EXPORT_MENUS.forEach(t => { const m = $('em-' + t); if (m) m.style.display = 'none'; });
+  _MS_KEYS.forEach(k => { const om = document.getElementById('f-' + k + '-menu'); if (om) om.style.display = 'none'; });
+});
+</script>
+{% endblock %}

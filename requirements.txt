@@ -1,0 +1,31 @@
+# FLoRA Extractor — Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# ── Web framework ─────────────────────────────────────────────────────────────
+flask>=3.0.0
+flask-sqlalchemy>=3.1.0
+
+# ── Data processing ───────────────────────────────────────────────────────────
+pandas>=2.0.0
+openpyxl>=3.1.0          # Excel export
+fpdf2>=2.7.0             # PDF export
+
+# ── HTTP / API clients ────────────────────────────────────────────────────────
+requests>=2.31.0
+openai>=1.0.0            # OpenAI fallback LLM
+
+# ── PDF processing ────────────────────────────────────────────────────────────
+pdfminer.six>=20221105   # Text extraction from PDFs
+pymupdf>=1.23.0          # PDF rendering for image-based ref extraction (fitz)
+playwright>=1.40.0       # Headless browser fallback for PDF acquisition
+                         # After install: python -m playwright install chromium
+
+# ── Text matching ─────────────────────────────────────────────────────────────
+rapidfuzz>=3.0.0         # Fuzzy title matching for deduplication
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0     # Load .env file
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=7.0.0
+pytest-mock>=3.0.0

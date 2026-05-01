@@ -1,0 +1,517 @@
+{% extends "base.html" %}
+{% block title %}FLoRA — Multiple Originals{% endblock %}
+
+{% block content %}
+
+<!-- Toolbar -->
+<div class="toolbar">
+  <span class="phase-label">Pipeline</span>
+  <button id="btn-run-all"        class="btn btn-primary"   onclick="startRun('all')">&#9654; Run All</button>
+  <button id="btn-run-unresolved" class="btn btn-secondary" onclick="startRun('unresolved')">&#9654; Run Unresolved</button>
+  <button id="btn-run-selected"   class="btn btn-secondary" onclick="startRun('selected')">&#9654; Run Selected <span id="selected-count"></span></button>
+  <button id="btn-stop"           class="btn btn-red"       onclick="stopRun()" style="display:none">&#9632; Stop</button>
+  <div class="progress-wrap" id="progress-wrap" style="display:none">
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+    <span class="progress-label" id="progress-label">0 / 0</span>
+  </div>
+</div>
+
+<!-- Export bar -->
+<div class="export-bar">
+  <span class="phase-label">Export</span>
+  <button id="btn-export"    class="btn btn-green"     onclick="exportCsv()">&#11015; Export CSV</button>
+  <a     id="btn-dl"         class="btn btn-secondary" href="/api/multi-originals/download"
+         style="text-decoration:none">&#11015; Download</a>
+  <span id="export-msg"></span>
+</div>
+
+<!-- Stats strip -->
+<div class="stats" id="stats-strip" style="display:none">
+  <div class="stat"><div class="dot" style="background:#7c3aed"></div><strong id="cnt-multi">0</strong>&nbsp;multi-original</div>
+  <div class="stat"><div class="dot dot-orange"></div><strong id="cnt-fp">0</strong>&nbsp;false positive</div>
+  <div class="stat"><div class="dot dot-blue"></div><strong id="cnt-running">0</strong>&nbsp;running</div>
+  <div class="stat"><div class="dot dot-gray"></div><strong id="cnt-pending">0</strong>&nbsp;pending</div>
+  <span id="filter-count"></span>
+</div>
+
+<!-- Search bar -->
+<div class="search-bar">
+  <input id="search-input" type="text" placeholder="Search DOI or study title…" oninput="applyFilters()"/>
+  <button class="btn btn-secondary" onclick="clearFilters()">&#10005; Clear</button>
+  <label>
+    <input type="checkbox" id="chk-all-visible" onchange="toggleSelectAll(this.checked)"/> Select all visible
+  </label>
+</div>
+
+<!-- Table -->
+<div class="table-wrap">
+  <div id="loading" style="text-align:center;padding:40px;color:#6b7280">Loading candidates…</div>
+  <table class="batch-table" id="main-table" style="display:none">
+    <thead>
+      <tr>
+        <th class="chk-col"><input type="checkbox" id="hdr-chk" onchange="toggleSelectAll(this.checked)"/></th>
+        <th>#</th>
+        <th>DOI (doi_r)</th>
+        <th>Study Title</th>
+        <th>Year</th>
+        <th>Status</th>
+        <th>Originals Found</th>
+        <th>LLM</th>
+        <th>PDF</th>
+      </tr>
+      <tr class="filter-row">
+        <th></th><th></th>
+        <th><input class="col-filter" id="f-doi"    type="text" placeholder="DOI…"   oninput="applyFilters()"/></th>
+        <th><input class="col-filter" id="f-title"  type="text" placeholder="Title…" oninput="applyFilters()"/></th>
+        <th><input class="col-filter" id="f-year"   type="text" placeholder="Year"   oninput="applyFilters()" style="width:52px"/></th>
+        <th><select class="col-filter" id="f-status" onchange="applyFilters()">
+              <option value="">All</option>
+              <option value="multi_found">Multi-original</option>
+              <option value="false_positive">False positive</option>
+              <option value="pending">Pending</option>
+              <option value="running">Running</option>
+            </select></th>
+        <th></th>
+        <th><select class="col-filter" id="f-llm" onchange="applyFilters()">
+              <option value="">All</option>
+              <option value="gemini">Gemini</option>
+              <option value="openai">OpenAI</option>
+              <option value="cache">Cache</option>
+            </select></th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="main-tbody"></tbody>
+  </table>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='render.js') }}"></script>
+<script>
+let candidates = [];
+let expanded   = {};
+let selected   = {};
+
+const $ = id => document.getElementById(id);
+
+const STATUS_META = {
+  multi_found   : { label: "Multi-original",  cls: "pill-blue"   },
+  false_positive: { label: "False positive",  cls: "pill-orange" },
+  running       : { label: "Running\u2026",   cls: "pill-spin"   },
+  pending       : { label: "\u2014 Pending",  cls: "pill-gray"   },
+  unresolved    : { label: "\u26a0 Unresolved", cls: "pill-red"  },
+};
+
+function pillHtml(t, c) { return `<span class="pill ${c}">${t}</span>`; }
+
+window.addEventListener("DOMContentLoaded", loadCandidates);
+
+async function loadCandidates() {
+  try {
+    const resp = await fetch("/api/multi-originals/candidates");
+    candidates = await resp.json();
+    $("loading").style.display = "none";
+    if (candidates.length === 0) {
+      $("loading").textContent = "No candidates — go to Input page and generate originals.";
+      $("loading").style.display = "block";
+      return;
+    }
+    renderTable();
+    $("main-table").style.display = "table";
+    $("stats-strip").style.display = "flex";
+    applyFilters();
+    updateStats();
+  } catch (e) {
+    $("loading").textContent = "Error: " + e.message;
+  }
+}
+
+function renderTable() {
+  const tbody = $("main-tbody");
+  tbody.innerHTML = "";
+  candidates.forEach((c, i) => {
+    tbody.appendChild(makeDataRow(c, i + 1));
+    tbody.appendChild(makeDetailRow(c.doi_r));
+  });
+}
+
+function makeDataRow(c, num) {
+  const st  = STATUS_META[c.status] || STATUS_META.pending;
+  const tr  = document.createElement("tr");
+  tr.className = "data-row"
+    + (expanded[c.doi_r] ? " expanded" : "")
+    + (selected[c.doi_r] ? " row-selected" : "");
+  tr.id = "row-" + CSS.escape(c.doi_r);
+  tr.setAttribute("data-doi", c.doi_r);
+
+  const study = c.study_r || "";
+  const trunc = study.length > 55 ? study.slice(0, 55) + "\u2026" : study;
+
+  const nCell = c.has_result
+    ? (c.is_false_positive
+        ? '<span class="pill pill-orange">False positive</span>'
+        : (c.n_originals > 0
+            ? `<span class="pill pill-blue">${c.n_originals} original${c.n_originals > 1 ? "s" : ""}</span>`
+            : '<span class="pill pill-gray">\u2014</span>'))
+    : '<span style="color:#9ca3af">\u2014</span>';
+
+  const llmCell = c.llm_source
+    ? `<span class="pill pill-${c.llm_source==="gemini"?"purple":c.llm_source==="cache"?"gray":"blue"}">${c.llm_source}</span>`
+    : '<span style="color:#9ca3af">\u2014</span>';
+
+  let pdfCell = '<span style="color:#9ca3af;font-size:11px">\u2014</span>';
+  if (c.pdf_serve_url) {
+    pdfCell = `<a class="pdf-btn" href="${c.pdf_serve_url}" target="_blank" onclick="event.stopPropagation()" style="font-size:11px;padding:3px 8px">&#128196; PDF</a>`;
+  } else if (c.pdf_url) {
+    pdfCell = `<a href="${c.pdf_url}" target="_blank" onclick="event.stopPropagation()" style="font-size:11px;color:var(--blue)">URL only</a>`;
+  }
+
+  tr.innerHTML =
+    `<td class="chk-col" onclick="event.stopPropagation()">
+       <input type="checkbox" class="row-chk" data-doi="${c.doi_r}"
+              ${selected[c.doi_r]?" checked":""} onchange="onRowCheck(this)"/>
+     </td>
+     <td style="color:#9ca3af;font-size:11px">${num}</td>
+     <td class="mono"><span class="chev">&#9658;</span>${c.doi_r}</td>
+     <td title="${study.replace(/"/g,'&quot;')}">${trunc}</td>
+     <td>${c.year_r || "\u2014"}</td>
+     <td>${pillHtml(st.label, st.cls)}</td>
+     <td>${nCell}</td>
+     <td>${llmCell}</td>
+     <td>${pdfCell}</td>`;
+
+  tr.onclick = () => toggleRow(c.doi_r);
+  return tr;
+}
+
+function makeDetailRow(doi_r) {
+  const tr = document.createElement("tr");
+  tr.className     = "detail-row";
+  tr.id            = "detail-" + CSS.escape(doi_r);
+  tr.style.display = expanded[doi_r] ? "" : "none";
+  tr.innerHTML = `<td colspan="9"><div class="detail-panel" id="panel-${CSS.escape(doi_r)}">
+    <p style="padding:12px 0;color:#6b7280">Loading…</p></div></td>`;
+  return tr;
+}
+
+// ── Filtering ─────────────────────────────────────────────────────────────────
+function applyFilters() {
+  const search  = ($("search-input").value || "").toLowerCase();
+  const fDoi    = ($("f-doi").value        || "").toLowerCase();
+  const fTitle  = ($("f-title").value      || "").toLowerCase();
+  const fYear   = ($("f-year").value       || "").trim();
+  const fStatus = $("f-status").value      || "";
+  const fLlm    = $("f-llm").value         || "";
+
+  let vis = 0;
+  candidates.forEach(c => {
+    const dr = $("row-"    + CSS.escape(c.doi_r));
+    const dt = $("detail-" + CSS.escape(c.doi_r));
+    if (!dr) return;
+    let show = true;
+    const doi   = (c.doi_r   || "").toLowerCase();
+    const title = (c.study_r || "").toLowerCase();
+    if (search  && !(doi.includes(search)  || title.includes(search))) show = false;
+    if (fDoi    && !doi.includes(fDoi))                                 show = false;
+    if (fTitle  && !title.includes(fTitle))                             show = false;
+    if (fYear   && c.year_r !== fYear)                                  show = false;
+    if (fStatus && c.status !== fStatus)                                show = false;
+    if (fLlm    && c.llm_source !== fLlm)                              show = false;
+    dr.style.display = show ? "" : "none";
+    if (dt) dt.style.display = (show && expanded[c.doi_r]) ? "" : "none";
+    if (show) vis++;
+  });
+  $("filter-count").textContent = vis < candidates.length
+    ? "Showing " + vis + " of " + candidates.length : "";
+  updateSelectedCount();
+}
+
+function clearFilters() {
+  ["search-input","f-doi","f-title","f-year"].forEach(id => { const el=$(id); if(el) el.value=""; });
+  ["f-status","f-llm"].forEach(id => { const el=$(id); if(el) el.value=""; });
+  applyFilters();
+}
+
+// ── Checkbox / selection ──────────────────────────────────────────────────────
+function onRowCheck(chk) {
+  const doi = chk.getAttribute("data-doi");
+  selected[doi] = chk.checked;
+  const row = $("row-" + CSS.escape(doi));
+  if (row) row.classList.toggle("row-selected", chk.checked);
+  updateSelectedCount();
+}
+
+function toggleSelectAll(checked) {
+  document.querySelectorAll(".data-row").forEach(tr => {
+    if (tr.style.display === "none") return;
+    const doi = tr.getAttribute("data-doi"); if (!doi) return;
+    selected[doi] = checked;
+    tr.classList.toggle("row-selected", checked);
+    const chk = tr.querySelector(".row-chk"); if (chk) chk.checked = checked;
+  });
+  $("hdr-chk").checked = checked;
+  if ($("chk-all-visible")) $("chk-all-visible").checked = checked;
+  updateSelectedCount();
+}
+
+function updateSelectedCount() {
+  const n = Object.values(selected).filter(Boolean).length;
+  const el = $("selected-count"); if (el) el.textContent = n > 0 ? `(${n})` : "";
+  const visible = [...document.querySelectorAll(".data-row")].filter(r => r.style.display !== "none");
+  const checked = visible.filter(r => { const c=r.querySelector(".row-chk"); return c&&c.checked; });
+  const hdr = $("hdr-chk");
+  if (hdr) {
+    hdr.indeterminate = checked.length > 0 && checked.length < visible.length;
+    hdr.checked       = visible.length > 0 && checked.length === visible.length;
+  }
+}
+
+function getSelectedDois() {
+  return Object.entries(selected).filter(([,v])=>v).map(([k])=>k);
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+function updateStats() {
+  let multi=0, fp=0, running=0, pending=0;
+  candidates.forEach(c => {
+    if      (c.status==="multi_found")    multi++;
+    else if (c.status==="false_positive") fp++;
+    else if (c.status==="running")        running++;
+    else                                  pending++;
+  });
+  $("cnt-multi").textContent   = multi;
+  $("cnt-fp").textContent      = fp;
+  $("cnt-running").textContent = running;
+  $("cnt-pending").textContent = pending;
+}
+
+// ── Row expansion ─────────────────────────────────────────────────────────────
+async function toggleRow(doi_r) {
+  const dataRow   = $("row-"    + CSS.escape(doi_r));
+  const detailRow = $("detail-" + CSS.escape(doi_r));
+  if (!dataRow || !detailRow) return;
+  const isOpen    = expanded[doi_r];
+  expanded[doi_r] = !isOpen;
+  dataRow.classList.toggle("expanded", !isOpen);
+  detailRow.style.display = (!isOpen && dataRow.style.display !== "none") ? "" : "none";
+
+  if (!isOpen) {
+    try {
+      const resp   = await fetch("/api/multi-originals/result/" + encodeURIComponent(doi_r));
+      const result = await resp.json();
+      const panel  = $("panel-" + CSS.escape(doi_r));
+      if (!panel) return;
+      if (result.error) {
+        panel.innerHTML = '<p style="padding:12px 0;color:#ea580c">Result not yet available — run the pipeline first.</p>';
+      } else {
+        panel.innerHTML = buildMultiOriginalHTML(result);
+      }
+    } catch (e) {
+      const panel = $("panel-" + CSS.escape(doi_r));
+      if (panel) panel.innerHTML = `<p style="padding:12px 0;color:#dc2626">Error: ${e.message}</p>`;
+    }
+  }
+}
+
+function buildMultiOriginalHTML(r) {
+  const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+  let html = `<div style="padding:10px 0 14px">`;
+
+  // Header badges
+  const fpTag = r.is_false_positive
+    ? `<span class="pill pill-orange" style="font-size:12px">False Positive — only 1 original</span>`
+    : (r.n_originals > 0
+        ? `<span class="pill pill-blue" style="font-size:12px">${r.n_originals} original${r.n_originals>1?"s":""} identified</span>`
+        : `<span class="pill pill-gray" style="font-size:12px">Unresolved</span>`);
+
+  html += `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+    ${fpTag}
+    ${r.llm_source ? `<span class="pill pill-${r.llm_source==="gemini"?"purple":"blue"}">${esc(r.llm_source)}</span>` : ""}
+    ${r.pdf_source && r.pdf_source !== "none" ? `<span class="pill pill-gray">${esc(r.pdf_source)}</span>` : ""}
+    ${r.pdf_serve_url ? `<a class="pdf-btn" href="${r.pdf_serve_url}" target="_blank" style="font-size:11px;padding:3px 8px">&#128196; PDF</a>` : ""}
+  </div>`;
+
+  if (r.llm_reasoning) {
+    html += `<div class="field" style="margin-bottom:12px">
+      <label>LLM reasoning</label>
+      <div class="abstract-block" style="border-left-color:var(--purple);font-size:12px">${esc(r.llm_reasoning)}</div>
+    </div>`;
+  }
+
+  // Originals list
+  let originals = [];
+  try { originals = JSON.parse(r.originals_json || "[]"); } catch(_) {}
+
+  if (originals.length > 0) {
+    html += `<div style="font-size:11px;font-weight:700;color:#374151;text-transform:uppercase;
+                         letter-spacing:.05em;margin-bottom:8px">Original Studies Identified</div>`;
+    for (const o of originals) {
+      const conf = o.confidence || "low";
+      const confColor = conf==="high" ? "var(--green)" : conf==="medium" ? "var(--blue)" : "var(--orange)";
+      html += `<div style="background:white;border:1px solid #e2e8f0;border-radius:6px;
+                           padding:12px;margin-bottom:8px">
+        <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">
+          <span class="pill" style="background:#f0f9ff;color:#0369a1;border:1px solid #bae6fd;
+                min-width:24px;text-align:center">${o.rank}</span>
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:13px;margin-bottom:4px">${esc(o.title) || "\u2014"}</div>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:#475569;margin-bottom:6px">
+              ${o.doi   ? `<span>DOI: <a href="https://doi.org/${esc(o.doi)}" target="_blank" style="color:var(--blue)">${esc(o.doi)}</a></span>` : ""}
+              ${o.year  ? `<span>Year: ${o.year}</span>` : ""}
+              ${o.first_author ? `<span>Author: ${esc(o.first_author)}</span>` : ""}
+              <span style="color:${confColor};font-weight:600">Confidence: ${conf}</span>
+            </div>
+            ${o.evidence ? `<div style="background:#f8fafc;border-left:3px solid var(--teal);
+                                        padding:6px 10px;font-size:12px;font-style:italic;
+                                        border-radius:0 4px 4px 0">"${esc(o.evidence)}"</div>` : ""}
+          </div>
+        </div>
+      </div>`;
+    }
+  } else if (!r.is_false_positive) {
+    html += `<div style="color:#9ca3af;font-size:12px">No originals identified.</div>`;
+  }
+
+  // OpenAlex candidates
+  let cands = [];
+  try { cands = JSON.parse(r.all_candidates_json || "[]"); } catch(_) {}
+  if (cands.length > 0) {
+    html += `<details style="margin-top:12px">
+      <summary style="font-size:11px;font-weight:700;color:#64748b;cursor:pointer;
+                      text-transform:uppercase;letter-spacing:.05em">
+        OpenAlex candidates (${cands.length})
+      </summary>
+      <table class="cands" style="margin-top:6px">
+        <thead><tr><th>#</th><th>Title</th><th>Year</th><th>Author</th><th>DOI</th></tr></thead>
+        <tbody>${cands.map((c,i)=>`<tr>
+          <td>${i+1}</td><td>${esc(c.title)}</td><td>${c.year||""}</td>
+          <td>${esc(c.first_author)}</td>
+          <td style="font-family:monospace;font-size:11px">${esc(c.doi)}</td>
+        </tr>`).join("")}</tbody>
+      </table>
+    </details>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+// ── Run pipeline (SSE) ────────────────────────────────────────────────────────
+async function startRun(mode) {
+  const dois = mode === "selected" ? getSelectedDois() : [];
+  if (mode === "selected" && dois.length === 0) {
+    $("export-msg").textContent = "No DOIs selected.";
+    setTimeout(() => { $("export-msg").textContent = ""; }, 3000);
+    return;
+  }
+
+  ["btn-run-all","btn-run-unresolved","btn-run-selected"].forEach(id => {
+    const el = $(id); if (el) el.disabled = true;
+  });
+  $("btn-stop").style.display      = "inline-block";
+  $("progress-wrap").style.display = "flex";
+  $("export-msg").textContent      = "";
+
+  try {
+    const resp = await fetch("/api/multi-originals/run", {
+      method : "POST",
+      headers: { "Content-Type": "application/json" },
+      body   : JSON.stringify({ mode, dois }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      $("export-msg").textContent = "Cannot start: " + (err.error || resp.statusText);
+      return;
+    }
+
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let   buffer  = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop();
+      for (const chunk of chunks) {
+        if (!chunk.startsWith("data: ")) continue;
+        try { handleEvent(JSON.parse(chunk.slice(6))); } catch (_) {}
+      }
+    }
+  } catch (e) {
+    console.error("SSE error:", e);
+  } finally {
+    ["btn-run-all","btn-run-unresolved","btn-run-selected"].forEach(id => {
+      const el = $(id); if (el) el.disabled = false;
+    });
+    $("btn-stop").style.display      = "none";
+    $("progress-wrap").style.display = "none";
+  }
+}
+
+function handleEvent(event) {
+  if (event.type === "heartbeat") return;
+
+  if (event.type === "progress" || event.type === "error") {
+    const pct = Math.round((event.index / event.total) * 100);
+    $("progress-fill").style.width  = pct + "%";
+    $("progress-label").textContent = event.index + " / " + event.total;
+
+    const cand = candidates.find(c => c.doi_r === event.doi);
+    if (cand && event.result) {
+      const r = event.result;
+      cand.status           = r.is_false_positive ? "false_positive"
+                            : (r.n_originals > 0  ? "multi_found" : "unresolved");
+      cand.is_false_positive = r.is_false_positive;
+      cand.n_originals       = r.n_originals;
+      cand.llm_source        = r.llm_source;
+      cand.pdf_source        = r.pdf_source;
+      cand.pdf_serve_url     = r.pdf_serve_url || "";
+      cand.pdf_url           = r.pdf_url || "";
+      cand.pdf_ok            = r.pdf_ok;
+      cand.has_result        = true;
+
+      const idx    = candidates.indexOf(cand) + 1;
+      const oldRow = $("row-" + CSS.escape(event.doi));
+      if (oldRow) {
+        const tbody  = $("main-tbody");
+        const newRow = makeDataRow(cand, idx);
+        tbody.replaceChild(newRow, oldRow);
+      }
+    }
+    applyFilters();
+    updateStats();
+  }
+
+  if (event.type === "done") {
+    $("progress-label").textContent = "Done \u2014 " + event.resolved + " / " + event.total + " resolved";
+  }
+  if (event.type === "stopped") {
+    $("progress-label").textContent = "Stopped.";
+  }
+}
+
+async function stopRun() {
+  await fetch("/api/multi-originals/stop", { method: "POST" });
+}
+
+async function exportCsv() {
+  const btn = $("btn-export"); if (btn) btn.disabled = true;
+  $("export-msg").textContent = "Exporting…";
+  try {
+    const resp = await fetch("/api/multi-originals/export", { method: "POST" });
+    const d    = await resp.json();
+    $("export-msg").textContent = d.error
+      ? "Error: " + d.error
+      : "\u2713 Saved " + d.rows + " rows";
+  } catch (e) {
+    $("export-msg").textContent = "Export failed: " + e.message;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+</script>
+{% endblock %}

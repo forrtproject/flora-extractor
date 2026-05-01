@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>{% block title %}FLoRA{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"/>
+{% block head %}{% endblock %}
+</head>
+<body>
+
+<nav>
+  <span class="brand">FLoRA</span>
+  <a href="{{ url_for('batch.dashboard_page') }}"
+     class="{{ 'active' if active_page == 'dashboard' else '' }}">Dashboard</a>
+  <a href="{{ url_for('disambiguation.index') }}"
+     class="{{ 'active' if active_page == 'disambiguation' else '' }}">Single DOI</a>
+  <a href="{{ url_for('input.input_page') }}"
+     class="{{ 'active' if active_page == 'input' else '' }}">Input</a>
+  <a href="{{ url_for('batch.batch_page') }}"
+     class="{{ 'active' if active_page == 'batch' else '' }}">Multiple Matches</a>
+  <a href="{{ url_for('multi_originals.multi_originals_page') }}"
+     class="{{ 'active' if active_page == 'multi_originals' else '' }}">Multiple Originals</a>
+</nav>
+
+{% block content %}{% endblock %}
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

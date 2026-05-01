@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}FLoRA — Single DOI Disambiguation{% endblock %}
+
+{% block content %}
+<div id="input-bar">
+  <input id="doi-input" type="text" placeholder="Enter doi_r  e.g. 10.1037/xlm0000127"
+         spellcheck="false" autocomplete="off"/>
+  <button id="lookup-btn" onclick="lookupDoi(false)">Look up</button>
+  <button id="rerun-btn"  onclick="lookupDoi(true)"
+          title="Clear LLM + GROBID caches, keep cached PDF, re-run full pipeline"
+          style="display:none">&#8635; Run Again</button>
+  <button id="copy-debug-btn" onclick="onCopyDebugDisamb()"
+          title="Copy Claude-friendly debug summary to clipboard"
+          style="display:none">&#128203; Copy Debug</button>
+  <span id="status-msg"></span>
+</div>
+
+<main>
+  <div id="empty-state">
+    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"
+         fill="none" viewBox="0 0 24 24" stroke="currentColor" style="opacity:.4;display:block;margin:0 auto 12px">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0
+               00.707-.293l2.414-2.414A1 1 0 0116.414 3H19a2 2 0 012 2v14a2
+               2 0 01-2 2z"/>
+    </svg>
+    <p>Enter a DOI to run the disambiguation pipeline.</p>
+  </div>
+  <div id="results" style="display:none"></div>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='render.js') }}"></script>
+<script>
+const $ = id => document.getElementById(id);
+
+$("doi-input").addEventListener("keydown", e => { if (e.key === "Enter") lookupDoi(false); });
+
+async function lookupDoi(force = false) {
+  const raw  = $("doi-input").value.trim();
+  if (!raw) return;
+  const doi_r = raw.replace(/^https?:\/\/doi\.org\//, "");
+
+  $("lookup-btn").disabled = true;
+  $("rerun-btn").disabled  = true;
+  $("rerun-btn").style.display = "none";
+  $("status-msg").innerHTML = force
+    ? '<span class="spinner"></span> Rerunning (caches cleared, PDF kept)…'
+    : '<span class="spinner"></span> Running pipeline…';
+  $("empty-state").style.display = "none";
+  $("results").style.display     = "none";
+
+  try {
+    const resp = await fetch("/api/lookup", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({doi_r, force}),
+    });
+    const data = await resp.json();
+    if (data.error) { $("status-msg").textContent = "Error: " + data.error; return; }
+    renderResults(data);
+    $("status-msg").textContent = force ? "↺ Rerun complete ✓" : "Done ✓";
+    $("rerun-btn").style.display       = "inline-block";
+    $("copy-debug-btn").style.display  = "inline-block";
+    $("copy-debug-btn")._resultData    = data;
+  } catch (err) {
+    $("status-msg").textContent = "Network error: " + err.message;
+  } finally {
+    $("lookup-btn").disabled = false;
+    $("rerun-btn").disabled  = false;
+  }
+}
+
+async function onCopyDebugDisamb() {
+  const btn  = $("copy-debug-btn");
+  const data = btn._resultData;
+  if (!data) return;
+  const ok   = await copyDebugToClipboard(data);
+  const prev = btn.textContent;
+  btn.textContent = ok ? "✓ Copied!" : "✗ Failed";
+  setTimeout(() => { btn.textContent = prev; }, 2000);
+}
+</script>
+{% endblock %}
