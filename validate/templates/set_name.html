@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}FLoRA — Who are you?{% endblock %}
+
+{% block content %}
+<div style="display:flex;align-items:center;justify-content:center;min-height:80vh">
+  <div class="card" style="width:100%;max-width:360px;padding:32px">
+    <h1 style="font-size:20px;font-weight:700;margin-bottom:6px">Welcome to FLoRA Validate</h1>
+    <p style="color:#64748b;font-size:13px;margin-bottom:24px">
+      Enter your name so your votes are tracked. You only need to do this once.
+    </p>
+    <form method="POST" action="/set-name?next={{ request.args.get('next', '') }}">
+      <label class="section-title" style="display:block;margin-bottom:6px">Your name</label>
+      <input type="text" name="name" placeholder="e.g. Rohan"
+             autofocus required style="margin-bottom:16px">
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:9px">
+        Start reviewing →
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}

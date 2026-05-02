@@ -1,6 +1,6 @@
 # FLoRA Extractor
 
-A Python tool that discovers, extracts, and validates replication and reproduction studies for the [FLoRA](https://forrt.org) / [FReD](https://forrt.org/fred) database.
+A Python tool that discovers, extracts, and validates replication and reproduction studies for the [FLoRA database](https://forrt.org/replication-hub/flora/).
 
 **Part of the [FORRT](https://forrt.org) project.**
 
@@ -8,10 +8,10 @@ A Python tool that discovers, extracts, and validates replication and reproducti
 
 ## What It Does
 
-Given a set of academic paper DOIs, FLoRA Extractor:
+Starting from keyword searches of academic databases, FLoRA Extractor:
 1. **Discovers** candidate replication/reproduction papers from OpenAlex and curated lists
 2. **Filters** false positives using rule-based and LLM classification
-3. **Extracts** the original target study and replication outcome from each paper
+3. **Extracts** the target study and replication outcome from each paper
 4. **Validates** results through a crowdsourced voting web interface
 
 ---
@@ -31,9 +31,12 @@ Each stage is independently runnable. See [CLAUDE.md](CLAUDE.md) for full techni
 
 ## Quick Start
 
+> **Note:** The commands below are the target state once all stages are implemented.
+> Currently, `flora_selected.csv` can be used to seed Stage 4 directly.
+
 ```bash
 # 1. Clone and setup
-git clone https://github.com/YOUR_ORG/flora-extractor.git
+git clone https://github.com/forrtproject/flora-extractor.git
 cd flora-extractor
 pip install -r requirements.txt
 cp .env.example .env   # fill in your API keys
@@ -44,22 +47,22 @@ python filter/run_filter.py        # → data/filtered.csv
 python extract/run_extract.py      # → data/extracted.csv
 
 # 3. Start the validation web app
-python validate/import_csv.py      # load into SQLite
-python validate/app.py             # → http://localhost:5001
+python -m validate.import_csv      # load into SQLite
+python -m validate.app             # → http://localhost:5001
 ```
 
 ---
 
 ## API Keys Required
 
-Add to your `.env` file:
+Add to your `.env` file (copy from `.env.example`):
 
 ```
 RESEARCHER_EMAIL=you@example.com      # for OpenAlex/Crossref API politeness
-GEMINI_API_KEY=...                    # primary LLM (free tier)
+GEMINI_API_KEY=...                    # primary LLM
 GEMINI_API_KEY_2=...                  # optional: rotate for higher quota
 OPENAI_API_KEY=...                    # fallback LLM (optional)
-GROBID_URL=http://localhost:8070      # optional: local GROBID server
+GROBID_URL=http://localhost:8070      # local GROBID server (optional, for full-text extraction)
 ```
 
 Get a free Gemini API key at [aistudio.google.com](https://aistudio.google.com).
@@ -68,12 +71,23 @@ Get a free Gemini API key at [aistudio.google.com](https://aistudio.google.com).
 
 ## Data Sources
 
-| Source | Coverage |
-|--------|----------|
-| [OpenAlex](https://openalex.org) | Broad academic literature search |
-| [Bob Reed's Replication Network](https://replicationnetwork.com/replication-studies/) | Curated economics replications |
-| [I4R](https://i4replication.org/reports/) | Institute for Replication reports |
-| SCORE | Curated list (contact Luke/Theresa) |
+**Bibliographic databases (primary):**
+
+| Source                                             | Coverage                                         |
+| -------------------------------------------------- | ------------------------------------------------ |
+| [OpenAlex](https://openalex.org)                   | Broad academic literature, free API              |
+| [Semantic Scholar](https://www.semanticscholar.org)| Supplementary coverage                           |
+| [Crossref](https://www.crossref.org)               | DOI resolution and reference lists               |
+| [OpenCitations](https://opencitations.net)         | Reference lists (where OpenAlex coverage is thin)|
+
+**Curated lists (secondary, pluggable):**
+
+| Source                                                                                | Coverage                            |
+| ------------------------------------------------------------------------------------- | ----------------------------------- |
+| [Bob Reed's Replication Network](https://replicationnetwork.com/replication-studies/) | Economics                           |
+| [I4R](https://i4replication.org/reports/)                                             | Institute for Replication reports   |
+
+Full-text acquisition (for Stage 3): [Unpaywall](https://unpaywall.org), [CORE](https://core.ac.uk), arXiv, OSF.
 
 ---
 
@@ -84,12 +98,12 @@ Each extracted record contains:
 | Field | Description |
 |-------|-------------|
 | `doi_r` | Replication paper DOI |
-| `doi_o` | Original study DOI |
-| `title_o` | Original study title |
-| `outcome` | success / failure / mixed / uninformative |
+| `doi_o` | Original target study DOI |
+| `title_o` | Original target study title |
+| `outcome` | success / failure / mixed / uninformative / descriptive |
 | `outcome_phrase` | Supporting quote from the paper |
 | `link_evidence` | Evidence used to identify the original |
-| `validation_status` | confirmed / rejected / pending |
+| `validation_status` | confirmed / rejected / pending / needs_review |
 
 Full schema: [shared/schema.py](shared/schema.py)
 
@@ -97,32 +111,32 @@ Full schema: [shared/schema.py](shared/schema.py)
 
 ## Team Guide
 
-| Component | Branch | Docs |
-|-----------|--------|------|
-| Search (Stage 1) | `feature/search` | [RULEBOOK.md § Team Search](RULEBOOK.md) |
-| Filter (Stage 2) | `feature/filter` | [RULEBOOK.md § Team Filter](RULEBOOK.md) |
-| Extract (Stage 3) | `feature/extract` | [RULEBOOK.md § Team Extract](RULEBOOK.md) |
-| Validate (Stage 4) | `feature/validate` | [RULEBOOK.md § Team Validate](RULEBOOK.md) |
+| Team | Stage | Branch | Docs |
+|------|-------|--------|------|
+| Team Search | Stage 1 | `feature/search` | [docs/STAGE1_SEARCH.md](docs/STAGE1_SEARCH.md) |
+| Team Filter | Stage 2 | `feature/filter` | [docs/STAGE2_FILTER.md](docs/STAGE2_FILTER.md) |
+| Team Extract | Stage 3 | `feature/extract` | [docs/STAGE3_EXTRACT.md](docs/STAGE3_EXTRACT.md) |
+| Team Validate | Stage 4 | `feature/validate` | [docs/STAGE4_VALIDATE.md](docs/STAGE4_VALIDATE.md) |
 
-**New team member?** Read [CLAUDE.md](CLAUDE.md) and [RULEBOOK.md](RULEBOOK.md) first.  
-**AI coding agent?** Read [CLAUDE.md](CLAUDE.md) — it contains everything you need to start coding.
+**New team member?** Read [CLAUDE.md](CLAUDE.md) first — it contains architecture, schema, and coding rules.  
+**AI coding agent?** Read [CLAUDE.md](CLAUDE.md) (Claude Code) or [AGENTS.md](AGENTS.md) (all others).  
+**Working in R?** See the R note in [CLAUDE.md](CLAUDE.md#r-support).
 
 ---
 
 ## Contributing
 
 1. Branch from `dev` using your team's branch name (`feature/search`, etc.)
-2. Use sample data in `misc/` to develop and test
-3. Open a PR to `dev` when done (not `main`)
-4. See [RULEBOOK.md](RULEBOOK.md) for coding standards
+2. Use sample data in `misc/` to develop and test independently
+3. Open a PR to `dev` when a feature is stable — don't wait until the end
+4. `main` and `dev` are branch-protected; all merges require a PR review
 
 ---
 
 ## Related Projects
 
 - [flora_search_approaches](https://github.com/forrtproject/flora_search_approaches) — original R-based pathway pipeline (reference implementation)
-- [FReD-data](https://github.com/forrtproject/FReD-data) — FReD database processing pipeline
-- [FORRT Replication Database](https://forrt.org/fred) — the database this tool feeds into
+- [FLoRA database](https://forrt.org/replication-hub/flora/) — the database this tool feeds into
 
 ---
 

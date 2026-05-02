@@ -345,7 +345,7 @@ def batch_page():
 
 # ── API: dashboard stats ──────────────────────────────────────────────────────
 
-@batch_bp.route("/api/dashboard/stats")
+@batch_bp.route("/api/batch/stats")
 def api_dashboard_stats():
     """Return summary statistics for the dashboard page."""
     total_candidates = len(state.filtered_df) if not state.filtered_df.empty else 0

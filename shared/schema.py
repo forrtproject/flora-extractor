@@ -18,39 +18,46 @@ CANDIDATES_COLS = [
     "journal_r",      # str   — journal name
     "url_r",          # str   — open access URL if available
     "openalex_id_r",  # str   — OpenAlex work ID (e.g. W2741809807)
-    "source",         # str   — openalex | bob_reed | i4r | score | semantic_scholar
+    "source",         # str   — openalex | bob_reed | i4r | semantic_scholar | ...
 ]
 
 # ── Stage 2 output: filtered.csv ─────────────────────────────────────────────
 # All CANDIDATES_COLS + the following:
 FILTER_ADDED_COLS = [
-    "filter_status",       # str   — replication | reproduction | false_positive | needs_review
-    "filter_method",       # str   — rule_based | llm | both
-    "filter_evidence",     # str   — phrase that triggered classification
-    "filter_confidence",   # float — 0.0–1.0
-    "is_replication",           # bool  — True if confirmed replication
-    "is_reproduction",          # bool  — True if confirmed reproduction
-    "original_match_type",      # str   — single_original | multiple_match | multiple_original
-    "original_match_confidence",# float — 0.0–1.0 confidence of match type classification
+    "filter_status",     # str — replication | reproduction | false_positive | needs_review
+    "filter_method",     # str — rule_based | llm | both
+    "filter_evidence",   # str — phrase or quote that triggered classification
+    "filter_confidence", # str — high | medium | low  (categorical, not float)
 ]
 FILTERED_COLS = CANDIDATES_COLS + FILTER_ADDED_COLS
 
 # ── Stage 3 output: extracted.csv ────────────────────────────────────────────
 # All FILTERED_COLS + the following:
 EXTRACT_ADDED_COLS = [
+    # Original-match type — determined by Stage 3 as its first routing step
+    "original_match_type",       # str   — single_original | multiple_match | multiple_original
+    "original_match_confidence", # str   — high | medium | low
+
+    # Original study
     "doi_o",               # str   — original study DOI
     "title_o",             # str   — original study title
     "year_o",              # int   — original study publication year
     "authors_o",           # str   — original study authors
+
+    # Linking
     "link_method",         # str   — author_year_match | llm_abstract | llm_fulltext | target_pending
     "link_evidence",       # str   — quote or pattern used for linking
-    "link_confidence",     # float — 0.0–1.0
-    "outcome",             # str   — success | failure | mixed | uninformative | pending
+    "link_confidence",     # str   — high | medium | low
+
+    # Outcome
+    "outcome",             # str   — success | failure | mixed | uninformative | descriptive | pending
     "outcome_phrase",      # str   — supporting quote from the paper
-    "outcome_confidence",  # float — 0.0–1.0
+    "outcome_confidence",  # str   — high | medium | low
     "out_quote_source",    # str   — abstract | fulltext | title
+
+    # Record type and multi-original bookkeeping
     "type",                # str   — replication | reproduction
-    "original_rank",       # int   — 1 for single; 1,2,3... for multi-original
+    "original_rank",       # int   — 1 for single; 1,2,3... for multi-original papers
     "n_originals",         # int   — total originals in this paper (1 for single)
 ]
 EXTRACTED_COLS = FILTERED_COLS + EXTRACT_ADDED_COLS
@@ -58,11 +65,14 @@ EXTRACTED_COLS = FILTERED_COLS + EXTRACT_ADDED_COLS
 # ── Stage 4 output: validated.csv ────────────────────────────────────────────
 # All EXTRACTED_COLS + the following:
 VALIDATE_ADDED_COLS = [
-    "validation_status",  # str  — confirmed | rejected | pending | needs_review
-    "vote_count",         # int  — total votes received
-    "confirm_votes",      # int  — confirm votes
-    "reject_votes",       # int  — reject votes
-    "validator_notes",    # str  — aggregated reviewer comments
+    "validation_status",  # str — confirmed | rejected | pending | needs_review
+    "vote_count",         # int — total votes received
+    "confirm_votes",      # int — confirm votes
+    "reject_votes",       # int — reject votes
+    "validator_notes",    # str — aggregated reviewer comments
+    # Reviewer corrections — blank means the extracted value was accepted unchanged
+    "validated_doi_o",    # str — reviewer-corrected original DOI (blank = accepted)
+    "validated_outcome",  # str — reviewer-corrected outcome (blank = accepted)
 ]
 VALIDATED_COLS = EXTRACTED_COLS + VALIDATE_ADDED_COLS
 
@@ -70,17 +80,24 @@ VALIDATED_COLS = EXTRACTED_COLS + VALIDATE_ADDED_COLS
 
 FILTER_STATUS_VALUES = {"replication", "reproduction", "false_positive", "needs_review"}
 
+FILTER_CONFIDENCE_VALUES = {"high", "medium", "low"}
+
 ORIGINAL_MATCH_TYPE_VALUES = {"single_original", "multiple_match", "multiple_original"}
 
-LINK_METHOD_VALUES = {"author_year_match", "llm_abstract", "llm_fulltext", "target_pending"}
+LINK_METHOD_VALUES = {
+    "author_year_match", "llm_abstract", "llm_fulltext",
+    "target_pending", "api_error",
+}
 
-OUTCOME_VALUES = {"success", "failure", "mixed", "uninformative", "pending"}
+OUTCOME_VALUES = {
+    "success", "failure", "mixed", "uninformative", "descriptive", "pending", "api_error",
+}
 
 TYPE_VALUES = {"replication", "reproduction"}
 
 VALIDATION_STATUS_VALUES = {"confirmed", "rejected", "pending", "needs_review"}
 
-SOURCE_VALUES = {"openalex", "bob_reed", "i4r", "score", "semantic_scholar"}
+SOURCE_VALUES = {"openalex", "bob_reed", "i4r", "semantic_scholar"}
 
 # ── Default empty row builders ────────────────────────────────────────────────
 
@@ -100,7 +117,7 @@ def empty_validated_row() -> dict:
 
 def validate_csv_columns(df_columns: list, stage: str) -> list[str]:
     """
-    Check that a DataFrame has all required columns for the given stage.
+    Check that a DataFrame has all required columns for a given stage.
     Returns list of missing column names (empty list = OK).
 
     Usage:

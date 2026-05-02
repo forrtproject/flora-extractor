@@ -31,3 +31,8 @@ env/
 .idea/
 *.DS_Store
 Thumbs.db
+
+# ── AI tooling ────────────────────────────────────────────────────────────────
+.claude/
+.superpowers/
+docs/superpowers/

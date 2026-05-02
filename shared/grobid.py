@@ -1,9 +1,11 @@
 """
 grobid.py — PDF section extraction for original study identification.
 
-Primary method : pdfminer.six  (local, no external server required)
-Fallback method: GROBID public server (https://kermitt2-grobid.hf.space)
-                 — used only when pdfminer fails and GROBID is reachable.
+Primary method  : pdfminer.six  (local, no external server required)
+Fallback 1      : GROBID public server (https://kermitt2-grobid.hf.space)
+                  — called when pdfminer extracts 0 references.
+Fallback 2      : Gemini with full PDF bytes  (success_direct_llm)
+Fallback 3      : Gemini with rendered page images  (success_image_llm)
 
 Public API:
     parse_pdf_sections(pdf_path) → dict
@@ -444,14 +446,32 @@ def _extract_refs_via_pdf_images(doi_r: str, pdf_path: Path) -> list[dict]:
     return refs
 
 
+def _extract_refs_via_grobid(doi_r: str, pdf_path: Path) -> list:
+    """Call the GROBID public server; return parsed reference list or []."""
+    tei_xml = process_pdf_with_grobid(pdf_path, server=GROBID_SERVER)
+    if not tei_xml:
+        log.info("[%s] GROBID: no response", doi_r)
+        return []
+    sections = parse_tei_sections(tei_xml)
+    refs = sections.get("references", [])
+    log.info("[%s] GROBID: extracted %d refs", doi_r, len(refs))
+    return refs
+
+
 def run_grobid(doi_r: str, pdf_path: Optional[Path]) -> dict:
     """
     Run the full extraction pipeline for one paper.
 
     Returns:
-        grobid_status   "success" | "success_image_llm" | "pdfminer_failed" | "no_pdf"
+        grobid_status   "success" | "success_grobid" | "success_direct_llm" |
+                        "success_image_llm" | "pdfminer_failed" | "no_pdf"
         sections        dict (abstract, intro, methods, references)
         n_refs_parsed   int
+
+    Fallback order when pdfminer finds 0 references:
+        1. GROBID public server (https://kermitt2-grobid.hf.space)
+        2. Gemini with full PDF bytes   (success_direct_llm)
+        3. Gemini with rendered images  (success_image_llm)
     """
     if not pdf_path:
         return {"grobid_status": "no_pdf", "sections": {}, "n_refs_parsed": 0}
@@ -467,23 +487,27 @@ def run_grobid(doi_r: str, pdf_path: Optional[Path]) -> dict:
     n_refs  = len(sections.get("references", []))
     status  = "success"
 
-    # If pdfminer parsed text but found 0 references, try Gemini with the full
-    # PDF first (native-text PDFs: efficient + accurate), then fall back to
-    # image rendering for scanned / non-standard layouts.
     if n_refs == 0:
-        direct_refs = _extract_refs_via_pdf_direct(doi_r, pdf_path)
-        if direct_refs:
-            sections["references"] = direct_refs
-            n_refs  = len(direct_refs)
-            status  = "success_direct_llm"
-            log.info("[%s] Used direct-PDF-LLM fallback: %d refs", doi_r, n_refs)
+        grobid_refs = _extract_refs_via_grobid(doi_r, pdf_path)
+        if grobid_refs:
+            sections["references"] = grobid_refs
+            n_refs  = len(grobid_refs)
+            status  = "success_grobid"
+            log.info("[%s] Used GROBID fallback: %d refs", doi_r, n_refs)
         else:
-            img_refs = _extract_refs_via_pdf_images(doi_r, pdf_path)
-            if img_refs:
-                sections["references"] = img_refs
-                n_refs  = len(img_refs)
-                status  = "success_image_llm"
-                log.info("[%s] Used image-LLM fallback: %d refs", doi_r, n_refs)
+            direct_refs = _extract_refs_via_pdf_direct(doi_r, pdf_path)
+            if direct_refs:
+                sections["references"] = direct_refs
+                n_refs  = len(direct_refs)
+                status  = "success_direct_llm"
+                log.info("[%s] Used direct-PDF-LLM fallback: %d refs", doi_r, n_refs)
+            else:
+                img_refs = _extract_refs_via_pdf_images(doi_r, pdf_path)
+                if img_refs:
+                    sections["references"] = img_refs
+                    n_refs  = len(img_refs)
+                    status  = "success_image_llm"
+                    log.info("[%s] Used image-LLM fallback: %d refs", doi_r, n_refs)
 
     return {
         "grobid_status" : status,

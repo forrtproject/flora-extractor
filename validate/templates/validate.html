@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% block title %}FLoRA — Validate{% endblock %}
+
+{% block head %}
+<style>
+#card-wrap   { max-width:960px; margin:20px auto; padding:0 16px; }
+.vote-card   { background:#fff; border:1px solid #e2e8f0; border-radius:10px;
+               box-shadow:0 1px 4px rgba(0,0,0,.06); overflow:hidden; }
+.card-top    { display:flex; align-items:center; justify-content:space-between;
+               padding:10px 16px; background:#f8fafc; border-bottom:1px solid #e2e8f0;
+               font-size:11px; color:#64748b; }
+.card-body   { display:flex; gap:0; }
+.card-left   { flex:1.8; padding:18px; border-right:1px solid #e2e8f0; min-width:0; }
+.card-right  { flex:1; padding:16px; display:flex; flex-direction:column;
+               gap:10px; min-width:170px; max-width:210px; }
+.vote-btn    { padding:9px 12px; font-size:12px; font-weight:600;
+               border-radius:8px; cursor:pointer; text-align:left;
+               transition:all .15s; border-width:2px; border-style:solid; }
+.vote-btn:hover { filter:brightness(.95); }
+.vote-btn.selected { box-shadow:0 0 0 3px rgba(0,0,0,.15); }
+.btn-confirm { background:#dcfce7; color:#166534; border-color:#86efac; }
+.btn-reject  { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+.btn-review  { background:#fef3c7; color:#92400e; border-color:#fcd34d; }
+.log-section { border-top:1px solid #f1f5f9; padding:10px 18px; }
+.log-toggle  { font-size:11px; color:#3b82f6; background:none; border:none;
+               cursor:pointer; padding:0; display:flex; align-items:center; gap:4px; }
+.log-body    { display:none; margin-top:10px; font-size:11px; color:#475569; }
+.empty-state { text-align:center; padding:60px 20px; color:#94a3b8; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="card-wrap">
+
+  <!-- Top bar -->
+  <div class="card-top" style="background:transparent;border:none;margin-bottom:10px;padding:0">
+    <span id="progress-text" style="color:#64748b;font-size:12px"></span>
+    <div style="display:flex;gap:6px;align-items:center">
+      <select id="queue-mode" onchange="loadCard()"
+              style="font-size:11px;padding:3px 8px;border:1px solid #e2e8f0;border-radius:4px">
+        <option value="pending">Pending first</option>
+        <option value="all">All papers</option>
+      </select>
+      <button class="btn btn-secondary" style="font-size:11px;padding:4px 10px"
+              onclick="prevCard()">← Prev</button>
+      <button class="btn btn-secondary" style="font-size:11px;padding:4px 10px"
+              onclick="nextCard()">Next →</button>
+    </div>
+  </div>
+
+  <!-- Progress bar -->
+  <div class="progress-bar" style="margin-bottom:12px">
+    <div class="progress-fill" id="prog-fill" style="width:0%"></div>
+  </div>
+
+  <!-- Vote card -->
+  <div class="vote-card" id="vote-card">
+    <div class="empty-state" id="loading-state">Loading…</div>
+  </div>
+
+</div>
+
+<template id="card-tmpl">
+<div class="card-top">
+  <span id="c-status"></span>
+  <span id="c-doi" style="font-family:monospace;font-size:10px;color:#94a3b8"></span>
+</div>
+<div class="card-body">
+
+  <!-- Left: paper info -->
+  <div class="card-left">
+    <div class="section-title">Replication Study</div>
+    <div id="c-title-r" style="font-size:14px;font-weight:600;color:#1e293b;
+         line-height:1.4;margin-bottom:14px"></div>
+
+    <div class="section-title">→ Proposed Original</div>
+    <div id="c-title-o" style="font-size:13px;font-weight:600;color:#1d4ed8;
+         margin-bottom:3px"></div>
+    <div id="c-doi-o" style="font-size:10px;color:#64748b;font-family:monospace;
+         margin-bottom:14px"></div>
+
+    <div class="section-title" id="abs-label" style="display:none">Abstract</div>
+    <div id="c-abstract" style="font-size:11px;color:#475569;line-height:1.6;
+         background:#f8fafc;padding:8px 10px;border-radius:6px;border:1px solid #e2e8f0;
+         display:none"></div>
+  </div>
+
+  <!-- Right: voting -->
+  <div class="card-right">
+    <div class="section-title">Your Vote</div>
+
+    <button class="vote-btn btn-confirm" onclick="selectVote('confirm')">✓ &nbsp;Confirm</button>
+    <button class="vote-btn btn-reject"  onclick="selectVote('reject')">✗ &nbsp;Reject</button>
+    <button class="vote-btn btn-review"  onclick="selectVote('needs_review')">? &nbsp;Needs Review</button>
+
+    <div style="border-top:1px solid #e2e8f0;padding-top:10px">
+      <div class="section-title" style="margin-bottom:4px">Comment</div>
+      <textarea id="vote-comment" rows="3" placeholder="Optional note…"
+                style="font-size:11px"></textarea>
+    </div>
+
+    <div>
+      <div class="section-title" style="margin-bottom:4px">Correct Original DOI</div>
+      <input type="text" id="vote-doi" placeholder="10.xxxx/… (if wrong)"
+             style="font-size:10px;font-family:monospace">
+    </div>
+
+    <button class="btn btn-primary" onclick="submitVote()"
+            style="justify-content:center;padding:9px;font-size:12px">
+      Submit →
+    </button>
+
+    <!-- Other votes (anonymous counts) -->
+    <div id="other-votes" style="border-top:1px solid #e2e8f0;padding-top:8px;display:none">
+      <div class="section-title" style="margin-bottom:4px">Other Votes</div>
+      <div id="other-votes-body" style="font-size:11px;color:#475569"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Full log -->
+<div class="log-section">
+  <button class="log-toggle" onclick="toggleLog()">
+    <span id="log-arrow">▸</span>
+    <strong>Full Log</strong>
+    <span style="color:#94a3b8"> — link method · evidence · filter trace</span>
+  </button>
+  <div class="log-body" id="log-body">Loading…</div>
+</div>
+</template>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentId    = null;
+let selectedVote = null;
+
+async function loadCard(afterId, beforeId) {
+  const mode = document.getElementById('queue-mode').value;
+  let url = '/api/review/next?show_all=' + (mode === 'all' ? 'true' : 'false');
+  if (afterId)  url += '&after_id='  + afterId;
+  if (beforeId) url += '&before_id=' + beforeId;
+
+  const data = await fetch(url).then(r => r.json());
+
+  if (data.done) {
+    document.getElementById('vote-card').innerHTML =
+      '<div class="empty-state"><strong>All done!</strong><br>' +
+      '<span style="font-size:12px">No more papers in this queue.</span></div>';
+    document.getElementById('progress-text').textContent = '';
+    return;
+  }
+
+  currentId    = data.id;
+  selectedVote = data.your_vote;
+
+  const tmpl = document.getElementById('card-tmpl').content.cloneNode(true);
+  document.getElementById('vote-card').innerHTML = '';
+  document.getElementById('vote-card').appendChild(tmpl);
+
+  const statusColors = {
+    confirmed:'#16a34a', rejected:'#dc2626',
+    needs_review:'#f59e0b', pending:'#64748b'
+  };
+  const sc = document.getElementById('c-status');
+  sc.textContent = data.validation_status.replace('_', ' ');
+  sc.style.color = statusColors[data.validation_status] || '#64748b';
+  sc.style.fontWeight = '600';
+
+  document.getElementById('c-doi').textContent     = data.doi_r;
+  document.getElementById('c-title-r').textContent = data.title_r || '(no title)';
+  document.getElementById('c-title-o').textContent = data.title_o || '(no original title)';
+  document.getElementById('c-doi-o').textContent   = data.doi_o  || '';
+
+  if (data.abstract_r) {
+    document.getElementById('abs-label').style.display  = '';
+    document.getElementById('c-abstract').style.display = '';
+    document.getElementById('c-abstract').textContent   = data.abstract_r;
+  }
+
+  if (data.your_vote) {
+    highlightVoteBtn(data.your_vote);
+    document.getElementById('vote-comment').value = data.your_comment || '';
+  }
+
+  if (data.vote_count > 0) {
+    const ov = document.getElementById('other-votes');
+    ov.style.display = '';
+    document.getElementById('other-votes-body').innerHTML =
+      `<span class="pill pill-green">${data.confirm_votes} ✓</span> &nbsp;` +
+      `<span class="pill pill-red">${data.reject_votes} ✗</span>` +
+      `<span style="color:#94a3b8;margin-left:6px;font-size:10px">${data.vote_count} vote(s)</span>`;
+  }
+
+  const done = data.total - data.total_pending;
+  const pct  = data.total > 0 ? Math.round(done / data.total * 100) : 0;
+  document.getElementById('prog-fill').style.width = pct + '%';
+  document.getElementById('progress-text').textContent =
+    `${done} / ${data.total} reviewed`;
+
+  document.getElementById('log-arrow').textContent  = '▸';
+  document.getElementById('log-body').style.display = 'none';
+  document.getElementById('log-body').textContent   = 'Loading…';
+  document.getElementById('log-body')._loaded = false;
+}
+
+function highlightVoteBtn(vote) {
+  document.querySelectorAll('.vote-btn').forEach(b => b.classList.remove('selected'));
+  const map = {confirm:'btn-confirm', reject:'btn-reject', needs_review:'btn-review'};
+  const cls = map[vote];
+  if (cls) {
+    const btn = document.querySelector('.' + cls);
+    if (btn) btn.classList.add('selected');
+  }
+}
+
+function selectVote(v) {
+  selectedVote = v;
+  highlightVoteBtn(v);
+}
+
+async function submitVote() {
+  if (!selectedVote) { alert('Please select a vote first.'); return; }
+  const body = {
+    replication_id:  currentId,
+    vote:            selectedVote,
+    comment:         document.getElementById('vote-comment').value,
+    corrected_doi_o: document.getElementById('vote-doi').value,
+  };
+  const resp = await fetch('/vote', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) { alert('Error saving vote.'); return; }
+  const mode = document.getElementById('queue-mode').value;
+  if (mode === 'all') {
+    loadCard(currentId);
+  } else {
+    loadCard();
+  }
+}
+
+function nextCard() { if (currentId) loadCard(currentId); }
+function prevCard() { if (currentId) loadCard(null, currentId); }
+
+async function toggleLog() {
+  const body  = document.getElementById('log-body');
+  const arrow = document.getElementById('log-arrow');
+  const open  = body.style.display !== 'none';
+
+  body.style.display = open ? 'none' : 'block';
+  arrow.textContent  = open ? '▸' : '▾';
+
+  if (!open && !body._loaded) {
+    body._loaded = true;
+    const d = await fetch('/api/validate/log?id=' + currentId).then(r => r.json());
+    body.innerHTML = `
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+        <span class="pill pill-blue">link: ${d.link_method || '—'}</span>
+        <span class="pill pill-green">conf: ${d.link_confidence ?? '—'}</span>
+        <span class="pill pill-gray">flora: ${d.flora_status || 'none'}</span>
+      </div>
+      ${d.link_evidence
+        ? `<div style="font-style:italic;background:#f8fafc;padding:6px 8px;
+               border-radius:4px;border:1px solid #e2e8f0;margin-bottom:8px">
+             "${d.link_evidence}"</div>`
+        : ''}
+      ${d.outcome_phrase
+        ? `<div><strong>Outcome quote:</strong> "${d.outcome_phrase}"</div>`
+        : ''}`;
+  }
+}
+
+window.addEventListener('DOMContentLoaded', () => loadCard());
+</script>
+{% endblock %}

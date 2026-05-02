@@ -1,278 +1,387 @@
 # CLAUDE.md — FLoRA Extractor
 
-This file is the primary instruction document for AI coding agents (Claude Code, Cursor, Copilot, etc.).
-Read this fully before writing any code. No superpowers or plugins required.
+This file is the primary instruction document for AI coding agents (Claude Code, Cursor, Copilot, etc.) and for human contributors. Read it fully before writing any code.
+
+Other agent runtimes: see [AGENTS.md](AGENTS.md), which points here.
 
 ---
 
 ## What This Project Does
 
-**FLoRA Extractor** is a Python tool that discovers, extracts, and validates replication and reproduction studies for the FLoRA/FReD academic database. It takes academic paper DOIs as input and outputs structured records identifying:
-1. Which original study a replication targets
-2. What the replication outcome was (success / mixed / failure)
+**FLoRA Extractor** discovers, extracts, and validates replication and reproduction studies for the [FLoRA database](https://forrt.org/replication-hub/flora/). Starting from keyword searches of academic databases, it identifies which paper each replication targets, what the outcome was, and exports the results for entry into FLoRA.
+
+The pipeline produces structured records identifying:
+
+1. Which original target study a replication targets
+2. What the replication result was (success / failure / mixed / uninformative / descriptive)
 
 ---
 
 ## Architecture — 4 Stage Pipeline
 
-```
+```text
 Stage 1: search/     → discovers candidate papers → data/candidates.csv
 Stage 2: filter/     → removes false positives    → data/filtered.csv
 Stage 3: extract/    → finds original + outcome   → data/extracted.csv
 Stage 4: validate/   → Flask web app with voting  → data/validated.csv
 ```
 
-Each stage reads one CSV and writes a richer CSV. Run each stage independently:
+Each stage reads one CSV and writes a richer CSV. Stages are independently runnable:
+
 ```bash
 python search/run_search.py
 python filter/run_filter.py
 python extract/run_extract.py
-python validate/app.py          # starts the web app on port 5001
+python -m validate.import_csv      # load into SQLite
+python -m validate.app             # starts the web app on port 5001
 ```
 
 ---
 
 ## Module Map — What Each File Does
 
-### `shared/` — DO NOT REWRITE. These are ported from a working pipeline.
-| File | Purpose |
-|------|---------|
-| `shared/openalex_client.py` | OpenAlex API: author-year pattern extraction, candidate fetch, referenced works |
-| `shared/llm_client.py` | Gemini + OpenAI calls with key rotation, prompt builders, JSON parsing |
-| `shared/pdf_sources.py` | 11-tier PDF acquisition waterfall (arXiv → OSF → Unpaywall → ...) |
-| `shared/grobid.py` | GROBID reference extraction from PDFs |
-| `shared/disambiguation.py` | Same-author/year disambiguation (fast, no PDF needed) |
-| `shared/utils.py` | `clean_doi()`, `cache_key()`, common helpers |
-| `shared/config.py` | All paths, env var loading, model names, rate limits |
-| `shared/schema.py` | CSV column definitions — the contract between pipeline stages |
-| `shared/cache.py` | Cache read/write/clear helpers |
+### `shared/` — Shared utilities
+
+> **Important caveats:**
+>
+> - `shared/` code was ported from an internal prototype called *OpenAlexLLM* (an earlier FLoRA extraction pipeline). It runs without errors and has been used in production, but it has **not been validated for correctness** — functions do what their names say, but thresholds and heuristics (e.g. Jaccard score cutoffs in `disambiguation.py`) have not been independently verified.
+> - `shared/openalex_client.py` contains `find_all_candidates()`, which is Stage 3 extraction logic wrapped around an API call. It is not a neutral utility — Stage 3 teams should review and potentially revise the candidate-matching logic.
+> - `shared/disambiguation.py` in particular is a key function for Stage 3 that **needs validation** before relying on it. The minimum acceptable Jaccard score and the tie-breaking logic should be reviewed by the team working on original-study linking.
+> - If you need to change a shared function, discuss with all stage teams first.
+
+| File                           | Purpose                                                                     |
+| ------------------------------ | --------------------------------------------------------------------------- |
+| `shared/openalex_client.py`    | OpenAlex API wrapper + `find_all_candidates()` (Stage 3 logic)              |
+| `shared/llm_client.py`         | Gemini + OpenAI calls with key rotation, prompt builders, JSON parsing      |
+| `shared/pdf_sources.py`        | Multi-tier PDF acquisition waterfall (arXiv → OSF → Unpaywall → CORE → …)   |
+| `shared/grobid.py`             | GROBID reference extraction from PDFs                                       |
+| `shared/disambiguation.py`     | Same-author/year candidate disambiguation — needs validation                |
+| `shared/utils.py`              | `clean_doi()`, `cache_key()`, common helpers                                |
+| `shared/config.py`             | All paths, env var loading, rate limits                                     |
+| `shared/schema.py`             | CSV column definitions — the contract between pipeline stages               |
+| `shared/cache.py`              | Cache read/write/clear helpers                                              |
 
 ### `search/` — Stage 1
-| File | Purpose |
-|------|---------|
-| `search/openalex_search.py` | Query OpenAlex API for papers with replication keywords |
-| `search/external_lists.py` | Scrape Bob Reed list, I4R list; import SCORE CSV |
-| `search/deduplicate.py` | Merge sources, deduplicate by DOI, cross-check against FLoRA entry sheet |
-| `search/run_search.py` | Orchestrator: calls all sources, writes `data/candidates.csv` |
+
+| File                         | Purpose                                                                     |
+| ---------------------------- | --------------------------------------------------------------------------- |
+| `search/openalex_search.py`  | Query OpenAlex API for papers with replication keywords                     |
+| `search/external_lists.py`   | Bob Reed list scraper, I4R list scraper (pluggable — see Stage 1 docs)      |
+| `search/deduplicate.py`      | Merge sources, deduplicate by DOI + fuzzy title, cross-check FLoRA sheet    |
+| `search/run_search.py`       | Orchestrator: calls all sources, writes `data/candidates.csv`               |
 
 ### `filter/` — Stage 2
-| File | Purpose |
-|------|---------|
-| `filter/rule_filter.py` | Rule-based classifier: keyword patterns, author-year presence check |
-| `filter/llm_filter.py` | Gemini classifier for uncertain cases only |
-| `filter/run_filter.py` | Orchestrator: reads `data/candidates.csv`, writes `data/filtered.csv` |
+
+| File                     | Purpose                                                        |
+| ------------------------ | -------------------------------------------------------------- |
+| `filter/rule_filter.py`  | Rule-based classifier: keyword patterns, author-year check     |
+| `filter/llm_filter.py`   | LLM classifier for uncertain cases only                        |
+| `filter/run_filter.py`   | Orchestrator: reads candidates.csv, writes filtered.csv        |
 
 ### `extract/` — Stage 3
-| File | Purpose |
-|------|---------|
-| `extract/run_extract.py` | Orchestrator: routes each DOI to single or multi-original path |
-| `extract/link_original.py` | 7-stage single-original pipeline (ported from OpenAlexLLM) |
-| `extract/multi_original.py` | Multi-original pipeline — finds all originals (NEEDS IMPROVEMENT) |
-| `extract/code_outcome.py` | Keyword + LLM outcome extraction (new — not yet ported) |
+
+| File                       | Purpose                                                                      |
+| -------------------------- | ---------------------------------------------------------------------------- |
+| `extract/run_extract.py`   | Orchestrator: classifies match type, routes to single or multi-original      |
+| `extract/link_original.py` | Single-original pipeline (ported from OpenAlexLLM)                           |
+| `extract/multi_original.py`| Multi-original pipeline — finds all target studies (needs improvement)       |
+| `extract/code_outcome.py`  | Keyword + LLM outcome extraction (new — not yet ported)                      |
 
 ### `validate/` — Stage 4 (Flask web app)
-| File | Purpose |
-|------|---------|
-| `validate/app.py` | Flask entry point, registers blueprints, loads startup data |
-| `validate/import_csv.py` | Load `extracted.csv` into SQLite (run once before starting app) |
-| `validate/models.py` | SQLAlchemy models: Originals, Replications, Reproductions, Votes |
-| `validate/state.py` | In-memory batch state (ported) |
-| `validate/routes/review.py` | `GET /review` voting queue, `POST /vote` |
-| `validate/routes/batch.py` | `GET /batch` SSE batch pipeline runner (ported) |
-| `validate/routes/multi_originals.py` | `GET /multi-originals` pipeline UI (ported) |
-| `validate/routes/input.py` | `GET /input` data generation page (ported) |
-| `validate/routes/export.py` | `GET /export` CSV/XLSX/PDF export (ported) |
-| `validate/routes/dashboard.py` | `GET /dashboard` stats overview (ported) |
+
+| File                           | Purpose                                                             |
+| ------------------------------ | ------------------------------------------------------------------- |
+| `validate/app.py`              | Flask entry point, `create_app()` factory, blueprint registration   |
+| `validate/import_csv.py`       | Load `flora_selected.csv` into SQLite (run once before starting)    |
+| `validate/models.py`           | SQLAlchemy models: Replication, Vote tables                         |
+| `validate/routes/review.py`    | `GET /validate`, `POST /vote`, `GET /api/validate/log`              |
+| `validate/routes/flora.py`     | `GET /flora` master list, API endpoints                             |
+| `validate/routes/dashboard.py` | `GET /dashboard`, `GET /api/dashboard/stats`                        |
+| `validate/routes/export.py`    | `GET /export`, `POST /api/export/download`                          |
 
 ### `misc/` — Reference only, do not import
-| File | Purpose |
-|------|---------|
+
+| File                           | Purpose                                      |
+| ------------------------------ | -------------------------------------------- |
 | `misc/openalex_api_example.py` | Standalone example: how to call OpenAlex API |
-| `misc/gemini_api_example.py` | Standalone example: how to call Gemini API |
-| `misc/sample_candidates.csv` | 20-row sample for Stage 1 output testing |
-| `misc/sample_filtered.csv` | 20-row sample for Stage 2 output testing |
-| `misc/sample_extracted.csv` | 20-row sample for Stage 3 output testing |
+| `misc/gemini_api_example.py`   | Standalone example: how to call Gemini API   |
+| `misc/sample_candidates.csv`   | 20-row sample for Stage 1 output testing     |
+| `misc/sample_filtered.csv`     | 20-row sample for Stage 2 output testing     |
+| `misc/sample_extracted.csv`    | 20-row sample for Stage 3 output testing     |
 
 ---
 
 ## CSV Schema — The Contract Between Stages
 
-**This is the most important section. Never change a column name without updating schema.py and notifying all teams.**
+The authoritative schema definition is in **`shared/schema.py`**. The summary below is for orientation; if there is any discrepancy, `schema.py` wins.
+
+Never change a column name without updating `schema.py` and notifying all teams.
 
 ### `data/candidates.csv` (Stage 1 → Stage 2)
-```python
-doi_r           # str   — DOI, cleaned (no https://doi.org/ prefix)
-title_r         # str   — paper title
-abstract_r      # str   — abstract text
-year_r          # int   — publication year
-authors_r       # str   — semicolon-separated author list
-journal_r       # str   — journal name
-url_r           # str   — open access URL
-openalex_id_r   # str   — OpenAlex work ID (e.g. W2741809807)
-source          # str   — openalex | bob_reed | i4r | score | semantic_scholar
+
+```text
+doi_r, title_r, abstract_r, year_r, authors_r, journal_r,
+url_r, openalex_id_r, source
 ```
+
+`source` values: `openalex | bob_reed | i4r | semantic_scholar | ...`
 
 ### `data/filtered.csv` (Stage 2 → Stage 3)
-All columns from candidates.csv, plus:
-```python
-filter_status             # str   — replication | reproduction | false_positive | needs_review
-filter_method             # str   — rule_based | llm | both
-filter_evidence           # str   — phrase that triggered classification
-filter_confidence         # float — 0.0–1.0
-is_replication            # bool  — True if confirmed replication
-is_reproduction           # bool  — True if confirmed reproduction
-original_match_type       # str   — single_original | multiple_match | multiple_original
-original_match_confidence # float — 0.0–1.0 confidence of match type classification
+
+All candidates.csv columns, plus:
+
+```text
+filter_status      — replication | reproduction | false_positive | needs_review
+filter_method      — rule_based | llm | both
+filter_evidence    — phrase or quote that triggered classification
+filter_confidence  — high | medium | low  (categorical)
 ```
+
+`filter_confidence` is categorical, not a continuous float. A single LLM call cannot reliably produce calibrated probabilities; a three-level label is more honest and easier to act on.
 
 ### `data/extracted.csv` (Stage 3 → Stage 4)
-All columns from filtered.csv, plus:
-```python
-doi_o               # str   — original study DOI
-title_o             # str   — original study title
-year_o              # int   — original study publication year
-authors_o           # str   — original study authors
-link_method         # str   — author_year_match | llm_abstract | llm_fulltext | target_pending
-link_evidence       # str   — quote or pattern used for linking
-link_confidence     # float — 0.0–1.0
-outcome             # str   — success | failure | mixed | uninformative | pending
-outcome_phrase      # str   — supporting quote from the paper
-outcome_confidence  # float — 0.0–1.0
-out_quote_source    # str   — abstract | fulltext | title
-type                # str   — replication | reproduction
-original_rank       # int   — 1 for single; 1,2,3... for multi-original papers
-n_originals         # int   — total originals in this paper (1 for single)
+
+All filtered.csv columns, plus:
+
+```text
+original_match_type       — single_original | multiple_match | multiple_original
+original_match_confidence — high | medium | low
+doi_o, title_o, year_o, authors_o
+link_method    — author_year_match | llm_abstract | llm_fulltext | target_pending | api_error
+link_evidence
+link_confidence           — high | medium | low
+outcome        — success | failure | mixed | uninformative | descriptive | pending | api_error
+outcome_phrase, outcome_confidence, out_quote_source
+type           — replication | reproduction
+original_rank  — 1 for single; 1,2,3... for multi-original papers
+n_originals
 ```
+
+`original_match_type` is determined by Stage 3 as its first routing step — not by Stage 2.
+
+`outcome = descriptive`: paper replicated methods in a different context but does not test the original claim. Include in extraction; flag for review during validation.
+
+`api_error`: set when extraction failed after retries. Reviewers see these in the Validate tab.
 
 ### `data/validated.csv` (Stage 4 output)
-All columns from extracted.csv, plus:
-```python
-validation_status   # str  — confirmed | rejected | pending | needs_review
-vote_count          # int  — total votes received
-confirm_votes       # int  — confirm votes
-reject_votes        # int  — reject votes
-validator_notes     # str  — aggregated reviewer comments
+
+All extracted.csv columns, plus:
+
+```text
+validation_status  — confirmed | rejected | pending | needs_review
+vote_count, confirm_votes, reject_votes, validator_notes
+validated_doi_o    — reviewer-corrected original DOI (blank = accepted unchanged)
+validated_outcome  — reviewer-corrected outcome (blank = accepted unchanged)
 ```
+
+`validated_doi_o` and `validated_outcome` enable accuracy measurement by diffing against the extracted values.
 
 ---
 
-## Stage 3 Linking Logic — Three Cases
+## Stage 3 Routing Logic
+
+Stage 3 determines `original_match_type` itself as its first step, then routes accordingly:
 
 ```python
-# run_extract.py decides which path per DOI:
+# run_extract.py:
 
-if row['original_match_type'] == 'multiple_original':
-    # Case C: study replicates N originals
-    results = run_multi_original_for_doi(doi_r, ...)
+original_match_type = classify_match_type(row)   # Stage 3's own classification
+
+if original_match_type == "multiple_original":
+    # Paper targets N independent originals
+    results = run_multi_original(doi_r, ...)
     # → expand to N rows in extracted.csv (original_rank = 1, 2, 3...)
-    # → if is_false_positive: treat as single_original
 else:
-    # Case A/B: single_original or multiple_match (shared pipeline)
-    result = run_for_doi(doi_r, ...)
-    # → 1 row in extracted.csv (original_rank = 1, n_originals = 1)
+    # single_original or multiple_match: same pipeline
+    result = run_single(doi_r, ...)
+    # → 1 row in extracted.csv
 ```
 
 ---
 
-## LLM Models — Use Exactly These
+## LLM Models
 
-```python
-GEMINI_MODEL = "gemini-3-flash-preview"   # primary for all LLM calls
-OPENAI_MODEL = "gpt-5-mini"               # fallback only
+Do not hardcode specific model names. Teams should choose models appropriate to their task:
+
+- For **simple pattern matching** (e.g. "is this a replication?"), try a smaller/cheaper model first (e.g. Flash Lite). Smaller models are often sufficient and have higher rate limits.
+- For **complex linking or reasoning** (e.g. identifying the original study from an abstract), use a more capable model.
+- Test quality on a sample before committing to a model for a full run.
+
+Configure model names in `.env` so they can be changed without editing code:
+
+```bash
+GEMINI_MODEL=gemini-2.0-flash       # override as needed
+OPENAI_MODEL=gpt-4o-mini            # override as needed
 ```
 
-Never change model names. Never assume a model doesn't exist.
+---
+
+## Caching
+
+Every API call (OpenAlex, Gemini, OpenAI, CrossRef) must be cached so that re-runs don't repeat expensive calls.
+
+Use `cache_key()` from `shared/utils.py` to get a stable hash for a given input, then use `shared/cache.py` to read and write:
+
+```python
+from shared.utils import cache_key
+from shared.cache import read_cache, write_cache
+
+key = cache_key(doi_r + "_filter")    # unique per call type
+cached = read_cache(key)
+if cached is None:
+    result = call_api(...)
+    write_cache(key, result)
+else:
+    result = cached
+```
+
+Cache files are stored in `cache/` (gitignored). They persist across runs; clear manually if you need fresh data.
+
+---
+
+## Error Handling on API Failures
+
+On any API call failure (LLM, OpenAlex, CrossRef):
+
+1. Log the error with the DOI and error code.
+2. Retry up to **3 times** with exponential backoff: 1 s, 2 s, 4 s.
+3. After 3 failures: set the relevant field to `api_error` (e.g. `outcome = api_error`, `link_method = api_error`) and continue to the next record — do not crash the pipeline.
+4. This produces an `api_error` status that reviewers can see in the Validate tab, distinct from `pending` (not yet processed).
 
 ---
 
 ## Code Style Rules
 
-1. **Python only.** Type hints on all function signatures.
-2. **No unnecessary abstractions.** Three similar lines is fine; don't create a helper.
-3. **No comments** unless the WHY is non-obvious.
-4. **Error handling only at system boundaries** (API calls, file I/O). Don't wrap internal logic.
-5. **All CSV writes use `utf-8-sig` encoding** (BOM, Excel-compatible).
-6. **All DOIs pass through `clean_doi()`** from `shared/utils.py` before use.
-7. **All API responses cached** to `cache/` using `cache_key()` from `shared/utils.py`.
-8. **Rate limiting:** OpenAlex: 0.1s between calls. Gemini: 1s between calls. OpenAI: 0.5s.
+1. **Python primary.** Type hints on all function signatures.
+2. **R is welcome.** Teams may implement individual stage functions in R, provided input/output CSV schemas are identical. Include equivalent test cases. We can help translate to Python later if needed.
+3. **No unnecessary abstractions.** Three similar lines is fine; don't create a helper unless it's used three or more times.
+4. **Comments:** Default to no comments. Add one only when the WHY is non-obvious — a hidden constraint, a threshold that was empirically chosen, a workaround for a specific API quirk. File-level docstrings should be a short paragraph explaining what the file does and why it exists, not just a list of functions.
+5. **Error handling only at system boundaries** (API calls, file I/O). Don't wrap internal logic in try/except.
+6. **All CSV writes use `utf-8-sig` encoding** (BOM, Excel-compatible).
+7. **All DOIs pass through `clean_doi()`** from `shared/utils.py` before writing or comparing.
+8. **All API responses must be cached** using the pattern above before any result is used.
+9. **Rate limiting:** OpenAlex: 0.1 s between calls. Gemini: 1 s between calls. OpenAI: 0.5 s.
+
+---
+
+## Testing
+
+### Schema tests (no mocking needed)
+
+Each stage should include a test that reads the stage's output CSV and checks it has all required columns:
+
+```python
+import pandas as pd
+from shared.schema import validate_csv_columns
+
+df = pd.read_csv("misc/sample_filtered.csv")
+missing = validate_csv_columns(list(df.columns), "filtered")
+assert not missing, f"Missing columns: {missing}"
+```
+
+### Unit tests with mocked APIs
+
+Use `unittest.mock.patch` or `pytest-mock` to mock external API calls in unit tests. Never make live API calls in regular `pytest` runs.
+
+```python
+from unittest.mock import patch
+
+def test_classify_replication(tmp_path):
+    with patch("filter.llm_filter.call_gemini") as mock_gemini:
+        mock_gemini.return_value = {"filter_status": "replication", ...}
+        result = classify_with_llm(sample_row)
+    assert result["filter_status"] == "replication"
+```
+
+### Live API tests
+
+Place live API tests in `tests/live/`. Guard them with an environment variable so they never run in CI unless explicitly enabled:
+
+```python
+import os
+import pytest
+
+@pytest.mark.skipif(
+    not os.getenv("TEST_LIVE_API"),
+    reason="set TEST_LIVE_API=1 to run live API tests"
+)
+def test_openalex_live():
+    ...
+```
+
+Run with: `TEST_LIVE_API=1 python -m pytest tests/live/`
 
 ---
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and fill in:
+Copy `.env.example` to `.env`. The example file includes all variables and their defaults.
+
+Key variables:
+
+```bash
+RESEARCHER_EMAIL=you@example.com      # required for OpenAlex/Crossref politeness headers
+GEMINI_API_KEY=...                    # required for LLM calls
+GEMINI_API_KEY_2=...                  # optional: key rotation for higher quota
+OPENAI_API_KEY=...                    # optional fallback LLM
+GROBID_URL=http://localhost:8070      # default; override if GROBID runs elsewhere
+GEMINI_MODEL=gemini-2.0-flash         # override to use a different model
+OPENAI_MODEL=gpt-4o-mini              # override to use a different model
 ```
-RESEARCHER_EMAIL=you@example.com      # for API politeness headers
-GEMINI_API_KEY=...                    # rotate multiple keys: GEMINI_API_KEY_2, _3, etc.
-OPENAI_API_KEY=...                    # fallback only
-GROBID_URL=http://localhost:8070      # local GROBID server (optional)
-```
+
+GROBID is optional. If `GROBID_URL` points to a server that is not running, the PDF extraction step logs a warning and falls back to abstract-only processing. It does not crash.
 
 ---
 
 ## Git Workflow
 
-```
-main          ← protected, PR + 1 review required
-  └── dev     ← integration branch
+```text
+main     ← protected; PR + 1 review required; no direct commits
+  └── dev     ← integration branch; protected; PR required
         ├── feature/search
         ├── feature/filter
         ├── feature/extract
         └── feature/validate
 ```
 
-- Never commit directly to `main` or `dev`
-- Always branch from `dev`, PR back to `dev`
-- `data/`, `cache/` are gitignored (add sample files to `misc/` instead)
+- Branch from `dev`, PR back to `dev`.
+- **Open PRs when a feature is stable, not just at the end.** Partial, working functionality is better to merge than a giant branch at deadline.
+- `data/` and `cache/` are gitignored — add sample files to `misc/` instead.
+- Branch protection rules are enforced on both `main` and `dev`.
 
 ---
 
-## What Is Already Done (Ported from OpenAlexLLM)
+## What Is Already Done
 
-The `shared/` folder contains working, tested code. When implementing stages:
-- **Do not rewrite** `shared/` modules
-- Import them: `from shared.openalex_client import find_all_candidates`
-- If you need a new shared utility, add it to `shared/utils.py` and tell all teams
+The following are implemented and working (ported from the *OpenAlexLLM* prototype — an internal earlier-generation pipeline for the same task):
 
-## What Needs to Be Written (New Code)
+- All of `shared/` — but see caveats above about semantic validation
+- `validate/` — Stage 4 app is fully implemented and running
+- `validate/import_csv.py` — imports `data/flora_selected.csv` (107 rows) into SQLite
+
+"Ported from OpenAlexLLM" means the code was adapted from a private prototype that was built for an earlier round of FLoRA extraction. It does what it claims to do but predates this project's test suite and schema definitions.
+
+## What Needs to Be Written
 
 - `search/openalex_search.py` — new
-- `search/external_lists.py` — new (Bob Reed, I4R scrapers)
+- `search/external_lists.py` — new (Bob Reed + I4R scrapers; see Stage 1 docs for pluggable pattern)
 - `filter/rule_filter.py` — new
 - `filter/llm_filter.py` — new
 - `extract/code_outcome.py` — new
-- `extract/run_extract.py` — new orchestrator
-- `validate/models.py` — new SQLAlchemy schema
-- `validate/import_csv.py` — new CSV→SQLite importer
-- `validate/routes/review.py` — new voting UI
-- `extract/multi_original.py` — ported BUT needs improvement (known flaws in detection logic)
-
----
-
-## Running the Full Pipeline
-
-```bash
-# 1. Setup
-cp .env.example .env          # fill in API keys
-pip install -r requirements.txt
-
-# 2. Run each stage
-python search/run_search.py                    # → data/candidates.csv
-python filter/run_filter.py                    # → data/filtered.csv
-python extract/run_extract.py                  # → data/extracted.csv
-
-# 3. Load into validation app
-python validate/import_csv.py                  # → loads SQLite
-python validate/app.py                         # → http://localhost:5001
-```
+- `extract/run_extract.py` — new orchestrator (includes match-type classification as first step)
+- `extract/multi_original.py` — ported but needs significant improvement
 
 ---
 
 ## Seeding With Existing Data
 
-The following CSVs from the existing `flora_search_approaches` pipeline can be used to bootstrap Stage 3 (skipping Stages 1-2):
-- `openalex_candidates.csv` — already-confirmed replications with OpenAlex metadata
-- `all_replications.csv` — full known replication set from all pathways
-- `flora_entry_sheet.csv` — use for deduplication in Stage 1 (skip DOIs already in FLoRA)
+The following CSVs from prior FLoRA extraction work can be used to skip Stages 1–2:
 
-Place these in `data/` when available. Stages 1-2 are only needed for discovering NEW replications not yet in these files.
+- `data/openalex_candidates.csv` — confirmed replications with OpenAlex metadata
+- `data/all_replications.csv` — full known replication set from all pathways
+- `data/flora_entry_sheet.csv` — use for deduplication in Stage 1 (skip DOIs already in FLoRA)
+- `data/flora_selected.csv` — 107 rows already loaded into the Stage 4 app
+
+These files are in `data/` on the shared drive. If you are setting up from scratch and the files are not present, contact the project leads.
+
+Stages 1–2 are only needed for discovering new replications not yet in these files.

@@ -48,6 +48,12 @@ class Replication(db.Model):
     out_quote_source    = db.Column(db.String, default="")
     type                = db.Column(db.String, default="replication")
 
+    # Stage 2 classification
+    original_match_type = db.Column(db.String, default="single_original")
+
+    # FLoRA database status (from source CSV)
+    flora_status        = db.Column(db.String, default="")
+
     # Validation state (aggregated from votes)
     validation_status   = db.Column(db.String, default="pending")
     vote_count          = db.Column(db.Integer, default=0)
@@ -71,7 +77,7 @@ class Vote(db.Model):
     replication_id  = db.Column(db.Integer, db.ForeignKey("replications.id"),
                                 nullable=False)
     reviewer_id     = db.Column(db.String,  nullable=False)
-    vote            = db.Column(db.String,  nullable=False)  # confirm | reject | unsure
+    vote            = db.Column(db.String,  nullable=False)  # confirm | reject | needs_review
     comment         = db.Column(db.Text,    default="")
     created_at      = db.Column(db.String,  default="")
 

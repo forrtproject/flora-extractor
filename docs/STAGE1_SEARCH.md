@@ -16,10 +16,10 @@ The goal is **high recall over precision** — it is better to include a false p
 ## Pipeline Flow
 
 ```
-OpenAlex keyword search
-Bob Reed list scrape
-I4R list scrape
-SCORE CSV import
+OpenAlex keyword search      ← primary bibliographic source
+Semantic Scholar search      ← supplementary bibliographic source
+Bob Reed list scrape         ← external curated list (pluggable)
+I4R list scrape              ← external curated list (pluggable)
          │
          ▼
   Merge all sources
@@ -38,15 +38,29 @@ SCORE CSV import
 
 ## Sources
 
-| Source | File | Method | Notes |
-|--------|------|--------|-------|
-| OpenAlex | `search/openalex_search.py` | Keyword search via REST API | Free, broad coverage |
-| Bob Reed list | `search/external_lists.py` | HTML scrape | Economics-focused curated list |
-| I4R reports | `search/external_lists.py` | HTML scrape | Institute for Replication reports |
-| SCORE CSV | `search/external_lists.py` | Static CSV import | Contact Luke/Theresa for file |
-| Semantic Scholar | future | API search | Potential future source |
+### Primary — Bibliographic Databases
 
-### OpenAlex Search Keywords
+These sources are queried programmatically for papers matching replication keywords.
+
+| Source           | File                        | Method                      |
+| ---------------- | --------------------------- | --------------------------- |
+| OpenAlex         | `search/openalex_search.py` | Keyword search via REST API |
+| Semantic Scholar | `search/openalex_search.py` | API search (future)         |
+
+### Secondary — External Curated Lists (Pluggable)
+
+These are hand-maintained lists of known replications. Each is implemented as an independent loader function in `search/external_lists.py`. New sources can be added without touching any other file.
+
+| Source        | Coverage         | Method                                |
+| ------------- | ---------------- | ------------------------------------- |
+| Bob Reed list | Economics        | HTML scrape of replicationnetwork.com |
+| I4R reports   | Multi-discipline | HTML scrape of i4replication.org      |
+
+To add a new external list: implement `fetch_<source>() -> pd.DataFrame` in `external_lists.py`, returning a DataFrame with all `CANDIDATES_COLS` columns. Then call it in `run_search.py` alongside the existing loaders.
+
+---
+
+## OpenAlex Search Keywords
 
 The search queries OpenAlex for papers matching these phrases in their title or abstract:
 
@@ -64,6 +78,10 @@ The search queries OpenAlex for papers matching these phrases in their title or 
 
 Each keyword query uses the OpenAlex `/works` endpoint with `filter=title_and_abstract.search`. Results are paginated (200 per page) and rate-limited to 10 req/sec. All API responses are cached to `cache/openalex/`.
 
+---
+
+## External List Details
+
 ### Bob Reed List
 
 Scrapes [replicationnetwork.com/replication-studies/](https://replicationnetwork.com/replication-studies/). Each entry has a title and a link; DOIs are resolved via CrossRef or OpenAlex lookup. Economics-heavy.
@@ -71,10 +89,6 @@ Scrapes [replicationnetwork.com/replication-studies/](https://replicationnetwork
 ### I4R Reports
 
 Scrapes [i4replication.org/reports/](https://i4replication.org/reports/). Each report corresponds to one replication paper. Metadata extracted from the page HTML. DOI resolved via OpenAlex.
-
-### SCORE CSV
-
-A static CSV provided by the SCORE project (contact Luke/Theresa). Load and map to `CANDIDATES_COLS` schema.
 
 ---
 
@@ -95,17 +109,17 @@ Any `doi_r` already present in `data/flora_entry_sheet.csv` is dropped. These ar
 
 ## Output Schema — `candidates.csv`
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `doi_r` | str | Cleaned DOI (no `https://doi.org/` prefix) |
-| `title_r` | str | Paper title |
-| `abstract_r` | str | Abstract text |
-| `year_r` | int | Publication year |
-| `authors_r` | str | Semicolon-separated author list |
-| `journal_r` | str | Journal name |
-| `url_r` | str | Open-access URL if available |
-| `openalex_id_r` | str | OpenAlex work ID (e.g. `W2741809807`) |
-| `source` | str | `openalex` / `bob_reed` / `i4r` / `score` / `semantic_scholar` |
+| Column          | Type | Description                                          |
+| --------------- | ---- | ---------------------------------------------------- |
+| `doi_r`         | str  | Cleaned DOI (no `https://doi.org/` prefix)           |
+| `title_r`       | str  | Paper title                                          |
+| `abstract_r`    | str  | Abstract text                                        |
+| `year_r`        | int  | Publication year                                     |
+| `authors_r`     | str  | Semicolon-separated author list                      |
+| `journal_r`     | str  | Journal name                                         |
+| `url_r`         | str  | Open-access URL if available                         |
+| `openalex_id_r` | str  | OpenAlex work ID (e.g. `W2741809807`)                |
+| `source`        | str  | `openalex` / `bob_reed` / `i4r` / `semantic_scholar` |
 
 All DOIs must pass through `clean_doi()` before being written. All API responses must be cached using `cache_key()`.
 
@@ -113,12 +127,12 @@ All DOIs must pass through `clean_doi()` before being written. All API responses
 
 ## Files
 
-| File | Status | Description |
-|------|--------|-------------|
-| `search/run_search.py` | Stub | Orchestrator — calls all sources, merges, writes CSV |
-| `search/openalex_search.py` | To implement | OpenAlex keyword search queries |
-| `search/external_lists.py` | To implement | Bob Reed scraper, I4R scraper, SCORE loader |
-| `search/deduplicate.py` | To implement | DOI dedup, fuzzy title dedup, FLoRA cross-check |
+| File                        | Status       | Description                                          |
+| --------------------------- | ------------ | ---------------------------------------------------- |
+| `search/run_search.py`      | Stub         | Orchestrator — calls all sources, merges, writes CSV |
+| `search/openalex_search.py` | To implement | OpenAlex keyword search queries                      |
+| `search/external_lists.py`  | To implement | Bob Reed scraper, I4R scraper                        |
+| `search/deduplicate.py`     | To implement | DOI dedup, fuzzy title dedup, FLoRA cross-check      |
 
 ---
 
@@ -127,18 +141,18 @@ All DOIs must pass through `clean_doi()` before being written. All API responses
 - [ ] `fetch_openalex_candidates()` — paginate through OpenAlex search results for each keyword, extract metadata, return DataFrame
 - [ ] `fetch_bob_reed()` — scrape the Bob Reed list, resolve DOIs via CrossRef, return DataFrame
 - [ ] `fetch_i4r()` — scrape I4R reports, return DataFrame
-- [ ] `load_score_csv(path)` — load and map SCORE CSV columns to `CANDIDATES_COLS`
 - [ ] `deduplicate_candidates(df)` — two-pass deduplication + FLoRA cross-check
 
 ---
 
-## Rules (from RULEBOOK.md)
+## Rules
 
 - Never add columns to `candidates.csv` that are not in `shared/schema.py:CANDIDATES_COLS`
 - Always clean DOIs with `clean_doi()` before writing
 - Respect OpenAlex rate limit: 0.1s sleep between calls (`OPENALEX_RATE_SEC`)
 - Bob Reed and I4R scrapers must handle HTTP errors gracefully — try/except, log and continue
 - If the FLoRA sheet is missing, skip the cross-check and log a warning; do not crash
+- All API responses must be cached to `cache/` before writing results to disk
 
 ---
 

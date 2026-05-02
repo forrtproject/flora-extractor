@@ -1,14 +1,22 @@
+
 # Stage 4 — Validate
-**Input:** `data/extracted.csv` (loaded via `validate/import_csv.py`)  
-**Output:** `data/validated.csv`  
-**Run:** `python validate/import_csv.py && python validate/app.py`  
+
+**Input:** `data/extracted.csv` (loaded via `validate/import_csv.py`)
+**Output:** `data/validated.csv`
+**Run:**
+
+```bash
+python -m validate.import_csv
+python -m validate.app
+```
+
 **URL:** `http://localhost:5001`
 
 ---
 
 ## What This Stage Does
 
-A Flask web application that lets human reviewers check and vote on the extraction results from Stage 3. Reviewers see the extracted original study and outcome for each replication paper, vote to confirm or reject the extraction, and leave notes. Validated results are exported to `data/validated.csv` for entry into the FLoRA/FReD database.
+A Flask web application that lets human reviewers check and vote on the extraction results from Stage 3. Reviewers see the extracted original study and outcome for each replication paper, vote to confirm or reject the extraction, and leave notes. Validated results are exported to `data/validated.csv` for entry into the FLoRA database.
 
 ---
 
@@ -23,15 +31,18 @@ validate/
 ├── routes/
 │   ├── dashboard.py    GET  /dashboard
 │   ├── review.py       GET  /validate    POST /vote
+│   ├── flora.py        GET  /flora       GET  /api/flora
 │   ├── input.py        GET  /input       POST /input/generate
-│   ├── batch.py        → renamed to pipeline_runner.py (see STAGE3_EXTRACT.md)
+│   ├── batch.py        SSE batch pipeline runner
 │   ├── multi_originals.py  GET /multi-originals
-│   ├── export.py       GET  /export
+│   ├── export.py       GET  /export      POST /api/export/download
 │   └── disambiguation.py   GET /disambiguation
 └── templates/
     ├── base.html       Shared nav + layout
     ├── dashboard.html
-    ├── review.html     Main voting UI
+    ├── validate.html   Main voting UI
+    ├── flora.html      FLoRA master list
+    ├── set_name.html   Reviewer name prompt
     ├── input.html
     └── export.html
 ```
@@ -44,9 +55,9 @@ The app navbar renders tabs in this order:
 
 1. **Dashboard** — stats overview
 2. **Validate** — voting queue (primary workflow)
-3. **Input** — data generation / batch pipeline runner
-4. **Single DOI** — run pipeline on a single DOI manually
-5. **FLoRA** — link to FLoRA/FReD database
+3. **FLoRA** — master list of all records with FLoRA status
+4. **Input** — data generation / batch pipeline runner
+5. **Single DOI** — run pipeline on a single DOI manually
 
 ---
 
@@ -75,22 +86,22 @@ Each paper displays as a card with two panels:
 
 **Left panel — Paper summary:**
 
-| Field | Source column |
-|-------|---------------|
-| Replication title | `title_r` |
-| Replication year | `year_r` |
-| Authors | `authors_r` |
-| Abstract | `abstract_r` (truncated to 300 chars, expandable) |
-| Original study | `title_o` (`year_o`, `authors_o`) |
-| Proposed outcome | `outcome` — colour-coded pill (green / red / orange / grey) |
-| Outcome phrase | `outcome_phrase` (supporting quote) |
+| Field             | Source column                                              |
+| ----------------- | ---------------------------------------------------------- |
+| Replication title | `title_r`                                                  |
+| Replication year  | `year_r`                                                   |
+| Authors           | `authors_r`                                                |
+| Abstract          | `abstract_r` (truncated to 300 chars, expandable)          |
+| Original study    | `title_o` (`year_o`, `authors_o`)                          |
+| Proposed outcome  | `outcome` — colour-coded pill (green / red / orange / grey)|
+| Outcome phrase    | `outcome_phrase` (supporting quote)                        |
 
 **Right panel — Voting:**
+
 - **Confirm** button — marks the extraction as correct
 - **Reject** button — marks the extraction as wrong
 - **Needs Review** button — flags for a second look
 - **Comment box** — free text, optional, saved with the vote
-- **Suggested edit fields** — reviewer can correct `doi_o` or `outcome` directly
 
 Vote is submitted via `POST /vote`. Duplicate votes from the same reviewer session update rather than stack.
 
@@ -98,17 +109,17 @@ Vote is submitted via `POST /vote`. Duplicate votes from the same reviewer sessi
 
 A `Full Log ▸` button at the bottom of each card expands a details section showing:
 
-| Section | Content |
-|---------|---------|
-| Pipeline log | `link_method`, `link_evidence`, `link_confidence` |
-| Outcome log | `out_quote_source`, `outcome_confidence` |
-| PDF cache | PDF source tier used, direct link to cached PDF if available |
-| LLM prompt | Full prompt text sent to Gemini / OpenAI |
-| LLM response | Raw JSON response from the model |
-| OpenAlex candidates | All candidates considered before resolution |
-| GROBID sections | Extracted abstract / intro / methods / references from PDF |
-| Filter trace | `filter_status`, `filter_method`, `filter_evidence`, `filter_confidence` |
-| Match type trace | `original_match_type`, `original_match_confidence` |
+| Section             | Content                                                                  |
+| ------------------- | ------------------------------------------------------------------------ |
+| Pipeline log        | `link_method`, `link_evidence`, `link_confidence`                        |
+| Outcome log         | `out_quote_source`, `outcome_confidence`                                 |
+| PDF cache           | PDF source tier used, direct link to cached PDF if available             |
+| LLM prompt          | Full prompt text sent to the LLM                                         |
+| LLM response        | Raw JSON response from the model                                         |
+| OpenAlex candidates | All candidates considered before resolution                              |
+| GROBID sections     | Extracted abstract / intro / methods / references from PDF               |
+| Filter trace        | `filter_status`, `filter_method`, `filter_evidence`, `filter_confidence` |
+| Match type trace    | `original_match_type`, `original_match_confidence`                       |
 
 This full log is loaded lazily (`GET /api/validate/log?doi_r=...`) to keep the initial page fast.
 
@@ -122,30 +133,30 @@ This full log is loaded lazily (`GET /api/validate/log?doi_r=...`) to keep the i
 
 ## SQLite Schema (`validate/models.py`)
 
-### `replication` table
+### `replications` table
 
 Maps directly to `EXTRACTED_COLS`. One row per extraction result (one row per original for multi-original papers).
 
 Key columns for voting logic:
-- `doi_r` — primary key component
+
+- `doi_r` — primary key component (with `original_rank`)
 - `original_rank` — primary key component (for multi-original grouping)
-- `validation_status` — `pending` | `confirmed` | `rejected` | `needs_review`
+- `validation_status` — `pending` / `confirmed` / `rejected` / `needs_review`
+- `flora_status` — FLoRA database entry status (imported from source CSV)
 
-### `vote` table
+### `votes` table
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | int | Auto-increment PK |
-| `doi_r` | str | FK → replication.doi_r |
-| `original_rank` | int | FK → replication.original_rank |
-| `reviewer_id` | str | Session cookie or name |
-| `vote` | str | `confirm` \| `reject` \| `needs_review` |
-| `comment` | str | Free text |
-| `corrected_doi_o` | str | Reviewer-corrected original DOI (if changed) |
-| `corrected_outcome` | str | Reviewer-corrected outcome (if changed) |
-| `timestamp` | datetime | UTC time of vote |
+| Column           | Type | Description                           |
+| ---------------- | ---- | ------------------------------------- |
+| `id`             | int  | Auto-increment PK                     |
+| `replication_id` | int  | FK → replications.id                  |
+| `reviewer_id`    | str  | Session cookie or name                |
+| `vote`           | str  | `confirm` / `reject` / `needs_review` |
+| `comment`        | str  | Free text                             |
+| `created_at`     | str  | UTC time of vote                      |
 
 **Validation logic:**
+
 - `confirmed` = majority of votes are `confirm` (≥ 2 votes required)
 - `rejected` = majority of votes are `reject` (≥ 2 votes required)
 - `needs_review` = tied or flagged by any reviewer
@@ -167,11 +178,11 @@ Data generation and batch pipeline runner. Two modes:
 
 Three formats available:
 
-| Format | Contents |
-|--------|---------|
-| CSV | Full `validated.csv` — all `VALIDATED_COLS` |
-| Excel (.xlsx) | Same as CSV, formatted |
-| Minimal CSV | 6 columns: `doi_r`, `title_r`, `doi_o`, `title_o`, `outcome`, `validation_status` |
+| Format        | Contents                                                               |
+| ------------- | ---------------------------------------------------------------------- |
+| CSV           | Full `validated.csv` — all `VALIDATED_COLS` plus `flora_status`        |
+| Excel (.xlsx) | Same as CSV, formatted                                                 |
+| Minimal CSV   | 5 columns: `doi_r`, `title_r`, `doi_o`, `title_o`, `validation_status` |
 
 Only `confirmed` rows are exported by default. A toggle includes `needs_review` rows.
 
@@ -181,47 +192,46 @@ Only `confirmed` rows are exported by default. A toggle includes `needs_review` 
 
 All columns from `extracted.csv`, plus:
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `validation_status` | str | `confirmed` \| `rejected` \| `pending` \| `needs_review` |
-| `vote_count` | int | Total votes received |
-| `confirm_votes` | int | Confirm votes |
-| `reject_votes` | int | Reject votes |
-| `validator_notes` | str | Aggregated reviewer comments |
+| Column               | Type | Description                                        |
+| -------------------- | ---- | -------------------------------------------------- |
+| `validation_status`  | str  | confirmed / rejected / pending / needs_review      |
+| `vote_count`         | int  | Total votes received                               |
+| `confirm_votes`      | int  | Confirm votes                                      |
+| `reject_votes`       | int  | Reject votes                                       |
+| `validator_notes`    | str  | Aggregated reviewer comments                       |
+| `flora_status`       | str  | FLoRA database entry status (from source CSV)      |
+| `validated_doi_o`    | str  | Reviewer-corrected original DOI (blank = accepted) |
+| `validated_outcome`  | str  | Reviewer-corrected outcome (blank = accepted)      |
 
 ---
 
 ## Files
 
-| File | Status | Description |
-|------|--------|-------------|
-| `validate/app.py` | Stub | Flask entry point — registers blueprints, loads startup data |
-| `validate/import_csv.py` | Stub | Load extracted.csv into SQLite (run once) |
-| `validate/models.py` | Stub | SQLAlchemy: Replication + Vote tables |
-| `validate/state.py` | Ported | In-memory DataFrames + threading locks |
-| `validate/routes/review.py` | Stub | GET /validate, POST /vote, GET /api/validate/log |
-| `validate/routes/dashboard.py` | Ported | GET /dashboard, GET /api/dashboard/stats |
-| `validate/routes/export.py` | Stub | GET /export, GET /api/export |
-| `validate/routes/input.py` | Ported | GET /input, POST /input/generate |
-| `validate/routes/batch.py` | Ported (→ pipeline_runner.py) | SSE batch runner |
-| `validate/routes/multi_originals.py` | Ported | GET /multi-originals pipeline UI |
-| `validate/routes/disambiguation.py` | Ported | GET /disambiguation single-DOI runner |
+| File                                 | Status      | Description                                                  |
+| ------------------------------------ | ----------- | ------------------------------------------------------------ |
+| `validate/app.py`                    | Implemented | Flask entry point — registers blueprints, loads startup data |
+| `validate/import_csv.py`             | Implemented | Load extracted.csv into SQLite (run once)                    |
+| `validate/models.py`                 | Implemented | SQLAlchemy: Replication + Vote tables                        |
+| `validate/state.py`                  | Ported      | In-memory DataFrames + threading locks                       |
+| `validate/routes/review.py`          | Implemented | GET /validate, POST /vote, GET /api/validate/log             |
+| `validate/routes/dashboard.py`       | Implemented | GET /dashboard, GET /api/dashboard/stats                     |
+| `validate/routes/export.py`          | Implemented | GET /export, POST /api/export/download                       |
+| `validate/routes/flora.py`           | Implemented | GET /flora, GET /api/flora master list                       |
+| `validate/routes/input.py`           | Ported      | GET /input, POST /input/generate                             |
+| `validate/routes/batch.py`           | Ported      | SSE batch runner                                             |
+| `validate/routes/multi_originals.py` | Ported      | GET /multi-originals pipeline UI                             |
+| `validate/routes/disambiguation.py`  | Ported      | GET /disambiguation single-DOI runner                        |
 
 ---
 
 ## What Needs to Be Implemented
 
-- [ ] `validate/models.py` — SQLAlchemy Replication and Vote table definitions
-- [ ] `validate/import_csv.py` — parse `extracted.csv`, upsert rows into `replication` table
-- [ ] `validate/app.py` — register all blueprints, init db, load startup DataFrames
-- [ ] `validate/routes/review.py` — voting queue, `POST /vote`, `GET /api/validate/log` (lazy full log)
-- [ ] `validate/routes/export.py` — CSV / XLSX / minimal CSV export
-- [ ] `validate/templates/review.html` — minimal card layout + Full Log toggle
-- [ ] `validate/templates/dashboard.html` — stats overview
+- [ ] Add `validated_doi_o` and `validated_outcome` to `Vote` model and `POST /vote` handler
+- [ ] `GET /api/validate/log` — lazy full log endpoint
 
 ---
 
-## Rules (from RULEBOOK.md)
+## Rules
 
 - The Validate tab must show minimal info by default — abstract, original study, outcome, and voting only
 - Full Log content is loaded lazily; never include LLM prompts or PDF paths in the initial page render
