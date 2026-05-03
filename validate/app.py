@@ -37,6 +37,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     from validate.routes.dashboard import dashboard_bp
     from validate.routes.flora import flora_bp
     from validate.routes.disambiguation import disambiguation_bp
+    from validate.routes.pipeline import pipeline_bp
 
     app.register_blueprint(batch_bp)
     app.register_blueprint(multi_orig_bp)
@@ -46,6 +47,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(flora_bp)
     app.register_blueprint(disambiguation_bp)
+    app.register_blueprint(pipeline_bp)
 
     # ── Name prompt guard ─────────────────────────────────────────────────────
     @app.before_request

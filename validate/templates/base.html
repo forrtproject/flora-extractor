@@ -21,6 +21,8 @@
      class="{{ 'active' if active_page == 'disambiguation' else '' }}">Single DOI</a>
   <a href="{{ url_for('flora.flora_page') }}"
      class="{{ 'active' if active_page == 'flora' else '' }}">FLORA</a>
+  <a href="{{ url_for('pipeline.pipeline_page') }}"
+     class="{{ 'active' if active_page == 'pipeline' else '' }}">Pipeline</a>
   {% if session.reviewer_id %}
   <span style="margin-left:auto;color:#64748b;font-size:11px">
     {{ session.reviewer_id }}

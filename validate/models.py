@@ -39,12 +39,12 @@ class Replication(db.Model):
     # Linking
     link_method     = db.Column(db.String,   default="target_pending")
     link_evidence   = db.Column(db.Text,     default="")
-    link_confidence = db.Column(db.Float,    default=0.0)
+    link_confidence = db.Column(db.String,   default="")
 
     # Outcome
     outcome             = db.Column(db.String, default="pending")
     outcome_phrase      = db.Column(db.Text,   default="")
-    outcome_confidence  = db.Column(db.Float,  default=0.0)
+    outcome_confidence  = db.Column(db.String, default="")
     out_quote_source    = db.Column(db.String, default="")
     type                = db.Column(db.String, default="replication")
 
