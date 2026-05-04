@@ -42,9 +42,9 @@ pip install -r requirements.txt
 cp .env.example .env   # fill in your API keys
 
 # 2. Run the pipeline
-python search/run_search.py        # → data/candidates.csv
-python filter/run_filter.py        # → data/filtered.csv
-python extract/run_extract.py      # → data/extracted.csv
+python -m search.run_search        # → data/candidates.csv
+python -m filter.run_filter.py        # → data/filtered.csv
+python -m extract.run_extract.py      # → data/extracted.csv
 
 # 3. Start the validation web app
 python -m validate.import_csv      # load into SQLite
