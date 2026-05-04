@@ -33,14 +33,14 @@ def run_search() -> pd.DataFrame:
     # log.info("Stage 1: fetching I4R list...")
     # frames.append(fetch_i4r())
 
-    result = (
+    combined = (
         pd.concat(frames, ignore_index=True)
         if frames
         else pd.DataFrame(columns=CANDIDATES_COLS)
     )
 
     out_path = DATA_DIR / "candidates.csv"
-    # result = deduplicate_candidates(combined)
+    result = deduplicate_candidates(combined)
     result.to_csv(out_path, index=False, encoding="utf-8-sig")
     log.info("Stage 1 complete: %d candidates → %s", len(result), out_path)
     return result
