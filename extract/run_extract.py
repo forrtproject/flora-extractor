@@ -90,8 +90,13 @@ def classify_match_type(row: dict) -> dict:
     except (ValueError, TypeError):
         year_r = 2099
 
-    # Step 1: extract author-year citation patterns from abstract
-    patterns       = extract_author_year_patterns(abstract_r, max_year=year_r)
+    # Step 1: extract author-year citation patterns from abstract and title
+    # This steps repeats in find_all_candidates, but we need the patterns here to feed into the LLM prompt
+    patterns = (
+        extract_author_year_patterns(title_r, max_year=year_r)
+        or extract_author_year_patterns(abstract_r, max_year=year_r)
+        # or extract_author_year_patterns(pattern_str, max_year=year_r)
+    )
     distinct_pairs = {(p["surname"], p["year"]) for p in patterns}
 
     # Step 2: fetch OpenAlex referenced works and match against patterns
