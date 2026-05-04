@@ -6,6 +6,7 @@ Calls all discovery sources, deduplicates, and writes data/candidates.csv.
 Usage:
     python search/run_search.py
 """
+
 import pandas as pd
 
 from shared.config import DATA_DIR, log
@@ -32,7 +33,11 @@ def run_search() -> pd.DataFrame:
     # log.info("Stage 1: fetching I4R list...")
     # frames.append(fetch_i4r())
 
-    result = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=CANDIDATES_COLS)
+    result = (
+        pd.concat(frames, ignore_index=True)
+        if frames
+        else pd.DataFrame(columns=CANDIDATES_COLS)
+    )
 
     out_path = DATA_DIR / "candidates.csv"
     # result = deduplicate_candidates(combined)

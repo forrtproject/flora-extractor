@@ -4,6 +4,7 @@ openalex_search.py — Query OpenAlex for replication papers.
 Public API:
     fetch_openalex_candidates() → pd.DataFrame  (CANDIDATES_COLS schema)
 """
+
 import json
 import time
 from typing import Optional
@@ -16,7 +17,7 @@ from shared.schema import CANDIDATES_COLS
 from shared.utils import cache_key, clean_doi
 
 
-SEARCH_PHRASE = "registered replication report"   # ~3,700 results — good test size
+SEARCH_PHRASE = "registered replication report"  # ~3,700 results — good test size
 
 _BASE_URL = "https://api.openalex.org/works"
 _PER_PAGE = 200
@@ -59,20 +60,20 @@ def _get_page(params: dict) -> dict:
 
 def _extract_row(work: dict) -> dict:
     authorships = work.get("authorships") or []
-    names   = [(a.get("author") or {}).get("display_name") for a in authorships]
+    names = [(a.get("author") or {}).get("display_name") for a in authorships]
     authors = "; ".join(n for n in names if n) or None
     location = work.get("primary_location") or {}
-    source   = location.get("source") or {}
+    source = location.get("source") or {}
     return {
-        "doi_r":         clean_doi(work.get("doi") or ""),
-        "title_r":       work.get("display_name"),
-        "abstract_r":    _reconstruct_abstract(work.get("abstract_inverted_index")),
-        "year_r":        work.get("publication_year"),
-        "authors_r":     authors,
-        "journal_r":     source.get("display_name"),
-        "url_r":         location.get("landing_page_url") or location.get("pdf_url"),
+        "doi_r": clean_doi(work.get("doi") or ""),
+        "title_r": work.get("display_name"),
+        "abstract_r": _reconstruct_abstract(work.get("abstract_inverted_index")),
+        "year_r": work.get("publication_year"),
+        "authors_r": authors,
+        "journal_r": source.get("display_name"),
+        "url_r": location.get("landing_page_url") or location.get("pdf_url"),
         "openalex_id_r": work.get("id"),
-        "source":        "openalex",
+        "source": "openalex",
     }
 
 
@@ -90,11 +91,11 @@ def fetch_openalex_candidates() -> pd.DataFrame:
 
     while cursor:
         params = {
-            "filter":   f'title_and_abstract.search:"{SEARCH_PHRASE}"',
+            "filter": f'title_and_abstract.search:"{SEARCH_PHRASE}"',
             "per-page": _PER_PAGE,
-            "cursor":   cursor,
-            "mailto":   RESEARCHER_EMAIL,
-            "select":   _SELECT,
+            "cursor": cursor,
+            "mailto": RESEARCHER_EMAIL,
+            "select": _SELECT,
         }
         try:
             data = _get_page(params)
@@ -107,9 +108,9 @@ def fetch_openalex_candidates() -> pd.DataFrame:
             break
 
         rows.extend(_extract_row(w) for w in results)
-        page  += 1
+        page += 1
         cursor = (data.get("meta") or {}).get("next_cursor")
-        total  = data.get("meta", {}).get("count", "?")
+        total = data.get("meta", {}).get("count", "?")
         log.info(f"  page {page:>3} | {len(rows):>5,} / {total} fetched")
         time.sleep(OPENALEX_RATE_SEC)
 
