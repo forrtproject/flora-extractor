@@ -22,6 +22,7 @@ from search.openalex_search import fetch_openalex_candidates
 from search.semantic_scholar_search import fetch_semantic_scholar_candidates
 from search.external_lists import fetch_i4r
 from search.deduplicate import deduplicate_candidates
+from search.engine_source import fetch_engine_candidates, is_engine_enabled
 
 
 def run_search(
@@ -53,11 +54,19 @@ def run_search(
     # Collect per-source DataFrames here before combining them into one table.
     frames: list[pd.DataFrame] = []
 
-    log.info("Stage 1: fetching OpenAlex candidates...")
-    frames.append(fetch_openalex_candidates(from_year=from_year, to_year=to_year))
+    if is_engine_enabled():
+        # FLORA_USE_ENGINE=1 → use the YAML-spec engine in place of the per-source
+        # scripts. The engine OR-bundles all phrase permutations into ONE search per
+        # source, which is far cheaper under OpenAlex's post-Feb-2026 search-call
+        # quota. Year filters are forwarded so behaviour matches the per-source path.
+        log.info("Stage 1: fetching engine candidates (FLORA_USE_ENGINE=1)...")
+        frames.append(fetch_engine_candidates(year_from=from_year, year_to=to_year))
+    else:
+        log.info("Stage 1: fetching OpenAlex candidates...")
+        frames.append(fetch_openalex_candidates(from_year=from_year, to_year=to_year))
 
-    log.info("Stage 1: fetching Semantic Scholar candidates...")
-    frames.append(fetch_semantic_scholar_candidates(from_year=from_year, to_year=to_year))
+        log.info("Stage 1: fetching Semantic Scholar candidates...")
+        frames.append(fetch_semantic_scholar_candidates(from_year=from_year, to_year=to_year))
 
     # log.info("Stage 1: fetching Bob Reed list...")
     # frames.append(fetch_bob_reed())

@@ -1,0 +1,108 @@
+# source-configs.yaml — replication discovery
+# Per-source endpoints, query syntax, rate limits.
+#
+# **Strategy: OR-bundle all keyword permutations into a single search query per source per run.**
+# The provider's docs explicitly recommend this:
+#   "For searching multiple phrase variants affordably, combine boolean operators with the
+#    standard search parameter: search=(phrase1 OR phrase2 OR phrase3). This uses one
+#    search call rather than multiple requests."  — OpenAlex search-entities docs (2026-05-04)
+#
+# Per-keyword and per-field attribution is computed POST-fetch by running phraseDetection
+# regexes locally on the title + abstract. We don't need title.search vs abstract.search vs
+# default.search separate calls.
+#
+# **Rate-limit values verified live on 2026-05-04** (see ../RATE_LIMITS_VERIFIED.md). The
+# freshness gate refuses runs with verified_at older than 60 days.
+#
+# Spec: docs/superpowers/specs/2026-05-04-replication-discovery-design.md §3.4
+version: 1
+
+# ---------------------------------------------------------------------------
+# OpenAlex
+#
+# Major change Feb 13 2026: polite pool deprecated, API key REQUIRED.
+# Free tier: $1/day credit. Search billed at $0.001/call ($1/1000) → 1000 free
+# search calls/day. With OR-bundling, ~20 calls per wide run = 50 runs/day free.
+# ---------------------------------------------------------------------------
+openalex:
+  base_url: "https://api.openalex.org"
+  works_endpoint: "/works"
+  auth:
+    api_key_env: OPENALEX_API_KEY
+    mailto_env: OPENALEX_MAILTO
+  rate_limit:
+    verified_at: "2026-05-04"
+    requests_per_second: 5            # 50% safety factor under 10 req/sec normal cap
+    requests_per_day: 1000            # free-tier search calls; engine pauses approaching
+  query:
+    strategy: or_bundle
+    parameter: search                 # ?search=(...)
+    phrase_quote: '"'                 # OpenAlex requires double-quoted phrases for exact match
+    or_operator: " OR "
+    max_phrases_per_query: 100        # safety vs URL length; ~2KB cap
+  pagination:
+    cursor_param: cursor
+    initial_cursor: "*"
+    per_page: 50
+    max_pages_per_query: 20
+  filters:
+    types: [article]
+    has_abstract: true
+    languages: [en]
+
+# ---------------------------------------------------------------------------
+# Crossref
+#
+# Updated Dec 1 2025. Polite pool (with mailto) gives 3 list req/sec.
+# Crossref doesn't bill — free regardless of volume, just rate-limited.
+# ---------------------------------------------------------------------------
+crossref:
+  base_url: "https://api.crossref.org"
+  works_endpoint: "/works"
+  auth:
+    polite_pool_mailto_env: CROSSREF_EMAIL
+  rate_limit:
+    verified_at: "2026-05-04"
+    requests_per_second: 1.5          # 50% safety factor under 3/sec polite-pool list cap
+  query:
+    strategy: or_bundle
+    parameter: query.bibliographic    # full-text bibliographic search
+    phrase_quote: '"'
+    or_operator: " OR "
+    max_phrases_per_query: 100
+  pagination:
+    cursor_param: cursor
+    initial_cursor: "*"
+    per_page: 100
+    max_pages_per_query: 20
+  filters:
+    type: journal-article
+    has_abstract: true
+
+# ---------------------------------------------------------------------------
+# Semantic Scholar
+#
+# Free key: 1 req/sec dedicated. Search hard limit: 1,000 results per query
+# (offset ≤ 999, limit ≤ 100). With OR-bundling we get one paginated query per run.
+# ---------------------------------------------------------------------------
+semantic_scholar:
+  base_url: "https://api.semanticscholar.org/graph/v1"
+  works_endpoint: "/paper/search"
+  auth:
+    api_key_env: SEMANTIC_SCHOLAR_API_KEY
+  rate_limit:
+    verified_at: "2026-05-04"
+    requests_per_second: 0.5          # 50% safety factor under 1/sec keyed cap
+  query:
+    strategy: or_bundle
+    parameter: query
+    phrase_quote: '"'
+    or_operator: " | "                # SS uses pipe for OR in their bulk-search syntax; verify on first hit
+    max_phrases_per_query: 100
+  pagination:
+    offset_param: offset
+    per_page: 100
+    max_total: 1000
+  filters: {}
+  # Required SS-specific field selection on every call:
+  fields: [title, abstract, year, authors, externalIds]
