@@ -1,8 +1,10 @@
 """
 run_filter.py — Stage 2 orchestrator.
 
-Reads data/candidates.csv, applies rule-based then LLM filtering,
-and writes data/filtered.csv.
+Reads data/candidates.csv, applies the rule filter (port of SciMeto's
+phrase-detection regex set) and then the LLM uplift on rows that come back
+as ``needs_review``, and writes data/filtered.csv with the FILTERED_COLS
+schema.
 
 Usage:
     python filter/run_filter.py
@@ -10,7 +12,7 @@ Usage:
 import pandas as pd
 
 from shared.config import DATA_DIR, log
-from shared.schema import FILTERED_COLS
+from shared.schema import CANDIDATES_COLS, FILTERED_COLS
 from filter.rule_filter import apply_rule_filter
 from filter.llm_filter import apply_llm_filter
 
@@ -24,12 +26,18 @@ def run_filter() -> pd.DataFrame:
     df = pd.read_csv(candidates_path, dtype=str, encoding="utf-8-sig").fillna("")
     log.info("Stage 2: loaded %d candidates", len(df))
 
+    # Reindex to the canonical schema so an old/extended candidates.csv still flows cleanly.
+    df = df.reindex(columns=CANDIDATES_COLS)
+
     df = apply_rule_filter(df)
-    log.info("Stage 2: rule filter done. needs_review: %d",
-             (df["filter_status"] == "needs_review").sum())
+    log.info(
+        "Stage 2: rule filter done. needs_review: %d",
+        int((df["filter_status"] == "needs_review").sum()),
+    )
 
     df = apply_llm_filter(df)
-    log.info("Stage 2: LLM filter done.")
+
+    df = df.reindex(columns=FILTERED_COLS)
 
     out_path = DATA_DIR / "filtered.csv"
     df.to_csv(out_path, index=False, encoding="utf-8-sig")
