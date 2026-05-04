@@ -5,8 +5,11 @@ For every row in filtered.csv:
   - false_positive → pass through unchanged (no extraction)
   - replication/reproduction → classify match type, route to pipeline, write result
 
+Each completed row is appended to data/extracted.csv immediately so that
+Stage 4 validation can begin before the full run finishes.
+
 Usage:
-    python extract/run_extract.py
+    python -m extract.run_extract
 """
 import json
 import time
@@ -200,6 +203,9 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
                match_type: str, match_conf: str,
                rank: int, n: int) -> dict:
     row = filter_row.to_dict()
+    # propagate study_r → title_r if title_r is absent (old seeded data uses study_r)
+    if not row.get("title_r"):
+        row["title_r"] = row.get("study_r", "")
     row.update({
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
@@ -226,6 +232,8 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
 def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
                      match_type: str, match_conf: str, n: int) -> dict:
     row = filter_row.to_dict()
+    if not row.get("title_r"):
+        row["title_r"] = row.get("study_r", "")
     conf_str = orig.get("confidence", "low")
     if conf_str not in {"high", "medium", "low"}:
         conf_str = "low"
@@ -289,8 +297,29 @@ def _parse_originals(result: dict) -> list[dict]:
 
 # ── Main orchestrator ─────────────────────────────────────────────────────────
 
+def _append_row(out_path, result_row: dict, first: bool) -> None:
+    """Write one result row to the output CSV immediately after processing.
+
+    first=True  → open with mode='w' (creates / truncates the file) and write header.
+    first=False → open with mode='a' (append) and skip header.
+    """
+    row_df = pd.DataFrame([result_row])
+    for col in EXTRACTED_COLS:
+        if col not in row_df.columns:
+            row_df[col] = ""
+    row_df[EXTRACTED_COLS].to_csv(
+        out_path, mode="w" if first else "a",
+        index=False, encoding="utf-8-sig", header=first,
+    )
+
+
 def run_extract() -> pd.DataFrame:
-    """Run Stage 3 and write data/extracted.csv."""
+    """
+    Run Stage 3 and stream results to data/extracted.csv.
+
+    Each completed row is written immediately so Stage 4 validation can begin
+    before the full run finishes.
+    """
     filtered_path = DATA_DIR / "filtered.csv"
     if not filtered_path.exists():
         sample_path = BASE_DIR / "misc" / "sample_filtered.csv"
@@ -305,59 +334,59 @@ def run_extract() -> pd.DataFrame:
     df = pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig").fillna("")
     log.info("Stage 3: loaded %d rows from %s", len(df), filtered_path.name)
 
+    out_path = DATA_DIR / "extracted.csv"
     output_rows: list[dict] = []
+    first_write = True  # write CSV header on the first row
 
     for _, row in df.iterrows():
+        result_rows: list[dict] = []
+
         # False positives pass through unchanged — no extraction
         if row.get("filter_status") == "false_positive":
-            output_rows.append(row.to_dict())
-            continue
+            result_rows.append(row.to_dict())
+        else:
+            doi_r = clean_doi(str(row.get("doi_r", "")))
+            match = classify_match_type(row.to_dict())
+            match_type = match["original_match_type"]
+            match_conf = match["original_match_confidence"]
+            log.info("[%s] match_type=%s conf=%s", doi_r, match_type, match_conf)
 
-        doi_r = clean_doi(str(row.get("doi_r", "")))
-        match = classify_match_type(row.to_dict())
-        match_type = match["original_match_type"]
-        match_conf = match["original_match_confidence"]
-        log.info("[%s] match_type=%s conf=%s", doi_r, match_type, match_conf)
-
-        try:
-            if match_type == "multiple_original":
-                result    = run_multi_original_for_doi(doi_r, _build_rep_df(row))
-                originals = _parse_originals(result)
-                if result.get("is_false_positive") or not originals:
-                    # LLM found only 1 original — re-route through single pipeline
+            try:
+                if match_type == "multiple_original":
+                    result    = run_multi_original_for_doi(doi_r, _build_rep_df(row))
+                    originals = _parse_originals(result)
+                    if result.get("is_false_positive") or not originals:
+                        link    = run_for_doi(doi_r, cands_df=_build_cands_df(row))
+                        outcome = _get_outcome(doi_r, row, link)
+                        result_rows.append(
+                            _merge_row(row, link, outcome, "single_original", match_conf, 1, 1)
+                        )
+                    else:
+                        for orig in originals:
+                            outcome = _get_outcome(doi_r, row, {})
+                            result_rows.append(
+                                _merge_multi_row(row, orig, outcome, match_type, match_conf,
+                                                 len(originals))
+                            )
+                else:
                     link    = run_for_doi(doi_r, cands_df=_build_cands_df(row))
                     outcome = _get_outcome(doi_r, row, link)
-                    output_rows.append(
-                        _merge_row(row, link, outcome, "single_original", match_conf, 1, 1)
+                    result_rows.append(
+                        _merge_row(row, link, outcome, match_type, match_conf, 1, 1)
                     )
-                else:
-                    for orig in originals:
-                        outcome = _get_outcome(doi_r, row, {})
-                        output_rows.append(
-                            _merge_multi_row(row, orig, outcome, match_type, match_conf,
-                                             len(originals))
-                        )
-            else:
-                # single_original or multiple_match — shared pipeline
-                link    = run_for_doi(doi_r, cands_df=_build_cands_df(row))
-                outcome = _get_outcome(doi_r, row, link)
-                output_rows.append(
-                    _merge_row(row, link, outcome, match_type, match_conf, 1, 1)
-                )
 
-        except Exception as e:
-            log.error("[%s] extraction failed: %s", doi_r, e)
-            output_rows.append(_empty_row(row, match_type, match_conf))
+            except Exception as e:
+                log.error("[%s] extraction failed: %s", doi_r, e)
+                result_rows.append(_empty_row(row, match_type, match_conf))
 
-    out_df = pd.DataFrame(output_rows)
-    for col in EXTRACTED_COLS:
-        if col not in out_df.columns:
-            out_df[col] = ""
+        for result_row in result_rows:
+            _append_row(out_path, result_row, first=first_write)
+            first_write = False
+            output_rows.append(result_row)
+            log.info("Streamed %d/%d rows → %s", len(output_rows), len(df), out_path.name)
 
-    out_path = DATA_DIR / "extracted.csv"
-    out_df[EXTRACTED_COLS].to_csv(out_path, index=False, encoding="utf-8-sig")
-    log.info("Stage 3 complete: %d rows → %s", len(out_df), out_path)
-    return out_df
+    log.info("Stage 3 complete: %d rows → %s", len(output_rows), out_path)
+    return pd.DataFrame(output_rows)
 
 
 if __name__ == "__main__":

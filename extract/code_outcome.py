@@ -141,6 +141,7 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str) -> di
         "outcome_phrase":     str(result.get("outcome_phrase",    "") or ""),
         "outcome_confidence": str(result.get("outcome_confidence", "low") or "low"),
         "out_quote_source":   str(result.get("out_quote_source",  "") or ""),
+        "llm_prompt":         prompt,  # stored for debug view in Extract tab
     }
     with cache_file.open("w", encoding="utf-8") as fh:
         json.dump(output, fh, ensure_ascii=False, indent=2)

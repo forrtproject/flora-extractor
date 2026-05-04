@@ -66,8 +66,18 @@ RESEARCHER_EMAIL = os.getenv("RESEARCHER_EMAIL", "research@example.com")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 
+# Per-task model selection — light for classify_match_type & code_outcome,
+# heavy for the full identify_original_with_llm linking step.
+GEMINI_LIGHT_MODEL = os.getenv("GEMINI_LIGHT_MODEL", GEMINI_MODEL)
+GEMINI_HEAVY_MODEL = os.getenv("GEMINI_HEAVY_MODEL", GEMINI_MODEL)
+
+# OpenRouter (OpenAI-compatible API at openrouter.ai) — optional alternative LLMs
+OPENROUTER_API_KEY    = os.getenv("OPENROUTER_API_KEY",    "")
+OPENROUTER_LIGHT_MODEL = os.getenv("OPENROUTER_LIGHT_MODEL", "qwen/qwen3.5-35b-a3b")
+OPENROUTER_HEAVY_MODEL = os.getenv("OPENROUTER_HEAVY_MODEL", "qwen/qwen3.5-35b-a3b")
+
 # ── External servers ──────────────────────────────────────────────────────────
-GROBID_SERVER = "https://kermitt2-grobid.hf.space"
+GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")
 
 # ── Rate limits (seconds between calls) ──────────────────────────────────────
 OPENALEX_RATE_SEC  = 0.1
