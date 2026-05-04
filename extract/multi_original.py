@@ -5,14 +5,32 @@ multi-target replication papers.
 Public API:
     run_multi_original_for_doi(doi_r, all_rep_df, cands_df) → dict
 
+Pipeline: load metadata → OpenAlex candidates → PDF acquisition → GROBID
+reference extraction → LLM identifies ALL originals.  The LLM step is the
+sole source of the originals list; if it returns fewer items than expected,
+the caller (run_extract.py) detects is_false_positive and re-routes to the
+single-original pipeline.
+
+Known limitations
+-----------------
+- No try/except around PDF or GROBID steps — exceptions propagate to the
+  run_extract.py orchestrator, which catches them and writes an api_error row.
+- originals_json is a JSON string (not a Python list) in the returned dict;
+  callers must parse it with _parse_originals() or json.loads().
+- _rep_row() silently returns "" for any column absent from all_rep_df; columns
+  from the old pipeline (multi_target, readiness_level, etc.) will be blank
+  when called from the filtered.csv-based orchestrator.
+
 The returned dict contains:
-  base_*         — from all_replications.csv
-  pdf_*          — PDF acquisition
-  grobid_*       — GROBID / pdfminer extraction
-  is_false_positive — bool: only 1 original found despite multi_target flag
-  n_originals    — number of originals identified
-  originals      — list of dicts, one per original study
-  llm_*          — LLM step metadata
+  base_*            — metadata from all_rep_df (or filtered.csv)
+  n_candidates      — number of OpenAlex candidate originals found
+  pdf_*             — PDF acquisition result
+  grobid_status     — GROBID extraction status
+  n_grobid_refs     — number of references parsed by GROBID
+  is_false_positive — True when LLM found ≤1 original despite multi_target flag
+  n_originals       — number of originals identified by LLM
+  originals_json    — JSON string: list of {rank, title, doi, first_author, ...}
+  llm_*             — LLM metadata (source, reasoning)
 """
 from __future__ import annotations
 
