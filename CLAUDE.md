@@ -29,12 +29,22 @@ Stage 4: validate/   → Flask web app with voting  → data/validated.csv
 Each stage reads one CSV and writes a richer CSV. Stages are independently runnable:
 
 ```bash
-python search/run_search.py
-python filter/run_filter.py
-python extract/run_extract.py
-python -m validate.import_csv      # load into SQLite
-python -m validate.app             # starts the web app on port 5001
+python -m search.run_search         # Stage 1 → data/candidates.csv
+python -m filter.run_filter         # Stage 2 → data/filtered.csv
+python -m extract.run_extract       # Stage 3 → data/extracted.csv  (streamed row-by-row)
+python -m validate.import_csv       # load extracted.csv into SQLite
+python -m validate.app              # Stage 4 web app → http://localhost:5001
 ```
+
+Stage 3 streams results to `data/extracted.csv` one row at a time, so you can open the
+Extract tab in the web app while the pipeline is still running.
+
+The web app provides tabbed views for each stage's output:
+
+- `/search`  — Stage 1 candidates (candidates.csv)
+- `/filter`  — Stage 2 filtered list (filtered.csv)
+- `/extract` — Stage 3 extraction results with model comparison tool
+- `/validate` — Stage 4 voting queue
 
 ---
 

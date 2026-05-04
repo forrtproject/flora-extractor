@@ -10,6 +10,7 @@ cache/
 
 # ── Environment ───────────────────────────────────────────────────────────────
 .env
+.env.example
 
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
@@ -36,3 +37,6 @@ Thumbs.db
 .claude/
 .superpowers/
 docs/superpowers/
+docs/GITHUB_ISSUES.md
+docs/ARCHITECTURE.md
+.env.example

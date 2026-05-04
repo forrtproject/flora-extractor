@@ -254,6 +254,7 @@ def find_all_candidates(doi_r: str,
         openalex_id, doi, title, year, first_author,
         match_year_exact, cited_pattern
     """
+
     cache_file = OA_CACHE_DIR / f"candidates_{cache_key(doi_r)}.json"
     if cache_file.exists():
         with cache_file.open(encoding="utf-8") as fh:
@@ -262,12 +263,12 @@ def find_all_candidates(doi_r: str,
     if not openalex_id_r:
         return []
 
-    # Extract author-year patterns: title takes priority, then abstract, then stored pattern
-    patterns = (
-        extract_author_year_patterns(study_r, max_year=year_r)
-        or extract_author_year_patterns(abstract_r, max_year=year_r)
-        or extract_author_year_patterns(pattern_str, max_year=year_r)
-    )
+    # Extract author-year patterns from title and abstract. 
+    # extract_author_year_patterns() always returns a list, so we can concatenate results immediately.
+    patterns = extract_author_year_patterns(study_r, max_year=year_r) \
+        + extract_author_year_patterns(abstract_r, max_year=year_r)
+        # + extract_author_year_patterns(pattern_str, max_year=year_r)
+
     if not patterns:
         return []
 
