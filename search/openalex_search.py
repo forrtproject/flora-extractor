@@ -5,6 +5,7 @@ Public API:
     fetch_openalex_candidates() → pd.DataFrame  (CANDIDATES_COLS schema)
 """
 
+import datetime
 import json
 import time
 from typing import Optional
@@ -46,16 +47,31 @@ def _get_page(params: dict) -> dict:
         with open(cache_path) as f:
             return json.load(f)
 
-    resp = requests.get(_BASE_URL, params=params, timeout=30)
+    for attempt in range(5):
+        try:
+            resp = requests.get(_BASE_URL, params=params, timeout=30)
+            if resp.status_code == 200:
+                data = resp.json()
+                with open(cache_path, "w") as f:
+                    json.dump(data, f)
+                return data
+            if resp.status_code == 429:
+                wait = float(resp.headers.get("Retry-After", 10))
+                wait_hms = str(datetime.timedelta(seconds=wait))
+                log.warning(f"Rate limited — need to wait {wait_hms}")
+                raise StopIteration("OpenAlex rate limit hit — returning rows collected so far")
+            resp.raise_for_status()
+            data = resp.json()
+            with open(cache_path, "w") as f:
+                json.dump(data, f)
+            return data
+        except requests.RequestException as exc:
+            if attempt == 4:
+                raise
+            log.warning(f"Request error ({exc}), retry {attempt + 1}/5")
+            time.sleep(2 ** attempt)
 
-    if resp.status_code == 429:
-        raise StopIteration("OpenAlex rate limit hit — returning rows collected so far")
-
-    resp.raise_for_status()
-    data = resp.json()
-    with open(cache_path, "w") as f:
-        json.dump(data, f)
-    return data
+    raise RuntimeError("OpenAlex: max retries exceeded")
 
 
 def _extract_row(work: dict) -> dict:
@@ -98,6 +114,7 @@ def fetch_openalex_candidates() -> pd.DataFrame:
             "select": _SELECT,
         }
         try:
+            print(params["mailto"])
             data = _get_page(params)
         except StopIteration as e:
             log.warning(f"  {e} ({len(rows):,} rows collected)")
