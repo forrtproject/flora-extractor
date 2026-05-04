@@ -26,8 +26,6 @@ _SELECT = (
 )
 
 
-# ---------------------------------------------------------------------------
-
 def _reconstruct_abstract(inverted_index: Optional[dict]) -> Optional[str]:
     if not inverted_index:
         return None
@@ -39,7 +37,7 @@ def _reconstruct_abstract(inverted_index: Optional[dict]) -> Optional[str]:
 
 
 def _get_page(params: dict) -> dict:
-    """Fetch one page (cache-first). Raises on HTTP errors including 429."""
+    """Fetch one page (cache-first). Raises StopIteration on 429."""
     key = cache_key(str(sorted(params.items())))
     cache_path = OA_CACHE_DIR / f"{key}.json"
 
@@ -50,14 +48,7 @@ def _get_page(params: dict) -> dict:
     resp = requests.get(_BASE_URL, params=params, timeout=30)
 
     if resp.status_code == 429:
-        retry_after = resp.headers.get("Retry-After", "unknown")
-        raise RuntimeError(
-            f"OpenAlex rate limit hit. Retry-After: {retry_after}s  "
-            f"(~{int(retry_after)//3600}h {(int(retry_after)%3600)//60}m). "
-            f"Wait before re-running, or delete cache/openalex/ to start fresh."
-            if retry_after.isdigit() else
-            f"OpenAlex rate limit hit. Retry-After header: {retry_after!r}"
-        )
+        raise StopIteration("OpenAlex rate limit hit — returning rows collected so far")
 
     resp.raise_for_status()
     data = resp.json()
@@ -85,11 +76,10 @@ def _extract_row(work: dict) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-
 def fetch_openalex_candidates() -> pd.DataFrame:
     """
     Fetch all OpenAlex works matching SEARCH_PHRASE.
+    Stops cleanly if rate-limited, returning whatever was collected.
     Returns a DataFrame with CANDIDATES_COLS schema.
     """
     rows: list[dict] = []
@@ -106,7 +96,12 @@ def fetch_openalex_candidates() -> pd.DataFrame:
             "mailto":   RESEARCHER_EMAIL,
             "select":   _SELECT,
         }
-        data    = _get_page(params)   # raises clearly on 429
+        try:
+            data = _get_page(params)
+        except StopIteration as e:
+            log.warning(f"  {e} ({len(rows):,} rows collected)")
+            break
+
         results = data.get("results") or []
         if not results:
             break
@@ -114,9 +109,8 @@ def fetch_openalex_candidates() -> pd.DataFrame:
         rows.extend(_extract_row(w) for w in results)
         page  += 1
         cursor = (data.get("meta") or {}).get("next_cursor")
-
-        total = data.get("meta", {}).get("count", "?")
-        log.info(f"  page {page:>3} | {len(rows):>5,} / {total:,} fetched")
+        total  = data.get("meta", {}).get("count", "?")
+        log.info(f"  page {page:>3} | {len(rows):>5,} / {total} fetched")
         time.sleep(OPENALEX_RATE_SEC)
 
     log.info(f"Done — {len(rows):,} rows")

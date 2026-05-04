@@ -20,8 +20,8 @@ def run_search() -> pd.DataFrame:
     """Run all search sources and write data/candidates.csv."""
     frames = []
 
-    # log.info("Stage 1: fetching OpenAlex candidates...")
-    # frames.append(fetch_openalex_candidates())
+    log.info("Stage 1: fetching OpenAlex candidates...")
+    frames.append(fetch_openalex_candidates())
 
     log.info("Stage 1: fetching Semantic Scholar candidates...")
     frames.append(fetch_semantic_scholar())
