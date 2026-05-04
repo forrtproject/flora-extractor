@@ -41,12 +41,11 @@ def run_search() -> pd.DataFrame:
     log.info("Stage 1: fetching Semantic Scholar candidates...")
     frames.append(fetch_semantic_scholar())
 
-    # Optional supplementary sources. These are currently disabled.
     # log.info("Stage 1: fetching Bob Reed list...")
     # frames.append(fetch_bob_reed())
 
-    # log.info("Stage 1: fetching I4R list...")
-    # frames.append(fetch_i4r())
+    log.info("Stage 1: fetching I4R list...")
+    frames.append(fetch_i4r())
 
     # pd.concat([]) raises an error, so fall back to an empty DataFrame with the
     # canonical schema if no sources were enabled or all fetching was skipped.
