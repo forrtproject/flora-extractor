@@ -1,11 +1,5 @@
 """
-openalex_search.py — Query OpenAlex API for replication/reproduction papers.
-
-Strategy:
-    Query OpenAlex with specific quoted phrases rather than the broad term
-    "replication" (which returns ~200k results, mostly biology).
-    Each phrase query is small (hundreds to a few thousand results), so the
-    full set of queries completes in a few minutes.
+openalex_search.py — Query OpenAlex for replication papers.
 
 Public API:
     fetch_openalex_candidates() → pd.DataFrame  (CANDIDATES_COLS schema)
@@ -22,44 +16,7 @@ from shared.schema import CANDIDATES_COLS
 from shared.utils import cache_key, clean_doi
 
 
-# ---------------------------------------------------------------------------
-# Search phrases
-# These are sent as exact quoted-phrase queries to OpenAlex's
-# title_and_abstract.search filter.  Each returns a small, precise result set.
-# ---------------------------------------------------------------------------
-
-SEARCH_PHRASES = [
-    "direct replication",
-    "conceptual replication",
-    "close replication",
-    "registered replication report",
-    "replication study",
-    "replication studies",
-    "we replicated",
-    "we conducted a replication",
-    "we performed a replication",
-    "attempt to replicate",
-    "attempts to replicate",
-    "set out to replicate",
-    "aim to replicate",
-    "aims to replicate",
-    "failed to replicate",
-    "fail to replicate",
-    "did not replicate",
-    "successfully replicated",
-    "replication and extension",
-    "pre-registered replication",
-    "preregistered replication",
-    "many-labs replication",
-    "multi-site replication",
-    "multi-lab replication",
-    "reproduction study",
-    "reproduction studies",
-]
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+SEARCH_PHRASE = "registered replication report"   # ~3,700 results — good test size
 
 _BASE_URL = "https://api.openalex.org/works"
 _PER_PAGE = 200
@@ -68,8 +25,7 @@ _SELECT = (
     "authorships,primary_location,abstract_inverted_index"
 )
 
-# ---------------------------------------------------------------------------
-# Helpers
+
 # ---------------------------------------------------------------------------
 
 def _reconstruct_abstract(inverted_index: Optional[dict]) -> Optional[str]:
@@ -83,7 +39,7 @@ def _reconstruct_abstract(inverted_index: Optional[dict]) -> Optional[str]:
 
 
 def _get_page(params: dict) -> dict:
-    """Return cached page or fetch from OpenAlex; retry up to 5× on failure."""
+    """Fetch one page (cache-first). Raises on HTTP errors including 429."""
     key = cache_key(str(sorted(params.items())))
     cache_path = OA_CACHE_DIR / f"{key}.json"
 
@@ -91,27 +47,23 @@ def _get_page(params: dict) -> dict:
         with open(cache_path) as f:
             return json.load(f)
 
-    for attempt in range(5):
-        try:
-            resp = requests.get(_BASE_URL, params=params, timeout=30)
-            if resp.status_code == 200:
-                data = resp.json()
-                with open(cache_path, "w") as f:
-                    json.dump(data, f)
-                return data
-            if resp.status_code == 429:
-                wait = float(resp.headers.get("Retry-After", 60))
-                log.warning(f"Rate limited — sleeping {min(wait, 120):.0f}s")
-                time.sleep(min(wait, 120))
-                continue
-            resp.raise_for_status()
-        except requests.RequestException as exc:
-            if attempt == 4:
-                raise
-            log.warning(f"Request error ({exc}), retry {attempt + 1}/5")
-            time.sleep(2 ** attempt)
+    resp = requests.get(_BASE_URL, params=params, timeout=30)
 
-    raise RuntimeError("OpenAlex: max retries exceeded")
+    if resp.status_code == 429:
+        retry_after = resp.headers.get("Retry-After", "unknown")
+        raise RuntimeError(
+            f"OpenAlex rate limit hit. Retry-After: {retry_after}s  "
+            f"(~{int(retry_after)//3600}h {(int(retry_after)%3600)//60}m). "
+            f"Wait before re-running, or delete cache/openalex/ to start fresh."
+            if retry_after.isdigit() else
+            f"OpenAlex rate limit hit. Retry-After header: {retry_after!r}"
+        )
+
+    resp.raise_for_status()
+    data = resp.json()
+    with open(cache_path, "w") as f:
+        json.dump(data, f)
+    return data
 
 
 def _extract_row(work: dict) -> dict:
@@ -133,38 +85,28 @@ def _extract_row(work: dict) -> dict:
     }
 
 
-def _count_phrase(phrase: str) -> int:
-    """Quick HEAD-equivalent: fetch one result to read meta.count."""
-    params = {
-        "filter":   f'title_and_abstract.search:"{phrase}"',
-        "per-page": 1,
-        "mailto":   RESEARCHER_EMAIL,
-        "select":   "id",
-    }
-    try:
-        resp = requests.get(_BASE_URL, params=params, timeout=10)
-        if resp.status_code == 200:
-            return resp.json().get("meta", {}).get("count", 0)
-    except Exception:
-        pass
-    return 0
+# ---------------------------------------------------------------------------
 
-
-def _fetch_phrase(phrase: str) -> list[dict]:
-    """Paginate through all OpenAlex results for one quoted phrase."""
+def fetch_openalex_candidates() -> pd.DataFrame:
+    """
+    Fetch all OpenAlex works matching SEARCH_PHRASE.
+    Returns a DataFrame with CANDIDATES_COLS schema.
+    """
     rows: list[dict] = []
     cursor = "*"
     page = 0
 
+    log.info(f"OpenAlex search: {SEARCH_PHRASE!r}")
+
     while cursor:
         params = {
-            "filter":   f'title_and_abstract.search:"{phrase}"',
+            "filter":   f'title_and_abstract.search:"{SEARCH_PHRASE}"',
             "per-page": _PER_PAGE,
             "cursor":   cursor,
             "mailto":   RESEARCHER_EMAIL,
             "select":   _SELECT,
         }
-        data    = _get_page(params)
+        data    = _get_page(params)   # raises clearly on 429
         results = data.get("results") or []
         if not results:
             break
@@ -172,41 +114,10 @@ def _fetch_phrase(phrase: str) -> list[dict]:
         rows.extend(_extract_row(w) for w in results)
         page  += 1
         cursor = (data.get("meta") or {}).get("next_cursor")
+
+        total = data.get("meta", {}).get("count", "?")
+        log.info(f"  page {page:>3} | {len(rows):>5,} / {total:,} fetched")
         time.sleep(OPENALEX_RATE_SEC)
 
-    return rows
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-def fetch_openalex_candidates() -> pd.DataFrame:
-    """
-    Search OpenAlex for papers matching explicit replication phrases.
-    Returns a DataFrame with CANDIDATES_COLS schema.
-    """
-    # Print estimated size before committing to the full fetch
-    log.info("Counting results per phrase...")
-    total_est = 0
-    for phrase in SEARCH_PHRASES:
-        n = _count_phrase(phrase)
-        total_est += n
-        log.info(f"  {phrase!r:45s} → {n:>6,}")
-        time.sleep(OPENALEX_RATE_SEC)
-    log.info(f"Estimated total (with overlap): ~{total_est:,}")
-
-    all_rows: list[dict] = []
-    for i, phrase in enumerate(SEARCH_PHRASES, 1):
-        log.info(f"[{i}/{len(SEARCH_PHRASES)}] Fetching {phrase!r}...")
-        rows = _fetch_phrase(phrase)
-        all_rows.extend(rows)
-        log.info(f"  → {len(rows):,} rows  (running total: {len(all_rows):,})")
-
-    if not all_rows:
-        log.warning("OpenAlex returned no results.")
-        return pd.DataFrame(columns=CANDIDATES_COLS)
-
-    df = pd.DataFrame(all_rows, columns=CANDIDATES_COLS)
-    log.info(f"OpenAlex: {len(df):,} rows before deduplication")
-    return df
+    log.info(f"Done — {len(rows):,} rows")
+    return pd.DataFrame(rows, columns=CANDIDATES_COLS)
