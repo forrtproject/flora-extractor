@@ -1,33 +1,77 @@
 {% extends "base.html" %}
-{% block title %}FLoRA — Single DOI Disambiguation{% endblock %}
+{% block title %}FLoRA — Single DOI{% endblock %}
+
+{% block head %}
+<style>
+.sdoi-page { max-width:1200px; margin:0 auto; padding:16px; }
+
+.sdoi-card { background:#fff; border:1px solid #e2e8f0; border-radius:10px;
+  box-shadow:0 1px 3px rgba(0,0,0,.06); padding:16px 20px; margin-bottom:16px; }
+
+.sdoi-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+
+#doi-input { flex:1; min-width:260px; padding:8px 14px; border:1px solid #e2e8f0;
+  border-radius:7px; font-size:13px; font-family:monospace; color:#1e293b; }
+#doi-input:focus { border-color:#2563eb; outline:none;
+  box-shadow:0 0 0 3px rgba(37,99,235,.1); }
+#doi-input::placeholder { color:#94a3b8; font-family:-apple-system,sans-serif; }
+
+.sdoi-btn { padding:8px 18px; border-radius:7px; font-size:13px; font-weight:600;
+  cursor:pointer; border:1px solid; white-space:nowrap; }
+#lookup-btn { background:#2563eb; color:#fff; border-color:#1d4ed8; }
+#lookup-btn:hover { background:#1d4ed8; }
+#lookup-btn:disabled { background:#94a3b8; border-color:#94a3b8; cursor:not-allowed; }
+#rerun-btn  { background:#fff; color:#475569; border-color:#cbd5e1; display:none; }
+#rerun-btn:hover { background:#f1f5f9; }
+#copy-debug-btn { background:#fff; color:#475569; border-color:#cbd5e1; display:none; }
+#copy-debug-btn:hover { background:#f1f5f9; }
+
+#status-msg { font-size:12px; color:#64748b; }
+#status-msg .spinner::after {
+  content:''; display:inline-block; width:12px; height:12px;
+  border:2px solid #e2e8f0; border-top-color:#2563eb;
+  border-radius:50%; animation:spin .6s linear infinite; margin-right:6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#empty-state { text-align:center; padding:60px 20px; color:#94a3b8; }
+#empty-state p { font-size:14px; margin-top:8px; }
+</style>
+{% endblock %}
 
 {% block content %}
-<div id="input-bar">
-  <input id="doi-input" type="text" placeholder="Enter doi_r  e.g. 10.1037/xlm0000127"
-         spellcheck="false" autocomplete="off"/>
-  <button id="lookup-btn" onclick="lookupDoi(false)">Look up</button>
-  <button id="rerun-btn"  onclick="lookupDoi(true)"
-          title="Clear LLM + GROBID caches, keep cached PDF, re-run full pipeline"
-          style="display:none">&#8635; Run Again</button>
-  <button id="copy-debug-btn" onclick="onCopyDebugDisamb()"
-          title="Copy Claude-friendly debug summary to clipboard"
-          style="display:none">&#128203; Copy Debug</button>
-  <span id="status-msg"></span>
-</div>
+<div class="sdoi-page">
 
-<main>
+  <div class="sdoi-card">
+    <div style="margin-bottom:12px">
+      <span style="font-size:13px;font-weight:700;color:#1e293b">Single DOI</span>
+      <span style="font-size:11px;color:#64748b;margin-left:8px">Run the full Stage 3 pipeline for one replication DOI</span>
+    </div>
+    <div class="sdoi-row">
+      <input id="doi-input" type="text"
+             placeholder="Enter DOI — e.g. 10.1037/xlm0000127"
+             spellcheck="false" autocomplete="off"/>
+      <button id="lookup-btn" class="sdoi-btn" onclick="lookupDoi(false)">Look up</button>
+      <button id="rerun-btn"  class="sdoi-btn" onclick="lookupDoi(true)"
+              title="Clear LLM + GROBID caches, keep cached PDF, re-run full pipeline">&#8635; Re-run</button>
+      <button id="copy-debug-btn" class="sdoi-btn" onclick="onCopyDebugDisamb()"
+              title="Copy debug summary to clipboard">Copy Debug</button>
+      <span id="status-msg"></span>
+    </div>
+  </div>
+
   <div id="empty-state">
-    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"
-         fill="none" viewBox="0 0 24 24" stroke="currentColor" style="opacity:.4;display:block;margin:0 auto 12px">
+    <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"
+         fill="none" viewBox="0 0 24 24" stroke="currentColor" style="opacity:.3;display:block;margin:0 auto 10px">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
             d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0
                00.707-.293l2.414-2.414A1 1 0 0116.414 3H19a2 2 0 012 2v14a2
                2 0 01-2 2z"/>
     </svg>
-    <p>Enter a DOI to run the disambiguation pipeline.</p>
+    <p>Enter a replication DOI above to run the full extraction pipeline.</p>
   </div>
   <div id="results" style="display:none"></div>
-</main>
+
+</div>
 {% endblock %}
 
 {% block scripts %}

@@ -818,7 +818,60 @@ function renderDetail(div, d) {
       </div>
     </div>` : '';
 
-  div.innerHTML = sec1 + sec2 + sec3 + sec3b + sec4 + sec5 + sec6 + sec7;
+  div.innerHTML = `<div style="text-align:right;margin-bottom:10px">
+    <button class="copy-debug-btn"
+      style="padding:5px 14px;font-size:11px;border-radius:5px;border:1px solid #e2e8f0;
+             background:#fff;cursor:pointer;color:#475569">Copy Debug</button>
+  </div>` + sec1 + sec2 + sec3 + sec3b + sec4 + sec5 + sec6 + sec7;
+
+  const cpBtn = div.querySelector('.copy-debug-btn');
+  if (cpBtn) cpBtn.addEventListener('click', () => copyDebug(d));
+}
+
+function copyDebug(d) {
+  const lines = [
+    '=== FLoRA Extraction Debug ===',
+    `DOI (R):            ${d.doi_r}`,
+    `Title (R):          ${d.title_r || d.study_r || '—'}`,
+    `Year:               ${d.year_r}`,
+    `Source:             ${d.source}`,
+    `Filter Status:      ${d.filter_status}`,
+    `Filter Evidence:    ${d.filter_evidence}`,
+    '',
+    '--- Stage 3 Match Classification ---',
+    `Match Type:         ${d.original_match_type}`,
+    `Match Confidence:   ${d.original_match_confidence}`,
+    `Match Reasoning:    ${d.match_reasoning}`,
+    `Record:             Rank ${d.original_rank} of ${d.n_originals}`,
+    '',
+    '--- Resolved Original ---',
+    `DOI (O):            ${d.doi_o}`,
+    `Title (O):          ${d.title_o}`,
+    `Year (O):           ${d.year_o}`,
+    `Authors (O):        ${d.authors_o}`,
+    `Link Method:        ${d.link_method}`,
+    `Link Confidence:    ${d.link_confidence}`,
+    `Link Evidence:      ${d.link_evidence}`,
+    `LLM Reasoning:      ${d.llm_reasoning}`,
+    `Resolution Score:   ${d.resolution_score}`,
+    '',
+    '--- Outcome ---',
+    `Outcome:            ${d.outcome}`,
+    `Outcome Confidence: ${d.outcome_confidence}`,
+    `Outcome Quote:      ${d.outcome_phrase}`,
+    `Quote Source:       ${d.out_quote_source}`,
+    '',
+    '--- LLM Prompt (DOI Resolution) ---',
+    d.llm_prompt || '(not cached)',
+  ].join('\n');
+  navigator.clipboard.writeText(lines).then(() => {}, () => {
+    const ta = document.createElement('textarea');
+    ta.value = lines;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  });
 }
 
 /* Build a human-readable match-type prompt summary from the row data */

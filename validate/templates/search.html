@@ -149,7 +149,7 @@ function renderFiltered() {
 
   body.innerHTML = rows.map(r => `
     <tr class="dr" data-doi="${esc(r.doi_r)}" data-abs="${esc(r.abstract_r)}"
-        data-url="${esc(r.url_r)}" onclick="toggleRow(this)">
+        data-url="${esc(r.url_r)}">
       <td class="tarr">▶</td>
       <td class="tn">${r.idx}</td>
       <td class="tdoi" title="${esc(r.doi_r)}">${esc(r.doi_r)}</td>

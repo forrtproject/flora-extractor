@@ -303,7 +303,7 @@ def _extract_refs_via_pdf_direct(doi_r: str, pdf_path: Path) -> list[dict]:
         }
     """).strip()
 
-    from .llm import call_gemini_with_pdf
+    from .llm_client import call_gemini_with_pdf
     result = call_gemini_with_pdf(prompt, pdf_bytes)
 
     if not result or not isinstance(result.get("references"), list):
@@ -410,7 +410,7 @@ def _extract_refs_via_pdf_images(doi_r: str, pdf_path: Path) -> list[dict]:
     """).strip()
 
     # Lazy import to avoid circular dependency at module load time
-    from .llm import call_gemini_with_images
+    from .llm_client import call_gemini_with_images
     result = call_gemini_with_images(prompt, images)
 
     if not result or not isinstance(result.get("references"), list):

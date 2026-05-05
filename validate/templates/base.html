@@ -21,8 +21,6 @@
      class="{{ 'active' if active_page == 'filter' else '' }}">Filter</a>
   <a href="{{ url_for('extract_view.extract_page') }}"
      class="{{ 'active' if active_page == 'extract' else '' }}">Extract</a>
-  <a href="{{ url_for('input.input_page') }}"
-     class="{{ 'active' if active_page == 'input' else '' }}">Input</a>
   <a href="{{ url_for('disambiguation.index') }}"
      class="{{ 'active' if active_page == 'disambiguation' else '' }}">Single DOI</a>
   <a href="{{ url_for('flora.flora_page') }}"

@@ -31,7 +31,6 @@ def create_app(test_config: dict | None = None) -> Flask:
     # Blueprints
     from validate.routes.batch import batch_bp
     from validate.routes.multi_originals import multi_orig_bp
-    from validate.routes.input import input_bp
     from validate.routes.review import review_bp
     from validate.routes.export import export_bp
     from validate.routes.dashboard import dashboard_bp
@@ -44,7 +43,6 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     app.register_blueprint(batch_bp)
     app.register_blueprint(multi_orig_bp)
-    app.register_blueprint(input_bp)
     app.register_blueprint(review_bp)
     app.register_blueprint(export_bp)
     app.register_blueprint(dashboard_bp)
