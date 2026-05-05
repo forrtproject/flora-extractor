@@ -200,13 +200,3 @@ def fetch_i4r(
         int(yr.max()) if len(yr) else 0,
     )
     return df
-
-
-# ---------------------------------------------------------------------------
-# SCORE CSV loader
-# ---------------------------------------------------------------------------
-
-
-def load_score_csv(path: str) -> pd.DataFrame:
-    """Load a SCORE CSV file and map to CANDIDATES_COLS schema."""
-    raise NotImplementedError("load_score_csv is not yet implemented")
