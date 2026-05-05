@@ -1,0 +1,238 @@
+# search-keywords.yaml — replication discovery
+# Source: ported from apps/worker/src/services/replication/phraseDetection.ts (18 regexes),
+# expanded with Tier A and filtered Tier B additions reviewed 2026-05-04.
+# Regex variants converted to explicit `permutations` (API search endpoints don't accept regex).
+# Permutations are OR-bundled into a single ?search= query per source per run.
+#
+# Spec: docs/superpowers/specs/2026-05-04-replication-discovery-design.md §3.2
+version: 1
+
+verified_against:
+  openalex: "2026-05-04"
+  crossref: "2026-05-04"
+  semantic_scholar: "2026-05-04"
+
+keywords:
+  # === Original 18 ported from phraseDetection.ts ===
+
+  - id: REP_OF
+    phrase: "replication of"
+    weight: 1.0
+    permutations: ["replication of", "replications of"]
+    fields: [title, abstract]
+    notes: "highest-precision phrase"
+
+  - id: WE_REPLICATED
+    phrase: "we replicated"
+    weight: 0.95
+    permutations: ["we replicated", "we successfully replicated"]
+    fields: [title, abstract]
+
+  - id: WE_REPLICATE
+    phrase: "we replicate"
+    weight: 0.9
+    permutations: ["we replicate"]
+    fields: [title, abstract]
+
+  - id: REPLICATING_FINDINGS
+    phrase: "replicating the findings"
+    weight: 0.95
+    permutations: ["replicating the findings", "replicating the original findings"]
+    fields: [title, abstract]
+
+  - id: DIRECT_REP
+    phrase: "direct replication"
+    weight: 0.95
+    permutations: ["direct replication", "direct replications"]
+    fields: [title, abstract]
+
+  - id: CONCEPTUAL_REP
+    phrase: "conceptual replication"
+    weight: 0.85
+    permutations: ["conceptual replication", "conceptual replications"]
+    fields: [title, abstract]
+
+  - id: PREREGISTERED_REP
+    phrase: "preregistered replication"
+    weight: 0.95
+    permutations: ["preregistered replication", "pre-registered replication"]
+    fields: [title, abstract]
+
+  - id: REGISTERED_REP
+    phrase: "registered replication"
+    weight: 0.95
+    permutations: ["registered replication"]
+    fields: [title, abstract]
+
+  - id: FAILED_TO_REP
+    phrase: "failed to replicate"
+    weight: 0.95
+    permutations: ["failed to replicate"]
+    fields: [title, abstract]
+
+  - id: DID_NOT_REP
+    phrase: "did not replicate"
+    weight: 0.9
+    permutations: ["did not replicate"]
+    fields: [title, abstract]
+
+  - id: COULD_NOT_REPRODUCE
+    phrase: "could not reproduce"
+    weight: 0.9
+    permutations: ["could not reproduce"]
+    fields: [title, abstract]
+
+  - id: SUCCESSFULLY_REPLICATED
+    phrase: "successfully replicated"
+    weight: 0.9
+    permutations: ["successfully replicated"]
+    fields: [title, abstract]
+
+  - id: REPRODUCIBILITY_OF
+    phrase: "reproducibility of"
+    weight: 0.85
+    permutations: ["reproducibility of"]
+    fields: [title, abstract]
+
+  - id: REP_AND_EXTENSION
+    phrase: "replication and extension"
+    weight: 0.9
+    permutations: ["replication and extension", "replication and extensions", "replication & extension"]
+    fields: [title, abstract]
+
+  # === Tier A additions — high precision ===
+
+  - id: REGISTERED_REPLICATION_REPORT
+    phrase: "registered replication report"
+    weight: 0.95
+    permutations: ["registered replication report", "registered replication reports"]
+    fields: [title, abstract]
+    notes: "RRR is a specific replication format; replaces broader REGISTERED_REPORT_OF which caught any RR"
+
+  - id: REPLICATION_STUDY
+    phrase: "replication study"
+    weight: 0.9
+    permutations: ["replication study", "replication studies"]
+    fields: [title, abstract]
+    notes: "Extremely common phrasing"
+
+  - id: REPLICABILITY_OF
+    phrase: "replicability of"
+    weight: 0.85
+    permutations: ["replicability of"]
+    fields: [title, abstract]
+    notes: "Mirrors reproducibility of"
+
+  - id: ATTEMPTED_REPLICATION
+    phrase: "attempted to replicate"
+    weight: 0.9
+    permutations:
+      - "attempted to replicate"
+      - "attempt to replicate"
+      - "we attempted to replicate"
+      - "an attempt to replicate"
+      - "attempts to replicate"
+    fields: [title, abstract]
+    notes: "Common phrasing especially in failed-replication papers"
+
+  - id: FAIL_TO_REPLICATE
+    phrase: "fail to replicate"
+    weight: 0.95
+    permutations:
+      - "fail to replicate"
+      - "fails to replicate"
+      - "failure to replicate"
+      - "failures to replicate"
+    fields: [title, abstract]
+    notes: "Verb-conjugation gap from FAILED_TO_REP (past tense only)"
+
+  - id: REPRODUCIBILITY_PROJECT
+    phrase: "Reproducibility Project"
+    weight: 0.95
+    permutations: ["Reproducibility Project"]
+    fields: [title, abstract]
+    notes: "Captures RP:P, RP:CB, RP:Cog and similar named projects"
+
+  - id: REP_QUALIFIED
+    template: "{qualifier} replication"
+    weight: 0.85
+    qualifiers:
+      # Originally ported
+      - close
+      - "high-powered"
+      - "high powered"
+      - "pre-registered"
+      - preregistered
+      - "large-scale"
+      - "large scale"
+      # Tier A extensions
+      - exact
+      - systematic
+      - many-labs
+      - "many labs"
+      - near
+      - approximate
+      - operational
+      - external
+      - independent
+      - multi-lab
+      - multilab
+      - collaborative
+    fields: [title, abstract]
+    notes: "Original 7 qualifiers + 12 Tier-A extensions"
+
+  - id: REPRODUCE_FINDINGS
+    phrase: "reproduce findings"
+    weight: 0.85
+    permutations:
+      - "reproduce findings"
+      - "reproduces findings"
+      - "reproduced findings"
+      - "reproduce the findings"
+      - "reproduce the original findings"
+      - "reproduce effects"
+      - "reproduces effects"
+      - "reproduced effects"
+      - "reproduce the effects"
+      - "reproduce the original effects"
+      - "reproduce results"
+      - "reproduces results"
+      - "reproduced results"
+      - "reproduce the results"
+      - "reproduce the original results"
+    fields: [title, abstract]
+    notes: "expansion of reproduce[ds]?\\s+(?:the\\s+)?(?:original\\s+)?(?:findings?|effects?|results?)"
+
+  # === Tier B additions — medium precision, flagged for benchmark review ===
+
+  - id: NON_REPLICATION
+    phrase: "non-replication"
+    weight: 0.85
+    permutations: ["non-replication", "non-replications", "non-replicable"]
+    fields: [title, abstract]
+    notes: "Tier B — review after first benchmark; small risk of methodology-essay FPs"
+
+  - id: NO_REPLICATION_OF
+    phrase: "no replication of"
+    weight: 0.85
+    permutations: ["no replication of"]
+    fields: [title, abstract]
+    notes: "Tier B — typical phrasing in failure-replication abstracts"
+
+  - id: TEST_REPLICABILITY
+    phrase: "test the replicability of"
+    weight: 0.8
+    permutations:
+      - "test the replicability of"
+      - "examine the replicability of"
+      - "investigate the replicability"
+      - "assess the replicability"
+    fields: [title, abstract]
+    notes: "Tier B — slight risk of methodology papers about replicability rather than doing it; classifier back-ref gate filters those"
+
+  - id: REPRODUCIBILITY_STUDY
+    phrase: "reproducibility study"
+    weight: 0.85
+    permutations: ["reproducibility study", "reproducibility studies"]
+    fields: [title, abstract]
+    notes: "Tier B — same caveat as TEST_REPLICABILITY"

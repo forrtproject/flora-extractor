@@ -1,0 +1,21 @@
+# ranking-weights.yaml — replication discovery
+# Pure-deterministic search_score formula. Same candidate, same spec → same score.
+#
+# Spec: docs/superpowers/specs/2026-05-04-replication-discovery-design.md §3.5
+version: 1
+
+formula:
+  contributions:
+    - field: title_match
+      weight: 1.0
+      condition: "any keyword permutation matched the title"
+    - field: abstract_match
+      weight: 0.5
+      condition: "any keyword permutation matched the abstract (only counted if no title match)"
+    - field: multi_keyword_bonus
+      weight: 0.2
+      condition: "two or more distinct keyword IDs matched (across any field)"
+    - field: source_diversity_bonus
+      weight: 0.1
+      condition: "two or more sources returned the same DOI"
+  cap: 1.0
