@@ -21,8 +21,18 @@ from shared.schema import CANDIDATES_COLS
 from shared.utils import cache_key, clean_doi
 
 
-# Fixed search phrase used to retrieve candidate replication papers from OpenAlex.
-SEARCH_PHRASE = "registered replication report"
+SEARCH_PHRASES = [
+    "replication of",
+    "direct replication",
+    "close replication",
+    "conceptual replication",
+    "replication study",
+    "reproduction study",
+    "we replicated",
+    "attempts to replicate",
+    "registered replication report",
+    "pre-registered replication",
+]
 
 # OpenAlex works endpoint and query defaults.
 _BASE_URL = "https://api.openalex.org/works"
@@ -33,6 +43,11 @@ _SELECT = (
     "id,doi,display_name,publication_year,"
     "authorships,primary_location,abstract_inverted_index"
 )
+
+SOURCE_TAG = "openalex"
+
+# Prototype safeguard: keep API use modest during development.
+MAX_PAGES_PER_PHRASE = 1
 
 
 def _year_filter(from_year: Optional[int], to_year: Optional[int]) -> Optional[str]:
@@ -111,7 +126,7 @@ def _get_page(params: dict) -> dict:
 
     # 1) Cache hit: serve the response from disk, no network call.
     if cache_path.exists():
-        with open(cache_path) as f:
+        with open(cache_path, encoding="utf-8") as f:
             return json.load(f)
 
     # 2) Cache miss: call the API, with retry and backoff on transient errors.
@@ -182,6 +197,7 @@ def _extract_row(work: dict) -> dict:
     # Primary location gives us journal/source name and landing/pdf URLs.
     location = work.get("primary_location") or {}
     source = location.get("source") or {}
+    open_access = work.get("open_access") or {}
 
     # Normalise field names to the *_r convention used by the candidates schema.
     return {
@@ -192,20 +208,20 @@ def _extract_row(work: dict) -> dict:
         "year_r": work.get("publication_year"),
         "authors_r": authors,
         "journal_r": source.get("display_name"),
-        # Prefer a human-readable landing page URL; fall back to direct PDF.
-        "url_r": location.get("landing_page_url") or location.get("pdf_url"),
+        "url_r": open_access.get("oa_url"),
         "openalex_id_r": work.get("id"),
         # Provenance marker: useful as we merge candidates from multiple sources.
-        "source": "openalex",
+        "source": SOURCE_TAG,
     }
 
 
-def fetch_openalex_candidates(
+def fetch_phrase(
+    phrase: str,
     from_year: Optional[int] = None,
     to_year:   Optional[int] = None,
-) -> pd.DataFrame:
+) -> list[dict]:
     """
-    Fetch OpenAlex works matching SEARCH_PHRASE.
+    Fetch OpenAlex works matching phrase.
 
     Results are requested page by page using cursor pagination and converted
     into the standard candidate-paper schema defined by ``CANDIDATES_COLS``.
@@ -214,6 +230,8 @@ def fetch_openalex_candidates(
 
     Parameters
     ----------
+    phrase : str
+        Search phrase.
     from_year : int, optional
         Earliest publication year (inclusive). None = no lower bound.
     to_year : int, optional
@@ -221,7 +239,7 @@ def fetch_openalex_candidates(
 
     Returns
     -------
-    pd.DataFrame with CANDIDATES_COLS schema.
+    list of dictionaries with CANDIDATES_COLS schema.
     Stops cleanly on rate-limit, returning whatever was collected
     """
     rows: list[dict] = []
@@ -230,16 +248,16 @@ def fetch_openalex_candidates(
     page = 0
 
     yr_filt = _year_filter(from_year, to_year)
-    base_filter = f'title_and_abstract.search:"{SEARCH_PHRASE}"'
+    base_filter = f'title_and_abstract.search:"{phrase}"'
     oa_filter   = f"{base_filter},{yr_filt}" if yr_filt else base_filter
 
     log.info("OpenAlex search: %r  years=%s–%s",
-             SEARCH_PHRASE,
+             phrase,
              from_year or "any",
              to_year   or "any")
 
     # Keep requesting pages until there is no next cursor or the API tells us to stop.
-    while cursor:
+    while cursor and page < MAX_PAGES_PER_PHRASE:
         # The filter searches both title and abstract text. We also include a
         # mailto parameter as recommended in the OpenAlex API docs so they
         # can reach out in case of abusive traffic.
@@ -271,13 +289,31 @@ def fetch_openalex_candidates(
         cursor = (data.get("meta") or {}).get("next_cursor")
         total = data.get("meta", {}).get("count", "?")
 
-        log.info(f"  page {page:>3} | {len(rows):>5,} / {total} fetched")
+        log.info(
+            "OpenAlex phrase=%r page=%d rows=%d total=%s",
+            phrase,
+            page,
+            len(rows),
+            total,
+        )
 
         # Throttle between requests to avoid hitting OpenAlex rate limits.
-        time.sleep(OPENALEX_RATE_SEC)
+        if cursor and page < MAX_PAGES_PER_PHRASE:
+            time.sleep(OPENALEX_RATE_SEC)
 
     log.info(f"Done — {len(rows):,} rows")
 
-    # We always construct the DataFrame with the canonical column order, even
-    # if some columns are entirely missing/null for this particular query.
-    return pd.DataFrame(rows, columns=CANDIDATES_COLS)
+    return rows
+
+
+def fetch_openalex_candidates(
+    from_year: Optional[int] = None,
+    to_year: Optional[int] = None,
+) -> pd.DataFrame:
+    all_rows: list[dict] = []
+
+    for i, phrase in enumerate(SEARCH_PHRASES, 1):
+        log.info("%d/%d Searching OpenAlex phrase %r", i, len(SEARCH_PHRASES), phrase)
+        all_rows.extend(fetch_phrase(phrase, from_year, to_year))
+
+    return pd.DataFrame(all_rows, columns=CANDIDATES_COLS)
