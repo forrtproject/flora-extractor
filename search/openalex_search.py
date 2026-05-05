@@ -203,7 +203,7 @@ def _extract_row(work: dict) -> dict:
     return {
         # DOI is cleaned to a canonical form for downstream matching.
         "doi_r": clean_doi(work.get("doi") or ""),
-        "title_r": work.get("display_name"),
+        "title_r": work.get("display_name") or work.get("title"),
         "abstract_r": _reconstruct_abstract(work.get("abstract_inverted_index")),
         "year_r": work.get("publication_year"),
         "authors_r": authors,
