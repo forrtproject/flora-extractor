@@ -3,10 +3,8 @@ Smoke tests for the YAML-spec discovery engine. Live API calls are NOT made —
 adapters are exercised via injected sessions in higher-level tests.
 """
 
-from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
 
 from search.engine.candidate_normalizer import (
     merge_candidates,
@@ -24,7 +22,6 @@ from search.engine.keyword_expander import (
     load_spec_keywords,
 )
 from search.engine.types import (
-    CandidateAuthor,
     MatchedKeyword,
     NormalizedCandidate,
     RawCandidate,
