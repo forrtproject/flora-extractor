@@ -13,12 +13,12 @@ Key differences from OpenAlex:
 - An API key can be supplied via the ``S2_API_KEY`` environment variable.
 
 Public API:
-    fetch_semantic_scholar() -> pd.DataFrame
+    fetch_semantic_scholar_candidates(from_year, to_year) → pd.DataFrame
 """
-
 import json
 import os
 import time
+from typing import Optional
 
 import pandas as pd
 import requests
@@ -54,8 +54,7 @@ S2_API_KEY = os.getenv("S2_API_KEY", "")
 S2_CACHE_DIR = OA_CACHE_DIR.parent / "semantic_scholar"
 S2_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-_BASE_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
-
+_BASE_URL   = "https://api.semanticscholar.org/graph/v1/paper/search"
 # Maximum number of records returned per page by relevance search.
 _PER_PAGE = 100
 
@@ -78,6 +77,18 @@ SOURCE_TAG = "semantic_scholar"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _year_param(from_year: Optional[int], to_year: Optional[int]) -> Optional[str]:
+    """Build the S2 'year' query parameter, or None if unrestricted.
+    S2 accepts: YYYY  |  YYYY-YYYY  |  YYYY-  |  -YYYY
+    """
+    if from_year is None and to_year is None:
+        return None
+    if from_year and to_year:
+        return f"{from_year}-{to_year}"
+    if from_year:
+        return f"{from_year}-"
+    return f"-{to_year}"
 
 
 def _get_page(params: dict) -> dict:
@@ -165,19 +176,19 @@ def _extract_row(paper: dict) -> dict:
 
     # Map source-specific fields into the shared candidate schema.
     return {
-        "doi_r": doi,
+        "doi_r": clean_doi(ext_ids.get("DOI") or ""),
         "title_r": paper.get("title"),
         "abstract_r": paper.get("abstract"),
         "year_r": paper.get("year"),
         "authors_r": authors,
-        "journal_r": journal,
-        "url_r": url,
-        "openalex_id_r": None,  # Semantic Scholar records do not carry OpenAlex IDs.
+        "journal_r": (paper.get("journal") or {}).get("name"),
+        "url_r": (paper.get("openAccessPdf") or {}).get("url"),
+        "openalex_id_r": None,
         "source": SOURCE_TAG,
     }
 
 
-def _fetch_phrase(phrase: str) -> list[dict]:
+def _fetch_phrase(phrase: str, year_param: Optional[str],) -> list[dict]:
     """Fetch all available relevance-search results for one search phrase.
 
     Semantic Scholar relevance search uses offset-based pagination. This helper
@@ -189,16 +200,17 @@ def _fetch_phrase(phrase: str) -> list[dict]:
     ----------
     phrase
         Search phrase to send to Semantic Scholar.
+    year_param
+        Years to search.
 
     Returns
     -------
     list[dict]
         Candidate rows extracted from all fetched pages for the phrase.
     """
-    rows: list[dict] = []
+    rows = []
     offset = 0
 
-    # Keep requesting pages until we hit the API's maximum supported offset.
     while offset <= _MAX_OFFSET:
         params = {
             "query": phrase,
@@ -206,12 +218,14 @@ def _fetch_phrase(phrase: str) -> list[dict]:
             "offset": offset,
             "limit": _PER_PAGE,
         }
+        if year_param:
+            params["year"] = year_param
 
         try:
             data = _get_page(params)
         except StopIteration as e:
             # Stop early but keep the rows we have already accumulated.
-            log.warning(f"  {e} ({len(rows):,} rows collected)")
+            log.warning("  %s (%d rows collected)", e, len(rows))
             break
 
         # Semantic Scholar returns papers under the "data" key.
@@ -221,12 +235,9 @@ def _fetch_phrase(phrase: str) -> list[dict]:
             break
 
         # Convert page results into the shared internal schema.
-        rows.extend(_extract_row(paper) for paper in items)
-        total = data.get("total", "?")
-
-        log.info(
-            f"  [{phrase!r}] offset {offset:>4} | {len(rows):>5,} / {total} fetched"
-        )
+        rows.extend(_extract_row(p) for p in items)
+        log.info("  [%r] offset %5d | %5d / %s fetched",
+                 phrase, offset, len(rows), data.get("total", "?"))
 
         # If the API returned fewer than the requested page size, this is the last page.
         if len(items) < _PER_PAGE:
@@ -236,7 +247,7 @@ def _fetch_phrase(phrase: str) -> list[dict]:
         offset += _PER_PAGE
         time.sleep(_RATE_SEC)
 
-    log.info(f"  [{phrase!r}] done — {len(rows):,} rows")
+    log.info("  [%r] done — %d rows", phrase, len(rows))
     return rows
 
 
@@ -244,18 +255,27 @@ def _fetch_phrase(phrase: str) -> list[dict]:
 # Public API
 # ---------------------------------------------------------------------------
 
-
-def fetch_semantic_scholar() -> pd.DataFrame:
-    """Search Semantic Scholar for replication-related papers.
+def fetch_semantic_scholar(
+    from_year: Optional[int] = None,
+    to_year:   Optional[int] = None,
+) -> pd.DataFrame:
+    """
+    Search Semantic Scholar for papers matching replication phrases.
 
     Each phrase in ``SEARCH_PHRASES`` is queried independently. Results are
     concatenated into a single DataFrame using the standard candidate-paper
     schema defined by ``CANDIDATES_COLS``.
 
+    Parameters
+    ----------
+    from_year : int, optional
+        Earliest publication year (inclusive).
+    to_year : int, optional
+        Latest publication year (inclusive).
+
     Returns
     -------
-    pd.DataFrame
-        DataFrame with columns ordered according to ``CANDIDATES_COLS``.
+    pd.DataFrame with CANDIDATES_COLS schema.
 
     Notes
     -----
@@ -269,20 +289,19 @@ def fetch_semantic_scholar() -> pd.DataFrame:
             "Semantic Scholar: no API key — using unauthenticated access; requests may be throttled"
         )
 
-    all_rows: list[dict] = []
+    yr = _year_param(from_year, to_year)
+    log.info("Semantic Scholar search  years=%s–%s  api_key=%s",
+             from_year or "any", to_year or "any", bool(S2_API_KEY))
 
-    # Search phrases one by one so logs clearly show progress and failures can be
-    # attributed to a specific query phrase.
+    all_rows: list[dict] = []
     for i, phrase in enumerate(SEARCH_PHRASES, 1):
-        log.info(f"[{i}/{len(SEARCH_PHRASES)}] Searching S2: {phrase!r}")
-        all_rows.extend(_fetch_phrase(phrase))
+        log.info("[%d/%d] Searching S2: %r", i, len(SEARCH_PHRASES), phrase)
+        all_rows.extend(_fetch_phrase(phrase, yr))
 
     if not all_rows:
-        # Return an empty DataFrame with the canonical schema rather than an
-        # empty frame with unpredictable columns.
         log.warning("Semantic Scholar returned no results.")
         return pd.DataFrame(columns=CANDIDATES_COLS)
 
     df = pd.DataFrame(all_rows, columns=CANDIDATES_COLS)
-    log.info(f"Semantic Scholar: {len(df):,} rows before deduplication")
+    log.info("Semantic Scholar done — %d rows (pre-dedup)", len(df))
     return df

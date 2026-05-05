@@ -35,6 +35,15 @@ _SELECT = (
 )
 
 
+def _year_filter(from_year: Optional[int], to_year: Optional[int]) -> Optional[str]:
+    """Build the OpenAlex publication_year filter fragment, or None if unrestricted."""
+    if from_year is None and to_year is None:
+        return None
+    lo = from_year or 1000
+    hi = to_year   or 9999
+    return f"publication_year:{lo}-{hi}"
+
+
 def _reconstruct_abstract(inverted_index: Optional[dict]) -> Optional[str]:
     """Rebuild plain abstract text from an OpenAlex inverted index.
 
@@ -191,25 +200,43 @@ def _extract_row(work: dict) -> dict:
     }
 
 
-def fetch_openalex_candidates() -> pd.DataFrame:
-    """Fetch OpenAlex works matching ``SEARCH_PHRASE``.
+def fetch_openalex_candidates(
+    from_year: Optional[int] = None,
+    to_year:   Optional[int] = None,
+) -> pd.DataFrame:
+    """
+    Fetch OpenAlex works matching SEARCH_PHRASE.
 
     Results are requested page by page using cursor pagination and converted
     into the standard candidate-paper schema defined by ``CANDIDATES_COLS``.
     The function respects the configured inter-request delay and stops cleanly
     if OpenAlex rate-limits the search, returning any rows collected so far.
 
+    Parameters
+    ----------
+    from_year : int, optional
+        Earliest publication year (inclusive). None = no lower bound.
+    to_year : int, optional
+        Latest publication year (inclusive). None = no upper bound.
+
     Returns
     -------
-    pd.DataFrame
-        DataFrame with columns ordered according to ``CANDIDATES_COLS``.
+    pd.DataFrame with CANDIDATES_COLS schema.
+    Stops cleanly on rate-limit, returning whatever was collected
     """
     rows: list[dict] = []
     # OpenAlex cursor pagination starts at "*".
     cursor = "*"
     page = 0
 
-    log.info(f"OpenAlex search: {SEARCH_PHRASE!r}")
+    yr_filt = _year_filter(from_year, to_year)
+    base_filter = f'title_and_abstract.search:"{SEARCH_PHRASE}"'
+    oa_filter   = f"{base_filter},{yr_filt}" if yr_filt else base_filter
+
+    log.info("OpenAlex search: %r  years=%s–%s",
+             SEARCH_PHRASE,
+             from_year or "any",
+             to_year   or "any")
 
     # Keep requesting pages until there is no next cursor or the API tells us to stop.
     while cursor:
@@ -217,7 +244,7 @@ def fetch_openalex_candidates() -> pd.DataFrame:
         # mailto parameter as recommended in the OpenAlex API docs so they
         # can reach out in case of abusive traffic.
         params = {
-            "filter": f'title_and_abstract.search:"{SEARCH_PHRASE}"',
+            "filter": oa_filter,
             "per-page": _PER_PAGE,
             "cursor": cursor,
             "mailto": RESEARCHER_EMAIL,

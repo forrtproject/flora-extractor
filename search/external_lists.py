@@ -1,3 +1,4 @@
+from typing import Optional
 """
 external_lists.py — Scrapers for I4R list and SCORE CSV.
 
@@ -50,9 +51,19 @@ _PAPER_RE  = re.compile(
 )
 
 
-def fetch_i4r() -> pd.DataFrame:
+def fetch_i4r(
+    from_year: Optional[int] = None,
+    to_year:   Optional[int] = None,
+) -> pd.DataFrame:
     """
     Scrape I4R discussion papers from the IDEAS/RepEC series page.
+
+    Parameters
+    ----------
+    from_year : int, optional
+        Earliest publication year (inclusive). None = no lower bound.
+    to_year : int, optional
+        Latest publication year (inclusive). None = no upper bound.
 
     Returns a DataFrame with CANDIDATES_COLS schema.
     DOIs are not available on this page; enrich later via OpenAlex/Crossref.
@@ -99,6 +110,11 @@ def fetch_i4r() -> pd.DataFrame:
         return pd.DataFrame(columns=CANDIDATES_COLS)
 
     df = pd.DataFrame(rows, columns=CANDIDATES_COLS)
+
+    if from_year is not None:
+        df = df[df["year_r"].isna() | (df["year_r"] >= from_year)]
+    if to_year is not None:
+        df = df[df["year_r"].isna() | (df["year_r"] <= to_year)]
     yr = df["year_r"].dropna()
     log.info("I4R: %d papers scraped (%d–%d)",
              len(df), int(yr.min()) if len(yr) else 0, int(yr.max()) if len(yr) else 0)
