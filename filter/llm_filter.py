@@ -11,7 +11,6 @@ a no-op: it leaves the rule-based ``needs_review`` rows untouched and logs a
 warning. That keeps offline runs working and avoids fake "LLM verdicts."
 """
 
-import json
 import time
 from typing import Optional
 
