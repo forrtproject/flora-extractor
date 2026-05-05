@@ -1,0 +1,31 @@
+# exclusion-patterns.yaml — replication discovery
+# Source: ported VERBATIM from apps/worker/src/services/replication/phraseDetection.ts:24-29
+# (NON_SCHOLARLY_REPLICATION_CONTEXTS).
+#
+# Applied as POST-fetch filter on title + abstract — no API supports negative regex
+# search reliably. If any pattern matches, the candidate is dropped before reaching
+# the classifier.
+#
+# Spec: docs/superpowers/specs/2026-05-04-replication-discovery-design.md §3.3
+version: 1
+
+patterns:
+  - id: BIOLOGICAL
+    regex: '\b(?:dna|rna|viral|virus|cell|cellular|chromosome|plasmid)\s+replication\b'
+    flags: [i]
+    description: "DNA/RNA/cell/viral replication — biology, not psychology"
+
+  - id: TECHNICAL_OBJECT
+    regex: '\b(?:replication of (?:the )?(?:apparatus|code|dataset|data|database|model|method|pipeline|protocol|software|simulation)|(?:apparatus|code|dataset|data|database|model|method|pipeline|protocol|software|simulation)\s+replication)\b'
+    flags: [i]
+    description: "code/data/method replication (both 'replication of X' and 'X replication' forms), not psychological"
+
+  - id: TECHNICAL_VERB
+    regex: '\breplicat(?:e|ed|ing)\s+(?:the )?(?:apparatus|code|dataset|data|database|model|method|pipeline|protocol|software|simulation)\b'
+    flags: [i]
+    description: "verb form of technical replication"
+
+  - id: STRUCTURAL
+    regex: '\breplication (?:fork|origin|stress|timing)\b'
+    flags: [i]
+    description: "molecular biology structural terms"
