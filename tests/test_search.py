@@ -3,7 +3,8 @@ Tests for search functions
 """
 import pytest
 
-from search.openalex_search import fetch_openalex_candidates
+from shared.config import OA_CACHE_DIR
+from search import openalex_search as oa
 from search.semantic_scholar_search import fetch_semantic_scholar
 from search.external_lists import fetch_i4r
 
@@ -12,38 +13,139 @@ from search.external_lists import fetch_i4r
 # OpenAlex
 # ---------------------------------------------------------------------------
 
+class DummyResponse:
+    def __init__(self, payload, status_code=200, headers=None):
+        self._payload = payload
+        self.status_code = status_code
+        self.headers = headers or {}
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise oa.requests.HTTPError(f"HTTP {self.status_code}")
+
+
+def make_payload():
+    return {
+        "meta": {"count": 1, "next_cursor": None},
+        "results": [
+            {
+                "id": "https://openalex.org/W123",
+                "doi": "https://doi.org/10.1234/ABC.567",
+                "title": "A direct replication study",
+                "publication_year": 2024,
+                "authorships": [
+                    {"author": {"display_name": "Alice Smith"}},
+                    {"author": {"display_name": "Bob Jones"}},
+                ],
+                "primary_location": {
+                    "source": {"display_name": "Journal of Replications"}
+                },
+                "open_access": {"oa_url": "https://example.org/paper.pdf"},
+                "abstract_inverted_index": {
+                    "This": [0],
+                    "is": [1],
+                    "a": [2],
+                    "replication": [3],
+                    "abstract": [4],
+                },
+            }
+        ],
+    }
+
+
+def test_extract_row_maps_expected_fields():
+    row = oa._extract_row(make_payload()["results"][0])
+
+    assert row["doi_r"] == "10.1234/abc.567"
+    assert row["title_r"] == "A direct replication study"
+    assert row["abstract_r"] == "This is a replication abstract"
+    assert row["year_r"] == 2024
+    assert row["authors_r"] == "Alice Smith; Bob Jones"
+    assert row["journal_r"] == "Journal of Replications"
+    assert row["url_r"] == "https://example.org/paper.pdf"
+    assert row["openalex_id_r"] == "https://openalex.org/W123"
+    assert row["source"] == "openalex"
+
+
+def test_fetch_openalex_candidates_schema_and_cleaning(monkeypatch, tmp_path):
+    monkeypatch.setattr(oa, "OA_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(oa, "SEARCH_PHRASES", ["direct replication"])
+    monkeypatch.setattr(oa.time, "sleep", lambda *_: None)
+
+    calls = []
+
+    def fake_get(url, params, timeout):
+        calls.append((url, params, timeout))
+        return DummyResponse(make_payload())
+
+    monkeypatch.setattr(oa.requests, "get", fake_get)
+
+    df = oa.fetch_openalex_candidates()
+
+    assert list(df.columns) == oa.CANDIDATES_COLS
+    assert len(df) == 1
+    assert df.loc[0, "doi_r"] == "10.1234/abc.567"
+    assert df.loc[0, "abstract_r"] == "This is a replication abstract"
+    assert calls
+
+
+def test_fetch_openalex_candidates_uses_cache_on_second_run(monkeypatch, tmp_path):
+    monkeypatch.setattr(oa, "OA_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(oa, "SEARCH_PHRASES", ["direct replication"])
+    monkeypatch.setattr(oa.time, "sleep", lambda *_: None)
+
+    call_count = {"n": 0}
+
+    def fake_get(url, params, timeout):
+        call_count["n"] += 1
+        return DummyResponse(make_payload())
+
+    monkeypatch.setattr(oa.requests, "get", fake_get)
+
+    df1 = oa.fetch_openalex_candidates()
+    df2 = oa.fetch_openalex_candidates()
+
+    assert call_count["n"] == 1
+    assert list(df1.columns) == oa.CANDIDATES_COLS
+    assert list(df2.columns) == oa.CANDIDATES_COLS
+    assert df1.equals(df2)
+
+
 class TestOpenAlexDateRange:
 
     def test_single_year_count(self):
         """2020 should return exactly 14 'registered replication report' papers."""
-        df = fetch_openalex_candidates(from_year=2020, to_year=2020)
+        df = oa.fetch_openalex_candidates(from_year=2020, to_year=2020)
         assert len(df) == 14, f"Expected 14 rows for 2020, got {len(df)}"
 
     def test_single_year_all_years_correct(self):
-        df = fetch_openalex_candidates(from_year=2020, to_year=2020)
+        df = oa.fetch_openalex_candidates(from_year=2020, to_year=2020)
         bad = df[df["year_r"] != 2020]
         assert bad.empty, f"Rows with wrong year:\n{bad[['doi_r','year_r']]}"
 
     def test_no_filter_returns_results(self):
-        df = fetch_openalex_candidates()
+        df = oa.fetch_openalex_candidates()
         assert len(df) > 0
 
     def test_from_year_only(self):
-        df = fetch_openalex_candidates(from_year=2024)
+        df = oa.fetch_openalex_candidates(from_year=2024)
         assert (df["year_r"].dropna() >= 2024).all()
 
     def test_to_year_only(self):
-        df = fetch_openalex_candidates(to_year=2015)
+        df = oa.fetch_openalex_candidates(to_year=2015)
         assert len(df) > 0
         assert (df["year_r"].dropna() <= 2015).all()
 
     def test_empty_range_returns_empty(self):
-        df = fetch_openalex_candidates(from_year=2050, to_year=2050)
+        df = oa.fetch_openalex_candidates(from_year=2050, to_year=2050)
         assert len(df) == 0
 
     # --- DOI spot-checks (fill in once you know the expected DOIs) ---
     # def test_known_doi_present_2020(self):
-    #     df = fetch_openalex_candidates(from_year=2020, to_year=2020)
+    #     df = oa.fetch_openalex_candidates(from_year=2020, to_year=2020)
     #     assert "10.XXXX/YYYY" in df["doi_r"].values
 
 
