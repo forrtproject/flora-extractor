@@ -1,8 +1,8 @@
 """
 llm.py — LLM-based original study identification.
 
-Primary model  : Gemini (gemini-3-flash-preview)
-Fallback model : OpenAI (gpt-5-mini)
+Primary model  : OpenRouter / Qwen (when OPENROUTER_API_KEY is set)
+Fallback chain : Gemini → OpenAI
 
 Public API:
     identify_original_with_llm(doi_r, study_r, abstract_r, pattern,
@@ -19,7 +19,7 @@ from typing import Optional
 import requests
 
 from .config import (
-    GEMINI_API_KEYS, GEMINI_MODEL,
+    GEMINI_API_KEYS, GEMINI_MODEL, GEMINI_LIGHT_MODEL, GEMINI_HEAVY_MODEL,
     LLM_CACHE_DIR, LLM_RATE_SEC,
     OPENAI_API_KEY, OPENAI_MODEL,
     OPENROUTER_API_KEY, OPENROUTER_HEAVY_MODEL,
@@ -107,6 +107,15 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
                           f"{'trying next key' if key_idx + 1 < len(GEMINI_API_KEYS) else 'no more keys'}")
                     log.warning("Gemini quota exhausted on %s", key_label)
                     break   # break inner retry loop → next key
+
+                if r.status_code == 404:
+                    # Model not found — changing keys won't help; bail out immediately.
+                    err_msg = r.json().get("error", {}).get("message", r.text[:200])
+                    log.error(
+                        "Gemini model not found: %s — update GEMINI_LIGHT_MODEL or "
+                        "GEMINI_HEAVY_MODEL in .env. API said: %s", model, err_msg
+                    )
+                    return None, f"model not found: {model}"
 
                 if r.status_code in (500, 503) and attempt == 0:
                     last_error = f"HTTP {r.status_code} on {key_label} (retrying)"
@@ -227,6 +236,41 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
     except Exception as e:
         log.warning("OpenRouter call failed (model=%s): %s", use_model, e)
         return None, f"exception: {e}"
+
+
+# ── Unified LLM router ───────────────────────────────────────────────────────
+
+def call_llm(prompt: str, gemini_model: str = "") -> tuple[Optional[dict], str, str]:
+    """
+    Route a prompt through the configured provider chain and return the first
+    successful result.
+
+    Order: OpenRouter (when OPENROUTER_API_KEY set) → Gemini → OpenAI.
+
+    gemini_model — Gemini model to use when falling back (defaults to GEMINI_LIGHT_MODEL).
+                   Ignored when OpenRouter answers first.
+
+    Returns (result_dict_or_None, model_used, error_description).
+    model_used is the exact model string that answered, or "" if all providers failed.
+    """
+    from .config import GEMINI_LIGHT_MODEL as _LIGHT
+
+    err = "n/a"
+    if OPENROUTER_API_KEY:
+        result, err = call_openrouter(prompt)
+        if result:
+            return result, OPENROUTER_HEAVY_MODEL, ""
+
+    model = gemini_model or _LIGHT
+    result, gemini_err = call_gemini(prompt, model=model)
+    if result:
+        return result, model, ""
+
+    result, openai_err = call_openai(prompt)
+    if result:
+        return result, OPENAI_MODEL, ""
+
+    return None, "", f"OpenRouter: {err} | Gemini: {gemini_err} | OpenAI: {openai_err}"
 
 
 # ── Prompt builder ────────────────────────────────────────────────────────────
@@ -376,7 +420,7 @@ def identify_original_with_llm(doi_r:          str,
     pdf_url   — URL to include in prompt when PDF download failed.
     html_text — extracted landing-page text as full-text substitute.
 
-    Order: Gemini (primary) → OpenAI (fallback).
+    Order: OpenRouter/Qwen (primary when OPENROUTER_API_KEY set) → Gemini → OpenAI.
     Successful results are cached in LLM_CACHE_DIR.
     """
     cache_file = LLM_CACHE_DIR / f"llm_{cache_key(doi_r)}.json"
@@ -395,19 +439,37 @@ def identify_original_with_llm(doi_r:          str,
                                              validator_note=validator_note)
     result     = None
     llm_source = "none"
+    llm_model  = ""
     llm_error  = ""
+    or_err     = ""
 
-    result, gemini_err = call_gemini(prompt)
-    if result:
-        llm_source = "gemini"
-        time.sleep(LLM_RATE_SEC)
-    else:
-        result, openai_err = call_openai(prompt)
+    # Primary: OpenRouter (Qwen) when key is configured.
+    if OPENROUTER_API_KEY:
+        result, or_err = call_openrouter(prompt)
         if result:
-            llm_source = "openai"
+            llm_source = "openrouter"
+            llm_model  = OPENROUTER_HEAVY_MODEL
+            time.sleep(LLM_RATE_SEC)
+
+    # Fallback: Gemini → OpenAI.
+    if not result:
+        result, gemini_err = call_gemini(prompt, model=GEMINI_HEAVY_MODEL)
+        if result:
+            llm_source = "gemini"
+            llm_model  = GEMINI_HEAVY_MODEL
             time.sleep(LLM_RATE_SEC)
         else:
-            llm_error = f"Gemini: {gemini_err} | OpenAI: {openai_err}"
+            result, openai_err = call_openai(prompt)
+            if result:
+                llm_source = "openai"
+                llm_model  = OPENAI_MODEL
+                time.sleep(LLM_RATE_SEC)
+            else:
+                parts = []
+                if OPENROUTER_API_KEY:
+                    parts.append(f"OpenRouter: {or_err}")
+                parts.extend([f"Gemini: {gemini_err}", f"OpenAI: {openai_err}"])
+                llm_error = " | ".join(parts)
 
     _empty = {
         "resolved"          : False,
@@ -418,6 +480,7 @@ def identify_original_with_llm(doi_r:          str,
         "resolved_author_o" : "",
         "resolution_score"  : 0.0,
         "llm_source"        : "none",
+        "llm_model"         : "",
         "llm_confidence"    : "",
         "llm_evidence"      : "",
         "llm_reasoning"     : "",
@@ -463,6 +526,7 @@ def identify_original_with_llm(doi_r:          str,
         "resolved_author_o" : resolved_auth,
         "resolution_score"  : conf_score,
         "llm_source"        : llm_source,
+        "llm_model"         : llm_model,
         "llm_confidence"    : conf_str,
         "llm_evidence"      : result.get("evidence",  ""),
         "llm_reasoning"     : result.get("reasoning", ""),
@@ -593,12 +657,13 @@ def call_gemini_with_pdf(prompt: str,
 
 # ── Multi-original prompt & dispatcher ────────────────────────────────────────
 
-def build_multi_original_prompt(study_r:    str,
-                                  abstract_r: str,
-                                  candidates: list[dict],
-                                  sections:   dict,
-                                  pdf_url:    str = "",
-                                  html_text:  str = "") -> str:
+def build_multi_original_prompt(study_r:     str,
+                                  abstract_r:  str,
+                                  candidates:  list[dict],
+                                  sections:    dict,
+                                  pdf_url:     str = "",
+                                  html_text:   str = "",
+                                  force_multi: bool = False) -> str:
     """
     Build the LLM prompt for identifying ALL original studies in a multi-target
     replication paper.
@@ -640,6 +705,16 @@ def build_multi_original_prompt(study_r:    str,
             f"    Use it if you can access it to identify all replicated originals.\n"
         )
 
+    force_multi_directive = ""
+    if force_multi:
+        force_multi_directive = textwrap.dedent("""
+    ⚠ CONFIRMED MULTI-TARGET: Automated rules have definitively identified this paper
+    as a large-scale multi-target replication (e.g., Many Labs, Registered Replication
+    Report). You MUST set is_false_positive to false. Every study listed in the reference
+    list that the paper explicitly replicates is an original — list ALL of them. If the
+    abstract says "replications of N studies", aim to find N originals.
+    """).strip()
+
     prompt = textwrap.dedent(f"""
     You are an expert in research methodology identifying ALL original studies
     that are replicated or reproduced in a scientific paper.
@@ -647,6 +722,7 @@ def build_multi_original_prompt(study_r:    str,
     This paper has been classified as potentially targeting MULTIPLE original studies.
     Your task: determine if this classification is correct (true multi-target) or a
     false positive (only 1 original), and list ALL originals found.
+    {force_multi_directive}
 
     ## Replication paper
     **Title:** {study_r}
@@ -679,13 +755,18 @@ def build_multi_original_prompt(study_r:    str,
 
     ## Task
 
-    Identify ALL distinct original studies that this paper directly replicates or reproduces.
+    Identify ALL distinct original studies that this paper directly replicates or reproduces,
+    and for each one determine the replication outcome.
 
     Rules:
     - A study is being replicated if the paper explicitly runs the same procedure again
     - Do NOT include studies that are merely cited for context or background
     - If you find only 1 original, set is_false_positive to true
     - For each candidate number used, reference it in candidate_number (or null if not in list)
+    - For outcome: look for the result for THAT SPECIFIC study (e.g. in a results table or
+      per-study section), NOT the overall aggregate across all studies
+    - outcome values: success (effect confirmed), failure (effect not found), mixed
+      (partial), uninformative (cannot determine from available text)
 
     Respond with **only** this JSON (no prose outside the braces):
     {{
@@ -700,7 +781,9 @@ def build_multi_original_prompt(study_r:    str,
           "first_author_surname": "<surname of first author>",
           "year": <4-digit year or null>,
           "evidence": "<1-2 sentence quote from the paper showing this study is replicated>",
-          "confidence": "<high|medium|low>"
+          "confidence": "<high|medium|low>",
+          "outcome": "<success|failure|mixed|uninformative>",
+          "outcome_evidence": "<1-2 sentence quote showing the outcome for THIS specific study, or empty if not found>"
         }}
       ]
     }}
@@ -709,13 +792,14 @@ def build_multi_original_prompt(study_r:    str,
     return prompt
 
 
-def identify_all_originals_with_llm(doi_r:      str,
-                                      study_r:    str,
-                                      abstract_r: str,
-                                      candidates: list[dict],
-                                      sections:   dict,
-                                      pdf_url:    str = "",
-                                      html_text:  str = "") -> dict:
+def identify_all_originals_with_llm(doi_r:        str,
+                                      study_r:      str,
+                                      abstract_r:   str,
+                                      candidates:   list[dict],
+                                      sections:     dict,
+                                      pdf_url:      str = "",
+                                      html_text:    str = "",
+                                      force_multi:  bool = False) -> dict:
     """
     Identify ALL original studies in a multi-target replication paper.
 
@@ -731,36 +815,51 @@ def identify_all_originals_with_llm(doi_r:      str,
         }
     """
     cache_file = LLM_CACHE_DIR / f"multi_{cache_key(doi_r)}.json"
-    if cache_file.exists():
+    if cache_file.exists() and not force_multi:
+        # When force_multi=True we skip the cache to ensure the stronger prompt runs.
         with cache_file.open(encoding="utf-8") as fh:
             cached = json.load(fh)
         cached.setdefault("llm_source", "cache")
         return cached
 
     _empty = {
-        "resolved"        : False,
+        "resolved"         : False,
         "is_false_positive": False,
-        "n_originals"     : 0,
-        "originals"       : [],
-        "llm_source"      : "none",
-        "llm_reasoning"   : "",
+        "n_originals"      : 0,
+        "originals"        : [],
+        "llm_source"       : "none",
+        "llm_reasoning"    : "",
     }
 
-    prompt     = build_multi_original_prompt(study_r, abstract_r, candidates,
-                                              sections, pdf_url=pdf_url,
-                                              html_text=html_text)
+    prompt = build_multi_original_prompt(study_r, abstract_r, candidates,
+                                          sections, pdf_url=pdf_url,
+                                          html_text=html_text,
+                                          force_multi=force_multi)
     result     = None
     llm_source = "none"
+    llm_model  = ""
 
-    result, _ = call_gemini(prompt)
-    if result:
-        llm_source = "gemini"
-        time.sleep(LLM_RATE_SEC)
-    else:
-        result, _ = call_openai(prompt)
+    # Primary: OpenRouter (Qwen) when key is configured.
+    if OPENROUTER_API_KEY:
+        result, _ = call_openrouter(prompt)
         if result:
-            llm_source = "openai"
+            llm_source = "openrouter"
+            llm_model  = OPENROUTER_HEAVY_MODEL
             time.sleep(LLM_RATE_SEC)
+
+    # Fallback: Gemini → OpenAI.
+    if not result:
+        result, _ = call_gemini(prompt, model=GEMINI_HEAVY_MODEL)
+        if result:
+            llm_source = "gemini"
+            llm_model  = GEMINI_HEAVY_MODEL
+            time.sleep(LLM_RATE_SEC)
+        else:
+            result, _ = call_openai(prompt)
+            if result:
+                llm_source = "openai"
+                llm_model  = OPENAI_MODEL
+                time.sleep(LLM_RATE_SEC)
 
     if not result:
         return _empty
@@ -783,27 +882,38 @@ def identify_all_originals_with_llm(doi_r:      str,
                     o.setdefault("first_author_surname", c.get("first_author", ""))
             except (ValueError, TypeError):
                 pass
+        raw_outcome = str(o.get("outcome", "uninformative") or "uninformative").lower()
+        if raw_outcome not in {"success", "failure", "mixed", "uninformative", "descriptive"}:
+            raw_outcome = "uninformative"
         originals.append({
-            "rank"           : o.get("rank", len(originals) + 1),
-            "title"          : str(o.get("title", "") or ""),
-            "doi"            : str(o.get("doi",   "") or ""),
-            "first_author"   : str(o.get("first_author_surname", "") or ""),
-            "year"           : o.get("year"),
-            "evidence"       : str(o.get("evidence",   "") or ""),
-            "confidence"     : str(o.get("confidence", "low") or "low"),
-            "candidate_number": cand_num,
+            "rank"             : o.get("rank", len(originals) + 1),
+            "title"            : str(o.get("title", "") or ""),
+            "doi"              : str(o.get("doi",   "") or ""),
+            "first_author"     : str(o.get("first_author_surname", "") or ""),
+            "year"             : o.get("year"),
+            "evidence"         : str(o.get("evidence",        "") or ""),
+            "confidence"       : str(o.get("confidence", "low") or "low"),
+            "candidate_number" : cand_num,
+            "outcome"          : raw_outcome,
+            "outcome_evidence" : str(o.get("outcome_evidence", "") or ""),
         })
 
-    n_originals     = len(originals)
-    is_false_positive = bool(result.get("is_false_positive", n_originals <= 1))
+    n_originals = len(originals)
+    # When force_multi=True the rule already confirmed this is multi-target;
+    # never trust is_false_positive from the LLM in that case.
+    if force_multi:
+        is_false_positive = False
+    else:
+        is_false_positive = bool(result.get("is_false_positive", n_originals <= 1))
 
     output = {
-        "resolved"        : n_originals > 0,
+        "resolved"         : n_originals > 0,
         "is_false_positive": is_false_positive,
-        "n_originals"     : n_originals,
-        "originals"       : originals,
-        "llm_source"      : llm_source,
-        "llm_reasoning"   : str(result.get("reasoning", "") or ""),
+        "n_originals"      : n_originals,
+        "originals"        : originals,
+        "llm_source"       : llm_source,
+        "llm_model"        : llm_model,
+        "llm_reasoning"    : str(result.get("reasoning", "") or ""),
     }
 
     if n_originals > 0:

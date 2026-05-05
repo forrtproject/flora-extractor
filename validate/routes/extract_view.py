@@ -125,6 +125,7 @@ def _enrich_detail(row: dict) -> dict:
         # LLM identification
         "llm_prompt":     llm.get("llm_prompt",    ""),
         "llm_source":     llm.get("llm_source",    row.get("link_method", "")),
+        "llm_model":      llm.get("llm_model",     row.get("link_llm_model", "")),
         "llm_confidence": llm.get("llm_confidence",""),
         "llm_evidence":   llm.get("llm_evidence",  row.get("link_evidence", "")),
         "llm_reasoning":  llm.get("llm_reasoning", ""),
@@ -132,8 +133,10 @@ def _enrich_detail(row: dict) -> dict:
         "resolution_score": llm.get("resolution_score", ""),
         # Outcome LLM
         "outcome_llm_prompt": outcome_cache.get("llm_prompt", ""),
+        "outcome_llm_model":  outcome_cache.get("llm_model",  ""),
         # Match-type classification
-        "match_reasoning": match_cache.get("reasoning", ""),
+        "match_reasoning":      match_cache.get("reasoning", ""),
+        "classify_llm_model":   match_cache.get("classify_llm_model", ""),
         # GROBID / PDF section extraction
         "grobid_status":   grobid.get("status",    ""),
         "n_grobid_refs":   grobid.get("n_refs",    len(grobid.get("refs", []))),
@@ -206,8 +209,10 @@ def api_list():
             "title_o":       r.get("title_o",       ""),
             "original_rank": r.get("original_rank", "1"),
             "n_originals":   r.get("n_originals",   "1"),
-            "match_type":    r.get("original_match_type", ""),
+            "match_type":     r.get("original_match_type", ""),
             "link_confidence": r.get("link_confidence", ""),
+            "link_llm_model":  r.get("link_llm_model",  ""),
+            "pair_id":         r.get("pair_id",         ""),
         })
 
     return jsonify({"rows": rows, "total": len(rows)})
@@ -238,21 +243,35 @@ def api_detail():
     return jsonify(_enrich_detail(row))
 
 
+def _call_model(prompt: str, model: str) -> tuple:
+    """Route a prompt to the right provider based on model name prefix."""
+    model_lower = model.lower()
+    if model_lower.startswith("gemini"):
+        from shared.llm_client import call_gemini
+        return call_gemini(prompt, model=model)
+    if model_lower.startswith(("gpt-", "o1", "o3", "o4")):
+        from shared.llm_client import call_openai
+        return call_openai(prompt, model=model)
+    from shared.llm_client import call_openrouter
+    return call_openrouter(prompt, model=model)
+
+
 @extract_view_bp.route("/api/extract/run-doi", methods=["POST"])
 def api_run_doi():
     """
-    Run the Stage 3 LLM identification step for one DOI with a selectable model.
+    Re-run all 3 Stage 3 LLM steps for one DOI using a selectable model.
 
-    Reads context from extracted.csv + caches (no new API calls for PDF/GROBID).
-    Does NOT update extracted.csv — intended for model comparison only.
+    Reads context from extracted.csv + caches. Does NOT write to extracted.csv
+    or any cache — intended for model comparison only.
 
     Body JSON:
       { "doi": "10.xxx/yyy", "model": "gemini-2.5-flash-lite-preview-06-17" }
 
-    model routing:
-      starts with "gemini"      → call_gemini(prompt, model=model)
-      starts with "gpt" / "o1"  → call_openai(prompt, model=model)
-      anything else             → call_openrouter(prompt, model=model)
+    Returns:
+      { doi, model,
+        classify: { prompt, result, error },
+        link:     { prompt, result, error, n_candidates, n_refs },
+        outcome:  { prompt, result, error } }
     """
     data  = request.get_json(force=True) or {}
     doi   = clean_doi(data.get("doi", "").strip())
@@ -282,17 +301,17 @@ def api_run_doi():
     except ValueError:
         year_r = 2099
 
-    # Get candidates from OpenAlex cache (does not make new API calls if cached)
+    # Shared: candidates and GROBID (from cache — no new API calls)
     try:
         from shared.openalex_client import find_all_candidates, extract_author_year_patterns
         candidates = find_all_candidates(doi, oa_id_r, title_r, abstract_r, year_r, "")
         patterns   = extract_author_year_patterns(abstract_r, max_year=year_r)
         pattern    = "; ".join(f"{p['surname']} ({p['year']})" for p in patterns[:5])
-    except Exception as e:
+    except Exception:
         candidates = []
         pattern    = ""
+        patterns   = []
 
-    # Get GROBID sections from cache
     key    = cache_key(doi)
     grobid = _read_json_cache(GROBID_CACHE_DIR / f"{key}.json")
     sections = {
@@ -300,34 +319,83 @@ def api_run_doi():
         "methods":    grobid.get("methods",  ""),
         "references": grobid.get("refs",     []),
     }
+    html_text = str(row.get("html_text", "") or "")
 
-    # Build prompt
-    from shared.llm_client import build_identification_prompt
-    prompt = build_identification_prompt(
-        title_r, abstract_r, pattern, candidates, sections
+    # ── Step 1: Match classification ─────────────────────────────────────────
+    distinct_pairs = {(p["surname"], p["year"]) for p in patterns}
+    abstract_snip  = (abstract_r[:800] + "…") if len(abstract_r) > 800 else abstract_r
+    pattern_lines  = "\n".join(f"- {s} ({y})" for s, y in sorted(distinct_pairs)) or "(none found)"
+    cand_lines     = "\n".join(
+        f"{i+1}. \"{c.get('title','?')}\" ({c.get('year','?')}) — {c.get('first_author','?')}"
+        for i, c in enumerate(candidates[:15])
+    ) or "(none found)"
+
+    classify_prompt = (
+        "Classify how many original studies this replication paper targets.\n\n"
+        f"TITLE: {title_r}\n"
+        f"ABSTRACT: {abstract_snip or '(not available)'}\n\n"
+        f"CITED AUTHOR-YEAR PATTERNS IN ABSTRACT ({len(distinct_pairs)} distinct):\n"
+        f"{pattern_lines}\n\n"
+        f"CANDIDATE ORIGINALS FROM OPENALEX ({len(candidates)} found):\n"
+        f"{cand_lines}\n\n"
+        "Classify as ONE of: single_original | multiple_match | multiple_original\n"
+        "Key rules: numeric counts ('replications of 28') and project names "
+        "(Many Labs, RRR) signal multiple_original. A large candidate list alone does NOT.\n\n"
+        '{"original_match_type":"<single_original|multiple_match|multiple_original>",'
+        '"original_match_confidence":"<high|medium|low>","reasoning":"<brief>"}'
     )
+    classify_result, classify_error = _call_model(classify_prompt, model)
 
-    # Call the selected model
-    result, error = None, ""
-    model_lower = model.lower()
-    if model_lower.startswith("gemini"):
-        from shared.llm_client import call_gemini
-        result, error = call_gemini(prompt, model=model)
-    elif model_lower.startswith(("gpt-", "o1", "o3", "o4")):
-        from shared.llm_client import call_openai
-        result, error = call_openai(prompt, model=model)
-    else:
-        from shared.llm_client import call_openrouter
-        result, error = call_openrouter(prompt, model=model)
+    # ── Step 2: DOI resolution ───────────────────────────────────────────────
+    from shared.llm_client import build_identification_prompt
+    link_prompt = build_identification_prompt(
+        title_r, abstract_r, pattern, candidates, sections,
+        html_text=html_text,
+    )
+    link_result, link_error = _call_model(link_prompt, model)
+
+    # ── Step 3: Outcome classification ──────────────────────────────────────
+    fulltext = str(grobid.get("intro", "") or html_text or "")
+    abstract_snip_out = (abstract_r[:1000] + "…") if len(abstract_r) > 1000 else abstract_r
+    text_snip = (fulltext[:800] + "…") if len(fulltext) > 800 else fulltext
+
+    outcome_prompt = (
+        "You are a research methodology expert. Classify the replication outcome.\n\n"
+        f"TITLE: {title_r}\n"
+        f"ABSTRACT: {abstract_snip_out or '(not available)'}\n"
+        f"FULLTEXT EXCERPT: {text_snip or '(not available)'}\n\n"
+        "Outcome values:\n"
+        "- success: replication confirmed the original finding\n"
+        "- failure: replication failed to find the original effect\n"
+        "- mixed: some aspects replicated, others did not\n"
+        "- uninformative: cannot determine from available text\n"
+        "- descriptive: adapted methods in a new context without testing the original claim\n\n"
+        'Respond with ONLY this JSON:\n'
+        '{"outcome":"<value>","outcome_phrase":"<supporting quote, max 2 sentences>",'
+        '"outcome_confidence":"<high|medium|low>","out_quote_source":"<abstract|fulltext|title>"}'
+    )
+    outcome_result, outcome_error = _call_model(outcome_prompt, model)
 
     return jsonify({
-        "doi":         doi,
-        "model":       model,
-        "prompt":      prompt,
-        "result":      result,
-        "error":       error,
-        "n_candidates": len(candidates),
-        "n_refs":      len(sections.get("references", [])),
+        "doi":   doi,
+        "model": model,
+        "classify": {
+            "prompt": classify_prompt,
+            "result": classify_result,
+            "error":  classify_error,
+        },
+        "link": {
+            "prompt":       link_prompt,
+            "result":       link_result,
+            "error":        link_error,
+            "n_candidates": len(candidates),
+            "n_refs":       len(sections.get("references", [])),
+        },
+        "outcome": {
+            "prompt": outcome_prompt,
+            "result": outcome_result,
+            "error":  outcome_error,
+        },
     })
 
 

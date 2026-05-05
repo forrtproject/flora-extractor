@@ -49,15 +49,17 @@ SERPAPI_KEYS: list[str] = [
 ]
 SERPAPI_KEY = SERPAPI_KEYS[0] if SERPAPI_KEYS else ""  # backward-compat
 
-# All Gemini keys in rotation order
-GEMINI_API_KEYS: list[str] = [
-    k for k in [
-        os.getenv("GEMINI_API_KEY",   ""),
-        os.getenv("GEMINI_API_KEY_2", ""),
-        os.getenv("GEMINI_API_KEY_3", ""),
-        os.getenv("GEMINI_API_KEY_4", ""),
-    ] if k
-]
+# Dynamic Gemini key loading — add GEMINI_API_KEY_N to .env for any N ≥ 2.
+# Keys must be sequential (2, 3, 4, …); loading stops at the first missing slot.
+_gemini_key_list = [os.getenv("GEMINI_API_KEY", "")]
+_key_idx = 2
+while True:
+    _k = os.getenv(f"GEMINI_API_KEY_{_key_idx}", "")
+    if not _k:
+        break
+    _gemini_key_list.append(_k)
+    _key_idx += 1
+GEMINI_API_KEYS: list[str] = [k for k in _gemini_key_list if k]
 GEMINI_API_KEY = GEMINI_API_KEYS[0] if GEMINI_API_KEYS else ""  # backward-compat
 
 RESEARCHER_EMAIL = os.getenv("RESEARCHER_EMAIL", "research@example.com")
@@ -68,7 +70,8 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 
 # Per-task model selection — light for classify_match_type & code_outcome,
 # heavy for the full identify_original_with_llm linking step.
-GEMINI_LIGHT_MODEL = os.getenv("GEMINI_LIGHT_MODEL", GEMINI_MODEL)
+# Default light to gemini-2.0-flash-lite (stable, high rate limits).
+GEMINI_LIGHT_MODEL = os.getenv("GEMINI_LIGHT_MODEL", "gemini-2.5-flash-lite")
 GEMINI_HEAVY_MODEL = os.getenv("GEMINI_HEAVY_MODEL", GEMINI_MODEL)
 
 # OpenRouter (OpenAI-compatible API at openrouter.ai) — optional alternative LLMs

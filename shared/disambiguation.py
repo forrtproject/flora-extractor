@@ -45,9 +45,13 @@ _UMBRELLA_PATTERNS = re.compile(
 )
 
 
-def _is_umbrella_paper(title: str) -> bool:
+def is_umbrella_paper(title: str) -> bool:
     """Return True if the title looks like an umbrella/framework project paper."""
     return bool(_UMBRELLA_PATTERNS.search(title or ""))
+
+
+# Keep private alias so existing internal calls still work
+_is_umbrella_paper = is_umbrella_paper
 
 
 def _tokens(text: str) -> set[str]:

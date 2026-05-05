@@ -12,14 +12,15 @@ Usage:
     python -m extract.run_extract
 """
 import json
+import re
 import time
 
 import pandas as pd
 
-from shared.config import BASE_DIR, DATA_DIR, LLM_CACHE_DIR, LLM_RATE_SEC, log
-from shared.llm_client import call_gemini, call_openai
+from shared.config import BASE_DIR, DATA_DIR, GEMINI_LIGHT_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC, log
+from shared.llm_client import call_llm
 from shared.openalex_client import extract_author_year_patterns, find_all_candidates
-from shared.schema import EXTRACTED_COLS
+from shared.schema import EXTRACTED_COLS, make_pair_id
 from shared.utils import cache_key, clean_doi
 from extract.link_original import run_for_doi
 from extract.multi_original import run_multi_original_for_doi
@@ -27,6 +28,7 @@ from extract.code_outcome import extract_outcome
 
 # ── Internal → schema link_method mapping ────────────────────────────────────
 _METHOD_MAP = {
+    "citation_context_match":         "author_year_match",
     "same_author_year_title_overlap": "author_year_match",
     "single_candidate_after_requery": "author_year_match",
     "grobid_ref_match":               "author_year_match",
@@ -42,6 +44,73 @@ _METHOD_MAP = {
 }
 
 _VALID_MATCH_TYPES = {"single_original", "multiple_match", "multiple_original"}
+_VALID_OUTCOMES    = {"success", "failure", "mixed", "uninformative", "descriptive"}
+
+# ── Rule-based multi-original detection ──────────────────────────────────────
+# These patterns catch papers whose title or abstract unambiguously declares
+# that N independent original studies are being replicated (Many Labs, RRR, etc).
+# They run BEFORE the LLM and BEFORE the cache so they cannot be overridden by
+# a stale cached single_original result.
+
+_MULTI_TITLE_RE = re.compile(
+    r"\bmany\s+labs\b"
+    r"|\bregistered\s+replication\s+report\b"
+    r"|\bmany\s+analysts\b"
+    r"|\breplicat(?:ion|ions?)\s+of\s+\d+\b",
+    re.IGNORECASE,
+)
+
+# Each pattern must capture the count of studies in group 1.
+_MULTI_ABSTRACT_RES: list[re.Pattern] = [
+    # "replications of 28"  /  "replication of 10 studies"
+    re.compile(r"\breplicat(?:ion|ions?)\s+of\s+(\d+)\b", re.IGNORECASE),
+    # "replicated 28 original findings"  /  "replicating 10 classic studies"
+    re.compile(
+        r"\b(?:replicated?|replicating)\s+(?:a\s+total\s+of\s+)?(\d+)\s*"
+        r"(?:original|independent|published|classic|contemporary|distinct|previous)?"
+        r"\s*(?:studi(?:es)?|findings?|experiments?|effects?|papers?)\b",
+        re.IGNORECASE,
+    ),
+    # "28 classic and contemporary findings"  /  "27 independent studies"
+    re.compile(
+        r"\b(\d+)\s+(?:original|independent|published|classic|contemporary|distinct)"
+        r"(?:\s+and\s+\w+(?:\s+\w+)?)?\s+(?:studi(?:es)?|findings?|experiments?|effects?)\b",
+        re.IGNORECASE,
+    ),
+]
+
+_MULTI_N_MIN = 3  # counts < 3 might be multiple_match, not multiple_original
+
+
+def _rule_classify_multi_original(title_r: str, abstract_r: str) -> "dict | None":
+    """
+    Return a classification dict if title or abstract contains unambiguous signals
+    that the paper replicates N ≥ 3 independent original studies. Returns None
+    when no rule fires (caller should fall through to LLM).
+    """
+    if _MULTI_TITLE_RE.search(title_r):
+        return {
+            "original_match_type":       "multiple_original",
+            "original_match_confidence": "high",
+            "rule_fired":                True,
+            "reasoning": "Title matches a known multi-target replication project or explicit 'replication of N' pattern.",
+        }
+    for pattern in _MULTI_ABSTRACT_RES:
+        m = pattern.search(abstract_r)
+        if not m:
+            continue
+        try:
+            n = int(m.group(1))
+        except (IndexError, ValueError, TypeError):
+            continue
+        if n >= _MULTI_N_MIN:
+            return {
+                "original_match_type":       "multiple_original",
+                "original_match_confidence": "high",
+                "rule_fired":                True,
+                "reasoning": f"Abstract explicitly states replication of {n} studies.",
+            }
+    return None
 
 
 def _map_method(method: str) -> str:
@@ -70,24 +139,35 @@ def classify_match_type(row: dict) -> dict:
     Classify original_match_type for a filtered.csv row.
 
     Steps:
+      0. Rule-based pre-screening (title/abstract patterns) — fires before cache
       1. Extract author-year citation patterns from abstract_r
       2. Fetch referenced works from OpenAlex, match against patterns
       3. Call LLM with: title, abstract, matched candidates, count of distinct patterns
       4. Return {"original_match_type": ..., "original_match_confidence": ...}
 
-    Cached as cache_key(doi_r + "_match_type"). On OpenAlex failure, defaults
-    to single_original (logs a warning, does not crash).
+    Rules run BEFORE the cache so a stale single_original result from a prior LLM
+    call cannot override a deterministic rule match (e.g. Many Labs, RRR papers).
+    LLM results are cached as cache_key(doi_r + "_match_type"). On OpenAlex failure,
+    defaults to single_original (logs a warning, does not crash).
     """
     doi_r      = clean_doi(str(row.get("doi_r", "")))
+    title_r    = str(row.get("title_r",    ""))
+    abstract_r = str(row.get("abstract_r", ""))
+    oa_id_r    = str(row.get("openalex_id_r", ""))
+    year_r_str = str(row.get("year_r", ""))
+
+    # Step 0: deterministic rules — catch Many Labs / RRR / "replications of N" papers
+    # without an LLM call and without being overridden by a cached LLM result.
+    rule = _rule_classify_multi_original(title_r, abstract_r)
+    if rule:
+        log.info("[%s] classify_match_type: rule fired → %s", doi_r, rule["original_match_type"])
+        return rule
+
     cache_file = LLM_CACHE_DIR / f"match_type_{cache_key(doi_r + '_match_type')}.json"
     if cache_file.exists():
         with cache_file.open(encoding="utf-8") as fh:
             return json.load(fh)
 
-    abstract_r = str(row.get("abstract_r", ""))
-    title_r    = str(row.get("title_r",    ""))
-    oa_id_r    = str(row.get("openalex_id_r", ""))
-    year_r_str = str(row.get("year_r", ""))
     try:
         year_r = int(year_r_str) if year_r_str else 2099
     except (ValueError, TypeError):
@@ -141,20 +221,25 @@ def _llm_classify_match_type(doi_r: str,
         f"{cand_lines}\n\n"
         "Classify as ONE of:\n"
         "- single_original: paper targets one specific original study\n"
-        "- multiple_match: 2–5 candidates share same author/year; paper targets ONE original"
-        " but disambiguation is needed\n"
+        "- multiple_match: 2–5 candidates share the SAME author/year; paper targets ONE"
+        " original but disambiguation is needed (e.g. two papers by Smith 2005)\n"
         "- multiple_original: paper explicitly replicates SEVERAL INDEPENDENT original"
-        " studies (will produce N output rows)\n\n"
-        "Key rule: citing multiple background studies is NOT multiple_original. Only choose\n"
-        "multiple_original if the paper's stated goal is to replicate EACH of several independent studies.\n\n"
+        " studies as its stated goal (will produce N output rows, one per original)\n\n"
+        "Key rules:\n"
+        "1. Merely citing many background studies is NOT multiple_original.\n"
+        "2. A large candidate list from OpenAlex does NOT mean multiple_original —"
+        " it may just reflect many citations.\n"
+        "3. STRONG signals for multiple_original: explicit count in abstract"
+        " (e.g. 'replications of 28 studies'), project names like Many Labs or"
+        " Registered Replication Report, a table of target studies each with its own protocol.\n"
+        "4. multiple_match applies when ONE study is targeted but there are 2–5 candidates"
+        " with the identical author/year — not when there are many different author/year pairs.\n\n"
         'Respond with ONLY this JSON:\n'
         '{"original_match_type": "<single_original|multiple_match|multiple_original>", '
         '"original_match_confidence": "<high|medium|low>", "reasoning": "<brief>"}'
     )
 
-    result, _ = call_gemini(prompt)
-    if not result:
-        result, _ = call_openai(prompt)
+    result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_LIGHT_MODEL)
     if result:
         time.sleep(LLM_RATE_SEC)
         mtype = result.get("original_match_type", "single_original")
@@ -163,10 +248,16 @@ def _llm_classify_match_type(doi_r: str,
             mtype = "single_original"
         if conf not in {"high", "medium", "low"}:
             conf = "low"
-        return {"original_match_type": mtype, "original_match_confidence": conf}
+        return {
+            "original_match_type":       mtype,
+            "original_match_confidence": conf,
+            "classify_llm_model":        model_used,
+            "reasoning":                 str(result.get("reasoning", "") or ""),
+        }
 
     log.warning("[%s] classify_match_type: LLM failed — defaulting to single_original", doi_r)
-    return {"original_match_type": "single_original", "original_match_confidence": "low"}
+    return {"original_match_type": "single_original", "original_match_confidence": "low",
+            "classify_llm_model": ""}
 
 
 # ── Data adapters ─────────────────────────────────────────────────────────────
@@ -206,16 +297,20 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
     # propagate study_r → title_r if title_r is absent (old seeded data uses study_r)
     if not row.get("title_r"):
         row["title_r"] = row.get("study_r", "")
+    doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
+    doi_o_clean = clean_doi(link.get("resolved_doi_o", "") or "")
     row.update({
+        "pair_id":           make_pair_id(doi_r_clean, doi_o_clean),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
-        "doi_o":           clean_doi(link.get("resolved_doi_o",   "") or ""),
+        "doi_o":           doi_o_clean,
         "title_o":         str(link.get("resolved_title_o", "") or ""),
         "year_o":          str(link.get("resolved_year_o",  "") or ""),
         "authors_o":       str(link.get("resolved_author_o","") or ""),
         "link_method":     _map_method(link.get("resolution_method", "target_pending")),
         "link_evidence":   str(link.get("llm_evidence",     "") or ""),
         "link_confidence": _score_to_confidence(link.get("resolution_score", 0)),
+        "link_llm_model":  str(link.get("llm_model",        "") or ""),
         "outcome":             outcome.get("outcome",             "uninformative"),
         "outcome_phrase":      outcome.get("outcome_phrase",      ""),
         "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
@@ -230,23 +325,28 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
 
 
 def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
-                     match_type: str, match_conf: str, n: int) -> dict:
+                     match_type: str, match_conf: str, n: int,
+                     link_llm_model: str = "") -> dict:
     row = filter_row.to_dict()
     if not row.get("title_r"):
         row["title_r"] = row.get("study_r", "")
     conf_str = orig.get("confidence", "low")
     if conf_str not in {"high", "medium", "low"}:
         conf_str = "low"
+    doi_r_clean  = clean_doi(str(filter_row.get("doi_r", "")))
+    doi_o_clean  = clean_doi(orig.get("doi", "") or "")
     row.update({
+        "pair_id":           make_pair_id(doi_r_clean, doi_o_clean),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
-        "doi_o":           clean_doi(orig.get("doi",          "") or ""),
+        "doi_o":           doi_o_clean,
         "title_o":         str(orig.get("title",        "") or ""),
         "year_o":          str(orig.get("year",         "") or ""),
         "authors_o":       str(orig.get("first_author", "") or ""),
         "link_method":     "llm_abstract",
         "link_evidence":   str(orig.get("evidence",     "") or ""),
         "link_confidence": conf_str,
+        "link_llm_model":  link_llm_model,
         "outcome":             outcome.get("outcome",             "uninformative"),
         "outcome_phrase":      outcome.get("outcome_phrase",      ""),
         "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
@@ -260,11 +360,14 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
 
 def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str) -> dict:
     row = filter_row.to_dict()
+    doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
     row.update({
+        "pair_id": make_pair_id(doi_r_clean, ""),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
         "doi_o": "", "title_o": "", "year_o": "", "authors_o": "",
         "link_method": "api_error", "link_evidence": "", "link_confidence": "low",
+        "link_llm_model": "",
         "outcome": "api_error", "outcome_phrase": "",
         "outcome_confidence": "low", "out_quote_source": "",
         "type": "", "original_rank": 1, "n_originals": 1,
@@ -353,20 +456,47 @@ def run_extract() -> pd.DataFrame:
 
             try:
                 if match_type == "multiple_original":
-                    result    = run_multi_original_for_doi(doi_r, _build_rep_df(row))
+                    rule_fired = bool(match.get("rule_fired", False))
+                    result    = run_multi_original_for_doi(
+                        doi_r, _build_rep_df(row), force_multi=rule_fired
+                    )
                     originals = _parse_originals(result)
-                    if result.get("is_false_positive") or not originals:
-                        link    = run_for_doi(doi_r, cands_df=_build_cands_df(row))
-                        outcome = _get_outcome(doi_r, row, link)
-                        result_rows.append(
-                            _merge_row(row, link, outcome, "single_original", match_conf, 1, 1)
-                        )
+                    if not originals:
+                        if rule_fired:
+                            # Rule is certain this is multi-original; LLM failed to list
+                            # originals — do NOT silently downgrade to single_original.
+                            # Write target_pending so reviewers know to fill originals manually.
+                            log.warning(
+                                "[%s] rule_fired=True but LLM returned no originals — "
+                                "writing target_pending (NOT single_original)", doi_r
+                            )
+                            result_rows.append(_empty_row(row, "multiple_original", match_conf))
+                        else:
+                            # LLM confirmed false positive or found nothing; fall to single path.
+                            link    = run_for_doi(doi_r, cands_df=_build_cands_df(row))
+                            outcome = _get_outcome(doi_r, row, link)
+                            result_rows.append(
+                                _merge_row(row, link, outcome, "single_original", match_conf, 1, 1)
+                            )
                     else:
+                        multi_llm_model = str(result.get("llm_model", "") or "")
                         for orig in originals:
-                            outcome = _get_outcome(doi_r, row, {})
+                            # Use the per-original outcome the multi-original LLM already
+                            # determined from the full paper. For multi-target papers the
+                            # whole-paper abstract describes an aggregate (e.g. "54% replicated")
+                            # which would give a wrong outcome for every individual original.
+                            raw_out = str(orig.get("outcome", "uninformative") or "uninformative").lower()
+                            if raw_out not in _VALID_OUTCOMES:
+                                raw_out = "uninformative"
+                            outcome = {
+                                "outcome":            raw_out,
+                                "outcome_phrase":     str(orig.get("outcome_evidence", "") or ""),
+                                "outcome_confidence": str(orig.get("confidence", "low") or "low"),
+                                "out_quote_source":   "llm_multi",
+                            }
                             result_rows.append(
                                 _merge_multi_row(row, orig, outcome, match_type, match_conf,
-                                                 len(originals))
+                                                 len(originals), multi_llm_model)
                             )
                 else:
                     link    = run_for_doi(doi_r, cands_df=_build_cands_df(row))
