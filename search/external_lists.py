@@ -1,4 +1,5 @@
 from typing import Optional
+
 """
 external_lists.py — Scrapers for I4R list and SCORE CSV.
 
@@ -21,6 +22,7 @@ from shared.utils import clean_doi
 # Bob Reed list:  https://replicationnetwork.com/replication-studies/
 # ---------------------------------------------------------------------------
 
+
 def fetch_bob_reed() -> pd.DataFrame:
     """Scrape Bob Reed's Replication Network list."""
     raise NotImplementedError("fetch_bob_reed is not yet implemented")
@@ -38,22 +40,22 @@ def fetch_bob_reed() -> pd.DataFrame:
 #   <h3>YYYY</h3>
 # ---------------------------------------------------------------------------
 
-_REPEC_URL  = "https://ideas.repec.org/s/zbw/i4rdps.html"
+_REPEC_URL = "https://ideas.repec.org/s/zbw/i4rdps.html"
 _REPEC_BASE = "https://ideas.repec.org"
 
-_YEAR_RE   = re.compile(r"<h3>(20\d\d)</h3>", re.IGNORECASE)
-_PAPER_RE  = re.compile(
-    r'<LI[^>]*list-group-item[^>]*>\s*'
-    r'<B>\s*(\d+)\s+'
+_YEAR_RE = re.compile(r"<h3>(20\d\d)</h3>", re.IGNORECASE)
+_PAPER_RE = re.compile(
+    r"<LI[^>]*list-group-item[^>]*>\s*"
+    r"<B>\s*(\d+)\s+"
     r'<A HREF="(/p/zbw/i4rdps/\d+\.html)">(.*?)</A>'
-    r'</B><BR><I>by</I>\s*(.*?)(?:\s*$)',
+    r"</B><BR><I>by</I>\s*(.*?)(?:\s*$)",
     re.IGNORECASE,
 )
 
 
 def fetch_i4r(
     from_year: Optional[int] = None,
-    to_year:   Optional[int] = None,
+    to_year: Optional[int] = None,
 ) -> pd.DataFrame:
     """
     Scrape I4R discussion papers from the IDEAS/RepEC series page.
@@ -90,20 +92,22 @@ def fetch_i4r(
             continue
 
         _paper_no, href, raw_title, raw_authors = pm.groups()
-        title   = html.unescape(raw_title).strip()
+        title = html.unescape(raw_title).strip()
         authors = html.unescape(raw_authors).strip() or None
 
-        rows.append({
-            "doi_r":         None,
-            "title_r":       title,
-            "abstract_r":    None,
-            "year_r":        current_year,
-            "authors_r":     authors,
-            "journal_r":     "I4R Discussion Paper",
-            "url_r":         _REPEC_BASE + href,
-            "openalex_id_r": None,
-            "source":        "i4r",
-        })
+        rows.append(
+            {
+                "doi_r": None,
+                "title_r": title,
+                "abstract_r": None,
+                "year_r": current_year,
+                "authors_r": authors,
+                "journal_r": "I4R Discussion Paper",
+                "url_r": _REPEC_BASE + href,
+                "openalex_id_r": None,
+                "source": "i4r",
+            }
+        )
 
     if not rows:
         log.warning("I4R scraper found no papers at %s", _REPEC_URL)
@@ -116,14 +120,19 @@ def fetch_i4r(
     if to_year is not None:
         df = df[df["year_r"].isna() | (df["year_r"] <= to_year)]
     yr = df["year_r"].dropna()
-    log.info("I4R: %d papers scraped (%d–%d)",
-             len(df), int(yr.min()) if len(yr) else 0, int(yr.max()) if len(yr) else 0)
+    log.info(
+        "I4R: %d papers scraped (%d–%d)",
+        len(df),
+        int(yr.min()) if len(yr) else 0,
+        int(yr.max()) if len(yr) else 0,
+    )
     return df
 
 
 # ---------------------------------------------------------------------------
 # SCORE CSV loader
 # ---------------------------------------------------------------------------
+
 
 def load_score_csv(path: str) -> pd.DataFrame:
     """Load a SCORE CSV file and map to CANDIDATES_COLS schema."""

@@ -11,6 +11,7 @@ Usage:
     python -m search.run_search --to-year 2023         # up to 2023
     python -m search.run_search --from-year 2020 --to-year 2023
 """
+
 import argparse
 from typing import Optional
 
@@ -26,7 +27,7 @@ from search.deduplicate import deduplicate_candidates
 
 def run_search(
     from_year: Optional[int] = None,
-    to_year:   Optional[int] = None,
+    to_year: Optional[int] = None,
 ) -> pd.DataFrame:
     """Run all Stage 1 discovery sources and write ``data/candidates.csv``.
 
@@ -57,7 +58,9 @@ def run_search(
     frames.append(fetch_openalex_candidates(from_year=from_year, to_year=to_year))
 
     log.info("Stage 1: fetching Semantic Scholar candidates...")
-    frames.append(fetch_semantic_scholar_candidates(from_year=from_year, to_year=to_year))
+    frames.append(
+        fetch_semantic_scholar_candidates(from_year=from_year, to_year=to_year)
+    )
 
     # log.info("Stage 1: fetching Bob Reed list...")
     # frames.append(fetch_bob_reed())
@@ -91,12 +94,16 @@ def _parse_args() -> argparse.Namespace:
         description="Run Stage 1 candidate search across all sources."
     )
     parser.add_argument(
-        "--from-year", type=int, default=None,
+        "--from-year",
+        type=int,
+        default=None,
         metavar="YYYY",
         help="Earliest publication year to include (inclusive).",
     )
     parser.add_argument(
-        "--to-year", type=int, default=None,
+        "--to-year",
+        type=int,
+        default=None,
         metavar="YYYY",
         help="Latest publication year to include (inclusive).",
     )
