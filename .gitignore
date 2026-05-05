@@ -42,3 +42,4 @@ docs/ARCHITECTURE.md
 .env.example
 /Logs
 load_doi_list.py
+/lookup

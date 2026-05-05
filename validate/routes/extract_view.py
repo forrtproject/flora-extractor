@@ -212,6 +212,7 @@ def api_list():
             "match_type":     r.get("original_match_type", ""),
             "link_confidence": r.get("link_confidence", ""),
             "link_llm_model":  r.get("link_llm_model",  ""),
+            "pair_id":         r.get("pair_id",         ""),
         })
 
     return jsonify({"rows": rows, "total": len(rows)})

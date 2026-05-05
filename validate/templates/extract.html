@@ -194,6 +194,7 @@ a.dl:hover { text-decoration:underline; }
       <tr>
         <th class="cchk"><input type="checkbox" id="chk-all" title="Select all visible"></th>
         <th class="cn">#</th>
+        <th style="width:30px">PAIR</th>
         <th>DOI (R)</th>
         <th>REPLICATION TITLE</th>
         <th class="cyr">YR</th>
@@ -209,6 +210,7 @@ a.dl:hover { text-decoration:underline; }
       </tr>
       <tr class="flt-row">
         <th></th><th></th>
+        <th><input class="cf" type="text" data-col="pair_id" placeholder="ID…" style="width:32px"></th>
         <th><input class="cf" type="text" data-col="doi_r"   placeholder="DOI…"></th>
         <th><input class="cf" type="text" data-col="title_r" placeholder="Title…"></th>
         <th><input class="cf" type="text" data-col="year_r"  placeholder="Year" style="width:42px"></th>
@@ -271,7 +273,7 @@ a.dl:hover { text-decoration:underline; }
       </tr>
     </thead>
     <tbody id="ex-body">
-      <tr><td colspan="14" style="padding:20px;text-align:center;color:#94a3b8">Loading…</td></tr>
+      <tr><td colspan="15" style="padding:20px;text-align:center;color:#94a3b8">Loading…</td></tr>
     </tbody>
   </table>
 
@@ -331,7 +333,7 @@ function loadList() {
 
 function renderError(msg) {
   document.getElementById('ex-body').innerHTML =
-    `<tr><td colspan="14" style="padding:20px;text-align:center;color:#ef4444">${esc(msg)}</td></tr>`;
+    `<tr><td colspan="15" style="padding:20px;text-align:center;color:#ef4444">${esc(msg)}</td></tr>`;
 }
 
 /* ── column filter (client-side) ───────────────────────────────────────── */
@@ -362,7 +364,7 @@ function renderFiltered() {
 function renderTable(rows) {
   const body = document.getElementById('ex-body');
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="14" style="padding:20px;text-align:center;color:#94a3b8">No rows found</td></tr>';
+    body.innerHTML = '<tr><td colspan="15" style="padding:20px;text-align:center;color:#94a3b8">No rows found</td></tr>';
     return;
   }
 
@@ -376,6 +378,8 @@ function renderTable(rows) {
           ${isSel?'checked':''} onchange="toggleSelect(this)">
       </td>
       <td class="cn"><span class="carr" style="font-size:10px;margin-right:3px;color:#94a3b8">▶</span>${r.idx}</td>
+      <td style="font-family:monospace;font-size:10px;color:#94a3b8;width:30px;text-align:center"
+          title="${esc(r.pair_id||'')}">${r.pair_id?r.pair_id.slice(0,3):'—'}</td>
       <td class="cdoi" title="${esc(r.doi_r)}">${esc(r.doi_r)}</td>
       <td class="ctit" title="${esc(r.title_r)}">${esc(trunc(r.title_r,65))}</td>
       <td class="cyr">${esc(r.year_r)}</td>
@@ -392,7 +396,7 @@ function renderTable(rows) {
       <td class="cn">${r.original_rank}/${r.n_originals}</td>
     </tr>
     <tr class="det" id="det-${esc(r.doi_r)}-${esc(r.original_rank)}" style="display:none">
-      <td colspan="14"><div class="dp" id="dp-${esc(r.doi_r)}-${esc(r.original_rank)}">
+      <td colspan="15"><div class="dp" id="dp-${esc(r.doi_r)}-${esc(r.original_rank)}">
         <span style="color:#94a3b8;font-size:11px">Loading…</span>
       </div></td>
     </tr>`;
@@ -676,7 +680,7 @@ function renderDetail(div, d) {
     </div>`;
 
   // ── 3: RESOLVED — Original Study ──────────────────────────────────────────
-  const linkResolved = d.doi_o && d.link_method !== 'target_pending' && d.link_method !== 'api_error';
+  const linkResolved = (d.doi_o || d.title_o) && d.link_method !== 'target_pending' && d.link_method !== 'api_error';
   const sec3 = `
     <div class="sc ${linkResolved ? 'grn' : d.link_method === 'api_error' ? 'red' : 'slt'}">
       <div class="sc-hd">

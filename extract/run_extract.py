@@ -17,10 +17,10 @@ import time
 
 import pandas as pd
 
-from shared.config import BASE_DIR, DATA_DIR, GEMINI_LIGHT_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC, OPENAI_MODEL, log
-from shared.llm_client import call_gemini, call_openai
+from shared.config import BASE_DIR, DATA_DIR, GEMINI_LIGHT_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC, log
+from shared.llm_client import call_llm
 from shared.openalex_client import extract_author_year_patterns, find_all_candidates
-from shared.schema import EXTRACTED_COLS
+from shared.schema import EXTRACTED_COLS, make_pair_id
 from shared.utils import cache_key, clean_doi
 from extract.link_original import run_for_doi
 from extract.multi_original import run_multi_original_for_doi
@@ -28,6 +28,7 @@ from extract.code_outcome import extract_outcome
 
 # ── Internal → schema link_method mapping ────────────────────────────────────
 _METHOD_MAP = {
+    "citation_context_match":         "author_year_match",
     "same_author_year_title_overlap": "author_year_match",
     "single_candidate_after_requery": "author_year_match",
     "grobid_ref_match":               "author_year_match",
@@ -238,16 +239,7 @@ def _llm_classify_match_type(doi_r: str,
         '"original_match_confidence": "<high|medium|low>", "reasoning": "<brief>"}'
     )
 
-    # Use the light model for classification — it's simpler than full DOI resolution
-    # and Flash Lite has much higher rate/daily limits than Flash or Pro.
-    classify_model = ""
-    result, _ = call_gemini(prompt, model=GEMINI_LIGHT_MODEL)
-    if result:
-        classify_model = GEMINI_LIGHT_MODEL
-    else:
-        result, _ = call_openai(prompt)
-        if result:
-            classify_model = OPENAI_MODEL
+    result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_LIGHT_MODEL)
     if result:
         time.sleep(LLM_RATE_SEC)
         mtype = result.get("original_match_type", "single_original")
@@ -259,7 +251,8 @@ def _llm_classify_match_type(doi_r: str,
         return {
             "original_match_type":       mtype,
             "original_match_confidence": conf,
-            "classify_llm_model":        classify_model,
+            "classify_llm_model":        model_used,
+            "reasoning":                 str(result.get("reasoning", "") or ""),
         }
 
     log.warning("[%s] classify_match_type: LLM failed — defaulting to single_original", doi_r)
@@ -304,10 +297,13 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
     # propagate study_r → title_r if title_r is absent (old seeded data uses study_r)
     if not row.get("title_r"):
         row["title_r"] = row.get("study_r", "")
+    doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
+    doi_o_clean = clean_doi(link.get("resolved_doi_o", "") or "")
     row.update({
+        "pair_id":           make_pair_id(doi_r_clean, doi_o_clean),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
-        "doi_o":           clean_doi(link.get("resolved_doi_o",   "") or ""),
+        "doi_o":           doi_o_clean,
         "title_o":         str(link.get("resolved_title_o", "") or ""),
         "year_o":          str(link.get("resolved_year_o",  "") or ""),
         "authors_o":       str(link.get("resolved_author_o","") or ""),
@@ -337,10 +333,13 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
     conf_str = orig.get("confidence", "low")
     if conf_str not in {"high", "medium", "low"}:
         conf_str = "low"
+    doi_r_clean  = clean_doi(str(filter_row.get("doi_r", "")))
+    doi_o_clean  = clean_doi(orig.get("doi", "") or "")
     row.update({
+        "pair_id":           make_pair_id(doi_r_clean, doi_o_clean),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
-        "doi_o":           clean_doi(orig.get("doi",          "") or ""),
+        "doi_o":           doi_o_clean,
         "title_o":         str(orig.get("title",        "") or ""),
         "year_o":          str(orig.get("year",         "") or ""),
         "authors_o":       str(orig.get("first_author", "") or ""),
@@ -361,7 +360,9 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
 
 def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str) -> dict:
     row = filter_row.to_dict()
+    doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
     row.update({
+        "pair_id": make_pair_id(doi_r_clean, ""),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
         "doi_o": "", "title_o": "", "year_o": "", "authors_o": "",

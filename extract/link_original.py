@@ -15,18 +15,254 @@ clearly prefixed by source:
 """
 from __future__ import annotations
 
+import html
+import json
+import re
+import time
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+import requests
 
-from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, log
-from shared.disambiguation import resolve_same_author_year
+from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, RESEARCHER_EMAIL, log
+from shared.disambiguation import is_umbrella_paper, jaccard_similarity
 from shared.grobid import run_grobid
 from shared.llm_client import identify_original_with_llm
-from shared.openalex_client import extract_author_year_patterns, find_all_candidates, fetch_openalex_by_doi
+from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_openalex_by_doi
 from shared.pdf_sources import acquire_pdf
 from shared.utils import cache_key, clean_doi
+
+# ── Unified rule-based resolver (runs before any LLM call) ───────────────────
+# Combines citation-context scoring (journal-qualified) with same-author/year
+# title-Jaccard fallback into a single function so both paths share one code path.
+#
+# Path A — journal hint present in abstract citation:
+#   Scores by author(+2) + year(+2) + journal Jaccard(+3/+1.5) + title Jaccard(+≤1).
+#   Resolves when best ≥ 4.0 AND gap ≥ 2.0.  Strict because the journal
+#   contributes 3 points, making the winner unambiguous.
+#
+# Path B — no journal hint, but all candidates share same author+year:
+#   Falls back to title-Jaccard relative threshold (best > 0.05, best ≥ second×1.5).
+#   Same logic as the old resolve_same_author_year() in shared/disambiguation.py.
+
+_CITATION_YEAR  = r"(?:19|20)\d{2}"
+_CITATION_NAME  = r"[A-Z][A-Za-z\-\xc0-ɏ]{1,}(?:\s+[A-Z][A-Za-z\-\xc0-ɏ]{1,})*"
+_CITATION_RE    = re.compile(
+    r"\("
+    r"(?P<authors>" + _CITATION_NAME +
+    r"(?:\s*(?:,|&|and|\bet\s+al\.?)\s*" + _CITATION_NAME + r")*)"
+    r"\s*,\s*"
+    r"(?P<year>" + _CITATION_YEAR + r")"
+    r"(?:\s*,\s*(?P<journal>[A-Z][A-Za-z\s&:]+?))?"
+    r"\s*\)",
+    re.UNICODE,
+)
+_STOP_SURNAMES = {"and", "van", "von", "der", "den", "del", "the", "for"}
+
+
+def _extract_cit_contexts(text: str) -> list[dict]:
+    """Return list of {surnames, year, journal} from all parenthetical citations."""
+    results: list[dict] = []
+    seen: set[tuple] = set()
+    for m in _CITATION_RE.finditer(text):
+        surnames = [
+            t.lower()
+            for t in re.findall(r"[A-Z][A-Za-z\-\xc0-ɏ]{2,}", m.group("authors"))
+            if t.lower() not in _STOP_SURNAMES
+        ]
+        try:
+            year = int(m.group("year"))
+        except ValueError:
+            continue
+        key = (tuple(sorted(surnames)), year)
+        if key in seen:
+            continue
+        seen.add(key)
+        journal = (m.group("journal") or "").strip().rstrip(",;.:")
+        results.append({"surnames": surnames, "year": year, "journal": journal, "raw": m.group(0)})
+    return results
+
+
+def _journal_token_sim(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    ta = {t.lower() for t in re.findall(r"\b\w{2,}\b", a)}
+    tb = {t.lower() for t in re.findall(r"\b\w{2,}\b", b)}
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def _fetch_journal_cached(doi: str) -> str:
+    """Return the journal display name for a DOI from OpenAlex. Result cached."""
+    doi = clean_doi(doi)
+    if not doi:
+        return ""
+    cache_path = OA_CACHE_DIR / f"journal_{cache_key(doi)}.json"
+    if cache_path.exists():
+        try:
+            return json.loads(cache_path.read_text(encoding="utf-8")).get("journal", "")
+        except Exception:
+            pass
+    try:
+        r = requests.get(
+            "https://api.openalex.org/works",
+            params={"filter": f"doi:{doi}",
+                    "select": "id,primary_location",
+                    "mailto": RESEARCHER_EMAIL},
+            headers={"User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
+        journal = ""
+        if data and data.get("results"):
+            loc = (data["results"][0].get("primary_location") or {})
+            src = (loc.get("source") or {})
+            journal = (src.get("display_name") or "").strip()
+    except Exception:
+        journal = ""
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps({"journal": journal}), encoding="utf-8")
+    time.sleep(0.12)
+    return journal
+
+
+def _resolve_rule_based(
+    doi_r:      str,
+    abstract_r: str,
+    candidates: list[dict],
+    year_r:     int,
+    study_r:    str = "",
+) -> dict:
+    """
+    Unified pre-LLM resolver covering both citation-context and same-author/year cases.
+
+    Returns the same shape dict as identify_original_with_llm().
+    """
+    base: dict = {
+        "resolved":           False,
+        "resolution_method":  "needs_fulltext",
+        "resolved_doi_o":     "",
+        "resolved_title_o":   "",
+        "resolved_year_o":    None,
+        "resolved_author_o":  "",
+        "resolution_score":   0.0,
+    }
+
+    if not candidates:
+        base["resolution_method"] = "no_candidates_found"
+        return base
+
+    # Single unambiguous candidate
+    if len(candidates) == 1:
+        c = candidates[0]
+        if is_umbrella_paper(c.get("title", "")):
+            return base
+        return {**base,
+                "resolved":          True,
+                "resolution_method": "single_candidate_after_requery",
+                "resolved_doi_o":    c.get("doi",          ""),
+                "resolved_title_o":  c.get("title",        ""),
+                "resolved_year_o":   c.get("year"),
+                "resolved_author_o": c.get("first_author", ""),
+                "resolution_score":  1.0}
+
+    decoded    = html.unescape(abstract_r or "")
+    citations  = [c for c in _extract_cit_contexts(decoded) if c["year"] <= year_r]
+    has_journal = any(cit["journal"] for cit in citations)
+
+    # ── Path A: citation scoring (author + year + optional journal) ───────────
+    if citations:
+        scored: list[dict] = []
+        for cand in candidates:
+            cand_doi    = cand.get("doi", "")
+            cand_title  = cand.get("title", "") or ""
+            cand_year   = int(cand.get("year") or 0)
+            cand_snames = [s.lower() for s in (cand.get("all_authors") or []) if s]
+            if not cand_snames:
+                fa = (cand.get("first_author") or "").lower()
+                if fa:
+                    cand_snames = [fa]
+
+            best_base = 0.0
+            best_cit: dict | None = None
+            for cit in citations:
+                auth_sc = 2.0 if any(author_matches(sn, cand_snames) for sn in cit["surnames"]) else 0.0
+                yr_sc   = 2.0 if cit["year"] == cand_year else (1.0 if abs(cit["year"] - cand_year) == 1 else 0.0)
+                if auth_sc == 0.0 and yr_sc == 0.0:
+                    continue
+                if auth_sc + yr_sc > best_base:
+                    best_base = auth_sc + yr_sc
+                    best_cit  = cit
+
+            if best_cit is None or best_base < 2.0:
+                continue
+            scored.append({"cand": cand, "citation": best_cit, "base_score": best_base,
+                           "cand_doi": cand_doi, "cand_title": cand_title,
+                           "cand_year": cand_year, "cand_snames": cand_snames})
+
+        # Enrich with journal info when a journal hint is present
+        if has_journal:
+            for entry in scored:
+                cit = entry["citation"]
+                if not cit.get("journal") or not entry["cand_doi"]:
+                    continue
+                cand_journal = _fetch_journal_cached(entry["cand_doi"])
+                if cand_journal:
+                    jsim = _journal_token_sim(cit["journal"], cand_journal)
+                    entry["base_score"] += 3.0 if jsim >= 0.6 else (1.5 if jsim >= 0.3 else 0.0)
+
+        for entry in scored:
+            entry["total"] = round(
+                entry["base_score"] + jaccard_similarity(entry["cand_title"], decoded), 4)
+
+        scored.sort(key=lambda x: x["total"], reverse=True)
+
+        if scored:
+            best   = scored[0]
+            second = scored[1]["total"] if len(scored) > 1 else 0.0
+            gap    = best["total"] - second
+            if best["total"] >= 4.0 and gap >= 2.0:
+                log.info("[%s] rule_based resolved (citation-context): %s score=%.2f gap=%.2f",
+                         doi_r, best["cand_doi"], best["total"], gap)
+                return {**base,
+                        "resolved":          True,
+                        "resolution_method": "citation_context_match",
+                        "resolved_doi_o":    best["cand_doi"],
+                        "resolved_title_o":  best["cand_title"],
+                        "resolved_year_o":   best["cand_year"],
+                        "resolved_author_o": best["cand_snames"][0] if best["cand_snames"] else "",
+                        "resolution_score":  round(min(best["total"] / 8.0, 1.0), 4)}
+
+    # ── Path B: same-author/year cluster — title Jaccard relative threshold ───
+    # Fires when all candidates share one surname and one year but no journal hint
+    # was present (or Path A's strict threshold was not met).
+    surnames = {(c.get("first_author") or "").lower().split()[-1] for c in candidates if c.get("first_author")}
+    years    = {c.get("year") for c in candidates}
+    if len(surnames) == 1 and len(years) == 1:
+        context = decoded + " " + (study_r or "")
+        by_title = sorted(candidates,
+                          key=lambda c: jaccard_similarity(c.get("title", ""), context),
+                          reverse=True)
+        best_sc  = jaccard_similarity(by_title[0].get("title", ""), context)
+        sec_sc   = jaccard_similarity(by_title[1].get("title", ""), context) if len(by_title) > 1 else 0.0
+        if best_sc > 0.05 and best_sc >= sec_sc * 1.5:
+            c = by_title[0]
+            log.info("[%s] rule_based resolved (same-author/year Jaccard): %s score=%.4f",
+                     doi_r, c.get("doi"), best_sc)
+            return {**base,
+                    "resolved":          True,
+                    "resolution_method": "same_author_year_title_overlap",
+                    "resolved_doi_o":    c.get("doi",          ""),
+                    "resolved_title_o":  c.get("title",        ""),
+                    "resolved_year_o":   c.get("year"),
+                    "resolved_author_o": c.get("first_author", ""),
+                    "resolution_score":  round(best_sc, 4)}
+
+    return base
+
 
 # Columns to pass through from openalex_candidates.csv (no renaming)
 _OA_PASSTHROUGH = [
@@ -194,22 +430,24 @@ def run_for_doi(doi_r:              str,
     # Combine anchor note with any user-supplied validation comment
     effective_note = "\n\n".join(filter(None, [anchor_note, validation_comment]))
 
-    # ── Stage 3: Same-author / same-year disambiguation ──────────────────────
-    stage3 = resolve_same_author_year(doi_r, study_r, abstract_r, candidates)
-
+    # ── Stage 3: Rule-based resolver (citation-context + same-author/year) ──────
+    stage3 = _resolve_rule_based(doi_r, abstract_r, candidates, year_r, study_r)
     if stage3["resolved"]:
-        log.info("[%s] Resolved by same-author/year: %s", doi_r,
-                 stage3["resolved_title_o"])
+        log.info("[%s] Resolved rule-based (%s): %s", doi_r,
+                 stage3["resolution_method"], stage3["resolved_title_o"])
         return _build_output(doi_r, flora, cands_row, candidates,
                              stage3, {}, {}, {})
 
-    # ── Stage 4: Early abstract-level LLM (multiple distinct patterns) ───────
-    # If the abstract has 2+ distinct cited author-year patterns and we have
-    # candidates, ask the LLM to pick using only the abstract (no PDF needed).
+    # ── Stage 4: Abstract-level LLM ──────────────────────────────────────────
+    # Run whenever we have an abstract and at least one citation pattern or candidate.
+    # Previously required ≥2 patterns AND candidates, which silently skipped papers
+    # whose abstract named the original clearly (e.g. "We replicated Son et al., 2013")
+    # but had only 1 pattern or 0 OpenAlex candidates.  The abstract LLM is cheap;
+    # there is no good reason to skip it when context is available.
     abstract_patterns = extract_author_year_patterns(abstract_r, max_year=year_r)
     distinct_pairs    = {(p["surname"], p["year"]) for p in abstract_patterns}
 
-    if len(distinct_pairs) >= 2 and candidates:
+    if abstract_r and (distinct_pairs or candidates):
         log.info("[%s] Multiple abstract patterns — early abstract LLM", doi_r)
         llm4 = identify_original_with_llm(
             doi_r + "_abstract",   # separate cache key from full-text LLM
@@ -234,7 +472,29 @@ def run_for_doi(doi_r:              str,
              grobid["grobid_status"], grobid["n_refs_parsed"])
 
     # ── Stage 7: LLM identification ──────────────────────────────────────────
-    # Only run if we still have no resolved original
+    # Guard: refuse to call the LLM when it would have nothing to reason from.
+    # Title-only prompts (no abstract, no PDF, no references) produce hallucinations
+    # that look confident but are wrong.  Write target_pending instead so the
+    # reviewer knows extraction is needed, rather than silently inserting a bad DOI.
+    _has_context = (
+        abstract_r
+        or candidates
+        or (sections.get("intro") or "")
+        or (sections.get("references") or [])
+    )
+    if not _has_context:
+        log.warning("[%s] No context — skipping LLM, writing target_pending", doi_r)
+        return _build_output(doi_r, flora, cands_row, candidates, {
+            "resolved":          False,
+            "resolution_method": "no_context",
+            "resolved_doi_o":    "",
+            "resolved_title_o":  "",
+            "resolved_year_o":   None,
+            "resolved_author_o": "",
+            "resolution_score":  0.0,
+            "llm_error":         "no_context: abstract missing, PDF unavailable, no refs",
+        }, pdf, grobid, sections)
+
     llm = identify_original_with_llm(
         doi_r, study_r, abstract_r, pattern_r, candidates, sections,
         pdf_url        = pdf.get("pdf_url", "")   if not pdf.get("pdf_ok") else "",

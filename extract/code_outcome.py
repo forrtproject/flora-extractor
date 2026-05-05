@@ -12,8 +12,8 @@ import re
 import time
 from typing import Optional
 
-from shared.config import GEMINI_LIGHT_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC, OPENAI_MODEL, log
-from shared.llm_client import call_gemini, call_openai
+from shared.config import GEMINI_LIGHT_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC, log
+from shared.llm_client import call_llm
 from shared.utils import cache_key
 
 # ── Keyword patterns (Pass 1) ─────────────────────────────────────────────────
@@ -118,17 +118,9 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str) -> di
         '"outcome_confidence": "<high|medium|low>", "out_quote_source": "<abstract|fulltext|title>"}'
     )
 
-    # Use the light model for outcome classification — it's a simple categorisation task.
-    llm_model = ""
-    result, _ = call_gemini(prompt, model=GEMINI_LIGHT_MODEL)
+    result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_LIGHT_MODEL)
     if result:
-        llm_model = GEMINI_LIGHT_MODEL
         time.sleep(LLM_RATE_SEC)
-    else:
-        result, _ = call_openai(prompt)
-        if result:
-            llm_model = OPENAI_MODEL
-            time.sleep(LLM_RATE_SEC)
 
     _fallback = {"outcome": "uninformative", "outcome_phrase": "",
                  "outcome_confidence": "low", "out_quote_source": "", "llm_model": ""}
@@ -145,7 +137,7 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str) -> di
         "outcome_phrase":     str(result.get("outcome_phrase",    "") or ""),
         "outcome_confidence": str(result.get("outcome_confidence", "low") or "low"),
         "out_quote_source":   str(result.get("out_quote_source",  "") or ""),
-        "llm_model":          llm_model,
+        "llm_model":          model_used,
         "llm_prompt":         prompt,  # stored for debug view in Extract tab
     }
     with cache_file.open("w", encoding="utf-8") as fh:
