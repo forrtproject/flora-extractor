@@ -1,7 +1,13 @@
 # Stage 1 — Search
 **Input:** External APIs and curated lists  
 **Output:** `data/candidates.csv`  
-**Run:** `python search/run_search.py`
+**Run:**
+
+```bash
+python -m search.run_search
+```
+
+Results are viewable in the **Search** tab of the Stage 4 web app (`http://localhost:5001/search`).
 
 ---
 

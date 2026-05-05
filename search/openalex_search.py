@@ -55,7 +55,7 @@ def _year_filter(from_year: Optional[int], to_year: Optional[int]) -> Optional[s
     if from_year is None and to_year is None:
         return None
     lo = from_year or 1000
-    hi = to_year   or 9999
+    hi = to_year or 9999
     return f"publication_year:{lo}-{hi}"
 
 
@@ -218,7 +218,7 @@ def _extract_row(work: dict) -> dict:
 def fetch_phrase(
     phrase: str,
     from_year: Optional[int] = None,
-    to_year:   Optional[int] = None,
+    to_year: Optional[int] = None,
 ) -> list[dict]:
     """
     Fetch OpenAlex works matching phrase.
@@ -249,12 +249,11 @@ def fetch_phrase(
 
     yr_filt = _year_filter(from_year, to_year)
     base_filter = f'title_and_abstract.search:"{phrase}"'
-    oa_filter   = f"{base_filter},{yr_filt}" if yr_filt else base_filter
+    oa_filter = f"{base_filter},{yr_filt}" if yr_filt else base_filter
 
-    log.info("OpenAlex search: %r  years=%s–%s",
-             phrase,
-             from_year or "any",
-             to_year   or "any")
+    log.info(
+        "OpenAlex search: %r  years=%s–%s", phrase, from_year or "any", to_year or "any"
+    )
 
     # Keep requesting pages until there is no next cursor or the API tells us to stop.
     while cursor and page < MAX_PAGES_PER_PHRASE:

@@ -3,7 +3,13 @@
 
 **Input:** `data/candidates.csv`
 **Output:** `data/filtered.csv`
-**Run:** `python filter/run_filter.py`
+**Run:**
+
+```bash
+python -m filter.run_filter
+```
+
+Results are viewable in the **Filter** tab of the Stage 4 web app (`http://localhost:5001/filter`).
 
 ---
 

@@ -21,7 +21,9 @@ import requests
 from .config import (
     GEMINI_API_KEYS, GEMINI_MODEL,
     LLM_CACHE_DIR, LLM_RATE_SEC,
-    OPENAI_API_KEY, OPENAI_MODEL, log,
+    OPENAI_API_KEY, OPENAI_MODEL,
+    OPENROUTER_API_KEY, OPENROUTER_HEAVY_MODEL,
+    log,
 )
 from .utils import cache_key
 
@@ -185,6 +187,48 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict],
         return None, f"exception: {e}"
 
 
+# ── OpenRouter (OpenAI-compatible alternative LLMs) ──────────────────────────
+
+def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
+    """
+    Call any model available on OpenRouter via the OpenAI-compatible API.
+
+    model — OpenRouter model ID e.g. "qwen/qwen3-30b-a3b".
+            Defaults to OPENROUTER_HEAVY_MODEL from config.
+
+    Returns (result_dict_or_None, error_description).
+    """
+    if not OPENROUTER_API_KEY:
+        return None, "OPENROUTER_API_KEY not configured"
+
+    import openai
+    client = openai.OpenAI(
+        api_key=OPENROUTER_API_KEY,
+        base_url="https://openrouter.ai/api/v1",
+    )
+
+    use_model = model or OPENROUTER_HEAVY_MODEL
+    try:
+        response = client.chat.completions.create(
+            model=use_model,
+            messages=[
+                {"role": "system",
+                 "content": ("You are a research methodology expert that identifies "
+                              "original studies from replication papers. "
+                              "Always respond with valid JSON only.")},
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=1024,
+            temperature=0.0,
+        )
+        result = _parse_llm_json(response.choices[0].message.content)
+        return result, ("" if result else "response was not valid JSON")
+    except Exception as e:
+        log.warning("OpenRouter call failed (model=%s): %s", use_model, e)
+        return None, f"exception: {e}"
+
+
 # ── Prompt builder ────────────────────────────────────────────────────────────
 
 def build_identification_prompt(study_r:        str,
@@ -226,9 +270,9 @@ def build_identification_prompt(study_r:        str,
             "excerpts to find the original study. Set selected_candidate_number to null."
         )
 
-    # Reference list (GROBID, up to 50 entries — enough to find the original)
+    # Reference list — 30 entries is enough to find the original; keeps tokens low
     ref_lines = []
-    for ref in sections.get("references", [])[:50]:
+    for ref in sections.get("references", [])[:30]:
         authors = "; ".join(ref["authors"][:2])
         if len(ref["authors"]) > 2:
             authors += " et al."
@@ -236,18 +280,18 @@ def build_identification_prompt(study_r:        str,
     ref_text = "\n".join(ref_lines) if ref_lines else "(no references extracted)"
 
     # Truncated snippets — prefer GROBID intro over abstract (less overlap with OpenAlex)
-    abstract_snip = (abstract_r[:1200] + "…") if len(abstract_r) > 1200 else abstract_r
-    intro_snip    = (sections.get("intro",   "") or "")[:900]
+    abstract_snip = (abstract_r[:700] + "…") if len(abstract_r) > 700 else abstract_r
+    intro_snip    = (sections.get("intro",   "") or "")[:600]
 
     # Include methods only when intro is short (avoid redundancy)
     methods_snip = ""
-    if len(intro_snip) < 400:
-        methods_snip = (sections.get("methods", "") or "")[:600]
+    if len(intro_snip) < 300:
+        methods_snip = (sections.get("methods", "") or "")[:400]
 
-    # HTML text fallback: use first 1500 chars as a substitute intro/body
+    # HTML text fallback: use first 1000 chars as a substitute intro/body
     html_snip = ""
     if html_text and not intro_snip:
-        html_snip = (html_text[:1500] + "…") if len(html_text) > 1500 else html_text
+        html_snip = (html_text[:1000] + "…") if len(html_text) > 1000 else html_text
 
     # PDF URL block — only included when download failed but URL is known
     if pdf_url:

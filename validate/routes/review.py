@@ -75,23 +75,35 @@ def api_next():
     ).first()
 
     return jsonify({
-        "id":                rep.id,
-        "doi_r":             rep.doi_r,
-        "title_r":           rep.title_r or "",
-        "doi_o":             rep.doi_o or "",
-        "title_o":           rep.title_o or "",
-        "abstract_r":        rep.abstract_r or "",
-        "outcome":           rep.outcome or "",
-        "validation_status": rep.validation_status,
-        "confirm_votes":     rep.confirm_votes,
-        "reject_votes":      rep.reject_votes,
-        "vote_count":        rep.vote_count,
-        "your_vote":         own_vote.vote if own_vote else None,
-        "your_comment":      own_vote.comment if own_vote else "",
-        "total_pending":     Replication.query.filter(
+        "id":                  rep.id,
+        "doi_r":               rep.doi_r,
+        "title_r":             rep.title_r or "",
+        "doi_o":               rep.doi_o or "",
+        "title_o":             rep.title_o or "",
+        "year_o":              rep.year_o or "",
+        "authors_o":           rep.authors_o or "",
+        "abstract_r":          rep.abstract_r or "",
+        "outcome":             rep.outcome or "",
+        "outcome_phrase":      rep.outcome_phrase or "",
+        "outcome_confidence":  rep.outcome_confidence or "",
+        "out_quote_source":    rep.out_quote_source or "",
+        "link_method":         rep.link_method or "",
+        "link_evidence":       rep.link_evidence or "",
+        "link_confidence":     rep.link_confidence or "",
+        "original_match_type": rep.original_match_type or "",
+        "original_rank":       rep.original_rank,
+        "n_originals":         rep.n_originals,
+        "type":                rep.type or "replication",
+        "validation_status":   rep.validation_status,
+        "confirm_votes":       rep.confirm_votes,
+        "reject_votes":        rep.reject_votes,
+        "vote_count":          rep.vote_count,
+        "your_vote":           own_vote.vote if own_vote else None,
+        "your_comment":        own_vote.comment if own_vote else "",
+        "total_pending":       Replication.query.filter(
             Replication.validation_status.notin_(["confirmed", "rejected"])
         ).count(),
-        "total":             Replication.query.count(),
+        "total":               Replication.query.count(),
     })
 
 

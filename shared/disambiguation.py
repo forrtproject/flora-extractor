@@ -4,6 +4,27 @@ disambiguation.py — Same-author / same-year original study disambiguation.
 Public API:
     jaccard_similarity(a, b) → float
     resolve_same_author_year(doi_r, study_r, abstract_r, candidates) → dict
+    resolve_by_grobid_refs(doi_r, candidates, sections) → dict
+
+Threshold summary
+-----------------
+resolve_same_author_year uses a *relative* margin rule, not an absolute cutoff:
+    best_score > 0.05  AND  best_score >= second_best * 1.5
+The 1.5× margin avoids picking the wrong title when two candidates have similar
+wording; the 0.05 floor prevents a near-zero score from winning by default
+against an equally near-zero rival.  Umbrella/multi-lab papers (ManyLabs,
+PSA, etc.) are excluded from auto-resolution regardless of score because they
+are never the specific original study being replicated.
+
+resolve_by_grobid_refs uses absolute Jaccard cutoffs:
+    0.45 — title-only match (no author confirmation)
+    0.30 — reduced threshold when the first-author surname also matches a
+            GROBID reference entry (prefix match, ≥ 3 chars)
+Year tolerance is ±1 to accommodate pre-print/official-publication year shifts.
+
+Known validation gap: these thresholds were carried over from the OpenAlexLLM
+prototype and have not yet been evaluated against a held-out gold standard.
+Run evaluate_disambiguation() against data/flora_all.csv before tuning.
 """
 import json
 import re

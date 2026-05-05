@@ -2,8 +2,18 @@
 # Stage 3 — Extract
 
 **Input:** `data/filtered.csv`
-**Output:** `data/extracted.csv`
-**Run:** `python extract/run_extract.py`
+**Output:** `data/extracted.csv` (streamed — each row written immediately after processing)
+**Run:**
+
+```bash
+python -m extract.run_extract
+```
+
+> Results are streamed to `data/extracted.csv` one row at a time. You can open the
+> Extract tab in the Stage 4 web app while the pipeline is still running.
+
+**Quick re-run a single DOI** (from the Extract tab in the web app):
+Select a row → choose a model → click "Run selected with model".
 
 ---
 
