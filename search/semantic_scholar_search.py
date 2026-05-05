@@ -35,14 +35,16 @@ from shared.utils import cache_key, clean_doi
 # A small set of phrases intended to capture replication papers expressed in
 # different ways. We search each phrase independently and combine the results.
 SEARCH_PHRASES = [
-    "registered replication report",
+    "replication of",
     "direct replication",
+    "close replication",
     "conceptual replication",
     "replication study",
-    "failed to replicate",
-    "did not replicate",
+    "reproduction study",
     "we replicated",
-    "attempt to replicate",
+    "attempts to replicate",
+    "registered replication report",
+    "pre-registered replication",
 ]
 
 # Optional API key. Semantic Scholar recommends using a key when available.
