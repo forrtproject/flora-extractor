@@ -11,6 +11,7 @@ Usage:
     python -m search.run_search --to-year 2023         # up to 2023
     python -m search.run_search --from-year 2020 --to-year 2023
 """
+
 import argparse
 from typing import Optional
 
@@ -20,13 +21,13 @@ from shared.config import DATA_DIR, log
 from shared.schema import CANDIDATES_COLS
 from search.openalex_search import fetch_openalex_candidates
 from search.semantic_scholar_search import fetch_semantic_scholar_candidates
-from search.external_lists import fetch_i4r
+from search.external_lists import fetch_i4r, fetch_replication_network
 from search.deduplicate import deduplicate_candidates
 
 
 def run_search(
     from_year: Optional[int] = None,
-    to_year:   Optional[int] = None,
+    to_year: Optional[int] = None,
 ) -> pd.DataFrame:
     """Run all Stage 1 discovery sources and write ``data/candidates.csv``.
 
@@ -57,10 +58,12 @@ def run_search(
     frames.append(fetch_openalex_candidates(from_year=from_year, to_year=to_year))
 
     log.info("Stage 1: fetching Semantic Scholar candidates...")
-    frames.append(fetch_semantic_scholar_candidates(from_year=from_year, to_year=to_year))
+    frames.append(
+        fetch_semantic_scholar_candidates(from_year=from_year, to_year=to_year)
+    )
 
-    # log.info("Stage 1: fetching Bob Reed list...")
-    # frames.append(fetch_bob_reed())
+    log.info("Stage 1: fetching Replication Network sheet...")
+    frames.append(fetch_replication_network(from_year=from_year, to_year=to_year))
 
     log.info("Stage 1: fetching I4R list...")
     frames.append(fetch_i4r(from_year=from_year, to_year=to_year))
@@ -91,12 +94,16 @@ def _parse_args() -> argparse.Namespace:
         description="Run Stage 1 candidate search across all sources."
     )
     parser.add_argument(
-        "--from-year", type=int, default=None,
+        "--from-year",
+        type=int,
+        default=None,
         metavar="YYYY",
         help="Earliest publication year to include (inclusive).",
     )
     parser.add_argument(
-        "--to-year", type=int, default=None,
+        "--to-year",
+        type=int,
+        default=None,
         metavar="YYYY",
         help="Latest publication year to include (inclusive).",
     )
