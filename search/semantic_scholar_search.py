@@ -255,7 +255,7 @@ def _fetch_phrase(phrase: str, year_param: Optional[str],) -> list[dict]:
 # Public API
 # ---------------------------------------------------------------------------
 
-def fetch_semantic_scholar(
+def fetch_semantic_scholar_candidates(
     from_year: Optional[int] = None,
     to_year:   Optional[int] = None,
 ) -> pd.DataFrame:

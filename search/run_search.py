@@ -19,7 +19,7 @@ import pandas as pd
 from shared.config import DATA_DIR, log
 from shared.schema import CANDIDATES_COLS
 from search.openalex_search import fetch_openalex_candidates
-from search.semantic_scholar_search import fetch_semantic_scholar
+from search.semantic_scholar_search import fetch_semantic_scholar_candidates
 from search.external_lists import fetch_i4r
 from search.deduplicate import deduplicate_candidates
 
@@ -57,7 +57,7 @@ def run_search(
     frames.append(fetch_openalex_candidates(from_year=from_year, to_year=to_year))
 
     log.info("Stage 1: fetching Semantic Scholar candidates...")
-    frames.append(fetch_semantic_scholar(from_year=from_year, to_year=to_year))
+    frames.append(fetch_semantic_scholar_candidates(from_year=from_year, to_year=to_year))
 
     # log.info("Stage 1: fetching Bob Reed list...")
     # frames.append(fetch_bob_reed())

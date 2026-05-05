@@ -5,7 +5,7 @@ import pytest
 
 from shared.config import OA_CACHE_DIR
 from search import openalex_search as oa
-from search.semantic_scholar_search import fetch_semantic_scholar
+from search.semantic_scholar_search import fetch_semantic_scholar_candidates
 from search.external_lists import fetch_i4r
 
 
@@ -156,25 +156,25 @@ class TestOpenAlexDateRange:
 class TestSemanticScholarDateRange:
 
     def test_single_year_all_years_correct(self):
-        df = fetch_semantic_scholar(from_year=2020, to_year=2020)
+        df = fetch_semantic_scholar_candidates(from_year=2020, to_year=2020)
         if df.empty:
             pytest.skip("S2 returned no results (rate-limited?)")
         bad = df[df["year_r"].notna() & (df["year_r"] != 2020)]
         assert bad.empty, f"Rows with wrong year:\n{bad[['doi_r','year_r']]}"
 
     def test_no_filter_returns_results(self):
-        df = fetch_semantic_scholar()
+        df = fetch_semantic_scholar_candidates()
         assert len(df) >= 0   # passes even if rate-limited (returns partial)
 
     def test_from_year_only(self):
-        df = fetch_semantic_scholar(from_year=2024)
+        df = fetch_semantic_scholar_candidates(from_year=2024)
         if df.empty:
             pytest.skip("S2 returned no results (rate-limited?)")
         assert (df["year_r"].dropna() >= 2024).all()
 
     # --- DOI spot-checks ---
     # def test_known_doi_present_2020(self):
-    #     df = fetch_semantic_scholar(from_year=2020, to_year=2020)
+    #     df = fetchfetch_semantic_scholar_candidates_semantic_scholar(from_year=2020, to_year=2020)
     #     assert "10.XXXX/YYYY" in df["doi_r"].values
 
 
