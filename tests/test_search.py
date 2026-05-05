@@ -118,7 +118,11 @@ class TestOpenAlexDateRange:
 
     def test_single_year_count(self):
         """2020 should return exactly 14 'registered replication report' papers."""
-        df = oa.fetch_openalex_candidates(from_year=2020, to_year=2020)
+        df = oa.fetch_phrase(
+            phrase="registered replication report",
+            from_year=2020,
+            to_year=2020
+        )
         assert len(df) == 14, f"Expected 14 rows for 2020, got {len(df)}"
 
     def test_single_year_all_years_correct(self):
