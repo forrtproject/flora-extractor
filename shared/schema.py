@@ -48,6 +48,7 @@ EXTRACT_ADDED_COLS = [
     "link_method",         # str   — author_year_match | llm_abstract | llm_fulltext | target_pending
     "link_evidence",       # str   — quote or pattern used for linking
     "link_confidence",     # str   — high | medium | low
+    "link_llm_model",      # str   — exact model used for DOI resolution (e.g. gemini-2.0-flash)
 
     # Outcome
     "outcome",             # str   — success | failure | mixed | uninformative | descriptive | pending

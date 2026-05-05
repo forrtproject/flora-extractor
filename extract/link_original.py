@@ -306,6 +306,7 @@ def _build_output(doi_r:     str,
 
         # ── LLM ───────────────────────────────────────────────────────────────
         "llm_source"            : resolution.get("llm_source",     ""),
+        "llm_model"             : resolution.get("llm_model",      ""),
         "llm_confidence"        : resolution.get("llm_confidence", ""),
         "llm_evidence"          : resolution.get("llm_evidence",   ""),
         "llm_reasoning"         : resolution.get("llm_reasoning",  ""),

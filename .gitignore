@@ -40,3 +40,5 @@ docs/superpowers/
 docs/GITHUB_ISSUES.md
 docs/ARCHITECTURE.md
 .env.example
+/Logs
+load_doi_list.py

@@ -201,6 +201,7 @@ a.dl:hover { text-decoration:underline; }
         <th>FILTER</th>
         <th>MATCH TYPE</th>
         <th>LINK METHOD</th>
+        <th>LLM MODEL</th>
         <th>OUTCOME</th>
         <th>MATCHED ORIGINAL</th>
         <th>CONF</th>
@@ -244,6 +245,7 @@ a.dl:hover { text-decoration:underline; }
             <option value="api_error">api_error</option>
           </select>
         </th>
+        <th><input class="cf" type="text" data-col="link_llm_model" placeholder="Model…"></th>
         <th>
           <select class="cf" data-col="outcome">
             <option value="">All</option>
@@ -269,7 +271,7 @@ a.dl:hover { text-decoration:underline; }
       </tr>
     </thead>
     <tbody id="ex-body">
-      <tr><td colspan="13" style="padding:20px;text-align:center;color:#94a3b8">Loading…</td></tr>
+      <tr><td colspan="14" style="padding:20px;text-align:center;color:#94a3b8">Loading…</td></tr>
     </tbody>
   </table>
 
@@ -329,7 +331,7 @@ function loadList() {
 
 function renderError(msg) {
   document.getElementById('ex-body').innerHTML =
-    `<tr><td colspan="13" style="padding:20px;text-align:center;color:#ef4444">${esc(msg)}</td></tr>`;
+    `<tr><td colspan="14" style="padding:20px;text-align:center;color:#ef4444">${esc(msg)}</td></tr>`;
 }
 
 /* ── column filter (client-side) ───────────────────────────────────────── */
@@ -360,7 +362,7 @@ function renderFiltered() {
 function renderTable(rows) {
   const body = document.getElementById('ex-body');
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="13" style="padding:20px;text-align:center;color:#94a3b8">No rows found</td></tr>';
+    body.innerHTML = '<tr><td colspan="14" style="padding:20px;text-align:center;color:#94a3b8">No rows found</td></tr>';
     return;
   }
 
@@ -381,13 +383,16 @@ function renderTable(rows) {
       <td>${pillFilter(r.filter_status)}</td>
       <td>${pillMatch(r.match_type)}</td>
       <td>${pillMethod(r.link_method)}</td>
+      <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+                 font-size:10px;color:#475569" title="${esc(r.link_llm_model||'')}"
+        >${esc(r.link_llm_model||'—')}</td>
       <td>${pillOutcome(r.outcome)}</td>
       <td class="cori" title="${esc(r.title_o)}">${esc(trunc(r.title_o,55))}</td>
       <td>${pillConf(r.link_confidence)}</td>
       <td class="cn">${r.original_rank}/${r.n_originals}</td>
     </tr>
     <tr class="det" id="det-${esc(r.doi_r)}-${esc(r.original_rank)}" style="display:none">
-      <td colspan="13"><div class="dp" id="dp-${esc(r.doi_r)}-${esc(r.original_rank)}">
+      <td colspan="14"><div class="dp" id="dp-${esc(r.doi_r)}-${esc(r.original_rank)}">
         <span style="color:#94a3b8;font-size:11px">Loading…</span>
       </div></td>
     </tr>`;
@@ -489,33 +494,75 @@ function appendRunResult(dp, model, data) {
     existing.className = 'model-run-results';
     dp.appendChild(existing);
   }
-  const res   = data.result || {};
+
+  const cl = data.classify || {};
+  const lk = data.link    || {};
+  const oc = data.outcome || {};
+
+  function subPanel(label, color, stepData) {
+    const res = stepData.result || {};
+    const err = stepData.error  || '';
+    const prompt = stepData.prompt || '';
+
+    let summary = '';
+    if (label === 'CLASSIFICATION') {
+      const mt = res.original_match_type || res.match_type || '';
+      const mc = res.original_match_confidence || res.match_confidence || '';
+      if (mt) summary = `<div style="font-size:11px;color:#6ee7b7;margin-bottom:4px">
+        match_type = <strong>${esc(mt)}</strong>  confidence = <strong>${esc(mc)}</strong>
+      </div>`;
+    } else if (label === 'DOI RESOLUTION') {
+      const title = res.selected_title || res.doi_o || '';
+      const yr    = res.selected_year  || res.year_o || '';
+      const auth  = res.selected_first_author || '';
+      const conf  = res.confidence || res.link_confidence || '';
+      const ev    = res.evidence   || res.link_evidence   || '';
+      if (title) summary = `<div style="font-size:11px;font-weight:700;color:#6ee7b7;margin-bottom:4px">
+        ✓ ${esc(title)} (${esc(yr)}) ${auth?'— '+esc(auth):''}
+      </div>`;
+      if (conf)  summary += `<div style="font-size:10px;color:#94a3b8;margin-bottom:3px">
+        Confidence: <strong style="color:#e2e8f0">${esc(conf)}</strong>
+        &nbsp;·&nbsp; ${lk.n_candidates||0} candidates · ${lk.n_refs||0} refs
+      </div>`;
+      if (ev)    summary += `<div style="font-size:11px;color:#cbd5e1;font-style:italic;margin-bottom:4px">"${esc(ev)}"</div>`;
+    } else if (label === 'OUTCOME') {
+      const ov = res.outcome || '';
+      const op = res.outcome_phrase || '';
+      if (ov) summary = `<div style="font-size:11px;color:#6ee7b7;margin-bottom:3px">
+        outcome = <strong>${esc(ov)}</strong>
+        ${res.outcome_confidence ? `(${esc(res.outcome_confidence)})` : ''}
+      </div>`;
+      if (op) summary += `<div style="font-size:11px;color:#cbd5e1;font-style:italic;margin-bottom:4px">"${esc(op)}"</div>`;
+    }
+
+    return `<div style="border-top:1px solid #1e293b;padding:8px 0 4px">
+      <div style="font-size:9px;font-weight:800;letter-spacing:.07em;color:${color};
+                  text-transform:uppercase;margin-bottom:6px">${label}</div>
+      ${err ? `<div style="color:#fca5a5;font-size:11px;margin-bottom:6px">⚠ ${esc(err)}</div>` : ''}
+      ${summary}
+      <div class="collap-hd" onclick="toggleCollap(this)" style="color:#475569">
+        <span class="carr" style="color:#475569">▶</span>
+        <span>Prompt / raw response</span>
+      </div>
+      <div class="collap-body">
+        <pre style="white-space:pre-wrap;font-size:10px;color:#94a3b8;overflow-x:auto;
+                    max-height:200px">${esc(prompt||'(no prompt captured)')}</pre>
+        <pre style="white-space:pre-wrap;font-size:10px;color:#e2e8f0;overflow-x:auto">${esc(JSON.stringify(res,null,2))}</pre>
+      </div>
+    </div>`;
+  }
+
   const panel = document.createElement('div');
   panel.className = 'sc dbg';
   panel.innerHTML = `
     <div class="sc-hd" style="margin-bottom:6px">
       <span class="pp pg" style="background:#1e40af;color:#fff">MODEL TEST</span>
       <span style="font-size:11px;font-weight:700;color:#93c5fd">${esc(model)}</span>
-      <span style="margin-left:auto;font-size:10px;color:#64748b">
-        ${data.n_candidates||0} candidates · ${data.n_refs||0} refs
-      </span>
+      <span style="margin-left:auto;font-size:10px;color:#64748b">${new Date().toLocaleTimeString()}</span>
     </div>
-    ${data.error ? `<div style="color:#fca5a5;font-size:11px;margin-bottom:6px">⚠ ${esc(data.error)}</div>` : ''}
-    ${res.selected_title ? `<div style="font-size:11px;font-weight:700;color:#6ee7b7;margin-bottom:4px">
-      ✓ ${esc(res.selected_title)} (${esc(res.selected_year||'?')}) — ${esc(res.selected_first_author||'?')}
-    </div>` : ''}
-    ${res.confidence ? `<div style="font-size:10px;color:#94a3b8;margin-bottom:4px">
-      Confidence: <strong style="color:#e2e8f0">${esc(res.confidence)}</strong>
-    </div>` : ''}
-    ${res.evidence ? `<div style="font-size:11px;color:#cbd5e1;font-style:italic;margin-bottom:4px">"${esc(res.evidence)}"</div>` : ''}
-    <div class="collap-hd" onclick="toggleCollap(this)" style="color:#64748b">
-      <span class="carr" style="color:#64748b">▶</span>
-      <span>Full prompt / raw output</span>
-    </div>
-    <div class="collap-body">
-      <pre style="white-space:pre-wrap;font-size:10px;color:#94a3b8;overflow-x:auto;max-height:200px">${esc(data.prompt||'')}</pre>
-      <pre style="white-space:pre-wrap;font-size:10px;color:#e2e8f0;overflow-x:auto">${esc(JSON.stringify(res,null,2))}</pre>
-    </div>`;
+    ${subPanel('CLASSIFICATION', '#93c5fd', cl)}
+    ${subPanel('DOI RESOLUTION', '#6ee7b7', lk)}
+    ${subPanel('OUTCOME',        '#fcd34d', oc)}`;
   existing.insertBefore(panel, existing.firstChild);
 }
 
@@ -612,6 +659,8 @@ function renderDetail(div, d) {
       <div class="sc-hd">
         <span class="pp pb">STAGE 3 ROUTING</span>
         <span class="sc-lbl">How Stage 3 classified the replication target</span>
+        ${d.classify_llm_model ? `<span class="pp psl" style="font-size:9px;background:#f1f5f9;color:#64748b;margin-left:auto"
+          title="LLM model used for match classification">${esc(d.classify_llm_model)}</span>` : ''}
       </div>
       <div class="fg3">
         <div><div class="fl">MATCH TYPE</div>${pillMatch(d.original_match_type)}</div>
@@ -633,6 +682,8 @@ function renderDetail(div, d) {
       <div class="sc-hd">
         <span class="pp ${linkResolved?'pg':'ptp'}">RESOLVED — ORIGINAL STUDY</span>
         <span class="sc-lbl">Stage 3 linking pipeline result</span>
+        ${d.llm_model ? `<span class="pp psl" style="font-size:9px;background:#f1f5f9;color:#64748b"
+          title="LLM model used for DOI resolution">${esc(d.llm_model)}</span>` : ''}
         <span style="margin-left:auto">${pillMethod(d.link_method)}</span>
       </div>
       ${linkResolved ? `
@@ -695,6 +746,8 @@ function renderDetail(div, d) {
       <div class="sc-hd">
         <span class="pp psl">OUTCOME</span>
         <span class="sc-lbl">Replication result classification</span>
+        ${d.outcome_llm_model ? `<span class="pp psl" style="font-size:9px;background:#f1f5f9;color:#64748b"
+          title="LLM model used for outcome classification">${esc(d.outcome_llm_model)}</span>` : ''}
         <span style="margin-left:auto">${pillOutcome(d.outcome)}</span>
       </div>
       <div class="fg3">
@@ -773,8 +826,8 @@ function renderDetail(div, d) {
       <div class="sc-hd" style="margin-bottom:10px">
         <span class="pp pg" style="background:#059669">LLM INPUT / OUTPUT</span>
         <span class="sc-lbl">Raw prompts and responses for each LLM step</span>
-        ${d.llm_source ? `<span style="margin-left:auto;font-size:10px;color:#64748b">
-          resolved via ${esc(d.llm_source)}</span>` : ''}
+        ${(d.llm_model||d.llm_source) ? `<span style="margin-left:auto;font-size:10px;color:#64748b">
+          resolved via <strong style="color:#e2e8f0">${esc(d.llm_model||d.llm_source)}</strong></span>` : ''}
       </div>
       <div class="llm-tabs">
         <div class="llm-tab active" onclick="switchLlmTab(this,'${tabId}','classify')">
@@ -791,6 +844,7 @@ function renderDetail(div, d) {
       <div id="${tabId}-classify" class="llm-pane active">
         <div class="llm-meta">
           <span class="llm-key">task</span><span class="llm-val">classify_match_type</span>
+          ${d.classify_llm_model ? `<span class="llm-key">model</span><span class="llm-val">${esc(d.classify_llm_model)}</span>` : ''}
           <span class="llm-key">result</span>
           <span class="llm-val">${esc(d.original_match_type||'—')} (${esc(d.original_match_confidence||'—')})</span>
         </div>
@@ -800,6 +854,7 @@ function renderDetail(div, d) {
       <div id="${tabId}-outcome" class="llm-pane">
         <div class="llm-meta">
           <span class="llm-key">task</span><span class="llm-val">extract_outcome (LLM pass)</span>
+          ${d.outcome_llm_model ? `<span class="llm-key">model</span><span class="llm-val">${esc(d.outcome_llm_model)}</span>` : ''}
           <span class="llm-key">result</span>
           <span class="llm-val">${esc(d.outcome||'—')} (${esc(d.outcome_confidence||'—')})</span>
         </div>
@@ -809,7 +864,7 @@ function renderDetail(div, d) {
       <div id="${tabId}-link" class="llm-pane">
         <div class="llm-meta">
           <span class="llm-key">task</span><span class="llm-val">identify_original_with_llm</span>
-          <span class="llm-key">model</span><span class="llm-val">${esc(d.llm_source||'—')}</span>
+          <span class="llm-key">model</span><span class="llm-val">${esc(d.llm_model||d.llm_source||'—')}</span>
           <span class="llm-key">confidence</span><span class="llm-val">${esc(d.llm_confidence||'—')}</span>
           ${d.llm_error ? `<span class="llm-key">error</span>
             <span class="llm-val" style="color:#fca5a5">${esc(d.llm_error)}</span>` : ''}

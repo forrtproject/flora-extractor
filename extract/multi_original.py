@@ -75,7 +75,8 @@ def _rep_row(doi_r: str, all_rep_df: pd.DataFrame) -> dict:
 
 def run_multi_original_for_doi(doi_r:       str,
                                 all_rep_df:  Optional[pd.DataFrame] = None,
-                                cands_df:    Optional[pd.DataFrame] = None) -> dict:
+                                cands_df:    Optional[pd.DataFrame] = None,
+                                force_multi: bool = False) -> dict:
     """
     Run the multi-original pipeline for doi_r.
 
@@ -123,8 +124,9 @@ def run_multi_original_for_doi(doi_r:       str,
     pdf_url_for_llm = pdf.get("pdf_url", "") if not pdf.get("pdf_ok") else ""
     llm = identify_all_originals_with_llm(
         doi_r, study_r, abstract_r, candidates, sections,
-        pdf_url   = pdf_url_for_llm,
-        html_text = pdf.get("html_text", ""),
+        pdf_url     = pdf_url_for_llm,
+        html_text   = pdf.get("html_text", ""),
+        force_multi = force_multi,
     )
     log.info("[multi/%s] LLM: n_originals=%d false_positive=%s source=%s",
              doi_r, llm["n_originals"], llm["is_false_positive"], llm["llm_source"])
@@ -152,5 +154,6 @@ def run_multi_original_for_doi(doi_r:       str,
         "n_originals"      : llm["n_originals"],
         "originals_json"   : json.dumps(llm["originals"], ensure_ascii=False),
         "llm_source"       : llm["llm_source"],
+        "llm_model"        : llm.get("llm_model", ""),
         "llm_reasoning"    : llm["llm_reasoning"],
     }
