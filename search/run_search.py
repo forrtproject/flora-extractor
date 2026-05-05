@@ -21,7 +21,7 @@ from shared.config import DATA_DIR, log
 from shared.schema import CANDIDATES_COLS
 from search.openalex_search import fetch_openalex_candidates
 from search.semantic_scholar_search import fetch_semantic_scholar_candidates
-from search.external_lists import fetch_i4r
+from search.external_lists import fetch_i4r, fetch_replication_network
 from search.deduplicate import deduplicate_candidates
 
 
@@ -62,8 +62,8 @@ def run_search(
         fetch_semantic_scholar_candidates(from_year=from_year, to_year=to_year)
     )
 
-    # log.info("Stage 1: fetching Bob Reed list...")
-    # frames.append(fetch_bob_reed())
+    log.info("Stage 1: fetching Replication Network sheet...")
+    frames.append(fetch_replication_network(from_year=from_year, to_year=to_year))
 
     log.info("Stage 1: fetching I4R list...")
     frames.append(fetch_i4r(from_year=from_year, to_year=to_year))
