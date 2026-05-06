@@ -18,9 +18,12 @@ import urllib.error
 from pathlib import Path
 
 import pandas as pd
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, jsonify, render_template, request, send_file
 
-from shared.config import BASE_DIR, DATA_DIR, GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, RESEARCHER_EMAIL
+from shared.config import (
+    BASE_DIR, DATA_DIR, GROBID_CACHE_DIR, LLM_CACHE_DIR,
+    OA_CACHE_DIR, PARSE_CACHE_DIR, PDF_CACHE_DIR, RESEARCHER_EMAIL,
+)
 from shared.utils import cache_key, clean_doi
 
 extract_view_bp = Blueprint("extract_view", __name__)
@@ -107,7 +110,7 @@ def _read_json_list(path: Path) -> list:
 
 
 def _enrich_detail(row: dict) -> dict:
-    """Augment a CSV row with data from LLM and GROBID cache files."""
+    """Augment a CSV row with data from LLM, GROBID, and parse cache files."""
     doi_r = clean_doi(str(row.get("doi_r", "")))
     key   = cache_key(doi_r)
 
@@ -118,12 +121,16 @@ def _enrich_detail(row: dict) -> dict:
     )
     grobid = _read_json_cache(GROBID_CACHE_DIR / f"{key}.json")
     oa_candidates = _read_json_list(OA_CACHE_DIR / f"candidates_{key}.json")
+    parse_results = _read_json_cache(PARSE_CACHE_DIR / f"parse_{key}.json")
+
+    has_pdf = (PDF_CACHE_DIR / f"{key}.pdf").exists()
 
     # Pull fields that are stored in caches but not in extracted.csv
     enriched = dict(row)
     enriched.update({
         # LLM identification
         "llm_prompt":     llm.get("llm_prompt",    ""),
+        "llm_response":   llm.get("llm_response",  ""),
         "llm_source":     llm.get("llm_source",    row.get("link_method", "")),
         "llm_model":      llm.get("llm_model",     row.get("link_llm_model", "")),
         "llm_confidence": llm.get("llm_confidence",""),
@@ -132,8 +139,9 @@ def _enrich_detail(row: dict) -> dict:
         "llm_error":      llm.get("llm_error",      ""),
         "resolution_score": llm.get("resolution_score", ""),
         # Outcome LLM
-        "outcome_llm_prompt": outcome_cache.get("llm_prompt", ""),
-        "outcome_llm_model":  outcome_cache.get("llm_model",  ""),
+        "outcome_llm_prompt":    outcome_cache.get("llm_prompt",    ""),
+        "outcome_llm_response":  outcome_cache.get("llm_response",  ""),
+        "outcome_llm_model":     outcome_cache.get("llm_model",     ""),
         # Match-type classification
         "match_reasoning":      match_cache.get("reasoning", ""),
         "classify_llm_model":   match_cache.get("classify_llm_model", ""),
@@ -147,6 +155,10 @@ def _enrich_detail(row: dict) -> dict:
         # OpenAlex candidate pool
         "oa_candidates":   oa_candidates,
         "n_oa_candidates": len(oa_candidates),
+        # Per-method parse comparison
+        "parse_results":   parse_results,
+        "has_pdf":         has_pdf,
+        "pdf_cache_key":   key,
     })
 
     # title fallback — extracted.csv may use study_r in some legacy rows
@@ -312,13 +324,30 @@ def api_run_doi():
         pattern    = ""
         patterns   = []
 
-    key    = cache_key(doi)
-    grobid = _read_json_cache(GROBID_CACHE_DIR / f"{key}.json")
-    sections = {
-        "intro":      grobid.get("intro",    ""),
-        "methods":    grobid.get("methods",  ""),
-        "references": grobid.get("refs",     []),
-    }
+    key = cache_key(doi)
+
+    # Prefer parse cache (written by parse_all in Stage 6) — fall back to old GROBID cache.
+    parse_cache = _read_json_cache(PARSE_CACHE_DIR / f"parse_{key}.json")
+    if parse_cache:
+        def _score(r: dict) -> int:
+            if r.get("error"):
+                return -1
+            return len(r.get("references") or []) * 500 + len(r.get("abstract") or "") + len(r.get("intro") or "")
+        valid = [r for r in parse_cache.values() if _score(r) >= 0]
+        best  = max(valid, key=_score) if valid else {}
+        sections = {
+            "intro":      best.get("intro",      ""),
+            "methods":    "",
+            "references": best.get("references", []),
+        }
+    else:
+        grobid = _read_json_cache(GROBID_CACHE_DIR / f"{key}.json")
+        sections = {
+            "intro":      grobid.get("intro",    ""),
+            "methods":    grobid.get("methods",  ""),
+            "references": grobid.get("refs",     []),
+        }
+
     html_text = str(row.get("html_text", "") or "")
 
     # ── Step 1: Match classification ─────────────────────────────────────────
@@ -355,7 +384,7 @@ def api_run_doi():
     link_result, link_error = _call_model(link_prompt, model)
 
     # ── Step 3: Outcome classification ──────────────────────────────────────
-    fulltext = str(grobid.get("intro", "") or html_text or "")
+    fulltext = str(sections.get("intro", "") or html_text or "")
     abstract_snip_out = (abstract_r[:1000] + "…") if len(abstract_r) > 1000 else abstract_r
     text_snip = (fulltext[:800] + "…") if len(fulltext) > 800 else fulltext
 
@@ -397,6 +426,87 @@ def api_run_doi():
             "error":  outcome_error,
         },
     })
+
+
+@extract_view_bp.route("/api/extract/rerun-doi", methods=["POST"])
+def api_rerun_doi():
+    """
+    Re-run the full Stage 3 pipeline for one DOI and write results back to extracted.csv.
+
+    Clears the LLM cache for this DOI so fresh LLM calls are made, then runs
+    classify_match_type → run_for_doi → extract_outcome, writes the new row
+    to extracted.csv (replacing any existing row for this DOI), and returns
+    the updated row as JSON so the UI can refresh without a page reload.
+
+    Body JSON:
+      { "doi": "10.xxx/yyy" }
+    """
+    data = request.get_json(force=True) or {}
+    doi  = clean_doi(data.get("doi", "").strip())
+    if not doi:
+        return jsonify({"error": "missing doi"}), 400
+
+    # Load filtered.csv — source of truth for the input row
+    filtered_path = DATA_DIR / "filtered.csv"
+    if not filtered_path.exists():
+        return jsonify({"error": "filtered.csv not found — run Stage 2 first"}), 404
+    fdf = pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig").fillna("")
+    matches = fdf[fdf["doi_r"].apply(clean_doi) == doi]
+    if matches.empty:
+        return jsonify({"error": f"{doi} not found in filtered.csv"}), 404
+    row = matches.iloc[0]
+
+    # Clear LLM cache so the pipeline makes fresh calls (not cached stale results)
+    key = cache_key(doi)
+    for stale in [
+        LLM_CACHE_DIR / f"llm_{key}.json",
+        LLM_CACHE_DIR / f"outcome_{cache_key(doi)}.json",
+        LLM_CACHE_DIR / f"match_type_{cache_key(doi + '_match_type')}.json",
+    ]:
+        if stale.exists():
+            stale.unlink()
+
+    # Run the full pipeline for this one DOI
+    try:
+        from extract.run_extract import (
+            classify_match_type, _build_cands_df, _merge_row,
+            _get_outcome, _save_parse_cache,
+        )
+        from extract.link_original import run_for_doi
+        from shared.schema import EXTRACTED_COLS
+
+        match      = classify_match_type(row.to_dict())
+        match_type = match["original_match_type"]
+        match_conf = match["original_match_confidence"]
+
+        link = run_for_doi(doi, cands_df=_build_cands_df(row))
+        _save_parse_cache(doi)
+        outcome = _get_outcome(doi, row, link)
+
+        result_row = _merge_row(row, link, outcome, match_type, match_conf, 1, 1)
+
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    # Write result back to extracted.csv — replace existing row for this DOI
+    extracted_path = DATA_DIR / "extracted.csv"
+    try:
+        if extracted_path.exists():
+            edf = pd.read_csv(extracted_path, dtype=str, encoding="utf-8-sig").fillna("")
+            edf = edf[edf["doi_r"].apply(clean_doi) != doi]
+        else:
+            edf = pd.DataFrame(columns=EXTRACTED_COLS)
+
+        new_row_df = pd.DataFrame([result_row])
+        for col in EXTRACTED_COLS:
+            if col not in new_row_df.columns:
+                new_row_df[col] = ""
+        edf = pd.concat([edf, new_row_df[EXTRACTED_COLS]], ignore_index=True)
+        edf.to_csv(extracted_path, index=False, encoding="utf-8-sig")
+    except Exception as exc:
+        return jsonify({"error": f"pipeline ok but csv write failed: {exc}"}), 500
+
+    return jsonify(result_row)
 
 
 @extract_view_bp.route("/api/crossref/lookup")
@@ -450,3 +560,15 @@ def api_crossref_lookup():
         return jsonify(_crossref(doi))
     except Exception as e:
         return jsonify({"error": str(e), "doi": doi}), 502
+
+
+@extract_view_bp.route("/api/pdf/<path:doi_raw>")
+def api_serve_pdf(doi_raw: str):
+    """Serve a cached PDF from PDF_CACHE_DIR for a given DOI."""
+    doi  = clean_doi(doi_raw)
+    key  = cache_key(doi)
+    path = PDF_CACHE_DIR / f"{key}.pdf"
+    if not path.exists():
+        return jsonify({"error": "PDF not in cache"}), 404
+    return send_file(path, mimetype="application/pdf",
+                     download_name=f"{key}.pdf", as_attachment=False)

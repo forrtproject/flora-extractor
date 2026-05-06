@@ -1,48 +1,105 @@
 """
 run_filter.py — Stage 2 orchestrator.
 
-Reads data/candidates.csv, applies the rule filter (port of SciMeto's
-phrase-detection regex set) and then the LLM uplift on rows that come back
-as ``needs_review``, and writes data/filtered.csv with the FILTERED_COLS
-schema.
+Reads data/candidates.csv, applies the rule filter then the LLM uplift
+per row, and streams results to data/filtered.csv one row at a time.
+
+DOIs already present in filtered.csv are skipped, so an interrupted run
+can be resumed without reprocessing completed rows.
 
 Usage:
-    python filter/run_filter.py
+    python -m filter.run_filter
 """
 import pandas as pd
 
 from shared.config import DATA_DIR, log
 from shared.schema import CANDIDATES_COLS, FILTERED_COLS
-from filter.rule_filter import apply_rule_filter
-from filter.llm_filter import apply_llm_filter
+from shared.utils import clean_doi
+from filter.rule_filter import classify_row as _rule_classify
+from filter.llm_filter import classify_with_llm as _llm_classify
+
+
+def _append_row(out_path, row_dict: dict, first: bool) -> None:
+    """Write one row to filtered.csv immediately after processing.
+
+    first=True  → create / truncate the file and write the header.
+    first=False → append without header.
+    """
+    row_df = pd.DataFrame([row_dict])
+    for col in FILTERED_COLS:
+        if col not in row_df.columns:
+            row_df[col] = ""
+    row_df[FILTERED_COLS].to_csv(
+        out_path, mode="w" if first else "a",
+        index=False, encoding="utf-8-sig", header=first,
+    )
 
 
 def run_filter() -> pd.DataFrame:
-    """Run the filter pipeline and write data/filtered.csv."""
+    """Run the filter pipeline, streaming results to data/filtered.csv."""
     candidates_path = DATA_DIR / "candidates.csv"
     if not candidates_path.exists():
-        raise FileNotFoundError(f"candidates.csv not found at {candidates_path}. Run Stage 1 first.")
+        raise FileNotFoundError(
+            f"candidates.csv not found at {candidates_path}. Run Stage 1 first."
+        )
 
     df = pd.read_csv(candidates_path, dtype=str, encoding="utf-8-sig").fillna("")
+    df = df.reindex(columns=CANDIDATES_COLS, fill_value="")
     log.info("Stage 2: loaded %d candidates", len(df))
 
-    # Reindex to the canonical schema so an old/extended candidates.csv still flows cleanly.
-    df = df.reindex(columns=CANDIDATES_COLS)
-
-    df = apply_rule_filter(df)
-    log.info(
-        "Stage 2: rule filter done. needs_review: %d",
-        int((df["filter_status"] == "needs_review").sum()),
-    )
-
-    df = apply_llm_filter(df)
-
-    df = df.reindex(columns=FILTERED_COLS)
-
     out_path = DATA_DIR / "filtered.csv"
-    df.to_csv(out_path, index=False, encoding="utf-8-sig")
-    log.info("Stage 2 complete: %d rows → %s", len(df), out_path)
-    return df
+
+    # Load already-processed DOIs so an interrupted run can be resumed.
+    already_done: set[str] = set()
+    first_write = not out_path.exists()
+    if out_path.exists():
+        try:
+            existing = pd.read_csv(out_path, dtype=str, encoding="utf-8-sig").fillna("")
+            already_done = {clean_doi(d) for d in existing["doi_r"] if d}
+            log.info("Stage 2: %d rows already in filtered.csv — skipping", len(already_done))
+        except Exception as exc:
+            log.warning("Stage 2: could not read existing filtered.csv (%s) — starting fresh", exc)
+            first_write = True
+
+    output_rows: list[dict] = []
+    new_rows = 0
+
+    for _, row in df.iterrows():
+        doi_r = clean_doi(str(row.get("doi_r", "")))
+        if doi_r in already_done:
+            continue
+
+        title    = str(row.get("title_r")    or "")
+        abstract = str(row.get("abstract_r") or "")
+
+        # Rule filter
+        row_dict = row.to_dict()
+        row_dict.update(_rule_classify(row_dict))
+
+        # LLM uplift for rows the rule filter couldn't decide
+        if row_dict.get("filter_status") == "needs_review":
+            verdict = _llm_classify(title, abstract)
+            if verdict:
+                row_dict["filter_status"]     = verdict["filter_status"]
+                row_dict["filter_confidence"] = verdict["filter_confidence"]
+                prior = str(row_dict.get("filter_evidence") or "")
+                row_dict["filter_evidence"] = (
+                    f"{prior} | llm:{verdict['filter_evidence']}"
+                    if prior else f"llm:{verdict['filter_evidence']}"
+                )
+                row_dict["filter_method"] = (
+                    "both" if row_dict.get("filter_method") == "rule_based" else "llm"
+                )
+
+        _append_row(out_path, row_dict, first=first_write)
+        first_write = False
+        new_rows += 1
+        output_rows.append(row_dict)
+        log.info("[%s] filter_status=%s — streamed (%d new so far)",
+                 doi_r, row_dict.get("filter_status"), new_rows)
+
+    log.info("Stage 2 complete: %d new rows written → %s", new_rows, out_path)
+    return pd.DataFrame(output_rows)
 
 
 if __name__ == "__main__":

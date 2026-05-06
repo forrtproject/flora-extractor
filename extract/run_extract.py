@@ -17,9 +17,13 @@ import time
 
 import pandas as pd
 
-from shared.config import BASE_DIR, DATA_DIR, GEMINI_LIGHT_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC, log
+from shared.config import (
+    BASE_DIR, DATA_DIR, GEMINI_LIGHT_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC,
+    OA_XML_CACHE_DIR, PARSE_CACHE_DIR, PDF_CACHE_DIR, log,
+)
 from shared.llm_client import call_llm
 from shared.openalex_client import extract_author_year_patterns, find_all_candidates
+from shared.pdf_parsing import parse_all as _parse_all
 from shared.schema import EXTRACTED_COLS, make_pair_id
 from shared.utils import cache_key, clean_doi
 from extract.link_original import run_for_doi
@@ -31,6 +35,7 @@ _METHOD_MAP = {
     "citation_context_match":         "author_year_match",
     "same_author_year_title_overlap": "author_year_match",
     "single_candidate_after_requery": "author_year_match",
+    "title_pattern_match":            "author_year_match",
     "grobid_ref_match":               "author_year_match",
     "llm_gemini":                     "llm_fulltext",
     "llm_openai":                     "llm_fulltext",
@@ -134,7 +139,7 @@ def _score_to_confidence(score) -> str:
 
 # ── Match-type classification (Issue 8) ──────────────────────────────────────
 
-def classify_match_type(row: dict) -> dict:
+def classify_match_type(row: dict, no_llm: bool = False) -> dict:
     """
     Classify original_match_type for a filtered.csv row.
 
@@ -145,6 +150,7 @@ def classify_match_type(row: dict) -> dict:
       3. Call LLM with: title, abstract, matched candidates, count of distinct patterns
       4. Return {"original_match_type": ..., "original_match_confidence": ...}
 
+    no_llm=True: rules only; returns single_original default when no rule fires.
     Rules run BEFORE the cache so a stale single_original result from a prior LLM
     call cannot override a deterministic rule match (e.g. Many Labs, RRR papers).
     LLM results are cached as cache_key(doi_r + "_match_type"). On OpenAlex failure,
@@ -162,6 +168,10 @@ def classify_match_type(row: dict) -> dict:
     if rule:
         log.info("[%s] classify_match_type: rule fired → %s", doi_r, rule["original_match_type"])
         return rule
+
+    if no_llm:
+        return {"original_match_type": "single_original",
+                "original_match_confidence": "low", "rule_fired": False}
 
     cache_file = LLM_CACHE_DIR / f"match_type_{cache_key(doi_r + '_match_type')}.json"
     if cache_file.exists():
@@ -309,7 +319,9 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
         "authors_o":       str(link.get("resolved_author_o","") or ""),
         "link_method":     _map_method(link.get("resolution_method", "target_pending")),
         "link_evidence":   str(link.get("llm_evidence",     "") or ""),
-        "link_confidence": _score_to_confidence(link.get("resolution_score", 0)),
+        "link_confidence": (link["llm_confidence"]
+                            if link.get("llm_confidence") in {"high", "medium", "low"}
+                            else _score_to_confidence(link.get("resolution_score", 0))),
         "link_llm_model":  str(link.get("llm_model",        "") or ""),
         "outcome":             outcome.get("outcome",             "uninformative"),
         "outcome_phrase":      outcome.get("outcome_phrase",      ""),
@@ -377,11 +389,45 @@ def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str) -> dict:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _get_outcome(doi_r: str, row: pd.Series, link: dict) -> dict:
+def _save_parse_cache(doi_r: str) -> None:
+    """Run all PDF parsers for doi_r and cache results to PARSE_CACHE_DIR."""
+    key      = cache_key(doi_r)
+    out_file = PARSE_CACHE_DIR / f"parse_{key}.json"
+    if out_file.exists():
+        return
+
+    pdf_path = PDF_CACHE_DIR / f"{key}.pdf"
+    if not pdf_path.exists():
+        pdf_path = None  # type: ignore[assignment]
+
+    oa_xml_file = OA_XML_CACHE_DIR / f"oa_xml_{key}.json"
+    oa_xml: dict | None = None
+    if oa_xml_file.exists():
+        try:
+            with oa_xml_file.open(encoding="utf-8") as fh:
+                oa_xml = json.load(fh)
+        except Exception:
+            pass
+
+    results = _parse_all(doi_r, pdf_path, oa_xml=oa_xml)
+    try:
+        with out_file.open("w", encoding="utf-8") as fh:
+            json.dump(results, fh, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        log.debug("[%s] _save_parse_cache write failed: %s", doi_r, exc)
+
+
+def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -> dict:
     abstract_r = str(row.get("abstract_r", ""))
     title_r    = str(row.get("title_r",    ""))
-    fulltext   = str(link.get("grobid_intro", "") or link.get("html_text", "") or "")
-    return extract_outcome(doi_r, abstract_r, fulltext, title_r)
+    # Combine all parsed sections for richer keyword coverage (~3200 chars vs. previous 1000)
+    fulltext = " ".join(filter(None, [
+        str(link.get("grobid_abstract", "") or ""),
+        str(link.get("grobid_intro",    "") or ""),
+        str(link.get("grobid_methods",  "") or ""),
+        str(link.get("html_text",       "") or ""),
+    ]))
+    return extract_outcome(doi_r, abstract_r, fulltext, title_r, no_llm=no_llm)
 
 
 def _parse_originals(result: dict) -> list[dict]:
@@ -416,10 +462,13 @@ def _append_row(out_path, result_row: dict, first: bool) -> None:
     )
 
 
-def run_extract() -> pd.DataFrame:
+def run_extract(no_llm: bool = False,
+                limit: "int | None" = None) -> pd.DataFrame:
     """
     Run Stage 3 and stream results to data/extracted.csv.
 
+    no_llm=True: skip all LLM calls (rule-based only).
+    limit: process only the first N non-false-positive rows.
     Each completed row is written immediately so Stage 4 validation can begin
     before the full run finishes.
     """
@@ -439,17 +488,23 @@ def run_extract() -> pd.DataFrame:
 
     out_path = DATA_DIR / "extracted.csv"
     output_rows: list[dict] = []
-    first_write = True  # write CSV header on the first row
+    first_write = True
+    processed = 0
 
     for _, row in df.iterrows():
         result_rows: list[dict] = []
 
-        # False positives pass through unchanged — no extraction
+        # False positives are excluded from extracted.csv entirely
         if row.get("filter_status") == "false_positive":
-            result_rows.append(row.to_dict())
+            log.debug("[%s] false_positive — skipped", clean_doi(str(row.get("doi_r", ""))))
+            continue
         else:
+            if limit is not None and processed >= limit:
+                break
+            processed += 1
+
             doi_r = clean_doi(str(row.get("doi_r", "")))
-            match = classify_match_type(row.to_dict())
+            match = classify_match_type(row.to_dict(), no_llm=no_llm)
             match_type = match["original_match_type"]
             match_conf = match["original_match_confidence"]
             log.info("[%s] match_type=%s conf=%s", doi_r, match_type, match_conf)
@@ -463,28 +518,22 @@ def run_extract() -> pd.DataFrame:
                     originals = _parse_originals(result)
                     if not originals:
                         if rule_fired:
-                            # Rule is certain this is multi-original; LLM failed to list
-                            # originals — do NOT silently downgrade to single_original.
-                            # Write target_pending so reviewers know to fill originals manually.
                             log.warning(
                                 "[%s] rule_fired=True but LLM returned no originals — "
                                 "writing target_pending (NOT single_original)", doi_r
                             )
                             result_rows.append(_empty_row(row, "multiple_original", match_conf))
                         else:
-                            # LLM confirmed false positive or found nothing; fall to single path.
-                            link    = run_for_doi(doi_r, cands_df=_build_cands_df(row))
-                            outcome = _get_outcome(doi_r, row, link)
+                            link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
+                                                  no_llm=no_llm)
+                            _save_parse_cache(doi_r)
+                            outcome = _get_outcome(doi_r, row, link, no_llm=no_llm)
                             result_rows.append(
                                 _merge_row(row, link, outcome, "single_original", match_conf, 1, 1)
                             )
                     else:
                         multi_llm_model = str(result.get("llm_model", "") or "")
                         for orig in originals:
-                            # Use the per-original outcome the multi-original LLM already
-                            # determined from the full paper. For multi-target papers the
-                            # whole-paper abstract describes an aggregate (e.g. "54% replicated")
-                            # which would give a wrong outcome for every individual original.
                             raw_out = str(orig.get("outcome", "uninformative") or "uninformative").lower()
                             if raw_out not in _VALID_OUTCOMES:
                                 raw_out = "uninformative"
@@ -499,8 +548,9 @@ def run_extract() -> pd.DataFrame:
                                                  len(originals), multi_llm_model)
                             )
                 else:
-                    link    = run_for_doi(doi_r, cands_df=_build_cands_df(row))
-                    outcome = _get_outcome(doi_r, row, link)
+                    link    = run_for_doi(doi_r, cands_df=_build_cands_df(row), no_llm=no_llm)
+                    _save_parse_cache(doi_r)
+                    outcome = _get_outcome(doi_r, row, link, no_llm=no_llm)
                     result_rows.append(
                         _merge_row(row, link, outcome, match_type, match_conf, 1, 1)
                     )
@@ -513,11 +563,113 @@ def run_extract() -> pd.DataFrame:
             _append_row(out_path, result_row, first=first_write)
             first_write = False
             output_rows.append(result_row)
-            log.info("Streamed %d/%d rows → %s", len(output_rows), len(df), out_path.name)
+            log.info("Streamed %d rows → %s", len(output_rows), out_path.name)
 
     log.info("Stage 3 complete: %d rows → %s", len(output_rows), out_path)
     return pd.DataFrame(output_rows)
 
 
+def run_match_type_only(no_llm: bool = False,
+                        limit: "int | None" = None) -> pd.DataFrame:
+    """
+    Read filtered.csv, classify match type per row, write data/match_type_only.csv.
+    Useful for evaluating match-type classification in isolation.
+    """
+    filtered_path = DATA_DIR / "filtered.csv"
+    if not filtered_path.exists():
+        filtered_path = BASE_DIR / "misc" / "sample_filtered.csv"
+    df = pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig").fillna("")
+    eligible = df[df["filter_status"] != "false_positive"]
+    if limit is not None:
+        eligible = eligible.head(limit)
+
+    rows = []
+    for _, row in eligible.iterrows():
+        doi_r = clean_doi(str(row.get("doi_r", "")))
+        match = classify_match_type(row.to_dict(), no_llm=no_llm)
+        rows.append({
+            "doi_r":         doi_r,
+            "title_r":       str(row.get("title_r", "")),
+            "filter_status": str(row.get("filter_status", "")),
+            "match_type":    match["original_match_type"],
+            "match_conf":    match["original_match_confidence"],
+            "rule_fired":    str(match.get("rule_fired", False)),
+            "reasoning":     str(match.get("reasoning", "")),
+        })
+
+    out = pd.DataFrame(rows)
+    out_path = DATA_DIR / "match_type_only.csv"
+    out.to_csv(out_path, index=False, encoding="utf-8-sig")
+    log.info("match-type-only: %d rows → %s", len(out), out_path)
+    return out
+
+
+def run_outcome_only(no_llm: bool = False,
+                     limit: "int | None" = None) -> pd.DataFrame:
+    """
+    Read filtered.csv, classify outcome per row, write data/outcome_only.csv.
+    Useful for evaluating outcome classification in isolation.
+    """
+    filtered_path = DATA_DIR / "filtered.csv"
+    if not filtered_path.exists():
+        filtered_path = BASE_DIR / "misc" / "sample_filtered.csv"
+    df = pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig").fillna("")
+    eligible = df[df["filter_status"] != "false_positive"]
+    if limit is not None:
+        eligible = eligible.head(limit)
+
+    rows = []
+    for _, row in eligible.iterrows():
+        doi_r   = clean_doi(str(row.get("doi_r", "")))
+        outcome = extract_outcome(
+            doi_r,
+            str(row.get("abstract_r", "")),
+            fulltext="",
+            title_r=str(row.get("title_r", "")),
+            no_llm=no_llm,
+        )
+        rows.append({
+            "doi_r":              doi_r,
+            "title_r":            str(row.get("title_r", "")),
+            "outcome":            outcome["outcome"],
+            "outcome_phrase":     outcome["outcome_phrase"],
+            "outcome_confidence": outcome["outcome_confidence"],
+            "out_quote_source":   outcome["out_quote_source"],
+        })
+
+    out = pd.DataFrame(rows)
+    out_path = DATA_DIR / "outcome_only.csv"
+    out.to_csv(out_path, index=False, encoding="utf-8-sig")
+    log.info("outcome-only: %d rows → %s", len(out), out_path)
+    return out
+
+
 if __name__ == "__main__":
-    run_extract()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Stage 3 Extract pipeline")
+    parser.add_argument(
+        "--no-llm", action="store_true",
+        help="Skip all LLM calls. Rule-based only.",
+    )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--match-type-only", action="store_true",
+        help="Classify match type only -> data/match_type_only.csv",
+    )
+    group.add_argument(
+        "--outcome-only", action="store_true",
+        help="Classify outcome only -> data/outcome_only.csv",
+    )
+    parser.add_argument(
+        "--limit", type=int, default=None, metavar="N",
+        help="Process only the first N non-false-positive rows.",
+    )
+    args = parser.parse_args()
+
+    if args.match_type_only:
+        run_match_type_only(no_llm=args.no_llm, limit=args.limit)
+    elif args.outcome_only:
+        run_outcome_only(no_llm=args.no_llm, limit=args.limit)
+    else:
+        run_extract(no_llm=args.no_llm, limit=args.limit)

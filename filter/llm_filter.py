@@ -48,7 +48,7 @@ def _build_prompt(title: str, abstract: str) -> str:
     )
 
 
-def _classify_with_llm(title: str, abstract: str) -> Optional[dict]:
+def classify_with_llm(title: str, abstract: str) -> Optional[dict]:
     """Return a dict with the three filter fields, or None on hard failure."""
     cache_id = cache_key(f"filter|{title}|{abstract}")
     cached = read_cache(LLM_CACHE_DIR, cache_id)
@@ -110,7 +110,7 @@ def apply_llm_filter(df: pd.DataFrame) -> pd.DataFrame:
         row = df.loc[idx]
         title = str(row.get("title_r") or "")
         abstract = str(row.get("abstract_r") or "")
-        verdict = _classify_with_llm(title, abstract)
+        verdict = classify_with_llm(title, abstract)
         if verdict is None:
             continue
         df.at[idx, "filter_status"] = verdict["filter_status"]

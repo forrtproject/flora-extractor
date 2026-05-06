@@ -9,6 +9,8 @@
 python -m filter.run_filter
 ```
 
+Results are streamed to `data/filtered.csv` one row at a time. Interrupted runs can be resumed — DOIs already present in `filtered.csv` are skipped automatically.
+
 Results are viewable in the **Filter** tab of the Stage 4 web app (`http://localhost:5001/filter`).
 
 ---
@@ -123,26 +125,35 @@ False positives are **included** in `filtered.csv` with `filter_status = false_p
 
 ## Files
 
-| File                    | Status       | Description                                                 |
-| ----------------------- | ------------ | ----------------------------------------------------------- |
-| `filter/run_filter.py`  | Stub         | Orchestrator — reads candidates.csv, runs steps, writes CSV |
-| `filter/rule_filter.py` | To implement | Deduplication, keyword classifier, author-year pattern check|
-| `filter/llm_filter.py`  | To implement | LLM classifier for `needs_review` rows                      |
+| File                    | Status      | Description                                                        |
+| ----------------------- | ----------- | ------------------------------------------------------------------ |
+| `filter/run_filter.py`  | Implemented | Orchestrator — streaming, resume-safe, one row appended at a time  |
+| `filter/rule_filter.py` | Implemented | Keyword classifier, author-year pattern check; `classify_row()`    |
+| `filter/llm_filter.py`  | Implemented | LLM classifier for `needs_review` rows; `classify_with_llm()`      |
 
 ---
 
-## What Needs to Be Implemented
+## Recent Improvements (2026-05-06)
 
-- [ ] `deduplicate_candidates(df)` — second-pass title dedup (DOI dedup is done in Stage 1)
-- [ ] `classify_with_rules(df)` — keyword pattern classifier returning `filter_status`, `filter_evidence`, `filter_confidence`
-- [ ] `check_author_year_patterns(row)` — flag `needs_review` when no author-year citation pattern found
-- [ ] `classify_with_llm(rows)` — LLM classifier for `needs_review` rows only
+### Streaming, resume-safe pipeline (`run_filter.py`)
+
+`run_filter.py` was rewritten from a batch writer to a streaming pipeline:
+
+- On startup, reads any existing `filtered.csv` and builds a set of already-processed DOIs.
+- Each new row is rule-classified, LLM-uplifted if `needs_review`, then **immediately appended** to `filtered.csv`.
+- Re-running after an interruption picks up where it left off — DOIs already in `filtered.csv` are skipped without reprocessing.
+
+### Public single-row API (`rule_filter.py`, `llm_filter.py`)
+
+- `classify_row(row: dict) -> dict` added to `rule_filter.py` — takes a candidate row dict, returns the four filter columns.
+- `_classify_with_llm` renamed to `classify_with_llm` (public) in `llm_filter.py`.
+- Both `apply_rule_filter` and `apply_llm_filter` remain intact for DataFrame-level use.
 
 ---
 
 ## Rules
 
-- Never delete false positives — set `filter_status = false_positive` and include in output
+- Never delete false positives — set `filter_status = false_positive` and include in `filtered.csv`
 - LLM classification pass runs only on `needs_review` rows — do not call LLM for every paper
 - All LLM calls must be cached with `cache_key(doi_r + suffix)` before writing to disk
 - Rate limit: 1s between LLM calls (`LLM_RATE_SEC`)
