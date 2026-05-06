@@ -28,6 +28,17 @@ Two knobs control how much **new** data is fetched in a run:
 
 ***
 
+## API keys required
+
+Set these in your `.env` file before running:
+
+| Variable               | Required for            | Get one at                                                                 |
+| ---------------------- | ----------------------- | -------------------------------------------------------------------------- |
+| `RESEARCHER_EMAIL`     | OpenAlex (polite pool)  | Any valid email — used as `mailto=` in API requests                        |
+| `SEMANTIC_SCHOLAR_KEY` | Semantic Scholar        | https://www.semanticscholar.org/product/api#api-key-form   |
+
+***
+
 ## What This Stage Does
 
 Discovers every academic paper that might be a replication or reproduction study. It casts a wide net across multiple sources, collects basic metadata for each paper, and writes a single deduplicated list of candidates. Stage 2 then decides which candidates are genuine.
@@ -82,8 +93,8 @@ Hand-maintained lists of known replications. Each is an independent loader in `s
 
 | Source        | Coverage         | Method                                |
 | ------------- | ---------------- | ------------------------------------- |
-| Bob Reed list | Economics        | HTML scrape of replicationnetwork.com |
-| I4R reports   | Multi-discipline | HTML scrape of i4replication.org      |
+| Bob Reed list | Economics        | Fetch ReplicationNetwork Google Sheet |
+| I4R reports   | Multi-discipline | Scrape from IDEAS I4R catalogue |
 
 ***
 
