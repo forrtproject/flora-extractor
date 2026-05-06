@@ -835,10 +835,10 @@ function renderDetail(div, d) {
 
   // ── 6b: PDF Parse Comparison ──────────────────────────────────────────────
   const pr = d.parse_results || {};
-  const parseMethods = ['openalex_xml','pdfminer','grobid','docpluck','docling'];
+  const parseMethods = ['openalex_xml','pdfminer','grobid','docpluck','opendataloader'];  // docling disabled
   const hasParsed = parseMethods.some(m => pr[m] && !pr[m].error);
   const parseLabels = {openalex_xml:'OA XML',pdfminer:'pdfminer',grobid:'GROBID',
-                       docpluck:'Docpluck',docling:'Docling'};
+                       docpluck:'Docpluck',opendataloader:'OpenDataLoader'};
 
   function parseMethodCol(m) {
     const r = pr[m] || {};
@@ -983,7 +983,23 @@ function renderDetail(div, d) {
                 <div class="llm-code">${esc(d.outcome_llm_response)}</div>
               </div>
             </div>`
-          : `<div class="llm-code">${esc(d.outcome_llm_prompt||'(outcome was determined by keyword scan — no LLM call needed, or cache not stored)')}</div>`}
+          : d.outcome_llm_model
+            ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+                <div>
+                  <div style="font-size:9px;font-weight:700;color:#7dd3fc;margin-bottom:4px;
+                      text-transform:uppercase;letter-spacing:.06em">PROMPT</div>
+                  <div class="llm-code">${esc(d.outcome_llm_prompt||'(not stored)')}</div>
+                </div>
+                <div>
+                  <div style="font-size:9px;font-weight:700;color:#6ee7b7;margin-bottom:4px;
+                      text-transform:uppercase;letter-spacing:.06em">RESPONSE</div>
+                  <div class="llm-code" style="color:#64748b;font-style:italic;padding:10px">
+                    Response not stored in this cache entry.<br>
+                    Use <strong style="color:#94a3b8">Rerun DOI</strong> to capture fresh LLM output.
+                  </div>
+                </div>
+              </div>`
+            : `<div class="llm-code">${esc(d.outcome_llm_prompt||'(outcome was determined by keyword scan — no LLM call needed, or cache not stored)')}</div>`}
       </div>
 
       <div id="${tabId}-link" class="llm-pane">
@@ -1007,7 +1023,23 @@ function renderDetail(div, d) {
                 <div class="llm-code">${esc(d.llm_response)}</div>
               </div>
             </div>`
-          : `<div class="llm-code">${esc(d.llm_prompt||'(not cached — DOI was resolved without an LLM call)')}</div>`}
+          : (d.llm_model && d.llm_source !== 'none' && d.llm_source !== '')
+            ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+                <div>
+                  <div style="font-size:9px;font-weight:700;color:#7dd3fc;margin-bottom:4px;
+                      text-transform:uppercase;letter-spacing:.06em">PROMPT</div>
+                  <div class="llm-code">${esc(d.llm_prompt||'(not stored)')}</div>
+                </div>
+                <div>
+                  <div style="font-size:9px;font-weight:700;color:#6ee7b7;margin-bottom:4px;
+                      text-transform:uppercase;letter-spacing:.06em">RESPONSE</div>
+                  <div class="llm-code" style="color:#64748b;font-style:italic;padding:10px">
+                    Response not stored in this cache entry.<br>
+                    Use <strong style="color:#94a3b8">Rerun DOI</strong> to capture fresh LLM output.
+                  </div>
+                </div>
+              </div>`
+            : `<div class="llm-code">${esc(d.llm_prompt||'(not cached — DOI was resolved without an LLM call)')}</div>`}
       </div>
     </div>` : '';
 

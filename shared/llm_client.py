@@ -632,7 +632,7 @@ def call_gemini_with_pdf(prompt: str,
                f":generateContent?key={api_key}")
         for attempt in range(2):
             try:
-                r = requests.post(url, json=payload, timeout=120)
+                r = requests.post(url, json=payload, timeout=45)
                 if r.status_code == 429:
                     break
                 if r.status_code in (500, 503) and attempt == 0:
