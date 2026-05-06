@@ -21,6 +21,7 @@ Usage
 
 import argparse
 import glob
+import json
 from typing import Optional
 
 import pandas as pd
@@ -115,6 +116,59 @@ def _merge_into_candidates_csv(
 # Main
 # ---------------------------------------------------------------------------
 
+
+
+def _harvest_oa_cache() -> pd.DataFrame:
+    """Load every cached OpenAlex page response and extract rows.
+
+    Scans all *.json files in OA_CACHE_DIR (skipping cursor files) and
+    extracts rows using the same _extract_row function used during live
+    fetches.  This makes all previously downloaded pages available to the
+    merge regardless of which year range was active when they were fetched.
+    """
+    from search.openalex_search import _extract_row
+    rows = []
+    for path in OA_CACHE_DIR.glob("*.json"):
+        if ".cursor." in path.name:
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            for w in (data.get("results") or []):
+                if isinstance(w, dict):
+                    rows.append(_extract_row(w))
+        except Exception:
+            continue
+    if not rows:
+        return pd.DataFrame(columns=CANDIDATES_COLS)
+    df = pd.DataFrame(rows, columns=CANDIDATES_COLS)
+    log.info("OA cache harvest: %d rows from %d page files",
+             len(df), sum(1 for _ in OA_CACHE_DIR.glob("*.json")))
+    return df
+
+
+def _harvest_s2_cache() -> pd.DataFrame:
+    """Load every cached S2 page response and extract rows."""
+    from search.semantic_scholar_search import S2_CACHE_DIR, _extract_row
+    rows = []
+    for path in S2_CACHE_DIR.glob("*.json"):
+        if ".offset." in path.name:
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            for p in (data.get("data") or []):
+                if isinstance(p, dict):
+                    rows.append(_extract_row(p))
+        except Exception:
+            continue
+    if not rows:
+        return pd.DataFrame(columns=CANDIDATES_COLS)
+    df = pd.DataFrame(rows, columns=CANDIDATES_COLS)
+    log.info("S2 cache harvest: %d rows from %d page files",
+             len(df), sum(1 for _ in S2_CACHE_DIR.glob("*.json")))
+    return df
+
 def run_search(
     from_year:              Optional[int] = None,
     to_year:                Optional[int] = None,
@@ -135,6 +189,15 @@ def run_search(
     """
     yr_label = f"{from_year or 'any'}–{to_year or 'any'}"
     log.info("Stage 1 starting  (years: %s)", yr_label)
+
+    # Always harvest all cached pages first so results from every previous
+    # run (any year range) flow into candidates.csv without re-fetching.
+    log.info("Harvesting all cached OpenAlex and SemanticScholar pages...")
+    cache_frames: list[pd.DataFrame] = [_harvest_oa_cache(), _harvest_s2_cache()]
+    cached_batch = pd.concat(cache_frames, ignore_index=True) if cache_frames else pd.DataFrame(columns=CANDIDATES_COLS)
+    if not cached_batch.empty:
+        log.info("Cache harvest total: %d rows — merging into candidates.csv", len(cached_batch))
+        _merge_into_candidates_csv(cached_batch, DATA_DIR / "candidates.csv")
 
     frames: list[pd.DataFrame] = []
 
