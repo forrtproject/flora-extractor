@@ -95,7 +95,7 @@ def _save_cursor_state(
             },
             f,
         )
-    tmp.rename(path)
+    tmp.replace(path)
 
 
 # ---------------------------------------------------------------------------

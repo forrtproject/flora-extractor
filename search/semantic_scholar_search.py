@@ -101,7 +101,7 @@ def _save_offset_state(path: Path, offset: int, total: int, completed: bool) -> 
             },
             f,
         )
-    tmp.rename(path)
+    tmp.replace(path)
 
 
 # ---------------------------------------------------------------------------
