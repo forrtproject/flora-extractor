@@ -370,17 +370,19 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
     return row
 
 
-def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str) -> dict:
+def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
+               link_method: str = "api_error") -> dict:
     row = filter_row.to_dict()
     doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
+    outcome = "api_error" if link_method == "api_error" else "pending"
     row.update({
         "pair_id": make_pair_id(doi_r_clean, ""),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
         "doi_o": "", "title_o": "", "year_o": "", "authors_o": "",
-        "link_method": "api_error", "link_evidence": "", "link_confidence": "low",
+        "link_method": link_method, "link_evidence": "", "link_confidence": "low",
         "link_llm_model": "",
-        "outcome": "api_error", "outcome_phrase": "",
+        "outcome": outcome, "outcome_phrase": "",
         "outcome_confidence": "low", "out_quote_source": "",
         "type": "", "original_rank": 1, "n_originals": 1,
     })
@@ -522,7 +524,8 @@ def run_extract(no_llm: bool = False,
                                 "[%s] rule_fired=True but LLM returned no originals — "
                                 "writing target_pending (NOT single_original)", doi_r
                             )
-                            result_rows.append(_empty_row(row, "multiple_original", match_conf))
+                            result_rows.append(_empty_row(row, "multiple_original", match_conf,
+                                                          link_method="target_pending"))
                         else:
                             link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                                                   no_llm=no_llm)

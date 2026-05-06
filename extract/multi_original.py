@@ -122,12 +122,20 @@ def run_multi_original_for_doi(doi_r:       str,
 
     # ── Stage 5: Multi-original LLM ──────────────────────────────────────────
     pdf_url_for_llm = pdf.get("pdf_url", "") if not pdf.get("pdf_ok") else ""
-    llm = identify_all_originals_with_llm(
-        doi_r, study_r, abstract_r, candidates, sections,
-        pdf_url     = pdf_url_for_llm,
-        html_text   = pdf.get("html_text", ""),
-        force_multi = force_multi,
-    )
+    try:
+        llm = identify_all_originals_with_llm(
+            doi_r, study_r, abstract_r, candidates, sections,
+            pdf_url     = pdf_url_for_llm,
+            html_text   = pdf.get("html_text", ""),
+            force_multi = force_multi,
+        )
+    except Exception as exc:
+        log.error("[multi/%s] LLM failed: %s — returning empty originals", doi_r, exc)
+        llm = {
+            "n_originals": 0, "is_false_positive": False,
+            "originals": [], "llm_source": "api_error",
+            "llm_model": "", "llm_reasoning": str(exc),
+        }
     log.info("[multi/%s] LLM: n_originals=%d false_positive=%s source=%s",
              doi_r, llm["n_originals"], llm["is_false_positive"], llm["llm_source"])
 
