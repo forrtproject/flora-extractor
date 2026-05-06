@@ -60,16 +60,17 @@ _CURSOR_START = "*"
 
 
 def _job_key(phrase: str, from_year: Optional[int], to_year: Optional[int]) -> str:
-    """Stable hash key for a (phrase, year-range) job."""
+    """Return a stable hash key identifying a (phrase, year-range) job."""
     return cache_key(f"oa|{phrase}|{from_year or 'any'}|{to_year or 'any'}")
 
 
 def _cursor_path(phrase: str, from_year: Optional[int], to_year: Optional[int]) -> Path:
+    """Return the Path where the cursor checkpoint for this job is stored."""
     return OA_CACHE_DIR / f"{_job_key(phrase, from_year, to_year)}.cursor.json"
 
 
 def _load_cursor_state(path: Path) -> dict:
-    """Return saved state, or a fresh-start state dict."""
+    """Load cursor state from *path*, or return a fresh-start state if absent or corrupt."""
     if path.exists():
         try:
             with open(path, encoding="utf-8") as f:
@@ -82,7 +83,7 @@ def _load_cursor_state(path: Path) -> dict:
 def _save_cursor_state(
     path: Path, cursor: Optional[str], total: int, completed: bool
 ) -> None:
-    """Atomically write cursor state so a crashed process leaves a valid file."""
+    """Atomically write cursor state so a crashed process leaves a valid checkpoint file."""
     tmp = path.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(
@@ -103,12 +104,19 @@ def _save_cursor_state(
 
 
 def _year_filter(from_year: Optional[int], to_year: Optional[int]) -> Optional[str]:
+    """Build an OpenAlex ``publication_year`` filter fragment, or ``None`` if unrestricted."""
     if from_year is None and to_year is None:
         return None
     return f"publication_year:{from_year or 1000}-{to_year or 9999}"
 
 
 def _reconstruct_abstract(inverted_index: Optional[dict]) -> Optional[str]:
+    """Reconstruct plain abstract text from an OpenAlex inverted index.
+
+    OpenAlex represents abstracts as a mapping of ``{word: [positions]}``.
+    This reverses the mapping into position order and joins the tokens.
+    Returns ``None`` when no abstract data is provided.
+    """
     if not inverted_index:
         return None
     positions: dict[int, str] = {}
@@ -124,14 +132,32 @@ def _reconstruct_abstract(inverted_index: Optional[dict]) -> Optional[str]:
 
 
 def _get_page(params: dict, max_retries: int = 5) -> dict:
-    """
-    Fetch one OpenAlex results page.
+    """Fetch one OpenAlex results page, serving from disk cache when available.
 
-    Cache-first: if the response is already on disk, return immediately with
-    no network call.  On 429 sleep ``Retry-After`` seconds and retry in-place
-    (no StopIteration — the cursor is checkpointed before sleeping so an
-    interrupted process can resume).  Other transient errors use exponential
-    back-off.
+    On a cache miss the page is requested from the API.  A 429 response causes
+    the function to sleep for ``Retry-After`` seconds then retry in-place; the
+    cursor is checkpointed by the caller *before* this call, so an interrupted
+    process can resume safely.  Other transient HTTP/network errors use
+    exponential back-off up to *max_retries* attempts.
+
+    Parameters
+    ----------
+    params : dict
+        Query parameters for the OpenAlex works endpoint.
+    max_retries : int
+        Maximum number of retry attempts for transient errors.
+
+    Returns
+    -------
+    dict
+        Parsed JSON response from OpenAlex.
+
+    Raises
+    ------
+    requests.RequestException
+        If the request keeps failing after all retries.
+    RuntimeError
+        If the retry loop exits without returning a response.
     """
     key = cache_key(str(sorted(params.items())))
     cache_path = OA_CACHE_DIR / f"{key}.json"
@@ -175,7 +201,6 @@ def _get_page(params: dict, max_retries: int = 5) -> dict:
             time.sleep(wait)
             continue
 
-        # Other HTTP error — exponential back-off, then raise on last attempt
         if attempt == max_retries - 1:
             resp.raise_for_status()
         wait = 2**attempt
@@ -192,6 +217,7 @@ def _get_page(params: dict, max_retries: int = 5) -> dict:
 
 
 def _extract_row(work: dict) -> dict:
+    """Convert one OpenAlex work record into the shared candidate-row schema."""
     authorships = work.get("authorships") or []
     names = [(a.get("author") or {}).get("display_name") for a in authorships]
     authors = "; ".join(n for n in names if n) or None
@@ -224,22 +250,30 @@ def fetch_phrase(
     to_year: Optional[int] = None,
     max_records: Optional[int] = None,
 ) -> list[dict]:
-    """
-    Fetch OpenAlex works matching *phrase* with resumable cursor persistence.
+    """Fetch OpenAlex works matching *phrase* with resumable cursor persistence.
 
-    Cursor state is checkpointed after every page.  Re-calling with the same
-    arguments resumes from the saved position.  Completed phrases are skipped.
+    The cursor is checkpointed twice per page: once *before* the request
+    (so a crash during the request retries that page on resume) and once
+    *after* (advancing the bookmark to the next page).  Completed phrases
+    write ``completed: true`` and are skipped on subsequent calls.
 
     Parameters
     ----------
     phrase : str
-        Search phrase (exact-phrase search against title + abstract).
+        Exact-phrase search string applied against title and abstract.
     from_year, to_year : int, optional
-        Publication year bounds (inclusive).
+        Publication year bounds (inclusive).  Together with *phrase* these
+        form the job identity — a different year range is an independent job
+        with its own cursor file.
     max_records : int, optional
-        Stop after this many rows *this call* without losing cursor position,
-        so the next call continues where this one stopped.  ``None`` = run
-        until the phrase is exhausted.
+        Stop returning rows after this count *for this call* without losing
+        the cursor position.  The next call resumes from the same page
+        boundary.  ``None`` runs until the phrase result set is exhausted.
+
+    Returns
+    -------
+    list[dict]
+        Candidate rows in the shared schema defined by ``CANDIDATES_COLS``.
     """
     cursor_path = _cursor_path(phrase, from_year, to_year)
     state = _load_cursor_state(cursor_path)
@@ -273,11 +307,11 @@ def fetch_phrase(
             "select": _SELECT,
         }
 
-        # Checkpoint the CURRENT cursor before the request so that if the
-        # process is killed mid-request, the next run retries this page.
+        # Checkpoint current cursor before the request (crash-safe: the next
+        # run retries this page rather than skipping it).
         _save_cursor_state(cursor_path, cursor, total_fetched, completed=False)
 
-        data = _get_page(params)  # sleeps and retries on 429
+        data = _get_page(params)
         results = data.get("results") or []
         if not results:
             cursor = None
@@ -298,7 +332,7 @@ def fetch_phrase(
 
         cursor = next_cursor  # None → phrase fully exhausted
 
-        # Checkpoint the NEXT cursor (advances bookmark past this page)
+        # Checkpoint the next cursor, advancing the bookmark past this page.
         _save_cursor_state(cursor_path, cursor, total_fetched, completed=(not cursor))
 
         if not cursor:
@@ -329,21 +363,29 @@ def fetch_openalex_candidates(
     to_year: Optional[int] = None,
     max_records_per_phrase: Optional[int] = None,
 ) -> pd.DataFrame:
-    """
-    Fetch OpenAlex candidates across all SEARCH_PHRASES.
+    """Fetch OpenAlex candidates across all ``SEARCH_PHRASES``.
 
-    Each phrase job is individually resumable via a cursor file in
-    ``OA_CACHE_DIR``.  Completed phrase jobs are skipped automatically.
+    Each phrase is an independent resumable job backed by a cursor file in
+    ``OA_CACHE_DIR``.  Completed jobs are skipped automatically, so this
+    function can be called repeatedly to incrementally extend the dataset.
 
     Parameters
     ----------
     from_year, to_year : int, optional
-        Year range.  A year range is part of the job identity, so
-        ``from_year=2020, to_year=2025`` is a different (independent) job
-        from running with no year filter.
+        Publication year range (inclusive).  The year range is part of the
+        job identity, so changing it starts a fresh set of cursor files
+        without disturbing jobs run under a different range.
     max_records_per_phrase : int, optional
-        Limit new rows per phrase per run without losing the cursor (useful
-        for incremental ingestion).  Omit for a full unlimited run.
+        Cap on new rows fetched per phrase per call.  The cursor is saved at
+        the page boundary so the next call continues from that point.
+        ``None`` runs each phrase to full exhaustion.
+
+    Returns
+    -------
+    pd.DataFrame
+        Candidate rows with columns ordered per ``CANDIDATES_COLS``.
+        Returns an empty DataFrame (with correct columns) if no results
+        are found or all phrase jobs are already complete.
     """
     all_rows: list[dict] = []
 
