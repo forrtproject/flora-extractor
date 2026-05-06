@@ -85,6 +85,18 @@ def _classify_row(title: str, abstract: str, year: int | None) -> dict:
     }
 
 
+def classify_row(row: dict) -> dict:
+    """Return FILTER_ADDED_COLS values for a single candidate row dict."""
+    title    = str(row.get("title_r")    or "")
+    abstract = str(row.get("abstract_r") or "")
+    year_val = row.get("year_r")
+    try:
+        year = int(year_val) if year_val and str(year_val).strip() else None
+    except (ValueError, TypeError):
+        year = None
+    return _classify_row(title, abstract, year)
+
+
 def apply_rule_filter(df: pd.DataFrame) -> pd.DataFrame:
     """Add FILTER_ADDED_COLS to ``df`` using rule-based classification."""
     if df.empty:

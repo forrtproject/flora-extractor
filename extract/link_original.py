@@ -25,10 +25,10 @@ from typing import Optional
 import pandas as pd
 import requests
 
-from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, RESEARCHER_EMAIL, log
+from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_CACHE_DIR, RESEARCHER_EMAIL, log
 from shared.disambiguation import is_umbrella_paper, jaccard_similarity
-from shared.grobid import run_grobid
 from shared.llm_client import identify_original_with_llm
+from shared.pdf_parsing import parse_all as _parse_all
 from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_openalex_by_doi
 from shared.pdf_sources import acquire_pdf
 from shared.utils import cache_key, clean_doi
@@ -59,6 +59,116 @@ _CITATION_RE    = re.compile(
     re.UNICODE,
 )
 _STOP_SURNAMES = {"and", "van", "von", "der", "den", "del", "the", "for"}
+
+# ── Title-pattern resolver ─────────────────────────────────────────────────────
+# Patterns that extract the original study name from a replication paper's title.
+# Order matters: more specific patterns come first.
+
+_TITLE_PATS: list[re.Pattern] = [
+    # "A Direct Replication of TARGET" / "Failed Replication of TARGET" / "Replication Study of TARGET"
+    re.compile(
+        r"^(?:a\s+)?(?:direct\s+|close\s+|failed\s+|conceptual\s+)?replication"
+        r"(?:\s+study)?\s+of\s+(.+)",
+        re.IGNORECASE,
+    ),
+    # "Replicating TARGET"
+    re.compile(r"^replicating\s+(.+)", re.IGNORECASE),
+    # "A Reproduction of TARGET" / "Reproducing TARGET"
+    re.compile(r"^(?:a\s+)?reproduction\s+of\s+(.+)", re.IGNORECASE),
+    re.compile(r"^reproducing\s+(.+)", re.IGNORECASE),
+    # "Revisiting TARGET" / "Re-examining TARGET" / "Reconsidering TARGET"
+    re.compile(r"^(?:re-?examining|revisiting|reconsidering)\s+(.+)", re.IGNORECASE),
+    # "Can we replicate TARGET?" / "Does TARGET replicate?"
+    re.compile(r"^can\s+we\s+replicate\s+(.+?)[\?\.]*$", re.IGNORECASE),
+    re.compile(r"^does\s+(.+?)\s+replicate[\?\.]*$", re.IGNORECASE),
+    # "Testing the replicability of TARGET"
+    re.compile(r"^testing\s+the\s+replicability\s+of\s+(.+)", re.IGNORECASE),
+    # "TARGET: A Replication" / "TARGET: Replication and Extension"
+    re.compile(
+        r"^(.+?)\s*:\s*(?:a\s+)?(?:direct\s+)?replication(?:\s+and\s+extension)?[\?\.]*$",
+        re.IGNORECASE,
+    ),
+]
+
+_TITLE_TARGET_MIN_LEN = 8   # shorter targets are noise (e.g. "Revisiting X" or "Trust")
+
+
+def _extract_title_target(title_r: str) -> "str | None":
+    """
+    Extract the original study target from a replication paper's title.
+    Returns the target substring or None if no pattern matches / target too short.
+    """
+    title_r = title_r.strip()
+    for pat in _TITLE_PATS:
+        m = pat.match(title_r)
+        if m:
+            target = m.group(1).strip().rstrip("?:.,;\"'")
+            if len(target) >= _TITLE_TARGET_MIN_LEN:
+                return target
+    return None
+
+
+def _resolve_by_title_pattern(
+    doi_r:      str,
+    study_r:    str,
+    candidates: list[dict],
+) -> "dict | None":
+    """
+    Try to resolve the original study by matching the replication paper's title
+    against candidate titles using Jaccard similarity.
+
+    Returns:
+      - dict with resolved=True when a single confident match exists
+      - dict with resolved=False + title_pattern_hint when multiple plausible matches
+      - None when no pattern matches or no candidates score above minimum threshold
+    """
+    target = _extract_title_target(study_r)
+    if not target or not candidates:
+        return None
+
+    scored = sorted(
+        candidates,
+        key=lambda c: jaccard_similarity(c.get("title", ""), target),
+        reverse=True,
+    )
+
+    best      = scored[0]
+    best_score = jaccard_similarity(best.get("title", ""), target)
+    sec_score  = jaccard_similarity(scored[1].get("title", ""), target) if len(scored) > 1 else 0.0
+
+    if best_score < 0.3:
+        return None
+
+    base = {
+        "resolved":             False,
+        "resolution_method":    "needs_fulltext",
+        "resolved_doi_o":       "",
+        "resolved_title_o":     "",
+        "resolved_year_o":      None,
+        "resolved_author_o":    "",
+        "resolution_score":     0.0,
+        "title_pattern_target": target,
+    }
+
+    if best_score >= 0.4 and best_score >= sec_score * 1.5:
+        log.info("[%s] title_pattern resolved: %s (score=%.3f target=%r)",
+                 doi_r, best.get("doi"), best_score, target)
+        return {
+            **base,
+            "resolved":          True,
+            "resolution_method": "title_pattern_match",
+            "resolved_doi_o":    best.get("doi", ""),
+            "resolved_title_o":  best.get("title", ""),
+            "resolved_year_o":   best.get("year"),
+            "resolved_author_o": best.get("first_author", ""),
+            "resolution_score":  round(best_score, 4),
+        }
+
+    hint_titles = [
+        c.get("title", "") for c in scored[:3]
+        if jaccard_similarity(c.get("title", ""), target) >= 0.3
+    ]
+    return {**base, "title_pattern_hint": hint_titles}
 
 
 def _extract_cit_contexts(text: str) -> list[dict]:
@@ -323,6 +433,19 @@ def clear_pipeline_caches(doi_r: str) -> list[str]:
     return deleted
 
 
+def _write_parse_cache(doi_r: str, parse_results: dict) -> None:
+    """Persist parse_all results to PARSE_CACHE_DIR so run_extract._save_parse_cache() skips re-parsing."""
+    out_file = PARSE_CACHE_DIR / f"parse_{cache_key(doi_r)}.json"
+    if out_file.exists():
+        return
+    try:
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+        with out_file.open("w", encoding="utf-8") as fh:
+            json.dump(parse_results, fh, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        log.debug("[%s] _write_parse_cache failed: %s", doi_r, exc)
+
+
 def _flora_row(doi_r: str, flora_df: pd.DataFrame) -> dict:
     """Return FLoRA sheet fields for *doi_r* (prefixed with flora_)."""
     out = {v: "" for v in _FLORA_COLS.values()}
@@ -351,11 +474,36 @@ def _cands_row(doi_r: str, cands_df: pd.DataFrame) -> dict:
     return out
 
 
+def _best_parse_result(parse_results: dict[str, dict]) -> dict:
+    """Return the parse result with the richest content.
+
+    Scoring: each reference is worth 500 points (references are the most
+    useful input for the LLM linking step); abstract and intro contribute
+    their character count.  Methods that errored score -1 and are skipped
+    unless all methods errored, in which case we fall back to the grobid
+    result (or the first available result).
+    """
+    def _score(r: dict) -> int:
+        if r.get("error"):
+            return -1
+        refs     = r.get("references") or []
+        abstract = r.get("abstract")   or ""
+        intro    = r.get("intro")      or ""
+        return len(refs) * 500 + len(abstract) + len(intro)
+
+    scored = [(m, _score(r), r) for m, r in parse_results.items()]
+    valid  = [(m, s, r) for m, s, r in scored if s >= 0]
+    if valid:
+        return max(valid, key=lambda x: x[1])[2]
+    return parse_results.get("grobid", next(iter(parse_results.values())))
+
+
 def run_for_doi(doi_r:              str,
                 flora_df:           Optional[pd.DataFrame] = None,
                 cands_df:           Optional[pd.DataFrame] = None,
                 force:              bool = False,
-                validation_comment: str  = "") -> dict:
+                validation_comment: str  = "",
+                no_llm:             bool = False) -> dict:
     """
     Run the full disambiguation pipeline for *doi_r*.
 
@@ -430,6 +578,21 @@ def run_for_doi(doi_r:              str,
     # Combine anchor note with any user-supplied validation comment
     effective_note = "\n\n".join(filter(None, [anchor_note, validation_comment]))
 
+    # ── Stage 2.5: Title-pattern resolver ─────────────────────────────────────
+    # Runs before citation scoring and before any LLM call.
+    title_pat = _resolve_by_title_pattern(doi_r, study_r, candidates)
+    if title_pat and title_pat.get("resolved"):
+        return _build_output(doi_r, flora, cands_row, candidates,
+                             title_pat, {}, {}, {})
+    if title_pat and title_pat.get("title_pattern_hint"):
+        hint_note = (
+            f"TITLE PATTERN HINT: The replication paper's title contains a pattern "
+            f"suggesting the original is \"{title_pat['title_pattern_target']}\". "
+            f"Top candidate matches by title: "
+            + ", ".join(f"\"{t}\"" for t in title_pat["title_pattern_hint"])
+        )
+        effective_note = "\n\n".join(filter(None, [effective_note, hint_note]))
+
     # ── Stage 3: Rule-based resolver (citation-context + same-author/year) ──────
     stage3 = _resolve_rule_based(doi_r, abstract_r, candidates, year_r, study_r)
     if stage3["resolved"]:
@@ -439,43 +602,73 @@ def run_for_doi(doi_r:              str,
                              stage3, {}, {}, {})
 
     # ── Stage 4: Abstract-level LLM ──────────────────────────────────────────
-    # Run whenever we have an abstract and at least one citation pattern or candidate.
-    # Previously required ≥2 patterns AND candidates, which silently skipped papers
-    # whose abstract named the original clearly (e.g. "We replicated Son et al., 2013")
-    # but had only 1 pattern or 0 OpenAlex candidates.  The abstract LLM is cheap;
-    # there is no good reason to skip it when context is available.
-    abstract_patterns = extract_author_year_patterns(abstract_r, max_year=year_r)
-    distinct_pairs    = {(p["surname"], p["year"]) for p in abstract_patterns}
+    if not no_llm:
+        abstract_patterns = extract_author_year_patterns(abstract_r, max_year=year_r)
+        distinct_pairs    = {(p["surname"], p["year"]) for p in abstract_patterns}
 
-    if abstract_r and (distinct_pairs or candidates):
-        log.info("[%s] Multiple abstract patterns — early abstract LLM", doi_r)
-        llm4 = identify_original_with_llm(
-            doi_r + "_abstract",   # separate cache key from full-text LLM
-            study_r, abstract_r, pattern_r, candidates, {},
-            validator_note=effective_note,
-        )
-        if llm4["resolved"]:
-            log.info("[%s] Resolved by abstract LLM: %s", doi_r,
-                     llm4["resolved_title_o"])
-            return _build_output(doi_r, flora, cands_row, candidates,
-                                 llm4, {}, {}, {})
+        if abstract_r and distinct_pairs:
+            log.info("[%s] Abstract has %d author-year patterns — early abstract LLM", doi_r, len(distinct_pairs))
+            llm4 = identify_original_with_llm(
+                doi_r + "_abstract",
+                study_r, abstract_r, pattern_r, candidates, {},
+                validator_note=effective_note,
+            )
+            if llm4["resolved"]:
+                log.info("[%s] Resolved by abstract LLM: %s", doi_r,
+                         llm4["resolved_title_o"])
+                return _build_output(doi_r, flora, cands_row, candidates,
+                                     llm4, {}, {}, {})
 
     # ── Stage 5: PDF acquisition ─────────────────────────────────────────────
-    pdf = acquire_pdf(doi_r, study_r)
+    pdf = acquire_pdf(doi_r, study_r, openalex_id=oa_id_r)
     log.info("[%s] PDF: %s (%s)", doi_r, pdf["pdf_source"], pdf["pdf_url"])
 
-    # ── Stage 6: GROBID ──────────────────────────────────────────────────────
-    pdf_path  = Path(pdf["pdf_path"]) if pdf.get("pdf_path") else None
-    grobid    = run_grobid(doi_r, pdf_path)
-    sections  = grobid.get("sections", {})
-    log.info("[%s] GROBID: %s (%d refs)", doi_r,
-             grobid["grobid_status"], grobid["n_refs_parsed"])
+    # ── Stage 6: Parse all — pick richest result to send to LLM ─────────────
+    pdf_path       = Path(pdf["pdf_path"]) if pdf.get("pdf_path") else None
+    oa_xml_content = pdf.get("openalex_xml")
+    parse_results  = _parse_all(doi_r, pdf_path, oa_xml=oa_xml_content, no_llm=no_llm)
+    _write_parse_cache(doi_r, parse_results)
+
+    for method, r in parse_results.items():
+        log.debug("[%s]   parse:%s refs=%d abstract=%d intro=%d error=%s",
+                  doi_r, method, len(r.get("references") or []),
+                  len(r.get("abstract") or ""), len(r.get("intro") or ""),
+                  r.get("error"))
+
+    best     = _best_parse_result(parse_results)
+    best_src = best.get("source", "unknown")
+    best_refs = best.get("references") or []
+    log.info("[%s] parse_all best=%s refs=%d abstract=%d intro=%d",
+             doi_r, best_src, len(best_refs),
+             len(best.get("abstract") or ""), len(best.get("intro") or ""))
+
+    sections = {
+        "abstract":   best.get("abstract") or "",
+        "intro":      best.get("intro")    or "",
+        "methods":    "",
+        "references": best_refs,
+    }
+    grobid = {
+        "grobid_status": f"parse_all:{best_src}",
+        "n_refs_parsed": len(best_refs),
+        "sections":      sections,
+    }
 
     # ── Stage 7: LLM identification ──────────────────────────────────────────
+    if no_llm:
+        log.info("[%s] no_llm mode — skipping LLM, writing target_pending", doi_r)
+        return _build_output(doi_r, flora, cands_row, candidates, {
+            "resolved":          False,
+            "resolution_method": "none",
+            "resolved_doi_o":    "",
+            "resolved_title_o":  "",
+            "resolved_year_o":   None,
+            "resolved_author_o": "",
+            "resolution_score":  0.0,
+            "llm_error":         "no_llm mode",
+        }, pdf, grobid, sections)
+
     # Guard: refuse to call the LLM when it would have nothing to reason from.
-    # Title-only prompts (no abstract, no PDF, no references) produce hallucinations
-    # that look confident but are wrong.  Write target_pending instead so the
-    # reviewer knows extraction is needed, rather than silently inserting a bad DOI.
     _has_context = (
         abstract_r
         or candidates

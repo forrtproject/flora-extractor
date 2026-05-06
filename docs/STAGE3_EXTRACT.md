@@ -3,17 +3,54 @@
 
 **Input:** `data/filtered.csv`
 **Output:** `data/extracted.csv` (streamed — each row written immediately after processing)
-**Run:**
+
+---
+
+## Running Stage 3
+
+### Full pipeline
 
 ```bash
 python -m extract.run_extract
 ```
 
-> Results are streamed to `data/extracted.csv` one row at a time. You can open the
-> Extract tab in the Stage 4 web app while the pipeline is still running.
+Results are streamed to `data/extracted.csv` one row at a time. You can open the Extract tab in the Stage 4 web app while the pipeline is still running.
 
-**Quick re-run a single DOI** (from the Extract tab in the web app):
-Select a row → choose a model → click "Run selected with model".
+### CLI flags
+
+| Flag | Description |
+| --- | --- |
+| `--no-llm` | Skip all LLM calls. Uses rules and heuristics only. Useful for a fast first pass or testing without API keys. |
+| `--match-type-only` | Classify `original_match_type` for every row only. Writes `data/match_type_only.csv`. Mutually exclusive with `--outcome-only`. |
+| `--outcome-only` | Run only the outcome extraction step (keyword + LLM). Writes `data/outcome_only.csv`. Mutually exclusive with `--match-type-only`. |
+| `--limit N` | Process only the first `N` non-false-positive rows. Useful for spot-checks during development. |
+
+#### Examples
+
+```bash
+# Rule-based first pass — no API calls, fills every row with heuristic results
+python -m extract.run_extract --no-llm
+
+# Evaluate match-type classification for the first 10 rows
+python -m extract.run_extract --match-type-only --limit 10
+
+# Evaluate match-type classification without LLM (rules only, first 20 rows)
+python -m extract.run_extract --match-type-only --no-llm --limit 20
+
+# Evaluate outcome classification for the first 5 rows
+python -m extract.run_extract --outcome-only --limit 5
+
+# Full run but stop after 50 rows (good for testing on a subset)
+python -m extract.run_extract --limit 50
+```
+
+> **`--no-llm` vs. `--match-type-only`:**
+> `--no-llm` still runs the full pipeline (linking + outcome) for every row — it just skips every LLM call. Rules and Jaccard-based heuristics resolve what they can; the rest gets `target_pending`.
+> `--match-type-only` is a separate run mode that only outputs a classification CSV — it does not touch `extracted.csv`.
+
+### Quick re-run a single DOI (from the web app)
+
+Select a row in the Extract tab → choose a model → click "Run selected with model".
 
 ---
 
@@ -26,7 +63,7 @@ For every confirmed replication or reproduction in `filtered.csv`, this stage re
 
 Stage 3 determines `original_match_type` as its first step (see Classification below), then routes each paper through one of two pipelines. Both pipelines start with an early LLM resolution step designed to resolve ~60% of papers before any PDF is needed.
 
-False positives (`filter_status = false_positive`) are passed through unchanged — no extraction is run.
+False positives (`filter_status = false_positive`) are **excluded entirely** from `extracted.csv` — no extraction is run and no row is written.
 
 ---
 
@@ -58,7 +95,7 @@ data/filtered.csv
          ▼
   Match-type classification (Step 1, always)
          │
-         ├── filter_status == false_positive → pass through, no extraction
+         ├── filter_status == false_positive → skipped, not written to extracted.csv
          │
          ├── single_original ──┐
          │                     ├─→ Shared Pipeline (A/B)
@@ -264,27 +301,101 @@ All columns from `filtered.csv`, plus:
 
 ## Files
 
-| File                         | Status                   | Description                                               |
-| ---------------------------- | ------------------------ | --------------------------------------------------------- |
-| `extract/run_extract.py`     | Stub                     | Orchestrator — match-type classify, route, write CSV      |
-| `extract/link_original.py`   | Ported                   | Shared Pipeline (A/B) — 7-step single/multiple-match      |
-| `extract/multi_original.py`  | Ported (needs work)      | Multi-Original Pipeline (C) — detection logic needs fixes |
-| `extract/code_outcome.py`    | Stub                     | Keyword + LLM outcome extraction (new)                    |
+| File                         | Status        | Description                                                                  |
+| ---------------------------- | ------------- | ---------------------------------------------------------------------------- |
+| `extract/run_extract.py`     | Implemented   | Orchestrator — match-type classify, route, write CSV; CLI flags              |
+| `extract/link_original.py`   | Implemented   | Shared Pipeline (A/B) — 7-step single/multiple-match; title-pattern stage    |
+| `extract/multi_original.py`  | Ported        | Multi-Original Pipeline (C) — detection logic may need further tuning        |
+| `extract/code_outcome.py`    | Implemented   | Keyword + LLM outcome extraction; `no_llm` flag supported                    |
+| `shared/pdf_parsing.py`      | Implemented   | Five-method PDF parse comparison (`parse_all`); uniform result shape         |
+| `shared/pdf_sources.py`      | Implemented   | OpenAlex GROBID XML as Tier 0 PDF source; 11-tier waterfall                  |
+| `shared/llm_client.py`       | Implemented   | Gemini → OpenAI → OpenRouter fallback chain; `llm_response` stored in cache  |
 
 ---
 
-## What Needs to Be Implemented
+## Recent Improvements (2026-05-05)
 
-- [ ] `run_extract.py` — classify `original_match_type` first, then route by it; write `extracted.csv`
-- [ ] `code_outcome.py` — keyword pass then LLM pass for `outcome`, `outcome_phrase`, `outcome_confidence`
-- [ ] Update `link_original.py` — LLM abstract+reference matching must be Step 1 (early exit); add retry/backoff
-- [ ] Update `multi_original.py` — fix detection logic; add LLM abstract early exit
+### A — CLI testing flags (`run_extract.py`)
+
+`--no-llm`, `--match-type-only`, `--outcome-only`, `--limit N` added to `run_extract.py`. See "Running Stage 3" above.
+The `no_llm` flag is threaded as a function parameter — never a global — through `classify_match_type`, `run_for_doi`, and `extract_outcome`.
+
+### B — Title-pattern disambiguation (`link_original.py`)
+
+Nine compiled regex patterns (e.g. `"replication of X"`, `"replicating X"`, `"reproduction of X"`) extract the name of the target study from the replication paper's own title. Results are Jaccard-scored against OpenAlex candidates:
+
+- Single strong match (score ≥ 0.4 AND 1.5× gap over second) → resolved immediately as `author_year_match`, no LLM needed
+- Multiple plausible matches → a `TITLE PATTERN HINT` is injected into the LLM prompt
+
+This fires as Stage 2.5 in the pipeline, after author-year heuristics and before the abstract LLM call.
+
+### C — OpenAlex GROBID XML (Tier 0) + LLM chain order
+
+**Tier 0 PDF acquisition:** `get_openalex_fulltext(openalex_id)` checks `has_content.grobid_xml` on the OpenAlex metadata API. If true, downloads pre-parsed TEI XML from `content.openalex.org/works/W{id}.grobid-xml`. This is faster and more reliable than any PDF download — uses the same cached GROBID parse that OpenAlex already produces. Cached in `cache/openalex_xml/`.
+
+**LLM chain reorder:** All LLM calls now use Gemini → OpenAI → OpenRouter (Qwen) order. Previously OpenRouter was first. Raw JSON responses are stored in LLM cache files under `"llm_response"` for UI display.
+
+### D — PDF parse comparison (`shared/pdf_parsing.py`)
+
+`parse_all(doi_r, pdf_path, oa_xml=None)` runs five methods and returns a uniform dict keyed by method name:
+
+| Method | Source |
+| --- | --- |
+| `openalex_xml` | OpenAlex pre-parsed TEI (Tier 0) |
+| `pdfminer` | Local pdfminer.six text extraction |
+| `grobid` | GROBID pipeline (pdfminer + LLM fallbacks) |
+| `docpluck` | Docpluck library (if installed) |
+| `docling` | Docling library (if installed) |
+
+Each result has shape `{source, title, abstract, intro, references: list, raw_text, error: str|None}`. Results cached to `cache/parse/parse_{key}.json` after each DOI is processed.
+
+### E — Extract tab UI (2026-05-05)
+
+- **PDF button**: "↓ PDF" link in the expanded detail panel when a cached PDF exists. Served via `GET /api/pdf/<doi>`.
+- **Parse comparison block**: table in the detail panel showing all five methods side by side (abstract, intro, ref count). Only visible after a row has been processed.
+- **LLM two-panel I/O**: when `llm_response` / `outcome_llm_response` are cached, the LLM tabs split into Prompt | Response columns instead of showing only the prompt.
+
+---
+
+## Recent Improvements (2026-05-06)
+
+### F — parse_all integration into Stage 6 (`link_original.py`)
+
+Stage 6 (previously "GROBID") now runs **all five parsers in parallel** and picks the richest result to send to the LLM, rather than calling GROBID directly:
+
+```text
+openalex_xml  → parse_openalex_xml()
+pdfminer      → parse_pdfminer()
+grobid        → parse_grobid()   (pdfminer + server + LLM fallbacks)
+docpluck      → parse_docpluck()
+docling       → parse_docling()
+```
+
+`_best_parse_result()` scores each result by `len(references) × 500 + len(abstract) + len(intro)`. References are weighted 500× because they are the most useful input for the LLM linking step. The highest-scoring non-errored result wins; if all methods fail, the GROBID result is used as the fallback.
+
+The winner is logged at INFO level (`parse_all best=<method> refs=N abstract=N intro=N`). All five methods are logged at DEBUG level so scores are visible for diagnostics.
+
+`no_llm=True` is threaded into `parse_grobid` → `run_grobid`, so Gemini fallback tiers inside GROBID are also skipped when the flag is set.
+
+The `grobid_status` column in `extracted.csv` now reads `"parse_all:<winning_method>"` (e.g. `"parse_all:pdfminer"`) to show which parser produced the context sent to the LLM.
+
+### G — Stage 2 streaming pipeline (`filter/run_filter.py`)
+
+`run_filter.py` was rewritten with the same row-by-row streaming pattern as Stage 3:
+
+- Each candidate row is classified (rule → LLM if `needs_review`) and **immediately appended** to `filtered.csv`.
+- On startup, reads any existing `filtered.csv` to build a set of already-processed DOIs — these are skipped without reprocessing, making interrupted runs safely resumable.
+- Public per-row APIs added: `classify_row(row: dict)` in `rule_filter.py`; `classify_with_llm(title, abstract)` in `llm_filter.py`.
+
+### H — False positives excluded from `extracted.csv`
+
+`filter_status = false_positive` rows are now **completely skipped** in Stage 3 — they are not written to `extracted.csv` at all. Previously they were passed through as empty extraction rows. This keeps `extracted.csv` clean (only genuine replications and reproductions) and reduces noise in Stage 4 validation.
 
 ---
 
 ## Rules
 
-- False positives pass through unchanged — do not run extraction on them
+- False positives are excluded from `extracted.csv` entirely — do not pass them through
 - `run_extract.py` must classify `original_match_type` before routing — it is not in `filtered.csv`
 - LLM abstract + reference matching must be Step 1 (the first step), not a fallback
 - All LLM responses must be cached before writing to disk

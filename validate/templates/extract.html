@@ -454,8 +454,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ── run selected with model ───────────────────────────────────────────── */
 async function runSelected() {
-  const model = document.getElementById('model-sel').value;
-  if (!model || selected.size === 0) return;
+  if (selected.size === 0) return;
 
   const btn = document.getElementById('btn-run');
   btn.disabled = true;
@@ -463,27 +462,38 @@ async function runSelected() {
 
   const dois = [...selected].map(k => k.split('|')[0]);
   for (const doi of dois) {
+    const tr = document.querySelector(`tr.dr[data-doi="${CSS.escape(doi)}"]`);
+
+    // Show spinner in the row while running
+    const statusCell = tr ? tr.querySelector('td:nth-child(8)') : null;
+    const prevStatus = statusCell ? statusCell.innerHTML : '';
+    if (statusCell) statusCell.innerHTML = '<span style="color:#94a3b8;font-size:11px">⏳ running…</span>';
+
     try {
-      const resp = await fetch('/api/extract/run-doi', {
+      const resp = await fetch('/api/extract/rerun-doi', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({doi, model}),
+        body: JSON.stringify({doi}),
       });
       const data = await resp.json();
 
-      // Inject result into the open (or freshly opened) detail panel
-      const tr = document.querySelector(`tr.dr[data-doi="${CSS.escape(doi)}"]`);
+      if (data.error) {
+        if (statusCell) statusCell.innerHTML = `<span style="color:#ef4444;font-size:11px">⚠ ${esc(data.error)}</span>`;
+        continue;
+      }
+
+      // Bust detail cache so the panel reloads fresh data
       if (tr) {
         const rank = tr.dataset.rank;
-        const key  = `${doi}|${rank}`;
-        // Ensure row is expanded so user sees the result
-        if (!tr.classList.contains('exp')) toggleRow(tr);
-        const dpId = `dp-${CSS.escape(doi)}-${CSS.escape(rank)}`;
-        const dp   = document.getElementById(dpId);
-        if (dp) appendRunResult(dp, model, data);
+        detailCache.delete(`${doi}|${rank}`);
       }
+
+      // Reload the full table to reflect the updated row in extracted.csv
+      loadList();
+
     } catch(e) {
-      console.error('run-doi failed:', e);
+      console.error('rerun-doi failed:', e);
+      if (statusCell) statusCell.innerHTML = prevStatus;
     }
   }
 
@@ -764,12 +774,16 @@ function renderDetail(div, d) {
     </div>`;
 
   // ── 5: PDF Acquisition ────────────────────────────────────────────────────
-  const hasPdf = d.pdf_url || d.grobid_status;
+  const hasPdf = d.pdf_url || d.grobid_status || d.has_pdf;
   const sec5 = hasPdf ? `
     <div class="sc slt">
       <div class="sc-hd">
         <span class="pp ptp">PDF ACQUISITION</span>
         <span class="sc-lbl">How the full text was obtained</span>
+        ${d.has_pdf ? `<a href="/api/pdf/${encodeURIComponent(d.doi_r)}" target="_blank"
+          style="margin-left:auto;padding:4px 12px;background:#2563eb;color:#fff;
+                 border-radius:5px;font-size:11px;font-weight:600;text-decoration:none">
+          ↓ PDF</a>` : ''}
       </div>
       <div class="fg3">
         <div><div class="fl">SOURCE</div>
@@ -819,6 +833,100 @@ function renderDetail(div, d) {
       ${refsHtml}
     </div>` : '';
 
+  // ── 6b: PDF Parse Comparison ──────────────────────────────────────────────
+  const pr = d.parse_results || {};
+  const parseMethods = ['openalex_xml','pdfminer','grobid','docpluck','docling'];
+  const hasParsed = parseMethods.some(m => pr[m] && !pr[m].error);
+  const parseLabels = {openalex_xml:'OA XML',pdfminer:'pdfminer',grobid:'GROBID',
+                       docpluck:'Docpluck',docling:'Docling'};
+
+  function parseMethodCol(m) {
+    const r = pr[m] || {};
+    const ok = !r.error;
+    const hdr = `<th style="padding:4px 8px;text-align:center;background:#f8fafc;
+        border-bottom:1px solid #e2e8f0;font-size:9px;font-weight:700;
+        text-transform:uppercase;color:${ok?'#166534':'#991b1b'}">
+      ${parseLabels[m]}
+      ${ok ? '' : `<div style="font-size:9px;font-weight:400;color:#94a3b8;
+          white-space:normal;max-width:100px;margin-top:2px">${esc(r.error||'')}</div>`}
+    </th>`;
+    const refs = Array.isArray(r.references) ? r.references.length : 0;
+    // td: plain cell for short values
+    const td = (txt, extra='') =>
+      `<td style="padding:4px 8px;vertical-align:top;font-size:11px;
+                  max-width:200px;${extra}">${esc(txt||'—')}</td>`;
+    // tdLong: clamped text — line-clamp applied to inner div so <td> keeps display:table-cell
+    const tdLong = (txt) =>
+      `<td style="padding:4px 8px;vertical-align:top;max-width:200px;" title="${esc(txt)}">
+        <div style="font-size:11px;max-height:72px;overflow:hidden;
+            display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical">
+          ${esc(txt||'—')}
+        </div>
+      </td>`;
+    return {hdr, abstract: tdLong(r.abstract), intro: tdLong(r.intro),
+            refs: td(refs > 0 ? String(refs) + ' refs' : (ok ? '0' : '—'),
+                     refs > 0 ? 'color:#166534;font-weight:600' : 'color:#94a3b8')};
+  }
+
+  const sec6b = (() => {
+    const nKeys = Object.keys(pr).length;
+    if (nKeys === 0) return '';  // no parse cache yet — hide section entirely
+
+    const hdrRow = `<div class="sc-hd">
+      <span class="pp ptp" style="background:#7c3aed;color:#fff">PDF PARSE COMPARISON</span>
+      <span class="sc-lbl">Per-method extraction results</span>
+    </div>`;
+
+    if (!hasParsed) {
+      // Cache exists but all methods errored (no PDF in cache at time of run)
+      const errors = parseMethods.map(m => {
+        const r = pr[m] || {};
+        return r.error ? `${parseLabels[m]}: ${r.error}` : null;
+      }).filter(Boolean);
+      return `<div class="sc slt">${hdrRow}
+        <div style="font-size:11px;color:#94a3b8;padding:4px 0">
+          No PDF or OpenAlex XML was in cache when this row was processed —
+          parse comparison will populate after the pipeline acquires a PDF.
+        </div>
+        <div style="margin-top:6px">
+          ${errors.map(e => `<div style="font-size:10px;color:#cbd5e1;font-family:monospace">
+            ${esc(e)}</div>`).join('')}
+        </div>
+      </div>`;
+    }
+
+    const cols = parseMethods.map(parseMethodCol);
+    return `<div class="sc slt">${hdrRow}
+      <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:11px">
+        <thead><tr>
+          <th style="padding:4px 8px;text-align:left;background:#f8fafc;
+              border-bottom:1px solid #e2e8f0;font-size:9px;font-weight:700;
+              text-transform:uppercase;color:#64748b;white-space:nowrap">FIELD</th>
+          ${cols.map(c => c.hdr).join('')}
+        </tr></thead>
+        <tbody>
+          <tr style="border-bottom:1px solid #f1f5f9">
+            <td style="padding:4px 8px;font-size:9px;font-weight:700;
+                text-transform:uppercase;color:#64748b;vertical-align:top">ABSTRACT</td>
+            ${cols.map(c => c.abstract).join('')}
+          </tr>
+          <tr style="border-bottom:1px solid #f1f5f9">
+            <td style="padding:4px 8px;font-size:9px;font-weight:700;
+                text-transform:uppercase;color:#64748b;vertical-align:top">INTRO</td>
+            ${cols.map(c => c.intro).join('')}
+          </tr>
+          <tr>
+            <td style="padding:4px 8px;font-size:9px;font-weight:700;
+                text-transform:uppercase;color:#64748b;vertical-align:top">REFS</td>
+            ${cols.map(c => c.refs).join('')}
+          </tr>
+        </tbody>
+      </table>
+      </div>
+    </div>`;
+  })();
+
   // ── 7: LLM Input / Output (3 tabs) ────────────────────────────────────────
   const hasLlm = d.llm_prompt || d.llm_source;
   const tabId  = `llm-${esc(d.doi_r)}-${esc(d.original_rank||1)}`.replace(/[^a-z0-9-]/gi,'_');
@@ -862,7 +970,20 @@ function renderDetail(div, d) {
           <span class="llm-key">result</span>
           <span class="llm-val">${esc(d.outcome||'—')} (${esc(d.outcome_confidence||'—')})</span>
         </div>
-        <div class="llm-code">${esc(d.outcome_llm_prompt||'(outcome was determined by keyword scan — no LLM call needed, or cache not stored)')}</div>
+        ${d.outcome_llm_response
+          ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+              <div>
+                <div style="font-size:9px;font-weight:700;color:#7dd3fc;margin-bottom:4px;
+                    text-transform:uppercase;letter-spacing:.06em">PROMPT</div>
+                <div class="llm-code">${esc(d.outcome_llm_prompt||'(not stored)')}</div>
+              </div>
+              <div>
+                <div style="font-size:9px;font-weight:700;color:#6ee7b7;margin-bottom:4px;
+                    text-transform:uppercase;letter-spacing:.06em">RESPONSE</div>
+                <div class="llm-code">${esc(d.outcome_llm_response)}</div>
+              </div>
+            </div>`
+          : `<div class="llm-code">${esc(d.outcome_llm_prompt||'(outcome was determined by keyword scan — no LLM call needed, or cache not stored)')}</div>`}
       </div>
 
       <div id="${tabId}-link" class="llm-pane">
@@ -873,7 +994,20 @@ function renderDetail(div, d) {
           ${d.llm_error ? `<span class="llm-key">error</span>
             <span class="llm-val" style="color:#fca5a5">${esc(d.llm_error)}</span>` : ''}
         </div>
-        <div class="llm-code">${esc(d.llm_prompt||'(not cached — DOI was resolved without an LLM call)')}</div>
+        ${d.llm_response
+          ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+              <div>
+                <div style="font-size:9px;font-weight:700;color:#7dd3fc;margin-bottom:4px;
+                    text-transform:uppercase;letter-spacing:.06em">PROMPT</div>
+                <div class="llm-code">${esc(d.llm_prompt||'(not stored)')}</div>
+              </div>
+              <div>
+                <div style="font-size:9px;font-weight:700;color:#6ee7b7;margin-bottom:4px;
+                    text-transform:uppercase;letter-spacing:.06em">RESPONSE</div>
+                <div class="llm-code">${esc(d.llm_response)}</div>
+              </div>
+            </div>`
+          : `<div class="llm-code">${esc(d.llm_prompt||'(not cached — DOI was resolved without an LLM call)')}</div>`}
       </div>
     </div>` : '';
 
@@ -881,7 +1015,7 @@ function renderDetail(div, d) {
     <button class="copy-debug-btn"
       style="padding:5px 14px;font-size:11px;border-radius:5px;border:1px solid #e2e8f0;
              background:#fff;cursor:pointer;color:#475569">Copy Debug</button>
-  </div>` + sec1 + sec2 + sec3 + sec3b + sec4 + sec5 + sec6 + sec7;
+  </div>` + sec1 + sec2 + sec3 + sec3b + sec4 + sec5 + sec6 + sec6b + sec7;
 
   const cpBtn = div.querySelector('.copy-debug-btn');
   if (cpBtn) cpBtn.addEventListener('click', () => copyDebug(d));

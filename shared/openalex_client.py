@@ -261,6 +261,7 @@ def find_all_candidates(doi_r: str,
             return json.load(fh)
 
     if not openalex_id_r:
+        log.warning("[%s] find_all_candidates: no openalex_id_r — returning empty candidates", doi_r)
         return []
 
     # Extract author-year patterns from title and abstract. 

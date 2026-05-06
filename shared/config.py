@@ -19,8 +19,11 @@ PDF_CACHE_DIR    = CACHE_DIR / "pdfs"
 GROBID_CACHE_DIR = CACHE_DIR / "grobid"
 LLM_CACHE_DIR    = CACHE_DIR / "llm"
 OA_CACHE_DIR     = CACHE_DIR / "openalex"
+OA_XML_CACHE_DIR = CACHE_DIR / "openalex_xml"   # GROBID XML from content.openalex.org
+PARSE_CACHE_DIR  = CACHE_DIR / "parse"           # per-method parse results
 
-for _d in [DATA_DIR, PDF_CACHE_DIR, GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR]:
+for _d in [DATA_DIR, PDF_CACHE_DIR, GROBID_CACHE_DIR, LLM_CACHE_DIR,
+           OA_CACHE_DIR, OA_XML_CACHE_DIR, PARSE_CACHE_DIR]:
     _d.mkdir(parents=True, exist_ok=True)
 
 # ── Input / output files ──────────────────────────────────────────────────────
@@ -38,7 +41,8 @@ MULTI_ORIG_CANDS_PATH    = DATA_DIR / "multi_original_candidates.csv"
 MULTI_ORIG_RESOLVED_PATH = DATA_DIR / "multi_original_resolved.csv"
 
 # ── API keys ──────────────────────────────────────────────────────────────────
-OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY", "")
+OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY",    "")
+OPENALEX_API_KEY  = os.getenv("OPENALEX_API_KEY",  "")  # optional: Bearer token for content.openalex.org + polite-pool upgrade
 
 # SerpAPI keys in rotation order — add SERPAPI_KEY_2 to .env for failover
 SERPAPI_KEYS: list[str] = [

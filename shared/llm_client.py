@@ -245,21 +245,14 @@ def call_llm(prompt: str, gemini_model: str = "") -> tuple[Optional[dict], str, 
     Route a prompt through the configured provider chain and return the first
     successful result.
 
-    Order: OpenRouter (when OPENROUTER_API_KEY set) → Gemini → OpenAI.
+    Order: Gemini -> OpenAI -> OpenRouter (Qwen as last resort).
 
-    gemini_model — Gemini model to use when falling back (defaults to GEMINI_LIGHT_MODEL).
-                   Ignored when OpenRouter answers first.
+    gemini_model — Gemini model to use (defaults to GEMINI_LIGHT_MODEL).
 
     Returns (result_dict_or_None, model_used, error_description).
     model_used is the exact model string that answered, or "" if all providers failed.
     """
     from .config import GEMINI_LIGHT_MODEL as _LIGHT
-
-    err = "n/a"
-    if OPENROUTER_API_KEY:
-        result, err = call_openrouter(prompt)
-        if result:
-            return result, OPENROUTER_HEAVY_MODEL, ""
 
     model = gemini_model or _LIGHT
     result, gemini_err = call_gemini(prompt, model=model)
@@ -270,7 +263,13 @@ def call_llm(prompt: str, gemini_model: str = "") -> tuple[Optional[dict], str, 
     if result:
         return result, OPENAI_MODEL, ""
 
-    return None, "", f"OpenRouter: {err} | Gemini: {gemini_err} | OpenAI: {openai_err}"
+    if OPENROUTER_API_KEY:
+        result, or_err = call_openrouter(prompt)
+        if result:
+            return result, OPENROUTER_HEAVY_MODEL, ""
+        return None, "", f"Gemini: {gemini_err} | OpenAI: {openai_err} | OpenRouter: {or_err}"
+
+    return None, "", f"Gemini: {gemini_err} | OpenAI: {openai_err}"
 
 
 # ── Prompt builder ────────────────────────────────────────────────────────────
@@ -441,35 +440,38 @@ def identify_original_with_llm(doi_r:          str,
     llm_source = "none"
     llm_model  = ""
     llm_error  = ""
+    gemini_err = ""
+    openai_err = ""
     or_err     = ""
 
-    # Primary: OpenRouter (Qwen) when key is configured.
-    if OPENROUTER_API_KEY:
+    # Primary: Gemini
+    result, gemini_err = call_gemini(prompt, model=GEMINI_HEAVY_MODEL)
+    if result:
+        llm_source = "gemini"
+        llm_model  = GEMINI_HEAVY_MODEL
+        time.sleep(LLM_RATE_SEC)
+
+    # Fallback 1: OpenAI
+    if not result:
+        result, openai_err = call_openai(prompt)
+        if result:
+            llm_source = "openai"
+            llm_model  = OPENAI_MODEL
+            time.sleep(LLM_RATE_SEC)
+
+    # Fallback 2: OpenRouter (Qwen)
+    if not result and OPENROUTER_API_KEY:
         result, or_err = call_openrouter(prompt)
         if result:
             llm_source = "openrouter"
             llm_model  = OPENROUTER_HEAVY_MODEL
             time.sleep(LLM_RATE_SEC)
 
-    # Fallback: Gemini → OpenAI.
     if not result:
-        result, gemini_err = call_gemini(prompt, model=GEMINI_HEAVY_MODEL)
-        if result:
-            llm_source = "gemini"
-            llm_model  = GEMINI_HEAVY_MODEL
-            time.sleep(LLM_RATE_SEC)
-        else:
-            result, openai_err = call_openai(prompt)
-            if result:
-                llm_source = "openai"
-                llm_model  = OPENAI_MODEL
-                time.sleep(LLM_RATE_SEC)
-            else:
-                parts = []
-                if OPENROUTER_API_KEY:
-                    parts.append(f"OpenRouter: {or_err}")
-                parts.extend([f"Gemini: {gemini_err}", f"OpenAI: {openai_err}"])
-                llm_error = " | ".join(parts)
+        parts = [f"Gemini: {gemini_err}", f"OpenAI: {openai_err}"]
+        if OPENROUTER_API_KEY:
+            parts.append(f"OpenRouter: {or_err}")
+        llm_error = " | ".join(parts)
 
     _empty = {
         "resolved"          : False,
@@ -531,6 +533,7 @@ def identify_original_with_llm(doi_r:          str,
         "llm_evidence"      : result.get("evidence",  ""),
         "llm_reasoning"     : result.get("reasoning", ""),
         "llm_prompt"        : prompt,
+        "llm_response"      : json.dumps(result, ensure_ascii=False) if result else "",
         "llm_error"         : "",
     }
 
@@ -839,27 +842,28 @@ def identify_all_originals_with_llm(doi_r:        str,
     llm_source = "none"
     llm_model  = ""
 
-    # Primary: OpenRouter (Qwen) when key is configured.
-    if OPENROUTER_API_KEY:
+    # Primary: Gemini
+    result, _ = call_gemini(prompt, model=GEMINI_HEAVY_MODEL)
+    if result:
+        llm_source = "gemini"
+        llm_model  = GEMINI_HEAVY_MODEL
+        time.sleep(LLM_RATE_SEC)
+
+    # Fallback 1: OpenAI
+    if not result:
+        result, _ = call_openai(prompt)
+        if result:
+            llm_source = "openai"
+            llm_model  = OPENAI_MODEL
+            time.sleep(LLM_RATE_SEC)
+
+    # Fallback 2: OpenRouter (Qwen)
+    if not result and OPENROUTER_API_KEY:
         result, _ = call_openrouter(prompt)
         if result:
             llm_source = "openrouter"
             llm_model  = OPENROUTER_HEAVY_MODEL
             time.sleep(LLM_RATE_SEC)
-
-    # Fallback: Gemini → OpenAI.
-    if not result:
-        result, _ = call_gemini(prompt, model=GEMINI_HEAVY_MODEL)
-        if result:
-            llm_source = "gemini"
-            llm_model  = GEMINI_HEAVY_MODEL
-            time.sleep(LLM_RATE_SEC)
-        else:
-            result, _ = call_openai(prompt)
-            if result:
-                llm_source = "openai"
-                llm_model  = OPENAI_MODEL
-                time.sleep(LLM_RATE_SEC)
 
     if not result:
         return _empty

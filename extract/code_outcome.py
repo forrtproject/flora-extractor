@@ -138,7 +138,8 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str) -> di
         "outcome_confidence": str(result.get("outcome_confidence", "low") or "low"),
         "out_quote_source":   str(result.get("out_quote_source",  "") or ""),
         "llm_model":          model_used,
-        "llm_prompt":         prompt,  # stored for debug view in Extract tab
+        "llm_prompt":         prompt,
+        "llm_response":       json.dumps(result, ensure_ascii=False) if result else "",
     }
     with cache_file.open("w", encoding="utf-8") as fh:
         json.dump(output, fh, ensure_ascii=False, indent=2)
@@ -149,7 +150,8 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str) -> di
 def extract_outcome(doi_r: str,
                     abstract_r: str,
                     fulltext: str = "",
-                    title_r: str = "") -> dict:
+                    title_r: str = "",
+                    no_llm: bool = False) -> dict:
     """
     Extract replication outcome from available text.
 
@@ -178,6 +180,10 @@ def extract_outcome(doi_r: str,
         hit = _keyword_scan(fulltext[:3000], "fulltext")
         if hit and hit["outcome_confidence"] == "high":
             return hit
+
+    if no_llm:
+        return {"outcome": "uninformative", "outcome_phrase": "",
+                "outcome_confidence": "low", "out_quote_source": ""}
 
     # LLM pass for uninformative or absent keyword matches
     return _llm_outcome(doi_r, title_r, abstract_r, fulltext)
