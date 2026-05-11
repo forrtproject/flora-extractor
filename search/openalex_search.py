@@ -32,6 +32,7 @@ from shared.utils import cache_key, clean_doi
 
 
 SEARCH_PHRASES = [
+    # Original high-precision phrases
     "replication of",
     "direct replication",
     "close replication",
@@ -42,6 +43,21 @@ SEARCH_PHRASES = [
     "attempts to replicate",
     "registered replication report",
     "pre-registered replication",
+    # Added from hackathon spec/search-keywords.yaml — high precision tier
+    "failed to replicate",
+    "did not replicate",
+    "we replicate",
+    "replicating the findings",
+    "could not reproduce",
+    "successfully replicated",
+    "reproducibility of",
+    "replication and extension",
+    "replicability of",
+    "attempt to replicate",
+    "failure to replicate",
+    "non-replication",
+    "reproducibility study",
+    "reproduce the findings",
 ]
 
 _BASE_URL = "https://api.openalex.org/works"
@@ -124,6 +140,22 @@ def _reconstruct_abstract(inverted_index: Optional[dict]) -> Optional[str]:
         for pos in pos_list:
             positions[pos] = word
     return " ".join(positions[k] for k in sorted(positions)) if positions else None
+
+
+def _build_ref(authors_r: "str | None", year_r: "int | None", journal_r: "str | None") -> str:
+    """Build a FLoRA-style reference string: 'Surname · Year · Journal'.
+
+    Uses only the last-name component of the first author. Returns a partial
+    string (e.g. 'Smith · 2020') when journal is unavailable.
+    """
+    if not authors_r:
+        surname = ""
+    else:
+        first_author = str(authors_r).split(";")[0].strip()
+        parts = first_author.split()
+        surname = parts[-1] if parts else ""
+    segments = [s for s in [surname, str(year_r) if year_r else "", journal_r or ""] if s]
+    return " · ".join(segments)
 
 
 # ---------------------------------------------------------------------------
@@ -225,17 +257,20 @@ def _extract_row(work: dict) -> dict:
     location = work.get("primary_location") or {}
     source = location.get("source") or {}
     open_access = work.get("open_access") or {}
+    journal = source.get("display_name")
+    year    = work.get("publication_year")
 
     return {
-        "doi_r": clean_doi(work.get("doi") or ""),
-        "title_r": work.get("display_name") or work.get("title"),
-        "abstract_r": _reconstruct_abstract(work.get("abstract_inverted_index")),
-        "year_r": work.get("publication_year"),
-        "authors_r": authors,
-        "journal_r": source.get("display_name"),
-        "url_r": open_access.get("oa_url"),
+        "doi_r":         clean_doi(work.get("doi") or ""),
+        "title_r":       work.get("display_name") or work.get("title"),
+        "abstract_r":    _reconstruct_abstract(work.get("abstract_inverted_index")),
+        "year_r":        year,
+        "authors_r":     authors,
+        "journal_r":     journal,
+        "url_r":         open_access.get("oa_url"),
         "openalex_id_r": work.get("id"),
-        "source": SOURCE_TAG,
+        "source":        SOURCE_TAG,
+        "ref_r":         _build_ref(authors, year, journal),
     }
 
 

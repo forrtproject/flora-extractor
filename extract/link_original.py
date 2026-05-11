@@ -503,7 +503,8 @@ def run_for_doi(doi_r:              str,
                 cands_df:           Optional[pd.DataFrame] = None,
                 force:              bool = False,
                 validation_comment: str  = "",
-                no_llm:             bool = False) -> dict:
+                no_llm:             bool = False,
+                no_pdf:             bool = False) -> dict:
     """
     Run the full disambiguation pipeline for *doi_r*.
 
@@ -620,7 +621,10 @@ def run_for_doi(doi_r:              str,
                                      llm4, {}, {}, {})
 
     # ── Stage 5: PDF acquisition ─────────────────────────────────────────────
-    pdf = acquire_pdf(doi_r, study_r, openalex_id=oa_id_r)
+    if no_pdf:
+        pdf = {"pdf_source": "skipped", "pdf_url": "", "pdf_path": None, "openalex_xml": None}
+    else:
+        pdf = acquire_pdf(doi_r, study_r, openalex_id=oa_id_r)
     log.info("[%s] PDF: %s (%s)", doi_r, pdf["pdf_source"], pdf["pdf_url"])
 
     # ── Stage 6: Parse all — pick richest result to send to LLM ─────────────

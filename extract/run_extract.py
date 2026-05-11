@@ -23,12 +23,43 @@ from shared.config import (
 )
 from shared.llm_client import call_llm
 from shared.openalex_client import extract_author_year_patterns, find_all_candidates
+from shared.openalex_client import fetch_openalex_by_doi as _oa_by_doi
 from shared.pdf_parsing import parse_all as _parse_all
 from shared.schema import EXTRACTED_COLS, make_pair_id
 from shared.utils import cache_key, clean_doi
 from extract.link_original import run_for_doi
 from extract.multi_original import run_multi_original_for_doi
 from extract.code_outcome import extract_outcome
+
+def _fetch_ref_o(doi_o: str, author_o: str, year_o: str) -> str:
+    """Build ref_o string for a resolved original study.
+
+    Attempts an OpenAlex lookup (cached) to get the journal name.
+    Falls back to 'Author · Year' if doi_o is absent or the lookup fails.
+    """
+    if not doi_o:
+        surname = str(author_o or "").split()[-1] if author_o else ""
+        return " · ".join(s for s in [surname, str(year_o or "")] if s)
+    try:
+        work = _oa_by_doi(doi_o)
+    except Exception:
+        work = None
+    if work:
+        journal = (work.get("primary_location") or {}).get("source", {}).get("display_name") or ""
+        authorships = work.get("authorships") or []
+        if authorships:
+            display = (authorships[0].get("author") or {}).get("display_name") or author_o or ""
+            parts = str(display).split()
+            surname = parts[-1] if parts else (str(author_o or "").split()[-1] if author_o else "")
+        else:
+            surname = str(author_o or "").split()[-1] if author_o else ""
+        year = str(work.get("publication_year") or year_o or "")
+    else:
+        surname = str(author_o or "").split()[-1] if author_o else ""
+        year    = str(year_o or "")
+        journal = ""
+    return " · ".join(s for s in [surname, year, journal] if s)
+
 
 # ── Internal → schema link_method mapping ────────────────────────────────────
 _METHOD_MAP = {
@@ -317,6 +348,9 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
         "title_o":         str(link.get("resolved_title_o", "") or ""),
         "year_o":          str(link.get("resolved_year_o",  "") or ""),
         "authors_o":       str(link.get("resolved_author_o","") or ""),
+        "ref_o":           _fetch_ref_o(doi_o_clean,
+                                        str(link.get("resolved_author_o", "") or ""),
+                                        str(link.get("resolved_year_o",   "") or "")),
         "link_method":     _map_method(link.get("resolution_method", "target_pending")),
         "link_evidence":   str(link.get("llm_evidence",     "") or ""),
         "link_confidence": (link["llm_confidence"]
@@ -355,6 +389,9 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
         "title_o":         str(orig.get("title",        "") or ""),
         "year_o":          str(orig.get("year",         "") or ""),
         "authors_o":       str(orig.get("first_author", "") or ""),
+        "ref_o":           _fetch_ref_o(doi_o_clean,
+                                        str(orig.get("first_author", "") or ""),
+                                        str(orig.get("year",         "") or "")),
         "link_method":     "llm_abstract",
         "link_evidence":   str(orig.get("evidence",     "") or ""),
         "link_confidence": conf_str,
@@ -379,7 +416,7 @@ def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
         "pair_id": make_pair_id(doi_r_clean, ""),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
-        "doi_o": "", "title_o": "", "year_o": "", "authors_o": "",
+        "doi_o": "", "title_o": "", "year_o": "", "authors_o": "", "ref_o": "",
         "link_method": link_method, "link_evidence": "", "link_confidence": "low",
         "link_llm_model": "",
         "outcome": outcome, "outcome_phrase": "",
@@ -465,14 +502,18 @@ def _append_row(out_path, result_row: dict, first: bool) -> None:
 
 
 def run_extract(no_llm: bool = False,
-                limit: "int | None" = None) -> pd.DataFrame:
+                limit: "int | None" = None,
+                no_pdf: bool = False,
+                no_multiple_originals: bool = False,
+                no_reproductions: bool = False) -> pd.DataFrame:
     """
     Run Stage 3 and stream results to data/extracted.csv.
 
-    no_llm=True: skip all LLM calls (rule-based only).
-    limit: process only the first N non-false-positive rows.
-    Each completed row is written immediately so Stage 4 validation can begin
-    before the full run finishes.
+    no_llm              — skip all LLM calls (rule-based only).
+    limit               — process only the first N non-false-positive rows.
+    no_pdf              — skip PDF download; abstract-only LLM resolution only.
+    no_multiple_originals — write multiple_original rows as target_pending instead of running LLM.
+    no_reproductions    — skip rows with filter_status=reproduction (write as target_pending).
     """
     filtered_path = DATA_DIR / "filtered.csv"
     if not filtered_path.exists():
@@ -496,9 +537,13 @@ def run_extract(no_llm: bool = False,
     for _, row in df.iterrows():
         result_rows: list[dict] = []
 
-        # False positives are excluded from extracted.csv entirely
+        # False positives pass through with empty extraction fields (no classify/link/outcome calls)
         if row.get("filter_status") == "false_positive":
-            log.debug("[%s] false_positive — skipped", clean_doi(str(row.get("doi_r", ""))))
+            fp_row = _empty_row(row, "single_original", "low", link_method="target_pending")
+            _append_row(out_path, fp_row, first=first_write)
+            first_write = False
+            output_rows.append(fp_row)
+            log.debug("[%s] false_positive — passed through", clean_doi(str(row.get("doi_r", ""))))
             continue
         else:
             if limit is not None and processed >= limit:
@@ -506,10 +551,33 @@ def run_extract(no_llm: bool = False,
             processed += 1
 
             doi_r = clean_doi(str(row.get("doi_r", "")))
+
+            # --no-reproductions: write reproduction rows as target_pending without processing
+            if no_reproductions and str(row.get("filter_status", "")) == "reproduction":
+                log.info("[%s] --no-reproductions: writing target_pending", doi_r)
+                result_rows.append(_empty_row(row, "single_original", "low",
+                                              link_method="target_pending"))
+                for result_row in result_rows:
+                    _append_row(out_path, result_row, first=first_write)
+                    first_write = False
+                    output_rows.append(result_row)
+                continue
+
             match = classify_match_type(row.to_dict(), no_llm=no_llm)
             match_type = match["original_match_type"]
             match_conf = match["original_match_confidence"]
             log.info("[%s] match_type=%s conf=%s", doi_r, match_type, match_conf)
+
+            # --no-multiple-originals: write multiple_original rows as target_pending
+            if no_multiple_originals and match_type == "multiple_original":
+                log.info("[%s] --no-multiple-originals: writing target_pending", doi_r)
+                result_rows.append(_empty_row(row, "multiple_original", match_conf,
+                                              link_method="target_pending"))
+                for result_row in result_rows:
+                    _append_row(out_path, result_row, first=first_write)
+                    first_write = False
+                    output_rows.append(result_row)
+                continue
 
             try:
                 if match_type == "multiple_original":
@@ -528,7 +596,7 @@ def run_extract(no_llm: bool = False,
                                                           link_method="target_pending"))
                         else:
                             link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
-                                                  no_llm=no_llm)
+                                                  no_llm=no_llm, no_pdf=no_pdf)
                             _save_parse_cache(doi_r)
                             outcome = _get_outcome(doi_r, row, link, no_llm=no_llm)
                             result_rows.append(
@@ -551,7 +619,8 @@ def run_extract(no_llm: bool = False,
                                                  len(originals), multi_llm_model)
                             )
                 else:
-                    link    = run_for_doi(doi_r, cands_df=_build_cands_df(row), no_llm=no_llm)
+                    link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
+                                          no_llm=no_llm, no_pdf=no_pdf)
                     _save_parse_cache(doi_r)
                     outcome = _get_outcome(doi_r, row, link, no_llm=no_llm)
                     result_rows.append(
@@ -569,7 +638,8 @@ def run_extract(no_llm: bool = False,
             log.info("Streamed %d rows → %s", len(output_rows), out_path.name)
 
     log.info("Stage 3 complete: %d rows → %s", len(output_rows), out_path)
-    return pd.DataFrame(output_rows)
+    out_df = pd.DataFrame(output_rows)
+    return out_df.reindex(columns=EXTRACTED_COLS, fill_value="")
 
 
 def run_match_type_only(no_llm: bool = False,
@@ -668,6 +738,18 @@ if __name__ == "__main__":
         "--limit", type=int, default=None, metavar="N",
         help="Process only the first N non-false-positive rows.",
     )
+    parser.add_argument(
+        "--no-pdf", action="store_true",
+        help="Skip PDF download; use abstract-only for LLM resolution.",
+    )
+    parser.add_argument(
+        "--no-multiple-originals", action="store_true",
+        help="Write multiple_original rows as target_pending instead of running LLM.",
+    )
+    parser.add_argument(
+        "--no-reproductions", action="store_true",
+        help="Skip reproduction rows (write as target_pending).",
+    )
     args = parser.parse_args()
 
     if args.match_type_only:
@@ -675,4 +757,10 @@ if __name__ == "__main__":
     elif args.outcome_only:
         run_outcome_only(no_llm=args.no_llm, limit=args.limit)
     else:
-        run_extract(no_llm=args.no_llm, limit=args.limit)
+        run_extract(
+            no_llm=args.no_llm,
+            limit=args.limit,
+            no_pdf=args.no_pdf,
+            no_multiple_originals=args.no_multiple_originals,
+            no_reproductions=args.no_reproductions,
+        )

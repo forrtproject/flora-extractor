@@ -35,8 +35,14 @@ def _append_row(out_path, row_dict: dict, first: bool) -> None:
     )
 
 
-def run_filter() -> pd.DataFrame:
-    """Run the filter pipeline, streaming results to data/filtered.csv."""
+def run_filter(limit: "int | None" = None,
+               offset: "int | None" = None) -> pd.DataFrame:
+    """Run the filter pipeline, streaming results to data/filtered.csv.
+
+    limit  — stop after processing this many new rows (None = no limit).
+    offset — skip the first N unprocessed rows before starting (None = start from beginning).
+             Useful for targeted reruns on a slice of the CSV.
+    """
     candidates_path = DATA_DIR / "candidates.csv"
     if not candidates_path.exists():
         raise FileNotFoundError(
@@ -63,11 +69,22 @@ def run_filter() -> pd.DataFrame:
 
     output_rows: list[dict] = []
     new_rows = 0
+    skipped  = 0   # counts unprocessed rows skipped by --offset
 
     for _, row in df.iterrows():
         doi_r = clean_doi(str(row.get("doi_r", "")))
         if doi_r in already_done:
             continue
+
+        # --offset: skip the first N unprocessed rows
+        if offset is not None and skipped < offset:
+            skipped += 1
+            continue
+
+        # --limit: stop after N new rows have been written
+        if limit is not None and new_rows >= limit:
+            log.info("Stage 2: reached --limit %d — stopping", limit)
+            break
 
         title    = str(row.get("title_r")    or "")
         abstract = str(row.get("abstract_r") or "")
@@ -103,4 +120,16 @@ def run_filter() -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    run_filter()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Stage 2 Filter pipeline")
+    parser.add_argument(
+        "--limit", type=int, default=None, metavar="N",
+        help="Stop after processing N new rows (None = unlimited).",
+    )
+    parser.add_argument(
+        "--offset", type=int, default=None, metavar="N",
+        help="Skip the first N unprocessed rows before starting.",
+    )
+    args = parser.parse_args()
+    run_filter(limit=args.limit, offset=args.offset)

@@ -70,6 +70,7 @@ RESEARCHER_EMAIL = os.getenv("RESEARCHER_EMAIL", "research@example.com")
 
 # ── Model identifiers ─────────────────────────────────────────────────────────
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
+FILTER_OPENAI_MODEL = os.getenv("FILTER_OPENAI_MODEL", "gpt-5.4-mini")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 
 # Per-task model selection — light for classify_match_type & code_outcome,

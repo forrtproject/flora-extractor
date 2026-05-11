@@ -19,6 +19,7 @@ CANDIDATES_COLS = [
     "url_r",          # str   — open access URL if available
     "openalex_id_r",  # str   — OpenAlex work ID (e.g. W2741809807)
     "source",         # str   — openalex | bob_reed | i4r | semantic_scholar | ...
+    "ref_r",          # str   — "Surname · Year · Journal" — built at search time
 ]
 
 # ── Stage 2 output: filtered.csv ─────────────────────────────────────────────
@@ -43,6 +44,7 @@ EXTRACT_ADDED_COLS = [
     "title_o",             # str   — original study title
     "year_o",              # int   — original study publication year
     "authors_o",           # str   — original study authors
+    "ref_o",               # str   — "Surname · Year · Journal" — fetched from OpenAlex after doi_o resolved
 
     # Linking
     "link_method",         # str   — author_year_match | llm_abstract | llm_fulltext | target_pending

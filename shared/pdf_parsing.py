@@ -168,6 +168,11 @@ def parse_docpluck(pdf_path) -> dict:
 #         return _error_result("docling", str(exc))
 
 
+def parse_docling(pdf_path) -> dict:
+    """Stub — docling is disabled (heavy deps). Install docling and uncomment the implementation."""
+    return _error_result("docling", "disabled — install docling to enable")
+
+
 # ── Method 6: OpenDataLoader ─────────────────────────────────────────────────
 
 def parse_opendataloader(pdf_path) -> dict:

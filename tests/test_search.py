@@ -1,6 +1,7 @@
 """
 Tests for search functions
 """
+import os
 import pytest
 
 from shared.config import OA_CACHE_DIR
@@ -108,12 +109,19 @@ def test_fetch_openalex_candidates_uses_cache_on_second_run(monkeypatch, tmp_pat
     df1 = oa.fetch_openalex_candidates()
     df2 = oa.fetch_openalex_candidates()
 
+    # Only one HTTP request should be made — phrase is marked complete after first run
     assert call_count["n"] == 1
     assert list(df1.columns) == oa.CANDIDATES_COLS
     assert list(df2.columns) == oa.CANDIDATES_COLS
-    assert df1.equals(df2)
+    # Second call returns empty (phrase already fully fetched, nothing new to add)
+    assert len(df1) == 1
+    assert len(df2) == 0
 
 
+@pytest.mark.skipif(
+    not os.getenv("TEST_LIVE_API"),
+    reason="set TEST_LIVE_API=1 to run live API tests",
+)
 class TestOpenAlexDateRange:
 
     def test_single_year_count(self):
@@ -157,6 +165,10 @@ class TestOpenAlexDateRange:
 # Semantic Scholar
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(
+    not os.getenv("TEST_LIVE_API"),
+    reason="set TEST_LIVE_API=1 to run live API tests",
+)
 class TestSemanticScholarDateRange:
 
     def test_single_year_all_years_correct(self):
@@ -186,6 +198,10 @@ class TestSemanticScholarDateRange:
 # I4R
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(
+    not os.getenv("TEST_LIVE_API"),
+    reason="set TEST_LIVE_API=1 to run live API tests",
+)
 class TestI4RDateRange:
 
     def test_no_filter_returns_results(self):

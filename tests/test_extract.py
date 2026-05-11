@@ -62,13 +62,13 @@ class TestKeywordScan:
 class TestExtractOutcome:
     def test_abstract_keyword_hit_skips_llm(self):
         """Keyword match in abstract should not call the LLM."""
-        with patch("extract.code_outcome.call_gemini") as mock_gemini:
+        with patch("extract.code_outcome.call_llm") as mock_llm:
             result = extract_outcome(
                 "10.1234/test",
                 abstract_r="we found no evidence of the original effect",
                 title_r="A Replication Study",
             )
-        mock_gemini.assert_not_called()
+        mock_llm.assert_not_called()
         assert result["outcome"] == "failure"
         assert result["out_quote_source"] == "abstract"
 
@@ -76,7 +76,7 @@ class TestExtractOutcome:
         """No keyword match should fall through to LLM."""
         mock_llm_result = {"outcome": "mixed", "outcome_phrase": "partial support",
                            "outcome_confidence": "medium", "out_quote_source": "abstract"}
-        with patch("extract.code_outcome.call_gemini", return_value=(mock_llm_result, "")), \
+        with patch("extract.code_outcome.call_llm", return_value=(mock_llm_result, "gemini-model", "")), \
              patch("extract.code_outcome.time.sleep"):
             result = extract_outcome(
                 "10.1234/test2",
@@ -87,8 +87,7 @@ class TestExtractOutcome:
 
     def test_llm_failure_returns_uninformative(self):
         """LLM failure should return uninformative, not crash."""
-        with patch("extract.code_outcome.call_gemini", return_value=(None, "quota")), \
-             patch("extract.code_outcome.call_openai", return_value=(None, "error")):
+        with patch("extract.code_outcome.call_llm", return_value=(None, "", "quota | error")):
             result = extract_outcome("10.1234/fail", abstract_r="ambiguous text")
         assert result["outcome"] == "uninformative"
         assert result["outcome_confidence"] == "low"
@@ -98,10 +97,10 @@ class TestExtractOutcome:
         mock_result = {"outcome": "success", "outcome_phrase": "replicated",
                        "outcome_confidence": "high", "out_quote_source": "abstract"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.call_gemini", return_value=(mock_result, "")), \
+             patch("extract.code_outcome.call_llm", return_value=(mock_result, "gemini-model", "")), \
              patch("extract.code_outcome.time.sleep"):
             r1 = extract_outcome("10.1234/cache", abstract_r="ambiguous text")
-            with patch("extract.code_outcome.call_gemini") as mock2:
+            with patch("extract.code_outcome.call_llm") as mock2:
                 r2 = extract_outcome("10.1234/cache", abstract_r="ambiguous text")
                 mock2.assert_not_called()
         assert r1["outcome"] == r2["outcome"] == "success"
@@ -110,8 +109,7 @@ class TestExtractOutcome:
         """LLM returning unexpected outcome value should become uninformative."""
         mock_result = {"outcome": "uncertain", "outcome_phrase": "",
                        "outcome_confidence": "low", "out_quote_source": ""}
-        with patch("extract.code_outcome.call_gemini", return_value=(mock_result, "")), \
-             patch("extract.code_outcome.call_openai", return_value=(None, "")), \
+        with patch("extract.code_outcome.call_llm", return_value=(mock_result, "gemini-model", "")), \
              patch("extract.code_outcome.time.sleep"):
             result = extract_outcome("10.1234/bad", abstract_r="ambiguous text")
         assert result["outcome"] == "uninformative"
@@ -148,7 +146,7 @@ class TestClassifyMatchType:
         row = row or _ROW
         with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
              patch("extract.run_extract.find_all_candidates", return_value=oa_result), \
-             patch("extract.run_extract.call_gemini", return_value=(llm_result, "")), \
+             patch("extract.run_extract.call_llm", return_value=(llm_result, "gemini-model", "")), \
              patch("extract.run_extract.time.sleep"):
             return classify_match_type(row)
 
@@ -186,8 +184,7 @@ class TestClassifyMatchType:
         """LLM failure should return single_original without crashing."""
         with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
              patch("extract.run_extract.find_all_candidates", return_value=_CAND_SINGLE), \
-             patch("extract.run_extract.call_gemini", return_value=(None, "quota")), \
-             patch("extract.run_extract.call_openai", return_value=(None, "error")):
+             patch("extract.run_extract.call_llm", return_value=(None, "", "quota | error")):
             result = classify_match_type(_ROW)
         assert result["original_match_type"] == "single_original"
         assert result["original_match_confidence"] == "low"
@@ -199,7 +196,7 @@ class TestClassifyMatchType:
         with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
              patch("extract.run_extract.find_all_candidates",
                    return_value=_CAND_SINGLE) as mock_oa, \
-             patch("extract.run_extract.call_gemini", return_value=(llm, "")) as mock_llm, \
+             patch("extract.run_extract.call_llm", return_value=(llm, "gemini-model", "")) as mock_llm, \
              patch("extract.run_extract.time.sleep"):
             classify_match_type(_ROW)  # first call — populates cache
             classify_match_type(_ROW)  # second call — should use cache
@@ -215,14 +212,14 @@ class TestClassifyMatchType:
     def test_prompt_includes_pattern_count_and_candidates(self, tmp_path):
         """The LLM prompt must include distinct pattern count and candidate list."""
         captured_prompt = []
-        def fake_gemini(prompt):
+        def fake_llm(prompt, gemini_model=""):
             captured_prompt.append(prompt)
             return ({"original_match_type": "single_original",
-                     "original_match_confidence": "high"}, "")
+                     "original_match_confidence": "high"}, "gemini-model", "")
 
         with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
              patch("extract.run_extract.find_all_candidates", return_value=_CAND_SINGLE), \
-             patch("extract.run_extract.call_gemini", side_effect=fake_gemini), \
+             patch("extract.run_extract.call_llm", side_effect=fake_llm), \
              patch("extract.run_extract.time.sleep"):
             classify_match_type(_ROW)
 
