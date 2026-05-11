@@ -622,9 +622,19 @@ def run_for_doi(doi_r:              str,
 
     # ── Stage 5: PDF acquisition ─────────────────────────────────────────────
     if no_pdf:
-        pdf = {"pdf_source": "skipped", "pdf_url": "", "pdf_path": None, "openalex_xml": None}
-    else:
-        pdf = acquire_pdf(doi_r, study_r, openalex_id=oa_id_r)
+        # Stages 2.5/3/4 didn't resolve — bail out without fulltext.
+        log.info("[%s] no_pdf mode — abstract/rules insufficient, writing target_pending", doi_r)
+        return _build_output(doi_r, flora, cands_row, candidates, {
+            "resolved":          False,
+            "resolution_method": "needs_fulltext",
+            "resolved_doi_o":    "",
+            "resolved_title_o":  "",
+            "resolved_year_o":   None,
+            "resolved_author_o": "",
+            "resolution_score":  0.0,
+        }, {}, {}, {})
+
+    pdf = acquire_pdf(doi_r, study_r, openalex_id=oa_id_r)
     log.info("[%s] PDF: %s (%s)", doi_r, pdf["pdf_source"], pdf["pdf_url"])
 
     # ── Stage 6: Parse all — pick richest result to send to LLM ─────────────

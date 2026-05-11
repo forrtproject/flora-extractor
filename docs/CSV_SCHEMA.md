@@ -7,17 +7,17 @@ Each stage reads the previous stage's CSV and writes a richer one. Columns are *
 ## Pipeline at a Glance
 
 ```
-Stage 1  search/        →  data/candidates.csv   (9 cols)
-Stage 2  filter/        →  data/filtered.csv     (13 cols = 9 + 4)
-Stage 3  extract/       →  data/extracted.csv    (30 cols = 13 + 17)
-Stage 4  validate/      →  data/validated.csv    (37 cols = 30 + 7)
+Stage 1  search/        →  data/candidates.csv   (10 cols)
+Stage 2  filter/        →  data/filtered.csv     (14 cols = 10 + 4)
+Stage 3  extract/       →  data/extracted.csv    (36 cols = 1 pair_id + 14 + 21)
+Stage 4  validate/      →  data/validated.csv    (43 cols = 36 + 7)
 ```
 
 ---
 
 ## Stage 1 — Search
 
-**Script:** `python search/run_search.py`  
+**Script:** `python -m search.run_search`  
 **Input:** OpenAlex API, Semantic Scholar API, Bob Reed list, I4R list  
 **Output:** `data/candidates.csv`
 
@@ -35,13 +35,14 @@ Stage 1 casts a wide net. It queries multiple bibliographic sources for papers t
 | `journal_r` | str | Journal or venue name. |
 | `url_r` | str | Open-access URL if available (arXiv, OSF, Unpaywall, etc.). Empty otherwise. |
 | `openalex_id_r` | str | OpenAlex work ID (e.g. `W2741809807`). Used in Stage 3 to fetch referenced works. |
-| `source` | str | Where this candidate came from. Values: `openalex` · `bob_reed` · `i4r` · `semantic_scholar`. A paper found in multiple sources keeps the most informative source name. |
+| `source` | str | Where this candidate came from. Values: `openalex` · `bob_reed` · `i4r` · `semantic_scholar`. |
+| `ref_r` | str | FLoRA-style display reference: `"Surname · Year · Journal"`. Built at search time from the first author's surname, publication year, and journal. |
 
 ---
 
 ## Stage 2 — Filter
 
-**Script:** `python filter/run_filter.py`  
+**Script:** `python -m filter.run_filter`  
 **Input:** `data/candidates.csv`  
 **Output:** `data/filtered.csv`
 
@@ -53,22 +54,28 @@ Stage 2 removes false positives. Each paper is first checked by a fast rule-base
 |---|---|---|---|
 | `filter_status` | str | `replication` · `reproduction` · `false_positive` · `needs_review` | Classification result. `replication` = same methods, different sample. `reproduction` = same data, re-analysis. `false_positive` = not a replication at all. `needs_review` = ambiguous; human review needed. |
 | `filter_method` | str | `rule_based` · `llm` · `both` | Which classifier produced the label. `both` means the rule-based and LLM classifiers agreed. |
-| `filter_evidence` | str | — | The phrase or quote from the abstract that triggered the classification (e.g. `"direct replication of Baumeister et al."`). Helps reviewers understand why a paper was included or excluded. |
+| `filter_evidence` | str | — | The phrase or quote from the abstract that triggered the classification. Helps reviewers understand why a paper was included or excluded. |
 | `filter_confidence` | str | `high` · `medium` · `low` | Categorical confidence in `filter_status`. **Not a float** — a three-level label is more honest than a pseudo-probability from a single LLM call. |
 
 ### All columns at this stage
 
-`doi_r`, `title_r`, `abstract_r`, `year_r`, `authors_r`, `journal_r`, `url_r`, `openalex_id_r`, `source`, `filter_status`, `filter_method`, `filter_evidence`, `filter_confidence`
+`doi_r`, `title_r`, `abstract_r`, `year_r`, `authors_r`, `journal_r`, `url_r`, `openalex_id_r`, `source`, `ref_r`, `filter_status`, `filter_method`, `filter_evidence`, `filter_confidence`
 
 ---
 
 ## Stage 3 — Extract
 
-**Script:** `python extract/run_extract.py`  
+**Script:** `python -m extract.run_extract`  
 **Input:** `data/filtered.csv`  
 **Output:** `data/extracted.csv`
 
-Stage 3 answers two questions for each confirmed replication: which original study does it target, and what was the outcome? It first classifies how many originals the paper targets, then routes through the appropriate pipeline. False positives (`filter_status = false_positive`) are passed through unchanged with extraction columns left empty.
+Stage 3 answers two questions for each confirmed replication: which original study does it target, and what was the outcome? It first classifies how many originals the paper targets, then routes through the appropriate pipeline. False positives (`filter_status = false_positive`) are passed through with extraction columns empty — they are included in `extracted.csv` so Stage 4 can see the full picture.
+
+### Leading identifier
+
+| Column | Type | Description |
+|---|---|---|
+| `pair_id` | str | MD5 of `doi_r + "|" + doi_o` (full 32-char hex). Uniquely identifies a replication–original pair. For false positives or unresolved rows, `doi_o` is empty so `pair_id` is derived from `doi_r` alone. The UI shows only the first 3 characters as a compact visual tag. |
 
 ### New columns added
 
@@ -87,6 +94,7 @@ Stage 3 answers two questions for each confirmed replication: which original stu
 | `title_o` | str | Title of the original study. |
 | `year_o` | int | Publication year of the original study. |
 | `authors_o` | str | Authors of the original study (first author or full list). |
+| `ref_o` | str | FLoRA-style display reference for the original study: `"Surname · Year · Journal"`. Fetched from OpenAlex after `doi_o` is resolved. Falls back to `"Surname · Year"` if the journal name cannot be retrieved. |
 
 #### Linking — how the original was found
 
@@ -95,13 +103,14 @@ Stage 3 answers two questions for each confirmed replication: which original stu
 | `link_method` | str | `author_year_match` · `llm_abstract` · `llm_fulltext` · `target_pending` · `api_error` | How the original was identified. `author_year_match` = citation pattern matched directly. `llm_abstract` = LLM identified it from the abstract alone. `llm_fulltext` = LLM needed the full PDF text. `target_pending` = not yet processed. `api_error` = failed after 3 retries. |
 | `link_evidence` | str | — | The quote or citation pattern used to link the replication to its original (e.g. `"Baumeister et al. (1998)"`). |
 | `link_confidence` | str | `high` · `medium` · `low` | Confidence that the identified original is correct. |
+| `link_llm_model` | str | — | Exact model identifier used for DOI resolution (e.g. `gemini-2.0-flash`). Empty when linking was rule-based. |
 
 #### Outcome
 
 | Column | Type | Values | Description |
 |---|---|---|---|
 | `outcome` | str | `success` · `failure` · `mixed` · `uninformative` · `descriptive` · `pending` · `api_error` | Replication outcome. `success` = original finding replicated. `failure` = original finding not replicated. `mixed` = partially replicated. `uninformative` = study ran but could not determine if it replicated. `descriptive` = replicated methods in a different context without testing the original claim (flag for review). `pending` = not yet processed. `api_error` = extraction failed. |
-| `outcome_phrase` | str | — | A verbatim quote from the paper supporting the outcome classification (e.g. `"we found no evidence of ego depletion (d = 0.04)"`). |
+| `outcome_phrase` | str | — | A verbatim quote from the paper supporting the outcome classification. |
 | `outcome_confidence` | str | `high` · `medium` · `low` | Confidence in the `outcome` classification. |
 | `out_quote_source` | str | `abstract` · `fulltext` · `title` | Where in the paper the `outcome_phrase` was found. |
 
@@ -115,11 +124,12 @@ Stage 3 answers two questions for each confirmed replication: which original stu
 
 ### All columns at this stage
 
-`doi_r`, `title_r`, `abstract_r`, `year_r`, `authors_r`, `journal_r`, `url_r`, `openalex_id_r`, `source`,  
+`pair_id`,  
+`doi_r`, `title_r`, `abstract_r`, `year_r`, `authors_r`, `journal_r`, `url_r`, `openalex_id_r`, `source`, `ref_r`,  
 `filter_status`, `filter_method`, `filter_evidence`, `filter_confidence`,  
 `original_match_type`, `original_match_confidence`,  
-`doi_o`, `title_o`, `year_o`, `authors_o`,  
-`link_method`, `link_evidence`, `link_confidence`,  
+`doi_o`, `title_o`, `year_o`, `authors_o`, `ref_o`,  
+`link_method`, `link_evidence`, `link_confidence`, `link_llm_model`,  
 `outcome`, `outcome_phrase`, `outcome_confidence`, `out_quote_source`,  
 `type`, `original_rank`, `n_originals`
 
@@ -147,7 +157,7 @@ Stage 4 is a Flask web app where human reviewers vote to confirm or reject each 
 
 ### All columns at this stage
 
-All 30 columns from Stage 3, plus:  
+All 36 columns from Stage 3, plus:  
 `validation_status`, `vote_count`, `confirm_votes`, `reject_votes`, `validator_notes`, `validated_doi_o`, `validated_outcome`
 
 ---

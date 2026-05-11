@@ -483,7 +483,67 @@ def _parse_originals(result: dict) -> list[dict]:
     return []
 
 
+# ── FLoRA entry sheet skip helper ────────────────────────────────────────────
+
+def _load_flora_validated_dois(sheet_path) -> set:
+    """Return the set of doi_r values already validated in the FLoRA entry sheet.
+
+    Skips rows whose validation_status is 'validated - unchanged' or
+    'validated - changed' — these are confirmed and need no re-extraction.
+    Returns an empty set (with a warning) if the file is missing or unreadable.
+    """
+    from pathlib import Path as _Path
+    sheet_path = _Path(sheet_path)
+    if not sheet_path.exists():
+        log.warning(
+            "FLoRA entry sheet not found at %s — --skip-flora-validated has no effect",
+            sheet_path,
+        )
+        return set()
+    try:
+        df = pd.read_csv(sheet_path, dtype=str, encoding="utf-8-sig").fillna("")
+        validated = {"validated - unchanged", "validated - changed"}
+        mask = df["validation_status"].isin(validated)
+        dois = {clean_doi(d) for d in df.loc[mask, "doi_r"] if d}
+        log.info("FLoRA entry sheet: %d already-validated DOIs will be skipped", len(dois))
+        return dois
+    except Exception as exc:
+        log.warning("Could not read FLoRA entry sheet (%s) — no DOIs skipped", exc)
+        return set()
+
+
 # ── Main orchestrator ─────────────────────────────────────────────────────────
+
+def _load_extracted_rows(out_path) -> tuple[dict[str, list[dict]], set[str]]:
+    """Partition extracted.csv rows by resolution status for --resume mode.
+
+    Returns:
+        resolved — doi_r → list of rows that are fully resolved (including false_positives,
+                   which are stable and need no re-processing despite their link_method)
+        pending  — set of doi_r where at least one row is target_pending and the row
+                   is NOT a false_positive (i.e. genuinely awaiting extraction)
+    """
+    if not out_path.exists():
+        return {}, set()
+    df = pd.read_csv(out_path, dtype=str, encoding="utf-8-sig").fillna("")
+    resolved: dict[str, list[dict]] = {}
+    pending: set[str] = set()
+    for doi_r, group in df.groupby("doi_r", sort=False):
+        doi_clean = clean_doi(str(doi_r))
+        rows = group.to_dict("records")
+        # A row is genuinely pending only when target_pending and not a false_positive.
+        # False positives use target_pending as a placeholder but are stable outcomes.
+        is_pending = any(
+            r.get("link_method") == "target_pending"
+            and r.get("filter_status") != "false_positive"
+            for r in rows
+        )
+        if is_pending:
+            pending.add(doi_clean)
+        else:
+            resolved[doi_clean] = rows
+    return resolved, pending
+
 
 def _append_row(out_path, result_row: dict, first: bool) -> None:
     """Write one result row to the output CSV immediately after processing.
@@ -505,7 +565,9 @@ def run_extract(no_llm: bool = False,
                 limit: "int | None" = None,
                 no_pdf: bool = False,
                 no_multiple_originals: bool = False,
-                no_reproductions: bool = False) -> pd.DataFrame:
+                no_reproductions: bool = False,
+                skip_flora_validated: bool = False,
+                resume: bool = False) -> pd.DataFrame:
     """
     Run Stage 3 and stream results to data/extracted.csv.
 
@@ -514,6 +576,10 @@ def run_extract(no_llm: bool = False,
     no_pdf              — skip PDF download; abstract-only LLM resolution only.
     no_multiple_originals — write multiple_original rows as target_pending instead of running LLM.
     no_reproductions    — skip rows with filter_status=reproduction (write as target_pending).
+    skip_flora_validated — skip DOIs already validated in the FLoRA entry sheet
+                           (validation_status = 'validated - unchanged' or 'validated - changed').
+    resume              — carry forward already-resolved rows from extracted.csv unchanged;
+                           re-run only rows with link_method == "target_pending".
     """
     filtered_path = DATA_DIR / "filtered.csv"
     if not filtered_path.exists():
@@ -529,12 +595,46 @@ def run_extract(no_llm: bool = False,
     df = pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig").fillna("")
     log.info("Stage 3: loaded %d rows from %s", len(df), filtered_path.name)
 
+    flora_skip: set[str] = set()
+    if skip_flora_validated:
+        sheet_path = DATA_DIR / "FLoRA entry sheet - replication list.csv"
+        flora_skip = _load_flora_validated_dois(sheet_path)
+
     out_path = DATA_DIR / "extracted.csv"
     output_rows: list[dict] = []
     first_write = True
     processed = 0
 
+    resolved_rows: dict[str, list[dict]] = {}
+    pending_dois: set[str] = set()
+    if resume:
+        resolved_rows, pending_dois = _load_extracted_rows(out_path)
+        n_resolved_rows = sum(len(v) for v in resolved_rows.values())
+        log.info(
+            "--resume: %d DOIs already resolved (%d rows), %d pending re-processing",
+            len(resolved_rows), n_resolved_rows, len(pending_dois),
+        )
+        # Write ALL resolved rows to the output file immediately, before processing
+        # any pending rows. This prevents data loss if the run is interrupted later —
+        # resolved work is committed up front, not interleaved with slow PDF/LLM calls.
+        for rows in resolved_rows.values():
+            for result_row in rows:
+                _append_row(out_path, result_row, first=first_write)
+                first_write = False
+                output_rows.append(result_row)
+        log.info("--resume: wrote %d resolved rows to %s (safe to interrupt)",
+                 len(output_rows), out_path.name)
+
     for _, row in df.iterrows():
+        doi_r_check = clean_doi(str(row.get("doi_r", "")))
+        if doi_r_check in flora_skip:
+            log.debug("[%s] already validated in FLoRA — skipping", doi_r_check)
+            continue
+
+        # --resume: skip DOIs already written above.
+        if resume and doi_r_check in resolved_rows:
+            continue
+
         result_rows: list[dict] = []
 
         # False positives pass through with empty extraction fields (no classify/link/outcome calls)
@@ -597,7 +697,8 @@ def run_extract(no_llm: bool = False,
                         else:
                             link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                                                   no_llm=no_llm, no_pdf=no_pdf)
-                            _save_parse_cache(doi_r)
+                            if not no_pdf:
+                                _save_parse_cache(doi_r)
                             outcome = _get_outcome(doi_r, row, link, no_llm=no_llm)
                             result_rows.append(
                                 _merge_row(row, link, outcome, "single_original", match_conf, 1, 1)
@@ -621,7 +722,8 @@ def run_extract(no_llm: bool = False,
                 else:
                     link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                                           no_llm=no_llm, no_pdf=no_pdf)
-                    _save_parse_cache(doi_r)
+                    if not no_pdf:
+                        _save_parse_cache(doi_r)
                     outcome = _get_outcome(doi_r, row, link, no_llm=no_llm)
                     result_rows.append(
                         _merge_row(row, link, outcome, match_type, match_conf, 1, 1)
@@ -750,6 +852,16 @@ if __name__ == "__main__":
         "--no-reproductions", action="store_true",
         help="Skip reproduction rows (write as target_pending).",
     )
+    parser.add_argument(
+        "--skip-flora-validated", action="store_true",
+        help="Skip DOIs already validated in the FLoRA entry sheet "
+             "(validation_status = 'validated - unchanged' or 'validated - changed').",
+    )
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="Carry forward already-resolved rows from extracted.csv; "
+             "re-run only rows with link_method == 'target_pending'.",
+    )
     args = parser.parse_args()
 
     if args.match_type_only:
@@ -763,4 +875,6 @@ if __name__ == "__main__":
             no_pdf=args.no_pdf,
             no_multiple_originals=args.no_multiple_originals,
             no_reproductions=args.no_reproductions,
+            skip_flora_validated=args.skip_flora_validated,
+            resume=args.resume,
         )

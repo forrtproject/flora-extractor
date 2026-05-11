@@ -24,25 +24,45 @@ Results are streamed to `data/extracted.csv` one row at a time. You can open the
 | `--match-type-only` | Classify `original_match_type` for every row only. Writes `data/match_type_only.csv`. Mutually exclusive with `--outcome-only`. |
 | `--outcome-only` | Run only the outcome extraction step (keyword + LLM). Writes `data/outcome_only.csv`. Mutually exclusive with `--match-type-only`. |
 | `--limit N` | Process only the first `N` non-false-positive rows. Useful for spot-checks during development. |
+| `--no-pdf` | Skip PDF download and all fulltext processing. Stages 2.5, 3, and 4 (title-pattern, rule-based, abstract LLM) still run. If those resolve → resolved. If not → writes `target_pending` immediately without downloading a PDF or calling the fulltext LLM. Use `--resume` on a second pass to fill these in. |
+| `--no-multiple-originals` | Write `multiple_original` rows as `target_pending` instead of running the expensive multi-original LLM. Useful for a first pass. |
+| `--no-reproductions` | Skip rows with `filter_status = reproduction` (write as `target_pending`). |
+| `--skip-flora-validated` | Skip DOIs already validated in `data/FLoRA entry sheet - replication list.csv` where `validation_status` is `validated - unchanged` or `validated - changed`. Avoids re-extracting 1,100+ already-confirmed papers. |
+| `--resume` | Carry forward already-resolved rows from `extracted.csv` unchanged; re-run only rows whose `link_method == "target_pending"`. Rows that are fully resolved are written directly without any API calls. Designed for the two-pass workflow below. |
 
 #### Examples
 
 ```bash
-# Rule-based first pass — no API calls, fills every row with heuristic results
+# Quick test — 5 rows, no PDF download
+python -m extract.run_extract --limit 5 --no-pdf
+
+# Full run skipping already-validated FLoRA DOIs
+python -m extract.run_extract --skip-flora-validated
+
+# Fast first pass — no multi-original LLM, no PDF (resolves ~60% via rules + abstract LLM)
+python -m extract.run_extract --no-pdf --no-multiple-originals --no-reproductions --skip-flora-validated
+
+# Second pass — carry forward resolved rows, fill in target_pending with full pipeline
+python -m extract.run_extract --resume
+
+# Rule-based only, no API calls
 python -m extract.run_extract --no-llm
 
-# Evaluate match-type classification for the first 10 rows
+# Inspect match-type classification for first 10 rows
 python -m extract.run_extract --match-type-only --limit 10
-
-# Evaluate match-type classification without LLM (rules only, first 20 rows)
-python -m extract.run_extract --match-type-only --no-llm --limit 20
-
-# Evaluate outcome classification for the first 5 rows
-python -m extract.run_extract --outcome-only --limit 5
-
-# Full run but stop after 50 rows (good for testing on a subset)
-python -m extract.run_extract --limit 50
 ```
+
+#### Two-pass workflow (recommended for large runs)
+
+```bash
+# Pass 1 — fast, resolves ~60% without any PDF downloads
+python -m extract.run_extract --no-pdf --no-multiple-originals --no-reproductions --skip-flora-validated
+
+# Pass 2 — fills in the remaining target_pending rows using the full pipeline (PDF + fulltext LLM)
+python -m extract.run_extract --resume
+```
+
+`--resume` can be combined with other flags on the second pass (e.g. `--resume --no-multiple-originals` to still defer multi-original rows).
 
 > **`--no-llm` vs. `--match-type-only`:**
 > `--no-llm` still runs the full pipeline (linking + outcome) for every row — it just skips every LLM call. Rules and Jaccard-based heuristics resolve what they can; the rest gets `target_pending`.
@@ -63,7 +83,7 @@ For every confirmed replication or reproduction in `filtered.csv`, this stage re
 
 Stage 3 determines `original_match_type` as its first step (see Classification below), then routes each paper through one of two pipelines. Both pipelines start with an early LLM resolution step designed to resolve ~60% of papers before any PDF is needed.
 
-False positives (`filter_status = false_positive`) are **excluded entirely** from `extracted.csv` — no extraction is run and no row is written.
+False positives (`filter_status = false_positive`) are **passed through** to `extracted.csv` with all extraction columns left empty and `link_method = target_pending`. This keeps the full candidate pool visible in Stage 4.
 
 ---
 
@@ -93,9 +113,10 @@ If the OpenAlex lookup fails, default to `single_original`.
 data/filtered.csv
          │
          ▼
-  Match-type classification (Step 1, always)
+  filter_status == false_positive? → pass through (empty extraction cols, target_pending)
          │
-         ├── filter_status == false_positive → skipped, not written to extracted.csv
+         ▼
+  Match-type classification (Step 1, for replication/reproduction rows)
          │
          ├── single_original ──┐
          │                     ├─→ Shared Pipeline (A/B)
@@ -264,19 +285,22 @@ Same keyword + LLM process as Shared Pipeline Step 7. Run once per original (eac
 
 ## Output Schema — `extracted.csv`
 
-All columns from `filtered.csv`, plus:
+`pair_id` is the leading column, followed by all columns from `filtered.csv`, then:
 
 | Column                      | Type | Description                                                                   |
 | --------------------------- | ---- | ----------------------------------------------------------------------------- |
+| `pair_id`                   | str  | MD5 of `doi_r \| doi_o` — uniquely identifies a replication–original pair |
 | `original_match_type`       | str  | single_original / multiple_match / multiple_original                          |
 | `original_match_confidence` | str  | high / medium / low                                                           |
 | `doi_o`                     | str  | Cleaned DOI of the original study                                             |
 | `title_o`                   | str  | Original study title                                                          |
 | `year_o`                    | int  | Original study publication year                                               |
 | `authors_o`                 | str  | Original study authors                                                        |
+| `ref_o`                     | str  | FLoRA display reference for the original: `"Surname · Year · Journal"` (fetched from OpenAlex after doi_o resolves) |
 | `link_method`               | str  | author_year_match / llm_abstract / llm_fulltext / target_pending / api_error  |
 | `link_evidence`             | str  | Quote or pattern used for linking                                             |
 | `link_confidence`           | str  | high / medium / low                                                           |
+| `link_llm_model`            | str  | Exact model used for DOI resolution (e.g. `gemini-2.0-flash`); empty for rule-based links |
 | `outcome`                   | str  | success / failure / mixed / uninformative / descriptive / pending / api_error |
 | `outcome_phrase`            | str  | Supporting quote from the paper                                               |
 | `outcome_confidence`        | str  | high / medium / low                                                           |
@@ -390,6 +414,30 @@ The `grobid_status` column in `extracted.csv` now reads `"parse_all:<winning_met
 ### H — False positives excluded from `extracted.csv`
 
 `filter_status = false_positive` rows are now **completely skipped** in Stage 3 — they are not written to `extracted.csv` at all. Previously they were passed through as empty extraction rows. This keeps `extracted.csv` clean (only genuine replications and reproductions) and reduces noise in Stage 4 validation.
+
+---
+
+## Recent Improvements (2026-05-11)
+
+### I — `--no-pdf` now exits at Stage 5 instead of continuing with empty PDF context
+
+Previously, `--no-pdf` only skipped the `acquire_pdf()` call and set a placeholder PDF dict; Stages 6 and 7 (PDF parsing and fulltext LLM) still ran against empty inputs. Now, when `no_pdf=True`, the pipeline exits immediately at Stage 5 if Stages 2.5, 3, and 4 (title-pattern, rule-based, abstract LLM) did not resolve the paper. The row is written as `link_method = target_pending` (`resolution_method = "needs_fulltext"` internally) without any parse or LLM calls. This makes `--no-pdf` runs substantially faster and avoids wasted LLM calls with no useful input.
+
+`_save_parse_cache()` in `run_extract.py` is also skipped when `no_pdf=True`, since there is no PDF to parse and no parse results to save.
+
+### J — `--resume` flag for two-pass extraction
+
+`run_extract()` accepts a new `resume=True` parameter (exposed as `--resume` on the CLI).
+
+Behaviour:
+
+1. On startup, reads the existing `extracted.csv` and partitions rows by DOI:
+   - **Resolved** — all rows for this DOI have `link_method != "target_pending"` → carried forward unchanged.
+   - **Pending** — at least one row has `link_method == "target_pending"` → re-processed through the full pipeline.
+2. In the main loop, resolved DOIs are written directly to the output without any API or LLM calls.
+3. Pending DOIs and DOIs not yet in `extracted.csv` are processed normally.
+
+This enables the recommended two-pass workflow: a fast `--no-pdf` first pass followed by a `--resume` second pass that runs the full pipeline only for unresolved rows.
 
 ---
 

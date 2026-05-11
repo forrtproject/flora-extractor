@@ -43,6 +43,8 @@ def api_search_list():
 
     q      = request.args.get("q",      "").strip().lower()
     source = request.args.get("source", "all")
+    page   = max(1, int(request.args.get("page",     1)))
+    per_pg = max(1, min(500, int(request.args.get("per_page", 200))))
 
     if q:
         mask = (
@@ -55,8 +57,12 @@ def api_search_list():
     if source != "all" and "source" in df.columns:
         df = df[df["source"] == source]
 
+    total   = len(df)
+    offset  = (page - 1) * per_pg
+    page_df = df.iloc[offset : offset + per_pg]
+
     rows = []
-    for i, r in enumerate(df.to_dict("records"), start=1):
+    for i, r in enumerate(page_df.to_dict("records"), start=offset + 1):
         rows.append({
             "idx":        i,
             "doi_r":      r.get("doi_r",      ""),
@@ -69,4 +75,10 @@ def api_search_list():
             "abstract_r": r.get("abstract_r", ""),
         })
 
-    return jsonify({"rows": rows, "total": len(rows)})
+    return jsonify({
+        "rows":     rows,
+        "total":    total,
+        "page":     page,
+        "per_page": per_pg,
+        "pages":    max(1, -(-total // per_pg)),  # ceil division
+    })

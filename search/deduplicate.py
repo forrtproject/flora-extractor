@@ -11,6 +11,8 @@ Public API:
     deduplicate_candidates(df) -> pd.DataFrame
 """
 
+import re
+
 import pandas as pd
 from rapidfuzz import fuzz
 
@@ -25,6 +27,15 @@ FLORA_SHEET_PATH = DATA_DIR / "flora_entry_sheet.csv"
 # Fuzzy title similarity threshold. RapidFuzz token_sort_ratio sorts words before
 # comparing strings, which makes it useful when titles differ mainly in word order.
 TITLE_MATCH_THRESHOLD = 90
+
+# DOI prefix for figshare — a data/figure repository, never a scholarly paper.
+_FIGSHARE_PREFIX = "10.6084/"
+
+# PeerJ embeds peer reviews as citable objects with "/reviews/N" in the DOI path.
+_PEER_REVIEW_RE = re.compile(r"/reviews/", re.IGNORECASE)
+
+# Versioned preprint DOIs end with _vN (e.g. 10.31234/osf.io/abc123_v2).
+_VERSIONED_RE = re.compile(r"^(.+?)_v(\d+)$", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +110,92 @@ def _best_row(group: pd.DataFrame) -> pd.Series:
     """
     scores = group.apply(_richness, axis=1)
     return group.loc[scores.idxmax()]
+
+
+# ---------------------------------------------------------------------------
+# Pass 0a — DOI-pattern exclusions (figshare, peer reviews)
+# ---------------------------------------------------------------------------
+
+
+def _exclude_by_doi_pattern(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop rows whose DOI identifies a non-paper object.
+
+    Excluded patterns:
+    - ``10.6084/`` — figshare datasets/figures; never a scholarly paper.
+    - ``/reviews/`` in the DOI path — PeerJ embeds peer-review text as
+      citable objects distinct from the reviewed article.
+    """
+    def _should_exclude(doi: str) -> bool:
+        if not doi or not isinstance(doi, str):
+            return False
+        doi = doi.strip()
+        return doi.startswith(_FIGSHARE_PREFIX) or bool(_PEER_REVIEW_RE.search(doi))
+
+    before = len(df)
+    mask = ~df["doi_r"].apply(_should_exclude)
+    df = df[mask].reset_index(drop=True)
+    removed = before - len(df)
+    if removed:
+        log.info("Pass 0a (DOI patterns): removed %d figshare/peer-review rows", removed)
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Pass 0b — versioned preprint deduplication
+# ---------------------------------------------------------------------------
+
+
+def _dedup_versioned_preprints(df: pd.DataFrame) -> pd.DataFrame:
+    """Collapse versioned preprint DOIs (e.g. ``_v1``, ``_v2``) to one row.
+
+    For each group of DOIs sharing the same base (the part before ``_vN``):
+
+    - If a non-versioned DOI with the same base already exists in the
+      dataset, drop *all* versioned variants — the canonical DOI wins.
+    - Otherwise keep only the row with the highest version number and drop
+      all lower-version rows.
+
+    Surviving rows pass through the regular exact-DOI deduplication pass
+    so that any remaining duplicates at the same version are handled there.
+    """
+    has_doi = df["doi_r"].notna() & (df["doi_r"].str.strip() != "")
+    versioned_mask = has_doi & df["doi_r"].apply(
+        lambda d: bool(_VERSIONED_RE.match(str(d).strip()))
+    )
+
+    if not versioned_mask.any():
+        return df
+
+    all_dois: set[str] = set(df.loc[has_doi, "doi_r"].str.strip())
+
+    drop_indices: set[int] = set()
+
+    # Group versioned rows by their base DOI.
+    base_groups: dict[str, list[tuple[int, int]]] = {}
+    for idx in df.index[versioned_mask]:
+        doi = str(df.at[idx, "doi_r"]).strip()
+        m = _VERSIONED_RE.match(doi)
+        if not m:
+            continue
+        base, version = m.group(1), int(m.group(2))
+        base_groups.setdefault(base, []).append((idx, version))
+
+    for base, group in base_groups.items():
+        if base in all_dois:
+            # Unversioned canonical DOI present — drop every versioned variant.
+            drop_indices.update(idx for idx, _ in group)
+        else:
+            # No canonical DOI — keep only the highest version.
+            max_v = max(v for _, v in group)
+            drop_indices.update(idx for idx, v in group if v < max_v)
+
+    if drop_indices:
+        log.info(
+            "Pass 0b (versions): removed %d lower-version / superseded preprint DOIs",
+            len(drop_indices),
+        )
+
+    return df.drop(index=list(drop_indices)).reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +403,8 @@ def deduplicate_candidates(df: pd.DataFrame) -> pd.DataFrame:
     df = df.reindex(columns=CANDIDATES_COLS)
 
     # Apply passes from strongest identifier to weakest heuristic.
+    df = _exclude_by_doi_pattern(df)
+    df = _dedup_versioned_preprints(df)
     df = _dedup_by_doi(df)
     df = _dedup_by_title(df)
     df = _remove_flora_dois(df, _load_flora_dois())

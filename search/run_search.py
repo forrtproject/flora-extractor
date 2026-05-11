@@ -246,7 +246,16 @@ def _merge_into_candidates_csv(new_df: pd.DataFrame, out_path: "Path") -> pd.Dat
         The full deduplicated candidate set after the merge.
     """
     if out_path.exists():
-        existing = pd.read_csv(out_path, encoding="utf-8-sig", low_memory=False)
+        try:
+            existing = pd.read_csv(out_path, encoding="utf-8-sig", low_memory=False)
+        except Exception:
+            log.warning(
+                "candidates.csv has a parse error — retrying with Python engine (bad lines skipped)"
+            )
+            existing = pd.read_csv(
+                out_path, encoding="utf-8-sig", low_memory=False,
+                engine="python", on_bad_lines="skip",
+            )
         log.info("Existing candidates.csv: %d rows", len(existing))
         # Concat new first so new rows win on dedup (keep="first").
         combined = pd.concat([new_df, existing], ignore_index=True)
@@ -361,10 +370,10 @@ def run_search(
     )
 
     log.info("Stage 1: fetching Replication Network sheet...")
-    frames.append(fetch_replication_network(from_year=from_year, to_year=to_year))
+    frames.append(fetch_replication_network())  # curated list — always fetch all years
 
     log.info("Stage 1: fetching I4R list...")
-    frames.append(fetch_i4r(from_year=from_year, to_year=to_year))
+    frames.append(fetch_i4r())  # curated list — always fetch all years
 
     combined = (
         pd.concat(frames, ignore_index=True)

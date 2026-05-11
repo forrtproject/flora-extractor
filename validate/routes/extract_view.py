@@ -197,6 +197,10 @@ def api_list():
         )
         df = df[mask]
 
+    # Always hide target_pending rows — reviewers only need actionable rows.
+    if "link_method" in df.columns:
+        df = df[df["link_method"] != "target_pending"]
+
     if outcome != "all" and "outcome" in df.columns:
         df = df[df["outcome"] == outcome]
     if method != "all" and "link_method" in df.columns:
@@ -206,8 +210,14 @@ def api_list():
     if mtype != "all" and "original_match_type" in df.columns:
         df = df[df["original_match_type"] == mtype]
 
+    total   = len(df)
+    page    = max(1, int(request.args.get("page",     1)))
+    per_pg  = max(1, min(500, int(request.args.get("per_page", 200))))
+    offset  = (page - 1) * per_pg
+    page_df = df.iloc[offset : offset + per_pg]
+
     rows = []
-    for i, r in enumerate(df.to_dict("records"), start=1):
+    for i, r in enumerate(page_df.to_dict("records"), start=offset + 1):
         title = r.get("title_r", "") or r.get("study_r", "")
         rows.append({
             "idx":           i,
@@ -225,9 +235,17 @@ def api_list():
             "link_confidence": r.get("link_confidence", ""),
             "link_llm_model":  r.get("link_llm_model",  ""),
             "pair_id":         r.get("pair_id",         ""),
+            "ref_r":           r.get("ref_r",           ""),
+            "ref_o":           r.get("ref_o",           ""),
         })
 
-    return jsonify({"rows": rows, "total": len(rows)})
+    return jsonify({
+        "rows":     rows,
+        "total":    total,
+        "page":     page,
+        "per_page": per_pg,
+        "pages":    max(1, -(-total // per_pg)),
+    })
 
 
 @extract_view_bp.route("/api/extract/detail")

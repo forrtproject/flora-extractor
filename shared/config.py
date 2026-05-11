@@ -88,7 +88,7 @@ OPENROUTER_HEAVY_MODEL = os.getenv("OPENROUTER_HEAVY_MODEL", "qwen/qwen3.5-35b-a
 GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")
 
 # ── Rate limits (seconds between calls) ──────────────────────────────────────
-OPENALEX_RATE_SEC  = 0.1
+OPENALEX_RATE_SEC  = float(os.getenv("OPENALEX_RATE_SEC", "0.3"))
 UNPAYWALL_RATE_SEC = 0.5
 GROBID_RATE_SEC    = 3.0
 LLM_RATE_SEC       = 1.0

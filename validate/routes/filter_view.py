@@ -47,6 +47,12 @@ def api_filter_list():
     fstatus = request.args.get("fstatus", "all")
     fmethod = request.args.get("fmethod", "all")
     fconf   = request.args.get("fconf",   "all")
+    page    = max(1, int(request.args.get("page",     1)))
+    per_pg  = max(1, min(500, int(request.args.get("per_page", 200))))
+
+    # Always hide false positives — reviewers only need actionable rows.
+    if "filter_status" in df.columns:
+        df = df[df["filter_status"] != "false_positive"]
 
     if q:
         mask = (
@@ -62,8 +68,12 @@ def api_filter_list():
     if fconf != "all" and "filter_confidence" in df.columns:
         df = df[df["filter_confidence"] == fconf]
 
+    total   = len(df)
+    offset  = (page - 1) * per_pg
+    page_df = df.iloc[offset : offset + per_pg]
+
     rows = []
-    for i, r in enumerate(df.to_dict("records"), start=1):
+    for i, r in enumerate(page_df.to_dict("records"), start=offset + 1):
         rows.append({
             "idx":              i,
             "doi_r":            r.get("doi_r",            ""),
@@ -79,7 +89,13 @@ def api_filter_list():
             "abstract_r":       r.get("abstract_r",       ""),
         })
 
-    return jsonify({"rows": rows, "total": len(rows)})
+    return jsonify({
+        "rows":     rows,
+        "total":    total,
+        "page":     page,
+        "per_page": per_pg,
+        "pages":    max(1, -(-total // per_pg)),
+    })
 
 
 @filter_view_bp.route("/api/filter/run-stage3", methods=["POST"])
