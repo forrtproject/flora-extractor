@@ -96,11 +96,13 @@ If no author-year citation pattern (e.g. `Smith (2020)`) is found anywhere in `a
 
 Applied **only** to rows where `filter_status = needs_review` from the rule pass.
 
-Prompt provides title and abstract; asks whether the paper is a replication, reproduction, or neither. Returns:
+The prompt provides title and abstract and asks whether the paper is a replication, reproduction, or neither. Returns:
 
 - `filter_status` — final classification
 - `filter_evidence` — a quote from the abstract supporting the decision
 - `filter_confidence` — `high` / `medium` / `low`
+
+**Model routing:** OpenAI (`gpt-5.4-mini` by default, configurable via `FILTER_OPENAI_MODEL` in `.env`) is tried first; Gemini is the fallback. This is reversed from Stage 3, which uses Gemini first.
 
 Responses cached to `cache/llm/` using `cache_key(doi_r + "_filter")`. Rate limit: 1s between calls (`LLM_RATE_SEC`).
 
@@ -121,6 +123,8 @@ All columns from `candidates.csv`, plus:
 
 False positives are **included** in `filtered.csv` with `filter_status = false_positive` so Stage 3 can skip them cleanly. They are never deleted.
 
+> **Web app:** The Filter tab (`/filter`) always hides `false_positive` rows. The row count shown in the UI reflects only `replication`, `reproduction`, and `needs_review` rows. False positives remain in `filtered.csv` on disk and are still passed through to `extracted.csv` by Stage 3, but they are not displayed in the Filter tab.
+
 ---
 
 ## Files
@@ -133,21 +137,21 @@ False positives are **included** in `filtered.csv` with `filter_status = false_p
 
 ---
 
-## Recent Improvements (2026-05-06)
+## CLI Flags
 
-### Streaming, resume-safe pipeline (`run_filter.py`)
+```bash
+# Run everything (resumes if interrupted)
+python -m filter.run_filter
 
-`run_filter.py` was rewritten from a batch writer to a streaming pipeline:
+# Process only the first 10 unprocessed rows (quick test)
+python -m filter.run_filter --limit 10
 
-- On startup, reads any existing `filtered.csv` and builds a set of already-processed DOIs.
-- Each new row is rule-classified, LLM-uplifted if `needs_review`, then **immediately appended** to `filtered.csv`.
-- Re-running after an interruption picks up where it left off — DOIs already in `filtered.csv` are skipped without reprocessing.
+# Skip the first 500 unprocessed rows (targeted reruns)
+python -m filter.run_filter --offset 500
+```
 
-### Public single-row API (`rule_filter.py`, `llm_filter.py`)
-
-- `classify_row(row: dict) -> dict` added to `rule_filter.py` — takes a candidate row dict, returns the four filter columns.
-- `_classify_with_llm` renamed to `classify_with_llm` (public) in `llm_filter.py`.
-- Both `apply_rule_filter` and `apply_llm_filter` remain intact for DataFrame-level use.
+`--limit N` stops after N new rows are written. The next run picks up where it left off.  
+`--offset N` skips the first N unprocessed rows before starting — useful to re-run a specific slice.
 
 ---
 

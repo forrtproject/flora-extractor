@@ -19,6 +19,7 @@ CANDIDATES_COLS = [
     "url_r",          # str   — open access URL if available
     "openalex_id_r",  # str   — OpenAlex work ID (e.g. W2741809807)
     "source",         # str   — openalex | bob_reed | i4r | semantic_scholar | ...
+    "ref_r",          # str   — "Surname · Year · Journal" — built at search time
 ]
 
 # ── Stage 2 output: filtered.csv ─────────────────────────────────────────────
@@ -43,6 +44,7 @@ EXTRACT_ADDED_COLS = [
     "title_o",             # str   — original study title
     "year_o",              # int   — original study publication year
     "authors_o",           # str   — original study authors
+    "ref_o",               # str   — "Surname · Year · Journal" — fetched from OpenAlex after doi_o resolved
 
     # Linking
     "link_method",         # str   — author_year_match | llm_abstract | llm_fulltext | target_pending
@@ -90,6 +92,9 @@ ORIGINAL_MATCH_TYPE_VALUES = {"single_original", "multiple_match", "multiple_ori
 
 LINK_METHOD_VALUES = {
     "author_year_match", "llm_abstract", "llm_fulltext",
+    # LLM ran with full context but concluded no identifiable original study exists.
+    # These papers are likely Stage 2 false positives or self-replications; exclude from DB import.
+    "no_original_found",
     "target_pending", "api_error",
 }
 

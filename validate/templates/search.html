@@ -57,6 +57,10 @@ a.dl:hover { text-decoration:underline; }
     Stage 1 — Search results &nbsp;|&nbsp; Source: <strong>{{ source }}</strong>
     &nbsp;|&nbsp; <strong>{{ total }}</strong> candidate papers
   </div>
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+    <input id="qsearch" type="text" placeholder="Search DOI / title / abstract…"
+      style="flex:1;padding:4px 8px;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
+  </div>
   <div class="sv-cnt" id="cnt"></div>
 
   <table class="sv-tbl">
@@ -93,14 +97,18 @@ a.dl:hover { text-decoration:underline; }
       <tr><td colspan="8" style="padding:20px;text-align:center;color:#94a3b8">Loading…</td></tr>
     </tbody>
   </table>
+  <div id="sv-pager" style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:12px"></div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
 'use strict';
-let allRows = [];
-let debTimer = null;
+const PER_PAGE = 200;
+let curPage = 1;
+let totalPages = 1;
+let totalRows  = 0;
+let debTimer   = null;
 
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function trunc(s,n=110){ const t=String(s||''); return t.length>n?t.slice(0,n)+'…':t; }
@@ -110,11 +118,27 @@ function pillSource(v) {
   return `<span class="pp ${m[v]||'psl'}">${v||'—'}</span>`;
 }
 
-async function loadData() {
-  const resp = await fetch('/api/search/list').then(r => r.json());
+function buildParams(page) {
+  const params = new URLSearchParams({ page, per_page: PER_PAGE });
+  const q = document.getElementById('qsearch')?.value.trim();
+  if (q) params.set('q', q);
+  const sel = document.querySelector('.flt-row select.cf');
+  if (sel && sel.value) params.set('source', sel.value);
+  return params;
+}
+
+async function loadPage(page) {
+  document.getElementById('sv-body').innerHTML =
+    '<tr><td colspan="8" style="padding:20px;text-align:center;color:#94a3b8">Loading…</td></tr>';
+  const resp = await fetch('/api/search/list?' + buildParams(page)).then(r => r.json());
   if (resp.error) { renderError(resp.error); return; }
-  allRows = resp.rows || [];
-  renderFiltered();
+  curPage    = resp.page;
+  totalPages = resp.pages;
+  totalRows  = resp.total;
+  renderRows(resp.rows);
+  renderPager();
+  document.getElementById('cnt').textContent =
+    `${totalRows.toLocaleString()} candidates — page ${curPage} of ${totalPages}`;
 }
 
 function renderError(msg) {
@@ -122,31 +146,12 @@ function renderError(msg) {
     `<tr><td colspan="8" style="padding:20px;text-align:center;color:#ef4444">${esc(msg)}</td></tr>`;
 }
 
-function renderFiltered() {
-  const filters = {};
-  document.querySelectorAll('.flt-row .cf').forEach(el => {
-    const v = el.value.trim().toLowerCase();
-    if (v) filters[el.dataset.col] = v;
-  });
-
-  const rows = allRows.filter(r => {
-    for (const [col, val] of Object.entries(filters)) {
-      const rv = String(r[col] ?? '').toLowerCase();
-      if (col === 'source' ? rv !== val : !rv.includes(val)) return false;
-    }
-    return true;
-  });
-
-  document.getElementById('cnt').textContent = rows.length === allRows.length
-    ? `${allRows.length} candidates`
-    : `${rows.length} of ${allRows.length} candidates (filtered)`;
-
+function renderRows(rows) {
   const body = document.getElementById('sv-body');
   if (!rows.length) {
     body.innerHTML = '<tr><td colspan="8" style="padding:20px;text-align:center;color:#94a3b8">No rows found</td></tr>';
     return;
   }
-
   body.innerHTML = rows.map(r => `
     <tr class="dr" data-doi="${esc(r.doi_r)}" data-abs="${esc(r.abstract_r)}"
         data-url="${esc(r.url_r)}">
@@ -162,14 +167,24 @@ function renderFiltered() {
     <tr class="det" style="display:none">
       <td colspan="8"><div class="dp" data-doi="${esc(r.doi_r)}"></div></td>
     </tr>`).join('');
-
   document.querySelectorAll('tr.dr').forEach(tr => tr.addEventListener('click', () => toggleRow(tr)));
 }
 
+function renderPager() {
+  const el = document.getElementById('sv-pager');
+  if (!el) return;
+  if (totalPages <= 1) { el.innerHTML = ''; return; }
+  const prev = curPage > 1
+    ? `<button onclick="loadPage(${curPage-1})">‹ Prev</button>` : '<button disabled>‹ Prev</button>';
+  const next = curPage < totalPages
+    ? `<button onclick="loadPage(${curPage+1})">Next ›</button>` : '<button disabled>Next ›</button>';
+  el.innerHTML = `${prev} <span style="font-size:11px;color:#64748b">Page ${curPage} / ${totalPages}</span> ${next}`;
+}
+
 function toggleRow(tr) {
-  const open    = tr.classList.contains('exp');
-  const detRow  = tr.nextElementSibling;
-  const dp      = detRow.querySelector('.dp');
+  const open   = tr.classList.contains('exp');
+  const detRow = tr.nextElementSibling;
+  const dp     = detRow.querySelector('.dp');
 
   document.querySelectorAll('tr.dr.exp').forEach(r => {
     r.classList.remove('exp');
@@ -182,7 +197,7 @@ function toggleRow(tr) {
   tr.querySelector('.tarr').textContent = '▼';
   detRow.style.display = '';
 
-  if (dp.innerHTML.trim()) return;  // already rendered
+  if (dp.innerHTML.trim()) return;
 
   const abs = tr.dataset.abs;
   const url = tr.dataset.url;
@@ -200,14 +215,17 @@ function toggleRow(tr) {
 }
 
 function debounce(fn) {
-  return function() { clearTimeout(debTimer); debTimer = setTimeout(fn, 220); };
+  return function() { clearTimeout(debTimer); debTimer = setTimeout(fn, 350); };
 }
 
+const reloadPage1 = () => loadPage(1);
+
 window.addEventListener('DOMContentLoaded', () => {
-  loadData();
+  loadPage(1);
+  document.getElementById('qsearch').addEventListener('input', debounce(reloadPage1));
   document.querySelectorAll('.flt-row .cf').forEach(el => {
     const isSel = el.tagName === 'SELECT';
-    el.addEventListener(isSel ? 'change' : 'input', isSel ? renderFiltered : debounce(renderFiltered));
+    el.addEventListener(isSel ? 'change' : 'input', isSel ? reloadPage1 : debounce(reloadPage1));
   });
 });
 </script>

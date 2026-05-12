@@ -100,7 +100,7 @@ Hand-maintained lists of known replications. Each is an independent loader in `s
 
 ## Search Phrases
 
-Both OpenAlex and Semantic Scholar are queried with the same set of phrases:
+Both OpenAlex and Semantic Scholar are queried with the same 24 phrases (expanded from the original 10 using the hackathon keyword list):
 
 ```
 "replication of"
@@ -113,6 +113,20 @@ Both OpenAlex and Semantic Scholar are queried with the same set of phrases:
 "attempts to replicate"
 "registered replication report"
 "pre-registered replication"
+"failed to replicate"
+"we attempted to replicate"
+"replication attempt"
+"exact replication"
+"high-powered replication"
+"multi-site replication"
+"replication and extension"
+"reproducibility of"
+"we reproduced"
+"we aimed to replicate"
+"aimed to replicate"
+"preregistered replication"
+"systematic replication"
+"independent replication"
 ```
 
 ***
@@ -141,20 +155,24 @@ python -m search.run_search --reset-cursors
 ## CLI Reference
 
 ```bash
-# All years, unlimited (production)
-python -m search.run_search
+# Incremental run: one phrase/year per invocation, cycling 2011–2021 (recommended for regular use)
+python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 --max-per-phrase 200
 
-# Restrict year range
+# Traditional batch: all phrases, restricted year range, unlimited pages
 python -m search.run_search --from-year 2015 --to-year 2023
 
-# Fetch only 1 page per phrase (quick smoke-test)
+# Quick smoke-test: fetch 1 page per phrase, no year restriction
 python -m search.run_search --max-per-phrase 200
 
 # Wipe all OpenAlex cursor and S2 offset files, then run
 python -m search.run_search --reset-cursors
 ```
 
-`--max-per-phrase` limits rows fetched *this run* per phrase without losing the checkpoint — the next run continues from the same page boundary.
+**`--auto-advance`** — incremental cycling mode. Reads `cache/search_state.json` to determine which phrase and year to process next, fetches up to `--max-per-phrase` rows for that one slot, then saves the updated state. On the next invocation it advances to the next phrase; after all phrases are done for a year it increments the year and wraps back to the first phrase. This spreads ingestion over many runs without any single run taking too long.
+
+**`--max-per-phrase`** limits rows fetched *this run* per phrase without losing the checkpoint — the next run continues from the same page boundary.
+
+**`--reset-cursors`** wipes all per-phrase checkpoint files so the next run starts from scratch.
 
 ***
 
@@ -164,6 +182,10 @@ Handled in `search/deduplicate.py`. Applied in two places: within the new batch 
 
 **Within the new batch** — `deduplicate_candidates(df)`:
 
+- **Pass 0a — DOI-pattern exclusions:** drops rows whose DOI identifies a non-paper object:
+  - `10.6084/` — figshare datasets and figures; never a scholarly paper.
+  - `/reviews/` in the DOI path — PeerJ embeds peer-review texts as citable objects distinct from the reviewed article.
+- **Pass 0b — Versioned preprint deduplication:** collapses DOIs ending in `_vN` (e.g. `_v1`, `_v2`). For each group sharing the same base DOI: if a canonical (non-versioned) DOI with that base already exists in the dataset, all versioned variants are dropped; otherwise, only the highest-version row is kept and lower versions are dropped. Surviving rows then flow through Pass 1.
 - **Pass 1 — Exact DOI:** rows sharing the same `clean_doi()` value are collapsed; the row with the most non-empty fields is kept.
 - **Pass 2 — Fuzzy title:** for rows without a DOI, `rapidfuzz.fuzz.token_sort_ratio` is computed between remaining title pairs. Pairs scoring ≥ 90 are collapsed.
 
@@ -190,6 +212,7 @@ New rows win over existing rows on any key clash, so re-fetched metadata replace
 | `url_r`         | str  | Open-access PDF URL if available                          |
 | `openalex_id_r` | str  | OpenAlex work ID (e.g. `W2741809807`); `None` for S2-only rows |
 | `source`        | str  | `openalex` / `semantic_scholar` / `bob_reed` / `i4r`     |
+| `ref_r`         | str  | FLoRA display reference: `"Surname · Year · Journal"` built from first author surname, year, and journal |
 
 Schema is defined in `shared/schema.py:CANDIDATES_COLS`. Never add columns outside this list.
 

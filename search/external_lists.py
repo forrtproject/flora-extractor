@@ -102,7 +102,7 @@ def fetch_replication_network(
 
 
 # ---------------------------------------------------------------------------
-# I4R  —  scraped from the IDEAS/RepEC listing (all papers, one page)
+# I4R  —  scraped from the IDEAS/RepEC listing (paginated)
 #
 # Each paper is one line:
 #   <LI class="list-group-item downfree">
@@ -111,10 +111,14 @@ def fetch_replication_network(
 #
 # Year groups are delimited by:
 #   <h3>YYYY</h3>
+#
+# The series spans multiple pages (i4rdps.html, i4rdps2.html, …).
+# Pagination links appear as: href="i4rdpsN.html"
 # ---------------------------------------------------------------------------
 
 _REPEC_URL = "https://ideas.repec.org/s/zbw/i4rdps.html"
 _REPEC_BASE = "https://ideas.repec.org"
+_REPEC_SERIES_BASE = "https://ideas.repec.org/s/zbw/"
 
 _YEAR_RE = re.compile(r"<h3>(20\d\d)</h3>", re.IGNORECASE)
 _PAPER_RE = re.compile(
@@ -124,6 +128,37 @@ _PAPER_RE = re.compile(
     r"</B><BR><I>by</I>\s*(.*?)(?:\s*$)",
     re.IGNORECASE,
 )
+# Matches pagination hrefs like href="i4rdps2.html", href="i4rdps10.html"
+_PAGE_LINK_RE = re.compile(r'href="(i4rdps\d+\.html)"', re.IGNORECASE)
+
+
+def _parse_repec_page(text: str) -> list[dict]:
+    """Extract paper rows from one RepEC HTML page."""
+    rows = []
+    current_year = None
+    for line in text.splitlines():
+        ym = _YEAR_RE.search(line)
+        if ym:
+            current_year = int(ym.group(1))
+            continue
+        pm = _PAPER_RE.search(line)
+        if not pm:
+            continue
+        _paper_no, href, raw_title, raw_authors = pm.groups()
+        rows.append(
+            {
+                "doi_r": None,
+                "title_r": html.unescape(raw_title).strip(),
+                "abstract_r": None,
+                "year_r": current_year,
+                "authors_r": html.unescape(raw_authors).strip() or None,
+                "journal_r": "I4R Discussion Paper",
+                "url_r": _REPEC_BASE + href,
+                "openalex_id_r": None,
+                "source": "i4r",
+            }
+        )
+    return rows
 
 
 def fetch_i4r(
@@ -131,7 +166,7 @@ def fetch_i4r(
     to_year: Optional[int] = None,
 ) -> pd.DataFrame:
     """
-    Scrape I4R discussion papers from the IDEAS/RepEC series page.
+    Scrape I4R discussion papers from the IDEAS/RepEC series (all pages).
 
     Parameters
     ----------
@@ -150,37 +185,19 @@ def fetch_i4r(
         log.warning("I4R/RepEC request failed (%s) — returning 0 rows", exc)
         return pd.DataFrame(columns=CANDIDATES_COLS)
 
-    rows = []
-    current_year = None
+    page1_text = resp.text
+    rows = _parse_repec_page(page1_text)
 
-    for line in resp.text.splitlines():
-        # Track current year from section headers
-        ym = _YEAR_RE.search(line)
-        if ym:
-            current_year = int(ym.group(1))
-            continue
-
-        pm = _PAPER_RE.search(line)
-        if not pm:
-            continue
-
-        _paper_no, href, raw_title, raw_authors = pm.groups()
-        title = html.unescape(raw_title).strip()
-        authors = html.unescape(raw_authors).strip() or None
-
-        rows.append(
-            {
-                "doi_r": None,
-                "title_r": title,
-                "abstract_r": None,
-                "year_r": current_year,
-                "authors_r": authors,
-                "journal_r": "I4R Discussion Paper",
-                "url_r": _REPEC_BASE + href,
-                "openalex_id_r": None,
-                "source": "i4r",
-            }
-        )
+    # Discover additional pages from pagination links (e.g. i4rdps2.html, i4rdps3.html)
+    extra_pages = sorted(set(_PAGE_LINK_RE.findall(page1_text)))
+    for page_file in extra_pages:
+        url = _REPEC_SERIES_BASE + page_file
+        try:
+            r = requests.get(url, timeout=30)
+            r.raise_for_status()
+            rows.extend(_parse_repec_page(r.text))
+        except requests.RequestException as exc:
+            log.warning("I4R/RepEC page %s failed (%s) — skipping", url, exc)
 
     if not rows:
         log.warning("I4R scraper found no papers at %s", _REPEC_URL)

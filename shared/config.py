@@ -70,6 +70,7 @@ RESEARCHER_EMAIL = os.getenv("RESEARCHER_EMAIL", "research@example.com")
 
 # ── Model identifiers ─────────────────────────────────────────────────────────
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
+FILTER_OPENAI_MODEL = os.getenv("FILTER_OPENAI_MODEL", "gpt-5.4-mini")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 
 # Per-task model selection — light for classify_match_type & code_outcome,
@@ -87,7 +88,7 @@ OPENROUTER_HEAVY_MODEL = os.getenv("OPENROUTER_HEAVY_MODEL", "qwen/qwen3.5-35b-a
 GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")
 
 # ── Rate limits (seconds between calls) ──────────────────────────────────────
-OPENALEX_RATE_SEC  = 0.1
+OPENALEX_RATE_SEC  = float(os.getenv("OPENALEX_RATE_SEC", "0.3"))
 UNPAYWALL_RATE_SEC = 0.5
 GROBID_RATE_SEC    = 3.0
 LLM_RATE_SEC       = 1.0

@@ -115,7 +115,6 @@ a.dl:hover { text-decoration:underline; }
             <option value="">All</option>
             <option value="replication">replication</option>
             <option value="reproduction">reproduction</option>
-            <option value="false_positive">false_positive</option>
             <option value="needs_review">needs_review</option>
           </select>
         </th>
@@ -150,13 +149,17 @@ a.dl:hover { text-decoration:underline; }
       <tr><td colspan="11" style="padding:20px;text-align:center;color:#94a3b8">Loading…</td></tr>
     </tbody>
   </table>
+  <div id="fv-pager" style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:12px"></div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
 'use strict';
-let allRows = [];
+const PER_PAGE = 200;
+let curPage  = 1;
+let totalPages = 1;
+let totalRows  = 0;
 let debTimer = null;
 let fvSelected = new Set();
 
@@ -176,11 +179,27 @@ function pillMethod(v) {
   return `<span class="pp ${m[v]||'psl'}">${v||'—'}</span>`;
 }
 
-async function loadData() {
-  const resp = await fetch('/api/filter/list').then(r => r.json());
+function buildParams(page) {
+  const params = new URLSearchParams({ page, per_page: PER_PAGE });
+  document.querySelectorAll('.flt-row .cf').forEach(el => {
+    const v = el.value.trim();
+    if (v) params.set(el.dataset.col, v);
+  });
+  return params;
+}
+
+async function loadPage(page) {
+  document.getElementById('fv-body').innerHTML =
+    '<tr><td colspan="11" style="padding:20px;text-align:center;color:#94a3b8">Loading…</td></tr>';
+  const resp = await fetch('/api/filter/list?' + buildParams(page)).then(r => r.json());
   if (resp.error) { renderError(resp.error); return; }
-  allRows = resp.rows || [];
-  renderFiltered();
+  curPage    = resp.page;
+  totalPages = resp.pages;
+  totalRows  = resp.total;
+  document.getElementById('cnt').textContent =
+    `${totalRows.toLocaleString()} rows — page ${curPage} of ${totalPages}`;
+  renderRows(resp.rows || []);
+  renderPager();
 }
 
 function renderError(msg) {
@@ -188,27 +207,17 @@ function renderError(msg) {
     `<tr><td colspan="11" style="padding:20px;text-align:center;color:#ef4444">${esc(msg)}</td></tr>`;
 }
 
-function renderFiltered() {
-  const filters = {};
-  document.querySelectorAll('.flt-row .cf').forEach(el => {
-    const v = el.value.trim().toLowerCase();
-    if (v) filters[el.dataset.col] = v;
-  });
+function renderPager() {
+  const el = document.getElementById('fv-pager');
+  if (!el || totalPages <= 1) { if(el) el.innerHTML=''; return; }
+  const prev = curPage > 1
+    ? `<button onclick="loadPage(${curPage-1})">‹ Prev</button>` : '<button disabled>‹ Prev</button>';
+  const next = curPage < totalPages
+    ? `<button onclick="loadPage(${curPage+1})">Next ›</button>` : '<button disabled>Next ›</button>';
+  el.innerHTML = `${prev} <span style="font-size:11px;color:#64748b">Page ${curPage} / ${totalPages}</span> ${next}`;
+}
 
-  const selectCols = ['filter_status','filter_method','filter_confidence','source'];
-
-  const rows = allRows.filter(r => {
-    for (const [col, val] of Object.entries(filters)) {
-      const rv = String(r[col] ?? '').toLowerCase();
-      if (selectCols.includes(col) ? rv !== val : !rv.includes(val)) return false;
-    }
-    return true;
-  });
-
-  document.getElementById('cnt').textContent = rows.length === allRows.length
-    ? `${allRows.length} rows`
-    : `${rows.length} of ${allRows.length} rows (filtered)`;
-
+function renderRows(rows) {
   const body = document.getElementById('fv-body');
   if (!rows.length) {
     body.innerHTML = '<tr><td colspan="11" style="padding:20px;text-align:center;color:#94a3b8">No rows found</td></tr>';
@@ -243,6 +252,8 @@ function renderFiltered() {
   document.querySelectorAll('tr.dr').forEach(tr => tr.addEventListener('click', () => toggleRow(tr)));
   updateFvSelCount();
 }
+
+const reloadPage1 = () => loadPage(1);
 
 function fvToggleSel(chk) {
   const doi = chk.dataset.doi;
@@ -338,10 +349,10 @@ function debounce(fn) {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-  loadData();
+  loadPage(1);
   document.querySelectorAll('.flt-row .cf').forEach(el => {
     const isSel = el.tagName === 'SELECT';
-    el.addEventListener(isSel ? 'change' : 'input', isSel ? renderFiltered : debounce(renderFiltered));
+    el.addEventListener(isSel ? 'change' : 'input', isSel ? reloadPage1 : debounce(reloadPage1));
   });
   document.getElementById('fv-chk-all').addEventListener('change', function() {
     document.querySelectorAll('.fv-chk').forEach(b => {

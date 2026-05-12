@@ -243,7 +243,6 @@ a.dl:hover { text-decoration:underline; }
             <option value="author_year_match">author_year_match</option>
             <option value="llm_abstract">llm_abstract</option>
             <option value="llm_fulltext">llm_fulltext</option>
-            <option value="target_pending">target_pending</option>
             <option value="api_error">api_error</option>
           </select>
         </th>
@@ -276,6 +275,7 @@ a.dl:hover { text-decoration:underline; }
       <tr><td colspan="15" style="padding:20px;text-align:center;color:#94a3b8">Loading…</td></tr>
     </tbody>
   </table>
+  <div id="ex-pager" style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:12px"></div>
 
 </div>
 {% endblock %}
@@ -284,9 +284,13 @@ a.dl:hover { text-decoration:underline; }
 <script>
 'use strict';
 const detailCache = new Map();
-let debTimer = null;
-let allRows   = [];
-let selected  = new Set();  // selected doi_r|rank keys
+let debTimer  = null;
+let pageRows  = [];   // rows from current page (for client-side text filter)
+let selected  = new Set();
+const PER_PAGE = 200;
+let curPage    = 1;
+let totalPages = 1;
+let totalRows  = 0;
 
 /* ── pill helpers ──────────────────────────────────────────────────────── */
 function pillOutcome(v) {
@@ -316,17 +320,53 @@ function pillConf(v) {
 }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function trunc(s,n=120){ const t=String(s||''); return t.length>n?t.slice(0,n)+'…':t; }
+function buildCitation(authors, year, title, journal, doi) {
+  const parts = [];
+  if (authors) parts.push(esc(authors));
+  if (year)    parts.push(`(${esc(year)})`);
+  if (title)   parts.push(`<em>${esc(title)}</em>`);
+  if (journal) parts.push(esc(journal));
+  const base = parts.join('. ');
+  const doiLink = doi ? `. <a href="https://doi.org/${esc(doi)}" target="_blank" style="color:#2563eb">https://doi.org/${esc(doi)}</a>` : '';
+  return base + doiLink || '—';
+}
 
 /* ── load list ─────────────────────────────────────────────────────────── */
-function loadList() {
+// Map data-col → server param name for select filters the endpoint supports.
+const SERVER_SELECT_PARAMS = {
+  outcome:       'outcome',
+  link_method:   'method',
+  filter_status: 'fstatus',
+  match_type:    'mtype',
+};
+
+function buildServerParams(page) {
+  const params = new URLSearchParams({ page, per_page: PER_PAGE });
   const q = document.getElementById('q-inp').value.trim();
-  fetch(`/api/extract/list?q=${encodeURIComponent(q)}`)
+  if (q) params.set('q', q);
+  document.querySelectorAll('.flt-row select.cf').forEach(el => {
+    const v = el.value.trim();
+    const serverKey = SERVER_SELECT_PARAMS[el.dataset.col];
+    if (v && serverKey) params.set(serverKey, v);
+  });
+  return params;
+}
+
+function loadPage(page) {
+  document.getElementById('ex-body').innerHTML =
+    '<tr><td colspan="15" style="padding:20px;text-align:center;color:#94a3b8">Loading…</td></tr>';
+  fetch('/api/extract/list?' + buildServerParams(page))
     .then(r => r.json())
     .then(data => {
       if (data.error) { renderError(data.error); return; }
-      allRows = data.rows || [];
-      document.getElementById('cnt').textContent = `${allRows.length} rows`;
+      curPage    = data.page;
+      totalPages = data.pages;
+      totalRows  = data.total;
+      pageRows   = data.rows || [];
+      document.getElementById('cnt').textContent =
+        `${totalRows.toLocaleString()} rows — page ${curPage} of ${totalPages}`;
       renderFiltered();
+      renderPager();
     })
     .catch(e => renderError(String(e)));
 }
@@ -336,26 +376,30 @@ function renderError(msg) {
     `<tr><td colspan="15" style="padding:20px;text-align:center;color:#ef4444">${esc(msg)}</td></tr>`;
 }
 
-/* ── column filter (client-side) ───────────────────────────────────────── */
+function renderPager() {
+  const el = document.getElementById('ex-pager');
+  if (!el || totalPages <= 1) { if(el) el.innerHTML=''; return; }
+  const prev = curPage > 1
+    ? `<button onclick="loadPage(${curPage-1})">‹ Prev</button>` : '<button disabled>‹ Prev</button>';
+  const next = curPage < totalPages
+    ? `<button onclick="loadPage(${curPage+1})">Next ›</button>` : '<button disabled>Next ›</button>';
+  el.innerHTML = `${prev} <span style="font-size:11px;color:#64748b">Page ${curPage} / ${totalPages}</span> ${next}`;
+}
+
+/* ── column filter (client-side within page for text boxes) ────────────── */
 function renderFiltered() {
   const filters = {};
-  document.querySelectorAll('.flt-row .cf').forEach(el => {
+  document.querySelectorAll('.flt-row input.cf').forEach(el => {
     const v = el.value.trim().toLowerCase();
     if (v) filters[el.dataset.col] = v;
   });
 
-  const rows = allRows.filter(r => {
+  const rows = !Object.keys(filters).length ? pageRows : pageRows.filter(r => {
     for (const [col, val] of Object.entries(filters)) {
-      const rv = String(r[col] ?? '').toLowerCase();
-      const isSelect = ['type','filter_status','match_type','link_method','outcome','link_confidence'].includes(col);
-      if (isSelect ? rv !== val : !rv.includes(val)) return false;
+      if (!String(r[col] ?? '').toLowerCase().includes(val)) return false;
     }
     return true;
   });
-
-  document.getElementById('cnt').textContent = rows.length === allRows.length
-    ? `${allRows.length} rows`
-    : `${rows.length} of ${allRows.length} rows`;
 
   renderTable(rows);
 }
@@ -488,8 +532,8 @@ async function runSelected() {
         detailCache.delete(`${doi}|${rank}`);
       }
 
-      // Reload the full table to reflect the updated row in extracted.csv
-      loadList();
+      // Reload the current page to reflect the updated row in extracted.csv
+      loadPage(curPage);
 
     } catch(e) {
       console.error('rerun-doi failed:', e);
@@ -645,6 +689,9 @@ function renderDetail(div, d) {
         ${field('Source', d.source)}
         ${field('Journal', d.journal_r)}
       </div>
+      <div style="margin-bottom:6px"><div class="fl">REPLICATION STUDY</div>
+        <div class="fv" style="color:#1e40af;line-height:1.6">${buildCitation(d.authors_r, d.year_r, d.title_r, d.journal_r, d.doi_r)}</div>
+      </div>
       <div style="margin-bottom:6px">
         <div class="fl">REPLICATION TITLE</div>
         <div class="fv" style="font-size:13px;font-weight:600">${esc(d.title_r||d.study_r||'—')}</div>
@@ -710,6 +757,9 @@ function renderDetail(div, d) {
           ${field('Year', d.year_o)}
           ${field('Authors', d.authors_o)}
           <div><div class="fl">LINK CONFIDENCE</div>${pillConf(d.link_confidence)}</div>
+        </div>
+        <div style="margin-bottom:6px"><div class="fl">ORIGINAL STUDY</div>
+          <div class="fv" style="color:#1e40af;line-height:1.6">${buildCitation(d.authors_o, d.year_o, d.title_o, '', d.doi_o)}</div>
         </div>
         ${d.link_evidence ? `<div><div class="fl">EVIDENCE / QUOTE</div>
           <div class="qbox grn">${esc(d.link_evidence)}</div></div>` : ''}
@@ -835,10 +885,10 @@ function renderDetail(div, d) {
 
   // ── 6b: PDF Parse Comparison ──────────────────────────────────────────────
   const pr = d.parse_results || {};
-  const parseMethods = ['openalex_xml','pdfminer','grobid','docpluck','docling'];
+  const parseMethods = ['openalex_xml','pdfminer','grobid','docpluck','opendataloader'];  // docling disabled
   const hasParsed = parseMethods.some(m => pr[m] && !pr[m].error);
   const parseLabels = {openalex_xml:'OA XML',pdfminer:'pdfminer',grobid:'GROBID',
-                       docpluck:'Docpluck',docling:'Docling'};
+                       docpluck:'Docpluck',opendataloader:'OpenDataLoader'};
 
   function parseMethodCol(m) {
     const r = pr[m] || {};
@@ -983,7 +1033,23 @@ function renderDetail(div, d) {
                 <div class="llm-code">${esc(d.outcome_llm_response)}</div>
               </div>
             </div>`
-          : `<div class="llm-code">${esc(d.outcome_llm_prompt||'(outcome was determined by keyword scan — no LLM call needed, or cache not stored)')}</div>`}
+          : d.outcome_llm_model
+            ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+                <div>
+                  <div style="font-size:9px;font-weight:700;color:#7dd3fc;margin-bottom:4px;
+                      text-transform:uppercase;letter-spacing:.06em">PROMPT</div>
+                  <div class="llm-code">${esc(d.outcome_llm_prompt||'(not stored)')}</div>
+                </div>
+                <div>
+                  <div style="font-size:9px;font-weight:700;color:#6ee7b7;margin-bottom:4px;
+                      text-transform:uppercase;letter-spacing:.06em">RESPONSE</div>
+                  <div class="llm-code" style="color:#64748b;font-style:italic;padding:10px">
+                    Response not stored in this cache entry.<br>
+                    Use <strong style="color:#94a3b8">Rerun DOI</strong> to capture fresh LLM output.
+                  </div>
+                </div>
+              </div>`
+            : `<div class="llm-code">${esc(d.outcome_llm_prompt||'(outcome was determined by keyword scan — no LLM call needed, or cache not stored)')}</div>`}
       </div>
 
       <div id="${tabId}-link" class="llm-pane">
@@ -1007,7 +1073,23 @@ function renderDetail(div, d) {
                 <div class="llm-code">${esc(d.llm_response)}</div>
               </div>
             </div>`
-          : `<div class="llm-code">${esc(d.llm_prompt||'(not cached — DOI was resolved without an LLM call)')}</div>`}
+          : (d.llm_model && d.llm_source !== 'none' && d.llm_source !== '')
+            ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+                <div>
+                  <div style="font-size:9px;font-weight:700;color:#7dd3fc;margin-bottom:4px;
+                      text-transform:uppercase;letter-spacing:.06em">PROMPT</div>
+                  <div class="llm-code">${esc(d.llm_prompt||'(not stored)')}</div>
+                </div>
+                <div>
+                  <div style="font-size:9px;font-weight:700;color:#6ee7b7;margin-bottom:4px;
+                      text-transform:uppercase;letter-spacing:.06em">RESPONSE</div>
+                  <div class="llm-code" style="color:#64748b;font-style:italic;padding:10px">
+                    Response not stored in this cache entry.<br>
+                    Use <strong style="color:#94a3b8">Rerun DOI</strong> to capture fresh LLM output.
+                  </div>
+                </div>
+              </div>`
+            : `<div class="llm-code">${esc(d.llm_prompt||'(not cached — DOI was resolved without an LLM call)')}</div>`}
       </div>
     </div>` : '';
 
@@ -1109,16 +1191,19 @@ function debounce(fn, ms=280) {
     debTimer = setTimeout(() => fn.apply(this, args), ms);
   };
 }
-const debouncedLoad = debounce(loadList);
+const reloadPage1    = () => loadPage(1);
+const debouncedLoad  = debounce(reloadPage1);
 
 document.getElementById('q-inp').addEventListener('input', debouncedLoad);
 
 window.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.flt-row .cf').forEach(el => {
     const isSel = el.tagName === 'SELECT';
-    el.addEventListener(isSel ? 'change' : 'input', isSel ? renderFiltered : debounce(renderFiltered));
+    // Selects trigger a server-side reload; text inputs filter client-side within the page.
+    el.addEventListener(isSel ? 'change' : 'input',
+      isSel ? reloadPage1 : debounce(renderFiltered));
   });
-  loadList();
+  loadPage(1);
 });
 </script>
 {% endblock %}

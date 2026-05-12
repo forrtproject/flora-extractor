@@ -521,7 +521,9 @@ def identify_original_with_llm(doi_r:          str,
 
     output = {
         "resolved"          : resolved,
-        "resolution_method" : f"llm_{llm_source}",
+        # llm_no_target: LLM ran successfully but concluded no identifiable original exists.
+        # Distinct from llm_failed (all API calls errored) and llm_fulltext (original found).
+        "resolution_method" : f"llm_{llm_source}" if resolved else "llm_no_target",
         "resolved_doi_o"    : resolved_doi,
         "resolved_title_o"  : resolved_title,
         "resolved_year_o"   : resolved_year,
@@ -632,7 +634,7 @@ def call_gemini_with_pdf(prompt: str,
                f":generateContent?key={api_key}")
         for attempt in range(2):
             try:
-                r = requests.post(url, json=payload, timeout=120)
+                r = requests.post(url, json=payload, timeout=45)
                 if r.status_code == 429:
                     break
                 if r.status_code in (500, 503) and attempt == 0:

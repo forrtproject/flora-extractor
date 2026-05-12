@@ -101,7 +101,7 @@ def _save_offset_state(path: Path, offset: int, total: int, completed: bool) -> 
             },
             f,
         )
-    tmp.rename(path)
+    tmp.replace(path)
 
 
 # ---------------------------------------------------------------------------
@@ -213,16 +213,29 @@ def _extract_row(paper: dict) -> dict:
         "; ".join(a.get("name", "") for a in authors_list if a.get("name")) or None
     )
     ext_ids = paper.get("externalIds") or {}
+    journal = (paper.get("journal") or {}).get("name")
+    year    = paper.get("year")
+
+    # Build FLoRA-style ref from first author surname, year, journal
+    if authors:
+        first = str(authors).split(";")[0].strip()
+        parts = first.split()
+        surname = parts[-1] if parts else ""
+    else:
+        surname = ""
+    ref_r = " · ".join(s for s in [surname, str(year) if year else "", journal or ""] if s)
+
     return {
-        "doi_r": clean_doi(ext_ids.get("DOI") or ""),
-        "title_r": paper.get("title"),
-        "abstract_r": paper.get("abstract"),
-        "year_r": paper.get("year"),
-        "authors_r": authors,
-        "journal_r": (paper.get("journal") or {}).get("name"),
-        "url_r": (paper.get("openAccessPdf") or {}).get("url"),
+        "doi_r":         clean_doi(ext_ids.get("DOI") or ""),
+        "title_r":       paper.get("title"),
+        "abstract_r":    paper.get("abstract"),
+        "year_r":        year,
+        "authors_r":     authors,
+        "journal_r":     journal,
+        "url_r":         (paper.get("openAccessPdf") or {}).get("url"),
         "openalex_id_r": None,
-        "source": SOURCE_TAG,
+        "source":        SOURCE_TAG,
+        "ref_r":         ref_r,
     }
 
 

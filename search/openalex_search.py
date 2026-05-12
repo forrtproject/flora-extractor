@@ -26,12 +26,13 @@ from typing import Optional
 import pandas as pd
 import requests
 
-from shared.config import OA_CACHE_DIR, OPENALEX_RATE_SEC, RESEARCHER_EMAIL, log
+from shared.config import OA_CACHE_DIR, OPENALEX_API_KEY, OPENALEX_RATE_SEC, RESEARCHER_EMAIL, log
 from shared.schema import CANDIDATES_COLS
 from shared.utils import cache_key, clean_doi
 
 
 SEARCH_PHRASES = [
+    # Original high-precision phrases
     "replication of",
     "direct replication",
     "close replication",
@@ -42,6 +43,21 @@ SEARCH_PHRASES = [
     "attempts to replicate",
     "registered replication report",
     "pre-registered replication",
+    # Added from hackathon spec/search-keywords.yaml — high precision tier
+    "failed to replicate",
+    "did not replicate",
+    "we replicate",
+    "replicating the findings",
+    "could not reproduce",
+    "successfully replicated",
+    "reproducibility of",
+    "replication and extension",
+    "replicability of",
+    "attempt to replicate",
+    "failure to replicate",
+    "non-replication",
+    "reproducibility study",
+    "reproduce the findings",
 ]
 
 _BASE_URL = "https://api.openalex.org/works"
@@ -95,7 +111,7 @@ def _save_cursor_state(
             },
             f,
         )
-    tmp.rename(path)
+    tmp.replace(path)
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +140,22 @@ def _reconstruct_abstract(inverted_index: Optional[dict]) -> Optional[str]:
         for pos in pos_list:
             positions[pos] = word
     return " ".join(positions[k] for k in sorted(positions)) if positions else None
+
+
+def _build_ref(authors_r: "str | None", year_r: "int | None", journal_r: "str | None") -> str:
+    """Build a FLoRA-style reference string: 'Surname · Year · Journal'.
+
+    Uses only the last-name component of the first author. Returns a partial
+    string (e.g. 'Smith · 2020') when journal is unavailable.
+    """
+    if not authors_r:
+        surname = ""
+    else:
+        first_author = str(authors_r).split(";")[0].strip()
+        parts = first_author.split()
+        surname = parts[-1] if parts else ""
+    segments = [s for s in [surname, str(year_r) if year_r else "", journal_r or ""] if s]
+    return " · ".join(segments)
 
 
 # ---------------------------------------------------------------------------
@@ -166,9 +198,15 @@ def _get_page(params: dict, max_retries: int = 5) -> dict:
         with open(cache_path, encoding="utf-8") as f:
             return json.load(f)
 
+    headers: dict = {}
+    if OPENALEX_API_KEY:
+        headers["Authorization"] = f"Bearer {OPENALEX_API_KEY}"
+    elif RESEARCHER_EMAIL:
+        headers["User-Agent"] = f"mailto:{RESEARCHER_EMAIL}"
+
     for attempt in range(max_retries):
         try:
-            resp = requests.get(_BASE_URL, params=params, timeout=30)
+            resp = requests.get(_BASE_URL, params=params, headers=headers, timeout=30)
         except requests.RequestException as exc:
             if attempt == max_retries - 1:
                 raise
@@ -191,6 +229,16 @@ def _get_page(params: dict, max_retries: int = 5) -> dict:
 
         if resp.status_code == 429:
             wait = float(resp.headers.get("Retry-After", 60))
+            if wait > 600:
+                # Retry-After > 10 minutes means the daily quota is exhausted.
+                # The cursor is already saved — the next run resumes from here.
+                reset_str = str(datetime.timedelta(seconds=int(wait)))
+                log.warning(
+                    "OpenAlex daily quota exhausted (Retry-After=%s). "
+                    "Stopping this phrase — cursor saved, next run resumes here.",
+                    reset_str,
+                )
+                raise StopIteration("OpenAlex daily quota exhausted")
             wait_str = str(datetime.timedelta(seconds=int(wait)))
             log.warning(
                 "OpenAlex 429 — sleeping %s then retrying (attempt %d/%d)",
@@ -225,17 +273,20 @@ def _extract_row(work: dict) -> dict:
     location = work.get("primary_location") or {}
     source = location.get("source") or {}
     open_access = work.get("open_access") or {}
+    journal = source.get("display_name")
+    year    = work.get("publication_year")
 
     return {
-        "doi_r": clean_doi(work.get("doi") or ""),
-        "title_r": work.get("display_name") or work.get("title"),
-        "abstract_r": _reconstruct_abstract(work.get("abstract_inverted_index")),
-        "year_r": work.get("publication_year"),
-        "authors_r": authors,
-        "journal_r": source.get("display_name"),
-        "url_r": open_access.get("oa_url"),
+        "doi_r":         clean_doi(work.get("doi") or ""),
+        "title_r":       work.get("display_name") or work.get("title"),
+        "abstract_r":    _reconstruct_abstract(work.get("abstract_inverted_index")),
+        "year_r":        year,
+        "authors_r":     authors,
+        "journal_r":     journal,
+        "url_r":         open_access.get("oa_url"),
         "openalex_id_r": work.get("id"),
-        "source": SOURCE_TAG,
+        "source":        SOURCE_TAG,
+        "ref_r":         _build_ref(authors, year, journal),
     }
 
 
@@ -311,7 +362,12 @@ def fetch_phrase(
         # run retries this page rather than skipping it).
         _save_cursor_state(cursor_path, cursor, total_fetched, completed=False)
 
-        data = _get_page(params)
+        try:
+            data = _get_page(params)
+        except StopIteration as exc:
+            log.warning("  Stopping phrase=%r: %s (%d rows kept)", phrase, exc, len(rows))
+            break
+
         results = data.get("results") or []
         if not results:
             cursor = None
@@ -387,6 +443,11 @@ def fetch_openalex_candidates(
         Returns an empty DataFrame (with correct columns) if no results
         are found or all phrase jobs are already complete.
     """
+    if OPENALEX_API_KEY:
+        log.info("OpenAlex: authenticated (Bearer token — keyed budget active)")
+    else:
+        log.info("OpenAlex: unauthenticated — add OPENALEX_API_KEY to .env for higher rate limits")
+
     all_rows: list[dict] = []
 
     for i, phrase in enumerate(SEARCH_PHRASES, 1):

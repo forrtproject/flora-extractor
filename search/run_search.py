@@ -26,6 +26,7 @@ Usage
 """
 
 import argparse
+import datetime
 import json
 from typing import Optional
 
@@ -73,6 +74,56 @@ def _reset_s2_offsets() -> None:
         "Deleted %d S2 offset file(s) — S2 phrases will restart from the beginning.",
         len(offset_files),
     )
+
+
+# ---------------------------------------------------------------------------
+# Auto-advance state file helpers
+# ---------------------------------------------------------------------------
+
+_SEARCH_STATE_PATH = OA_CACHE_DIR.parent / "search_state.json"
+
+
+def _load_search_state(from_year: int, to_year: int) -> dict:
+    """Load auto-advance state, or initialise if absent / year range changed."""
+    if _SEARCH_STATE_PATH.exists():
+        try:
+            with open(_SEARCH_STATE_PATH, encoding="utf-8") as f:
+                state = json.load(f)
+            if state.get("from_year") == from_year and state.get("to_year") == to_year:
+                return state
+        except Exception:
+            pass
+    return {
+        "from_year":          from_year,
+        "to_year":            to_year,
+        "current_year":       from_year,
+        "current_phrase_idx": 0,
+    }
+
+
+def _save_search_state(state: dict) -> None:
+    """Atomically write search state to disk."""
+    state["last_updated"] = datetime.datetime.now().isoformat(timespec="seconds")
+    tmp = _SEARCH_STATE_PATH.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+    tmp.replace(_SEARCH_STATE_PATH)
+
+
+def _advance_state(state: dict, phrase_list: list) -> dict:
+    """Increment phrase index, rolling over to next year when all phrases are done."""
+    state = dict(state)
+    state["current_phrase_idx"] += 1
+    if state["current_phrase_idx"] >= len(phrase_list):
+        state["current_phrase_idx"] = 0
+        state["current_year"] += 1
+        if state["current_year"] > state["to_year"]:
+            state["current_year"] = state["from_year"]
+            log.info(
+                "Auto-advance: cycled past to_year=%d — restarting from year %d",
+                state["to_year"], state["from_year"],
+            )
+    return state
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +246,16 @@ def _merge_into_candidates_csv(new_df: pd.DataFrame, out_path: "Path") -> pd.Dat
         The full deduplicated candidate set after the merge.
     """
     if out_path.exists():
-        existing = pd.read_csv(out_path, encoding="utf-8-sig", low_memory=False)
+        try:
+            existing = pd.read_csv(out_path, encoding="utf-8-sig", low_memory=False)
+        except Exception:
+            log.warning(
+                "candidates.csv has a parse error — retrying with Python engine (bad lines skipped)"
+            )
+            existing = pd.read_csv(
+                out_path, encoding="utf-8-sig", low_memory=False,
+                engine="python", on_bad_lines="skip",
+            )
         log.info("Existing candidates.csv: %d rows", len(existing))
         # Concat new first so new rows win on dedup (keep="first").
         combined = pd.concat([new_df, existing], ignore_index=True)
@@ -310,10 +370,10 @@ def run_search(
     )
 
     log.info("Stage 1: fetching Replication Network sheet...")
-    frames.append(fetch_replication_network(from_year=from_year, to_year=to_year))
+    frames.append(fetch_replication_network())  # curated list — always fetch all years
 
     log.info("Stage 1: fetching I4R list...")
-    frames.append(fetch_i4r(from_year=from_year, to_year=to_year))
+    frames.append(fetch_i4r())  # curated list — always fetch all years
 
     combined = (
         pd.concat(frames, ignore_index=True)
@@ -328,6 +388,59 @@ def run_search(
     result = _merge_into_candidates_csv(new_batch, out_path)
 
     log.info("Stage 1 complete: %d total candidates in %s", len(result), out_path)
+    return result
+
+
+def run_search_auto_advance(
+    from_year: int = 2011,
+    to_year:   int = 2021,
+    max_records_per_phrase: int = 200,
+) -> pd.DataFrame:
+    """Process exactly ONE phrase/year combination per invocation.
+
+    Reads state from ``cache/search_state.json``, runs the current phrase for
+    the current year, then advances to the next phrase (rolling to the next year
+    when all phrases for the current year are done).  Designed to be called
+    repeatedly — each call appends results to ``candidates.csv``.
+
+    Run command:
+        python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 --max-per-phrase 200
+    """
+    from search.openalex_search import SEARCH_PHRASES, fetch_phrase
+
+    state  = _load_search_state(from_year, to_year)
+    year   = state["current_year"]
+    pidx   = state["current_phrase_idx"]
+    phrase = SEARCH_PHRASES[pidx % len(SEARCH_PHRASES)]
+
+    log.info(
+        "Auto-advance: year=%d  phrase[%d/%d]=%r",
+        year, pidx + 1, len(SEARCH_PHRASES), phrase,
+    )
+
+    rows = fetch_phrase(phrase, from_year=year, to_year=year,
+                        max_records=max_records_per_phrase)
+
+    out_path = DATA_DIR / "candidates.csv"
+    if rows:
+        batch  = pd.DataFrame(rows, columns=CANDIDATES_COLS)
+        result = _merge_into_candidates_csv(deduplicate_candidates(batch), out_path)
+    else:
+        log.info("Auto-advance: no new rows for phrase=%r year=%d", phrase, year)
+        result = (
+            pd.read_csv(out_path, encoding="utf-8-sig")
+            if out_path.exists()
+            else pd.DataFrame(columns=CANDIDATES_COLS)
+        )
+
+    new_state = _advance_state(state, SEARCH_PHRASES)
+    _save_search_state(new_state)
+    log.info(
+        "Auto-advance: next run will process year=%d phrase[%d]=%r",
+        new_state["current_year"],
+        new_state["current_phrase_idx"],
+        SEARCH_PHRASES[new_state["current_phrase_idx"]],
+    )
     return result
 
 
@@ -371,6 +484,15 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Delete all saved OpenAlex cursor files and S2 offset files, then start fresh.",
     )
+    parser.add_argument(
+        "--auto-advance",
+        action="store_true",
+        help=(
+            "Process one phrase/year combo per run (reads/writes cache/search_state.json). "
+            "Pair with --from-year, --to-year, --max-per-phrase. "
+            "Run repeatedly to advance through the year range."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -381,8 +503,15 @@ if __name__ == "__main__":
         _reset_openalex_cursors()
         _reset_s2_offsets()
 
-    run_search(
-        from_year=args.from_year,
-        to_year=args.to_year,
-        max_records_per_phrase=args.max_per_phrase,
-    )
+    if args.auto_advance:
+        from_yr = args.from_year or 2011
+        to_yr   = args.to_year   or 2021
+        max_n   = args.max_per_phrase or 200
+        run_search_auto_advance(from_year=from_yr, to_year=to_yr,
+                                max_records_per_phrase=max_n)
+    else:
+        run_search(
+            from_year=args.from_year,
+            to_year=args.to_year,
+            max_records_per_phrase=args.max_per_phrase,
+        )

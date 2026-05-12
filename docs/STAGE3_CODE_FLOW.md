@@ -8,7 +8,9 @@ This document traces exactly what happens to a DOI when `python -m extract.run_e
 
 Reads `data/filtered.csv` (falls back to `misc/sample_filtered.csv`). Iterates every row.
 
-**False positives are silently skipped** — they are not written to `extracted.csv` at all.
+**`--resume` mode:** if `resume=True`, reads the existing `extracted.csv` first and calls `_load_extracted_rows()`, which partitions rows into two sets: *resolved* (all rows for that DOI have `link_method != "target_pending"`) and *pending* (at least one row is `target_pending`). In the main loop, resolved DOIs are written directly to the output CSV without any processing; pending and new DOIs are processed normally.
+
+**False positives are passed through** — written to `extracted.csv` with all extraction columns empty and `link_method = target_pending`. No classification or LLM calls are made for them.
 
 For every non-false-positive row:
 
@@ -198,6 +200,8 @@ Fires only if: `abstract_r` is non-empty **AND** `distinct_pairs` from the abstr
 Calls `identify_original_with_llm(doi_r + "_abstract", ...)` with GEMINI_HEAVY_MODEL. Cached separately at `cache/llm/llm_<md5(doi+"_abstract")>.json`. If resolved → returns early.
 
 ### Stage 5 — PDF acquisition (11-tier waterfall)
+
+**`no_pdf=True` early exit:** if the `--no-pdf` flag is set and Stages 2.5, 3, and 4 did not resolve the paper, Stage 5 returns `target_pending` immediately with `resolution_method = "needs_fulltext"`. No PDF is downloaded and Stages 6–7 are skipped entirely. `_save_parse_cache()` in `run_extract.py` is also skipped for these rows.
 
 `acquire_pdf(doi_r, title, openalex_id)` in `shared/pdf_sources.py`:
 
