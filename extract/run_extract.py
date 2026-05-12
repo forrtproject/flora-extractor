@@ -579,7 +579,8 @@ def run_extract(no_llm: bool = False,
                 no_multiple_originals: bool = False,
                 no_reproductions: bool = False,
                 skip_flora_validated: bool = False,
-                resume: bool = False) -> pd.DataFrame:
+                resume: bool = False,
+                resolved_only: bool = False) -> pd.DataFrame:
     """
     Run Stage 3 and stream results to data/extracted.csv.
 
@@ -592,6 +593,11 @@ def run_extract(no_llm: bool = False,
                            (validation_status = 'validated - unchanged' or 'validated - changed').
     resume              — carry forward already-resolved rows from extracted.csv unchanged;
                            re-run only rows with link_method == "target_pending".
+    resolved_only       — only write rows that are fully resolved (link_method in
+                           author_year_match / llm_abstract / llm_fulltext with a non-empty doi_o).
+                           target_pending / api_error / no_original_found rows are silently skipped.
+                           Use with --no-llm --no-pdf for a fast rule-based-only pass, then
+                           follow up with --resume for the LLM pass on remaining rows.
     """
     filtered_path = DATA_DIR / "filtered.csv"
     if not filtered_path.exists():
@@ -661,13 +667,14 @@ def run_extract(no_llm: bool = False,
 
         # --no-reproductions: write reproduction rows as target_pending without processing
         if no_reproductions and str(row.get("filter_status", "")) == "reproduction":
-            log.info("[%s] --no-reproductions: writing target_pending", doi_r)
-            result_rows.append(_empty_row(row, "single_original", "low",
-                                          link_method="target_pending"))
-            for result_row in result_rows:
-                _append_row(out_path, result_row, first=first_write)
-                first_write = False
-                output_rows.append(result_row)
+            if not resolved_only:
+                log.info("[%s] --no-reproductions: writing target_pending", doi_r)
+                result_rows.append(_empty_row(row, "single_original", "low",
+                                              link_method="target_pending"))
+                for result_row in result_rows:
+                    _append_row(out_path, result_row, first=first_write)
+                    first_write = False
+                    output_rows.append(result_row)
             continue
 
         match = classify_match_type(row.to_dict(), no_llm=no_llm)
@@ -677,13 +684,14 @@ def run_extract(no_llm: bool = False,
 
         # --no-multiple-originals: write multiple_original rows as target_pending
         if no_multiple_originals and match_type == "multiple_original":
-            log.info("[%s] --no-multiple-originals: writing target_pending", doi_r)
-            result_rows.append(_empty_row(row, "multiple_original", match_conf,
-                                          link_method="target_pending"))
-            for result_row in result_rows:
-                _append_row(out_path, result_row, first=first_write)
-                first_write = False
-                output_rows.append(result_row)
+            if not resolved_only:
+                log.info("[%s] --no-multiple-originals: writing target_pending", doi_r)
+                result_rows.append(_empty_row(row, "multiple_original", match_conf,
+                                              link_method="target_pending"))
+                for result_row in result_rows:
+                    _append_row(out_path, result_row, first=first_write)
+                    first_write = False
+                    output_rows.append(result_row)
             continue
 
         try:
@@ -741,6 +749,12 @@ def run_extract(no_llm: bool = False,
             result_rows.append(_empty_row(row, match_type, match_conf))
 
         for result_row in result_rows:
+            if resolved_only and result_row.get("link_method") in {
+                "target_pending", "api_error", "no_original_found"
+            }:
+                log.debug("[%s] --resolved-only: skipping %s row",
+                          doi_r, result_row.get("link_method"))
+                continue
             _append_row(out_path, result_row, first=first_write)
             first_write = False
             output_rows.append(result_row)
@@ -869,6 +883,13 @@ if __name__ == "__main__":
         help="Carry forward already-resolved rows from extracted.csv; "
              "re-run only rows with link_method == 'target_pending'.",
     )
+    parser.add_argument(
+        "--resolved-only", action="store_true",
+        help="Only write rows that are fully resolved (author_year_match / llm_abstract / llm_fulltext). "
+             "target_pending / api_error / no_original_found rows are silently skipped. "
+             "Combine with --no-llm --no-pdf for a fast rule-based pass, then use --resume "
+             "for the LLM pass on the remaining rows.",
+    )
     args = parser.parse_args()
 
     if args.match_type_only:
@@ -884,4 +905,5 @@ if __name__ == "__main__":
             no_reproductions=args.no_reproductions,
             skip_flora_validated=args.skip_flora_validated,
             resume=args.resume,
+            resolved_only=args.resolved_only,
         )

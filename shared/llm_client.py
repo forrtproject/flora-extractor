@@ -10,6 +10,7 @@ Public API:
 """
 import base64
 import json
+import os
 import re
 import textwrap
 import time
@@ -26,6 +27,44 @@ from .config import (
     log,
 )
 from .utils import cache_key
+
+# ── OpenAI session-level token guardrail ─────────────────────────────────────
+# Tracks tokens consumed via call_openai() within the current process.
+# When usage crosses OPENAI_WARN_TOKENS, the pipeline pauses and asks the user
+# whether to continue.  Override the threshold via env var (in tokens):
+#   OPENAI_WARN_TOKENS=9000000
+_openai_tokens_session: int = 0
+_openai_limit_prompted: bool = False   # ensure we only prompt once
+_openai_disabled:       bool = False   # set to True when user answers N
+_OPENAI_WARN_THRESHOLD: int = int(os.getenv("OPENAI_WARN_TOKENS", "8000000"))
+
+
+def _track_openai_tokens(n_tokens: int) -> None:
+    """Add n_tokens to the session counter and prompt the user if the threshold is crossed."""
+    global _openai_tokens_session, _openai_limit_prompted, _openai_disabled
+    _openai_tokens_session += n_tokens
+    if _openai_limit_prompted or _openai_tokens_session < _OPENAI_WARN_THRESHOLD:
+        return
+    _openai_limit_prompted = True
+    used_m     = _openai_tokens_session / 1_000_000
+    thresh_m   = _OPENAI_WARN_THRESHOLD  / 1_000_000
+    print(f"\n{'=' * 62}")
+    print(f"  OpenAI token guardrail: {used_m:.1f}M tokens used this session")
+    print(f"  (threshold: {thresh_m:.0f}M — set OPENAI_WARN_TOKENS to change)")
+    print(f"  Continue using OpenAI for remaining rows?")
+    print(f"  Y = keep going   N = disable OpenAI (Gemini-only for rest of run)")
+    print(f"{'=' * 62}")
+    try:
+        answer = input("  Your choice [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = "n"
+    if answer in ("n", "no"):
+        _openai_disabled = True
+        log.info("OpenAI disabled by user at %.1fM tokens", used_m)
+        print("  OpenAI disabled. Remaining rows will use Gemini only.\n")
+    else:
+        log.info("User confirmed continuing OpenAI at %.1fM tokens", used_m)
+        print("  Continuing with OpenAI.\n")
 
 
 # ── JSON parsing (handles markdown-fenced output) ─────────────────────────────
@@ -172,6 +211,9 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict],
         log.warning("OPENAI_API_KEY not set — skipping OpenAI")
         return None, "OPENAI_API_KEY not configured"
 
+    if _openai_disabled:
+        return None, "OpenAI disabled — token limit reached and user declined to continue"
+
     import openai
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
@@ -188,6 +230,10 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict],
             response_format={"type": "json_object"},
             max_completion_tokens=1024,
         )
+        if response.usage:
+            _track_openai_tokens(response.usage.total_tokens)
+            log.debug("OpenAI usage: +%d tokens (session total: %d)",
+                      response.usage.total_tokens, _openai_tokens_session)
         result = _parse_llm_json(response.choices[0].message.content)
         return result, ("" if result else "response was not valid JSON")
     except Exception as e:
