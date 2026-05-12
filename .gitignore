@@ -1,5 +1,5 @@
 # ── Data files (too large / sensitive) ───────────────────────────────────────
-data/*.csv
+#data/*.csv
 data/*.xlsx
 data/*.pdf
 data/*.db
@@ -47,3 +47,5 @@ issue.md
 /data/old
 /data/hackathon
 /data/Hackathon_final
+/data/Working
+/data/temp

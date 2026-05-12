@@ -92,6 +92,9 @@ ORIGINAL_MATCH_TYPE_VALUES = {"single_original", "multiple_match", "multiple_ori
 
 LINK_METHOD_VALUES = {
     "author_year_match", "llm_abstract", "llm_fulltext",
+    # LLM ran with full context but concluded no identifiable original study exists.
+    # These papers are likely Stage 2 false positives or self-replications; exclude from DB import.
+    "no_original_found",
     "target_pending", "api_error",
 }
 

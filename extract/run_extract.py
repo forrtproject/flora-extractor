@@ -72,6 +72,9 @@ _METHOD_MAP = {
     "llm_openai":                     "llm_fulltext",
     "llm_abstract_gemini":            "llm_abstract",
     "llm_abstract_openai":            "llm_abstract",
+    # LLM ran successfully but concluded no identifiable original study exists.
+    # Distinct from llm_failed (API errors) and llm_fulltext (original found).
+    "llm_no_target":                  "no_original_found",
     "llm_failed":                     "target_pending",
     "no_candidates_found":            "target_pending",
     "needs_fulltext":                 "target_pending",
@@ -153,8 +156,10 @@ def _map_method(method: str) -> str:
     if method in _METHOD_MAP:
         return _METHOD_MAP[method]
     if method in {"author_year_match", "llm_abstract", "llm_fulltext",
-                  "target_pending", "api_error"}:
+                  "no_original_found", "target_pending", "api_error"}:
         return method
+    if method == "llm_no_target":
+        return "no_original_found"
     if method.startswith("llm_"):
         return "llm_fulltext"
     return "target_pending"
@@ -517,27 +522,34 @@ def _load_flora_validated_dois(sheet_path) -> set:
 def _load_extracted_rows(out_path) -> tuple[dict[str, list[dict]], set[str]]:
     """Partition extracted.csv rows by resolution status for --resume mode.
 
+    False_positive rows in the existing file are dropped — they should never have
+    been written to extracted.csv and will not be re-written on resume.
+
     Returns:
-        resolved — doi_r → list of rows that are fully resolved (including false_positives,
-                   which are stable and need no re-processing despite their link_method)
-        pending  — set of doi_r where at least one row is target_pending and the row
-                   is NOT a false_positive (i.e. genuinely awaiting extraction)
+        resolved — doi_r → list of rows that are fully resolved (link_method != target_pending)
+        pending  — set of doi_r where at least one row has link_method == target_pending
     """
     if not out_path.exists():
         return {}, set()
     df = pd.read_csv(out_path, dtype=str, encoding="utf-8-sig").fillna("")
+    # Drop false_positive rows that were incorrectly written in a prior run.
+    df = df[df["filter_status"] != "false_positive"]
     resolved: dict[str, list[dict]] = {}
     pending: set[str] = set()
     for doi_r, group in df.groupby("doi_r", sort=False):
         doi_clean = clean_doi(str(doi_r))
         rows = group.to_dict("records")
-        # A row is genuinely pending only when target_pending and not a false_positive.
-        # False positives use target_pending as a placeholder but are stable outcomes.
-        is_pending = any(
-            r.get("link_method") == "target_pending"
-            and r.get("filter_status") != "false_positive"
-            for r in rows
-        )
+        # Stale artifact: LLM method written before the no_original_found fix — these
+        # have link_method=llm_fulltext/llm_abstract but an empty doi_o. Re-process them.
+        rows = [
+            r for r in rows
+            if not (r.get("link_method") in {"llm_fulltext", "llm_abstract"}
+                    and not r.get("doi_o", "").strip())
+        ]
+        if not rows:
+            pending.add(doi_clean)
+            continue
+        is_pending = any(r.get("link_method") == "target_pending" for r in rows)
         if is_pending:
             pending.add(doi_clean)
         else:
@@ -635,103 +647,98 @@ def run_extract(no_llm: bool = False,
         if resume and doi_r_check in resolved_rows:
             continue
 
-        result_rows: list[dict] = []
-
-        # False positives pass through with empty extraction fields (no classify/link/outcome calls)
+        # False positives are excluded from Stage 3 — only replications and reproductions proceed.
         if row.get("filter_status") == "false_positive":
-            fp_row = _empty_row(row, "single_original", "low", link_method="target_pending")
-            _append_row(out_path, fp_row, first=first_write)
-            first_write = False
-            output_rows.append(fp_row)
-            log.debug("[%s] false_positive — passed through", clean_doi(str(row.get("doi_r", ""))))
+            log.debug("[%s] false_positive — skipping", clean_doi(str(row.get("doi_r", ""))))
             continue
-        else:
-            if limit is not None and processed >= limit:
-                break
-            processed += 1
 
-            doi_r = clean_doi(str(row.get("doi_r", "")))
+        if limit is not None and processed >= limit:
+            break
+        processed += 1
 
-            # --no-reproductions: write reproduction rows as target_pending without processing
-            if no_reproductions and str(row.get("filter_status", "")) == "reproduction":
-                log.info("[%s] --no-reproductions: writing target_pending", doi_r)
-                result_rows.append(_empty_row(row, "single_original", "low",
-                                              link_method="target_pending"))
-                for result_row in result_rows:
-                    _append_row(out_path, result_row, first=first_write)
-                    first_write = False
-                    output_rows.append(result_row)
-                continue
+        result_rows: list[dict] = []
+        doi_r = clean_doi(str(row.get("doi_r", "")))
 
-            match = classify_match_type(row.to_dict(), no_llm=no_llm)
-            match_type = match["original_match_type"]
-            match_conf = match["original_match_confidence"]
-            log.info("[%s] match_type=%s conf=%s", doi_r, match_type, match_conf)
+        # --no-reproductions: write reproduction rows as target_pending without processing
+        if no_reproductions and str(row.get("filter_status", "")) == "reproduction":
+            log.info("[%s] --no-reproductions: writing target_pending", doi_r)
+            result_rows.append(_empty_row(row, "single_original", "low",
+                                          link_method="target_pending"))
+            for result_row in result_rows:
+                _append_row(out_path, result_row, first=first_write)
+                first_write = False
+                output_rows.append(result_row)
+            continue
 
-            # --no-multiple-originals: write multiple_original rows as target_pending
-            if no_multiple_originals and match_type == "multiple_original":
-                log.info("[%s] --no-multiple-originals: writing target_pending", doi_r)
-                result_rows.append(_empty_row(row, "multiple_original", match_conf,
-                                              link_method="target_pending"))
-                for result_row in result_rows:
-                    _append_row(out_path, result_row, first=first_write)
-                    first_write = False
-                    output_rows.append(result_row)
-                continue
+        match = classify_match_type(row.to_dict(), no_llm=no_llm)
+        match_type = match["original_match_type"]
+        match_conf = match["original_match_confidence"]
+        log.info("[%s] match_type=%s conf=%s", doi_r, match_type, match_conf)
 
-            try:
-                if match_type == "multiple_original":
-                    rule_fired = bool(match.get("rule_fired", False))
-                    result    = run_multi_original_for_doi(
-                        doi_r, _build_rep_df(row), force_multi=rule_fired
-                    )
-                    originals = _parse_originals(result)
-                    if not originals:
-                        if rule_fired:
-                            log.warning(
-                                "[%s] rule_fired=True but LLM returned no originals — "
-                                "writing target_pending (NOT single_original)", doi_r
-                            )
-                            result_rows.append(_empty_row(row, "multiple_original", match_conf,
-                                                          link_method="target_pending"))
-                        else:
-                            link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
-                                                  no_llm=no_llm, no_pdf=no_pdf)
-                            if not no_pdf:
-                                _save_parse_cache(doi_r)
-                            outcome = _get_outcome(doi_r, row, link, no_llm=no_llm)
-                            result_rows.append(
-                                _merge_row(row, link, outcome, "single_original", match_conf, 1, 1)
-                            )
+        # --no-multiple-originals: write multiple_original rows as target_pending
+        if no_multiple_originals and match_type == "multiple_original":
+            log.info("[%s] --no-multiple-originals: writing target_pending", doi_r)
+            result_rows.append(_empty_row(row, "multiple_original", match_conf,
+                                          link_method="target_pending"))
+            for result_row in result_rows:
+                _append_row(out_path, result_row, first=first_write)
+                first_write = False
+                output_rows.append(result_row)
+            continue
+
+        try:
+            if match_type == "multiple_original":
+                rule_fired = bool(match.get("rule_fired", False))
+                result    = run_multi_original_for_doi(
+                    doi_r, _build_rep_df(row), force_multi=rule_fired
+                )
+                originals = _parse_originals(result)
+                if not originals:
+                    if rule_fired:
+                        log.warning(
+                            "[%s] rule_fired=True but LLM returned no originals — "
+                            "writing target_pending (NOT single_original)", doi_r
+                        )
+                        result_rows.append(_empty_row(row, "multiple_original", match_conf,
+                                                      link_method="target_pending"))
                     else:
-                        multi_llm_model = str(result.get("llm_model", "") or "")
-                        for orig in originals:
-                            raw_out = str(orig.get("outcome", "uninformative") or "uninformative").lower()
-                            if raw_out not in _VALID_OUTCOMES:
-                                raw_out = "uninformative"
-                            outcome = {
-                                "outcome":            raw_out,
-                                "outcome_phrase":     str(orig.get("outcome_evidence", "") or ""),
-                                "outcome_confidence": str(orig.get("confidence", "low") or "low"),
-                                "out_quote_source":   "llm_multi",
-                            }
-                            result_rows.append(
-                                _merge_multi_row(row, orig, outcome, match_type, match_conf,
-                                                 len(originals), multi_llm_model)
-                            )
+                        link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
+                                              no_llm=no_llm, no_pdf=no_pdf)
+                        if not no_pdf:
+                            _save_parse_cache(doi_r)
+                        outcome = _get_outcome(doi_r, row, link, no_llm=no_llm)
+                        result_rows.append(
+                            _merge_row(row, link, outcome, "single_original", match_conf, 1, 1)
+                        )
                 else:
-                    link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
-                                          no_llm=no_llm, no_pdf=no_pdf)
-                    if not no_pdf:
-                        _save_parse_cache(doi_r)
-                    outcome = _get_outcome(doi_r, row, link, no_llm=no_llm)
-                    result_rows.append(
-                        _merge_row(row, link, outcome, match_type, match_conf, 1, 1)
-                    )
+                    multi_llm_model = str(result.get("llm_model", "") or "")
+                    for orig in originals:
+                        raw_out = str(orig.get("outcome", "uninformative") or "uninformative").lower()
+                        if raw_out not in _VALID_OUTCOMES:
+                            raw_out = "uninformative"
+                        outcome = {
+                            "outcome":            raw_out,
+                            "outcome_phrase":     str(orig.get("outcome_evidence", "") or ""),
+                            "outcome_confidence": str(orig.get("confidence", "low") or "low"),
+                            "out_quote_source":   "llm_multi",
+                        }
+                        result_rows.append(
+                            _merge_multi_row(row, orig, outcome, match_type, match_conf,
+                                             len(originals), multi_llm_model)
+                        )
+            else:
+                link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
+                                      no_llm=no_llm, no_pdf=no_pdf)
+                if not no_pdf:
+                    _save_parse_cache(doi_r)
+                outcome = _get_outcome(doi_r, row, link, no_llm=no_llm)
+                result_rows.append(
+                    _merge_row(row, link, outcome, match_type, match_conf, 1, 1)
+                )
 
-            except Exception as e:
-                log.error("[%s] extraction failed: %s", doi_r, e)
-                result_rows.append(_empty_row(row, match_type, match_conf))
+        except Exception as e:
+            log.error("[%s] extraction failed: %s", doi_r, e)
+            result_rows.append(_empty_row(row, match_type, match_conf))
 
         for result_row in result_rows:
             _append_row(out_path, result_row, first=first_write)
