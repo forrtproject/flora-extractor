@@ -15,14 +15,16 @@
      class="{{ 'active' if active_page == 'dashboard' else '' }}">Dashboard</a>
   <a href="{{ url_for('review.validate_page') }}"
      class="{{ 'active' if active_page == 'validate' else '' }}">Validate</a>
-  <a href="{{ url_for('input.input_page') }}"
-     class="{{ 'active' if active_page == 'input' else '' }}">Input</a>
+  <a href="{{ url_for('search_view.search_page') }}"
+     class="{{ 'active' if active_page == 'search' else '' }}">Search</a>
+  <a href="{{ url_for('filter_view.filter_page') }}"
+     class="{{ 'active' if active_page == 'filter' else '' }}">Filter</a>
+  <a href="{{ url_for('extract_view.extract_page') }}"
+     class="{{ 'active' if active_page == 'extract' else '' }}">Extract</a>
   <a href="{{ url_for('disambiguation.index') }}"
      class="{{ 'active' if active_page == 'disambiguation' else '' }}">Single DOI</a>
   <a href="{{ url_for('flora.flora_page') }}"
      class="{{ 'active' if active_page == 'flora' else '' }}">FLORA</a>
-  <a href="{{ url_for('pipeline.pipeline_page') }}"
-     class="{{ 'active' if active_page == 'pipeline' else '' }}">Pipeline</a>
   {% if session.reviewer_id %}
   <span style="margin-left:auto;color:#64748b;font-size:11px">
     {{ session.reviewer_id }}

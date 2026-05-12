@@ -17,7 +17,7 @@ from typing import Optional
 import requests
 
 from .config import (
-    OA_CACHE_DIR, OPENALEX_RATE_SEC, RESEARCHER_EMAIL, log,
+    OA_CACHE_DIR, OPENALEX_API_KEY, OPENALEX_RATE_SEC, RESEARCHER_EMAIL, log,
 )
 from .utils import clean_doi, cache_key
 
@@ -108,30 +108,50 @@ def extract_author_year_patterns(text: str,
 
 # ── OpenAlex API ──────────────────────────────────────────────────────────────
 
-_OA_HEADERS  = {
+_OA_HEADERS: dict[str, str] = {
     "User-Agent": (
         f"FLoRA-DisambiguationPipeline/1.0 (mailto:{RESEARCHER_EMAIL})"
     )
 }
+if OPENALEX_API_KEY:
+    _OA_HEADERS["Authorization"] = OPENALEX_API_KEY
 _oa_last_call = 0.0
 
 
 def _oa_get(url: str, params: dict | None = None) -> Optional[dict]:
-    """GET from OpenAlex with rate limiting and error handling."""
+    """GET from OpenAlex with rate limiting, 429 retry, and error handling."""
     global _oa_last_call
     wait = OPENALEX_RATE_SEC - (time.time() - _oa_last_call)
     if wait > 0:
         time.sleep(wait)
     _oa_last_call = time.time()
 
-    try:
-        r = requests.get(url, headers=_OA_HEADERS, params=params or {},
-                         timeout=30)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        log.warning("OpenAlex request failed: %s — %s", url, e)
-        return None
+    _RETRY_DELAYS = [5, 15, 30]  # seconds to wait after 1st, 2nd, 3rd 429
+    for attempt in range(len(_RETRY_DELAYS) + 1):
+        try:
+            r = requests.get(url, headers=_OA_HEADERS, params=params or {},
+                             timeout=30)
+            if r.status_code == 429:
+                if attempt >= len(_RETRY_DELAYS):
+                    break
+                # Use our own schedule — OpenAlex sometimes sends absurdly large
+                # Retry-After values (e.g. 40000+s) that would stall the pipeline.
+                delay = _RETRY_DELAYS[attempt]
+                log.warning("OpenAlex 429 — waiting %ds before retry %d/%d",
+                            delay, attempt + 1, len(_RETRY_DELAYS))
+                time.sleep(delay)
+                _oa_last_call = time.time()
+                continue
+            r.raise_for_status()
+            return r.json()
+        except requests.exceptions.HTTPError:
+            break
+        except Exception as e:
+            log.warning("OpenAlex request failed: %s — %s", url, e)
+            return None
+
+    log.warning("OpenAlex request failed after retries: %s", url)
+    return None
 
 
 def fetch_referenced_works_metadata(openalex_id: str,
@@ -254,20 +274,22 @@ def find_all_candidates(doi_r: str,
         openalex_id, doi, title, year, first_author,
         match_year_exact, cited_pattern
     """
+
     cache_file = OA_CACHE_DIR / f"candidates_{cache_key(doi_r)}.json"
     if cache_file.exists():
         with cache_file.open(encoding="utf-8") as fh:
             return json.load(fh)
 
     if not openalex_id_r:
+        log.warning("[%s] find_all_candidates: no openalex_id_r — returning empty candidates", doi_r)
         return []
 
-    # Extract author-year patterns: title takes priority, then abstract, then stored pattern
-    patterns = (
-        extract_author_year_patterns(study_r, max_year=year_r)
-        or extract_author_year_patterns(abstract_r, max_year=year_r)
-        or extract_author_year_patterns(pattern_str, max_year=year_r)
-    )
+    # Extract author-year patterns from title and abstract. 
+    # extract_author_year_patterns() always returns a list, so we can concatenate results immediately.
+    patterns = extract_author_year_patterns(study_r, max_year=year_r) \
+        + extract_author_year_patterns(abstract_r, max_year=year_r)
+        # + extract_author_year_patterns(pattern_str, max_year=year_r)
+
     if not patterns:
         return []
 

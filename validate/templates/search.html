@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% block title %}FLoRA — Search (Stage 1){% endblock %}
+
+{% block head %}
+<style>
+.sv-page { max-width:1340px; margin:0 auto; padding:10px 16px; }
+.sv-meta { font-size:11px; color:#64748b; margin-bottom:6px; }
+.sv-meta strong { color:#334155; }
+
+.sv-tbl { width:100%; border-collapse:collapse; background:#fff;
+  border:1px solid #e2e8f0; border-radius:8px; overflow:hidden;
+  box-shadow:0 1px 3px rgba(0,0,0,.05); font-size:12px; }
+.sv-tbl thead th { background:#f8fafc; border-bottom:1px solid #e2e8f0;
+  padding:6px 8px; text-align:left; font-size:9.5px; font-weight:700;
+  text-transform:uppercase; letter-spacing:.05em; color:#64748b; white-space:nowrap; }
+.flt-row th { padding:3px 5px; background:#f1f5f9; border-bottom:2px solid #e2e8f0; }
+.cf { width:100%; padding:3px 6px; border:1px solid #e2e8f0; border-radius:4px;
+  font-size:10px; box-sizing:border-box; background:#fff; color:#334155; }
+.cf:focus { border-color:#3b82f6; outline:none; }
+.sv-tbl .dr { cursor:pointer; border-bottom:1px solid #f1f5f9; }
+.sv-tbl .dr:hover td { background:#f8fafc; }
+.sv-tbl .dr.exp td { background:#eff6ff; border-bottom:none; }
+.sv-tbl td { padding:6px 8px; vertical-align:middle; }
+.sv-tbl .det td { padding:0; background:#f0f9ff; border-bottom:1px solid #bae6fd; }
+
+.tn   { color:#94a3b8; font-size:11px; width:28px; text-align:right; }
+.tdoi { font-family:monospace; font-size:10px; color:#2563eb;
+  white-space:nowrap; max-width:180px; overflow:hidden; text-overflow:ellipsis; }
+.ttl  { max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tyr  { color:#64748b; width:44px; }
+.tarr { width:20px; color:#94a3b8; font-size:11px; text-align:center; }
+.sv-cnt { font-size:11px; color:#64748b; margin-bottom:6px; }
+
+.pp  { display:inline-flex; align-items:center; padding:2px 7px;
+  border-radius:10px; font-size:10px; font-weight:600; white-space:nowrap; }
+.pg  { background:#dcfce7; color:#166534; }
+.pb  { background:#dbeafe; color:#1d4ed8; }
+.psl { background:#e2e8f0; color:#334155; }
+
+.dp { padding:12px 16px 16px; }
+.fl { font-size:9px; font-weight:700; text-transform:uppercase;
+  letter-spacing:.06em; color:#94a3b8; margin-bottom:2px; }
+.fv { font-size:11px; color:#334155; }
+.fv.mono { font-family:monospace; font-size:10px; color:#2563eb; }
+.fg4 { display:grid; grid-template-columns:repeat(4,1fr); gap:6px 14px; margin-bottom:8px; }
+.qbox { background:#f8fafc; border-left:3px solid #93c5fd; padding:6px 10px;
+  border-radius:0 4px 4px 0; font-size:11px; color:#475569;
+  font-style:italic; margin-top:4px; line-height:1.6; }
+a.dl { color:#2563eb; text-decoration:none; }
+a.dl:hover { text-decoration:underline; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sv-page">
+  <div class="sv-meta">
+    Stage 1 — Search results &nbsp;|&nbsp; Source: <strong>{{ source }}</strong>
+    &nbsp;|&nbsp; <strong>{{ total }}</strong> candidate papers
+  </div>
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+    <input id="qsearch" type="text" placeholder="Search DOI / title / abstract…"
+      style="flex:1;padding:4px 8px;border:1px solid #e2e8f0;border-radius:4px;font-size:12px">
+  </div>
+  <div class="sv-cnt" id="cnt"></div>
+
+  <table class="sv-tbl">
+    <thead>
+      <tr>
+        <th class="tarr"></th>
+        <th class="tn">#</th>
+        <th>DOI</th>
+        <th>TITLE</th>
+        <th class="tyr">YR</th>
+        <th>SOURCE</th>
+        <th>JOURNAL</th>
+        <th>AUTHORS</th>
+      </tr>
+      <tr class="flt-row">
+        <th></th><th></th>
+        <th><input class="cf" type="text" data-col="doi_r"    placeholder="DOI…"></th>
+        <th><input class="cf" type="text" data-col="title_r"  placeholder="Title…"></th>
+        <th><input class="cf" type="text" data-col="year_r"   placeholder="Year" style="width:44px"></th>
+        <th>
+          <select class="cf" data-col="source">
+            <option value="">All</option>
+            <option value="openalex">openalex</option>
+            <option value="bob_reed">bob_reed</option>
+            <option value="i4r">i4r</option>
+            <option value="semantic_scholar">semantic_scholar</option>
+          </select>
+        </th>
+        <th><input class="cf" type="text" data-col="journal_r" placeholder="Journal…"></th>
+        <th><input class="cf" type="text" data-col="authors_r" placeholder="Authors…"></th>
+      </tr>
+    </thead>
+    <tbody id="sv-body">
+      <tr><td colspan="8" style="padding:20px;text-align:center;color:#94a3b8">Loading…</td></tr>
+    </tbody>
+  </table>
+  <div id="sv-pager" style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:12px"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+'use strict';
+const PER_PAGE = 200;
+let curPage = 1;
+let totalPages = 1;
+let totalRows  = 0;
+let debTimer   = null;
+
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function trunc(s,n=110){ const t=String(s||''); return t.length>n?t.slice(0,n)+'…':t; }
+
+function pillSource(v) {
+  const m = {openalex:'pg',bob_reed:'pb',i4r:'pb',semantic_scholar:'pb'};
+  return `<span class="pp ${m[v]||'psl'}">${v||'—'}</span>`;
+}
+
+function buildParams(page) {
+  const params = new URLSearchParams({ page, per_page: PER_PAGE });
+  const q = document.getElementById('qsearch')?.value.trim();
+  if (q) params.set('q', q);
+  const sel = document.querySelector('.flt-row select.cf');
+  if (sel && sel.value) params.set('source', sel.value);
+  return params;
+}
+
+async function loadPage(page) {
+  document.getElementById('sv-body').innerHTML =
+    '<tr><td colspan="8" style="padding:20px;text-align:center;color:#94a3b8">Loading…</td></tr>';
+  const resp = await fetch('/api/search/list?' + buildParams(page)).then(r => r.json());
+  if (resp.error) { renderError(resp.error); return; }
+  curPage    = resp.page;
+  totalPages = resp.pages;
+  totalRows  = resp.total;
+  renderRows(resp.rows);
+  renderPager();
+  document.getElementById('cnt').textContent =
+    `${totalRows.toLocaleString()} candidates — page ${curPage} of ${totalPages}`;
+}
+
+function renderError(msg) {
+  document.getElementById('sv-body').innerHTML =
+    `<tr><td colspan="8" style="padding:20px;text-align:center;color:#ef4444">${esc(msg)}</td></tr>`;
+}
+
+function renderRows(rows) {
+  const body = document.getElementById('sv-body');
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="8" style="padding:20px;text-align:center;color:#94a3b8">No rows found</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(r => `
+    <tr class="dr" data-doi="${esc(r.doi_r)}" data-abs="${esc(r.abstract_r)}"
+        data-url="${esc(r.url_r)}">
+      <td class="tarr">▶</td>
+      <td class="tn">${r.idx}</td>
+      <td class="tdoi" title="${esc(r.doi_r)}">${esc(r.doi_r)}</td>
+      <td class="ttl" title="${esc(r.title_r)}">${esc(trunc(r.title_r,75))}</td>
+      <td class="tyr">${esc(r.year_r)}</td>
+      <td>${pillSource(r.source)}</td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(trunc(r.journal_r,40))}</td>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#64748b">${esc(trunc(r.authors_r,50))}</td>
+    </tr>
+    <tr class="det" style="display:none">
+      <td colspan="8"><div class="dp" data-doi="${esc(r.doi_r)}"></div></td>
+    </tr>`).join('');
+  document.querySelectorAll('tr.dr').forEach(tr => tr.addEventListener('click', () => toggleRow(tr)));
+}
+
+function renderPager() {
+  const el = document.getElementById('sv-pager');
+  if (!el) return;
+  if (totalPages <= 1) { el.innerHTML = ''; return; }
+  const prev = curPage > 1
+    ? `<button onclick="loadPage(${curPage-1})">‹ Prev</button>` : '<button disabled>‹ Prev</button>';
+  const next = curPage < totalPages
+    ? `<button onclick="loadPage(${curPage+1})">Next ›</button>` : '<button disabled>Next ›</button>';
+  el.innerHTML = `${prev} <span style="font-size:11px;color:#64748b">Page ${curPage} / ${totalPages}</span> ${next}`;
+}
+
+function toggleRow(tr) {
+  const open   = tr.classList.contains('exp');
+  const detRow = tr.nextElementSibling;
+  const dp     = detRow.querySelector('.dp');
+
+  document.querySelectorAll('tr.dr.exp').forEach(r => {
+    r.classList.remove('exp');
+    r.querySelector('.tarr').textContent = '▶';
+    r.nextElementSibling.style.display = 'none';
+  });
+
+  if (open) return;
+  tr.classList.add('exp');
+  tr.querySelector('.tarr').textContent = '▼';
+  detRow.style.display = '';
+
+  if (dp.innerHTML.trim()) return;
+
+  const abs = tr.dataset.abs;
+  const url = tr.dataset.url;
+  const doi = tr.dataset.doi;
+  dp.innerHTML = `
+    <div class="fg4">
+      <div><div class="fl">DOI</div>
+        <span class="fv mono"><a href="https://doi.org/${esc(doi)}" target="_blank" class="dl">${esc(doi)}</a></span></div>
+      ${url ? `<div style="grid-column:span 3"><div class="fl">URL</div>
+        <div class="fv mono" style="font-size:10px;word-break:break-all">
+          <a href="${esc(url)}" target="_blank" class="dl">${esc(url)}</a></div></div>` : ''}
+    </div>
+    ${abs ? `<div><div class="fl">ABSTRACT</div>
+      <div class="qbox" style="font-style:normal;line-height:1.7">${esc(abs)}</div></div>` : ''}`;
+}
+
+function debounce(fn) {
+  return function() { clearTimeout(debTimer); debTimer = setTimeout(fn, 350); };
+}
+
+const reloadPage1 = () => loadPage(1);
+
+window.addEventListener('DOMContentLoaded', () => {
+  loadPage(1);
+  document.getElementById('qsearch').addEventListener('input', debounce(reloadPage1));
+  document.querySelectorAll('.flt-row .cf').forEach(el => {
+    const isSel = el.tagName === 'SELECT';
+    el.addEventListener(isSel ? 'change' : 'input', isSel ? reloadPage1 : debounce(reloadPage1));
+  });
+});
+</script>
+{% endblock %}

@@ -28,28 +28,32 @@ def create_app(test_config: dict | None = None) -> Flask:
     with app.app_context():
         db.create_all()
 
-    # ── Blueprints ────────────────────────────────────────────────────────────
+    # Blueprints
     from validate.routes.batch import batch_bp
     from validate.routes.multi_originals import multi_orig_bp
-    from validate.routes.input import input_bp
     from validate.routes.review import review_bp
     from validate.routes.export import export_bp
     from validate.routes.dashboard import dashboard_bp
     from validate.routes.flora import flora_bp
     from validate.routes.disambiguation import disambiguation_bp
     from validate.routes.pipeline import pipeline_bp
+    from validate.routes.extract_view import extract_view_bp
+    from validate.routes.search_view import search_view_bp
+    from validate.routes.filter_view import filter_view_bp
 
     app.register_blueprint(batch_bp)
     app.register_blueprint(multi_orig_bp)
-    app.register_blueprint(input_bp)
     app.register_blueprint(review_bp)
     app.register_blueprint(export_bp)
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(flora_bp)
     app.register_blueprint(disambiguation_bp)
     app.register_blueprint(pipeline_bp)
+    app.register_blueprint(extract_view_bp)
+    app.register_blueprint(search_view_bp)
+    app.register_blueprint(filter_view_bp)
 
-    # ── Name prompt guard ─────────────────────────────────────────────────────
+    # Name prompt guard
     @app.before_request
     def require_reviewer_name():
         if (
@@ -63,7 +67,7 @@ def create_app(test_config: dict | None = None) -> Flask:
             next_url = request.url
             return redirect(f"/set-name?next={next_url}")
 
-    # ── Static routes ─────────────────────────────────────────────────────────
+    # Static routes
     @app.route("/pdf/<path:filename>")
     def serve_pdf(filename: str):
         return send_from_directory(str(PDF_CACHE_DIR), filename)
@@ -71,6 +75,11 @@ def create_app(test_config: dict | None = None) -> Flask:
     @app.route("/")
     def index():
         return redirect(url_for("dashboard.dashboard_page"))
+
+    # /pipeline redirects to /extract (Pipeline tab merged into Extract)
+    @app.route("/pipeline")
+    def pipeline_redirect():
+        return redirect(url_for("extract_view.extract_page"), code=301)
 
     return app
 

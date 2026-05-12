@@ -3,7 +3,15 @@
 
 **Input:** `data/candidates.csv`
 **Output:** `data/filtered.csv`
-**Run:** `python filter/run_filter.py`
+**Run:**
+
+```bash
+python -m filter.run_filter
+```
+
+Results are streamed to `data/filtered.csv` one row at a time. Interrupted runs can be resumed — DOIs already present in `filtered.csv` are skipped automatically.
+
+Results are viewable in the **Filter** tab of the Stage 4 web app (`http://localhost:5001/filter`).
 
 ---
 
@@ -88,11 +96,13 @@ If no author-year citation pattern (e.g. `Smith (2020)`) is found anywhere in `a
 
 Applied **only** to rows where `filter_status = needs_review` from the rule pass.
 
-Prompt provides title and abstract; asks whether the paper is a replication, reproduction, or neither. Returns:
+The prompt provides title and abstract and asks whether the paper is a replication, reproduction, or neither. Returns:
 
 - `filter_status` — final classification
 - `filter_evidence` — a quote from the abstract supporting the decision
 - `filter_confidence` — `high` / `medium` / `low`
+
+**Model routing:** OpenAI (`gpt-5.4-mini` by default, configurable via `FILTER_OPENAI_MODEL` in `.env`) is tried first; Gemini is the fallback. This is reversed from Stage 3, which uses Gemini first.
 
 Responses cached to `cache/llm/` using `cache_key(doi_r + "_filter")`. Rate limit: 1s between calls (`LLM_RATE_SEC`).
 
@@ -113,30 +123,41 @@ All columns from `candidates.csv`, plus:
 
 False positives are **included** in `filtered.csv` with `filter_status = false_positive` so Stage 3 can skip them cleanly. They are never deleted.
 
+> **Web app:** The Filter tab (`/filter`) always hides `false_positive` rows. The row count shown in the UI reflects only `replication`, `reproduction`, and `needs_review` rows. False positives remain in `filtered.csv` on disk and are still passed through to `extracted.csv` by Stage 3, but they are not displayed in the Filter tab.
+
 ---
 
 ## Files
 
-| File                    | Status       | Description                                                 |
-| ----------------------- | ------------ | ----------------------------------------------------------- |
-| `filter/run_filter.py`  | Stub         | Orchestrator — reads candidates.csv, runs steps, writes CSV |
-| `filter/rule_filter.py` | To implement | Deduplication, keyword classifier, author-year pattern check|
-| `filter/llm_filter.py`  | To implement | LLM classifier for `needs_review` rows                      |
+| File                    | Status      | Description                                                        |
+| ----------------------- | ----------- | ------------------------------------------------------------------ |
+| `filter/run_filter.py`  | Implemented | Orchestrator — streaming, resume-safe, one row appended at a time  |
+| `filter/rule_filter.py` | Implemented | Keyword classifier, author-year pattern check; `classify_row()`    |
+| `filter/llm_filter.py`  | Implemented | LLM classifier for `needs_review` rows; `classify_with_llm()`      |
 
 ---
 
-## What Needs to Be Implemented
+## CLI Flags
 
-- [ ] `deduplicate_candidates(df)` — second-pass title dedup (DOI dedup is done in Stage 1)
-- [ ] `classify_with_rules(df)` — keyword pattern classifier returning `filter_status`, `filter_evidence`, `filter_confidence`
-- [ ] `check_author_year_patterns(row)` — flag `needs_review` when no author-year citation pattern found
-- [ ] `classify_with_llm(rows)` — LLM classifier for `needs_review` rows only
+```bash
+# Run everything (resumes if interrupted)
+python -m filter.run_filter
+
+# Process only the first 10 unprocessed rows (quick test)
+python -m filter.run_filter --limit 10
+
+# Skip the first 500 unprocessed rows (targeted reruns)
+python -m filter.run_filter --offset 500
+```
+
+`--limit N` stops after N new rows are written. The next run picks up where it left off.  
+`--offset N` skips the first N unprocessed rows before starting — useful to re-run a specific slice.
 
 ---
 
 ## Rules
 
-- Never delete false positives — set `filter_status = false_positive` and include in output
+- Never delete false positives — set `filter_status = false_positive` and include in `filtered.csv`
 - LLM classification pass runs only on `needs_review` rows — do not call LLM for every paper
 - All LLM calls must be cached with `cache_key(doi_r + suffix)` before writing to disk
 - Rate limit: 1s between LLM calls (`LLM_RATE_SEC`)

@@ -31,9 +31,6 @@ Each stage is independently runnable. See [CLAUDE.md](CLAUDE.md) for full techni
 
 ## Quick Start
 
-> **Note:** The commands below are the target state once all stages are implemented.
-> Currently, `flora_selected.csv` can be used to seed Stage 4 directly.
-
 ```bash
 # 1. Clone and setup
 git clone https://github.com/forrtproject/flora-extractor.git
@@ -42,9 +39,9 @@ pip install -r requirements.txt
 cp .env.example .env   # fill in your API keys
 
 # 2. Run the pipeline
-python search/run_search.py        # → data/candidates.csv
-python filter/run_filter.py        # → data/filtered.csv
-python extract/run_extract.py      # → data/extracted.csv
+python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 --max-per-phrase 200
+python -m filter.run_filter           # → data/filtered.csv
+python -m extract.run_extract --skip-flora-validated  # → data/extracted.csv
 
 # 3. Start the validation web app
 python -m validate.import_csv      # load into SQLite

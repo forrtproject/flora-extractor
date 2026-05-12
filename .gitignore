@@ -1,5 +1,5 @@
 # ── Data files (too large / sensitive) ───────────────────────────────────────
-data/*.csv
+#data/*.csv
 data/*.xlsx
 data/*.pdf
 data/*.db
@@ -10,6 +10,7 @@ cache/
 
 # ── Environment ───────────────────────────────────────────────────────────────
 .env
+.env.example
 
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
@@ -36,3 +37,15 @@ Thumbs.db
 .claude/
 .superpowers/
 docs/superpowers/
+docs/GITHUB_ISSUES.md
+docs/ARCHITECTURE.md
+.env.example
+/Logs
+load_doi_list.py
+/lookup
+issue.md
+/data/old
+/data/hackathon
+/data/Hackathon_final
+/data/Working
+/data/temp

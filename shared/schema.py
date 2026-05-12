@@ -19,6 +19,7 @@ CANDIDATES_COLS = [
     "url_r",          # str   — open access URL if available
     "openalex_id_r",  # str   — OpenAlex work ID (e.g. W2741809807)
     "source",         # str   — openalex | bob_reed | i4r | semantic_scholar | ...
+    "ref_r",          # str   — "Surname · Year · Journal" — built at search time
 ]
 
 # ── Stage 2 output: filtered.csv ─────────────────────────────────────────────
@@ -43,11 +44,13 @@ EXTRACT_ADDED_COLS = [
     "title_o",             # str   — original study title
     "year_o",              # int   — original study publication year
     "authors_o",           # str   — original study authors
+    "ref_o",               # str   — "Surname · Year · Journal" — fetched from OpenAlex after doi_o resolved
 
     # Linking
     "link_method",         # str   — author_year_match | llm_abstract | llm_fulltext | target_pending
     "link_evidence",       # str   — quote or pattern used for linking
     "link_confidence",     # str   — high | medium | low
+    "link_llm_model",      # str   — exact model used for DOI resolution (e.g. gemini-2.0-flash)
 
     # Outcome
     "outcome",             # str   — success | failure | mixed | uninformative | descriptive | pending
@@ -60,7 +63,10 @@ EXTRACT_ADDED_COLS = [
     "original_rank",       # int   — 1 for single; 1,2,3... for multi-original papers
     "n_originals",         # int   — total originals in this paper (1 for single)
 ]
-EXTRACTED_COLS = FILTERED_COLS + EXTRACT_ADDED_COLS
+# pair_id is placed first so it is the leading identifier in extracted.csv.
+# Value: md5(doi_r + "|" + doi_o).hexdigest() — full 32-char hex in the CSV;
+# the UI displays only the first 3 characters as a compact visual tag.
+EXTRACTED_COLS = ["pair_id"] + FILTERED_COLS + EXTRACT_ADDED_COLS
 
 # ── Stage 4 output: validated.csv ────────────────────────────────────────────
 # All EXTRACTED_COLS + the following:
@@ -86,6 +92,9 @@ ORIGINAL_MATCH_TYPE_VALUES = {"single_original", "multiple_match", "multiple_ori
 
 LINK_METHOD_VALUES = {
     "author_year_match", "llm_abstract", "llm_fulltext",
+    # LLM ran with full context but concluded no identifiable original study exists.
+    # These papers are likely Stage 2 false positives or self-replications; exclude from DB import.
+    "no_original_found",
     "target_pending", "api_error",
 }
 
@@ -109,6 +118,12 @@ def empty_filter_row() -> dict:
 
 def empty_extract_row() -> dict:
     return {col: "" for col in EXTRACTED_COLS}
+
+
+def make_pair_id(doi_r: str, doi_o: str) -> str:
+    """MD5 of the replication-original DOI pair. Full 32-char hex string."""
+    import hashlib
+    return hashlib.md5(f"{doi_r}|{doi_o}".encode()).hexdigest()
 
 def empty_validated_row() -> dict:
     return {col: "" for col in VALIDATED_COLS}
