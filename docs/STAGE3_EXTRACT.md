@@ -29,6 +29,7 @@ Results are streamed to `data/extracted.csv` one row at a time. You can open the
 | `--no-reproductions` | Skip rows with `filter_status = reproduction` (write as `target_pending`). |
 | `--skip-flora-validated` | Skip DOIs already validated in `data/FLoRA entry sheet - replication list.csv` where `validation_status` is `validated - unchanged` or `validated - changed`. Avoids re-extracting 1,100+ already-confirmed papers. |
 | `--resume` | Carry forward already-resolved rows from `extracted.csv` unchanged; re-run only rows whose `link_method == "target_pending"`. Rows that are fully resolved are written directly without any API calls. Designed for the two-pass workflow below. |
+| `--resolved-only` | Only write rows that are fully resolved — `link_method` must be one of `author_year_match`, `llm_abstract`, or `llm_fulltext` **and** `doi_o` must be non-empty. Rows that end up as `target_pending`, `api_error`, or `no_original_found` are silently skipped (not written to `extracted.csv`). Use this on the first pass to build a clean set of high-confidence resolved rows, then follow up with `--resume` (without `--resolved-only`) to fill in the rest. |
 
 #### Examples
 
@@ -39,10 +40,10 @@ python -m extract.run_extract --limit 5 --no-pdf
 # Full run skipping already-validated FLoRA DOIs
 python -m extract.run_extract --skip-flora-validated
 
-# Fast first pass — no multi-original LLM, no PDF (resolves ~60% via rules + abstract LLM)
-python -m extract.run_extract --no-pdf --no-multiple-originals --no-reproductions --skip-flora-validated
+# Fast first pass — rules + abstract LLM only, write only what resolves cleanly
+python -m extract.run_extract --resume --no-llm --no-pdf --resolved-only --no-multiple-originals --no-reproductions --skip-flora-validated
 
-# Second pass — carry forward resolved rows, fill in target_pending with full pipeline
+# Second pass — fill in remaining target_pending with full pipeline (PDF + fulltext LLM)
 python -m extract.run_extract --resume
 
 # Rule-based only, no API calls
@@ -58,11 +59,40 @@ python -m extract.run_extract --match-type-only --limit 10
 # Pass 1 — fast, resolves ~60% without any PDF downloads
 python -m extract.run_extract --no-pdf --no-multiple-originals --no-reproductions --skip-flora-validated
 
-# Pass 2 — fills in the remaining target_pending rows using the full pipeline (PDF + fulltext LLM)
+# Pass 2 — carry forward resolved rows, fill in target_pending with full pipeline
 python -m extract.run_extract --resume
 ```
 
 `--resume` can be combined with other flags on the second pass (e.g. `--resume --no-multiple-originals` to still defer multi-original rows).
+
+#### Three-pass workflow (cleanest extracted.csv — write only what resolves)
+
+Use this when you want `extracted.csv` to contain only high-confidence resolved rows, with unresolved rows added later rather than cluttering the file as `target_pending`.
+
+```bash
+# Pass 1 — rule-based only, no PDF, no LLM; write ONLY rows that resolve cleanly.
+#           Reproductions and multiple-originals are silently skipped (not written).
+#           target_pending / api_error rows are also silently skipped.
+python -m extract.run_extract --resume --no-llm --no-pdf --resolved-only --no-multiple-originals --no-reproductions --skip-flora-validated
+
+# Pass 2 — abstract LLM pass; still no PDF; still write only resolved rows.
+#           --resume carries forward what Pass 1 wrote; re-runs everything else.
+python -m extract.run_extract --resume --no-pdf --resolved-only --no-multiple-originals --no-reproductions --skip-flora-validated
+
+# Pass 3 — full pipeline (PDF + fulltext LLM) for everything still unresolved.
+#           --resolved-only is dropped so target_pending rows now appear in the file.
+python -m extract.run_extract --resume
+```
+
+**What happens to skipped rows across passes:**
+
+| Flag combination | Reproductions | Multiple-originals | Unresolved (target_pending) |
+| --- | --- | --- | --- |
+| `--no-reproductions --resolved-only` | Not written | — | Not written |
+| `--no-multiple-originals --resolved-only` | — | Not written | Not written |
+| `--resume` on final pass (no `--resolved-only`) | Written as `target_pending` if still unresolved | Written as `target_pending` if still deferred | Written as `target_pending` |
+
+Rows not yet in `extracted.csv` are always processed on the next `--resume` run — nothing is permanently lost by deferring them.
 
 > **`--no-llm` vs. `--match-type-only`:**
 > `--no-llm` still runs the full pipeline (linking + outcome) for every row — it just skips every LLM call. Rules and Jaccard-based heuristics resolve what they can; the rest gets `target_pending`.
@@ -318,7 +348,8 @@ Same keyword + LLM process as Shared Pipeline Step 7. Run once per original (eac
 | `llm_abstract`      | Step 1                         | Resolved by LLM using abstract + OpenAlex references             |
 | `author_year_match` | Step 3 or Step 5 (GROBID path) | Resolved by same-author/year heuristic or GROBID reference match |
 | `llm_fulltext`      | Step 6                         | Resolved by LLM using full PDF context                           |
-| `target_pending`    | Step 6 — no result             | LLM returned no usable result                                    |
+| `no_original_found` | Step 1 or Step 6               | LLM ran but found no identifiable original; not an API failure   |
+| `target_pending`    | Step 6 — no result             | LLM returned no usable result; re-processed on `--resume`        |
 | `api_error`         | Step 6 — all retries failed    | API failed after 3 retries with exponential backoff              |
 
 ---
