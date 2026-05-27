@@ -17,6 +17,42 @@ from shared import token_counter
 from shared.llm_client import call_llm
 from shared.utils import cache_key
 
+# ── Sentence splitter helpers ─────────────────────────────────────────────────
+
+_ABBREV_RE = re.compile(
+    r"\b(?:et al|e\.g|i\.e|vs|Dr|Mr|Mrs|Ms|Prof|Fig|No|Vol|pp|cf)\."
+    r"|(?<!\w)\b[A-Z]\.",
+    re.IGNORECASE,
+)
+
+
+def _expand_to_sentences(text: str, match_start: int, match_end: int,
+                          n_context: int = 1) -> str:
+    """Return the sentence containing the match plus n_context sentences on each side."""
+    if not text:
+        return ""
+    placeholder = "\x00"
+    masked = _ABBREV_RE.sub(lambda m: m.group(0).replace(".", placeholder), text)
+    raw_sentences = re.split(r"(?<=[.!?])\s+", masked.strip())
+    sentences = [s.replace(placeholder, ".") for s in raw_sentences if s.strip()]
+    if not sentences:
+        return text.strip()
+    target_idx = len(sentences) - 1
+    cumulative = 0
+    for i, sent in enumerate(sentences):
+        pos = text.find(sent.strip(), cumulative)
+        if pos == -1:
+            pos = cumulative
+        end_pos = pos + len(sent)
+        if pos <= match_start < end_pos:
+            target_idx = i
+            break
+        cumulative = end_pos
+    lo = max(0, target_idx - n_context)
+    hi = min(len(sentences) - 1, target_idx + n_context)
+    return " ".join(sentences[lo : hi + 1]).strip()
+
+
 # ── Keyword patterns (Pass 1) ─────────────────────────────────────────────────
 # Failure is checked before success to avoid "failed to replicate" hitting success.
 
@@ -76,38 +112,51 @@ def _keyword_scan(text: str, source: str) -> Optional[dict]:
     """
     m = _FAILURE.search(text)
     if m:
-        return {"outcome": "failure", "outcome_phrase": m.group(0),
+        return {"outcome": "failure",
+                "outcome_phrase": _expand_to_sentences(text, m.start(), m.end()),
                 "outcome_confidence": "high", "out_quote_source": source}
     m = _MIXED.search(text)
     if m:
-        return {"outcome": "mixed", "outcome_phrase": m.group(0),
+        return {"outcome": "mixed",
+                "outcome_phrase": _expand_to_sentences(text, m.start(), m.end()),
                 "outcome_confidence": "medium", "out_quote_source": source}
     m = _SUCCESS.search(text)
     if m:
-        return {"outcome": "success", "outcome_phrase": m.group(0),
+        return {"outcome": "success",
+                "outcome_phrase": _expand_to_sentences(text, m.start(), m.end()),
                 "outcome_confidence": "high", "out_quote_source": source}
     m = _DESCRIPTIVE.search(text)
     if m:
-        return {"outcome": "descriptive", "outcome_phrase": m.group(0),
+        return {"outcome": "descriptive",
+                "outcome_phrase": _expand_to_sentences(text, m.start(), m.end()),
                 "outcome_confidence": "medium", "out_quote_source": source}
     return None
 
 
-def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str) -> dict:
+def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
+                 original_title: str = "", original_authors: str = "",
+                 original_year: str = "") -> dict:
     """LLM-based outcome extraction. Result cached per doi_r."""
     cache_file = LLM_CACHE_DIR / f"outcome_{cache_key(doi_r)}.json"
     if cache_file.exists():
         with cache_file.open(encoding="utf-8") as fh:
-            return json.load(fh)
+            cached = json.load(fh)
+        cached.setdefault("outcome_reasoning", "")
+        return cached
 
     abstract_snip = (abstract_r[:1000] + "…") if len(abstract_r) > 1000 else abstract_r
-    text_snip = (fulltext[:800] + "…") if len(fulltext) > 800 else fulltext
+
+    original_block = ""
+    if original_title:
+        original_block = (
+            f"This paper replicates: {original_authors} ({original_year}). {original_title}\n\n"
+        )
 
     prompt = (
         "You are a research methodology expert. Classify the replication outcome.\n\n"
-        f"TITLE: {title_r}\n"
-        f"ABSTRACT: {abstract_snip or '(not available)'}\n"
-        f"FULLTEXT EXCERPT: {text_snip or '(not available)'}\n\n"
+        + original_block
+        + f"TITLE: {title_r}\n"
+        f"ABSTRACT: {abstract_snip or '(not available)'}\n\n"
         "Outcome values:\n"
         "- success: replication confirmed the original finding\n"
         "- failure: replication failed to find the original effect\n"
@@ -115,8 +164,11 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str) -> di
         "- uninformative: cannot determine from available text\n"
         "- descriptive: adapted methods in a new context without testing the original claim\n\n"
         "Respond with ONLY this JSON:\n"
-        '{"outcome": "<value>", "outcome_phrase": "<supporting quote, max 2 sentences>", '
-        '"outcome_confidence": "<high|medium|low>", "out_quote_source": "<abstract|fulltext|title>"}'
+        '{"outcome": "<value>", '
+        '"outcome_phrase": "<verbatim quote of 2-3 sentences from the abstract that specifically describes what replicated and what did not>", '
+        '"outcome_confidence": "<high|medium|low>", '
+        '"out_quote_source": "<abstract|title>", '
+        '"outcome_reasoning": "<one sentence explaining the classification choice>"}'
     )
 
     token_counter.set_stage("extract_outcome")
@@ -125,7 +177,8 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str) -> di
         time.sleep(LLM_RATE_SEC)
 
     _fallback = {"outcome": "uninformative", "outcome_phrase": "",
-                 "outcome_confidence": "low", "out_quote_source": "", "llm_model": ""}
+                 "outcome_confidence": "low", "out_quote_source": "",
+                 "outcome_reasoning": "", "llm_model": ""}
     if not result:
         log.warning("[%s] outcome LLM failed — marking uninformative", doi_r)
         return _fallback
@@ -139,6 +192,7 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str) -> di
         "outcome_phrase":     str(result.get("outcome_phrase",    "") or ""),
         "outcome_confidence": str(result.get("outcome_confidence", "low") or "low"),
         "out_quote_source":   str(result.get("out_quote_source",  "") or ""),
+        "outcome_reasoning":  str(result.get("outcome_reasoning", "") or ""),
         "llm_model":          model_used,
         "llm_prompt":         prompt,
         "llm_response":       json.dumps(result, ensure_ascii=False) if result else "",
@@ -173,39 +227,42 @@ def extract_outcome(doi_r: str,
                     abstract_r: str,
                     fulltext: str = "",
                     title_r: str = "",
-                    no_llm: bool = False) -> dict:
-    """
-    Extract replication outcome from available text.
+                    no_llm: bool = False,
+                    original_title: str = "",
+                    original_authors: str = "",
+                    original_year: str = "") -> dict:
+    """Extract replication outcome from available text.
 
-    Returns:
-        {
-          "outcome":            str,  # success | failure | mixed | uninformative | descriptive
-          "outcome_phrase":     str,  # supporting quote
-          "outcome_confidence": str,  # high | medium | low
-          "out_quote_source":   str,  # abstract | fulltext | title
-        }
+    Returns a dict with keys: outcome, outcome_phrase, outcome_confidence,
+    out_quote_source, outcome_reasoning (empty string for keyword-matched rows).
     """
+    _kw_fallback = {"outcome_reasoning": ""}
+
     # Title scan — only act on high-confidence hits (avoid false triggers like "replication of X")
     if title_r:
         hit = _keyword_scan(title_r, "title")
         if hit and hit["outcome_confidence"] == "high":
-            return hit
+            return {**hit, **_kw_fallback}
 
     # Abstract scan — accept any hit
     if abstract_r:
         hit = _keyword_scan(abstract_r, "abstract")
         if hit:
-            return hit
+            return {**hit, **_kw_fallback}
 
     # Fulltext scan — only act on high-confidence hits
     if fulltext:
         hit = _keyword_scan(fulltext[:3000], "fulltext")
         if hit and hit["outcome_confidence"] == "high":
-            return hit
+            return {**hit, **_kw_fallback}
 
     if no_llm:
         return {"outcome": "uninformative", "outcome_phrase": "",
-                "outcome_confidence": "low", "out_quote_source": ""}
+                "outcome_confidence": "low", "out_quote_source": "",
+                "outcome_reasoning": ""}
 
     # LLM pass for uninformative or absent keyword matches
-    return _llm_outcome(doi_r, title_r, abstract_r, fulltext)
+    return _llm_outcome(doi_r, title_r, abstract_r, fulltext,
+                        original_title=original_title,
+                        original_authors=original_authors,
+                        original_year=original_year)

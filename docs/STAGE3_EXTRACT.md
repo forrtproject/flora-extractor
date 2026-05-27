@@ -308,17 +308,22 @@ Implemented in `extract/code_outcome.py`.
 
 **Pass 1 — Keyword matching:**
 
-- Scans abstract and title for outcome phrases
+- Scans title → abstract → fulltext (first high-confidence hit wins)
 - `success`: `"replicated"`, `"consistent with"`, `"confirmed"`, `"effect was reproduced"`
 - `failure`: `"failed to replicate"`, `"no evidence"`, `"could not replicate"`, `"null result"`
 - `mixed`: `"partial replication"`, `"mixed results"`, `"some but not all"`
+- `descriptive`: `"adapted the method"`, `"in a different context"`
 - `uninformative`: no clear outcome phrase found
 
-**Pass 2 — LLM outcome extraction** (for `uninformative` or low-confidence keyword matches):
+When a keyword fires, `outcome_phrase` is set to the **matched sentence plus one sentence of context on each side** (via `_expand_to_sentences()`). This produces a meaningful quote rather than a bare keyword fragment. Abbreviations (`et al.`, `e.g.`, initials) are protected from being treated as sentence boundaries.
 
-- Sends title + abstract (+ fulltext intro if available) to LLM
-- Returns `outcome`, `outcome_phrase` (supporting quote), `outcome_confidence`, `out_quote_source`
-- Cached to `cache/llm/` using `cache_key(doi_r + "_outcome")`
+**Pass 2 — LLM outcome extraction** (no high-confidence keyword match):
+
+- Sends title + abstract to the LLM (fulltext is no longer sent)
+- When the original study is known from linking (`resolved_title_o` / `resolved_author_o` / `resolved_year_o`), prepends a citation block: `"This paper replicates: {authors} ({year}). {title}"` so the LLM can reason about whether *that specific effect* was confirmed
+- Returns `outcome`, `outcome_phrase` (verbatim 2–3 sentence quote from the abstract), `outcome_confidence`, `out_quote_source`, and `outcome_reasoning` (one sentence explaining the classification choice)
+- `outcome_reasoning` is empty for keyword-matched rows (Pass 1)
+- Cached to `cache/llm/outcome_{cache_key(doi_r)}.json`; old cache entries without `outcome_reasoning` return `""` for that field — no cache invalidation needed
 
 ---
 
@@ -381,9 +386,10 @@ Same keyword + LLM process as Shared Pipeline Step 7. Run once per original (eac
 | `link_confidence`           | str  | high / medium / low                                                           |
 | `link_llm_model`            | str  | Model used for DOI resolution; empty for rule-based links                     |
 | `outcome`                   | str  | success / failure / mixed / uninformative / descriptive / pending / api_error |
-| `outcome_phrase`            | str  | Supporting quote from the paper                                               |
+| `outcome_phrase`            | str  | Verbatim quote (multi-sentence) from the paper supporting the classification  |
 | `outcome_confidence`        | str  | high / medium / low                                                           |
 | `out_quote_source`          | str  | abstract / fulltext / title                                                   |
+| `outcome_reasoning`         | str  | One-sentence LLM note explaining the classification; empty for keyword rows   |
 | `type`                      | str  | replication / reproduction                                                    |
 | `original_rank`             | int  | 1 for single; 1, 2, 3... for multi-original                                   |
 | `n_originals`               | int  | Total originals in this paper (1 for single)                                  |
@@ -532,6 +538,44 @@ This enables the recommended two-pass workflow: a fast `--no-pdf` first pass fol
 - `multiple_original` papers expand to N rows in extracted.csv — `original_rank` must be set
 - If `is_false_positive` comes back from Multi-Original LLM, re-route through Shared Pipeline
 - All DOIs written to `doi_o` must pass through `clean_doi()`
+
+---
+
+## Recent Improvements (2026-05-27)
+
+### K — Outcome extraction quality (`code_outcome.py`)
+
+Two problems in the previous outcome extraction were identified and fixed:
+
+#### 1. Quote quality (Pass 1 — keyword scan)
+
+Previously, `outcome_phrase` was set to the bare regex match (e.g. the literal text `"failed to replicate"`). Reviewers in Stage 4 saw a bare keyword fragment instead of a meaningful quote.
+
+Fix: `_expand_to_sentences(text, match_start, match_end, n_context=1)` was added. It splits the abstract on sentence boundaries — protecting common abbreviations (`et al.`, `e.g.`, `i.e.`, `vs.`, initials) from being treated as sentence ends — and returns the matched sentence plus one surrounding sentence on each side. `_keyword_scan()` now calls this instead of returning `m.group(0)`.
+
+#### 2. Classification accuracy (Pass 2 — LLM)
+
+Previously the LLM prompt contained no information about which original study was being replicated. This degraded accuracy for `mixed` and `uninformative` cases where the LLM needed to know which specific effect to look for in the abstract.
+
+Fix: `_llm_outcome()` now accepts `original_title`, `original_authors`, `original_year` and — when `original_title` is non-empty — prepends:
+
+```text
+This paper replicates: {authors} ({year}). {title}
+```
+
+before the abstract. The fulltext excerpt was also removed from the prompt (it added noise without improving accuracy). The quote instruction was updated to ask for 2–3 verbatim sentences from the abstract.
+
+#### New `outcome_reasoning` field
+
+The LLM response now includes `"outcome_reasoning"`: a one-sentence note explaining the classification choice (e.g. `"Partial: valence effect replicated but arousal effect did not reach significance."`). This field is empty for keyword-matched rows (Pass 1) and for rows where the LLM call failed. Old cache entries without it return `""` — no cache invalidation needed.
+
+#### Caller wiring (`run_extract.py`)
+
+`_get_outcome()` now passes `resolved_title_o`, `resolved_author_o`, `resolved_year_o` from the `link` dict through to `extract_outcome()`. For multi-original rows where the multi-original LLM returned originals, outcome comes inline from `orig.get("outcome_evidence")` — these rows are unchanged.
+
+#### Schema change (`shared/schema.py`)
+
+`outcome_reasoning` was added to `EXTRACT_ADDED_COLS` after `out_quote_source`. Old rows in `extracted.csv` get an empty string for this column on re-read.
 
 ---
 

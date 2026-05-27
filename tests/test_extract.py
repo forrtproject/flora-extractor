@@ -13,13 +13,58 @@ import pandas as pd
 import pytest
 
 from shared.schema import EXTRACTED_COLS
-from extract.code_outcome import extract_outcome, _keyword_scan
+from extract.code_outcome import extract_outcome, _keyword_scan, _expand_to_sentences
 from extract.run_extract import (
     classify_match_type,
     _llm_classify_match_type,
     _map_method,
     _score_to_confidence,
 )
+
+
+# ── Sentence expansion unit tests ────────────────────────────────────────────
+
+class TestExpandToSentences:
+    def test_returns_target_sentence(self):
+        text = "First sentence. We replicated the effect. Third sentence."
+        result = _expand_to_sentences(text, text.index("We replicated"), text.index("We replicated") + 5, n_context=0)
+        assert "We replicated the effect" in result
+
+    def test_includes_one_sentence_before(self):
+        text = "First sentence. We replicated the effect. Third sentence."
+        start = text.index("We replicated")
+        result = _expand_to_sentences(text, start, start + 5, n_context=1)
+        assert "First sentence" in result
+        assert "We replicated the effect" in result
+
+    def test_includes_one_sentence_after(self):
+        text = "First sentence. We replicated the effect. Third sentence."
+        start = text.index("We replicated")
+        result = _expand_to_sentences(text, start, start + 5, n_context=1)
+        assert "We replicated the effect" in result
+        assert "Third sentence" in result
+
+    def test_single_sentence_no_error(self):
+        text = "We replicated the effect."
+        result = _expand_to_sentences(text, 3, 15, n_context=1)
+        assert "We replicated the effect" in result
+
+    def test_match_at_start_clamps(self):
+        text = "Failed to replicate. Second sentence. Third sentence."
+        result = _expand_to_sentences(text, 0, 18, n_context=1)
+        assert "Failed to replicate" in result
+        assert "Second sentence" in result
+
+    def test_et_al_not_split(self):
+        text = "Smith et al. found an effect. The replication failed."
+        start = text.index("The replication")
+        result = _expand_to_sentences(text, start, start + 20, n_context=1)
+        assert "Smith et al" in result
+        assert "replication failed" in result
+
+    def test_empty_text_returns_empty(self):
+        result = _expand_to_sentences("", 0, 0)
+        assert result == ""
 
 
 # ── Keyword scan unit tests ───────────────────────────────────────────────────
@@ -55,6 +100,18 @@ class TestKeywordScan:
     def test_returns_source_correctly(self):
         hit = _keyword_scan("successfully replicated", "fulltext")
         assert hit["out_quote_source"] == "fulltext"
+
+    def test_outcome_phrase_is_not_bare_keyword(self):
+        text = "We ran three experiments. The results failed to replicate. Further analysis confirmed this."
+        hit = _keyword_scan(text, "abstract")
+        assert hit is not None
+        assert len(hit["outcome_phrase"]) > len("failed to replicate")
+
+    def test_outcome_phrase_contains_surrounding_sentence(self):
+        text = "Prior work found a large effect. We failed to replicate this effect in our sample. Our power was 0.95."
+        hit = _keyword_scan(text, "abstract")
+        assert hit is not None
+        assert "Prior work" in hit["outcome_phrase"] or "power was" in hit["outcome_phrase"]
 
 
 # ── extract_outcome unit tests ────────────────────────────────────────────────
@@ -113,6 +170,71 @@ class TestExtractOutcome:
              patch("extract.code_outcome.time.sleep"):
             result = extract_outcome("10.1234/bad", abstract_r="ambiguous text")
         assert result["outcome"] == "uninformative"
+
+
+# ── LLM outcome prompt tests ─────────────────────────────────────────────────
+
+class TestLLMOutcomePrompt:
+    """Verify the enriched _llm_outcome() prompt and new extract_outcome() params."""
+
+    def _run_llm(self, tmp_path, abstract_r="ambiguous text",
+                 original_title="", original_authors="", original_year="",
+                 llm_return=None):
+        if llm_return is None:
+            llm_return = {"outcome": "success", "outcome_phrase": "We confirmed the effect.",
+                          "outcome_confidence": "high", "out_quote_source": "abstract",
+                          "outcome_reasoning": "All effects replicated."}
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.call_llm", return_value=(llm_return, "gemini-model", "")) as mock_llm, \
+             patch("extract.code_outcome.time.sleep"):
+            result = extract_outcome(
+                "10.1234/test", abstract_r=abstract_r, title_r="A Study",
+                original_title=original_title, original_authors=original_authors,
+                original_year=original_year,
+            )
+        return result, mock_llm
+
+    def test_original_citation_appears_in_prompt_when_provided(self, tmp_path):
+        _, mock_llm = self._run_llm(
+            tmp_path, original_title="The Original", original_authors="Smith", original_year="2010"
+        )
+        prompt = mock_llm.call_args[0][0]
+        assert "This paper replicates" in prompt
+        assert "The Original" in prompt
+        assert "Smith" in prompt
+        assert "2010" in prompt
+
+    def test_no_original_block_when_title_empty(self, tmp_path):
+        _, mock_llm = self._run_llm(tmp_path)
+        prompt = mock_llm.call_args[0][0]
+        assert "This paper replicates" not in prompt
+
+    def test_fulltext_not_in_prompt(self, tmp_path):
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.call_llm", return_value=(
+                 {"outcome": "success", "outcome_phrase": "x", "outcome_confidence": "high",
+                  "out_quote_source": "abstract", "outcome_reasoning": ""},
+                 "gemini-model", "")) as mock_llm, \
+             patch("extract.code_outcome.time.sleep"):
+            extract_outcome("10.1234/ft", abstract_r="ambiguous text", fulltext="UNIQUE_FULLTEXT_MARKER")
+        prompt = mock_llm.call_args[0][0]
+        assert "UNIQUE_FULLTEXT_MARKER" not in prompt
+
+    def test_outcome_reasoning_returned_from_llm(self, tmp_path):
+        result, _ = self._run_llm(tmp_path)
+        assert "outcome_reasoning" in result
+        assert result["outcome_reasoning"] == "All effects replicated."
+
+    def test_outcome_reasoning_empty_on_keyword_hit(self):
+        result = extract_outcome(
+            "10.1234/kw", abstract_r="we failed to replicate the original finding"
+        )
+        assert result.get("outcome_reasoning", "") == ""
+
+    def test_outcome_reasoning_empty_on_llm_failure(self):
+        with patch("extract.code_outcome.call_llm", return_value=(None, "", "")):
+            result = extract_outcome("10.1234/fail2", abstract_r="ambiguous")
+        assert result.get("outcome_reasoning", "") == ""
 
 
 # ── classify_match_type unit tests (Issue 8) ─────────────────────────────────
@@ -245,6 +367,7 @@ _MOCK_LINK = {
 _MOCK_OUTCOME = {
     "outcome": "success", "outcome_phrase": "replicated",
     "outcome_confidence": "high", "out_quote_source": "abstract",
+    "outcome_reasoning": "",
 }
 _MOCK_MULTI = {
     "is_false_positive": False,
@@ -452,6 +575,35 @@ class TestRunExtract:
         assert len(result) == 1, "Row must not be dropped on extraction failure"
         assert result.iloc[0]["link_method"] == "api_error"
         assert result.iloc[0]["outcome"] == "api_error"
+
+    def test_get_outcome_receives_original_study_info(self):
+        """_get_outcome must pass resolved_title_o/author_o/year_o to extract_outcome."""
+        csv = (
+            "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
+            "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
+            "10.1000/rep,Rep Paper,Abstract,2020,Jones,J. Psych,,W2,openalex,"
+            "replication,rule_based,direct replication,high\n"
+        )
+        with patch("extract.run_extract.classify_match_type", return_value=_MOCK_MATCH), \
+             patch("extract.run_extract.run_for_doi", return_value=_MOCK_LINK), \
+             patch("extract.run_extract.run_multi_original_for_doi",
+                   return_value={"is_false_positive": False, "n_originals": 0,
+                                 "originals": [], "originals_json": "[]"}), \
+             patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME) as mock_eo, \
+             patch("extract.run_extract.DATA_DIR", Path(tempfile.gettempdir())), \
+             patch("extract.run_extract.BASE_DIR", Path(tempfile.gettempdir())):
+            fp = Path(tempfile.gettempdir()) / "filtered.csv"
+            fp.write_text(csv, encoding="utf-8-sig")
+            out = Path(tempfile.gettempdir()) / "extracted.csv"
+            from extract.run_extract import run_extract
+            run_extract()
+            fp.unlink(missing_ok=True)
+            out.unlink(missing_ok=True)
+
+        call_kwargs = mock_eo.call_args[1]
+        assert call_kwargs.get("original_title") == "The Original Study"
+        assert call_kwargs.get("original_authors") == "Smith"
+        assert call_kwargs.get("original_year") == "1935"
 
 
 # ── Schema integration test ───────────────────────────────────────────────────

@@ -69,6 +69,46 @@ def _track_openai_tokens(n_tokens: int) -> None:
         print("  Continuing with OpenAI.\n")
 
 
+# ── Gemini key-0 (paid) session-level token guardrail ────────────────────────
+# Only active when GEMINI_WARN_TOKENS is set to a positive integer (default: 0 = off).
+# Tracks tokens on key 0 only (the paid key). Keys 1+ are free-tier and unaffected.
+# When usage crosses the threshold the pipeline pauses and asks whether to continue.
+_gemini_key0_tokens_session: int  = 0
+_gemini_key0_limit_prompted: bool = False
+_gemini_key0_disabled:       bool = False
+_GEMINI_WARN_THRESHOLD: int = int(os.getenv("GEMINI_WARN_TOKENS", "0"))
+
+
+def _track_gemini_key0_tokens(n_tokens: int) -> None:
+    """Add n_tokens for key-0 and prompt the user if the threshold is crossed."""
+    global _gemini_key0_tokens_session, _gemini_key0_limit_prompted, _gemini_key0_disabled
+    if not _GEMINI_WARN_THRESHOLD:
+        return
+    _gemini_key0_tokens_session += n_tokens
+    if _gemini_key0_limit_prompted or _gemini_key0_tokens_session < _GEMINI_WARN_THRESHOLD:
+        return
+    _gemini_key0_limit_prompted = True
+    used_m   = _gemini_key0_tokens_session / 1_000_000
+    thresh_m = _GEMINI_WARN_THRESHOLD / 1_000_000
+    print(f"\n{'=' * 62}")
+    print(f"  Gemini key-0 guardrail: {used_m:.1f}M tokens used this session")
+    print(f"  (threshold: {thresh_m:.0f}M — set GEMINI_WARN_TOKENS to change)")
+    print(f"  Continue using Gemini key-0 (paid) for remaining rows?")
+    print(f"  Y = keep going   N = skip key-0 (free-tier keys only for rest of run)")
+    print(f"{'=' * 62}")
+    try:
+        answer = input("  Your choice [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = "n"
+    if answer in ("n", "no"):
+        _gemini_key0_disabled = True
+        log.info("Gemini key-0 disabled by user at %.1fM tokens", used_m)
+        print("  Gemini key-0 disabled. Remaining rows will use free-tier keys only.\n")
+    else:
+        log.info("User confirmed continuing Gemini key-0 at %.1fM tokens", used_m)
+        print("  Continuing with Gemini key-0.\n")
+
+
 # ── JSON parsing (handles markdown-fenced output) ─────────────────────────────
 
 def _parse_llm_json(text: str) -> Optional[dict]:
@@ -137,6 +177,9 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
 
     last_error = "all keys exhausted"
     for key_idx, api_key in enumerate(GEMINI_API_KEYS):
+        if key_idx == 0 and _gemini_key0_disabled:
+            log.debug("Gemini key-0 disabled by guardrail — skipping to free-tier keys")
+            continue
         # Flex inference: apply only on key 0 (the paid key).
         # Keys 1+ are assumed free-tier and use standard inference.
         use_flex = GEMINI_USE_FLEX and key_idx == 0
@@ -196,6 +239,8 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
                 if result is not None:
                     n_tok = int((body.get("usageMetadata") or {}).get("totalTokenCount", 0))
                     token_counter.record("gemini", n_tok)
+                    if key_idx == 0:
+                        _track_gemini_key0_tokens(n_tok)
                     if key_idx > 0:
                         log.info("Gemini succeeded on %s", key_label)
                     return result, ""

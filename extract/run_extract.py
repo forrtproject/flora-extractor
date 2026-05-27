@@ -368,6 +368,7 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
         "outcome_phrase":      outcome.get("outcome_phrase",      ""),
         "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
         "out_quote_source":    outcome.get("out_quote_source",    ""),
+        "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
         "type":          "reproduction"
                          if str(filter_row.get("filter_status", "")) == "reproduction"
                          else "replication",
@@ -407,6 +408,7 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
         "outcome_phrase":      outcome.get("outcome_phrase",      ""),
         "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
         "out_quote_source":    outcome.get("out_quote_source",    ""),
+        "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
         "type":          "replication",
         "original_rank": orig.get("rank", 1),
         "n_originals":   n,
@@ -427,7 +429,7 @@ def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
         "link_method": link_method, "link_evidence": "", "link_confidence": "low",
         "link_llm_model": "",
         "outcome": outcome, "outcome_phrase": "",
-        "outcome_confidence": "low", "out_quote_source": "",
+        "outcome_confidence": "low", "out_quote_source": "", "outcome_reasoning": "",
         "type": "", "original_rank": 1, "n_originals": 1,
     })
     return row
@@ -473,7 +475,12 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -
         str(link.get("grobid_methods",  "") or ""),
         str(link.get("html_text",       "") or ""),
     ]))
-    return extract_outcome(doi_r, abstract_r, fulltext, title_r, no_llm=no_llm)
+    return extract_outcome(
+        doi_r, abstract_r, fulltext, title_r, no_llm=no_llm,
+        original_title=str(link.get("resolved_title_o",  "") or ""),
+        original_authors=str(link.get("resolved_author_o", "") or ""),
+        original_year=str(link.get("resolved_year_o",   "") or ""),
+    )
 
 
 def _parse_originals(result: dict) -> list[dict]:

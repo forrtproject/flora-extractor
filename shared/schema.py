@@ -57,6 +57,7 @@ EXTRACT_ADDED_COLS = [
     "outcome_phrase",      # str   — supporting quote from the paper
     "outcome_confidence",  # str   — high | medium | low
     "out_quote_source",    # str   — abstract | fulltext | title
+    "outcome_reasoning",  # str   — one-sentence LLM note explaining the classification choice
 
     # Record type and multi-original bookkeeping
     "type",                # str   — replication | reproduction

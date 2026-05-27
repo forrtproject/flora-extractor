@@ -9,8 +9,8 @@ Each stage reads the previous stage's CSV and writes a richer one. Columns are *
 ```
 Stage 1  search/        →  data/candidates.csv   (10 cols)
 Stage 2  filter/        →  data/filtered.csv     (14 cols = 10 + 4)
-Stage 3  extract/       →  data/extracted.csv    (36 cols = 1 pair_id + 14 + 21)
-Stage 4  validate/      →  data/validated.csv    (43 cols = 36 + 7)
+Stage 3  extract/       →  data/extracted.csv    (37 cols = 1 pair_id + 14 + 22)
+Stage 4  validate/      →  data/validated.csv    (44 cols = 37 + 7)
 ```
 
 ---
@@ -110,9 +110,10 @@ Stage 3 answers two questions for each confirmed replication: which original stu
 | Column | Type | Values | Description |
 |---|---|---|---|
 | `outcome` | str | `success` · `failure` · `mixed` · `uninformative` · `descriptive` · `pending` · `api_error` | Replication outcome. `success` = original finding replicated. `failure` = original finding not replicated. `mixed` = partially replicated. `uninformative` = study ran but could not determine if it replicated. `descriptive` = replicated methods in a different context without testing the original claim (flag for review). `pending` = not yet processed. `api_error` = extraction failed. |
-| `outcome_phrase` | str | — | A verbatim quote from the paper supporting the outcome classification. |
+| `outcome_phrase` | str | — | A verbatim multi-sentence quote from the paper supporting the outcome classification. For keyword-matched rows, this is the matched sentence plus one sentence of surrounding context. For LLM rows, the LLM returns 2–3 verbatim sentences from the abstract. |
 | `outcome_confidence` | str | `high` · `medium` · `low` | Confidence in the `outcome` classification. |
 | `out_quote_source` | str | `abstract` · `fulltext` · `title` | Where in the paper the `outcome_phrase` was found. |
+| `outcome_reasoning` | str | — | One-sentence note from the LLM explaining the classification choice (e.g. `"Partial: valence effect replicated but arousal effect did not."`). Empty for keyword-matched rows and LLM failures. |
 
 #### Record bookkeeping
 
@@ -130,7 +131,7 @@ Stage 3 answers two questions for each confirmed replication: which original stu
 `original_match_type`, `original_match_confidence`,  
 `doi_o`, `title_o`, `year_o`, `authors_o`, `ref_o`,  
 `link_method`, `link_evidence`, `link_confidence`, `link_llm_model`,  
-`outcome`, `outcome_phrase`, `outcome_confidence`, `out_quote_source`,  
+`outcome`, `outcome_phrase`, `outcome_confidence`, `out_quote_source`, `outcome_reasoning`,  
 `type`, `original_rank`, `n_originals`
 
 ---
@@ -157,7 +158,7 @@ Stage 4 is a Flask web app where human reviewers vote to confirm or reject each 
 
 ### All columns at this stage
 
-All 36 columns from Stage 3, plus:  
+All 37 columns from Stage 3, plus:  
 `validation_status`, `vote_count`, `confirm_votes`, `reject_votes`, `validator_notes`, `validated_doi_o`, `validated_outcome`
 
 ---
