@@ -334,9 +334,13 @@ RESEARCHER_EMAIL=you@example.com      # required for OpenAlex/Crossref politenes
 GEMINI_API_KEY=...                    # required for LLM calls
 GEMINI_API_KEY_2=...                  # optional: key rotation for higher quota
 OPENAI_API_KEY=...                    # optional fallback LLM
+S2_API_KEY=...                        # optional: Semantic Scholar API key (Stage 1)
 GROBID_URL=http://localhost:8070      # default; override if GROBID runs elsewhere
-GEMINI_MODEL=gemini-2.0-flash         # override to use a different model
-OPENAI_MODEL=gpt-4o-mini              # override to use a different model
+GEMINI_MODEL=gemini-3-flash-preview   # primary Gemini model
+GEMINI_HEAVY_MODEL=gemini-3-flash-preview  # used for DOI resolution (defaults to GEMINI_MODEL)
+OPENAI_MODEL=gpt-5-mini               # OpenAI fallback
+FILTER_OPENAI_MODEL=gpt-5-mini        # Stage 2 filter primary model
+GEMINI_USE_FLEX=true                  # 50% cost reduction; requires paid GEMINI_API_KEY
 ```
 
 GROBID is optional. If `GROBID_URL` points to a server that is not running, the PDF extraction step logs a warning and falls back to abstract-only processing. It does not crash.
@@ -373,13 +377,11 @@ The following are implemented and working (ported from the *OpenAlexLLM* prototy
 
 ## What Needs to Be Written
 
-- `search/openalex_search.py` — new
-- `search/external_lists.py` — new (Bob Reed + I4R scrapers; see Stage 1 docs for pluggable pattern)
-- `filter/rule_filter.py` — new
-- `filter/llm_filter.py` — new
-- `extract/code_outcome.py` — new
-- `extract/run_extract.py` — new orchestrator (includes match-type classification as first step)
-- `extract/multi_original.py` — ported but needs significant improvement
+All core pipeline modules are now implemented. Known gaps:
+
+- `tests/live/` directory — mentioned in `tests/test_filter.py` but not yet created; live LLM integration tests should go here, guarded by `TEST_LIVE_API=1`
+- Unit tests for standalone scripts: `search/sensitivity_check.py`, `extract/mix_for_validation.py`, `validate/csv_to_db.py`
+- Unit tests for orchestrators: `search/deduplicate.py`, `filter/run_filter.py` (currently tested only indirectly)
 
 ---
 

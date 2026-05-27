@@ -172,13 +172,29 @@ function renderRows(rows) {
 
 function renderPager() {
   const el = document.getElementById('sv-pager');
-  if (!el) return;
-  if (totalPages <= 1) { el.innerHTML = ''; return; }
+  if (!el || totalPages <= 1) { if(el) el.innerHTML=''; return; }
   const prev = curPage > 1
     ? `<button onclick="loadPage(${curPage-1})">‹ Prev</button>` : '<button disabled>‹ Prev</button>';
   const next = curPage < totalPages
     ? `<button onclick="loadPage(${curPage+1})">Next ›</button>` : '<button disabled>Next ›</button>';
-  el.innerHTML = `${prev} <span style="font-size:11px;color:#64748b">Page ${curPage} / ${totalPages}</span> ${next}`;
+  el.innerHTML = `
+    ${prev}
+    <span style="font-size:11px;color:#64748b">Page ${curPage} / ${totalPages}</span>
+    ${next}
+    <span style="font-size:11px;color:#cbd5e1;margin:0 2px">|</span>
+    <span style="font-size:11px;color:#64748b">Go to:</span>
+    <input id="pg-jump" type="number" min="1" max="${totalPages}" value="${curPage}"
+      style="width:46px;padding:2px 4px;border:1px solid #cbd5e1;border-radius:4px;font-size:11px;text-align:center"
+      onkeydown="if(event.key==='Enter')jumpPage()">
+    <button onclick="jumpPage()"
+      style="padding:2px 8px;font-size:11px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;cursor:pointer;color:#475569">Go</button>`;
+}
+
+function jumpPage() {
+  const inp = document.getElementById('pg-jump');
+  if (!inp) return;
+  const v = parseInt(inp.value);
+  if (v >= 1 && v <= totalPages) loadPage(v);
 }
 
 function toggleRow(tr) {

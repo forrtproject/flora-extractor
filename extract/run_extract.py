@@ -18,9 +18,10 @@ import time
 import pandas as pd
 
 from shared.config import (
-    BASE_DIR, DATA_DIR, GEMINI_LIGHT_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC,
+    BASE_DIR, DATA_DIR, GEMINI_HEAVY_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC,
     OA_XML_CACHE_DIR, PARSE_CACHE_DIR, PDF_CACHE_DIR, log,
 )
+from shared import token_counter
 from shared.llm_client import call_llm
 from shared.openalex_client import extract_author_year_patterns, find_all_candidates
 from shared.openalex_client import fetch_openalex_by_doi as _oa_by_doi
@@ -29,7 +30,7 @@ from shared.schema import EXTRACTED_COLS, make_pair_id
 from shared.utils import cache_key, clean_doi
 from extract.link_original import run_for_doi
 from extract.multi_original import run_multi_original_for_doi
-from extract.code_outcome import extract_outcome
+from extract.code_outcome import extract_outcome, predict_outcome_keyword
 
 def _fetch_ref_o(doi_o: str, author_o: str, year_o: str) -> str:
     """Build ref_o string for a resolved original study.
@@ -285,7 +286,8 @@ def _llm_classify_match_type(doi_r: str,
         '"original_match_confidence": "<high|medium|low>", "reasoning": "<brief>"}'
     )
 
-    result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_LIGHT_MODEL)
+    token_counter.set_stage("extract_classify")
+    result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_HEAVY_MODEL)
     if result:
         time.sleep(LLM_RATE_SEC)
         mtype = result.get("original_match_type", "single_original")
@@ -580,7 +582,10 @@ def run_extract(no_llm: bool = False,
                 no_reproductions: bool = False,
                 skip_flora_validated: bool = False,
                 resume: bool = False,
-                resolved_only: bool = False) -> pd.DataFrame:
+                resolved_only: bool = False,
+                from_year: "int | None" = None,
+                to_year: "int | None" = None,
+                predicted_outcome: "str | None" = None) -> pd.DataFrame:
     """
     Run Stage 3 and stream results to data/extracted.csv.
 
@@ -612,6 +617,45 @@ def run_extract(no_llm: bool = False,
 
     df = pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig").fillna("")
     log.info("Stage 3: loaded %d rows from %s", len(df), filtered_path.name)
+
+    # ── Year filter ───────────────────────────────────────────────────────────
+    if from_year is not None or to_year is not None:
+        def _year_int(v: str) -> "int | None":
+            try:
+                return int(v)
+            except (ValueError, TypeError):
+                return None
+        years = df["year_r"].apply(_year_int)
+        mask = pd.Series(True, index=df.index)
+        if from_year is not None:
+            mask &= years.apply(lambda y: y is not None and y >= from_year)
+        if to_year is not None:
+            mask &= years.apply(lambda y: y is not None and y <= to_year)
+        before = len(df)
+        df = df[mask].reset_index(drop=True)
+        log.info(
+            "--year filter %s–%s: %d → %d rows",
+            from_year or "any", to_year or "any", before, len(df),
+        )
+
+    # ── Predicted-outcome filter ──────────────────────────────────────────────
+    # "other" means any outcome that is not failure (success / mixed / descriptive / uninformative).
+    # Uses keyword-only pre-screening on title + abstract — no LLM, no API calls.
+    if predicted_outcome:
+        want = predicted_outcome.lower()
+        before = len(df)
+        def _keep(row: pd.Series) -> bool:
+            pred = predict_outcome_keyword(
+                str(row.get("title_r", "")), str(row.get("abstract_r", ""))
+            )
+            if want == "other":
+                return pred != "failure"
+            return pred == want
+        df = df[df.apply(_keep, axis=1)].reset_index(drop=True)
+        log.info(
+            "--predicted-outcome %r: %d → %d rows",
+            predicted_outcome, before, len(df),
+        )
 
     flora_skip: set[str] = set()
     if skip_flora_validated:
@@ -890,20 +934,45 @@ if __name__ == "__main__":
              "Combine with --no-llm --no-pdf for a fast rule-based pass, then use --resume "
              "for the LLM pass on the remaining rows.",
     )
+    parser.add_argument(
+        "--from-year", type=int, default=None, metavar="YYYY",
+        help="Only process rows from filtered.csv where year_r >= YYYY.",
+    )
+    parser.add_argument(
+        "--to-year", type=int, default=None, metavar="YYYY",
+        help="Only process rows from filtered.csv where year_r <= YYYY.",
+    )
+    parser.add_argument(
+        "--predicted-outcome",
+        choices=["failure", "success", "mixed", "descriptive", "uninformative", "other"],
+        default=None,
+        metavar="OUTCOME",
+        help=(
+            "Pre-screen rows using keyword-only outcome prediction on title + abstract "
+            "before running any API calls. 'other' means any predicted outcome except failure. "
+            "Choices: failure | success | mixed | descriptive | uninformative | other."
+        ),
+    )
     args = parser.parse_args()
 
-    if args.match_type_only:
-        run_match_type_only(no_llm=args.no_llm, limit=args.limit)
-    elif args.outcome_only:
-        run_outcome_only(no_llm=args.no_llm, limit=args.limit)
-    else:
-        run_extract(
-            no_llm=args.no_llm,
-            limit=args.limit,
-            no_pdf=args.no_pdf,
-            no_multiple_originals=args.no_multiple_originals,
-            no_reproductions=args.no_reproductions,
-            skip_flora_validated=args.skip_flora_validated,
-            resume=args.resume,
-            resolved_only=args.resolved_only,
-        )
+    try:
+        if args.match_type_only:
+            run_match_type_only(no_llm=args.no_llm, limit=args.limit)
+        elif args.outcome_only:
+            run_outcome_only(no_llm=args.no_llm, limit=args.limit)
+        else:
+            run_extract(
+                no_llm=args.no_llm,
+                limit=args.limit,
+                no_pdf=args.no_pdf,
+                no_multiple_originals=args.no_multiple_originals,
+                no_reproductions=args.no_reproductions,
+                skip_flora_validated=args.skip_flora_validated,
+                resume=args.resume,
+                resolved_only=args.resolved_only,
+                from_year=args.from_year,
+                to_year=args.to_year,
+                predicted_outcome=args.predicted_outcome,
+            )
+    finally:
+        token_counter.print_summary()

@@ -67,10 +67,12 @@ GEMINI_API_KEYS: list[str] = [k for k in _gemini_key_list if k]
 GEMINI_API_KEY = GEMINI_API_KEYS[0] if GEMINI_API_KEYS else ""  # backward-compat
 
 RESEARCHER_EMAIL = os.getenv("RESEARCHER_EMAIL", "research@example.com")
+# Semantic Scholar API key — accepts both S2_API_KEY and legacy SEMANTIC_SCHOLAR_KEY
+S2_API_KEY = os.getenv("S2_API_KEY") or os.getenv("SEMANTIC_SCHOLAR_KEY", "")
 
 # ── Model identifiers ─────────────────────────────────────────────────────────
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
-FILTER_OPENAI_MODEL = os.getenv("FILTER_OPENAI_MODEL", "gpt-5.4-mini")
+FILTER_OPENAI_MODEL = os.getenv("FILTER_OPENAI_MODEL", "gpt-5-mini")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 
 # Per-task model selection — light for classify_match_type & code_outcome,
@@ -86,6 +88,14 @@ OPENROUTER_HEAVY_MODEL = os.getenv("OPENROUTER_HEAVY_MODEL", "qwen/qwen3.5-35b-a
 
 # ── External servers ──────────────────────────────────────────────────────────
 GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")
+
+# ── Gemini flex inference ─────────────────────────────────────────────────────
+# When True, adds service_tier=flex to requests on the first (paid) key only.
+# Flex inference costs 50% less but may take up to 15 minutes per call.
+# Only enable this if GEMINI_API_KEY (key 1) is a paid-tier key.
+GEMINI_USE_FLEX     = os.getenv("GEMINI_USE_FLEX", "").lower() in ("1", "true", "yes")
+# Timeout in seconds for flex calls — must cover the 15-minute worst case.
+GEMINI_FLEX_TIMEOUT = int(os.getenv("GEMINI_FLEX_TIMEOUT", "900"))
 
 # ── Rate limits (seconds between calls) ──────────────────────────────────────
 OPENALEX_RATE_SEC  = float(os.getenv("OPENALEX_RATE_SEC", "0.3"))

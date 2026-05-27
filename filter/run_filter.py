@@ -13,6 +13,7 @@ Usage:
 import pandas as pd
 
 from shared.config import DATA_DIR, log
+from shared import token_counter
 from shared.schema import CANDIDATES_COLS, FILTERED_COLS
 from shared.utils import clean_doi
 from filter.rule_filter import classify_row as _rule_classify
@@ -132,4 +133,7 @@ if __name__ == "__main__":
         help="Skip the first N unprocessed rows before starting.",
     )
     args = parser.parse_args()
-    run_filter(limit=args.limit, offset=args.offset)
+    try:
+        run_filter(limit=args.limit, offset=args.offset)
+    finally:
+        token_counter.print_summary()

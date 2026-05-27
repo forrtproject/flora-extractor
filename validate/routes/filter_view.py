@@ -43,10 +43,10 @@ def api_filter_list():
     if df is None:
         return jsonify({"error": "No filtered.csv found. Run Stage 2 first."}), 404
 
-    q       = request.args.get("q",       "").strip().lower()
-    fstatus = request.args.get("fstatus", "all")
-    fmethod = request.args.get("fmethod", "all")
-    fconf   = request.args.get("fconf",   "all")
+    q       = request.args.get("q",                "").strip().lower()
+    fstatus = request.args.get("filter_status",     "all")
+    fmethod = request.args.get("filter_method",     "all")
+    fconf   = request.args.get("filter_confidence", "all")
     page    = max(1, int(request.args.get("page",     1)))
     per_pg  = max(1, min(500, int(request.args.get("per_page", 200))))
 
@@ -81,6 +81,9 @@ def api_filter_list():
             "year_r":           r.get("year_r",           ""),
             "authors_r":        r.get("authors_r",        ""),
             "journal_r":        r.get("journal_r",        ""),
+            "url_r":            r.get("url_r",            ""),
+            "openalex_id_r":    r.get("openalex_id_r",    ""),
+            "ref_r":            r.get("ref_r",            ""),
             "source":           r.get("source",           ""),
             "filter_status":    r.get("filter_status",    ""),
             "filter_method":    r.get("filter_method",    ""),

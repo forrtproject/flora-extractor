@@ -27,6 +27,7 @@ import requests
 
 from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_CACHE_DIR, RESEARCHER_EMAIL, log
 from shared.disambiguation import is_umbrella_paper, jaccard_similarity
+from shared import token_counter
 from shared.llm_client import identify_original_with_llm
 from shared.pdf_parsing import parse_all as _parse_all
 from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_openalex_by_doi
@@ -609,6 +610,7 @@ def run_for_doi(doi_r:              str,
 
         if abstract_r and distinct_pairs:
             log.info("[%s] Abstract has %d author-year patterns — early abstract LLM", doi_r, len(distinct_pairs))
+            token_counter.set_stage("extract_abstract")
             llm4 = identify_original_with_llm(
                 doi_r + "_abstract",
                 study_r, abstract_r, pattern_r, candidates, {},
@@ -702,6 +704,7 @@ def run_for_doi(doi_r:              str,
             "llm_error":         "no_context: abstract missing, PDF unavailable, no refs",
         }, pdf, grobid, sections)
 
+    token_counter.set_stage("extract_fulltext")
     llm = identify_original_with_llm(
         doi_r, study_r, abstract_r, pattern_r, candidates, sections,
         pdf_url        = pdf.get("pdf_url", "")   if not pdf.get("pdf_ok") else "",

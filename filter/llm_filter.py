@@ -19,6 +19,7 @@ from shared.config import (
     LLM_CACHE_DIR, LLM_RATE_SEC,
     OPENAI_API_KEY, log,
 )
+from shared import token_counter
 from shared.llm_client import call_gemini, call_openai
 from shared.utils import cache_key
 
@@ -86,6 +87,7 @@ def classify_with_llm(title: str, abstract: str) -> Optional[dict]:
     prompt = _build_prompt(title, abstract)
     result = None
     err    = "no API keys configured"
+    token_counter.set_stage("filter")
 
     # Primary: OpenAI gpt-5.4-mini
     if OPENAI_API_KEY:

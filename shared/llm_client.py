@@ -21,11 +21,13 @@ import requests
 
 from .config import (
     GEMINI_API_KEYS, GEMINI_MODEL, GEMINI_LIGHT_MODEL, GEMINI_HEAVY_MODEL,
+    GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT,
     LLM_CACHE_DIR, LLM_RATE_SEC,
     OPENAI_API_KEY, OPENAI_MODEL,
     OPENROUTER_API_KEY, OPENROUTER_HEAVY_MODEL,
     log,
 )
+from . import token_counter
 from .utils import cache_key
 
 # ── OpenAI session-level token guardrail ─────────────────────────────────────
@@ -130,15 +132,26 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
         },
     }
 
+    if GEMINI_USE_FLEX:
+        log.debug("Gemini flex inference enabled — key 0 uses service_tier=flex (timeout=%ds)", GEMINI_FLEX_TIMEOUT)
+
     last_error = "all keys exhausted"
     for key_idx, api_key in enumerate(GEMINI_API_KEYS):
+        # Flex inference: apply only on key 0 (the paid key).
+        # Keys 1+ are assumed free-tier and use standard inference.
+        use_flex = GEMINI_USE_FLEX and key_idx == 0
+        if use_flex:
+            payload["service_tier"] = "flex"
+        elif "service_tier" in payload:
+            del payload["service_tier"]
+        call_timeout = GEMINI_FLEX_TIMEOUT if use_flex else 90
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
                f":generateContent?key={api_key}")
         key_label = f"key {key_idx + 1}/{len(GEMINI_API_KEYS)}"
 
         for attempt in range(2):
             try:
-                r = requests.post(url, json=payload, timeout=90)
+                r = requests.post(url, json=payload, timeout=call_timeout)
 
                 if r.status_code == 429:
                     last_error = f"quota exhausted on {key_label} (429)"
@@ -181,6 +194,8 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
                 text   = body["candidates"][0]["content"]["parts"][0]["text"]
                 result = _parse_llm_json(text)
                 if result is not None:
+                    n_tok = int((body.get("usageMetadata") or {}).get("totalTokenCount", 0))
+                    token_counter.record("gemini", n_tok)
                     if key_idx > 0:
                         log.info("Gemini succeeded on %s", key_label)
                     return result, ""
@@ -232,6 +247,7 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict],
         )
         if response.usage:
             _track_openai_tokens(response.usage.total_tokens)
+            token_counter.record("openai", response.usage.total_tokens)
             log.debug("OpenAI usage: +%d tokens (session total: %d)",
                       response.usage.total_tokens, _openai_tokens_session)
         result = _parse_llm_json(response.choices[0].message.content)
@@ -278,6 +294,8 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
             temperature=0.0,
         )
         result = _parse_llm_json(response.choices[0].message.content)
+        if result and response.usage:
+            token_counter.record("openrouter", response.usage.total_tokens)
         return result, ("" if result else "response was not valid JSON")
     except Exception as e:
         log.warning("OpenRouter call failed (model=%s): %s", use_model, e)

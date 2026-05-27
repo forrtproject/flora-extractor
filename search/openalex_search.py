@@ -283,7 +283,7 @@ def _extract_row(work: dict) -> dict:
         "year_r":        year,
         "authors_r":     authors,
         "journal_r":     journal,
-        "url_r":         open_access.get("oa_url"),
+        "url_r":         open_access.get("oa_url") or location.get("landing_page_url"),
         "openalex_id_r": work.get("id"),
         "source":        SOURCE_TAG,
         "ref_r":         _build_ref(authors, year, journal),

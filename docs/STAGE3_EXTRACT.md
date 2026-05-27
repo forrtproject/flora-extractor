@@ -30,6 +30,9 @@ Results are streamed to `data/extracted.csv` one row at a time. You can open the
 | `--skip-flora-validated` | Skip DOIs already validated in `data/FLoRA entry sheet - replication list.csv` where `validation_status` is `validated - unchanged` or `validated - changed`. Avoids re-extracting 1,100+ already-confirmed papers. |
 | `--resume` | Carry forward already-resolved rows from `extracted.csv` unchanged; re-run only rows whose `link_method == "target_pending"`. Rows that are fully resolved are written directly without any API calls. Designed for the two-pass workflow below. |
 | `--resolved-only` | Only write rows that are fully resolved — `link_method` must be one of `author_year_match`, `llm_abstract`, or `llm_fulltext` **and** `doi_o` must be non-empty. Rows that end up as `target_pending`, `api_error`, or `no_original_found` are silently skipped (not written to `extracted.csv`). Use this on the first pass to build a clean set of high-confidence resolved rows, then follow up with `--resume` (without `--resolved-only`) to fill in the rest. |
+| `--from-year YYYY` | Only process rows from `filtered.csv` where `year_r >= YYYY`. Useful for targeting a specific publication-year window (e.g. 2011–2021 for the failure-weighted extraction pass). |
+| `--to-year YYYY` | Only process rows from `filtered.csv` where `year_r <= YYYY`. Combine with `--from-year` for a closed year range. |
+| `--predicted-outcome OUTCOME` | Pre-screen rows using keyword-only outcome prediction on title + abstract **before** any API calls. Choices: `failure \| success \| mixed \| descriptive \| uninformative \| other` (`other` = any predicted outcome except failure). No LLM is used for the pre-screen — it runs the same regex patterns as Pass 1 of outcome extraction. Rows the keywords cannot classify fall into `uninformative`, which `other` captures. Use `failure` to build a failure-weighted extraction run and `other` for the complementary pass. |
 
 #### Examples
 
@@ -51,6 +54,12 @@ python -m extract.run_extract --no-llm
 
 # Inspect match-type classification for first 10 rows
 python -m extract.run_extract --match-type-only --limit 10
+
+# Targeted: only failures from 2011–2021
+python -m extract.run_extract --resume --from-year 2011 --to-year 2021 --predicted-outcome failure --no-multiple-originals --no-reproductions --skip-flora-validated
+
+# Targeted: non-failures from any year (to fill the 25% "other" pool)
+python -m extract.run_extract --resume --predicted-outcome other --no-multiple-originals --no-reproductions --skip-flora-validated
 ```
 
 #### Two-pass workflow (recommended for large runs)
@@ -93,6 +102,46 @@ python -m extract.run_extract --resume
 | `--resume` on final pass (no `--resolved-only`) | Written as `target_pending` if still unresolved | Written as `target_pending` if still deferred | Written as `target_pending` |
 
 Rows not yet in `extracted.csv` are always processed on the next `--resume` run — nothing is permanently lost by deferring them.
+
+#### Validation-mix workflow (75% failures + 25% other outcomes)
+
+Use when you want the validator queue weighted toward failures but not exclusively so.
+
+```bash
+# Step 1 — extract failures from the target year range
+python -m extract.run_extract --resume --from-year 2011 --to-year 2021 \
+    --predicted-outcome failure --no-multiple-originals --no-reproductions --skip-flora-validated
+
+# Step 2 — extract other outcomes from any year
+python -m extract.run_extract --resume --predicted-outcome other \
+    --no-multiple-originals --no-reproductions --skip-flora-validated
+
+# Step 3 — build the mixed sample (writes data/validation_sample.csv)
+python -m extract.mix_for_validation --failure-pct 75 --failure-year-from 2011 --failure-year-to 2021
+
+# Cap at 400 rows total
+python -m extract.mix_for_validation --failure-pct 75 --failure-year-from 2011 --failure-year-to 2021 --n 400
+
+# Try a 70/30 split
+python -m extract.mix_for_validation --failure-pct 70 --failure-year-from 2011 --failure-year-to 2021
+```
+
+`mix_for_validation` reads `extracted.csv`, samples `failure_pct`% from failure rows in the given year range and the remainder from any non-failure resolved row, shuffles the result, and writes `data/validation_sample.csv`. Only fully resolved rows (`author_year_match / llm_abstract / llm_fulltext`) are eligible — `target_pending` and `api_error` rows are excluded from the mix.
+
+> **Note on `--predicted-outcome` accuracy:** The pre-screen uses keyword regex on title + abstract only — no LLM. It will mis-classify some rows (e.g. a paper that mentions "failed to replicate" in background but succeeded). The actual extracted `outcome` may differ from the prediction. The mix step uses the real extracted outcome, so the final `validation_sample.csv` ratio is accurate even if the extraction passes were approximate.
+
+#### Why `target_pending` rows are hidden in the web app
+
+The Extract tab always hides rows with `link_method = target_pending` — they are present in `extracted.csv` but not shown to reviewers because there is nothing actionable to validate yet. To inspect them, filter the CSV directly:
+
+```bash
+python -c "
+import pandas as pd
+df = pd.read_csv('data/extracted.csv', dtype=str, encoding='utf-8-sig').fillna('')
+pending = df[df['link_method'] == 'target_pending']
+print(pending[['doi_r', 'title_r', 'filter_status', 'original_match_type']].to_string())
+"
+```
 
 > **`--no-llm` vs. `--match-type-only`:**
 > `--no-llm` still runs the full pipeline (linking + outcome) for every row — it just skips every LLM call. Rules and Jaccard-based heuristics resolve what they can; the rest gets `target_pending`.
@@ -319,18 +368,18 @@ Same keyword + LLM process as Shared Pipeline Step 7. Run once per original (eac
 
 | Column                      | Type | Description                                                                   |
 | --------------------------- | ---- | ----------------------------------------------------------------------------- |
-| `pair_id`                   | str  | MD5 of `doi_r \| doi_o` — uniquely identifies a replication–original pair |
+| `pair_id`                   | str  | MD5 of `doi_r` + `doi_o` -- uniquely identifies a replication-original pair  |
 | `original_match_type`       | str  | single_original / multiple_match / multiple_original                          |
 | `original_match_confidence` | str  | high / medium / low                                                           |
 | `doi_o`                     | str  | Cleaned DOI of the original study                                             |
 | `title_o`                   | str  | Original study title                                                          |
 | `year_o`                    | int  | Original study publication year                                               |
 | `authors_o`                 | str  | Original study authors                                                        |
-| `ref_o`                     | str  | FLoRA display reference for the original: `"Surname · Year · Journal"` (fetched from OpenAlex after doi_o resolves) |
+| `ref_o`                     | str  | FLoRA display reference: `"Surname / Year / Journal"` (fetched from OpenAlex)|
 | `link_method`               | str  | author_year_match / llm_abstract / llm_fulltext / target_pending / api_error  |
 | `link_evidence`             | str  | Quote or pattern used for linking                                             |
 | `link_confidence`           | str  | high / medium / low                                                           |
-| `link_llm_model`            | str  | Exact model used for DOI resolution (e.g. `gemini-2.0-flash`); empty for rule-based links |
+| `link_llm_model`            | str  | Model used for DOI resolution; empty for rule-based links                     |
 | `outcome`                   | str  | success / failure / mixed / uninformative / descriptive / pending / api_error |
 | `outcome_phrase`            | str  | Supporting quote from the paper                                               |
 | `outcome_confidence`        | str  | high / medium / low                                                           |

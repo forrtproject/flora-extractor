@@ -12,7 +12,8 @@ import re
 import time
 from typing import Optional
 
-from shared.config import GEMINI_LIGHT_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC, log
+from shared.config import GEMINI_HEAVY_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC, log
+from shared import token_counter
 from shared.llm_client import call_llm
 from shared.utils import cache_key
 
@@ -118,7 +119,8 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str) -> di
         '"outcome_confidence": "<high|medium|low>", "out_quote_source": "<abstract|fulltext|title>"}'
     )
 
-    result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_LIGHT_MODEL)
+    token_counter.set_stage("extract_outcome")
+    result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_HEAVY_MODEL)
     if result:
         time.sleep(LLM_RATE_SEC)
 
@@ -145,6 +147,26 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str) -> di
         json.dump(output, fh, ensure_ascii=False, indent=2)
 
     return output
+
+
+def predict_outcome_keyword(title_r: str, abstract_r: str) -> str:
+    """Fast keyword-only outcome prediction for pre-filtering before extraction.
+
+    Runs the same regex patterns as Pass 1 of extract_outcome but on title +
+    abstract only — no LLM, no fulltext.  Used by --predicted-outcome to decide
+    whether to process a row at all.
+
+    Returns one of: failure | success | mixed | descriptive | uninformative
+    """
+    if title_r:
+        hit = _keyword_scan(title_r, "title")
+        if hit and hit["outcome_confidence"] == "high":
+            return hit["outcome"]
+    if abstract_r:
+        hit = _keyword_scan(abstract_r, "abstract")
+        if hit:
+            return hit["outcome"]
+    return "uninformative"
 
 
 def extract_outcome(doi_r: str,

@@ -166,6 +166,26 @@ let fvSelected = new Set();
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function trunc(s,n=110){ const t=String(s||''); return t.length>n?t.slice(0,n)+'…':t; }
 
+// Best available URL: doi.org → url_r → openalex.org fallback
+function bestUrl(r) {
+  if (r.doi_r) return 'https://doi.org/' + r.doi_r;
+  if (r.url_r) return r.url_r;
+  if (r.openalex_id_r) return r.openalex_id_r.startsWith('http') ? r.openalex_id_r : 'https://openalex.org/' + r.openalex_id_r;
+  return '';
+}
+
+// Short APA-ish citation: Author(s) (Year). Journal.
+function buildCitation(r) {
+  const parts = [];
+  if (r.authors_r) {
+    const names = r.authors_r.split(';').map(s => s.trim()).filter(Boolean);
+    parts.push(names.length > 2 ? names[0] + ' et al.' : names.join(', '));
+  }
+  if (r.year_r) parts.push('(' + r.year_r + ').');
+  if (r.journal_r) parts.push(r.journal_r + '.');
+  return parts.join(' ');
+}
+
 function pillStatus(v) {
   const m = {replication:'pg',reproduction:'pb',false_positive:'pgr',needs_review:'py'};
   return `<span class="pp ${m[v]||'psl'}">${v||'—'}</span>`;
@@ -214,7 +234,24 @@ function renderPager() {
     ? `<button onclick="loadPage(${curPage-1})">‹ Prev</button>` : '<button disabled>‹ Prev</button>';
   const next = curPage < totalPages
     ? `<button onclick="loadPage(${curPage+1})">Next ›</button>` : '<button disabled>Next ›</button>';
-  el.innerHTML = `${prev} <span style="font-size:11px;color:#64748b">Page ${curPage} / ${totalPages}</span> ${next}`;
+  el.innerHTML = `
+    ${prev}
+    <span style="font-size:11px;color:#64748b">Page ${curPage} / ${totalPages}</span>
+    ${next}
+    <span style="font-size:11px;color:#cbd5e1;margin:0 2px">|</span>
+    <span style="font-size:11px;color:#64748b">Go to:</span>
+    <input id="pg-jump" type="number" min="1" max="${totalPages}" value="${curPage}"
+      style="width:46px;padding:2px 4px;border:1px solid #cbd5e1;border-radius:4px;font-size:11px;text-align:center"
+      onkeydown="if(event.key==='Enter')jumpPage()">
+    <button onclick="jumpPage()"
+      style="padding:2px 8px;font-size:11px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;cursor:pointer;color:#475569">Go</button>`;
+}
+
+function jumpPage() {
+  const inp = document.getElementById('pg-jump');
+  if (!inp) return;
+  const v = parseInt(inp.value);
+  if (v >= 1 && v <= totalPages) loadPage(v);
 }
 
 function renderRows(rows) {
@@ -226,16 +263,21 @@ function renderRows(rows) {
 
   body.innerHTML = rows.map(r => {
     const isSel = fvSelected.has(r.doi_r);
+    const url   = bestUrl(r);
+    const doiCell = url
+      ? `<a href="${esc(url)}" target="_blank" class="dl" title="${esc(r.doi_r||r.url_r||r.openalex_id_r)}">${esc(r.doi_r || '↗ link')}</a>`
+      : `<span style="color:#94a3b8">${esc(r.doi_r||'—')}</span>`;
     return `
     <tr class="dr${isSel?' sel':''}" data-doi="${esc(r.doi_r)}" data-abs="${esc(r.abstract_r)}"
-        data-evid="${esc(r.filter_evidence)}">
+        data-evid="${esc(r.filter_evidence)}" data-url="${esc(r.url_r||'')}"
+        data-oa-id="${esc(r.openalex_id_r||'')}" data-ref="${esc(r.ref_r||'')}">
       <td class="cchk" onclick="event.stopPropagation()">
         <input type="checkbox" class="fv-chk" data-doi="${esc(r.doi_r)}"
           ${isSel?'checked':''} onchange="fvToggleSel(this)">
       </td>
       <td class="tarr">▶</td>
       <td class="tn">${r.idx}</td>
-      <td class="tdoi" title="${esc(r.doi_r)}">${esc(r.doi_r)}</td>
+      <td class="tdoi" title="${esc(r.doi_r)}" onclick="event.stopPropagation()">${doiCell}</td>
       <td class="ttl" title="${esc(r.title_r)}">${esc(trunc(r.title_r,72))}</td>
       <td class="tyr">${esc(r.year_r)}</td>
       <td>${pillStatus(r.filter_status)}</td>
@@ -329,14 +371,29 @@ function toggleRow(tr) {
 
   if (dp.innerHTML.trim()) return;
 
-  const doi  = tr.dataset.doi;
-  const abs  = tr.dataset.abs;
-  const evid = tr.dataset.evid;
+  const doi   = tr.dataset.doi;
+  const abs   = tr.dataset.abs;
+  const evid  = tr.dataset.evid;
+  const urlR  = tr.dataset.url;
+  const oaId  = tr.dataset.oaId;
+  const refR  = tr.dataset.ref;
+
+  // Collect all available links for this row
+  const links = [];
+  if (doi)  links.push(`<a href="https://doi.org/${esc(doi)}" target="_blank" class="dl">${esc(doi)}</a>`);
+  if (urlR) links.push(`<a href="${esc(urlR)}" target="_blank" class="dl">${esc(urlR.length>60?urlR.slice(0,60)+'…':urlR)}</a>`);
+  if (oaId) { const oaUrl = oaId.startsWith('http') ? oaId : 'https://openalex.org/' + oaId;
+    links.push(`<a href="${esc(oaUrl)}" target="_blank" class="dl" style="color:#7c3aed">OpenAlex ↗</a>`); }
+
+  // Build the row data object for citation builder (pull from sibling cells)
+  const rowData = { doi_r: doi, url_r: urlR, openalex_id_r: oaId };
 
   dp.innerHTML = `
     <div class="fg4">
-      <div><div class="fl">DOI</div>
-        <span class="fv mono"><a href="https://doi.org/${esc(doi)}" target="_blank" class="dl">${esc(doi)}</a></span></div>
+      <div><div class="fl">LINKS</div>
+        <span class="fv mono">${links.length ? links.join(' &nbsp;|&nbsp; ') : '<span style="color:#94a3b8">no link available</span>'}</span></div>
+      ${refR ? `<div><div class="fl">CITATION (ref_r)</div>
+        <span class="fv" style="font-size:11px">${esc(refR)}</span></div>` : ''}
     </div>
     ${evid ? `<div style="margin-bottom:8px"><div class="fl">FILTER EVIDENCE (phrase that triggered classification)</div>
       <div class="qbox">${esc(evid)}</div></div>` : ''}

@@ -47,7 +47,7 @@ SEARCH_PHRASES = [
     "pre-registered replication",
 ]
 
-S2_API_KEY = os.getenv("SEMANTIC_SCHOLAR_KEY") or os.getenv("S2_API_KEY", "")
+from shared.config import S2_API_KEY
 S2_CACHE_DIR = OA_CACHE_DIR.parent / "semantic_scholar"
 S2_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
