@@ -195,8 +195,12 @@ def _get_page(params: dict, max_retries: int = 5) -> dict:
     cache_path = OA_CACHE_DIR / f"{key}.json"
 
     if cache_path.exists():
-        with open(cache_path, encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(cache_path, encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            log.warning("Corrupt cache file %s — deleting and re-fetching", cache_path.name)
+            cache_path.unlink()
 
     headers: dict = {}
     if OPENALEX_API_KEY:
