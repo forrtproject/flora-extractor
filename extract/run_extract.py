@@ -528,6 +528,26 @@ def _load_flora_validated_dois(sheet_path) -> set:
 
 # ── Main orchestrator ─────────────────────────────────────────────────────────
 
+def _extract_row_key(row: "dict | pd.Series") -> str:
+    """Return a unique resume key for a row.
+
+    Fallback chain: doi_r → openalex_id_r → url_r → title_r.
+    Prevents multiple no-DOI rows (e.g. from I4R / Replication Network) from
+    collapsing to the same empty-string key and being skipped as already-processed.
+    """
+    doi = clean_doi(str(row.get("doi_r", "") or ""))
+    if doi:
+        return doi
+    oa = str(row.get("openalex_id_r", "") or "").strip()
+    if oa:
+        return f"oa:{oa}"
+    url = str(row.get("url_r", "") or "").strip()
+    if url:
+        return f"url:{url}"
+    title = str(row.get("title_r", "") or "").lower().strip()
+    return f"title:{title}" if title else ""
+
+
 def _load_extracted_rows(out_path) -> tuple[dict[str, list[dict]], set[str]]:
     """Partition extracted.csv rows by resolution status for --resume mode.
 
@@ -535,8 +555,8 @@ def _load_extracted_rows(out_path) -> tuple[dict[str, list[dict]], set[str]]:
     been written to extracted.csv and will not be re-written on resume.
 
     Returns:
-        resolved — doi_r → list of rows that are fully resolved (link_method != target_pending)
-        pending  — set of doi_r where at least one row has link_method == target_pending
+        resolved — row_key → list of rows that are fully resolved (link_method != target_pending)
+        pending  — set of row_key where at least one row has link_method == target_pending
     """
     if not out_path.exists():
         return {}, set()
@@ -545,8 +565,9 @@ def _load_extracted_rows(out_path) -> tuple[dict[str, list[dict]], set[str]]:
     df = df[df["filter_status"] != "false_positive"]
     resolved: dict[str, list[dict]] = {}
     pending: set[str] = set()
-    for doi_r, group in df.groupby("doi_r", sort=False):
-        doi_clean = clean_doi(str(doi_r))
+    for row_key, group in df.groupby(df.apply(_extract_row_key, axis=1), sort=False):
+        if not row_key:
+            continue  # rows with no DOI, no OA ID, and no title — skip; can't dedup
         rows = group.to_dict("records")
         # Stale artifact: LLM method written before the no_original_found fix — these
         # have link_method=llm_fulltext/llm_abstract but an empty doi_o. Re-process them.
@@ -556,13 +577,13 @@ def _load_extracted_rows(out_path) -> tuple[dict[str, list[dict]], set[str]]:
                     and not r.get("doi_o", "").strip())
         ]
         if not rows:
-            pending.add(doi_clean)
+            pending.add(row_key)
             continue
         is_pending = any(r.get("link_method") == "target_pending" for r in rows)
         if is_pending:
-            pending.add(doi_clean)
+            pending.add(row_key)
         else:
-            resolved[doi_clean] = rows
+            resolved[row_key] = rows
     return resolved, pending
 
 
@@ -696,12 +717,13 @@ def run_extract(no_llm: bool = False,
 
     for _, row in df.iterrows():
         doi_r_check = clean_doi(str(row.get("doi_r", "")))
+        row_key     = _extract_row_key(row)
         if doi_r_check in flora_skip:
             log.debug("[%s] already validated in FLoRA — skipping", doi_r_check)
             continue
 
-        # --resume: skip DOIs already written above.
-        if resume and doi_r_check in resolved_rows:
+        # --resume: skip rows already written above.
+        if resume and row_key and row_key in resolved_rows:
             continue
 
         # False positives are excluded from Stage 3 — only replications and reproductions proceed.
@@ -715,6 +737,21 @@ def run_extract(no_llm: bool = False,
 
         result_rows: list[dict] = []
         doi_r = clean_doi(str(row.get("doi_r", "")))
+
+        # If DOI is missing, try to resolve one from the URL before processing.
+        # This lets I4R / Replication Network rows participate in the full pipeline.
+        if not doi_r:
+            url_r = str(row.get("url_r", "") or "").strip()
+            if url_r:
+                from shared.openalex_client import resolve_doi_from_url
+                resolved = resolve_doi_from_url(url_r)
+                if resolved:
+                    log.info("[url:%s] resolved DOI %s — using for extraction", url_r[:60], resolved)
+                    doi_r = resolved
+                    row = row.copy()
+                    row["doi_r"] = doi_r
+                else:
+                    log.info("[url:%s] could not resolve DOI — will extract from URL/abstract only", url_r[:60])
 
         # --no-reproductions: write reproduction rows as target_pending without processing
         if no_reproductions and str(row.get("filter_status", "")) == "reproduction":

@@ -3,45 +3,157 @@
 
 {% block head %}
 <style>
-.dash-page   { max-width:900px; margin:0 auto; padding:20px 16px; }
-.kpi-row     { display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr));
-               gap:12px; margin-bottom:20px; }
-.two-col     { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-@media(max-width:600px){ .two-col{ grid-template-columns:1fr; } }
-.stat-card   { background:#fff; border:1px solid #e2e8f0; border-radius:8px;
-               padding:14px 16px; }
-.stat-card h3{ font-size:11px; font-weight:700; text-transform:uppercase;
-               color:#94a3b8; letter-spacing:.5px; margin-bottom:12px; }
-.stat-row    { display:flex; justify-content:space-between; align-items:center;
-               padding:5px 0; border-bottom:1px solid #f1f5f9; font-size:12px; }
+.dash-page   { max-width:1100px; margin:0 auto; padding:20px 16px; }
+.section-title {
+  font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.06em;
+  color:#94a3b8; margin:0 0 10px;
+}
+.kpi-row {
+  display:flex; flex-wrap:wrap; gap:12px; margin-bottom:20px; align-items:center;
+}
+.kpi-card {
+  background:#fff; border:1px solid #e2e8f0; border-radius:8px;
+  padding:14px 18px; text-align:center; min-width:120px;
+}
+a.kpi-card {
+  text-decoration:none; color:inherit;
+  transition:border-color .15s, box-shadow .15s;
+}
+a.kpi-card:hover { border-color:#3b82f6; box-shadow:0 0 0 2px #bfdbfe; }
+.kpi-arrow { font-size:18px; color:#cbd5e1; flex-shrink:0; }
+.kpi-num   { font-size:26px; font-weight:800; line-height:1.1; }
+.kpi-label { font-size:11px; font-weight:600; color:#475569; margin-top:3px; }
+.kpi-sub   { font-size:9.5px; color:#94a3b8; margin-top:2px; font-family:monospace; }
+.two-col   { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+.three-col { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-bottom:16px; }
+@media(max-width:640px){ .two-col,.three-col{ grid-template-columns:1fr; } }
+.stat-card { background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:14px 16px; }
+.stat-card h3 {
+  font-size:10px; font-weight:700; text-transform:uppercase;
+  color:#94a3b8; letter-spacing:.5px; margin:0 0 10px;
+}
+.stat-row {
+  display:flex; justify-content:space-between; align-items:center;
+  padding:5px 0; border-bottom:1px solid #f1f5f9; font-size:12px;
+}
 .stat-row:last-child { border-bottom:none; }
+.stat-pct { font-size:10px; color:#94a3b8; margin-left:4px; }
+
+/* Pie / donut chart */
+.pie-wrap { display:flex; gap:24px; align-items:center; flex-wrap:wrap; }
+.pie-legend { flex:1; min-width:160px; }
+.leg-row {
+  display:flex; align-items:center; gap:7px;
+  padding:4px 0; border-bottom:1px solid #f1f5f9; font-size:12px;
+}
+.leg-row:last-child { border-bottom:none; }
+.leg-dot { width:10px; height:10px; border-radius:2px; flex-shrink:0; }
+.leg-label { flex:1; color:#334155; }
+.leg-count { font-weight:700; color:#1e293b; }
+.leg-pct   { font-size:10px; color:#94a3b8; min-width:34px; text-align:right; }
+
+.dash-section { margin-bottom:20px; }
+.null-note { font-size:11px; color:#94a3b8; font-style:italic; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="dash-page">
-  <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px">
     <h1 style="font-size:16px;font-weight:700">Dashboard</h1>
-    <button class="btn btn-secondary" style="font-size:11px" onclick="load()">↺ Refresh</button>
+    <button class="btn btn-secondary" style="font-size:11px" onclick="loadAll()">↺ Refresh</button>
     <span id="status" style="font-size:11px;color:#94a3b8"></span>
   </div>
 
-  <!-- KPI row -->
-  <div class="kpi-row" id="kpi-row">
-    <div class="kpi-card"><div class="kpi-num" id="k-total" style="color:#1e293b">—</div>
-      <div class="kpi-label">Total papers</div></div>
-    <div class="kpi-card"><div class="kpi-num" id="k-confirmed" style="color:#16a34a">—</div>
-      <div class="kpi-label">Confirmed</div></div>
-    <div class="kpi-card"><div class="kpi-num" id="k-rejected" style="color:#dc2626">—</div>
-      <div class="kpi-label">Rejected</div></div>
-    <div class="kpi-card"><div class="kpi-num" id="k-needs" style="color:#f59e0b">—</div>
-      <div class="kpi-label">Needs review</div></div>
-    <div class="kpi-card"><div class="kpi-num" id="k-inprog" style="color:#2563eb">—</div>
-      <div class="kpi-label">In progress</div></div>
-    <div class="kpi-card"><div class="kpi-num" id="k-pending" style="color:#94a3b8">—</div>
-      <div class="kpi-label">Pending</div></div>
+  <!-- ── Pipeline Progress ─────────────────────────────────────────────────── -->
+  <div class="dash-section">
+    <div class="section-title">Pipeline Progress</div>
+    <div class="kpi-row">
+      <a href="/search" class="kpi-card">
+        <div class="kpi-num" id="k-candidates" style="color:#1e293b">—</div>
+        <div class="kpi-label">Candidates</div>
+        <div class="kpi-sub">candidates.csv</div>
+      </a>
+      <div class="kpi-arrow">→</div>
+      <a href="/filter" class="kpi-card">
+        <div class="kpi-num" id="k-filtered" style="color:#1e293b">—</div>
+        <div class="kpi-label">Filtered</div>
+        <div class="kpi-sub">filtered.csv</div>
+      </a>
+      <div class="kpi-arrow">→</div>
+      <a href="/extract" class="kpi-card">
+        <div class="kpi-num" id="k-extracted" style="color:#1e293b">—</div>
+        <div class="kpi-label">Extracted</div>
+        <div class="kpi-sub">extracted.csv</div>
+      </a>
+      <div style="width:1px;height:48px;background:#e2e8f0;align-self:center;margin:0 4px"></div>
+      <a href="/target-pending" class="kpi-card">
+        <div class="kpi-num" id="k-target-pending" style="color:#f59e0b">—</div>
+        <div class="kpi-label">Target Pending</div>
+        <div class="kpi-sub">need original ID</div>
+      </a>
+    </div>
   </div>
 
+  <!-- ── Filter + Match breakdown ─────────────────────────────────────────── -->
+  <div class="two-col">
+    <div class="stat-card">
+      <h3>Filter Results (filtered.csv)</h3>
+      <div class="stat-row">
+        <span>Replications</span>
+        <span><strong id="f-replication" style="color:#16a34a">—</strong>
+          <span class="stat-pct" id="f-replication-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>Reproductions</span>
+        <span><strong id="f-reproduction" style="color:#2563eb">—</strong>
+          <span class="stat-pct" id="f-reproduction-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>Needs review</span>
+        <span><strong id="f-needs-review" style="color:#f59e0b">—</strong>
+          <span class="stat-pct" id="f-needs-review-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>False positives</span>
+        <span><strong id="f-false-positive" style="color:#dc2626">—</strong>
+          <span class="stat-pct" id="f-false-positive-pct"></span></span>
+      </div>
+    </div>
+
+    <div class="stat-card">
+      <h3>Match Types (extracted.csv)</h3>
+      <div class="stat-row">
+        <span>Single original</span>
+        <span><strong id="m-single" style="color:#16a34a">—</strong>
+          <span class="stat-pct" id="m-single-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>Multiple match</span>
+        <span><strong id="m-multiple-match" style="color:#f59e0b">—</strong>
+          <span class="stat-pct" id="m-multiple-match-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>Multiple original</span>
+        <span><strong id="m-multiple-original" style="color:#7c3aed">—</strong>
+          <span class="stat-pct" id="m-multiple-original-pct"></span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Outcome Distribution ──────────────────────────────────────────────── -->
+  <div class="stat-card" style="margin-bottom:16px">
+    <h3>Outcome Distribution (extracted.csv)</h3>
+    <div class="pie-wrap">
+      <svg id="pie-svg" width="160" height="160" viewBox="0 0 160 160"
+           style="flex-shrink:0;overflow:visible"></svg>
+      <div class="pie-legend" id="pie-legend">
+        <div class="null-note">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Validation Stats ──────────────────────────────────────────────────── -->
   <div class="two-col">
     <div class="stat-card">
       <h3>Votes</h3>
@@ -58,21 +170,154 @@
 
 {% block scripts %}
 <script>
+'use strict';
 const $ = id => document.getElementById(id);
-async function load() {
-  $('status').textContent = 'Loading…';
-  const d = await fetch('/api/dashboard/stats').then(r => r.json());
-  $('k-total').textContent     = d.total;
-  $('k-confirmed').textContent = d.confirmed;
-  $('k-rejected').textContent  = d.rejected;
-  $('k-needs').textContent     = d.needs_review;
-  $('k-inprog').textContent    = d.in_progress;
-  $('k-pending').textContent   = d.pending;
-  $('k-votes').textContent     = d.total_votes;
-  $('k-avg').textContent       = d.avg_votes;
-  $('k-reviewers').textContent = d.reviewer_count;
-  $('status').textContent      = 'Updated ' + new Date().toLocaleTimeString();
+
+// ── Pie chart (pure SVG donut) ───────────────────────────────────────────────
+const PIE_COLORS = {
+  success:       '#16a34a',
+  failure:       '#dc2626',
+  mixed:         '#f59e0b',
+  uninformative: '#64748b',
+  descriptive:   '#2563eb',
+  pending:       '#cbd5e1',
+  api_error:     '#f87171',
+};
+const PIE_LABELS = {
+  success:       'Success',
+  failure:       'Failure',
+  mixed:         'Mixed',
+  uninformative: 'Uninformative',
+  descriptive:   'Descriptive',
+  pending:       'Pending',
+  api_error:     'API Error',
+};
+
+function drawDonut(svgEl, data) {
+  svgEl.innerHTML = '';
+  const total = data.reduce((s, d) => s + d.value, 0);
+  if (total === 0) {
+    svgEl.innerHTML = '<text x="80" y="86" text-anchor="middle" font-size="11" fill="#94a3b8">No data</text>';
+    return;
+  }
+  const cx = 80, cy = 80, R = 68, r = 38;
+  let angle = -Math.PI / 2;
+
+  data.forEach(d => {
+    if (d.value === 0) return;
+    const slice    = (d.value / total) * 2 * Math.PI;
+    const endAngle = angle + slice;
+    const x1 = cx + R * Math.cos(angle),  y1 = cy + R * Math.sin(angle);
+    const x2 = cx + R * Math.cos(endAngle), y2 = cy + R * Math.sin(endAngle);
+    const xi1 = cx + r * Math.cos(angle),  yi1 = cy + r * Math.sin(angle);
+    const xi2 = cx + r * Math.cos(endAngle), yi2 = cy + r * Math.sin(endAngle);
+    const large = slice > Math.PI ? 1 : 0;
+
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d',
+      `M ${xi1} ${yi1} L ${x1} ${y1} A ${R} ${R} 0 ${large} 1 ${x2} ${y2}` +
+      ` L ${xi2} ${yi2} A ${r} ${r} 0 ${large} 0 ${xi1} ${yi1} Z`
+    );
+    path.setAttribute('fill', d.color);
+    svgEl.appendChild(path);
+    angle = endAngle;
+  });
+
+  // centre label
+  const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  txt.setAttribute('x', cx); txt.setAttribute('y', cy - 6);
+  txt.setAttribute('text-anchor', 'middle');
+  txt.setAttribute('font-size', '18'); txt.setAttribute('font-weight', '800');
+  txt.setAttribute('fill', '#1e293b');
+  txt.textContent = total.toLocaleString();
+  svgEl.appendChild(txt);
+
+  const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  sub.setAttribute('x', cx); sub.setAttribute('y', cy + 12);
+  sub.setAttribute('text-anchor', 'middle');
+  sub.setAttribute('font-size', '10'); sub.setAttribute('fill', '#94a3b8');
+  sub.textContent = 'total';
+  svgEl.appendChild(sub);
 }
-window.addEventListener('DOMContentLoaded', load);
+
+function renderLegend(legendEl, data, total) {
+  if (total === 0) { legendEl.innerHTML = '<div class="null-note">No extracted rows yet.</div>'; return; }
+  legendEl.innerHTML = data.filter(d => d.value > 0).map(d => {
+    const pct = total > 0 ? ((d.value / total) * 100).toFixed(1) : '0.0';
+    return `<div class="leg-row">
+      <span class="leg-dot" style="background:${d.color}"></span>
+      <span class="leg-label">${d.label}</span>
+      <span class="leg-count">${d.value.toLocaleString()}</span>
+      <span class="leg-pct">${pct}%</span>
+    </div>`;
+  }).join('');
+}
+
+// ── Helper: pct string ────────────────────────────────────────────────────────
+function pct(n, total) {
+  if (!total || total === 0) return '';
+  return `(${((n / total) * 100).toFixed(1)}%)`;
+}
+function fmt(n) { return n == null ? '—' : Number(n).toLocaleString(); }
+
+// ── Load everything ──────────────────────────────────────────────────────────
+async function loadAll() {
+  $('status').textContent = 'Loading…';
+  try {
+    const [csv, val] = await Promise.all([
+      fetch('/api/dashboard/csv-stats').then(r => r.json()),
+      fetch('/api/dashboard/stats').then(r => r.json()),
+    ]);
+
+    // Pipeline progress
+    $('k-candidates').textContent    = fmt(csv.candidates_count);
+    $('k-filtered').textContent      = fmt(csv.filtered_count);
+    $('k-extracted').textContent     = fmt(csv.extracted_count);
+    $('k-target-pending').textContent = fmt(csv.target_pending_count);
+
+    // Filter breakdown
+    const ftotal = csv.filtered_count || 0;
+    $('f-replication').textContent   = fmt(csv.filter_replication);
+    $('f-replication-pct').textContent = pct(csv.filter_replication, ftotal);
+    $('f-reproduction').textContent  = fmt(csv.filter_reproduction);
+    $('f-reproduction-pct').textContent = pct(csv.filter_reproduction, ftotal);
+    $('f-needs-review').textContent  = fmt(csv.filter_needs_review);
+    $('f-needs-review-pct').textContent = pct(csv.filter_needs_review, ftotal);
+    $('f-false-positive').textContent = fmt(csv.filter_false_positive);
+    $('f-false-positive-pct').textContent = pct(csv.filter_false_positive, ftotal);
+
+    // Match types
+    const mtotal = (csv.match_single || 0) + (csv.match_multiple_match || 0) + (csv.match_multiple_original || 0);
+    $('m-single').textContent    = fmt(csv.match_single);
+    $('m-single-pct').textContent = pct(csv.match_single, mtotal);
+    $('m-multiple-match').textContent = fmt(csv.match_multiple_match);
+    $('m-multiple-match-pct').textContent = pct(csv.match_multiple_match, mtotal);
+    $('m-multiple-original').textContent = fmt(csv.match_multiple_original);
+    $('m-multiple-original-pct').textContent = pct(csv.match_multiple_original, mtotal);
+
+    // Outcome pie
+    const outcomes = ['success','failure','mixed','uninformative','descriptive','pending','api_error'];
+    const pieData  = outcomes.map(k => ({
+      key:   k,
+      label: PIE_LABELS[k],
+      color: PIE_COLORS[k],
+      value: csv[`outcome_${k}`] || 0,
+    }));
+    const outTotal = pieData.reduce((s, d) => s + d.value, 0);
+    drawDonut($('pie-svg'), pieData);
+    renderLegend($('pie-legend'), pieData, outTotal);
+
+    // Validation stats
+    $('k-votes').textContent     = fmt(val.total_votes);
+    $('k-avg').textContent       = val.avg_votes ?? '—';
+    $('k-reviewers').textContent = fmt(val.reviewer_count);
+
+    $('status').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    $('status').textContent = 'Error: ' + e.message;
+  }
+}
+
+window.addEventListener('DOMContentLoaded', loadAll);
 </script>
 {% endblock %}

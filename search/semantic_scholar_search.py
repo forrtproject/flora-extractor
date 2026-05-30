@@ -194,15 +194,15 @@ def _get_page(params: dict) -> dict:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f)
             return data
-        if resp.status_code == 429:
+        if resp.status_code in (429, 500, 502, 503, 504):
+            # 429 = rate limit; 5xx = transient S2 backend error — both warrant backoff+retry.
             _backoff_sleep(attempt)
             resp = requests.get(_BASE_URL, params=params, headers=headers, timeout=30)
         else:
             resp.raise_for_status()
 
     raise StopIteration(
-        f"S2 still returning 429 after {_MAX_RETRIES} retries. "
-        "Check your API key or try again later."
+        f"S2 still returning {resp.status_code} after {_MAX_RETRIES} retries — skipping phrase."
     )
 
 

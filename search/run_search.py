@@ -84,20 +84,27 @@ _SEARCH_STATE_PATH = OA_CACHE_DIR.parent / "search_state.json"
 
 
 def _load_search_state(from_year: int, to_year: int) -> dict:
-    """Load auto-advance state, or initialise if absent / year range changed."""
+    """Load auto-advance state, or initialise if absent / year range changed.
+
+    Migrates old states that used ``current_phrase_idx`` (OpenAlex-only) to
+    the new ``current_job_idx`` key that spans all sources.
+    """
     if _SEARCH_STATE_PATH.exists():
         try:
             with open(_SEARCH_STATE_PATH, encoding="utf-8") as f:
                 state = json.load(f)
             if state.get("from_year") == from_year and state.get("to_year") == to_year:
+                # Migrate old single-source state format transparently.
+                if "current_phrase_idx" in state and "current_job_idx" not in state:
+                    state["current_job_idx"] = state.pop("current_phrase_idx")
                 return state
         except Exception:
             pass
     return {
-        "from_year":          from_year,
-        "to_year":            to_year,
-        "current_year":       from_year,
-        "current_phrase_idx": 0,
+        "from_year":       from_year,
+        "to_year":         to_year,
+        "current_year":    from_year,
+        "current_job_idx": 0,
     }
 
 
@@ -110,12 +117,12 @@ def _save_search_state(state: dict) -> None:
     tmp.replace(_SEARCH_STATE_PATH)
 
 
-def _advance_state(state: dict, phrase_list: list) -> dict:
-    """Increment phrase index, rolling over to next year when all phrases are done."""
+def _advance_state(state: dict, job_list: list) -> dict:
+    """Increment job index, rolling over to next year when all jobs for this year are done."""
     state = dict(state)
-    state["current_phrase_idx"] += 1
-    if state["current_phrase_idx"] >= len(phrase_list):
-        state["current_phrase_idx"] = 0
+    state["current_job_idx"] = state.get("current_job_idx", 0) + 1
+    if state["current_job_idx"] >= len(job_list):
+        state["current_job_idx"] = 0
         state["current_year"] += 1
         if state["current_year"] > state["to_year"]:
             state["current_year"] = state["from_year"]
@@ -287,7 +294,11 @@ def _merge_into_candidates_csv(new_df: pd.DataFrame, out_path: "Path") -> pd.Dat
         len(combined) - (before - len(new_df)),
     )
 
-    combined.to_csv(out_path, index=False, encoding="utf-8-sig")
+    # Write to a temp file first, then atomically rename so a mid-write
+    # Ctrl+C or crash never produces a truncated candidates.csv.
+    tmp_path = out_path.with_suffix(".tmp.csv")
+    combined.to_csv(tmp_path, index=False, encoding="utf-8-sig")
+    tmp_path.replace(out_path)
     return combined
 
 
@@ -396,50 +407,87 @@ def run_search_auto_advance(
     to_year:   int = 2021,
     max_records_per_phrase: int = 200,
 ) -> pd.DataFrame:
-    """Process exactly ONE phrase/year combination per invocation.
+    """Process exactly ONE (source, phrase, year) job per invocation.
 
-    Reads state from ``cache/search_state.json``, runs the current phrase for
-    the current year, then advances to the next phrase (rolling to the next year
-    when all phrases for the current year are done).  Designed to be called
-    repeatedly — each call appends results to ``candidates.csv``.
+    Jobs cycle through all OpenAlex phrases then all Semantic Scholar phrases
+    for the current year before advancing to the next year.  At the start of
+    each year's first job, the curated lists (I4R, Replication Network) are
+    also fetched and merged.
+
+    State is persisted in ``cache/search_state.json`` and resumes across
+    invocations.  Old state files that only tracked OpenAlex (``current_phrase_idx``)
+    are migrated automatically.
 
     Run command:
         python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 --max-per-phrase 200
     """
-    from search.openalex_search import SEARCH_PHRASES, fetch_phrase
+    from search.openalex_search import SEARCH_PHRASES as OA_PHRASES, fetch_phrase as oa_fetch
+    from search.semantic_scholar_search import SEARCH_PHRASES as S2_PHRASES, fetch_phrase as s2_fetch
+
+    # Combined job list: all OA phrases first, then all S2 phrases.
+    # Each entry is (source_tag, phrase).
+    JOBS = (
+        [("openalex",          p) for p in OA_PHRASES]
+        + [("semantic_scholar", p) for p in S2_PHRASES]
+    )
 
     state  = _load_search_state(from_year, to_year)
     year   = state["current_year"]
-    pidx   = state["current_phrase_idx"]
-    phrase = SEARCH_PHRASES[pidx % len(SEARCH_PHRASES)]
+    jidx   = state.get("current_job_idx", 0) % len(JOBS)
+    source, phrase = JOBS[jidx]
 
     log.info(
-        "Auto-advance: year=%d  phrase[%d/%d]=%r",
-        year, pidx + 1, len(SEARCH_PHRASES), phrase,
+        "Auto-advance: year=%d  [%s] job[%d/%d] phrase=%r",
+        year, source, jidx + 1, len(JOBS), phrase,
     )
 
-    rows = fetch_phrase(phrase, from_year=year, to_year=year,
+    out_path = DATA_DIR / "candidates.csv"
+
+    # Fetch curated lists once at the very first job of each year.
+    if jidx == 0:
+        log.info(
+            "Auto-advance: year=%d — fetching curated lists (I4R + Replication Network)",
+            year,
+        )
+        curated = pd.concat(
+            [
+                fetch_i4r(from_year=year, to_year=year),
+                fetch_replication_network(from_year=year, to_year=year),
+            ],
+            ignore_index=True,
+        )
+        if not curated.empty:
+            _merge_into_candidates_csv(deduplicate_candidates(curated), out_path)
+
+    # Fetch this job's phrase from the appropriate source.
+    if source == "openalex":
+        rows = oa_fetch(phrase, from_year=year, to_year=year,
+                        max_records=max_records_per_phrase)
+    else:
+        rows = s2_fetch(phrase, from_year=year, to_year=year,
                         max_records=max_records_per_phrase)
 
-    out_path = DATA_DIR / "candidates.csv"
     if rows:
         batch  = pd.DataFrame(rows, columns=CANDIDATES_COLS)
         result = _merge_into_candidates_csv(deduplicate_candidates(batch), out_path)
     else:
-        log.info("Auto-advance: no new rows for phrase=%r year=%d", phrase, year)
+        log.info("Auto-advance: no new rows for [%s] phrase=%r year=%d",
+                 source, phrase, year)
         result = (
             pd.read_csv(out_path, encoding="utf-8-sig")
             if out_path.exists()
             else pd.DataFrame(columns=CANDIDATES_COLS)
         )
 
-    new_state = _advance_state(state, SEARCH_PHRASES)
+    new_state = _advance_state(state, JOBS)
     _save_search_state(new_state)
+    next_source, next_phrase = JOBS[new_state["current_job_idx"] % len(JOBS)]
     log.info(
-        "Auto-advance: next run will process year=%d phrase[%d]=%r",
+        "Auto-advance: next run → year=%d  [%s] job[%d] phrase=%r",
         new_state["current_year"],
-        new_state["current_phrase_idx"],
-        SEARCH_PHRASES[new_state["current_phrase_idx"]],
+        next_source,
+        new_state["current_job_idx"],
+        next_phrase,
     )
     return result
 

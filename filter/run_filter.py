@@ -56,13 +56,30 @@ def run_filter(limit: "int | None" = None,
 
     out_path = DATA_DIR / "filtered.csv"
 
-    # Load already-processed DOIs so an interrupted run can be resumed.
+    # Load already-processed rows so an interrupted run can be resumed.
+    # Key fallback: doi_r → openalex_id_r → url_r → title_r (same logic as extract stage).
+    def _row_key(r) -> str:
+        doi = clean_doi(str(r.get("doi_r", "") or ""))
+        if doi:
+            return doi
+        oa = str(r.get("openalex_id_r", "") or "").strip()
+        if oa:
+            return f"oa:{oa}"
+        url = str(r.get("url_r", "") or "").strip()
+        if url:
+            return f"url:{url}"
+        title = str(r.get("title_r", "") or "").lower().strip()
+        return f"title:{title}" if title else ""
+
     already_done: set[str] = set()
     first_write = not out_path.exists()
     if out_path.exists():
         try:
             existing = pd.read_csv(out_path, dtype=str, encoding="utf-8-sig").fillna("")
-            already_done = {clean_doi(d) for d in existing["doi_r"] if d}
+            for _, er in existing.iterrows():
+                k = _row_key(er)
+                if k:
+                    already_done.add(k)
             log.info("Stage 2: %d rows already in filtered.csv — skipping", len(already_done))
         except Exception as exc:
             log.warning("Stage 2: could not read existing filtered.csv (%s) — starting fresh", exc)
@@ -73,8 +90,7 @@ def run_filter(limit: "int | None" = None,
     skipped  = 0   # counts unprocessed rows skipped by --offset
 
     for _, row in df.iterrows():
-        doi_r = clean_doi(str(row.get("doi_r", "")))
-        if doi_r in already_done:
+        if _row_key(row) in already_done:
             continue
 
         # --offset: skip the first N unprocessed rows

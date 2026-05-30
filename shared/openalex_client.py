@@ -385,3 +385,53 @@ def fetch_openalex_by_doi(doi: str) -> Optional[dict]:
         json.dump(result, fh, ensure_ascii=False, indent=2)
 
     return result
+
+
+def resolve_doi_from_url(url: str) -> str:
+    """Try to find a DOI for a paper identified only by URL.
+
+    Resolution strategy:
+      1. If the URL itself is a doi.org URL, extract the DOI directly.
+      2. Query OpenAlex with filter=open_access.oa_url:<url> (open-access PDFs).
+      3. Query OpenAlex with filter=primary_location.landing_page_url:<url> (landing pages).
+
+    Returns the cleaned DOI string if found, or "" if not resolvable.
+    Caches the result (including negative lookups) so subsequent calls are free.
+    """
+    import re as _re
+    url = (url or "").strip()
+    if not url:
+        return ""
+
+    cache_file = OA_CACHE_DIR / f"url_doi_{cache_key(url)}.json"
+    if cache_file.exists():
+        with cache_file.open(encoding="utf-8") as fh:
+            return json.load(fh).get("doi", "")
+
+    def _save(doi: str) -> str:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        with cache_file.open("w", encoding="utf-8") as fh:
+            json.dump({"url": url, "doi": doi}, fh)
+        return doi
+
+    # 1. doi.org URL → extract DOI directly
+    m = _re.match(r"https?://(?:dx\.)?doi\.org/(.+)", url, _re.IGNORECASE)
+    if m:
+        return _save(clean_doi(m.group(1)))
+
+    # 2 & 3. Ask OpenAlex
+    for oa_filter in (
+        f"open_access.oa_url:{url}",
+        f"primary_location.landing_page_url:{url}",
+    ):
+        data = _oa_get(
+            "https://api.openalex.org/works",
+            {"filter": oa_filter, "select": "doi", "mailto": RESEARCHER_EMAIL},
+        )
+        results = (data or {}).get("results") or []
+        if results:
+            doi = clean_doi(results[0].get("doi") or "")
+            if doi:
+                return _save(doi)
+
+    return _save("")

@@ -40,6 +40,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     from validate.routes.extract_view import extract_view_bp
     from validate.routes.search_view import search_view_bp
     from validate.routes.filter_view import filter_view_bp
+    from validate.routes.target_pending import target_pending_bp
 
     app.register_blueprint(batch_bp)
     app.register_blueprint(multi_orig_bp)
@@ -52,6 +53,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.register_blueprint(extract_view_bp)
     app.register_blueprint(search_view_bp)
     app.register_blueprint(filter_view_bp)
+    app.register_blueprint(target_pending_bp)
 
     # Name prompt guard
     @app.before_request
