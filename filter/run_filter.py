@@ -103,6 +103,7 @@ def run_filter(limit: "int | None" = None,
             log.info("Stage 2: reached --limit %d — stopping", limit)
             break
 
+        doi_r    = str(row.get("doi_r")       or "")
         title    = str(row.get("title_r")    or "")
         abstract = str(row.get("abstract_r") or "")
 

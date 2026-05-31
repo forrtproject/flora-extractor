@@ -294,11 +294,20 @@ def _merge_into_candidates_csv(new_df: pd.DataFrame, out_path: "Path") -> pd.Dat
         len(combined) - (before - len(new_df)),
     )
 
-    # Write to a temp file first, then atomically rename so a mid-write
-    # Ctrl+C or crash never produces a truncated candidates.csv.
+    # Write to a temp file first, then rename. On Windows (especially in
+    # Google Drive folders) another process may briefly hold the target open,
+    # so retry a few times before giving up.
     tmp_path = out_path.with_suffix(".tmp.csv")
     combined.to_csv(tmp_path, index=False, encoding="utf-8-sig")
-    tmp_path.replace(out_path)
+    for attempt in range(10):
+        try:
+            tmp_path.replace(out_path)
+            break
+        except PermissionError:
+            if attempt == 9:
+                raise
+            import time
+            time.sleep(2 ** attempt * 0.5)  # 0.5s, 1s, 2s, 4s, …
     return combined
 
 
