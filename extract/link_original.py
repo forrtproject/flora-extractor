@@ -604,6 +604,7 @@ def run_for_doi(doi_r:              str,
                 doi_r + "_abstract",
                 study_r, abstract_r, pattern_r, candidates, {},
                 validator_note=effective_note,
+                abstract_only=True,
             )
             if llm4["resolved"]:
                 log.info("[%s] Resolved by abstract LLM: %s", doi_r,

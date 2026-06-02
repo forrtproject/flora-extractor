@@ -521,7 +521,8 @@ def identify_original_with_llm(doi_r:          str,
                                  sections:       dict,
                                  pdf_url:        str = "",
                                  html_text:      str = "",
-                                 validator_note: str = "") -> dict:
+                                 validator_note: str = "",
+                                 abstract_only:  bool = False) -> dict:
     """
     Identify the original study via LLM.
 
@@ -632,7 +633,7 @@ def identify_original_with_llm(doi_r:          str,
         "resolved"          : resolved,
         # llm_no_target: LLM ran successfully but concluded no identifiable original exists.
         # Distinct from llm_failed (all API calls errored) and llm_fulltext (original found).
-        "resolution_method" : f"llm_{llm_source}" if resolved else "llm_no_target",
+        "resolution_method" : (f"llm_abstract_{llm_source}" if abstract_only else f"llm_{llm_source}") if resolved else "llm_no_target",
         "resolved_doi_o"    : resolved_doi,
         "resolved_title_o"  : resolved_title,
         "resolved_year_o"   : resolved_year,
