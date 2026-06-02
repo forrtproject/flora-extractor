@@ -53,3 +53,4 @@ misc/download_pdf.py
 data/all_replications.csv
 /data/Search Approaches
 data/candidates.csv
+data/filtered.csv
