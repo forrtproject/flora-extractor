@@ -117,20 +117,52 @@ def _save_search_state(state: dict) -> None:
     tmp.replace(_SEARCH_STATE_PATH)
 
 
-def _advance_state(state: dict, job_list: list) -> dict:
-    """Increment job index, rolling over to next year when all jobs for this year are done."""
+def _advance_state(state: dict, job_list: list, rows_this_job: int = 0) -> dict:
+    """Increment job index, rolling over to next year when all jobs for this year are done.
+
+    rows_this_job — new rows fetched in this iteration; accumulated into
+    current_cycle_rows so we can detect a fully-exhausted cycle (zero new
+    rows across all jobs in the cycle).
+    """
+    import datetime
     state = dict(state)
+    state["current_cycle_rows"] = state.get("current_cycle_rows", 0) + rows_this_job
     state["current_job_idx"] = state.get("current_job_idx", 0) + 1
     if state["current_job_idx"] >= len(job_list):
         state["current_job_idx"] = 0
         state["current_year"] += 1
         if state["current_year"] > state["to_year"]:
             state["current_year"] = state["from_year"]
-            log.info(
-                "Auto-advance: cycled past to_year=%d — restarting from year %d",
-                state["to_year"], state["from_year"],
-            )
+            state["cycles_completed"]      = state.get("cycles_completed", 0) + 1
+            state["last_cycle_completed_at"] = datetime.datetime.now().isoformat(timespec="seconds")
+            state["last_cycle_new_rows"]   = state["current_cycle_rows"]
+            state["current_cycle_rows"]    = 0   # reset for the next cycle
+            _print_cycle_complete_banner(state)
     return state
+
+
+def _print_cycle_complete_banner(state: dict) -> None:
+    """Print a visible completion banner to stdout when a full cycle finishes."""
+    cycles   = state.get("cycles_completed", 1)
+    ts       = state.get("last_cycle_completed_at", "")
+    new_rows = state.get("last_cycle_new_rows", 0)
+    sep      = "=" * 64
+    exhausted = (new_rows == 0)
+    print("", flush=True)
+    print(sep, flush=True)
+    print(f"  SEARCH CYCLE {cycles} COMPLETE", flush=True)
+    print(f"  Years     : {state.get('from_year')}-{state.get('to_year')}", flush=True)
+    print(f"  Time      : {ts}", flush=True)
+    print(f"  New rows  : {new_rows}", flush=True)
+    if exhausted:
+        print( "  ** ALL CANDIDATES FETCHED — no new rows this cycle.", flush=True)
+        print( "  ** The loop will now stop.", flush=True)
+    else:
+        print( "  More rows may still be available — continuing to next cycle.", flush=True)
+    print(sep, flush=True)
+    print("", flush=True)
+    log.info("Auto-advance: cycle %d complete — %d new rows (years %d-%d).",
+             cycles, new_rows, state.get("from_year"), state.get("to_year"))
 
 
 # ---------------------------------------------------------------------------
@@ -367,22 +399,26 @@ def run_search(
 
     # Phase 1: harvest all cached pages so prior runs flow into the CSV
     # regardless of which year range was active when they were downloaded.
-    log.info("Harvesting all cached OpenAlex and Semantic Scholar pages...")
-    cached_batch = pd.concat(
-        [_harvest_oa_cache(), _harvest_s2_cache()], ignore_index=True
-    )
-    if not cached_batch.empty:
-        log.info(
-            "Cache harvest total: %d rows — merging into candidates.csv",
-            len(cached_batch),
-        )
-        _merge_into_candidates_csv(cached_batch, DATA_DIR / "candidates.csv")
-
-    # Phase 2: live fetch from each enabled source.
+    # Skipped when --source excludes both openalex and semantic_scholar,
+    # since the cache only contains pages from those two sources.
     def _want(*names: str) -> bool:
-        """True if any of the given source names is in the requested set (or all sources wanted)."""
         return sources is None or bool(sources.intersection(names))
 
+    if _want("openalex", "semantic_scholar", "engine"):
+        log.info("Harvesting all cached OpenAlex and Semantic Scholar pages...")
+        cached_batch = pd.concat(
+            [_harvest_oa_cache(), _harvest_s2_cache()], ignore_index=True
+        )
+        if not cached_batch.empty:
+            log.info(
+                "Cache harvest total: %d rows — merging into candidates.csv",
+                len(cached_batch),
+            )
+            _merge_into_candidates_csv(cached_batch, DATA_DIR / "candidates.csv")
+    else:
+        log.info("Cache harvest skipped (source filter excludes openalex and semantic_scholar)")
+
+    # Phase 2: live fetch from each enabled source.
     frames: list[pd.DataFrame] = []
 
     if is_engine_enabled():
@@ -488,10 +524,30 @@ def run_search_auto_advance(
     JOBS = [j for j in ALL_JOBS if _want_src(j[0])] if sources else ALL_JOBS
 
     if not JOBS:
-        log.warning("Auto-advance: no jobs match --source %s — nothing to do", sources)
-        out_path = DATA_DIR / "candidates.csv"
-        return (pd.read_csv(out_path, encoding="utf-8-sig")
-                if out_path.exists() else pd.DataFrame(columns=CANDIDATES_COLS))
+        # bob_reed and i4r are curated lists — not phrase-based, so they have no
+        # entries in JOBS.  Fetch them once here and return True (cycle done).
+        if _want_src("i4r", "bob_reed", "replication_network"):
+            log.info(
+                "Auto-advance: --source contains only curated lists "
+                "(bob_reed/i4r) — fetching once and finishing."
+            )
+            out_path = DATA_DIR / "candidates.csv"
+            curated_frames = []
+            if _want_src("i4r"):
+                curated_frames.append(fetch_i4r())
+            if _want_src("bob_reed", "replication_network"):
+                curated_frames.append(fetch_replication_network())
+            if curated_frames:
+                curated = pd.concat(curated_frames, ignore_index=True)
+                if not curated.empty:
+                    _merge_into_candidates_csv(deduplicate_candidates(curated), out_path)
+        else:
+            log.warning(
+                "Auto-advance: no jobs match --source %s — nothing to do. "
+                "Use --source openalex or --source semantic_scholar for phrase cycling.",
+                sources,
+            )
+        return True  # always bool — callers check this, not the DataFrame
 
     state  = _load_search_state(from_year, to_year)
     year   = state["current_year"]
@@ -529,29 +585,32 @@ def run_search_auto_advance(
         rows = s2_fetch(phrase, from_year=year, to_year=year,
                         max_records=max_records_per_phrase)
 
+    rows_this_job = len(rows) if rows else 0
     if rows:
         batch  = pd.DataFrame(rows, columns=CANDIDATES_COLS)
-        result = _merge_into_candidates_csv(deduplicate_candidates(batch), out_path)
+        _merge_into_candidates_csv(deduplicate_candidates(batch), out_path)
     else:
         log.info("Auto-advance: no new rows for [%s] phrase=%r year=%d",
                  source, phrase, year)
-        result = (
-            pd.read_csv(out_path, encoding="utf-8-sig")
-            if out_path.exists()
-            else pd.DataFrame(columns=CANDIDATES_COLS)
-        )
 
-    new_state = _advance_state(state, JOBS)
+    prev_cycles = state.get("cycles_completed", 0)
+    new_state   = _advance_state(state, JOBS, rows_this_job=rows_this_job)
+    cycle_done  = new_state.get("cycles_completed", 0) > prev_cycles
+
+    # Only signal "done" (exit code 2) when a cycle completes with zero new
+    # rows — meaning every phrase+year cursor has reached the end of the data.
+    exhausted = cycle_done and new_state.get("last_cycle_new_rows", -1) == 0
+
     _save_search_state(new_state)
     next_source, next_phrase = JOBS[new_state["current_job_idx"] % len(JOBS)]
     log.info(
-        "Auto-advance: next run → year=%d  [%s] job[%d] phrase=%r",
+        "Auto-advance: next run -> year=%d  [%s] job[%d] phrase=%r",
         new_state["current_year"],
         next_source,
         new_state["current_job_idx"],
         next_phrase,
     )
-    return result
+    return exhausted
 
 
 # ---------------------------------------------------------------------------
@@ -628,10 +687,14 @@ if __name__ == "__main__":
         from_yr = args.from_year or 2011
         to_yr   = args.to_year   or 2021
         max_n   = args.max_per_phrase or 200
-        run_search_auto_advance(
+        cycle_done = run_search_auto_advance(
             from_year=from_yr, to_year=to_yr, max_records_per_phrase=max_n,
             sources=set(args.sources) if args.sources else None,
         )
+        # Exit code 2 signals a full cycle completed.
+        # PowerShell: do { python ... } until ($LASTEXITCODE -eq 2)
+        if cycle_done:
+            raise SystemExit(2)
     else:
         run_search(
             from_year=args.from_year,

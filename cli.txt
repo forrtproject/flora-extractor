@@ -49,4 +49,15 @@ python -m filter.run_filter --source openalex --from-year 2018 --limit 20
 
 (the source column — openalex, bob_reed, i4r, semantic_scholar)
 
+--------------------------------------------
+# Phrase-based sources (need auto-advance loop)
+do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 --max-per-phrase 1000 --source openalex } until ($LASTEXITCODE -eq 2)
+do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 --max-per-phrase 1000 --source semantic_scholar } until ($LASTEXITCODE -eq 2)
+
+# Curated lists (single fetch, no loop needed)
+python -m search.run_search --source bob_reed
+python -m search.run_search --source i4r
+
+do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 --max-per-phrase 1000 --source openalex } until ($LASTEXITCODE -eq 2)
+
 
