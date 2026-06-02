@@ -154,19 +154,39 @@ python -m search.run_search --reset-cursors
 
 ## CLI Reference
 
+| Flag | Description |
+| --- | --- |
+| `--from-year YYYY` | Earliest publication year to fetch (inclusive). |
+| `--to-year YYYY` | Latest publication year to fetch (inclusive). |
+| `--max-per-phrase N` | Limit new rows fetched per phrase per run for OpenAlex and S2. Checkpoints saved so the next run continues from the same page. |
+| `--source SOURCE` | Only fetch from this source (repeatable). Values: `openalex`, `semantic_scholar`, `bob_reed`, `i4r`. Default: all sources. |
+| `--reset-cursors` | Wipe all OpenAlex cursor and S2 offset checkpoint files, then start fresh. |
+| `--auto-advance` | Incremental cycling mode — one phrase/year per invocation, advances via `cache/search_state.json`. |
+
 ```bash
 # Incremental run: one phrase/year per invocation, cycling 2011–2021 (recommended for regular use)
 python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 --max-per-phrase 200
 
-# Traditional batch: all phrases, restricted year range, unlimited pages
+# Traditional batch: all phrases, restricted year range
 python -m search.run_search --from-year 2015 --to-year 2023
 
-# Quick smoke-test: fetch 1 page per phrase, no year restriction
-python -m search.run_search --max-per-phrase 200
+# Only fetch from OpenAlex (skip Semantic Scholar, I4R, Bob Reed)
+python -m search.run_search --source openalex --from-year 2020
 
-# Wipe all OpenAlex cursor and S2 offset files, then run
+# Only fetch I4R and Bob Reed lists (fast — no API pagination)
+python -m search.run_search --source i4r --source bob_reed
+
+# Only fetch Semantic Scholar for a specific year window
+python -m search.run_search --source semantic_scholar --from-year 2018 --to-year 2022
+
+# Quick smoke-test: 1 page per phrase from OpenAlex only
+python -m search.run_search --source openalex --max-per-phrase 200
+
+# Wipe all checkpoints and start fresh
 python -m search.run_search --reset-cursors
 ```
+
+**`--source`** is repeatable — `--source openalex --source i4r` fetches both. Sources not listed are silently skipped (logged at INFO level).
 
 **`--auto-advance`** — incremental cycling mode. Reads `cache/search_state.json` to determine which phrase and year to process next, fetches up to `--max-per-phrase` rows for that one slot, then saves the updated state. On the next invocation it advances to the next phrase; after all phrases are done for a year it increments the year and wraps back to the first phrase. This spreads ingestion over many runs without any single run taking too long.
 

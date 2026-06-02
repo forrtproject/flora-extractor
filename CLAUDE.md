@@ -39,12 +39,26 @@ python -m validate.app              # Stage 4 web app → http://localhost:5001
 Stage 3 streams results to `data/extracted.csv` one row at a time, so you can open the
 Extract tab in the web app while the pipeline is still running.
 
+**Test sandbox** — run new pipelines (multiple originals, reproductions) safely before
+promoting to `extracted.csv`:
+
+```bash
+# Write to extracted-test.csv instead — skips already-resolved DOIs from extracted.csv
+python -m extract.run_extract --extracted-test [--resume] [other flags]
+
+# Promote test rows to production when satisfied
+python -m extract.promote_test --all           # promote everything
+python -m extract.promote_test --doi 10.xxx/y  # promote one row
+python -m extract.promote_test --all --dry-run # preview without writing
+```
+
 The web app provides tabbed views for each stage's output:
 
-- `/search`  — Stage 1 candidates (candidates.csv)
-- `/filter`  — Stage 2 filtered list (filtered.csv)
-- `/extract` — Stage 3 extraction results with model comparison tool
-- `/validate` — Stage 4 voting queue
+- `/search`        — Stage 1 candidates (candidates.csv)
+- `/filter`        — Stage 2 filtered list (filtered.csv)
+- `/extract`       — Stage 3 extraction results with model comparison tool
+- `/extract-test`  — Stage 3 test sandbox (extracted-test.csv) with per-row Promote button
+- `/validate`      — Stage 4 voting queue
 
 ---
 
@@ -64,10 +78,11 @@ The web app provides tabbed views for each stage's output:
 | `shared/openalex_client.py`    | OpenAlex API wrapper + `find_all_candidates()` (Stage 3 logic)              |
 | `shared/llm_client.py`         | Gemini + OpenAI calls with key rotation, prompt builders, JSON parsing      |
 | `shared/pdf_sources.py`        | Multi-tier PDF acquisition waterfall (arXiv → OSF → Unpaywall → CORE → …)   |
+| `shared/pdf_parsing.py`        | Six PDF parse methods (openalex_xml, pdfminer, GROBID, docpluck, opendataloader, markitdown); `parse_all()` orchestrator; `score_parse_result()`, `best_parse_result()`, `best_parse_method_name()` scoring API |
 | `shared/grobid.py`             | GROBID reference extraction from PDFs                                       |
 | `shared/disambiguation.py`     | Same-author/year candidate disambiguation — needs validation                |
 | `shared/utils.py`              | `clean_doi()`, `cache_key()`, common helpers                                |
-| `shared/config.py`             | All paths, env var loading, rate limits                                     |
+| `shared/config.py`             | All paths, env var loading, rate limits; `MARKITDOWN_CACHE_DIR = cache/markdown/` |
 | `shared/schema.py`             | CSV column definitions — the contract between pipeline stages               |
 | `shared/cache.py`              | Cache read/write/clear helpers                                              |
 
@@ -92,22 +107,24 @@ The web app provides tabbed views for each stage's output:
 
 | File                       | Purpose                                                                      |
 | -------------------------- | ---------------------------------------------------------------------------- |
-| `extract/run_extract.py`   | Orchestrator: classifies match type, routes to single or multi-original      |
-| `extract/link_original.py` | Single-original pipeline (ported from OpenAlexLLM)                           |
+| `extract/run_extract.py`   | Orchestrator: classifies match type, routes to single or multi-original; supports `--extracted-test` flag; `_best_fulltext_from_cache()` feeds the best-scoring parse result to the outcome LLM |
+| `extract/link_original.py` | Single-original pipeline; runs `parse_all()` on the PDF, scores all methods, uses the winner's text for the DOI-resolution LLM; uses shared `best_parse_result()` scoring |
 | `extract/multi_original.py`| Multi-original pipeline — finds all target studies (needs improvement)       |
-| `extract/code_outcome.py`  | Keyword + LLM outcome extraction (new — not yet ported)                      |
+| `extract/code_outcome.py`  | Keyword + LLM outcome extraction                                             |
+| `extract/promote_test.py`  | CLI + library: merge rows from extracted-test.csv into extracted.csv; `--all`, `--doi`, `--dry-run`, `--force` |
 
 ### `validate/` — Stage 4 (Flask web app)
 
 | File                           | Purpose                                                             |
 | ------------------------------ | ------------------------------------------------------------------- |
-| `validate/app.py`              | Flask entry point, `create_app()` factory, blueprint registration   |
-| `validate/import_csv.py`       | Load `flora_selected.csv` into SQLite (run once before starting)    |
-| `validate/models.py`           | SQLAlchemy models: Replication, Vote tables                         |
-| `validate/routes/review.py`    | `GET /validate`, `POST /vote`, `GET /api/validate/log`              |
-| `validate/routes/flora.py`     | `GET /flora` master list, API endpoints                             |
-| `validate/routes/dashboard.py` | `GET /dashboard`, `GET /api/dashboard/stats`                        |
-| `validate/routes/export.py`    | `GET /export`, `POST /api/export/download`                          |
+| `validate/app.py`                  | Flask entry point, `create_app()` factory, blueprint registration                          |
+| `validate/import_csv.py`           | Load `flora_selected.csv` into SQLite (run once before starting)                           |
+| `validate/models.py`               | SQLAlchemy models: Replication, Vote tables                                                |
+| `validate/routes/review.py`        | `GET /validate`, `POST /vote`, `GET /api/validate/log`                                     |
+| `validate/routes/flora.py`         | `GET /flora` master list, API endpoints                                                    |
+| `validate/routes/dashboard.py`     | `GET /dashboard`; CSV stats including link-method breakdown, model family breakdown (Gemini/GPT/Qwen), and full Extract Test section |
+| `validate/routes/export.py`        | `GET /export`, `POST /api/export/download`                                                 |
+| `validate/routes/extract_view.py`  | Blueprint factory (`make_extract_blueprint` + `add_shared_routes`) for Extract + Extract Test tabs; PDF availability column; Promote endpoint; parse winner badge via `best_parse_method_name` |
 
 ### `misc/` — Reference only, do not import
 
@@ -365,6 +382,22 @@ main     ← protected; PR + 1 review required; no direct commits
 
 ---
 
+## PDF Parsing — How the Best Parser Is Selected
+
+`parse_all()` in `shared/pdf_parsing.py` runs six methods and returns a dict keyed by method name. Both `link_original.py` (DOI resolution) and `_get_outcome` in `run_extract.py` (outcome extraction) call `best_parse_result()` to pick the winner:
+
+```text
+score = refs × 300  +  abstract_len  +  intro_len × 2  +  min(raw_text_len ÷ 5, 1000)
+```
+
+The winner's `abstract + intro` is fed to the LLM. Structured references (for citation pattern matching) come from whichever method the winner is — if MarkItDown wins but has sparse references, the LLM prompt's reference section will be thin; this is acceptable because citation matching runs as a rule-based step before the LLM fires.
+
+Parse results are cached at `cache/parse/parse_{key}.json`. MarkItDown's raw `.md` output is additionally cached at `cache/markdown/{key}.md` (human-readable). The detail panel in the web app shows a **★ USED BY LLM** badge on the winning column plus each method's score.
+
+If a row's parse cache exists but is missing the `markitdown` key (written before MarkItDown was added), the detail panel runs MarkItDown lazily on first open and updates the cache.
+
+---
+
 ## What Is Already Done
 
 The following are implemented and working (ported from the *OpenAlexLLM* prototype — an internal earlier-generation pipeline for the same task):
@@ -375,6 +408,13 @@ The following are implemented and working (ported from the *OpenAlexLLM* prototy
 
 "Ported from OpenAlexLLM" means the code was adapted from a private prototype that was built for an earlier round of FLoRA extraction. It does what it claims to do but predates this project's test suite and schema definitions.
 
+### Additional features implemented (June 2026)
+
+- **Extract Test sandbox** — `--extracted-test` flag, `promote_test` CLI, Extract Test web tab with Promote button, target-pending rows visible in Extract Test tab only
+- **PDF availability column** — Available / Not Available / Not Needed badge in both Extract and Extract Test tables, with server-side filter
+- **Parse scoring + MarkItDown** — six parse methods, unified scoring formula used by both DOI resolution and outcome extraction, winner badge in UI
+- **Dashboard enhancements** — link-method breakdown, LLM model family breakdown (Gemini / GPT / Qwen), and full Extract Test stats section
+
 ## What Needs to Be Written
 
 All core pipeline modules are now implemented. Known gaps:
@@ -382,6 +422,7 @@ All core pipeline modules are now implemented. Known gaps:
 - `tests/live/` directory — mentioned in `tests/test_filter.py` but not yet created; live LLM integration tests should go here, guarded by `TEST_LIVE_API=1`
 - Unit tests for standalone scripts: `search/sensitivity_check.py`, `extract/mix_for_validation.py`, `validate/csv_to_db.py`
 - Unit tests for orchestrators: `search/deduplicate.py`, `filter/run_filter.py` (currently tested only indirectly)
+- Unit tests for `extract/promote_test.py` promote logic (currently smoke-tested only)
 
 ---
 

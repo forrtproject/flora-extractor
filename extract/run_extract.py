@@ -468,19 +468,48 @@ def _save_parse_cache(doi_r: str) -> None:
 def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -> dict:
     abstract_r = str(row.get("abstract_r", ""))
     title_r    = str(row.get("title_r",    ""))
-    # Combine all parsed sections for richer keyword coverage (~3200 chars vs. previous 1000)
-    fulltext = " ".join(filter(None, [
-        str(link.get("grobid_abstract", "") or ""),
-        str(link.get("grobid_intro",    "") or ""),
-        str(link.get("grobid_methods",  "") or ""),
-        str(link.get("html_text",       "") or ""),
-    ]))
+
+    # Prefer the best-scoring parse method from the parse cache so the outcome LLM
+    # receives whichever parser extracted the richest text, not always GROBID.
+    fulltext = _best_fulltext_from_cache(doi_r)
+    if not fulltext:
+        # Fallback: GROBID sections that run_for_doi already extracted
+        fulltext = " ".join(filter(None, [
+            str(link.get("grobid_abstract", "") or ""),
+            str(link.get("grobid_intro",    "") or ""),
+            str(link.get("grobid_methods",  "") or ""),
+            str(link.get("html_text",       "") or ""),
+        ]))
+
     return extract_outcome(
         doi_r, abstract_r, fulltext, title_r, no_llm=no_llm,
         original_title=str(link.get("resolved_title_o",  "") or ""),
         original_authors=str(link.get("resolved_author_o", "") or ""),
         original_year=str(link.get("resolved_year_o",   "") or ""),
     )
+
+
+def _best_fulltext_from_cache(doi_r: str) -> str:
+    """
+    Read the parse cache for doi_r, score each method, and return the abstract +
+    intro text of the highest-scoring method.  Returns '' on any failure.
+    """
+    cache_file = PARSE_CACHE_DIR / f"parse_{cache_key(doi_r)}.json"
+    if not cache_file.exists():
+        return ""
+    try:
+        with cache_file.open(encoding="utf-8") as fh:
+            results = json.load(fh)
+        from shared.pdf_parsing import best_parse_result
+        best = best_parse_result(results)
+        if not best:
+            return ""
+        return " ".join(filter(None, [
+            str(best.get("abstract", "") or ""),
+            str(best.get("intro",    "") or ""),
+        ]))
+    except Exception:
+        return ""
 
 
 def _parse_originals(result: dict) -> list[dict]:
@@ -613,7 +642,9 @@ def run_extract(no_llm: bool = False,
                 resolved_only: bool = False,
                 from_year: "int | None" = None,
                 to_year: "int | None" = None,
-                predicted_outcome: "str | None" = None) -> pd.DataFrame:
+                predicted_outcome: "str | None" = None,
+                out_path: "Path | None" = None,
+                source: "str | None" = None) -> pd.DataFrame:
     """
     Run Stage 3 and stream results to data/extracted.csv.
 
@@ -685,15 +716,36 @@ def run_extract(no_llm: bool = False,
             predicted_outcome, before, len(df),
         )
 
+    # ── Source filter ─────────────────────────────────────────────────────────
+    if source is not None:
+        before = len(df)
+        df = df[df["source"].str.lower() == source.lower()].reset_index(drop=True)
+        log.info("--source filter %r: %d → %d rows", source, before, len(df))
+
     flora_skip: set[str] = set()
     if skip_flora_validated:
         sheet_path = DATA_DIR / "FLoRA entry sheet - replication list.csv"
         flora_skip = _load_flora_validated_dois(sheet_path)
 
-    out_path = DATA_DIR / "extracted.csv"
+    prod_path = DATA_DIR / "extracted.csv"
+    if out_path is None:
+        out_path = prod_path
+    test_mode = (str(out_path.resolve()) != str(prod_path.resolve()))
+
     output_rows: list[dict] = []
     first_write = True
     processed = 0
+
+    # In test mode: always load the production CSV to identify which DOIs to skip
+    # (those already resolved in extracted.csv should not be re-processed or written
+    #  to extracted-test.csv, even without --resume).
+    resolved_main: dict[str, list[dict]] = {}
+    if test_mode:
+        resolved_main, _ = _load_extracted_rows(prod_path)
+        log.info(
+            "--extracted-test: %d DOIs already resolved in extracted.csv will be skipped",
+            len(resolved_main),
+        )
 
     resolved_rows: dict[str, list[dict]] = {}
     pending_dois: set[str] = set()
@@ -724,6 +776,11 @@ def run_extract(no_llm: bool = False,
 
         # --resume: skip rows already written above.
         if resume and row_key and row_key in resolved_rows:
+            continue
+
+        # --extracted-test: skip DOIs already resolved in the production extracted.csv.
+        if test_mode and row_key and row_key in resolved_main:
+            log.debug("[%s] --extracted-test: resolved in extracted.csv — skipping", doi_r_check)
             continue
 
         # False positives are excluded from Stage 3 — only replications and reproductions proceed.
@@ -997,6 +1054,22 @@ if __name__ == "__main__":
             "Choices: failure | success | mixed | descriptive | uninformative | other."
         ),
     )
+    parser.add_argument(
+        "--extracted-test", action="store_true",
+        help=(
+            "Write output to data/extracted-test.csv instead of extracted.csv. "
+            "Skips DOIs already resolved in extracted.csv; re-runs target_pending "
+            "rows and new rows not yet present in either CSV."
+        ),
+    )
+    parser.add_argument(
+        "--source", type=str, default=None, metavar="SOURCE",
+        help=(
+            "Only process rows from this source "
+            "(openalex | bob_reed | i4r | semantic_scholar | …). "
+            "Case-insensitive. Matches the 'source' column in filtered.csv."
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -1017,6 +1090,8 @@ if __name__ == "__main__":
                 from_year=args.from_year,
                 to_year=args.to_year,
                 predicted_outcome=args.predicted_outcome,
+                out_path=(DATA_DIR / "extracted-test.csv") if args.extracted_test else None,
+                source=args.source,
             )
     finally:
         token_counter.print_summary()

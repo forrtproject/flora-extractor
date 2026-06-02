@@ -37,10 +37,20 @@ def create_app(test_config: dict | None = None) -> Flask:
     from validate.routes.flora import flora_bp
     from validate.routes.disambiguation import disambiguation_bp
     from validate.routes.pipeline import pipeline_bp
-    from validate.routes.extract_view import extract_view_bp
+    from validate.routes.extract_view import make_extract_blueprint, add_shared_routes
     from validate.routes.search_view import search_view_bp
     from validate.routes.filter_view import filter_view_bp
     from validate.routes.target_pending import target_pending_bp
+
+    extract_view_bp = make_extract_blueprint(
+        "extract_view", DATA_DIR / "extracted.csv", "/extract", "extract"
+    )
+    add_shared_routes(extract_view_bp)
+
+    extract_test_view_bp = make_extract_blueprint(
+        "extract_test_view", DATA_DIR / "extracted-test.csv",
+        "/extract-test", "extract_test", test_mode=True,
+    )
 
     app.register_blueprint(batch_bp)
     app.register_blueprint(multi_orig_bp)
@@ -51,6 +61,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.register_blueprint(disambiguation_bp)
     app.register_blueprint(pipeline_bp)
     app.register_blueprint(extract_view_bp)
+    app.register_blueprint(extract_test_view_bp)
     app.register_blueprint(search_view_bp)
     app.register_blueprint(filter_view_bp)
     app.register_blueprint(target_pending_bp)

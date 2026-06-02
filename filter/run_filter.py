@@ -37,12 +37,19 @@ def _append_row(out_path, row_dict: dict, first: bool) -> None:
 
 
 def run_filter(limit: "int | None" = None,
-               offset: "int | None" = None) -> pd.DataFrame:
+               offset: "int | None" = None,
+               from_year: "int | None" = None,
+               to_year: "int | None" = None,
+               source: "str | None" = None) -> pd.DataFrame:
     """Run the filter pipeline, streaming results to data/filtered.csv.
 
-    limit  — stop after processing this many new rows (None = no limit).
-    offset — skip the first N unprocessed rows before starting (None = start from beginning).
-             Useful for targeted reruns on a slice of the CSV.
+    limit     — stop after processing this many new rows (None = no limit).
+    offset    — skip the first N unprocessed rows before starting.
+    from_year — only process rows where year_r >= from_year.
+    to_year   — only process rows where year_r <= to_year.
+    source    — only process rows where the source column equals this value
+                (e.g. 'openalex', 'bob_reed', 'i4r', 'semantic_scholar').
+                Case-insensitive. None = all sources.
     """
     candidates_path = DATA_DIR / "candidates.csv"
     if not candidates_path.exists():
@@ -53,6 +60,30 @@ def run_filter(limit: "int | None" = None,
     df = pd.read_csv(candidates_path, dtype=str, encoding="utf-8-sig").fillna("")
     df = df.reindex(columns=CANDIDATES_COLS, fill_value="")
     log.info("Stage 2: loaded %d candidates", len(df))
+
+    # ── Year filter ───────────────────────────────────────────────────────────
+    if from_year is not None or to_year is not None:
+        def _year_int(v: str) -> "int | None":
+            try:
+                return int(v)
+            except (ValueError, TypeError):
+                return None
+        years = df["year_r"].apply(_year_int)
+        mask  = pd.Series(True, index=df.index)
+        if from_year is not None:
+            mask &= years.apply(lambda y: y is not None and y >= from_year)
+        if to_year is not None:
+            mask &= years.apply(lambda y: y is not None and y <= to_year)
+        before = len(df)
+        df = df[mask].reset_index(drop=True)
+        log.info("--year filter %s–%s: %d → %d rows",
+                 from_year or "any", to_year or "any", before, len(df))
+
+    # ── Source filter ─────────────────────────────────────────────────────────
+    if source is not None:
+        before = len(df)
+        df = df[df["source"].str.lower() == source.lower()].reset_index(drop=True)
+        log.info("--source filter %r: %d → %d rows", source, before, len(df))
 
     out_path = DATA_DIR / "filtered.csv"
 
@@ -143,14 +174,36 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Stage 2 Filter pipeline")
     parser.add_argument(
         "--limit", type=int, default=None, metavar="N",
-        help="Stop after processing N new rows (None = unlimited).",
+        help="Stop after processing N new rows.",
     )
     parser.add_argument(
         "--offset", type=int, default=None, metavar="N",
         help="Skip the first N unprocessed rows before starting.",
     )
+    parser.add_argument(
+        "--from-year", type=int, default=None, metavar="YYYY",
+        help="Only process rows where year_r >= YYYY.",
+    )
+    parser.add_argument(
+        "--to-year", type=int, default=None, metavar="YYYY",
+        help="Only process rows where year_r <= YYYY.",
+    )
+    parser.add_argument(
+        "--source", type=str, default=None, metavar="SOURCE",
+        help=(
+            "Only process rows from this source "
+            "(openalex | bob_reed | i4r | semantic_scholar | …). "
+            "Case-insensitive."
+        ),
+    )
     args = parser.parse_args()
     try:
-        run_filter(limit=args.limit, offset=args.offset)
+        run_filter(
+            limit=args.limit,
+            offset=args.offset,
+            from_year=args.from_year,
+            to_year=args.to_year,
+            source=args.source,
+        )
     finally:
         token_counter.print_summary()

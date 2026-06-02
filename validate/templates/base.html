@@ -19,6 +19,8 @@
      class="{{ 'active' if active_page == 'filter' else '' }}">Filter</a>
   <a href="{{ url_for('extract_view.extract_page') }}"
      class="{{ 'active' if active_page == 'extract' else '' }}">Extract</a>
+  <a href="{{ url_for('extract_test_view.extract_page') }}"
+     class="{{ 'active' if active_page == 'extract_test' else '' }}">Extract Test</a>
   <a href="/target-pending"
      class="{{ 'active' if active_page == 'target_pending' else '' }}">Target Pending</a>
   {% if session.reviewer_id %}

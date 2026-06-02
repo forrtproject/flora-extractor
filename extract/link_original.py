@@ -29,7 +29,7 @@ from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_C
 from shared.disambiguation import is_umbrella_paper, jaccard_similarity
 from shared import token_counter
 from shared.llm_client import identify_original_with_llm
-from shared.pdf_parsing import parse_all as _parse_all
+from shared.pdf_parsing import parse_all as _parse_all, best_parse_result as _best_parse_shared
 from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_openalex_by_doi
 from shared.pdf_sources import acquire_pdf
 from shared.utils import cache_key, clean_doi
@@ -478,24 +478,13 @@ def _cands_row(doi_r: str, cands_df: pd.DataFrame) -> dict:
 def _best_parse_result(parse_results: dict[str, dict]) -> dict:
     """Return the parse result with the richest content.
 
-    Scoring: each reference is worth 500 points (references are the most
-    useful input for the LLM linking step); abstract and intro contribute
-    their character count.  Methods that errored score -1 and are skipped
-    unless all methods errored, in which case we fall back to the grobid
-    result (or the first available result).
+    Delegates to shared.pdf_parsing.best_parse_result so the scoring formula
+    is identical to what the UI badge and _get_outcome use — one source of truth.
+    Falls back to grobid (or first available result) if all methods errored.
     """
-    def _score(r: dict) -> int:
-        if r.get("error"):
-            return -1
-        refs     = r.get("references") or []
-        abstract = r.get("abstract")   or ""
-        intro    = r.get("intro")      or ""
-        return len(refs) * 500 + len(abstract) + len(intro)
-
-    scored = [(m, _score(r), r) for m, r in parse_results.items()]
-    valid  = [(m, s, r) for m, s, r in scored if s >= 0]
-    if valid:
-        return max(valid, key=lambda x: x[1])[2]
+    best = _best_parse_shared(parse_results)
+    if best is not None:
+        return best
     return parse_results.get("grobid", next(iter(parse_results.values())))
 
 

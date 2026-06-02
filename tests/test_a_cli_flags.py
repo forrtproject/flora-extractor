@@ -71,3 +71,92 @@ class TestNoLlmClassifyMatchType:
             result = classify_match_type(row, no_llm=True)
         mock_llm.assert_not_called()
         assert result["original_match_type"] == "single_original"
+
+
+# ── --extracted-test flag tests ───────────────────────────────────────────────
+
+import pandas as pd
+from pathlib import Path
+from shared.schema import EXTRACTED_COLS, FILTERED_COLS
+
+
+def _make_filtered_csv(tmp_path: Path, dois: list) -> Path:
+    rows = []
+    for i, doi in enumerate(dois):
+        row = {col: "" for col in FILTERED_COLS}
+        row["doi_r"]         = doi
+        row["title_r"]       = f"Title {i}"
+        row["filter_status"] = "replication"
+        row["year_r"]        = "2020"
+        rows.append(row)
+    p = tmp_path / "filtered.csv"
+    pd.DataFrame(rows).to_csv(p, index=False, encoding="utf-8-sig")
+    return p
+
+
+def _make_extracted_csv(tmp_path: Path, doi: str, link_method: str) -> Path:
+    row = {col: "" for col in EXTRACTED_COLS}
+    row["doi_r"]         = doi
+    row["link_method"]   = link_method
+    row["filter_status"] = "replication"
+    row["pair_id"]       = "abc"
+    p = tmp_path / "extracted.csv"
+    pd.DataFrame([row]).to_csv(p, index=False, encoding="utf-8-sig")
+    return p
+
+
+_EMPTY_LINK = {
+    "resolution_method": "none", "resolved_doi_o": "",
+    "resolved_title_o": "", "resolved_author_o": "",
+    "resolved_year_o": "", "llm_confidence": "low",
+    "resolution_score": 0, "llm_evidence": "", "llm_model": "",
+}
+_EMPTY_OUTCOME = {
+    "outcome": "uninformative", "outcome_phrase": "",
+    "outcome_confidence": "low", "out_quote_source": "",
+    "outcome_reasoning": "",
+}
+
+
+class TestExtractedTestFlag:
+    def _run_test_extract(self, tmp_path, filtered_dois, main_doi, main_link_method):
+        """Helper: sets up CSVs and runs run_extract in test mode with all API calls mocked."""
+        import extract.run_extract as rex
+        (tmp_path / "llm").mkdir(exist_ok=True)
+        _make_filtered_csv(tmp_path, filtered_dois)
+        _make_extracted_csv(tmp_path, main_doi, main_link_method)
+        test_out = tmp_path / "extracted-test.csv"
+        prod_csv = tmp_path / "extracted.csv"
+        with patch.object(rex, "DATA_DIR", tmp_path), \
+             patch.object(rex, "LLM_CACHE_DIR", tmp_path / "llm"), \
+             patch("extract.run_extract.classify_match_type",
+                   return_value={"original_match_type": "single_original",
+                                 "original_match_confidence": "low"}), \
+             patch("extract.run_extract.run_for_doi", return_value=_EMPTY_LINK), \
+             patch("extract.run_extract._get_outcome", return_value=_EMPTY_OUTCOME), \
+             patch("extract.run_extract._save_parse_cache"):
+            rex.run_extract(no_llm=True, no_pdf=True, out_path=test_out)
+        return test_out
+
+    def test_skips_resolved_doi_from_main_csv(self, tmp_path):
+        """DOI already resolved in extracted.csv must not appear in extracted-test.csv."""
+        doi_resolved = "10.1111/resolved"
+        doi_new      = "10.2222/new"
+        test_path = self._run_test_extract(
+            tmp_path, [doi_resolved, doi_new], doi_resolved, "author_year_match"
+        )
+        assert test_path.exists(), "extracted-test.csv was not created"
+        df = pd.read_csv(test_path, dtype=str, encoding="utf-8-sig").fillna("")
+        dois_in_test = set(df["doi_r"].tolist())
+        assert doi_resolved not in dois_in_test, "resolved DOI should be skipped in test mode"
+        assert doi_new in dois_in_test, "new DOI should be processed in test mode"
+
+    def test_processes_target_pending_doi_from_main_csv(self, tmp_path):
+        """DOI with target_pending in extracted.csv must be re-processed in test mode."""
+        doi_pending = "10.3333/pending"
+        test_path = self._run_test_extract(
+            tmp_path, [doi_pending], doi_pending, "target_pending"
+        )
+        assert test_path.exists()
+        df = pd.read_csv(test_path, dtype=str, encoding="utf-8-sig").fillna("")
+        assert doi_pending in df["doi_r"].tolist(), "target_pending DOI should be re-processed"

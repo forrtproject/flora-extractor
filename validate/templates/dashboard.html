@@ -54,6 +54,15 @@ a.kpi-card:hover { border-color:#3b82f6; box-shadow:0 0 0 2px #bfdbfe; }
 
 .dash-section { margin-bottom:20px; }
 .null-note { font-size:11px; color:#94a3b8; font-style:italic; }
+.section-divider {
+  border:none; border-top:2px solid #e2e8f0; margin:24px 0 16px;
+}
+.section-badge {
+  display:inline-flex; align-items:center; gap:6px;
+  background:#f5f3ff; border:1px solid #ddd6fe; border-radius:6px;
+  padding:4px 10px; font-size:11px; font-weight:700; color:#6d28d9;
+  margin-bottom:12px;
+}
 </style>
 {% endblock %}
 
@@ -141,7 +150,72 @@ a.kpi-card:hover { border-color:#3b82f6; box-shadow:0 0 0 2px #bfdbfe; }
     </div>
   </div>
 
-  <!-- ── Outcome Distribution ──────────────────────────────────────────────── -->
+  <!-- ── Link Method + Model (extracted.csv) ──────────────────────────────── -->
+  <div class="two-col">
+    <div class="stat-card">
+      <h3>Link Method (extracted.csv)</h3>
+      <div class="stat-row">
+        <span>Author / year match</span>
+        <span><strong id="lm-author" style="color:#16a34a">—</strong>
+          <span class="stat-pct" id="lm-author-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>LLM fulltext</span>
+        <span><strong id="lm-fulltext" style="color:#1d4ed8">—</strong>
+          <span class="stat-pct" id="lm-fulltext-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>LLM abstract</span>
+        <span><strong id="lm-abstract" style="color:#0284c7">—</strong>
+          <span class="stat-pct" id="lm-abstract-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>No original found</span>
+        <span><strong id="lm-nof" style="color:#475569">—</strong>
+          <span class="stat-pct" id="lm-nof-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>Target pending</span>
+        <span><strong id="lm-pending" style="color:#f59e0b">—</strong>
+          <span class="stat-pct" id="lm-pending-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>API error</span>
+        <span><strong id="lm-err" style="color:#dc2626">—</strong>
+          <span class="stat-pct" id="lm-err-pct"></span></span>
+      </div>
+    </div>
+    <div class="stat-card">
+      <h3>LLM Model Used (extracted.csv)</h3>
+      <div class="stat-row">
+        <span>Gemini</span>
+        <span><strong id="mod-gemini" style="color:#059669">—</strong>
+          <span class="stat-pct" id="mod-gemini-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>GPT (OpenAI)</span>
+        <span><strong id="mod-gpt" style="color:#2563eb">—</strong>
+          <span class="stat-pct" id="mod-gpt-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>Qwen (OpenRouter)</span>
+        <span><strong id="mod-qwen" style="color:#7c3aed">—</strong>
+          <span class="stat-pct" id="mod-qwen-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>Other</span>
+        <span><strong id="mod-other" style="color:#475569">—</strong>
+          <span class="stat-pct" id="mod-other-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>None (rule-based)</span>
+        <span><strong id="mod-none" style="color:#94a3b8">—</strong>
+          <span class="stat-pct" id="mod-none-pct"></span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Outcome Distribution (extracted.csv) ──────────────────────────────── -->
   <div class="stat-card" style="margin-bottom:16px">
     <h3>Outcome Distribution (extracted.csv)</h3>
     <div class="pie-wrap">
@@ -153,7 +227,118 @@ a.kpi-card:hover { border-color:#3b82f6; box-shadow:0 0 0 2px #bfdbfe; }
     </div>
   </div>
 
+  <!-- ── Extract Test section ──────────────────────────────────────────────── -->
+  <hr class="section-divider">
+  <div class="section-badge">⬡ Extract Test — extracted-test.csv</div>
+
+  <div class="kpi-row" style="margin-bottom:16px">
+    <a href="/extract-test" class="kpi-card">
+      <div class="kpi-num" id="k-test-count" style="color:#7c3aed">—</div>
+      <div class="kpi-label">Test Rows</div>
+      <div class="kpi-sub">extracted-test.csv</div>
+    </a>
+    <div class="kpi-card">
+      <div class="kpi-num" id="k-test-pending" style="color:#f59e0b">—</div>
+      <div class="kpi-label">Target Pending</div>
+      <div class="kpi-sub">need original ID</div>
+    </div>
+  </div>
+
+  <div class="three-col">
+    <div class="stat-card">
+      <h3>Match Types (test)</h3>
+      <div class="stat-row">
+        <span>Single original</span>
+        <span><strong id="tm-single" style="color:#16a34a">—</strong>
+          <span class="stat-pct" id="tm-single-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>Multiple match</span>
+        <span><strong id="tm-mmatch" style="color:#f59e0b">—</strong>
+          <span class="stat-pct" id="tm-mmatch-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>Multiple original</span>
+        <span><strong id="tm-morig" style="color:#7c3aed">—</strong>
+          <span class="stat-pct" id="tm-morig-pct"></span></span>
+      </div>
+    </div>
+    <div class="stat-card">
+      <h3>Link Method (test)</h3>
+      <div class="stat-row">
+        <span>Author / year match</span>
+        <span><strong id="tlm-author" style="color:#16a34a">—</strong>
+          <span class="stat-pct" id="tlm-author-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>LLM fulltext</span>
+        <span><strong id="tlm-fulltext" style="color:#1d4ed8">—</strong>
+          <span class="stat-pct" id="tlm-fulltext-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>LLM abstract</span>
+        <span><strong id="tlm-abstract" style="color:#0284c7">—</strong>
+          <span class="stat-pct" id="tlm-abstract-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>No original found</span>
+        <span><strong id="tlm-nof" style="color:#475569">—</strong>
+          <span class="stat-pct" id="tlm-nof-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>Target pending</span>
+        <span><strong id="tlm-pending" style="color:#f59e0b">—</strong>
+          <span class="stat-pct" id="tlm-pending-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>API error</span>
+        <span><strong id="tlm-err" style="color:#dc2626">—</strong>
+          <span class="stat-pct" id="tlm-err-pct"></span></span>
+      </div>
+    </div>
+    <div class="stat-card">
+      <h3>LLM Model Used (test)</h3>
+      <div class="stat-row">
+        <span>Gemini</span>
+        <span><strong id="tmod-gemini" style="color:#059669">—</strong>
+          <span class="stat-pct" id="tmod-gemini-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>GPT (OpenAI)</span>
+        <span><strong id="tmod-gpt" style="color:#2563eb">—</strong>
+          <span class="stat-pct" id="tmod-gpt-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>Qwen (OpenRouter)</span>
+        <span><strong id="tmod-qwen" style="color:#7c3aed">—</strong>
+          <span class="stat-pct" id="tmod-qwen-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>Other</span>
+        <span><strong id="tmod-other" style="color:#475569">—</strong>
+          <span class="stat-pct" id="tmod-other-pct"></span></span>
+      </div>
+      <div class="stat-row">
+        <span>None (rule-based)</span>
+        <span><strong id="tmod-none" style="color:#94a3b8">—</strong>
+          <span class="stat-pct" id="tmod-none-pct"></span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="stat-card" style="margin-bottom:16px">
+    <h3>Outcome Distribution (extracted-test.csv)</h3>
+    <div class="pie-wrap">
+      <svg id="pie-test-svg" width="140" height="140" viewBox="0 0 160 160"
+           style="flex-shrink:0;overflow:visible"></svg>
+      <div class="pie-legend" id="pie-test-legend">
+        <div class="null-note">Loading…</div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Validation Stats ──────────────────────────────────────────────────── -->
+  <hr class="section-divider">
   <div class="two-col">
     <div class="stat-card">
       <h3>Votes</h3>
@@ -260,6 +445,33 @@ function pct(n, total) {
 }
 function fmt(n) { return n == null ? '—' : Number(n).toLocaleString(); }
 
+// ── Shared helpers ────────────────────────────────────────────────────────────
+function fillLinkMethod(pfx, csv, p) {
+  const total = csv[`${p}extracted_count`] || 0;
+  const pairs = [
+    [`${pfx}-author`,  `${p}method_author_year_match`],
+    [`${pfx}-fulltext`,`${p}method_llm_fulltext`],
+    [`${pfx}-abstract`,`${p}method_llm_abstract`],
+    [`${pfx}-nof`,     `${p}method_no_original_found`],
+    [`${pfx}-pending`, `${p}method_target_pending`],
+    [`${pfx}-err`,     `${p}method_api_error`],
+  ];
+  pairs.forEach(([id, key]) => {
+    const v = csv[key] || 0;
+    $(id).textContent = fmt(v);
+    $(`${id}-pct`).textContent = pct(v, total);
+  });
+}
+
+function fillModel(pfx, csv, p) {
+  const total = csv[`${p}extracted_count`] || 0;
+  ['gemini','gpt','qwen','other','none'].forEach(fam => {
+    const v = csv[`${p}model_${fam}`] || 0;
+    $(`${pfx}-${fam}`).textContent = fmt(v);
+    $(`${pfx}-${fam}-pct`).textContent = pct(v, total);
+  });
+}
+
 // ── Load everything ──────────────────────────────────────────────────────────
 async function loadAll() {
   $('status').textContent = 'Loading…';
@@ -270,42 +482,66 @@ async function loadAll() {
     ]);
 
     // Pipeline progress
-    $('k-candidates').textContent    = fmt(csv.candidates_count);
-    $('k-filtered').textContent      = fmt(csv.filtered_count);
-    $('k-extracted').textContent     = fmt(csv.extracted_count);
+    $('k-candidates').textContent     = fmt(csv.candidates_count);
+    $('k-filtered').textContent       = fmt(csv.filtered_count);
+    $('k-extracted').textContent      = fmt(csv.extracted_count);
     $('k-target-pending').textContent = fmt(csv.target_pending_count);
 
     // Filter breakdown
     const ftotal = csv.filtered_count || 0;
-    $('f-replication').textContent   = fmt(csv.filter_replication);
+    $('f-replication').textContent     = fmt(csv.filter_replication);
     $('f-replication-pct').textContent = pct(csv.filter_replication, ftotal);
-    $('f-reproduction').textContent  = fmt(csv.filter_reproduction);
+    $('f-reproduction').textContent    = fmt(csv.filter_reproduction);
     $('f-reproduction-pct').textContent = pct(csv.filter_reproduction, ftotal);
-    $('f-needs-review').textContent  = fmt(csv.filter_needs_review);
+    $('f-needs-review').textContent    = fmt(csv.filter_needs_review);
     $('f-needs-review-pct').textContent = pct(csv.filter_needs_review, ftotal);
-    $('f-false-positive').textContent = fmt(csv.filter_false_positive);
+    $('f-false-positive').textContent  = fmt(csv.filter_false_positive);
     $('f-false-positive-pct').textContent = pct(csv.filter_false_positive, ftotal);
 
-    // Match types
-    const mtotal = (csv.match_single || 0) + (csv.match_multiple_match || 0) + (csv.match_multiple_original || 0);
-    $('m-single').textContent    = fmt(csv.match_single);
-    $('m-single-pct').textContent = pct(csv.match_single, mtotal);
+    // Match types (extracted.csv)
+    const mtotal = (csv.match_single||0) + (csv.match_multiple_match||0) + (csv.match_multiple_original||0);
+    $('m-single').textContent         = fmt(csv.match_single);
+    $('m-single-pct').textContent     = pct(csv.match_single, mtotal);
     $('m-multiple-match').textContent = fmt(csv.match_multiple_match);
     $('m-multiple-match-pct').textContent = pct(csv.match_multiple_match, mtotal);
-    $('m-multiple-original').textContent = fmt(csv.match_multiple_original);
+    $('m-multiple-original').textContent  = fmt(csv.match_multiple_original);
     $('m-multiple-original-pct').textContent = pct(csv.match_multiple_original, mtotal);
 
-    // Outcome pie
+    // Link method + model (extracted.csv)
+    fillLinkMethod('lm',  csv, '');
+    fillModel('mod', csv, '');
+
+    // Outcome pie (extracted.csv)
     const outcomes = ['success','failure','mixed','uninformative','descriptive','pending','api_error'];
     const pieData  = outcomes.map(k => ({
-      key:   k,
-      label: PIE_LABELS[k],
-      color: PIE_COLORS[k],
-      value: csv[`outcome_${k}`] || 0,
+      label: PIE_LABELS[k], color: PIE_COLORS[k], value: csv[`outcome_${k}`] || 0,
     }));
     const outTotal = pieData.reduce((s, d) => s + d.value, 0);
     drawDonut($('pie-svg'), pieData);
     renderLegend($('pie-legend'), pieData, outTotal);
+
+    // ── Extract Test section ─────────────────────────────────────────────────
+    $('k-test-count').textContent   = fmt(csv.test_extracted_count);
+    $('k-test-pending').textContent = fmt(csv.test_target_pending_count);
+
+    const tmtotal = (csv.test_match_single||0) + (csv.test_match_multiple_match||0) + (csv.test_match_multiple_original||0);
+    $('tm-single').textContent        = fmt(csv.test_match_single);
+    $('tm-single-pct').textContent    = pct(csv.test_match_single, tmtotal);
+    $('tm-mmatch').textContent        = fmt(csv.test_match_multiple_match);
+    $('tm-mmatch-pct').textContent    = pct(csv.test_match_multiple_match, tmtotal);
+    $('tm-morig').textContent         = fmt(csv.test_match_multiple_original);
+    $('tm-morig-pct').textContent     = pct(csv.test_match_multiple_original, tmtotal);
+
+    fillLinkMethod('tlm',  csv, 'test_');
+    fillModel('tmod', csv, 'test_');
+
+    // Outcome pie (extracted-test.csv)
+    const testPieData = outcomes.map(k => ({
+      label: PIE_LABELS[k], color: PIE_COLORS[k], value: csv[`test_outcome_${k}`] || 0,
+    }));
+    const testOutTotal = testPieData.reduce((s, d) => s + d.value, 0);
+    drawDonut($('pie-test-svg'), testPieData);
+    renderLegend($('pie-test-legend'), testPieData, testOutTotal);
 
     // Validation stats
     $('k-votes').textContent     = fmt(val.total_votes);

@@ -139,19 +139,33 @@ False positives are **included** in `filtered.csv` with `filter_status = false_p
 
 ## CLI Flags
 
+| Flag | Description |
+| --- | --- |
+| `--limit N` | Stop after writing N new rows. The next run picks up where it left off. |
+| `--offset N` | Skip the first N unprocessed rows before starting — useful for targeted reruns on a slice. |
+| `--from-year YYYY` | Only process rows where `year_r >= YYYY`. Applied before the resume check. |
+| `--to-year YYYY` | Only process rows where `year_r <= YYYY`. Combine with `--from-year` for a closed range. |
+| `--source SOURCE` | Only process rows from this source (case-insensitive). Values: `openalex`, `bob_reed`, `i4r`, `semantic_scholar`. Applied before the resume check. |
+
 ```bash
 # Run everything (resumes if interrupted)
 python -m filter.run_filter
 
-# Process only the first 10 unprocessed rows (quick test)
+# Quick test — first 10 unprocessed rows
 python -m filter.run_filter --limit 10
 
-# Skip the first 500 unprocessed rows (targeted reruns)
-python -m filter.run_filter --offset 500
-```
+# Only filter OpenAlex rows
+python -m filter.run_filter --source openalex
 
-`--limit N` stops after N new rows are written. The next run picks up where it left off.  
-`--offset N` skips the first N unprocessed rows before starting — useful to re-run a specific slice.
+# Only filter I4R rows from 2015 onwards
+python -m filter.run_filter --source i4r --from-year 2015
+
+# Filter a specific year window across all sources
+python -m filter.run_filter --from-year 2010 --to-year 2020
+
+# Quick spot-check: 20 rows from Semantic Scholar
+python -m filter.run_filter --source semantic_scholar --limit 20
+```
 
 ---
 

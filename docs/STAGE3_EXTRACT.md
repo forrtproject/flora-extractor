@@ -33,6 +33,8 @@ Results are streamed to `data/extracted.csv` one row at a time. You can open the
 | `--from-year YYYY` | Only process rows from `filtered.csv` where `year_r >= YYYY`. Useful for targeting a specific publication-year window (e.g. 2011–2021 for the failure-weighted extraction pass). |
 | `--to-year YYYY` | Only process rows from `filtered.csv` where `year_r <= YYYY`. Combine with `--from-year` for a closed year range. |
 | `--predicted-outcome OUTCOME` | Pre-screen rows using keyword-only outcome prediction on title + abstract **before** any API calls. Choices: `failure \| success \| mixed \| descriptive \| uninformative \| other` (`other` = any predicted outcome except failure). No LLM is used for the pre-screen — it runs the same regex patterns as Pass 1 of outcome extraction. Rows the keywords cannot classify fall into `uninformative`, which `other` captures. Use `failure` to build a failure-weighted extraction run and `other` for the complementary pass. |
+| `--extracted-test` | Write output to `data/extracted-test.csv` instead of `extracted.csv`. Skips DOIs already resolved in `extracted.csv`; re-runs `target_pending` rows and rows absent from `extracted.csv`. Use to safely test new pipeline options (multiple-originals, reproductions) before committing results to production. Combine with `--resume` to continue an interrupted test run. See **Test Sandbox** section below. |
+| `--source SOURCE` | Only process rows from this source (case-insensitive). Values: `openalex`, `bob_reed`, `i4r`, `semantic_scholar`. Matches the `source` column in `filtered.csv`. Useful for targeted re-runs when only one source has new papers. |
 
 #### Examples
 
@@ -130,9 +132,11 @@ python -m extract.mix_for_validation --failure-pct 70 --failure-year-from 2011 -
 
 > **Note on `--predicted-outcome` accuracy:** The pre-screen uses keyword regex on title + abstract only — no LLM. It will mis-classify some rows (e.g. a paper that mentions "failed to replicate" in background but succeeded). The actual extracted `outcome` may differ from the prediction. The mix step uses the real extracted outcome, so the final `validation_sample.csv` ratio is accurate even if the extraction passes were approximate.
 
-#### Why `target_pending` rows are hidden in the web app
+#### Why `target_pending` rows are hidden on the Extract tab
 
-The Extract tab always hides rows with `link_method = target_pending` — they are present in `extracted.csv` but not shown to reviewers because there is nothing actionable to validate yet. To inspect them, filter the CSV directly:
+The **Extract** tab hides rows with `link_method = target_pending` — they are present in `extracted.csv` but not shown to reviewers because there is nothing actionable to validate yet.
+
+The **Extract Test** tab shows `target_pending` rows so you can monitor which DOIs are still unresolved during a test run. To inspect them from the CSV directly:
 
 ```bash
 python -c "
@@ -162,7 +166,7 @@ For every confirmed replication or reproduction in `filtered.csv`, this stage re
 
 Stage 3 determines `original_match_type` as its first step (see Classification below), then routes each paper through one of two pipelines. Both pipelines start with an early LLM resolution step designed to resolve ~60% of papers before any PDF is needed.
 
-False positives (`filter_status = false_positive`) are **passed through** to `extracted.csv` with all extraction columns left empty and `link_method = target_pending`. This keeps the full candidate pool visible in Stage 4.
+False positives (`filter_status = false_positive`) are **skipped entirely** — they are not written to `extracted.csv` and do not appear in Stage 4.
 
 ---
 
@@ -269,32 +273,44 @@ If still unresolved. 11-tier waterfall — each tier is skipped once a PDF is do
 | 10   | Playwright headless Chromium (publisher-specific CSS selectors)      |
 | 11   | HTML text extraction (up to 50 000 chars as full-text substitute)    |
 
-### Step 5 — Reference Extraction
+### Step 5 — Multi-Method PDF Parsing + Best Result Selection
 
-Uses **pdfminer.six** locally — no GROBID server required. Extracts four sections:
+`parse_all()` from `shared/pdf_parsing.py` runs **six parsers in parallel** on the downloaded PDF and returns a dict keyed by method name. Each result has the same uniform shape: `{abstract, intro, references, raw_text, error}`.
 
-| Section      | Content                                          |
-| ------------ | ------------------------------------------------ |
-| `abstract`   | Paper abstract                                   |
-| `intro`      | Introduction text                                |
-| `methods`    | Methods section text                             |
-| `references` | Parsed `{authors, year, title, raw_ref}` structs |
+| Parser | What it does |
+| --- | --- |
+| `openalex_xml` | OpenAlex GROBID XML — structured sections when OpenAlex has it |
+| `pdfminer` | Raw text extraction via pdfminer.six; section splitting via heuristics |
+| `grobid` | GROBID server (optional); structured references + section splitting |
+| `docpluck` | Lightweight structured extraction (optional dependency) |
+| `opendataloader` | Java-based PDF-to-Markdown converter (requires JVM) |
+| `markitdown` | Microsoft MarkItDown — PDF to clean Markdown; good prose quality |
 
-**Fallback 1 — Direct PDF to LLM** (`success_direct_llm`): if pdfminer extracts 0 references, the full PDF is sent to the LLM as inline `application/pdf` data. Efficient for native-text PDFs.
+**Scoring and winner selection:** each result is scored:
 
-**Fallback 2 — PyMuPDF image rendering** (`success_image_llm`): if direct-PDF also returns nothing, the last ~20% of pages (max 6) are rendered as 1.5× grayscale PNGs and sent to the LLM. Used for scanned PDFs.
+```text
+score = refs × 300  +  abstract_len  +  intro_len × 2  +  min(raw_text_len ÷ 5, 1000)
+```
 
-GROBID fast-path: after extraction, if one candidate matches the reference list exactly by DOI or author+year (Jaccard similarity), resolve immediately. Set `link_method = author_year_match`.
+The highest-scoring result is selected as `best`. Its `abstract`, `intro`, and `references` are used in Step 6. All results are cached to `cache/parse/parse_{key}.json`. MarkItDown's raw `.md` output is additionally cached to `cache/markdown/{key}.md`.
+
+The **web app detail panel** shows all six methods side-by-side with a **★ USED BY LLM** badge on the winning column and each method's score.
+
+**Fallbacks for PDF acquisition failure:** if no PDF was downloaded, `parse_all()` still runs — most parsers return an error result and the scoring falls back to the OpenAlex XML or abstract text. The pipeline does not crash.
+
+GROBID fast-path (rule-based before Step 6): after parsing, if one candidate matches the reference list exactly by DOI or author+year (Jaccard similarity), resolve immediately. Set `link_method = author_year_match`.
 
 ### Step 6 — Full LLM Identification
 
-Builds a structured prompt:
+Builds a structured prompt using the **best parse result** selected in Step 5:
 
 - Replication title + abstract
 - Numbered candidate list with full author lists and OpenAlex IDs
-- PDF intro (1 000 chars), methods (700 chars), up to 80 reference entries
+- Best parser's intro text and up to 80 reference entries
 - If PDF failed but URL available: URL passed for LLM URL grounding
 - If HTML text extracted: used as intro substitute
+
+The winner's text is chosen by the same scoring formula as Step 5 — so if MarkItDown produced richer prose than GROBID for this paper, the LLM sees MarkItDown's intro. The structured reference list also comes from the winner (if the winner has sparse references, the LLM prompt's reference section will be thin — acceptable since citation matching already ran in Step 5's fast-path).
 
 Returns: `doi_o`, `title_o`, `link_evidence`, `link_confidence`. Sets `link_method = llm_fulltext`.
 
@@ -319,7 +335,7 @@ When a keyword fires, `outcome_phrase` is set to the **matched sentence plus one
 
 **Pass 2 — LLM outcome extraction** (no high-confidence keyword match):
 
-- Sends title + abstract to the LLM (fulltext is no longer sent)
+- Sends title + abstract + fulltext to the LLM. The fulltext comes from `_best_fulltext_from_cache()`: reads `cache/parse/parse_{key}.json`, scores all parse methods with the same formula as Step 5, and uses the winner's `abstract + intro`. Falls back to the GROBID sections from the link step if no parse cache exists yet.
 - When the original study is known from linking (`resolved_title_o` / `resolved_author_o` / `resolved_year_o`), prepends a citation block: `"This paper replicates: {authors} ({year}). {title}"` so the LLM can reason about whether *that specific effect* was confirmed
 - Returns `outcome`, `outcome_phrase` (verbatim 2–3 sentence quote from the abstract), `outcome_confidence`, `out_quote_source`, and `outcome_reasoning` (one sentence explaining the classification choice)
 - `outcome_reasoning` is empty for keyword-matched rows (Pass 1)
@@ -413,11 +429,12 @@ Same keyword + LLM process as Shared Pipeline Step 7. Run once per original (eac
 
 | File                         | Status        | Description                                                                  |
 | ---------------------------- | ------------- | ---------------------------------------------------------------------------- |
-| `extract/run_extract.py`     | Implemented   | Orchestrator — match-type classify, route, write CSV; CLI flags              |
-| `extract/link_original.py`   | Implemented   | Shared Pipeline (A/B) — 7-step single/multiple-match; title-pattern stage    |
+| `extract/run_extract.py`     | Implemented   | Orchestrator — match-type classify, route, write CSV; CLI flags including `--extracted-test`; `_best_fulltext_from_cache()` for dynamic outcome text |
+| `extract/link_original.py`   | Implemented   | Shared Pipeline (A/B) — 7-step single/multiple-match; runs `parse_all()`, scores all methods, uses winner for LLM |
 | `extract/multi_original.py`  | Ported        | Multi-Original Pipeline (C) — detection logic may need further tuning        |
 | `extract/code_outcome.py`    | Implemented   | Keyword + LLM outcome extraction; `no_llm` flag supported                    |
-| `shared/pdf_parsing.py`      | Implemented   | Five-method PDF parse comparison (`parse_all`); uniform result shape         |
+| `extract/promote_test.py`    | Implemented   | Merge rows from `extracted-test.csv` into `extracted.csv`; `--all`, `--doi`, `--dry-run`, `--force` |
+| `shared/pdf_parsing.py`      | Implemented   | **Six**-method PDF parse comparison (`parse_all`); uniform result shape; `score_parse_result()`, `best_parse_result()`, `best_parse_method_name()` |
 | `shared/pdf_sources.py`      | Implemented   | OpenAlex GROBID XML as Tier 0 PDF source; 11-tier waterfall                  |
 | `shared/llm_client.py`       | Implemented   | Gemini → OpenAI → OpenRouter fallback chain; `llm_response` stored in cache  |
 
@@ -447,7 +464,7 @@ This fires as Stage 2.5 in the pipeline, after author-year heuristics and before
 
 ### D — PDF parse comparison (`shared/pdf_parsing.py`)
 
-`parse_all(doi_r, pdf_path, oa_xml=None)` runs five methods and returns a uniform dict keyed by method name:
+`parse_all(doi_r, pdf_path, oa_xml=None)` runs **six** methods and returns a uniform dict keyed by method name:
 
 | Method | Source |
 | --- | --- |
@@ -455,9 +472,10 @@ This fires as Stage 2.5 in the pipeline, after author-year heuristics and before
 | `pdfminer` | Local pdfminer.six text extraction |
 | `grobid` | GROBID pipeline (pdfminer + LLM fallbacks) |
 | `docpluck` | Docpluck library (if installed) |
-| `docling` | Docling library (if installed) |
+| `opendataloader` | Java-based PDF-to-Markdown (if JVM available) |
+| `markitdown` | Microsoft MarkItDown — PDF to clean Markdown (June 2026) |
 
-Each result has shape `{source, title, abstract, intro, references: list, raw_text, error: str|None}`. Results cached to `cache/parse/parse_{key}.json` after each DOI is processed.
+Each result has shape `{source, title, abstract, intro, references: list, raw_text, error: str|None}`. Results cached to `cache/parse/parse_{key}.json`. MarkItDown's raw `.md` output is additionally cached to `cache/markdown/{key}.md`.
 
 ### E — Extract tab UI (2026-05-05)
 
@@ -471,19 +489,15 @@ Each result has shape `{source, title, abstract, intro, references: list, raw_te
 
 ### F — parse_all integration into Stage 6 (`link_original.py`)
 
-Stage 6 (previously "GROBID") now runs **all five parsers in parallel** and picks the richest result to send to the LLM, rather than calling GROBID directly:
+Stage 6 (previously "GROBID") now runs **all parsers in parallel** via `parse_all()` and picks the richest result to send to the LLM, rather than calling GROBID directly. The scoring formula (unified with the UI badge — see June 2026 improvements below):
 
 ```text
-openalex_xml  → parse_openalex_xml()
-pdfminer      → parse_pdfminer()
-grobid        → parse_grobid()   (pdfminer + server + LLM fallbacks)
-docpluck      → parse_docpluck()
-docling       → parse_docling()
+score = refs × 300  +  abstract_len  +  intro_len × 2  +  min(raw_text_len ÷ 5, 1000)
 ```
 
-`_best_parse_result()` scores each result by `len(references) × 500 + len(abstract) + len(intro)`. References are weighted 500× because they are the most useful input for the LLM linking step. The highest-scoring non-errored result wins; if all methods fail, the GROBID result is used as the fallback.
+`best_parse_result()` from `shared/pdf_parsing.py` is used — the same function as the UI winner badge — so the log, the badge, and the actual LLM input always agree. The highest-scoring non-errored result wins; if all methods fail, the GROBID result is used as the fallback.
 
-The winner is logged at INFO level (`parse_all best=<method> refs=N abstract=N intro=N`). All five methods are logged at DEBUG level so scores are visible for diagnostics.
+The winner is logged at INFO level (`parse_all best=<method> refs=N abstract=N intro=N`). All methods are logged at DEBUG level so scores are visible for diagnostics.
 
 `no_llm=True` is threaded into `parse_grobid` → `run_grobid`, so Gemini fallback tiers inside GROBID are also skipped when the flag is set.
 
@@ -576,6 +590,50 @@ The LLM response now includes `"outcome_reasoning"`: a one-sentence note explain
 #### Schema change (`shared/schema.py`)
 
 `outcome_reasoning` was added to `EXTRACT_ADDED_COLS` after `out_quote_source`. Old rows in `extracted.csv` get an empty string for this column on re-read.
+
+---
+
+## Recent Improvements (2026-06-01)
+
+### L — MarkItDown as 6th parse method (`shared/pdf_parsing.py`)
+
+`parse_markitdown(pdf_path, doi_r)` converts a PDF to clean Markdown using [Microsoft MarkItDown](https://github.com/microsoft/markitdown). The raw `.md` output is cached separately at `cache/markdown/{key}.md` (human-readable). The function extracts `abstract`, `intro`, and a basic reference list using a line-by-line scanner that handles multiple academic heading styles: `# Abstract`, `**Abstract**`, `ABSTRACT` (ALL CAPS), `1. Introduction` (numbered).
+
+`PARSE_METHODS` now includes `"markitdown"` as the 6th entry.
+
+### M — Unified scoring formula + shared API
+
+`score_parse_result(r)`, `best_parse_result(results)`, and `best_parse_method_name(results)` are now exported from `shared/pdf_parsing.py`. Both `link_original.py` and `_get_outcome` use `best_parse_result()` — previously `link_original.py` had its own local `_best_parse_result` with a different formula (`refs × 500`). The unified formula:
+
+```text
+score = refs × 300  +  abstract_len  +  intro_len × 2  +  min(raw_text_len ÷ 5, 1000)
+```
+
+This ensures the parse winner shown in the UI badge, used by DOI resolution, and used by outcome extraction are always the same method.
+
+### N — Dynamic best-parser text for outcome extraction
+
+`_get_outcome` in `run_extract.py` now calls `_best_fulltext_from_cache(doi_r)` before falling back to GROBID text. This reads `cache/parse/parse_{key}.json`, scores all methods, and uses the winner's `abstract + intro` as the LLM fulltext input. Since `link_original.py` writes the parse cache before `_get_outcome` runs, the cache is always available for newly processed rows.
+
+### O — Extract Test sandbox
+
+New workflow for safely testing pipeline options (multiple-originals, reproductions) before promoting results to production:
+
+```bash
+# Run with --extracted-test to write to extracted-test.csv
+python -m extract.run_extract --extracted-test [--resume] [other flags]
+
+# Promote to production when satisfied
+python -m extract.promote_test --all           # promote everything
+python -m extract.promote_test --doi 10.xxx/y  # promote one row
+python -m extract.promote_test --all --dry-run # preview only
+```
+
+**Skip logic:** `--extracted-test` skips DOIs already resolved in `extracted.csv` (won't overwrite production data). It re-runs DOIs that are `target_pending` in `extracted.csv` and processes rows absent from `extracted.csv` entirely.
+
+**Web app:** `/extract-test` tab mirrors the Extract tab but reads `extracted-test.csv`. Unlike the Extract tab, it shows `target_pending` rows so you can monitor unresolved DOIs during a test run. Each row has a **Promote →** button; a **Promote Selected** bulk action is available in the action bar.
+
+**Parse winner badge:** The detail panel parse comparison table shows a **★ USED BY LLM** badge on the winning column plus each method's score. If a row's parse cache is missing the `markitdown` key (written before MarkItDown was added), the detail panel runs it lazily on first open and updates the cache.
 
 ---
 

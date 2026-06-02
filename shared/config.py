@@ -19,11 +19,12 @@ PDF_CACHE_DIR    = CACHE_DIR / "pdfs"
 GROBID_CACHE_DIR = CACHE_DIR / "grobid"
 LLM_CACHE_DIR    = CACHE_DIR / "llm"
 OA_CACHE_DIR     = CACHE_DIR / "openalex"
-OA_XML_CACHE_DIR = CACHE_DIR / "openalex_xml"   # GROBID XML from content.openalex.org
-PARSE_CACHE_DIR  = CACHE_DIR / "parse"           # per-method parse results
+OA_XML_CACHE_DIR     = CACHE_DIR / "openalex_xml"   # GROBID XML from content.openalex.org
+PARSE_CACHE_DIR      = CACHE_DIR / "parse"           # per-method parse results
+MARKITDOWN_CACHE_DIR = CACHE_DIR / "markdown"        # raw .md files from MarkItDown
 
 for _d in [DATA_DIR, PDF_CACHE_DIR, GROBID_CACHE_DIR, LLM_CACHE_DIR,
-           OA_CACHE_DIR, OA_XML_CACHE_DIR, PARSE_CACHE_DIR]:
+           OA_CACHE_DIR, OA_XML_CACHE_DIR, PARSE_CACHE_DIR, MARKITDOWN_CACHE_DIR]:
     _d.mkdir(parents=True, exist_ok=True)
 
 # ── Input / output files ──────────────────────────────────────────────────────

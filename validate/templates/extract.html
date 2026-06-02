@@ -187,6 +187,12 @@ a.dl:hover { text-decoration:underline; }
       ▶ Run selected with model
     </button>
     <button class="btn-clear" onclick="clearSelection()">Clear selection</button>
+    {% if test_mode %}
+    <button class="btn-run" id="btn-promote-sel" onclick="promoteSelected()"
+      style="background:#7c3aed;border-color:#6d28d9;margin-left:8px" disabled>
+      Promote Selected →
+    </button>
+    {% endif %}
   </div>
 
   <table class="ex-tbl">
@@ -207,6 +213,8 @@ a.dl:hover { text-decoration:underline; }
         <th>MATCHED ORIGINAL</th>
         <th>CONF</th>
         <th class="cn">RANK</th>
+        <th style="width:80px">PDF</th>
+        {% if test_mode %}<th style="width:72px">PROMOTE</th>{% endif %}
       </tr>
       <tr class="flt-row">
         <th></th><th></th>
@@ -269,10 +277,19 @@ a.dl:hover { text-decoration:underline; }
           </select>
         </th>
         <th></th>
+        <th>
+          <select class="cf" data-col="pdf_status" id="pdf-filter">
+            <option value="">All</option>
+            <option value="available">Available</option>
+            <option value="not_available">Not Available</option>
+            <option value="not_needed">Not Needed</option>
+          </select>
+        </th>
+        {% if test_mode %}<th></th>{% endif %}
       </tr>
     </thead>
     <tbody id="ex-body">
-      <tr><td colspan="15" style="padding:20px;text-align:center;color:#94a3b8">Loading…</td></tr>
+      <tr><td id="loading-cell" colspan="16" style="padding:20px;text-align:center;color:#94a3b8">Loading…</td></tr>
     </tbody>
   </table>
   <div id="ex-pager" style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:12px"></div>
@@ -283,6 +300,9 @@ a.dl:hover { text-decoration:underline; }
 {% block scripts %}
 <script>
 'use strict';
+const API_PREFIX = '{{ api_prefix }}';
+const TEST_MODE  = {{ 'true' if test_mode else 'false' }};
+const COLSPAN    = 15 + 1 + (TEST_MODE ? 1 : 0);  // base + PDF + optional Promote
 const detailCache = new Map();
 let debTimer  = null;
 let pageRows  = [];   // rows from current page (for client-side text filter)
@@ -318,6 +338,11 @@ function pillConf(v) {
   const m = {high:'pg',medium:'py',low:'psl'};
   return `<span class="pp ${m[v]||'psl'}">${v||'—'}</span>`;
 }
+function pillPdf(v) {
+  const cls = {available:'pg', not_available:'py', not_needed:'psl'};
+  const lbl = {available:'Available', not_available:'Not Available', not_needed:'Not Needed'};
+  return `<span class="pp ${cls[v]||'psl'}">${lbl[v]||v||'—'}</span>`;
+}
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function trunc(s,n=120){ const t=String(s||''); return t.length>n?t.slice(0,n)+'…':t; }
 function buildCitation(authors, year, title, journal, doi) {
@@ -338,6 +363,7 @@ const SERVER_SELECT_PARAMS = {
   link_method:   'method',
   filter_status: 'fstatus',
   match_type:    'mtype',
+  pdf_status:    'pdf_status',
 };
 
 function buildServerParams(page) {
@@ -354,8 +380,8 @@ function buildServerParams(page) {
 
 function loadPage(page) {
   document.getElementById('ex-body').innerHTML =
-    '<tr><td colspan="15" style="padding:20px;text-align:center;color:#94a3b8">Loading…</td></tr>';
-  fetch('/api/extract/list?' + buildServerParams(page))
+    `<tr><td colspan="${COLSPAN}" style="padding:20px;text-align:center;color:#94a3b8">Loading…</td></tr>`;
+  fetch(`${API_PREFIX}/list?` + buildServerParams(page))
     .then(r => r.json())
     .then(data => {
       if (data.error) { renderError(data.error); return; }
@@ -373,7 +399,7 @@ function loadPage(page) {
 
 function renderError(msg) {
   document.getElementById('ex-body').innerHTML =
-    `<tr><td colspan="15" style="padding:20px;text-align:center;color:#ef4444">${esc(msg)}</td></tr>`;
+    `<tr><td colspan="${COLSPAN}" style="padding:20px;text-align:center;color:#ef4444">${esc(msg)}</td></tr>`;
 }
 
 function renderPager() {
@@ -425,7 +451,7 @@ function renderFiltered() {
 function renderTable(rows) {
   const body = document.getElementById('ex-body');
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="15" style="padding:20px;text-align:center;color:#94a3b8">No rows found</td></tr>';
+    body.innerHTML = `<tr><td colspan="${COLSPAN}" style="padding:20px;text-align:center;color:#94a3b8">No rows found</td></tr>`;
     return;
   }
 
@@ -455,9 +481,15 @@ function renderTable(rows) {
       <td class="cori" title="${esc(r.title_o)}">${esc(trunc(r.title_o,55))}</td>
       <td>${pillConf(r.link_confidence)}</td>
       <td class="cn">${r.original_rank}/${r.n_originals}</td>
+      <td>${pillPdf(r.pdf_status)}</td>
+      ${TEST_MODE ? `<td style="white-space:nowrap" onclick="event.stopPropagation()">
+        <button onclick="promoteRow('${esc(r.doi_r)}')"
+          style="padding:3px 9px;background:#7c3aed;color:#fff;border:none;border-radius:5px;
+                 font-size:10px;font-weight:600;cursor:pointer">Promote →</button>
+      </td>` : ''}
     </tr>
     <tr class="det" id="det-${esc(r.doi_r)}-${esc(r.original_rank)}" style="display:none">
-      <td colspan="15"><div class="dp" id="dp-${esc(r.doi_r)}-${esc(r.original_rank)}">
+      <td colspan="${COLSPAN}"><div class="dp" id="dp-${esc(r.doi_r)}-${esc(r.original_rank)}">
         <span style="color:#94a3b8;font-size:11px">Loading…</span>
       </div></td>
     </tr>`;
@@ -484,6 +516,10 @@ function toggleSelect(chk) {
 function updateSelCount() {
   document.getElementById('sel-count').textContent = `${selected.size} selected`;
   document.getElementById('btn-run').disabled = selected.size === 0;
+  if (TEST_MODE) {
+    const b = document.getElementById('btn-promote-sel');
+    if (b) b.disabled = selected.size === 0;
+  }
 }
 
 function updateSelectAll() {
@@ -531,7 +567,7 @@ async function runSelected() {
     if (statusCell) statusCell.innerHTML = '<span style="color:#94a3b8;font-size:11px">⏳ running…</span>';
 
     try {
-      const resp = await fetch('/api/extract/rerun-doi', {
+      const resp = await fetch(`${API_PREFIX}/rerun-doi`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({doi}),
@@ -560,6 +596,53 @@ async function runSelected() {
 
   btn.disabled = false;
   btn.textContent = '▶ Run selected with model';
+}
+
+/* ── Promote (test_mode only) ────────────────────────────────────────────── */
+async function promoteRow(doi) {
+  try {
+    const resp = await fetch(`${API_PREFIX}/promote`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({doi}),
+    });
+    const data = await resp.json();
+    if (data.error) { alert('Promote failed: ' + data.error); return; }
+    // Remove the row (and its detail panel) from the table immediately
+    const tr  = document.querySelector(`tr.dr[data-doi="${CSS.escape(doi)}"]`);
+    const det = tr ? tr.nextElementSibling : null;
+    if (tr)  tr.remove();
+    if (det && det.classList.contains('det')) det.remove();
+    totalRows = Math.max(0, totalRows - 1);
+    document.getElementById('cnt').textContent =
+      `${totalRows.toLocaleString()} rows — page ${curPage} of ${totalPages}`;
+    selected.delete([...selected].find(k => k.startsWith(doi + '|')) || '');
+    updateSelCount();
+    showToast(`Promoted ${doi} → extracted.csv`);
+  } catch(e) {
+    alert('Promote failed: ' + String(e));
+  }
+}
+
+async function promoteSelected() {
+  const dois = [...selected].map(k => k.split('|')[0]);
+  for (const doi of dois) await promoteRow(doi);
+  clearSelection();
+}
+
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.textContent = msg;
+  Object.assign(t.style, {
+    position:'fixed', bottom:'20px', right:'20px',
+    background:'#1e293b', color:'#f1f5f9',
+    padding:'8px 16px', borderRadius:'6px',
+    fontSize:'12px', zIndex:'9999',
+    boxShadow:'0 2px 8px rgba(0,0,0,.3)',
+    transition:'opacity .3s',
+  });
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.opacity='0'; setTimeout(() => t.remove(), 300); }, 2700);
 }
 
 function appendRunResult(dp, model, data) {
@@ -669,7 +752,7 @@ function toggleRow(tr) {
     return;
   }
 
-  fetch(`/api/extract/detail?doi=${encodeURIComponent(doi)}&rank=${encodeURIComponent(rank)}`)
+  fetch(`${API_PREFIX}/detail?doi=${encodeURIComponent(doi)}&rank=${encodeURIComponent(rank)}`)
     .then(r => r.json())
     .then(d => {
       if (d.error) {
@@ -902,18 +985,24 @@ function renderDetail(div, d) {
 
   // ── 6b: PDF Parse Comparison ──────────────────────────────────────────────
   const pr = d.parse_results || {};
-  const parseMethods = ['openalex_xml','pdfminer','grobid','docpluck','opendataloader'];  // docling disabled
+  const parseMethods = ['openalex_xml','pdfminer','grobid','docpluck','opendataloader','markitdown'];  // docling disabled
   const hasParsed = parseMethods.some(m => pr[m] && !pr[m].error);
   const parseLabels = {openalex_xml:'OA XML',pdfminer:'pdfminer',grobid:'GROBID',
-                       docpluck:'Docpluck',opendataloader:'OpenDataLoader'};
+                       docpluck:'Docpluck',opendataloader:'OpenDataLoader',markitdown:'MarkItDown'};
 
-  function parseMethodCol(m) {
-    const r = pr[m] || {};
-    const ok = !r.error;
-    const hdr = `<th style="padding:4px 8px;text-align:center;background:#f8fafc;
-        border-bottom:1px solid #e2e8f0;font-size:9px;font-weight:700;
-        text-transform:uppercase;color:${ok?'#166534':'#991b1b'}">
+  function parseMethodCol(m, bestMethod, scores) {
+    const r      = pr[m] || {};
+    const ok     = !r.error;
+    const isWinner = m === bestMethod && ok;
+    const score  = (scores && scores[m] != null) ? scores[m] : null;
+    const hdr = `<th style="padding:4px 8px;text-align:center;
+        background:${isWinner ? '#f0fdf4' : '#f8fafc'};
+        border-bottom:1px solid ${isWinner ? '#6ee7b7' : '#e2e8f0'};
+        font-size:9px;font-weight:700;text-transform:uppercase;
+        color:${ok ? (isWinner ? '#065f46' : '#166534') : '#991b1b'}">
+      ${isWinner ? '<span style="background:#059669;color:#fff;padding:1px 5px;border-radius:3px;font-size:8px;margin-right:4px">★ USED BY LLM</span>' : ''}
       ${parseLabels[m]}
+      ${score != null && ok ? `<div style="font-size:8px;font-weight:400;color:#64748b;margin-top:1px">score: ${score}</div>` : ''}
       ${ok ? '' : `<div style="font-size:9px;font-weight:400;color:#94a3b8;
           white-space:normal;max-width:100px;margin-top:2px">${esc(r.error||'')}</div>`}
     </th>`;
@@ -962,7 +1051,9 @@ function renderDetail(div, d) {
       </div>`;
     }
 
-    const cols = parseMethods.map(parseMethodCol);
+    const bestMethod = d.best_parse_source || '';
+    const scores     = d.parse_scores     || {};
+    const cols = parseMethods.map(m => parseMethodCol(m, bestMethod, scores));
     return `<div class="sc slt">${hdrRow}
       <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:11px">

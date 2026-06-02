@@ -98,52 +98,108 @@ def api_csv_stats():
         stats.update(filter_replication=0, filter_reproduction=0,
                      filter_false_positive=0, filter_needs_review=0)
 
-    # ── Extracted ─────────────────────────────────────────────────────────────
-    ext_path = DATA_DIR / "extracted.csv"
-    if ext_path.exists():
-        try:
-            edf = pd.read_csv(ext_path, encoding="utf-8-sig", dtype=str,
-                              on_bad_lines="skip",
-                              usecols=lambda c: c in
-                              ("doi_r", "link_method", "original_match_type", "outcome"))
-            stats["extracted_count"] = len(edf)
-
-            if "link_method" in edf.columns:
-                stats["target_pending_count"] = int((edf["link_method"] == "target_pending").sum())
-            else:
-                stats["target_pending_count"] = 0
-
-            if "original_match_type" in edf.columns:
-                vc = edf["original_match_type"].value_counts().to_dict()
-                stats["match_single"]            = int(vc.get("single_original",    0))
-                stats["match_multiple_match"]    = int(vc.get("multiple_match",     0))
-                stats["match_multiple_original"] = int(vc.get("multiple_original",  0))
-            else:
-                stats.update(match_single=0, match_multiple_match=0, match_multiple_original=0)
-
-            if "outcome" in edf.columns:
-                vc = edf["outcome"].value_counts().to_dict()
-                for key in ("success", "failure", "mixed", "uninformative",
-                            "descriptive", "pending", "api_error"):
-                    stats[f"outcome_{key}"] = int(vc.get(key, 0))
-            else:
-                for key in ("success", "failure", "mixed", "uninformative",
-                            "descriptive", "pending", "api_error"):
-                    stats[f"outcome_{key}"] = 0
-
-        except Exception:
-            stats["extracted_count"] = None
-            stats["target_pending_count"] = 0
-            stats.update(match_single=0, match_multiple_match=0, match_multiple_original=0)
-            for key in ("success", "failure", "mixed", "uninformative",
-                        "descriptive", "pending", "api_error"):
-                stats[f"outcome_{key}"] = 0
-    else:
-        stats["extracted_count"] = None
-        stats["target_pending_count"] = 0
-        stats.update(match_single=0, match_multiple_match=0, match_multiple_original=0)
-        for key in ("success", "failure", "mixed", "uninformative",
-                    "descriptive", "pending", "api_error"):
-            stats[f"outcome_{key}"] = 0
+    # ── Extracted + Extracted Test ────────────────────────────────────────────
+    for prefix, path in [("", DATA_DIR / "extracted.csv"),
+                         ("test_", DATA_DIR / "extracted-test.csv")]:
+        _add_extracted_stats(stats, prefix, path)
 
     return jsonify(stats)
+
+
+_OUTCOME_KEYS = ("success", "failure", "mixed", "uninformative",
+                 "descriptive", "pending", "api_error")
+_METHOD_KEYS  = ("author_year_match", "llm_abstract", "llm_fulltext",
+                 "no_original_found", "target_pending", "api_error")
+
+
+def _model_family(model_str: str) -> str:
+    """Bucket a model identifier into gemini / gpt / qwen / none / other."""
+    m = str(model_str or "").lower().strip()
+    if not m:
+        return "none"
+    if m.startswith("gemini"):
+        return "gemini"
+    if m.startswith(("gpt-", "o1", "o3", "o4")):
+        return "gpt"
+    if "qwen" in m:
+        return "qwen"
+    return "other"
+
+
+def _add_extracted_stats(stats: dict, prefix: str, path) -> None:
+    """Populate stats dict with extracted-CSV metrics under the given prefix."""
+    zero_defaults = {
+        f"{prefix}target_pending_count": 0,
+        f"{prefix}match_single":            0,
+        f"{prefix}match_multiple_match":     0,
+        f"{prefix}match_multiple_original":  0,
+        **{f"{prefix}method_{k}": 0 for k in _METHOD_KEYS},
+        **{f"{prefix}model_gemini": 0, f"{prefix}model_gpt": 0,
+           f"{prefix}model_qwen":  0, f"{prefix}model_none": 0,
+           f"{prefix}model_other": 0},
+        **{f"{prefix}outcome_{k}": 0 for k in _OUTCOME_KEYS},
+    }
+
+    if not path.exists():
+        stats[f"{prefix}extracted_count"] = None
+        stats.update(zero_defaults)
+        return
+
+    try:
+        edf = pd.read_csv(
+            path, encoding="utf-8-sig", dtype=str, on_bad_lines="skip",
+            usecols=lambda c: c in ("doi_r", "link_method", "link_llm_model",
+                                    "original_match_type", "outcome"),
+        ).fillna("")
+
+        stats[f"{prefix}extracted_count"] = len(edf)
+
+        # target_pending shortcut
+        if "link_method" in edf.columns:
+            stats[f"{prefix}target_pending_count"] = int(
+                (edf["link_method"] == "target_pending").sum()
+            )
+        else:
+            stats[f"{prefix}target_pending_count"] = 0
+
+        # match type
+        if "original_match_type" in edf.columns:
+            vc = edf["original_match_type"].value_counts().to_dict()
+            stats[f"{prefix}match_single"]            = int(vc.get("single_original",   0))
+            stats[f"{prefix}match_multiple_match"]    = int(vc.get("multiple_match",    0))
+            stats[f"{prefix}match_multiple_original"] = int(vc.get("multiple_original", 0))
+        else:
+            stats.update({f"{prefix}match_single": 0,
+                          f"{prefix}match_multiple_match": 0,
+                          f"{prefix}match_multiple_original": 0})
+
+        # link method
+        if "link_method" in edf.columns:
+            vc = edf["link_method"].value_counts().to_dict()
+            for k in _METHOD_KEYS:
+                stats[f"{prefix}method_{k}"] = int(vc.get(k, 0))
+        else:
+            for k in _METHOD_KEYS:
+                stats[f"{prefix}method_{k}"] = 0
+
+        # model family (only for LLM-resolved rows)
+        if "link_llm_model" in edf.columns:
+            families = edf["link_llm_model"].apply(_model_family).value_counts().to_dict()
+            for fam in ("gemini", "gpt", "qwen", "none", "other"):
+                stats[f"{prefix}model_{fam}"] = int(families.get(fam, 0))
+        else:
+            for fam in ("gemini", "gpt", "qwen", "none", "other"):
+                stats[f"{prefix}model_{fam}"] = 0
+
+        # outcome
+        if "outcome" in edf.columns:
+            vc = edf["outcome"].value_counts().to_dict()
+            for k in _OUTCOME_KEYS:
+                stats[f"{prefix}outcome_{k}"] = int(vc.get(k, 0))
+        else:
+            for k in _OUTCOME_KEYS:
+                stats[f"{prefix}outcome_{k}"] = 0
+
+    except Exception:
+        stats[f"{prefix}extracted_count"] = None
+        stats.update(zero_defaults)

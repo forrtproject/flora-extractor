@@ -32,7 +32,7 @@ from typing import Any
 from .grobid import run_grobid
 from .config import log
 
-PARSE_METHODS: list[str] = ["openalex_xml", "pdfminer", "grobid", "docpluck", "opendataloader"]  # docling excluded (heavy deps)
+PARSE_METHODS: list[str] = ["openalex_xml", "pdfminer", "grobid", "docpluck", "opendataloader", "markitdown"]  # docling excluded (heavy deps)
 
 _EMPTY: dict[str, Any] = {
     "source": "", "title": "", "abstract": "", "intro": "",
@@ -221,6 +221,207 @@ def parse_opendataloader(pdf_path) -> dict:
     })
 
 
+# ── Method 7: MarkItDown ─────────────────────────────────────────────────────
+
+def _md_section(text: str, heading: str) -> str:
+    """
+    Extract a named section from markdown text using a line-by-line scanner.
+
+    Handles all common academic PDF heading styles produced by MarkItDown:
+      • Markdown headers:   # Abstract  /  ## Introduction
+      • Bold headings:      **Abstract**  /  __Introduction__
+      • ALL-CAPS lines:     ABSTRACT  /  INTRODUCTION
+      • Numbered sections:  1. Introduction  /  1 Introduction
+      • Plain with colon:   Abstract:
+    """
+    import re
+
+    h_lower = heading.lower().strip()
+
+    # Patterns that indicate any section heading — used to stop collecting
+    _md_hdr   = re.compile(r"^#{1,4}\s+\S", re.IGNORECASE)
+    _bold_hdr = re.compile(r"^(?:\*{2}|__).+?(?:\*{2}|__)\s*$")
+    _caps_hdr = re.compile(r"^[A-Z][A-Z\s\-]{2,60}$")
+    _num_hdr  = re.compile(r"^\d+\.?\s+[A-Z]")
+
+    def _heading_text(line: str) -> str | None:
+        """Return normalised heading text if line is a heading, else None."""
+        s = line.strip()
+        if not s:
+            return None
+        if _md_hdr.match(s):
+            return re.sub(r"^#{1,4}\s+", "", s).lower().strip()
+        if _bold_hdr.match(s):
+            return re.sub(r"^\*{2}|^__|__$|\*{2}$", "", s).lower().strip()
+        if _caps_hdr.match(s) and not s[0].isdigit():
+            return s.lower().strip()
+        if _num_hdr.match(s):
+            return re.sub(r"^\d+\.?\s+", "", s).lower().strip()
+        return None
+
+    def _matches_heading(norm: str) -> bool:
+        """True if the normalised heading text refers to the section we want."""
+        return norm == h_lower or norm.startswith(h_lower)
+
+    lines      = text.splitlines()
+    start_idx  = None
+
+    for i, line in enumerate(lines):
+        norm = _heading_text(line)
+        if norm is not None and _matches_heading(norm):
+            start_idx = i + 1
+            break
+
+    if start_idx is None:
+        return ""
+
+    content: list[str] = []
+    for line in lines[start_idx:]:
+        norm = _heading_text(line)
+        if norm is not None and not _matches_heading(norm):
+            break
+        content.append(line)
+
+    return "\n".join(content).strip()[:3000]
+
+
+def _md_references(text: str) -> list[dict]:
+    """
+    Parse a basic reference list from MarkItDown text.
+    Returns a list of {"raw": str} dicts — enough for the scoring function to
+    count references, even without full structured metadata.
+    """
+    import re
+    refs_text = _md_section(text, "references") or _md_section(text, "bibliography")
+    if not refs_text:
+        return []
+    # Split on numbered entries (1. / [1] / •) or blank-line-separated blocks
+    items = re.split(r"\n(?=\[\d+\]|\d+\.\s|\d+\s+[A-Z]|•\s)", refs_text)
+    result = []
+    for item in items:
+        item = item.strip()
+        # Strip leading markers
+        item = re.sub(r"^(?:\[\d+\]|\d+\.?)\s*", "", item).strip()
+        if len(item) > 15:          # skip very short noise entries
+            result.append({"raw": item[:300]})
+        if len(result) >= 60:
+            break
+    return result
+
+
+def parse_markitdown(pdf_path, doi_r: str) -> dict:
+    """Convert PDF to Markdown using Microsoft MarkItDown. Caches .md to MARKITDOWN_CACHE_DIR.
+
+    doi_r is required for a stable cache key — PDF paths change, DOIs don't.
+    """
+    from .config import MARKITDOWN_CACHE_DIR
+    from .utils import cache_key as _ck
+
+    if pdf_path is None:
+        return _error_result("markitdown", "no pdf_path")
+    if not doi_r:
+        return _error_result("markitdown", "doi_r required for cache key")
+
+    pdf_path = Path(pdf_path)
+    key      = _ck(doi_r)
+    md_path  = MARKITDOWN_CACHE_DIR / f"{key}.md"
+
+    if md_path.exists():
+        raw_text = md_path.read_text(encoding="utf-8", errors="replace")
+    else:
+        if not pdf_path.exists():
+            return _error_result("markitdown", f"file not found: {pdf_path}")
+        try:
+            from markitdown import MarkItDown  # type: ignore
+        except ImportError:
+            return _error_result(
+                "markitdown",
+                "markitdown not installed — run: pip install markitdown",
+            )
+        try:
+            result   = MarkItDown().convert(str(pdf_path))
+            raw_text = result.text_content or ""
+        except Exception as exc:
+            return _error_result("markitdown", str(exc))
+        try:
+            md_path.write_text(raw_text, encoding="utf-8")
+        except Exception:
+            pass  # cache write failure is non-fatal
+
+    abstract = _md_section(raw_text, "abstract")
+    intro    = _md_section(raw_text, "introduction")
+    refs     = _md_references(raw_text)
+
+    # Fallback: if abstract is empty, skip the header block (first ~15 lines of
+    # journal metadata) and take the next substantial paragraph.
+    if not abstract:
+        lines = raw_text.splitlines()
+        skip  = min(15, len(lines))
+        body  = "\n".join(lines[skip:]).strip()
+        # Take text up to the first heading
+        import re
+        first_hdg = re.search(
+            r"^(?:#{1,4}\s|\*{2}[A-Z]|[A-Z]{3,}$|\d+\.\s)",
+            body, re.MULTILINE,
+        )
+        abstract = (body[: first_hdg.start()].strip() if first_hdg else body[:800])
+
+    return _uniform_shape("markitdown", {
+        "abstract":   abstract,
+        "intro":      intro,
+        "references": refs,
+        "raw_text":   raw_text[:5000],
+    })
+
+
+# ── Parse scoring ─────────────────────────────────────────────────────────────
+
+def score_parse_result(r: dict) -> int:
+    """
+    Score a single parse-method result. Higher = better text for LLM consumption.
+    Returns -1 for any result with an error (unusable).
+
+    Scoring rationale:
+      - References (×300): the strongest signal of structured extraction — a method
+        that found references almost certainly extracted coherent body text too.
+      - Intro (×2): longer intro = more context for the LLM; weighted above abstract
+        because many papers hide the abstract in the header block.
+      - Abstract (×1): valuable but sometimes extracted as metadata noise.
+      - Raw text (÷5, capped at 1000): tie-breaker for methods with no structured
+        sections (e.g. pdfminer on a poorly structured PDF).
+    """
+    if r.get("error"):
+        return -1
+    refs    = len(r.get("references") or [])
+    abs_len = len(r.get("abstract")   or "")
+    int_len = len(r.get("intro")      or "")
+    raw_len = len(r.get("raw_text")   or "")
+    return refs * 300 + abs_len + int_len * 2 + min(raw_len // 5, 1000)
+
+
+def best_parse_result(results: "dict[str, dict]") -> "dict | None":
+    """
+    Return the highest-scoring parse result from a parse_all() output dict.
+    Returns None if all methods errored.
+    """
+    best_r, best_s = None, -1
+    for r in results.values():
+        s = score_parse_result(r)
+        if s > best_s:
+            best_s, best_r = s, r
+    return best_r if best_s >= 0 else None
+
+
+def best_parse_method_name(results: "dict[str, dict]") -> str:
+    """Return the key of the highest-scoring parse method, or '' if all errored."""
+    best_k, best_s = "", -1
+    for k, r in results.items():
+        s = score_parse_result(r)
+        if s > best_s:
+            best_s, best_k = s, k
+    return best_k if best_s >= 0 else ""
+
+
 # ── Orchestrator ─────────────────────────────────────────────────────────────
 
 def parse_all(doi_r: str, pdf_path, oa_xml: dict | None = None,
@@ -233,4 +434,5 @@ def parse_all(doi_r: str, pdf_path, oa_xml: dict | None = None,
         "docpluck":       parse_docpluck(pdf_path),
         # "docling":      parse_docling(pdf_path),  # disabled — heavy deps
         "opendataloader": parse_opendataloader(pdf_path),
+        "markitdown":     parse_markitdown(pdf_path, doi_r=doi_r),
     }

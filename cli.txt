@@ -1,0 +1,52 @@
+python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 --max-per-phrase 1000
+while ($true) { python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 --max-per-phrase 1000 }
+
+python -m filter.run_filter --limit 10
+python -m filter.run_filter
+
+python -m extract.run_extract --limit 5 --no-pdf
+python -m extract.run_extract --skip-flora-validated
+python -m extract.run_extract --skip-flora-validated --no-multiple-originals
+
+python -m extract.run_extract --resume --no-pdf --no-multiple-originals --no-reproductions --skip-flora-validated
+python -m extract.run_extract --no-llm --no-pdf --no-multiple-originals --no-reproductions --skip-flora-validated
+
+python -m extract.run_extract -resume --no-llm --no-pdf --resolved-only --no-multiple-originals --no-reproductions --skip-flora-validated
+
+python -m extract.run_extract --resume --no-llm --no-pdf --resolved-only --no-multiple-originals --no-reproductions --skip-flora-validated
+
+python -m extract.run_extract --resume --resolved-only --no-multiple-originals --no-reproductions --skip-flora-validated
+python -m extract.run_extract --resume --no-multiple-originals --no-reproductions --skip-flora-validated --extracted-test
+
+
+------------------------------------------
+# Failures from 2011–2021 (your main extraction pass)
+python -m extract.run_extract --resume --from-year 2011 --to-year 2021 --predicted-outcome failure --no-multiple-originals --no-reproductions --skip-flora-validated
+
+# Other outcomes from any year (the 25% fill)
+python -m extract.run_extract --resume --predicted-outcome other --no-multiple-originals --no-reproductions --skip-flora-validated
+# Default: 75% failures (2011-2021) + 25% others, all available rows
+python -m extract.mix_for_validation --failure-year-from 2011 --failure-year-to 2021
+
+# Cap at 400 rows total
+python -m extract.mix_for_validation --failure-year-from 2011 --failure-year-to 2021 --n 400
+
+# Try 70/30 split
+python -m extract.mix_for_validation --failure-pct 70 --failure-year-from 2011 --failure-year-to 2021
+
+--------------------------------------------
+# Filter only OpenAlex rows from 2015 onwards
+python -m filter.run_filter --source openalex --from-year 2015
+
+# Filter only I4R rows
+python -m filter.run_filter --source i4r
+
+# Filter a specific year range across all sources
+python -m filter.run_filter --from-year 2010 --to-year 2020
+
+# Combine with limit for a quick spot-check
+python -m filter.run_filter --source openalex --from-year 2018 --limit 20
+
+(the source column — openalex, bob_reed, i4r, semantic_scholar)
+
+

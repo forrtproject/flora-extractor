@@ -316,12 +316,16 @@ def _merge_into_candidates_csv(new_df: pd.DataFrame, out_path: "Path") -> pd.Dat
 # ---------------------------------------------------------------------------
 
 
+_ALL_SOURCES = frozenset({"openalex", "semantic_scholar", "bob_reed", "replication_network", "i4r", "engine"})
+
+
 def run_search(
     from_year: Optional[int] = None,
     to_year: Optional[int] = None,
     max_records_per_phrase: Optional[int] = None,
+    sources: "Optional[set[str]]" = None,
 ) -> pd.DataFrame:
-    """Run all Stage 1 discovery sources and merge results into ``candidates.csv``.
+    """Run Stage 1 discovery sources and merge results into ``candidates.csv``.
 
     The function proceeds in two phases:
 
@@ -342,12 +346,22 @@ def run_search(
         Cap on new rows fetched per phrase per call for OpenAlex and S2.
         Checkpoints are saved at the page boundary so subsequent calls
         continue from that point.  ``None`` = unlimited.
+    sources : set[str], optional
+        Restrict fetching to these sources only.  Valid values:
+        ``openalex``, ``semantic_scholar``, ``bob_reed`` (alias
+        ``replication_network``), ``i4r``, ``engine``.
+        ``None`` = all enabled sources.
 
     Returns
     -------
     pd.DataFrame
         The full deduplicated candidate set after the merge.
     """
+    if sources is not None:
+        sources = {s.lower().strip() for s in sources}
+        # normalise alias
+        if "replication_network" in sources:
+            sources.add("bob_reed")
     yr_label = f"{from_year or 'any'}–{to_year or 'any'}"
     log.info("Stage 1 starting  (years: %s)", yr_label)
 
@@ -365,35 +379,54 @@ def run_search(
         _merge_into_candidates_csv(cached_batch, DATA_DIR / "candidates.csv")
 
     # Phase 2: live fetch from each enabled source.
+    def _want(*names: str) -> bool:
+        """True if any of the given source names is in the requested set (or all sources wanted)."""
+        return sources is None or bool(sources.intersection(names))
+
     frames: list[pd.DataFrame] = []
 
     if is_engine_enabled():
-        log.info("Stage 1: fetching engine candidates (FLORA_USE_ENGINE=1)...")
-        frames.append(fetch_engine_candidates(year_from=from_year, year_to=to_year))
+        if _want("engine"):
+            log.info("Stage 1: fetching engine candidates (FLORA_USE_ENGINE=1)...")
+            frames.append(fetch_engine_candidates(year_from=from_year, year_to=to_year))
+        else:
+            log.info("Stage 1: engine source skipped (not in --source list)")
     else:
-        log.info("Stage 1: fetching OpenAlex candidates...")
+        if _want("openalex"):
+            log.info("Stage 1: fetching OpenAlex candidates...")
+            frames.append(
+                fetch_openalex_candidates(
+                    from_year=from_year,
+                    to_year=to_year,
+                    max_records_per_phrase=max_records_per_phrase,
+                )
+            )
+        else:
+            log.info("Stage 1: OpenAlex source skipped (not in --source list)")
+
+    if _want("semantic_scholar"):
+        log.info("Stage 1: fetching Semantic Scholar candidates...")
         frames.append(
-            fetch_openalex_candidates(
+            fetch_semantic_scholar_candidates(
                 from_year=from_year,
                 to_year=to_year,
                 max_records_per_phrase=max_records_per_phrase,
             )
         )
+    else:
+        log.info("Stage 1: Semantic Scholar source skipped (not in --source list)")
 
-    log.info("Stage 1: fetching Semantic Scholar candidates...")
-    frames.append(
-        fetch_semantic_scholar_candidates(
-            from_year=from_year,
-            to_year=to_year,
-            max_records_per_phrase=max_records_per_phrase,
-        )
-    )
+    if _want("bob_reed", "replication_network"):
+        log.info("Stage 1: fetching Replication Network sheet...")
+        frames.append(fetch_replication_network())
+    else:
+        log.info("Stage 1: Replication Network source skipped (not in --source list)")
 
-    log.info("Stage 1: fetching Replication Network sheet...")
-    frames.append(fetch_replication_network())  # curated list — always fetch all years
-
-    log.info("Stage 1: fetching I4R list...")
-    frames.append(fetch_i4r())  # curated list — always fetch all years
+    if _want("i4r"):
+        log.info("Stage 1: fetching I4R list...")
+        frames.append(fetch_i4r())
+    else:
+        log.info("Stage 1: I4R source skipped (not in --source list)")
 
     combined = (
         pd.concat(frames, ignore_index=True)
@@ -415,17 +448,23 @@ def run_search_auto_advance(
     from_year: int = 2011,
     to_year:   int = 2021,
     max_records_per_phrase: int = 200,
+    sources: "Optional[set[str]]" = None,
 ) -> pd.DataFrame:
     """Process exactly ONE (source, phrase, year) job per invocation.
 
     Jobs cycle through all OpenAlex phrases then all Semantic Scholar phrases
     for the current year before advancing to the next year.  At the start of
     each year's first job, the curated lists (I4R, Replication Network) are
-    also fetched and merged.
+    also fetched and merged (unless --source excludes them).
 
     State is persisted in ``cache/search_state.json`` and resumes across
     invocations.  Old state files that only tracked OpenAlex (``current_phrase_idx``)
     are migrated automatically.
+
+    sources : set[str], optional
+        Restrict to these sources only (same values as run_search).
+        The JOBS list is filtered so the state index cycles only over the
+        requested sources.
 
     Run command:
         python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 --max-per-phrase 200
@@ -433,12 +472,26 @@ def run_search_auto_advance(
     from search.openalex_search import SEARCH_PHRASES as OA_PHRASES, fetch_phrase as oa_fetch
     from search.semantic_scholar_search import SEARCH_PHRASES as S2_PHRASES, fetch_phrase as s2_fetch
 
-    # Combined job list: all OA phrases first, then all S2 phrases.
-    # Each entry is (source_tag, phrase).
-    JOBS = (
+    if sources is not None:
+        sources = {s.lower().strip() for s in sources}
+        if "replication_network" in sources:
+            sources.add("bob_reed")
+
+    def _want_src(*names: str) -> bool:
+        return sources is None or bool(sources.intersection(names))
+
+    # Build the job list filtered to requested sources.
+    ALL_JOBS = (
         [("openalex",          p) for p in OA_PHRASES]
         + [("semantic_scholar", p) for p in S2_PHRASES]
     )
+    JOBS = [j for j in ALL_JOBS if _want_src(j[0])] if sources else ALL_JOBS
+
+    if not JOBS:
+        log.warning("Auto-advance: no jobs match --source %s — nothing to do", sources)
+        out_path = DATA_DIR / "candidates.csv"
+        return (pd.read_csv(out_path, encoding="utf-8-sig")
+                if out_path.exists() else pd.DataFrame(columns=CANDIDATES_COLS))
 
     state  = _load_search_state(from_year, to_year)
     year   = state["current_year"]
@@ -452,19 +505,19 @@ def run_search_auto_advance(
 
     out_path = DATA_DIR / "candidates.csv"
 
-    # Fetch curated lists once at the very first job of each year.
-    if jidx == 0:
+    # Fetch curated lists once at the very first job of each year
+    # (only if those sources are included in the request).
+    if jidx == 0 and _want_src("i4r", "bob_reed", "replication_network"):
         log.info(
             "Auto-advance: year=%d — fetching curated lists (I4R + Replication Network)",
             year,
         )
-        curated = pd.concat(
-            [
-                fetch_i4r(from_year=year, to_year=year),
-                fetch_replication_network(from_year=year, to_year=year),
-            ],
-            ignore_index=True,
-        )
+        curated_frames = []
+        if _want_src("i4r"):
+            curated_frames.append(fetch_i4r(from_year=year, to_year=year))
+        if _want_src("bob_reed", "replication_network"):
+            curated_frames.append(fetch_replication_network(from_year=year, to_year=year))
+        curated = pd.concat(curated_frames, ignore_index=True)
         if not curated.empty:
             _merge_into_candidates_csv(deduplicate_candidates(curated), out_path)
 
@@ -550,6 +603,17 @@ def _parse_args() -> argparse.Namespace:
             "Run repeatedly to advance through the year range."
         ),
     )
+    parser.add_argument(
+        "--source",
+        action="append",
+        metavar="SOURCE",
+        dest="sources",
+        help=(
+            "Only fetch from this source (repeatable for multiple). "
+            "Values: openalex, semantic_scholar, bob_reed, i4r. "
+            "Default: all sources."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -564,11 +628,14 @@ if __name__ == "__main__":
         from_yr = args.from_year or 2011
         to_yr   = args.to_year   or 2021
         max_n   = args.max_per_phrase or 200
-        run_search_auto_advance(from_year=from_yr, to_year=to_yr,
-                                max_records_per_phrase=max_n)
+        run_search_auto_advance(
+            from_year=from_yr, to_year=to_yr, max_records_per_phrase=max_n,
+            sources=set(args.sources) if args.sources else None,
+        )
     else:
         run_search(
             from_year=args.from_year,
             to_year=args.to_year,
             max_records_per_phrase=args.max_per_phrase,
+            sources=set(args.sources) if args.sources else None,
         )
