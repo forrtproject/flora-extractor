@@ -36,7 +36,6 @@ from shared.config import DATA_DIR, OA_CACHE_DIR, log
 from shared.schema import CANDIDATES_COLS
 from search.openalex_search import fetch_openalex_candidates
 from search.semantic_scholar_search import fetch_semantic_scholar_candidates
-from search.external_lists import fetch_i4r, fetch_replication_network
 from search.deduplicate import deduplicate_candidates
 from search.engine_source import fetch_engine_candidates, is_engine_enabled
 
@@ -348,7 +347,7 @@ def _merge_into_candidates_csv(new_df: pd.DataFrame, out_path: "Path") -> pd.Dat
 # ---------------------------------------------------------------------------
 
 
-_ALL_SOURCES = frozenset({"openalex", "semantic_scholar", "bob_reed", "replication_network", "i4r", "engine"})
+_ALL_SOURCES = frozenset({"openalex", "semantic_scholar", "engine"})
 
 
 def run_search(
@@ -380,8 +379,7 @@ def run_search(
         continue from that point.  ``None`` = unlimited.
     sources : set[str], optional
         Restrict fetching to these sources only.  Valid values:
-        ``openalex``, ``semantic_scholar``, ``bob_reed`` (alias
-        ``replication_network``), ``i4r``, ``engine``.
+        ``openalex``, ``semantic_scholar``, ``engine``.
         ``None`` = all enabled sources.
 
     Returns
@@ -452,18 +450,6 @@ def run_search(
     else:
         log.info("Stage 1: Semantic Scholar source skipped (not in --source list)")
 
-    if _want("bob_reed", "replication_network"):
-        log.info("Stage 1: fetching Replication Network sheet...")
-        frames.append(fetch_replication_network())
-    else:
-        log.info("Stage 1: Replication Network source skipped (not in --source list)")
-
-    if _want("i4r"):
-        log.info("Stage 1: fetching I4R list...")
-        frames.append(fetch_i4r())
-    else:
-        log.info("Stage 1: I4R source skipped (not in --source list)")
-
     combined = (
         pd.concat(frames, ignore_index=True)
         if any(not f.empty for f in frames)
@@ -524,29 +510,11 @@ def run_search_auto_advance(
     JOBS = [j for j in ALL_JOBS if _want_src(j[0])] if sources else ALL_JOBS
 
     if not JOBS:
-        # bob_reed and i4r are curated lists — not phrase-based, so they have no
-        # entries in JOBS.  Fetch them once here and return True (cycle done).
-        if _want_src("i4r", "bob_reed", "replication_network"):
-            log.info(
-                "Auto-advance: --source contains only curated lists "
-                "(bob_reed/i4r) — fetching once and finishing."
-            )
-            out_path = DATA_DIR / "candidates.csv"
-            curated_frames = []
-            if _want_src("i4r"):
-                curated_frames.append(fetch_i4r())
-            if _want_src("bob_reed", "replication_network"):
-                curated_frames.append(fetch_replication_network())
-            if curated_frames:
-                curated = pd.concat(curated_frames, ignore_index=True)
-                if not curated.empty:
-                    _merge_into_candidates_csv(deduplicate_candidates(curated), out_path)
-        else:
-            log.warning(
-                "Auto-advance: no jobs match --source %s — nothing to do. "
-                "Use --source openalex or --source semantic_scholar for phrase cycling.",
-                sources,
-            )
+        log.warning(
+            "Auto-advance: no jobs match --source %s — nothing to do. "
+            "Use --source openalex or --source semantic_scholar for phrase cycling.",
+            sources,
+        )
         return True  # always bool — callers check this, not the DataFrame
 
     state  = _load_search_state(from_year, to_year)
@@ -560,22 +528,6 @@ def run_search_auto_advance(
     )
 
     out_path = DATA_DIR / "candidates.csv"
-
-    # Fetch curated lists once at the very first job of each year
-    # (only if those sources are included in the request).
-    if jidx == 0 and _want_src("i4r", "bob_reed", "replication_network"):
-        log.info(
-            "Auto-advance: year=%d — fetching curated lists (I4R + Replication Network)",
-            year,
-        )
-        curated_frames = []
-        if _want_src("i4r"):
-            curated_frames.append(fetch_i4r(from_year=year, to_year=year))
-        if _want_src("bob_reed", "replication_network"):
-            curated_frames.append(fetch_replication_network(from_year=year, to_year=year))
-        curated = pd.concat(curated_frames, ignore_index=True)
-        if not curated.empty:
-            _merge_into_candidates_csv(deduplicate_candidates(curated), out_path)
 
     # Fetch this job's phrase from the appropriate source.
     if source == "openalex":
@@ -669,7 +621,7 @@ def _parse_args() -> argparse.Namespace:
         dest="sources",
         help=(
             "Only fetch from this source (repeatable for multiple). "
-            "Values: openalex, semantic_scholar, bob_reed, i4r. "
+            "Values: openalex, semantic_scholar, engine. "
             "Default: all sources."
         ),
     )

@@ -767,9 +767,28 @@ def run_extract(no_llm: bool = False,
         log.info("--resume: wrote %d resolved rows to %s (safe to interrupt)",
                  len(output_rows), out_path.name)
 
+    # Deprioritize candidates without abstracts — process abstract-bearing rows first,
+    # then defer the ones missing abstracts to the end so they don't block others.
+    has_abstract = df["abstract_r"].notna() & (df["abstract_r"].astype(str).str.strip() != "")
+    df = pd.concat([df[has_abstract], df[~has_abstract]], ignore_index=True)
+    n_with_abstract = sum(has_abstract)
+    n_without = len(df) - n_with_abstract
+    if n_without > 0:
+        log.info("Prioritization: processing %d with abstract, deferring %d without", n_with_abstract, n_without)
+
     for _, row in df.iterrows():
         doi_r_check = clean_doi(str(row.get("doi_r", "")))
         row_key     = _extract_row_key(row)
+
+        # Log when we reach candidates without abstracts (deferred to end)
+        abstract_r = str(row.get("abstract_r", "")).strip()
+        if not abstract_r and n_without > 0 and processed == n_with_abstract:
+            log.info("Deferring candidates without abstracts — processing will continue but at lower priority")
+
+        # Skip rows without abstract if in deferred section
+        if not abstract_r:
+            log.debug("[%s] Deferring — no abstract available", doi_r_check)
+
         if doi_r_check in flora_skip:
             log.debug("[%s] already validated in FLoRA — skipping", doi_r_check)
             continue

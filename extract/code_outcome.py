@@ -100,7 +100,7 @@ _DESCRIPTIVE = re.compile(
     re.IGNORECASE,
 )
 
-_VALID_OUTCOMES = {"success", "failure", "mixed", "uninformative", "descriptive"}
+_VALID_OUTCOMES = {"success", "failure", "mixed", "uninformative", "descriptive", "cannot_be_determined"}
 
 
 def _keyword_scan(text: str, source: str) -> Optional[dict]:
@@ -153,39 +153,65 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
         )
 
     prompt = (
-        "You are a research methodology expert. Classify the replication outcome.\n\n"
+        "You are a research methodology expert. Classify the replication outcome based on what the paper's abstract states.\n\n"
         + original_block
         + f"TITLE: {title_r}\n"
         f"ABSTRACT: {abstract_snip or '(not available)'}\n\n"
-        "Outcome values:\n"
-        "- success: replication confirmed the original finding\n"
-        "- failure: replication failed to find the original effect\n"
-        "- mixed: some aspects replicated, others did not\n"
-        "- uninformative: cannot determine from available text\n"
-        "- descriptive: adapted methods in a new context without testing the original claim\n\n"
+        "Outcome classification rules:\n"
+        "- success: authors explicitly state the original finding was confirmed, replicated, or supported\n"
+        "- failure: authors explicitly state the original finding was NOT found, contradicted, or failed to replicate\n"
+        "- mixed: authors state that SOME but not all aspects of the original finding were confirmed\n"
+        "- descriptive: authors adapted or extended methods in a different context/population WITHOUT directly testing the original claim\n"
+        "- cannot_be_determined: the abstract lacks sufficient detail to classify the outcome (not when authors say it's unclear, but when WE cannot tell)\n\n"
+        "Few-shot examples:\n"
+        "1. UNINFORMATIVE (explicit author statement): 'This conceptual replication extends the theory but does not directly test the original hypothesis.'\n"
+        "2. CANNOT_BE_DETERMINED (insufficient detail): 'We conducted a replication study in a different population.' (no mention of success or failure)\n"
+        "3. MIXED (partial success): 'We replicated the main effect but not the interaction.'\n"
+        "4. SUCCESS (confirmation): 'Our findings confirm Smith et al. (2015)'\n\n"
+        "CRITICAL: Only output 'cannot_be_determined' when the abstract genuinely lacks detail. "
+        "Default to 'cannot_be_determined' rather than 'uninformative' when uncertain.\n\n"
         "Respond with ONLY this JSON:\n"
-        '{"outcome": "<value>", '
+        '{"outcome": "<success|failure|mixed|descriptive|cannot_be_determined>", '
         '"outcome_phrase": "<verbatim quote of 2-3 sentences from the abstract that specifically describes what replicated and what did not>", '
         '"outcome_confidence": "<high|medium|low>", '
-        '"out_quote_source": "<abstract|title>", '
+        '"out_quote_source": "<abstract|title|fulltext>", '
         '"outcome_reasoning": "<one sentence explaining the classification choice>"}'
     )
 
     token_counter.set_stage("extract_outcome")
-    result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_HEAVY_MODEL)
-    if result:
-        time.sleep(LLM_RATE_SEC)
 
-    _fallback = {"outcome": "uninformative", "outcome_phrase": "",
+    # Retry logic: attempt up to 3 times with exponential backoff
+    max_retries = 3
+    result = None
+    model_used = ""
+
+    for attempt in range(max_retries):
+        try:
+            result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_HEAVY_MODEL)
+            if result:
+                time.sleep(LLM_RATE_SEC)
+                break  # Success, exit retry loop
+        except Exception as e:
+            wait_time = 2 ** attempt  # 1s, 2s, 4s
+            if attempt < max_retries - 1:
+                log.warning("[%s] outcome LLM failed (attempt %d/%d), retrying in %ds: %s",
+                           doi_r, attempt + 1, max_retries, wait_time, str(e))
+                time.sleep(wait_time)
+            else:
+                log.warning("[%s] outcome LLM failed after %d retries: %s", doi_r, max_retries, str(e))
+
+    _fallback = {"outcome": "cannot_be_determined", "outcome_phrase": "",
                  "outcome_confidence": "low", "out_quote_source": "",
                  "outcome_reasoning": "", "llm_model": ""}
     if not result:
-        log.warning("[%s] outcome LLM failed — marking uninformative", doi_r)
+        log.warning("[%s] outcome LLM failed after all retries — marking cannot_be_determined", doi_r)
         return _fallback
 
-    outcome = str(result.get("outcome", "uninformative")).lower()
-    if outcome not in _VALID_OUTCOMES:
-        outcome = "uninformative"
+    # Add "cannot_be_determined" as valid outcome
+    valid_outcomes = _VALID_OUTCOMES | {"cannot_be_determined"}
+    outcome = str(result.get("outcome", "cannot_be_determined")).lower()
+    if outcome not in valid_outcomes:
+        outcome = "cannot_be_determined"
 
     output = {
         "outcome":            outcome,
@@ -210,7 +236,7 @@ def predict_outcome_keyword(title_r: str, abstract_r: str) -> str:
     abstract only — no LLM, no fulltext.  Used by --predicted-outcome to decide
     whether to process a row at all.
 
-    Returns one of: failure | success | mixed | descriptive | uninformative
+    Returns one of: failure | success | mixed | descriptive | cannot_be_determined
     """
     if title_r:
         hit = _keyword_scan(title_r, "title")
@@ -220,7 +246,7 @@ def predict_outcome_keyword(title_r: str, abstract_r: str) -> str:
         hit = _keyword_scan(abstract_r, "abstract")
         if hit:
             return hit["outcome"]
-    return "uninformative"
+    return "cannot_be_determined"
 
 
 def extract_outcome(doi_r: str,
@@ -257,7 +283,7 @@ def extract_outcome(doi_r: str,
             return {**hit, **_kw_fallback}
 
     if no_llm:
-        return {"outcome": "uninformative", "outcome_phrase": "",
+        return {"outcome": "cannot_be_determined", "outcome_phrase": "",
                 "outcome_confidence": "low", "out_quote_source": "",
                 "outcome_reasoning": ""}
 

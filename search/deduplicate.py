@@ -21,8 +21,9 @@ from shared.schema import CANDIDATES_COLS
 from shared.utils import clean_doi
 
 
-# Path to the existing FLoRA entry sheet used to exclude already catalogued items.
+# Paths to FLoRA data files for deduplication
 FLORA_SHEET_PATH = DATA_DIR / "flora_entry_sheet.csv"
+FLORA_CSV_PATH = DATA_DIR / "flora.csv"
 
 # Fuzzy title similarity threshold. RapidFuzz token_sort_ratio sorts words before
 # comparing strings, which makes it useful when titles differ mainly in word order.
@@ -44,35 +45,52 @@ _VERSIONED_RE = re.compile(r"^(.+?)_v(\d+)$", re.IGNORECASE)
 
 
 def _load_flora_dois() -> set[str]:
-    """Load the set of DOIs already present in the FLoRA entry sheet.
+    """Load the set of DOIs already present in FLoRA data (entry sheet + flora.csv).
 
-    The file is treated as optional. If it is missing, the pipeline logs a
-    warning and continues without performing the cross-check.
+    Checks both FLORA_SHEET_PATH and FLORA_CSV_PATH. The files are treated as
+    optional. If missing, the pipeline logs a warning and continues without
+    performing the cross-check.
 
     Returns
     -------
     set[str]
-        Cleaned DOI strings found in the ``doi_r`` column of the FLoRA sheet.
-        Returns an empty set if the file is missing or the expected column is absent.
+        Cleaned DOI strings found in the ``doi_r``, ``doi_o`` columns of FLoRA data.
+        Returns an empty set if all files are missing or expected columns are absent.
     """
-    if not FLORA_SHEET_PATH.exists():
-        log.warning(
-            "FLoRA entry sheet not found at %s — skipping cross-check",
-            FLORA_SHEET_PATH,
-        )
-        return set()
+    flora_dois = set()
 
-    # Read as strings so DOI values are not mangled by type inference.
-    # fillna("") makes downstream string handling simpler and more predictable.
-    df = pd.read_csv(FLORA_SHEET_PATH, dtype=str, encoding="utf-8-sig").fillna("")
+    # Check flora_entry_sheet.csv
+    if FLORA_SHEET_PATH.exists():
+        try:
+            df = pd.read_csv(FLORA_SHEET_PATH, dtype=str, encoding="utf-8-sig").fillna("")
+            if "doi_r" in df.columns:
+                flora_dois.update({clean_doi(d) for d in df["doi_r"] if d.strip()})
+            log.info("FLoRA entry sheet: loaded %d DOIs", len(flora_dois))
+        except Exception as e:
+            log.warning("FLoRA entry sheet read failed (%s) — skipping", e)
+    else:
+        log.warning("FLoRA entry sheet not found at %s — skipping", FLORA_SHEET_PATH)
 
-    if "doi_r" not in df.columns:
-        # Missing column means we cannot perform a DOI-based exclusion.
-        return set()
+    # Check flora.csv
+    if FLORA_CSV_PATH.exists():
+        try:
+            df = pd.read_csv(FLORA_CSV_PATH, dtype=str, encoding="utf-8-sig").fillna("")
+            before = len(flora_dois)
 
-    # Clean DOI formatting so comparisons are robust to differences like
-    # prefixes, casing, or surrounding whitespace.
-    return {clean_doi(d) for d in df["doi_r"] if d.strip()}
+            # Check both doi_r (replication) and doi_o (original) columns
+            if "doi_r" in df.columns:
+                flora_dois.update({clean_doi(d) for d in df["doi_r"] if d.strip()})
+            if "doi_o" in df.columns:
+                flora_dois.update({clean_doi(d) for d in df["doi_o"] if d.strip()})
+
+            added = len(flora_dois) - before
+            log.info("flora.csv: loaded %d additional unique DOIs (total now %d)", added, len(flora_dois))
+        except Exception as e:
+            log.warning("flora.csv read failed (%s) — skipping", e)
+    else:
+        log.debug("flora.csv not found at %s — skipping", FLORA_CSV_PATH)
+
+    return flora_dois
 
 
 def _richness(row: pd.Series) -> int:
