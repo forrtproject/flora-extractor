@@ -54,3 +54,5 @@ data/all_replications.csv
 /data/Search Approaches
 data/candidates.csv
 data/filtered.csv
+data/candidates.csv_backup
+data/filtered.csv_backup
