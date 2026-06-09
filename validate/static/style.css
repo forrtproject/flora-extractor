@@ -1,33 +1,101 @@
-/* ── Reset & base ─────────────────────────────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-       font-size: 13px; color: #1e293b; background: #f1f5f9; min-height: 100vh; }
+/* ── CSS Custom Properties (Light theme default) ───────────────────────────── */
+:root {
+  --bg:          #f1f5f9;
+  --surface:     #ffffff;
+  --surface-2:   #f8fafc;
+  --border:      #e2e8f0;
+  --border-2:    #cbd5e1;
+  --text:        #1e293b;
+  --text-muted:  #6b7280;
+  --text-faint:  #94a3b8;
+  --nav-bg:      #1e293b;
+  --nav-text:    #94a3b8;
+  --nav-active:  rgba(255,255,255,.15);
+  --nav-hover:   rgba(255,255,255,.08);
+  --accent:      #2563eb;
+  --accent-hover:#1d4ed8;
+  --accent-ring: rgba(37,99,235,.1);
+  --shadow:      0 1px 3px rgba(0,0,0,.06);
+  --shadow-md:   0 4px 12px rgba(0,0,0,.08);
+  --row-hover:   #f8fafc;
+  --row-expand:  #f0f9ff;
+  --table-head:  #f8fafc;
+}
 
-/* ── Nav ─────────────────────────────────────────────────────────────────── */
-nav { display: flex; align-items: center; gap: 4px;
-      background: #1e293b; padding: 0 16px; height: 44px; position: sticky;
-      top: 0; z-index: 100; }
+[data-theme="dark"] {
+  --bg:          #0f172a;
+  --surface:     #1e293b;
+  --surface-2:   #263348;
+  --border:      #334155;
+  --border-2:    #475569;
+  --text:        #e2e8f0;
+  --text-muted:  #94a3b8;
+  --text-faint:  #64748b;
+  --nav-bg:      #020817;
+  --nav-text:    #64748b;
+  --nav-active:  rgba(255,255,255,.12);
+  --nav-hover:   rgba(255,255,255,.06);
+  --accent:      #3b82f6;
+  --accent-hover:#2563eb;
+  --accent-ring: rgba(59,130,246,.2);
+  --shadow:      0 1px 3px rgba(0,0,0,.3);
+  --shadow-md:   0 4px 12px rgba(0,0,0,.4);
+  --row-hover:   #263348;
+  --row-expand:  #1e3a5f;
+  --table-head:  #263348;
+}
+
+/* ── Reset & base ────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px; color: var(--text); background: var(--bg); min-height: 100vh;
+  transition: background .2s, color .2s;
+}
+
+/* ── Nav ──────────────────────────────────────────────────────────────────────── */
+nav {
+  display: flex; align-items: center; gap: 4px;
+  background: var(--nav-bg); padding: 0 16px; height: 44px;
+  position: sticky; top: 0; z-index: 100;
+}
 .brand { font-weight: 700; font-size: 15px; color: #fff; margin-right: 12px;
          letter-spacing: -.3px; }
-nav a { color: #94a3b8; text-decoration: none; font-size: 12px; font-weight: 500;
+nav a { color: var(--nav-text); text-decoration: none; font-size: 12px; font-weight: 500;
         padding: 6px 10px; border-radius: 6px; transition: all .15s; }
-nav a:hover { color: #fff; background: rgba(255,255,255,.08); }
-nav a.active { color: #fff; background: rgba(255,255,255,.15); }
+nav a:hover { color: #fff; background: var(--nav-hover); }
+nav a.active { color: #fff; background: var(--nav-active); }
 
-/* ── Buttons ─────────────────────────────────────────────────────────────── */
-.btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px;
-       font-size: 12px; font-weight: 600; border-radius: 6px; border: 1px solid transparent;
-       cursor: pointer; transition: all .15s; white-space: nowrap; }
-.btn-primary   { background: #2563eb; color: #fff; border-color: #2563eb; }
-.btn-primary:hover { background: #1d4ed8; }
-.btn-secondary { background: #fff; color: #374151; border-color: #e2e8f0; }
-.btn-secondary:hover { background: #f8fafc; border-color: #cbd5e1; }
+/* Theme toggle button */
+.theme-toggle {
+  margin-left: auto; background: none; border: 1px solid var(--border-2);
+  border-radius: 20px; padding: 4px 10px; cursor: pointer;
+  color: var(--nav-text); font-size: 12px; display: flex; align-items: center;
+  gap: 5px; transition: all .15s; white-space: nowrap;
+}
+.theme-toggle:hover { background: var(--nav-hover); color: #fff; }
+.theme-toggle .icon { font-size: 14px; }
+
+/* reviewer label (pushed right by theme-toggle's margin-left: auto when no toggle) */
+.nav-reviewer { color: var(--nav-text); font-size: 11px; }
+.nav-reviewer a { color: var(--nav-text); margin-left: 6px; }
+
+/* ── Buttons ──────────────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px;
+  font-size: 12px; font-weight: 600; border-radius: 6px; border: 1px solid transparent;
+  cursor: pointer; transition: all .15s; white-space: nowrap;
+}
+.btn-primary   { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border); }
+.btn-secondary:hover { background: var(--surface-2); border-color: var(--border-2); }
 .btn-green  { background: #16a34a; color: #fff; border-color: #16a34a; }
 .btn-green:hover { background: #15803d; }
 .btn-red    { background: #dc2626; color: #fff; border-color: #dc2626; }
 .btn-red:hover { background: #b91c1c; }
 
-/* ── Pills ───────────────────────────────────────────────────────────────── */
+/* ── Pills ────────────────────────────────────────────────────────────────────── */
 .pill { display: inline-block; padding: 2px 8px; border-radius: 99px;
         font-size: 11px; font-weight: 600; }
 .pill-green  { background: #dcfce7; color: #166534; }
@@ -35,9 +103,15 @@ nav a.active { color: #fff; background: rgba(255,255,255,.15); }
 .pill-yellow { background: #fef3c7; color: #92400e; }
 .pill-blue   { background: #dbeafe; color: #1d4ed8; }
 .pill-purple { background: #f3e8ff; color: #7e22ce; }
-.pill-gray   { background: #f1f5f9; color: #64748b; }
+.pill-gray   { background: var(--surface-2); color: var(--text-muted); }
 
-/* ── Dots ────────────────────────────────────────────────────────────────── */
+[data-theme="dark"] .pill-green  { background: #14532d; color: #86efac; }
+[data-theme="dark"] .pill-red    { background: #7f1d1d; color: #fca5a5; }
+[data-theme="dark"] .pill-yellow { background: #78350f; color: #fcd34d; }
+[data-theme="dark"] .pill-blue   { background: #1e3a5f; color: #93c5fd; }
+[data-theme="dark"] .pill-purple { background: #3b0764; color: #d8b4fe; }
+
+/* ── Dots ─────────────────────────────────────────────────────────────────────── */
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .dot-green  { background: #16a34a; }
 .dot-orange { background: #ea580c; }
@@ -45,53 +119,73 @@ nav a.active { color: #fff; background: rgba(255,255,255,.15); }
 .dot-gray   { background: #9ca3af; }
 .dot-yellow { background: #f59e0b; }
 
-/* ── Page wrapper ────────────────────────────────────────────────────────── */
+/* ── Page wrapper ─────────────────────────────────────────────────────────────── */
 .page { max-width: 1100px; margin: 0 auto; padding: 20px 16px; }
 
-/* ── Cards ───────────────────────────────────────────────────────────────── */
-.card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
-        box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+/* ── Cards ────────────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: var(--shadow);
+}
 
-/* ── Forms ───────────────────────────────────────────────────────────────── */
+/* ── Forms ────────────────────────────────────────────────────────────────────── */
 input[type=text], textarea, select {
-  border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px 10px;
-  font-size: 12px; font-family: inherit; color: #1e293b;
-  transition: border-color .15s; width: 100%; }
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
+  font-size: 12px; font-family: inherit; color: var(--text);
+  background: var(--surface); transition: border-color .15s; width: 100%;
+}
 input[type=text]:focus, textarea:focus, select:focus {
-  outline: none; border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
 textarea { resize: vertical; }
 
-/* ── Tables ──────────────────────────────────────────────────────────────── */
-.data-table { width: 100%; border-collapse: collapse; background: #fff;
-              font-size: 12px; }
-.data-table th { padding: 8px 12px; text-align: left; background: #f8fafc;
-                 font-weight: 600; color: #6b7280; font-size: 11px;
-                 text-transform: uppercase; border-bottom: 2px solid #e2e8f0; }
-.data-table td { padding: 9px 12px; border-bottom: 1px solid #f1f5f9;
-                 vertical-align: middle; }
+/* ── Tables ───────────────────────────────────────────────────────────────────── */
+.data-table { width: 100%; border-collapse: collapse; background: var(--surface); font-size: 12px; }
+.data-table th {
+  padding: 8px 12px; text-align: left; background: var(--table-head);
+  font-weight: 600; color: var(--text-muted); font-size: 11px;
+  text-transform: uppercase; border-bottom: 2px solid var(--border);
+}
+.data-table td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .data-table tr:last-child td { border-bottom: none; }
-.data-table tr:hover td { background: #f8fafc; }
-.data-table tr.expanded td { background: #f0f9ff; }
+.data-table tr:hover td { background: var(--row-hover); }
+.data-table tr.expanded td { background: var(--row-expand); }
 
-/* ── KPI cards (dashboard) ───────────────────────────────────────────────── */
-.kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px,1fr));
-            gap: 12px; }
-.kpi-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
+/* ── KPI cards (dashboard) ────────────────────────────────────────────────────── */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px,1fr)); gap: 12px; }
+.kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
             padding: 16px; text-align: center; }
-.kpi-num  { font-size: 30px; font-weight: 700; line-height: 1.1; }
-.kpi-label { font-size: 11px; color: #6b7280; text-transform: uppercase;
+.kpi-num  { font-size: 30px; font-weight: 700; line-height: 1.1; color: var(--text); }
+.kpi-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase;
              letter-spacing: .05em; margin-top: 4px; }
 
-/* ── Progress bar ────────────────────────────────────────────────────────── */
-.progress-bar  { height: 4px; background: #e2e8f0; border-radius: 2px; overflow: hidden; }
+/* ── Progress bar ─────────────────────────────────────────────────────────────── */
+.progress-bar  { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
 .progress-fill { height: 100%; background: linear-gradient(90deg,#22c55e,#86efac);
                  border-radius: 2px; transition: width .3s; }
 
-/* ── Toolbar strip ───────────────────────────────────────────────────────── */
+/* ── Toolbar strip ────────────────────────────────────────────────────────────── */
 .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-           padding: 10px 16px; background: #fff; border-bottom: 1px solid #e2e8f0; }
+           padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
 
-/* ── Section headers ─────────────────────────────────────────────────────── */
+/* ── Section headers ──────────────────────────────────────────────────────────── */
 .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase;
-                 color: #94a3b8; letter-spacing: .6px; margin-bottom: 6px; }
+                 color: var(--text-faint); letter-spacing: .6px; margin-bottom: 6px; }
+
+/* ── Tab strip ────────────────────────────────────────────────────────────────── */
+.tab-strip {
+  display: flex; gap: 2px; border-bottom: 2px solid var(--border);
+  padding: 0 0 0 0; margin-bottom: 20px;
+}
+.tab-btn {
+  padding: 8px 18px; font-size: 13px; font-weight: 600; border: none;
+  background: none; cursor: pointer; color: var(--text-muted);
+  border-bottom: 2px solid transparent; margin-bottom: -2px;
+  border-radius: 6px 6px 0 0; transition: all .15s;
+}
+.tab-btn:hover { color: var(--text); background: var(--surface-2); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); background: none; }
+
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }

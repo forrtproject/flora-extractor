@@ -1,17 +1,19 @@
 """
-routes/dashboard.py — Validation stats dashboard.
+routes/dashboard.py — Read-only monitoring dashboard.
 
 Routes:
-  GET  /dashboard               → dashboard page
-  GET  /api/dashboard/stats     → JSON stats from SQLite (validation votes)
-  GET  /api/dashboard/csv-stats → JSON stats read directly from pipeline CSVs
+  GET  /dashboard                        → dashboard page
+  GET  /api/dashboard/csv-stats          → pipeline stats (column-only CSV reads)
+  GET  /api/dashboard/supabase-stats     → Supabase validation KPIs (cached 5 min)
+  GET  /api/dashboard/supabase-outcomes  → outcome distribution from validated table
+  GET  /api/dashboard/supabase-corrections → per-field correction frequency
+  GET  /api/dashboard/supabase-drilldown → paginated incorrect-DOI table
 """
 import pandas as pd
-from flask import Blueprint, jsonify, render_template
-from sqlalchemy import func
+from flask import Blueprint, jsonify, render_template, request
 
 from shared.config import DATA_DIR
-from validate.models import db, Replication, Vote
+from shared import supabase_client as supa
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
@@ -20,39 +22,6 @@ dashboard_bp = Blueprint("dashboard", __name__)
 def dashboard_page():
     return render_template("dashboard.html", active_page="dashboard")
 
-
-@dashboard_bp.route("/api/dashboard/stats")
-def api_stats():
-    total        = Replication.query.count()
-    confirmed    = Replication.query.filter_by(validation_status="confirmed").count()
-    rejected     = Replication.query.filter_by(validation_status="rejected").count()
-    needs_review = Replication.query.filter_by(validation_status="needs_review").count()
-    in_progress  = Replication.query.filter(
-        Replication.validation_status == "pending",
-        Replication.vote_count > 0,
-    ).count()
-    pending      = Replication.query.filter(
-        Replication.validation_status == "pending",
-        Replication.vote_count == 0,
-    ).count()
-
-    total_votes    = Vote.query.count()
-    avg_votes      = round(total_votes / total, 2) if total > 0 else 0
-    reviewer_count = db.session.query(
-        func.count(func.distinct(Vote.reviewer_id))
-    ).scalar() or 0
-
-    return jsonify({
-        "total":          total,
-        "confirmed":      confirmed,
-        "rejected":       rejected,
-        "needs_review":   needs_review,
-        "in_progress":    in_progress,
-        "pending":        pending,
-        "total_votes":    total_votes,
-        "avg_votes":      avg_votes,
-        "reviewer_count": reviewer_count,
-    })
 
 
 @dashboard_bp.route("/api/dashboard/csv-stats")
@@ -107,7 +76,7 @@ def api_csv_stats():
 
 
 _OUTCOME_KEYS = ("success", "failure", "mixed", "uninformative",
-                 "descriptive", "pending", "api_error")
+                 "cannot_be_determined", "descriptive", "pending", "api_error")
 _METHOD_KEYS  = ("author_year_match", "llm_abstract", "llm_fulltext",
                  "no_original_found", "target_pending", "api_error")
 
@@ -203,3 +172,38 @@ def _add_extracted_stats(stats: dict, prefix: str, path) -> None:
     except Exception:
         stats[f"{prefix}extracted_count"] = None
         stats.update(zero_defaults)
+
+
+# ── Supabase endpoints ────────────────────────────────────────────────────────
+
+@dashboard_bp.route("/api/dashboard/supabase-stats")
+def api_supabase_stats():
+    """Validation KPIs from Supabase (cached 5 min)."""
+    return jsonify(supa.get_validation_stats())
+
+
+@dashboard_bp.route("/api/dashboard/supabase-outcomes")
+def api_supabase_outcomes():
+    """Outcome distribution from validated table."""
+    return jsonify(supa.get_validated_outcomes())
+
+
+@dashboard_bp.route("/api/dashboard/supabase-corrections")
+def api_supabase_corrections():
+    """Per-field correction frequency (type / original / outcome)."""
+    return jsonify(supa.get_correction_frequency())
+
+
+@dashboard_bp.route("/api/dashboard/supabase-drilldown")
+def api_supabase_drilldown():
+    """Paginated table of DOIs where at least one field was corrected.
+
+    Query params:
+      page           — 1-based page (default 1)
+      outcome_filter — "all" or a specific outcome value (default "all")
+      check_filter   — "all" | "type" | "original" | "outcome" (default "all")
+    """
+    page = max(1, int(request.args.get("page", 1)))
+    outcome_filter = request.args.get("outcome_filter", "all")
+    check_filter = request.args.get("check_filter", "all")
+    return jsonify(supa.get_drilldown_page(page, outcome_filter, check_filter))

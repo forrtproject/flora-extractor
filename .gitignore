@@ -56,3 +56,12 @@ data/candidates.csv
 data/filtered.csv
 data/candidates.csv_backup
 data/filtered.csv_backup
+data/extracted05.06.2026.csv_backup
+data/archive/
+analysis/gap_analysis_*.csv
+analysis/gap_vs_extracted_comparison.csv
+analysis/filter_rules.csv
+analysis/filter_misclassifications.csv
+analysis/rule_improvement_opportunities.csv
+analysis/source_contribution.csv
+analysis/apa_reference_fallback.csv

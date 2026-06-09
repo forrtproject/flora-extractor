@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>{% block title %}FLoRA{% endblock %}</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"/>
+<!-- Apply saved theme before paint to avoid flash -->
+<script>
+  (function(){
+    var t = localStorage.getItem('flora-theme');
+    if (t === 'dark') document.documentElement.setAttribute('data-theme','dark');
+  })();
+</script>
 {% block head %}{% endblock %}
 </head>
 <body>
@@ -23,10 +30,16 @@
      class="{{ 'active' if active_page == 'extract_test' else '' }}">Extract Test</a>
   <a href="/target-pending"
      class="{{ 'active' if active_page == 'target_pending' else '' }}">Target Pending</a>
+
+  <button class="theme-toggle" id="themeToggle" title="Toggle light / dark mode" aria-label="Toggle theme">
+    <span class="icon" id="themeIcon">🌙</span>
+    <span id="themeLabel">Dark</span>
+  </button>
+
   {% if session.reviewer_id %}
-  <span style="margin-left:auto;color:#64748b;font-size:11px">
+  <span class="nav-reviewer">
     {{ session.reviewer_id }}
-    <a href="/set-name" style="color:#64748b;margin-left:6px">change</a>
+    <a href="/set-name">change</a>
   </span>
   {% endif %}
 </nav>
@@ -34,5 +47,35 @@
 {% block content %}{% endblock %}
 
 {% block scripts %}{% endblock %}
+
+<script>
+(function () {
+  var toggle = document.getElementById('themeToggle');
+  var icon   = document.getElementById('themeIcon');
+  var label  = document.getElementById('themeLabel');
+  var html   = document.documentElement;
+
+  function applyTheme(dark) {
+    if (dark) {
+      html.setAttribute('data-theme', 'dark');
+      icon.textContent  = '☀️';
+      label.textContent = 'Light';
+    } else {
+      html.removeAttribute('data-theme');
+      icon.textContent  = '🌙';
+      label.textContent = 'Dark';
+    }
+  }
+
+  // Sync button state with current theme on load
+  applyTheme(html.getAttribute('data-theme') === 'dark');
+
+  toggle.addEventListener('click', function () {
+    var isDark = html.getAttribute('data-theme') === 'dark';
+    applyTheme(!isDark);
+    localStorage.setItem('flora-theme', isDark ? 'light' : 'dark');
+  });
+})();
+</script>
 </body>
 </html>

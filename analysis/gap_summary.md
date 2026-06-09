@@ -1,12 +1,12 @@
 # Task 2: Overlap Analysis Report
 
-Generated: 2026-06-03 14:10:23
+Generated: 2026-06-06 12:36:33
 
 ## Executive Summary
 
 - **Gap Analysis Results**:
-  - DOI-matched gaps: 30445
-  - URL-matched gaps: 5
+  - DOI-matched gaps: 30447
+  - URL-matched gaps: 3
   - Fuzzy-matched gaps: 0
   - Total: 30450 gaps
 - **Filter misclassifications**: 0 rows
@@ -15,7 +15,7 @@ Generated: 2026-06-03 14:10:23
 
 Replications in all_replications.csv but not in candidates.csv: 30450
 
-### DOI-matched gaps (30445 rows)
+### DOI-matched gaps (30447 rows)
 |    | doi_r                               | study_r                                                                                                                                      |   year_r |
 |---:|:------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------|---------:|
 |  0 | 10.1001/archgenpsychiatry.2011.2094 | Dopaminergic Mechanisms of Reduced Basal Ganglia Responses to Hedonic Reward During Interferon Alfa Administration                           |     2012 |
@@ -30,14 +30,12 @@ Replications in all_replications.csv but not in candidates.csv: 30450
 |  9 | 10.1001/jama.2015.3435              | Association of HLA-DRB1 Haplotypes With Rheumatoid Arthritis Severity, Mortality, and Treatment Response                                     |     2015 |
 
 
-### URL-matched gaps (5 rows)
-|    | url_r                                                          | study_r                                                                                                                                                    |   year_r |
-|---:|:---------------------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------|---------:|
-|  0 | https://doi.org/10.1016/j.antiviral.2021.105089                | Virucidal and antiviral activity of astodrimer sodium against SARS-CoV-2 in vitro                                                                          |     2021 |
-|  1 | https://doi.org/10.31234/osf.io/4u98x                          | Inaction Inertia Effect: Foregoing Opportunities as a Consequence of an Initial Failure to Act - a Replication-Extension Study in the Brazilian Population |     2023 |
-|  2 | https://doi.org/10.31234/osf.io/4u98x                          | Inaction Inertia Effect: Foregoing Opportunities as a Consequence of an Initial Failure to Act - a Replication-Extension Study in the Brazilian Population |     2023 |
-|  3 | https://doi.org/10.3390/ijms22063163                           | Identification of Anti-Severe Acute Respiratory Syndrome-Related Coronavirus 2 (SARS-CoV-2) Oxysterol Derivatives In Vitro                                 |     2021 |
-|  4 | https://www.econstor.eu/bitstream/10419/333870/1/I4R-DP275.pdf | nan                                                                                                                                                        |      nan |
+### URL-matched gaps (3 rows)
+|    | url_r                                           | study_r                                                                                                                                                    |   year_r |
+|---:|:------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------|---------:|
+|  0 | https://doi.org/10.1016/j.antiviral.2021.105089 | Virucidal and antiviral activity of astodrimer sodium against SARS-CoV-2 in vitro                                                                          |     2021 |
+|  1 | https://doi.org/10.31234/osf.io/4u98x           | Inaction Inertia Effect: Foregoing Opportunities as a Consequence of an Initial Failure to Act - a Replication-Extension Study in the Brazilian Population |     2023 |
+|  2 | https://doi.org/10.31234/osf.io/4u98x           | Inaction Inertia Effect: Foregoing Opportunities as a Consequence of an Initial Failure to Act - a Replication-Extension Study in the Brazilian Population |     2023 |
 
 
 ## Filter Gaps (Analysis 1b)

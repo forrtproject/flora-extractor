@@ -622,14 +622,29 @@ def _append_row(out_path, result_row: dict, first: bool) -> None:
     first=True  → open with mode='w' (creates / truncates the file) and write header.
     first=False → open with mode='a' (append) and skip header.
     """
+    # Sanitize row data to handle problematic characters
+    for key, val in result_row.items():
+        if isinstance(val, str):
+            # Replace control characters and problematic whitespace
+            # but preserve newlines within fields (they'll be quoted)
+            result_row[key] = val.replace('\x00', '').replace('\r', ' ')
+
     row_df = pd.DataFrame([result_row])
     for col in EXTRACTED_COLS:
         if col not in row_df.columns:
             row_df[col] = ""
-    row_df[EXTRACTED_COLS].to_csv(
-        out_path, mode="w" if first else "a",
-        index=False, encoding="utf-8-sig", header=first,
-    )
+
+    try:
+        row_df[EXTRACTED_COLS].to_csv(
+            out_path, mode="w" if first else "a",
+            index=False, encoding="utf-8-sig", header=first,
+            quoting=1,  # csv.QUOTE_ALL to quote fields with special characters
+            quotechar='"',
+        )
+    except Exception as e:
+        log.error("Failed to write row for DOI %s: %s",
+                  result_row.get("doi_r", "unknown"), str(e))
+        raise
 
 
 def run_extract(no_llm: bool = False,
@@ -776,6 +791,8 @@ def run_extract(no_llm: bool = False,
     if n_without > 0:
         log.info("Prioritization: processing %d with abstract, deferring %d without", n_with_abstract, n_without)
 
+    flora_skip_count = 0
+
     for _, row in df.iterrows():
         doi_r_check = clean_doi(str(row.get("doi_r", "")))
         row_key     = _extract_row_key(row)
@@ -791,6 +808,7 @@ def run_extract(no_llm: bool = False,
 
         if doi_r_check in flora_skip:
             log.debug("[%s] already validated in FLoRA — skipping", doi_r_check)
+            flora_skip_count += 1
             continue
 
         # --resume: skip rows already written above.
@@ -925,6 +943,20 @@ def run_extract(no_llm: bool = False,
             log.info("Streamed %d rows → %s", len(output_rows), out_path.name)
 
     log.info("Stage 3 complete: %d rows → %s", len(output_rows), out_path)
+
+    # Print summary
+    print("\n" + "=" * 70)
+    print("STAGE 3 SUMMARY")
+    print("=" * 70)
+    print(f"  Rows processed:           {processed}")
+    print(f"  Rows output:              {len(output_rows)}")
+    print(f"  Flora-validated skipped:  {flora_skip_count}")
+    if skip_flora_validated:
+        print(f"    (from flora_entry_sheet.csv + flora.csv)")
+    if limit:
+        print(f"  Limit reached:            {processed >= limit}")
+    print("=" * 70 + "\n")
+
     out_df = pd.DataFrame(output_rows)
     return out_df.reindex(columns=EXTRACTED_COLS, fill_value="")
 

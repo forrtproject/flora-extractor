@@ -60,4 +60,9 @@ python -m search.run_search --source i4r
 
 do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 --max-per-phrase 1000 --source openalex } until ($LASTEXITCODE -eq 2)
 
+Default (Smart Mode) — Only Process Uncertain Rows
+python recalibrate_outcomes.py --input data/extracted.csv --clear-cache
+
+If You Want Fresh LLM on Everything
+python recalibrate_outcomes.py --input data/extracted.csv --clear-cache --reprocess-all
 

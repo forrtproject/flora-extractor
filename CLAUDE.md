@@ -93,15 +93,15 @@ The web app provides tabbed views for each stage's output:
 | `search/openalex_search.py`  | Query OpenAlex API for papers with replication keywords                     |
 | `search/external_lists.py`   | Bob Reed list scraper, I4R list scraper (pluggable — see Stage 1 docs)      |
 | `search/deduplicate.py`      | Merge sources, deduplicate by DOI + fuzzy title, cross-check FLoRA sheet    |
-| `search/run_search.py`       | Orchestrator: calls all sources, writes `data/candidates.csv`               |
+| `search/run_search.py`       | Orchestrator: calls all sources, appends to `data/candidates.csv` via index |
 
 ### `filter/` — Stage 2
 
-| File                     | Purpose                                                        |
-| ------------------------ | -------------------------------------------------------------- |
-| `filter/rule_filter.py`  | Rule-based classifier: keyword patterns, author-year check     |
-| `filter/llm_filter.py`   | LLM classifier for uncertain cases only                        |
-| `filter/run_filter.py`   | Orchestrator: reads candidates.csv, writes filtered.csv        |
+| File                     | Purpose                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------ |
+| `filter/rule_filter.py`  | Rule-based classifier: keyword patterns, author-year check                     |
+| `filter/llm_filter.py`   | LLM classifier for uncertain cases only                                        |
+| `filter/run_filter.py`   | Orchestrator: reads candidates.csv in 50k-row chunks, streams to filtered.csv  |
 
 ### `extract/` — Stage 3
 
@@ -277,6 +277,57 @@ On any API call failure (LLM, OpenAlex, CrossRef):
 
 ---
 
+## Large-File Handling — Index-Based Deduplication
+
+candidates.csv and filtered.csv grow beyond 1 million rows over a full search run. Loading either file entirely into memory causes OOM on typical developer machines. Both Stage 1 and Stage 2 use persistent index files to avoid this.
+
+### How it works
+
+Instead of reading the full CSV to check for duplicates or resume progress, each stage maintains a sidecar index in `cache/`:
+
+| Index file                    | Used by          | Contents                                               |
+| ----------------------------- | ---------------- | ------------------------------------------------------ |
+| `cache/candidates_index.txt`  | Stage 1 merge    | All identifiers ever written to candidates.csv         |
+| `cache/filtered_index.txt`    | Stage 2 resume   | One resume key per row already written to filtered.csv |
+
+Each line in an index file is one key. Keys use the same priority fallback as the rest of the pipeline:
+
+```text
+doi (cleaned)  →  oa:<openalex_id>  →  url:<url>  →  title:<lowercased title>
+```
+
+The candidates index stores **all** keys for each row (up to four per row) so a duplicate can be caught via any identifier. The filtered index stores **one** key per row (highest-priority identifier only), which is sufficient for resume.
+
+### First run / migration
+
+If an index file is missing, it is built automatically from the existing CSV in **50k-row chunks** before the first merge or filter run. This is a one-time cost (~30s for 800k rows). After that, all subsequent runs load only the small index file (~1s).
+
+### Stage 1 merge behaviour
+
+`_merge_into_candidates_csv` in `search/run_search.py` now:
+
+1. Loads the candidates index
+2. Filters the incoming batch to rows whose keys are not in the index
+3. **Appends** only the new rows to candidates.csv (never reads the full CSV)
+4. Updates the index after a successful write
+
+Because rows are appended rather than merged into a full rewrite, the file encoding rule has a nuance: the initial write uses `utf-8-sig` (BOM); all subsequent appends use plain `utf-8` to avoid embedding BOM mid-file. Excel reads both correctly.
+
+### Stage 2 read behaviour
+
+`run_filter` reads candidates.csv in **50k-row chunks**, applying year and source filters per chunk. The filtered candidate set passed to the rule/LLM classifiers is therefore never larger than what passed those filters — not the full CSV.
+
+### Rebuild commands
+
+If an index becomes stale (e.g. rows were added to a CSV manually outside the pipeline):
+
+```bash
+python -m search.run_search --rebuild-index   # rebuilds cache/candidates_index.txt
+python -m filter.run_filter --rebuild-index   # rebuilds cache/filtered_index.txt
+```
+
+---
+
 ## Code Style Rules
 
 1. **Python primary.** Type hints on all function signatures.
@@ -284,7 +335,7 @@ On any API call failure (LLM, OpenAlex, CrossRef):
 3. **No unnecessary abstractions.** Three similar lines is fine; don't create a helper unless it's used three or more times.
 4. **Comments:** Default to no comments. Add one only when the WHY is non-obvious — a hidden constraint, a threshold that was empirically chosen, a workaround for a specific API quirk. File-level docstrings should be a short paragraph explaining what the file does and why it exists, not just a list of functions.
 5. **Error handling only at system boundaries** (API calls, file I/O). Don't wrap internal logic in try/except.
-6. **All CSV writes use `utf-8-sig` encoding** (BOM, Excel-compatible).
+6. **All CSV writes use `utf-8-sig` encoding** (BOM, Excel-compatible). Exception: when appending to an existing file, use plain `utf-8` to avoid embedding BOM mid-file — Excel handles both correctly.
 7. **All DOIs pass through `clean_doi()`** from `shared/utils.py` before writing or comparing.
 8. **All API responses must be cached** using the pattern above before any result is used.
 9. **Rate limiting:** OpenAlex: 0.1 s between calls. Gemini: 1 s between calls. OpenAI: 0.5 s.
@@ -414,6 +465,7 @@ The following are implemented and working (ported from the *OpenAlexLLM* prototy
 - **PDF availability column** — Available / Not Available / Not Needed badge in both Extract and Extract Test tables, with server-side filter
 - **Parse scoring + MarkItDown** — six parse methods, unified scoring formula used by both DOI resolution and outcome extraction, winner badge in UI
 - **Dashboard enhancements** — link-method breakdown, LLM model family breakdown (Gemini / GPT / Qwen), and full Extract Test stats section
+- **Index-based dedup for Stage 1 + 2** — `cache/candidates_index.txt` and `cache/filtered_index.txt` replace full-CSV loads; Stage 1 appends new rows only; Stage 2 reads candidates.csv in 50k-row chunks; both stages support `--rebuild-index` to force a fresh index build
 
 ## What Needs to Be Written
 

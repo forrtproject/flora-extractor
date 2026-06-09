@@ -26,6 +26,3 @@ resolved_lock = threading.Lock()
 multi_orig_resolved: dict = {}
 multi_orig_lock = threading.Lock()
 
-# ── Human validations (persisted to cache/validations.json) ───────────────────
-# doi_r -> {status: "successful"|"failed"|"recheck", comment: str, timestamp: str}
-validations: dict = {}

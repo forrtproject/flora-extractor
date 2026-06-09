@@ -28,16 +28,122 @@ Usage
 import argparse
 import datetime
 import json
+from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 
-from shared.config import DATA_DIR, OA_CACHE_DIR, log
+from shared.config import CACHE_DIR, DATA_DIR, OA_CACHE_DIR, log
 from shared.schema import CANDIDATES_COLS
+from shared.utils import clean_doi
 from search.openalex_search import fetch_openalex_candidates
 from search.semantic_scholar_search import fetch_semantic_scholar_candidates
 from search.deduplicate import deduplicate_candidates
 from search.engine_source import fetch_engine_candidates, is_engine_enabled
+
+# ---------------------------------------------------------------------------
+# Candidates index — avoids loading the full CSV to check for duplicates
+# ---------------------------------------------------------------------------
+
+_CANDIDATES_INDEX_PATH = CACHE_DIR / "candidates_index.txt"
+
+
+def _row_keys(row: "pd.Series | dict") -> list[str]:
+    """All identifying keys for a row. Stored in the index to detect duplicates
+    via any identifier (openalex_id takes priority, then doi, url, title)."""
+    keys = []
+    oa = str(row.get("openalex_id_r", "") or "").strip()
+    if oa:
+        keys.append(f"oa:{oa}")
+    doi = clean_doi(str(row.get("doi_r", "") or ""))
+    if doi:
+        keys.append(doi)
+    url = str(row.get("url_r", "") or "").strip()
+    if url:
+        keys.append(f"url:{url}")
+    title = str(row.get("title_r", "") or "").lower().strip()
+    if title:
+        keys.append(f"title:{title}")
+    return keys
+
+
+def _load_candidates_index() -> set[str]:
+    """Load candidates index from disk, streaming to avoid loading entire file in memory.
+
+    With 2M+ entries, reading all at once causes MemoryError on Windows.
+    This reads line-by-line instead, keeping memory usage bounded.
+    """
+    if not _CANDIDATES_INDEX_PATH.exists():
+        return set()
+
+    index = set()
+    try:
+        with open(_CANDIDATES_INDEX_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                key = line.strip()
+                if key:  # Skip empty lines
+                    index.add(key)
+        log.info("Candidates index loaded: %d keys from disk", len(index))
+    except MemoryError:
+        log.error("MemoryError loading candidates index — file may be too large (%s)",
+                  _CANDIDATES_INDEX_PATH.stat().st_size / (1024**3) if _CANDIDATES_INDEX_PATH.exists() else "unknown")
+        raise
+    except Exception as e:
+        log.error("Failed to load candidates index: %s", e)
+        raise
+
+    return index
+
+
+def _save_candidates_index(index: set[str]) -> None:
+    # Stream keys to disk line-by-line to avoid building a giant string in memory.
+    tmp = _CANDIDATES_INDEX_PATH.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.writelines(k + "\n" for k in index)
+    tmp.replace(_CANDIDATES_INDEX_PATH)
+
+
+def _append_to_candidates_index(new_keys: set[str]) -> None:
+    """Append only new keys to the index — avoids rewriting the full 2.9M-key file."""
+    with open(_CANDIDATES_INDEX_PATH, "a", encoding="utf-8") as f:
+        f.writelines(k + "\n" for k in new_keys)
+
+
+def build_candidates_index(csv_path: Path) -> set[str]:
+    """Build candidates index from CSV in 50k-row chunks. Run once on migration
+    or when index is missing/stale. Writes the index file and returns the set."""
+    log.info("Building candidates index from %s (reading in chunks)...", csv_path)
+    index: set[str] = set()
+    chunks_read = 0
+    for chunk in pd.read_csv(
+        csv_path, encoding="utf-8-sig", chunksize=50_000, dtype=str, low_memory=False
+    ):
+        chunk = chunk.fillna("")
+        if "openalex_id_r" in chunk.columns:
+            oa = chunk["openalex_id_r"].str.strip()
+            index.update(("oa:" + oa)[oa != ""].tolist())
+        if "doi_r" in chunk.columns:
+            dois = chunk["doi_r"].apply(lambda x: clean_doi(str(x)))
+            index.update(d for d in dois if d)
+        if "url_r" in chunk.columns:
+            urls = chunk["url_r"].str.strip()
+            index.update(("url:" + urls)[urls != ""].tolist())
+        if "title_r" in chunk.columns:
+            titles = chunk["title_r"].str.lower().str.strip()
+            index.update(("title:" + titles)[titles != ""].tolist())
+        chunks_read += 1
+    log.info("Candidates index built: %d keys from %d chunks — saving to disk", len(index), chunks_read)
+    _save_candidates_index(index)
+    return index
+
+
+def _load_or_build_candidates_index(csv_path: Path) -> set[str]:
+    index = _load_candidates_index()
+    if index:
+        return index
+    if csv_path.exists():
+        return build_candidates_index(csv_path)
+    return set()
 
 
 # ---------------------------------------------------------------------------
@@ -253,93 +359,56 @@ def _harvest_s2_cache() -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def _merge_into_candidates_csv(new_df: pd.DataFrame, out_path: "Path") -> pd.DataFrame:
-    """Append *new_df* to the existing candidates CSV, deduplicate, and write back.
+def _merge_into_candidates_csv(new_df: pd.DataFrame, out_path: "Path") -> None:
+    """Append only genuinely new rows from *new_df* into the candidates CSV.
 
-    New rows take precedence over existing rows on any key clash, so
-    re-fetched metadata replaces stale entries automatically.
+    Uses a persistent index file (``cache/candidates_index.txt``) to check
+    whether each row already exists — keyed by openalex_id, doi, url, and
+    title — without loading the full CSV into memory.
 
-    Deduplication is applied in three passes to handle the different
-    identifier coverage across sources:
-
-    1. Rows with ``openalex_id_r`` → deduplicate on ``openalex_id_r``.
-    2. Rows without ``openalex_id_r`` but with ``doi_r`` → deduplicate on
-       ``doi_r`` (covers most Semantic Scholar rows).
-    3. Rows with neither identifier → deduplicate on lowercased ``title_r``
-       as a best-effort fallback.
-
-    This avoids the naive pitfall of collapsing all rows where
-    ``openalex_id_r`` is ``None`` (e.g. all S2 rows) into a single entry.
+    On first run the index is built from the existing CSV in 50k-row chunks
+    (one-time migration). All subsequent calls load the small index file only.
 
     Parameters
     ----------
     new_df : pd.DataFrame
-        Incoming rows to merge.  May overlap with existing CSV content.
+        Incoming rows to merge. Already deduplicated within the batch by the
+        caller (``deduplicate_candidates``).
     out_path : Path
-        Destination CSV path.  Created if absent.
-
-    Returns
-    -------
-    pd.DataFrame
-        The full deduplicated candidate set after the merge.
+        Destination CSV path. Created if absent.
     """
-    if out_path.exists():
-        try:
-            existing = pd.read_csv(out_path, encoding="utf-8-sig", low_memory=False)
-        except Exception:
-            log.warning(
-                "candidates.csv has a parse error — retrying with Python engine (bad lines skipped)"
-            )
-            existing = pd.read_csv(
-                out_path, encoding="utf-8-sig", low_memory=False,
-                engine="python", on_bad_lines="skip",
-            )
-        log.info("Existing candidates.csv: %d rows", len(existing))
-        # Concat new first so new rows win on dedup (keep="first").
-        combined = pd.concat([new_df, existing], ignore_index=True)
+    index = _load_or_build_candidates_index(out_path)
+
+    truly_new = new_df[new_df.apply(
+        lambda row: not any(k in index for k in _row_keys(row)), axis=1
+    )].copy()
+
+    n_skipped = len(new_df) - len(truly_new)
+    if n_skipped:
+        log.info("Merge: skipped %d already-indexed rows", n_skipped)
+
+    if truly_new.empty:
+        log.info("Merge: no new rows — candidates.csv unchanged (+0 from new batch)")
+        return
+
+    log.info("Merge: appending %d new rows to candidates.csv (+%d from new batch)",
+             len(truly_new), len(truly_new))
+
+    # Append to CSV. Use utf-8-sig only when creating the file (BOM header);
+    # subsequent appends use utf-8 to avoid embedding BOM mid-file.
+    file_exists = out_path.exists()
+    if file_exists:
+        truly_new.to_csv(out_path, mode="a", index=False, encoding="utf-8", header=False)
     else:
-        combined = new_df.copy()
+        truly_new.to_csv(out_path, mode="w", index=False, encoding="utf-8-sig")
 
-    before = len(combined)
+    # Append only new keys — never rewrites the full index file.
+    new_keys: set[str] = set()
+    for _, row in truly_new.iterrows():
+        new_keys.update(_row_keys(row))
+    _append_to_candidates_index(new_keys)
 
-    def _has(col: str) -> pd.Series:
-        """Return a boolean mask for rows where *col* is non-null and non-empty."""
-        return combined[col].notna() & (combined[col].astype(str).str.strip() != "")
-
-    oa_mask = _has("openalex_id_r")
-    oa_rows = combined[oa_mask].drop_duplicates(subset=["openalex_id_r"], keep="first")
-
-    no_oa = combined[~oa_mask]
-    doi_mask = _has("doi_r").reindex(no_oa.index, fill_value=False)
-    doi_rows = no_oa[doi_mask].drop_duplicates(subset=["doi_r"], keep="first")
-
-    rest = no_oa[~doi_mask]
-    title_key = rest["title_r"].str.lower().str.strip()
-    title_rows = rest[~title_key.duplicated(keep="first")]
-
-    combined = pd.concat([oa_rows, doi_rows, title_rows], ignore_index=True)
-    log.info(
-        "Merged: %d → %d rows after dedup (+%d from new batch)",
-        before,
-        len(combined),
-        len(combined) - (before - len(new_df)),
-    )
-
-    # Write to a temp file first, then rename. On Windows (especially in
-    # Google Drive folders) another process may briefly hold the target open,
-    # so retry a few times before giving up.
-    tmp_path = out_path.with_suffix(".tmp.csv")
-    combined.to_csv(tmp_path, index=False, encoding="utf-8-sig")
-    for attempt in range(10):
-        try:
-            tmp_path.replace(out_path)
-            break
-        except PermissionError:
-            if attempt == 9:
-                raise
-            import time
-            time.sleep(2 ** attempt * 0.5)  # 0.5s, 1s, 2s, 4s, …
-    return combined
+    log.info("Merge: index updated — %d new keys appended", len(new_keys))
 
 
 # ---------------------------------------------------------------------------
@@ -529,6 +598,21 @@ def run_search_auto_advance(
 
     out_path = DATA_DIR / "candidates.csv"
 
+    # Harvest cached pages once per full cycle (at the first job of the first year
+    # only, and only after at least one cycle has completed). This catches any rows
+    # orphaned by OOM crashes in the previous cycle without adding per-year overhead.
+    harvest_due = (
+        jidx == 0
+        and year == from_year
+        and state.get("cycles_completed", 0) >= 1
+    )
+    if harvest_due:
+        log.info("Auto-advance: harvesting cached pages (once per cycle)...")
+        cached_batch = pd.concat([_harvest_oa_cache(), _harvest_s2_cache()], ignore_index=True)
+        if not cached_batch.empty:
+            log.info("Cache harvest: %d rows — merging into candidates.csv", len(cached_batch))
+            _merge_into_candidates_csv(cached_batch, out_path)
+
     # Fetch this job's phrase from the appropriate source.
     if source == "openalex":
         rows = oa_fetch(phrase, from_year=year, to_year=year,
@@ -625,11 +709,25 @@ def _parse_args() -> argparse.Namespace:
             "Default: all sources."
         ),
     )
+    parser.add_argument(
+        "--rebuild-index",
+        action="store_true",
+        help="Force rebuild of the candidates index from candidates.csv, then exit.",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
+
+    if args.rebuild_index:
+        csv_path = DATA_DIR / "candidates.csv"
+        if csv_path.exists():
+            idx = build_candidates_index(csv_path)
+            print(f"Rebuilt candidates index: {len(idx)} keys → {_CANDIDATES_INDEX_PATH}")
+        else:
+            print("candidates.csv not found — nothing to rebuild.")
+        raise SystemExit(0)
 
     if args.reset_cursors:
         _reset_openalex_cursors()
