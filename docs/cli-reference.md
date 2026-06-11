@@ -121,7 +121,23 @@ python -m analysis.apa_resolver
 
 ```bash
 # Recalibrate outcome values in extracted.csv
-python tools/recalibrate_outcomes.py
+# Must be run as a module from the project root (not from inside tools/)
+python -m tools.recalibrate_outcomes
+
+# Only reprocess recently added rows (last N rows of the CSV, which are the newest appended entries)
+python -m tools.recalibrate_outcomes --tail 50
+
+# Only reprocess rows from a given publication year onward
+python -m tools.recalibrate_outcomes --since-year 2022
+
+# Force fresh LLM calls (clears cached outcomes for rows being reprocessed)
+python -m tools.recalibrate_outcomes --tail 50 --clear-cache
+
+# Preview without writing
+python -m tools.recalibrate_outcomes --tail 50 --dry-run
+
+# Process only first N uncertain rows (for testing a prompt change)
+python -m tools.recalibrate_outcomes --limit 10 --dry-run
 
 # Load a plain DOI list as pipeline input
 python tools/load_doi_list.py path/to/dois.txt

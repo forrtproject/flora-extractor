@@ -46,6 +46,8 @@ def recalibrate_outcomes(
     dry_run: bool = False,
     limit: int = None,
     only_uncertain: bool = True,
+    since_year: int = None,
+    tail: int = None,
 ) -> dict:
     """
     Re-run outcome extraction for uncertain rows in a CSV.
@@ -80,170 +82,154 @@ def recalibrate_outcomes(
     log.info("Input:  %s", input_csv)
     log.info("Output: %s", output_csv if not dry_run else f"{output_csv} (DRY RUN)")
     log.info("Clear cache: %s", clear_cache)
+    log.info("Since year: %s", since_year or "all years")
+    log.info("Tail: %s", f"last {tail} rows" if tail else "all rows")
     log.info("Limit: %s rows", limit or "unlimited")
 
-    # Read input CSV
     if not input_csv.exists():
         log.error("File not found: %s", input_csv)
         return {"error": "File not found"}
 
-    df = pd.read_csv(input_csv, encoding="utf-8-sig", low_memory=False)
-    log.info("Loaded %d rows from %s", len(df), input_csv.name)
+    # Load the FULL CSV — df_full is never sliced, so the output always contains
+    # every row, even when --tail or --since-year restricts what gets reprocessed.
+    df_full = pd.read_csv(input_csv, encoding="utf-8-sig", low_memory=False)
+    log.info("Loaded %d rows from %s", len(df_full), input_csv.name)
 
-    # Check required columns
     required_cols = ["doi_r", "title_r", "abstract_r"]
-    missing = [c for c in required_cols if c not in df.columns]
+    missing = [c for c in required_cols if c not in df_full.columns]
     if missing:
         log.error("Missing columns: %s", missing)
         return {"error": f"Missing columns: {missing}"}
 
-    # Filter to uncertain outcomes if requested
+    # Build a boolean mask over df_full.index for which rows to process.
+    mask = pd.Series(True, index=df_full.index)
+
+    if tail is not None:
+        tail_mask = pd.Series(False, index=df_full.index)
+        tail_mask.iloc[-tail:] = True
+        mask = mask & tail_mask
+        log.info("Tail filter: last %d of %d rows selected", tail, len(df_full))
+
+    if since_year is not None:
+        years = pd.to_numeric(df_full.get("year_r", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        before = mask.sum()
+        mask = mask & (years >= since_year)
+        log.info("Year filter (%d+): %d → %d rows", since_year, before, mask.sum())
+
     if only_uncertain:
         uncertain_mask = (
-            (df["outcome"].isna()) |
-            (df["outcome"].astype(str).str.strip() == "") |
-            (df["outcome"].astype(str).str.lower() == "cannot_be_determined") |
-            (df["outcome"].astype(str).str.lower() == "pending")
+            df_full["outcome"].isna() |
+            (df_full["outcome"].astype(str).str.strip() == "") |
+            (df_full["outcome"].astype(str).str.lower() == "cannot_be_determined") |
+            (df_full["outcome"].astype(str).str.lower() == "pending")
         )
-        df_to_process = df[uncertain_mask].reset_index(drop=True)
-        df_unchanged = df[~uncertain_mask]
-        log.info(
-            "Filtering to uncertain outcomes only: %d uncertain, %d with good outcomes",
-            len(df_to_process), len(df_unchanged)
-        )
-    else:
-        df_to_process = df
-        df_unchanged = None
+        before = mask.sum()
+        mask = mask & uncertain_mask
+        log.info("Uncertain filter: %d → %d rows to process", before, mask.sum())
 
-    # Clear cache if requested (only for uncertain rows to be processed)
+    # The indices we will actually iterate over (honouring --limit)
+    candidate_indices = df_full.index[mask].tolist()
+    if limit:
+        candidate_indices = candidate_indices[:limit]
+    log.info("Will process %d rows", len(candidate_indices))
+
+    # Clear outcome cache for selected rows if requested
     cache_cleared = 0
-    if clear_cache and only_uncertain:
-        # Clear cache files for rows we're about to process
-        for doi in df_to_process.get("doi_r", []):
-            doi_clean = clean_doi(str(doi))
-            if doi_clean:
-                cache_file = LLM_CACHE_DIR / f"outcome_{cache_key(doi_clean)}.json"
-                if cache_file.exists():
-                    try:
-                        cache_file.unlink()
-                        cache_cleared += 1
-                    except Exception as e:
-                        log.warning("Failed to delete %s: %s", cache_file.name, e)
-        log.info("Cleared %d outcome cache files for uncertain rows", cache_cleared)
-    elif clear_cache and not only_uncertain:
-        cache_cleared = clear_outcome_cache()
+    if clear_cache:
+        if not only_uncertain:
+            cache_cleared = clear_outcome_cache()
+        else:
+            for idx in candidate_indices:
+                doi_clean = clean_doi(str(df_full.at[idx, "doi_r"]))
+                if doi_clean:
+                    cache_file = LLM_CACHE_DIR / f"outcome_{cache_key(doi_clean)}.json"
+                    if cache_file.exists():
+                        try:
+                            cache_file.unlink()
+                            cache_cleared += 1
+                        except Exception as e:
+                            log.warning("Failed to delete %s: %s", cache_file.name, e)
+            log.info("Cleared %d outcome cache files", cache_cleared)
 
-    # Process rows
     rows_processed = 0
     rows_updated = 0
-    errors = []
-    updated_rows = []
+    errors: list[dict] = []
 
-    # Subset if limit provided
-    if limit:
-        df_process = df_to_process.head(limit)
-    else:
-        df_process = df_to_process
+    def _save(label: str = "") -> None:
+        if dry_run:
+            return
+        df_full.to_csv(output_csv, index=False, encoding="utf-8-sig")
+        tag = f"[{label}] " if label else ""
+        log.info("%sSaved %d rows → %s  (%d updated so far)", tag, len(df_full), output_csv, rows_updated)
 
-    for idx, row in df_process.iterrows():
-        rows_processed += 1
-        doi_r = clean_doi(str(row.get("doi_r", "")))
-        title_r = str(row.get("title_r", ""))
-        abstract_r = str(row.get("abstract_r", ""))
+    try:
+        for pos, orig_idx in enumerate(candidate_indices):
+            row = df_full.loc[orig_idx]
+            rows_processed += 1
+            doi_r = clean_doi(str(row.get("doi_r", "")))
+            title_r = str(row.get("title_r", ""))
+            abstract_r = str(row.get("abstract_r", ""))
 
-        # Skip if missing critical fields
-        if not abstract_r or not abstract_r.strip():
-            log.debug("[%s] Skipping — no abstract", doi_r)
-            continue
+            if not abstract_r or not abstract_r.strip():
+                log.debug("[%s] Skipping — no abstract", doi_r)
+                continue
 
-        log.info(
-            "[%d/%d] [%s] Extracting outcome: %s...",
-            idx + 1,
-            len(df_process),
-            doi_r,
-            title_r[:60],
-        )
-
-        try:
-            # Get original title/authors/year if available (for context)
-            original_title = str(row.get("title_o", ""))
-            original_authors = str(row.get("authors_o", ""))
-            original_year = str(row.get("year_o", ""))
-
-            # Call outcome extraction with improved logic
-            result = extract_outcome(
-                doi_r=doi_r,
-                title_r=title_r,
-                abstract_r=abstract_r,
-                fulltext="",  # Not using fulltext for this recalibration
-                original_title=original_title if original_title and original_title != "nan" else "",
-                original_authors=original_authors if original_authors and original_authors != "nan" else "",
-                original_year=original_year if original_year and original_year != "nan" else "",
+            log.info(
+                "[%d/%d] [%s] Extracting outcome: %s...",
+                pos + 1,
+                len(candidate_indices),
+                doi_r,
+                title_r[:60],
             )
 
-            # Check if outcome changed
-            old_outcome = str(row.get("outcome", ""))
-            new_outcome = result.get("outcome", "")
-            changed = old_outcome != new_outcome
+            try:
+                original_title = str(row.get("title_o", ""))
+                original_authors = str(row.get("authors_o", ""))
+                original_year = str(row.get("year_o", ""))
 
-            if changed:
-                rows_updated += 1
-                log.info(
-                    "  [%s] Outcome: %s → %s (confidence: %s)",
-                    doi_r,
-                    old_outcome or "(empty)",
-                    new_outcome,
-                    result.get("outcome_confidence", "unknown"),
+                result = extract_outcome(
+                    doi_r=doi_r,
+                    title_r=title_r,
+                    abstract_r=abstract_r,
+                    fulltext="",
+                    original_title=original_title if original_title and original_title != "nan" else "",
+                    original_authors=original_authors if original_authors and original_authors != "nan" else "",
+                    original_year=original_year if original_year and original_year != "nan" else "",
                 )
-            else:
-                log.debug("  [%s] Outcome unchanged: %s", doi_r, new_outcome)
 
-            # Update row
-            row_copy = row.copy()
-            row_copy["outcome"] = result.get("outcome", "")
-            row_copy["outcome_phrase"] = result.get("outcome_phrase", "")
-            row_copy["outcome_confidence"] = result.get("outcome_confidence", "")
-            row_copy["out_quote_source"] = result.get("out_quote_source", "")
-            row_copy["outcome_reasoning"] = result.get("outcome_reasoning", "")
-            updated_rows.append(row_copy)
+                old_outcome = str(row.get("outcome", ""))
+                new_outcome = result.get("outcome", "")
+                if old_outcome != new_outcome:
+                    rows_updated += 1
+                    log.info(
+                        "  [%s] %s → %s  (confidence: %s)",
+                        doi_r, old_outcome or "(empty)", new_outcome,
+                        result.get("outcome_confidence", "unknown"),
+                    )
+                else:
+                    log.debug("  [%s] Outcome unchanged: %s", doi_r, new_outcome)
 
-        except Exception as e:
-            log.error("[%s] Error: %s", doi_r, str(e))
-            errors.append({"doi": doi_r, "error": str(e)})
-            # Keep original row on error
-            updated_rows.append(row)
+                # Update df_full in-place so partial progress is always writable
+                df_full.at[orig_idx, "outcome"] = result.get("outcome", "")
+                df_full.at[orig_idx, "outcome_phrase"] = result.get("outcome_phrase", "")
+                df_full.at[orig_idx, "outcome_confidence"] = result.get("outcome_confidence", "")
+                df_full.at[orig_idx, "out_quote_source"] = result.get("out_quote_source", "")
+                df_full.at[orig_idx, "outcome_reasoning"] = result.get("outcome_reasoning", "")
 
-        # Rate limiting
-        time.sleep(0.5)
+            except Exception as e:
+                log.error("[%s] Error: %s", doi_r, str(e))
+                errors.append({"doi": doi_r, "error": str(e)})
 
-    # Reconstruct dataframe
-    if updated_rows:
-        df_updated = pd.DataFrame(updated_rows)
-        # Ensure we have all original columns
-        for col in df.columns:
-            if col not in df_updated.columns:
-                df_updated[col] = df[col]
-        df_updated = df_updated[df.columns]  # Reorder to original column order
+            # Checkpoint every 10 rows so progress survives a crash
+            if rows_processed % 10 == 0:
+                _save("checkpoint")
 
-        # Append unchanged rows (those with good outcomes)
-        if only_uncertain and df_unchanged is not None and len(df_unchanged) > 0:
-            df_updated = pd.concat([df_updated, df_unchanged], ignore_index=True)
+            time.sleep(0.5)
 
-        # Append rows that weren't processed due to limit
-        if limit and len(df_to_process) > limit:
-            df_unprocessed = df_to_process.iloc[limit:]
-            if only_uncertain:
-                df_unprocessed = pd.concat([df_unprocessed, df_unchanged], ignore_index=True) if df_unchanged is not None else df_unprocessed
-            df_updated = pd.concat([df_updated, df_unprocessed], ignore_index=True)
-    else:
-        df_updated = df.copy()
-
-    # Write output
-    if not dry_run:
-        df_updated.to_csv(output_csv, index=False, encoding="utf-8-sig")
-        log.info("Wrote %d rows to %s", len(df_updated), output_csv)
-    else:
-        log.info("DRY RUN: would write %d rows to %s", len(df_updated), output_csv)
+    except KeyboardInterrupt:
+        log.warning("\nInterrupted after %d/%d rows — saving progress...", rows_processed, len(candidate_indices))
+    finally:
+        _save()
 
     log.info("=" * 70)
     log.info("SUMMARY:")
@@ -264,6 +250,7 @@ def recalibrate_outcomes(
         "cache_cleared": cache_cleared,
         "errors": len(errors),
         "output_file": str(output_csv) if not dry_run else None,
+        "interrupted": rows_processed < len(candidate_indices),
     }
 
 
@@ -304,6 +291,22 @@ def main():
         action="store_true",
         help="Reprocess ALL rows (not just uncertain ones). Default: only uncertain rows.",
     )
+    parser.add_argument(
+        "--since-year",
+        type=int,
+        default=None,
+        metavar="YEAR",
+        help="Only process rows where year_r >= YEAR (e.g. --since-year 2020).",
+    )
+    parser.add_argument(
+        "--tail",
+        type=int,
+        nargs="?",
+        const=50,
+        default=None,
+        metavar="N",
+        help="Only process the last N rows of the CSV (recently added entries). Defaults to 50 if N is omitted.",
+    )
     args = parser.parse_args()
 
     result = recalibrate_outcomes(
@@ -313,6 +316,8 @@ def main():
         dry_run=args.dry_run,
         limit=args.limit,
         only_uncertain=not args.reprocess_all,
+        since_year=args.since_year,
+        tail=args.tail,
     )
 
     return result

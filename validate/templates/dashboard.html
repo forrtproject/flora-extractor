@@ -113,8 +113,17 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
 .analysis-file-list li { display:flex; align-items:baseline; gap:8px;
                           padding:4px 0; border-bottom:1px solid var(--border); font-size:12px; }
 .analysis-file-list li:last-child { border-bottom:none; }
-.analysis-file-list .fname { font-family:monospace; font-size:11px; color:var(--accent); }
+.analysis-file-list .fname { font-family:monospace; font-size:11px; color:var(--accent); flex-shrink:0; }
 .analysis-file-list .fdesc { color:var(--text-muted); }
+
+/* Analysis priority badge */
+.pri-high   { color:#dc2626; font-weight:700; }
+.pri-medium { color:#f59e0b; font-weight:700; }
+.pri-low    { color:#9ca3af; font-weight:600; }
+
+/* Analysis gap search */
+.gap-search-row { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+.gap-search-row input { flex:1; min-width:200px; }
 </style>
 {% endblock %}
 
@@ -129,7 +138,9 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
   <!-- ── Tab strip ─────────────────────────────────────────────────────────── -->
   <div class="tab-strip">
     <button class="tab-btn active" data-tab="pipeline">Pipeline</button>
+    <button class="tab-btn" data-tab="extract-test">Extract Test</button>
     <button class="tab-btn" data-tab="validation">Validation</button>
+    <button class="tab-btn" data-tab="analysis">Analysis</button>
   </div>
 
   <!-- ════════════════════════════════════════════════════════════════════════ -->
@@ -275,9 +286,13 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
       </div>
     </div>
 
-    <!-- Extract Test section -->
-    <hr class="section-divider">
-    <div class="section-badge">⬡ Extract Test — extracted-test.csv</div>
+  </div><!-- /tab-pipeline -->
+
+
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <!-- EXTRACT TEST TAB                                                        -->
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="tab-extract-test">
 
     <div class="kpi-row" style="margin-bottom:16px">
       <a href="/extract-test" class="kpi-card">
@@ -360,51 +375,7 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
       </div>
     </div>
 
-    <!-- Analysis section -->
-    <hr class="section-divider">
-    <div class="section-badge">🔬 Analysis — analysis/</div>
-    <div class="analysis-card">
-      <h3>Analysis Scripts &amp; Outputs</h3>
-      <ul class="analysis-file-list">
-        <li>
-          <span class="fname">gap_analysis.py</span>
-          <span class="fdesc">Compares extracted.csv against the FLoRA entry sheet to find unextracted DOIs</span>
-        </li>
-        <li>
-          <span class="fname">rule_analysis.py</span>
-          <span class="fdesc">Audits filter rules: contribution per rule, false-positive rate, improvement opportunities</span>
-        </li>
-        <li>
-          <span class="fname">apa_resolver.py</span>
-          <span class="fdesc">Resolves APA-format citations in extracted rows to structured DOIs via CrossRef</span>
-        </li>
-        <li>
-          <span class="fname">extraction_audit.md</span>
-          <span class="fdesc">Manual audit notes — accuracy estimate and common error patterns</span>
-        </li>
-        <li>
-          <span class="fname">gap_analysis_doi_matched.csv</span>
-          <span class="fdesc">DOIs in FLoRA sheet matched to extracted.csv — gap between known and extracted</span>
-        </li>
-        <li>
-          <span class="fname">gap_analysis_url_matched.csv</span>
-          <span class="fdesc">URL-matched gap analysis (fallback when DOIs differ by formatting)</span>
-        </li>
-        <li>
-          <span class="fname">gap_summary.md</span>
-          <span class="fdesc">Human-readable summary of the gap analysis results</span>
-        </li>
-      </ul>
-      <p style="font-size:11px;color:var(--text-faint);margin-top:10px">
-        Run with: <code style="font-family:monospace;background:var(--surface-2);padding:1px 5px;border-radius:3px">python -m analysis.gap_analysis</code>
-        &nbsp;&nbsp;
-        <code style="font-family:monospace;background:var(--surface-2);padding:1px 5px;border-radius:3px">python -m analysis.rule_analysis</code>
-        &nbsp;&nbsp;
-        <code style="font-family:monospace;background:var(--surface-2);padding:1px 5px;border-radius:3px">python -m analysis.apa_resolver</code>
-      </p>
-    </div>
-
-  </div><!-- /tab-pipeline -->
+  </div><!-- /tab-extract-test -->
 
 
   <!-- ════════════════════════════════════════════════════════════════════════ -->
@@ -570,6 +541,213 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
     </div><!-- /supa-content -->
   </div><!-- /tab-validation -->
 
+
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <!-- ANALYSIS TAB                                                            -->
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="tab-analysis">
+
+    <!-- Gap Summary KPIs -->
+    <div class="dash-section">
+      <div class="section-title">Gap Analysis — Known vs. Extracted</div>
+      <div id="gap-generated" style="font-size:10px;color:var(--text-faint);margin-bottom:12px"></div>
+      <div class="kpi-row">
+        <div class="kpi-card">
+          <div class="kpi-num" id="gap-total" style="color:#dc2626">—</div>
+          <div class="kpi-label">Total Gaps</div>
+          <div class="kpi-sub">in FLoRA, not extracted</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-num" id="gap-doi" style="color:#f59e0b">—</div>
+          <div class="kpi-label">DOI-matched</div>
+          <div class="kpi-sub">gap_analysis_doi_matched.csv</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-num" id="gap-url" style="color:#2563eb">—</div>
+          <div class="kpi-label">URL-matched</div>
+          <div class="kpi-sub">gap_analysis_url_matched.csv</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-num" id="gap-fuzzy" style="color:#9ca3af">—</div>
+          <div class="kpi-label">Fuzzy-matched</div>
+          <div class="kpi-sub">title fallback</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-num" id="gap-misclass" style="color:#7c3aed">—</div>
+          <div class="kpi-label">Filter Misclasses</div>
+          <div class="kpi-sub">wrongly filtered out</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Extraction Audit KPIs -->
+    <hr class="section-divider">
+    <div class="section-badge">📋 Extraction Audit — extracted.csv</div>
+    <div id="audit-generated" style="font-size:10px;color:var(--text-faint);margin-bottom:12px"></div>
+    <div class="kpi-row" style="margin-bottom:16px">
+      <div class="kpi-card">
+        <div class="kpi-num" id="audit-total" style="color:#16a34a">—</div>
+        <div class="kpi-label">Extracted Rows</div>
+        <div class="kpi-sub">extracted.csv</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-num" id="audit-missing-doi" style="color:#f59e0b">—</div>
+        <div class="kpi-label">Missing DOI</div>
+        <div class="kpi-sub">doi_o empty / pending</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-num" id="audit-api-errors" style="color:#dc2626">—</div>
+        <div class="kpi-label">API Errors</div>
+        <div class="kpi-sub">extraction failures</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-num" id="audit-pending" style="color:#9ca3af">—</div>
+        <div class="kpi-label">Target Pending</div>
+        <div class="kpi-sub">needs manual ID</div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="stat-card">
+        <h3>Link Method Distribution</h3>
+        <div id="audit-link-methods"><div class="null-note">Loading…</div></div>
+      </div>
+      <div class="stat-card">
+        <h3>Link Confidence Distribution</h3>
+        <div id="audit-confidence"><div class="null-note">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- Rule Improvement Opportunities -->
+    <hr class="section-divider">
+    <div class="section-badge">🔧 Rule Improvement Opportunities</div>
+    <div class="analysis-card" style="padding:0;overflow:hidden">
+      <table class="data-table" id="improvement-table">
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th style="width:60px;text-align:right">Count</th>
+            <th>Current Status</th>
+            <th>Suggested Fix</th>
+            <th style="width:70px">Priority</th>
+          </tr>
+        </thead>
+        <tbody id="improvement-tbody">
+          <tr><td colspan="5" class="null-note" style="text-align:center;padding:16px">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Missing DOIs (DOI-matched gaps) -->
+    <hr class="section-divider">
+    <div class="section-badge">🔍 Missing Candidates — DOI Gap List</div>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+      DOIs present in <code style="font-family:monospace;background:var(--surface-2);padding:1px 4px;border-radius:3px">all_replications.csv</code>
+      but not found in <code style="font-family:monospace;background:var(--surface-2);padding:1px 4px;border-radius:3px">candidates.csv</code>.
+      Run <code style="font-family:monospace;background:var(--surface-2);padding:1px 4px;border-radius:3px">python -m analysis.run_overlap_analysis</code> to refresh.
+    </p>
+
+    <div class="gap-search-row">
+      <input type="text" id="gap-search" placeholder="Search DOI or title…"
+             oninput="scheduleGapSearch()" style="font-size:12px">
+      <span id="gap-count" style="font-size:11px;color:var(--text-faint)"></span>
+    </div>
+
+    <div class="card" style="overflow:hidden;margin-bottom:8px">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th style="width:200px">DOI</th>
+            <th>Title</th>
+            <th style="width:60px">Year</th>
+          </tr>
+        </thead>
+        <tbody id="gap-tbody">
+          <tr><td colspan="3" class="null-note" style="text-align:center;padding:16px">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pager" id="gap-pager"></div>
+
+    <!-- URL-matched gaps -->
+    <hr class="section-divider">
+    <div class="section-badge">🔗 URL-matched Gaps</div>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+      Entries matched by URL rather than DOI — often preprints or papers with non-standard DOI formatting.
+    </p>
+    <div class="card" style="overflow:hidden;margin-bottom:16px">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>DOI / URL</th>
+            <th>Title</th>
+            <th style="width:60px">Year</th>
+          </tr>
+        </thead>
+        <tbody id="url-gap-tbody">
+          <tr><td colspan="3" class="null-note" style="text-align:center;padding:16px">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Documentation -->
+    <hr class="section-divider">
+    <div class="section-badge">📖 Analysis Scripts &amp; Outputs</div>
+    <div class="analysis-card">
+      <h3>How to Run</h3>
+      <ul class="analysis-file-list">
+        <li>
+          <span class="fname">run_overlap_analysis.py</span>
+          <span class="fdesc">Main gap analysis — compares extracted.csv against FLoRA entry sheet to find unextracted DOIs. Writes gap CSVs and gap_summary.md.</span>
+        </li>
+        <li>
+          <span class="fname">rule_analysis.py</span>
+          <span class="fdesc">Audits filter rules: contribution per rule, false-positive rate, improvement opportunities. Writes rule_improvement_opportunities.csv.</span>
+        </li>
+        <li>
+          <span class="fname">apa_resolver.py</span>
+          <span class="fdesc">Resolves APA-format citations in extracted rows to structured DOIs via CrossRef. Writes apa_reference_fallback.csv.</span>
+        </li>
+      </ul>
+      <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px">
+        <code style="font-family:monospace;background:var(--surface-2);padding:3px 8px;border-radius:4px;font-size:11px">python -m analysis.run_overlap_analysis</code>
+        <code style="font-family:monospace;background:var(--surface-2);padding:3px 8px;border-radius:4px;font-size:11px">python -m analysis.rule_analysis</code>
+        <code style="font-family:monospace;background:var(--surface-2);padding:3px 8px;border-radius:4px;font-size:11px">python -m analysis.apa_resolver</code>
+      </div>
+    </div>
+
+    <div class="analysis-card">
+      <h3>Output Files</h3>
+      <ul class="analysis-file-list">
+        <li>
+          <span class="fname">gap_analysis_doi_matched.csv</span>
+          <span class="fdesc">DOIs in FLoRA sheet matched to extracted.csv — full gap list with original and replication metadata</span>
+        </li>
+        <li>
+          <span class="fname">gap_analysis_url_matched.csv</span>
+          <span class="fdesc">URL-matched gap analysis (fallback when DOIs differ by formatting)</span>
+        </li>
+        <li>
+          <span class="fname">gap_vs_extracted_comparison.csv</span>
+          <span class="fdesc">Side-by-side comparison of FLoRA entries vs. what was extracted</span>
+        </li>
+        <li>
+          <span class="fname">rule_improvement_opportunities.csv</span>
+          <span class="fdesc">Actionable suggestions from rule_analysis.py with priority ratings</span>
+        </li>
+        <li>
+          <span class="fname">gap_summary.md</span>
+          <span class="fdesc">Human-readable executive summary of the gap analysis (displayed above)</span>
+        </li>
+        <li>
+          <span class="fname">extraction_audit.md</span>
+          <span class="fdesc">Manual audit notes — accuracy estimate, link method distribution, missing DOI sample</span>
+        </li>
+      </ul>
+    </div>
+
+  </div><!-- /tab-analysis -->
+
 </div>
 {% endblock %}
 
@@ -579,25 +757,32 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
 const $ = id => document.getElementById(id);
 
 // ── Tab switching ────────────────────────────────────────────────────────────
+const TAB_LOADERS = {
+  validation:    () => { if (!_valLoaded)      loadValidation(); },
+  'extract-test': () => { /* loaded with pipeline */ },
+  analysis:      () => { if (!_analysisLoaded) loadAnalysis(); },
+};
+
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-    // persist
     location.hash = btn.dataset.tab;
-    if (btn.dataset.tab === 'validation' && !_valLoaded) loadValidation();
+    const loader = TAB_LOADERS[btn.dataset.tab];
+    if (loader) loader();
   });
 });
+
 // Restore active tab from URL hash
 (function(){
   const h = location.hash.replace('#','');
-  if (h === 'validation') {
-    document.querySelector('[data-tab="pipeline"]').classList.remove('active');
-    document.querySelector('[data-tab="validation"]').classList.add('active');
-    $('tab-pipeline').classList.remove('active');
-    $('tab-validation').classList.add('active');
+  if (h && document.querySelector(`[data-tab="${h}"]`)) {
+    document.querySelector('.tab-btn.active').classList.remove('active');
+    document.querySelector('.tab-panel.active').classList.remove('active');
+    document.querySelector(`[data-tab="${h}"]`).classList.add('active');
+    document.getElementById('tab-' + h).classList.add('active');
   }
 })();
 
@@ -698,6 +883,7 @@ function renderOutcomeBreakdown(el, data, total) {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function pct(n, total) { if (!total) return ''; return `(${((n/total)*100).toFixed(1)}%)`; }
 function fmt(n) { return n == null ? '—' : Number(n).toLocaleString(); }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 function fillLinkMethod(pfx, csv, p) {
   const total = csv[`${p}extracted_count`] || 0;
@@ -756,7 +942,7 @@ async function loadPipeline() {
   renderLegend($('pie-legend'), pieData, outTotal);
   renderOutcomeBreakdown($('outcome-breakdown'), pieData, outTotal);
 
-  // Test section
+  // Extract Test tab (loaded together with Pipeline since same API call)
   $('k-test-count').textContent   = fmt(csv.test_extracted_count);
   $('k-test-pending').textContent = fmt(csv.test_target_pending_count);
 
@@ -797,7 +983,6 @@ async function loadValidation() {
     }
     $('supa-unconfigured').style.display = 'none';
 
-    // KPIs
     $('sv-total').textContent       = fmt(stats.total);
     $('sv-validated').textContent   = fmt(stats.validated);
     $('sv-unvalidated').textContent = fmt(stats.unvalidated);
@@ -816,7 +1001,6 @@ async function loadValidation() {
     $('sv-progress-fill').style.width = valPct + '%';
     $('sv-progress-label').textContent = `${valPct.toFixed(1)}% validated`;
 
-    // Correction frequency bars
     if (!corr.error) {
       const maxCorr = Math.max(corr.type_incorrect||0, corr.original_incorrect||0, corr.outcome_incorrect||0, 1);
       const total = stats.validated || 1;
@@ -847,7 +1031,6 @@ async function loadValidation() {
       $('corr-bars').innerHTML = '<div class="null-note">Correction data unavailable</div>';
     }
 
-    // Validated outcome donut
     if (!outcomes.error && outcomes.outcomes) {
       const pieData = OUTCOMES.map(k => ({
         key:k, label:PIE_LABELS[k], color:PIE_COLORS[k],
@@ -862,7 +1045,6 @@ async function loadValidation() {
       renderLegend($('pie-val-legend'), pieData, outTotal);
     }
 
-    // Load drilldown
     loadDrilldown(1);
 
   } catch(e) {
@@ -958,7 +1140,6 @@ async function loadDrilldown(page) {
     </tr>`;
   }).join('');
 
-  // Pagination
   const pages = data.pages;
   if (pages <= 1) { $('dd-pager').innerHTML = ''; return; }
   let btns = `<button class="pager-btn" onclick="loadDrilldown(${page-1})" ${page<=1?'disabled':''}>← Prev</button>`;
@@ -976,18 +1157,175 @@ function toggleDrilldown(id) {
   el.classList.toggle('open');
 }
 
+// ── Load Analysis tab ────────────────────────────────────────────────────────
+let _analysisLoaded = false;
+let _gapPage = 1;
+let _gapSearchTimer = null;
+
+async function loadAnalysis() {
+  _analysisLoaded = true;
+  try {
+    const data = await fetch('/api/dashboard/analysis-stats').then(r => r.json());
+
+    // Gap summary KPIs
+    const gs = data.gap_summary || {};
+    $('gap-total').textContent   = fmt(gs.total_gaps);
+    $('gap-doi').textContent     = fmt(gs.doi_gaps);
+    $('gap-url').textContent     = fmt(gs.url_gaps);
+    $('gap-fuzzy').textContent   = fmt(gs.fuzzy_gaps);
+    $('gap-misclass').textContent = fmt(gs.filter_misclassifications);
+    if (gs.generated) $('gap-generated').textContent = 'Last run: ' + gs.generated;
+
+    // Extraction audit KPIs
+    const au = data.audit || {};
+    $('audit-total').textContent       = fmt(au.total_extracted);
+    $('audit-missing-doi').textContent = fmt(au.missing_doi);
+    $('audit-api-errors').textContent  = fmt(au.api_errors);
+    $('audit-pending').textContent     = fmt(au.target_pending);
+    if (au.generated) $('audit-generated').textContent = 'Last run: ' + au.generated;
+
+    // Link method distribution
+    if (au.link_methods && au.link_methods.length) {
+      const maxCount = Math.max(...au.link_methods.map(r => r.count), 1);
+      $('audit-link-methods').innerHTML = au.link_methods.map(r => `
+        <div style="margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+            <span style="font-family:monospace;color:var(--text)">${esc(r.method)}</span>
+            <span style="color:var(--text-muted)">${r.count.toLocaleString()} (${r.pct.toFixed(1)}%)</span>
+          </div>
+          <div style="width:100%;height:6px;background:var(--border);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:${Math.max(2,(r.count/maxCount)*100)}%;background:#2563eb;transition:width .2s"></div>
+          </div>
+        </div>`).join('');
+    } else {
+      $('audit-link-methods').innerHTML = '<div class="null-note">No data — run extraction_audit first.</div>';
+    }
+
+    // Confidence distribution
+    if (au.confidence_rows && au.confidence_rows.length) {
+      const CONF_COLORS = {high:'#16a34a', medium:'#f59e0b', low:'#dc2626'};
+      const maxCount = Math.max(...au.confidence_rows.map(r => r.count), 1);
+      $('audit-confidence').innerHTML = au.confidence_rows.map(r => `
+        <div style="margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+            <span style="color:var(--text);font-weight:600">${esc(r.level)}</span>
+            <span style="color:var(--text-muted)">${r.count.toLocaleString()} (${r.pct.toFixed(1)}%)</span>
+          </div>
+          <div style="width:100%;height:6px;background:var(--border);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:${Math.max(2,(r.count/maxCount)*100)}%;background:${CONF_COLORS[r.level]||'#9ca3af'};transition:width .2s"></div>
+          </div>
+        </div>`).join('');
+    } else {
+      $('audit-confidence').innerHTML = '<div class="null-note">No data — run extraction_audit first.</div>';
+    }
+
+    // Improvement opportunities table
+    const opps = data.improvement_rows || [];
+    if (opps.length) {
+      $('improvement-tbody').innerHTML = opps.map(r => {
+        const priClass = r.Priority === 'High' ? 'pri-high' : r.Priority === 'Medium' ? 'pri-medium' : 'pri-low';
+        return `<tr>
+          <td style="font-size:12px">${esc(r.Category||'')}</td>
+          <td style="text-align:right;font-weight:700;font-size:12px">${esc(r.Count||'')}</td>
+          <td style="font-size:11px;color:var(--text-muted)">${esc(r['Current Status']||'')}</td>
+          <td style="font-size:11px">${esc(r['Suggested Fix']||'')}</td>
+          <td class="${priClass}" style="font-size:11px">${esc(r.Priority||'')}</td>
+        </tr>`;
+      }).join('');
+    } else {
+      $('improvement-tbody').innerHTML = '<tr><td colspan="5" class="null-note" style="text-align:center;padding:12px">No data — run python -m analysis.rule_analysis</td></tr>';
+    }
+
+    // URL-matched gaps
+    const urlRows = data.gap_url_rows || [];
+    if (urlRows.length) {
+      $('url-gap-tbody').innerHTML = urlRows.map(r => `<tr>
+        <td style="font-family:monospace;font-size:10px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          ${esc(r.doi_r || r.url_r || '—')}
+        </td>
+        <td style="font-size:12px">${esc(r.study_r || '—')}</td>
+        <td style="font-size:11px;color:var(--text-muted)">${esc(r.year_r || '—')}</td>
+      </tr>`).join('');
+    } else {
+      $('url-gap-tbody').innerHTML = '<tr><td colspan="3" class="null-note" style="text-align:center;padding:12px">No URL-matched gaps found.</td></tr>';
+    }
+
+    // Load gap table page 1
+    loadGapPage(1);
+
+  } catch(e) {
+    $('gap-generated').textContent = 'Error loading analysis data: ' + e.message;
+  }
+}
+
+async function loadGapPage(page) {
+  _gapPage = page;
+  const search = $('gap-search').value.trim();
+  $('gap-tbody').innerHTML = '<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--text-faint)">Loading…</td></tr>';
+
+  const url = `/api/dashboard/analysis-gaps?page=${page}&per_page=50${search ? '&search=' + encodeURIComponent(search) : ''}`;
+  const data = await fetch(url).then(r => r.json());
+
+  if (data.error) {
+    $('gap-tbody').innerHTML = `<tr><td colspan="3" class="null-note" style="text-align:center;padding:16px">${esc(data.error)}</td></tr>`;
+    $('gap-pager').innerHTML = '';
+    $('gap-count').textContent = '';
+    return;
+  }
+
+  $('gap-count').textContent = `${data.total.toLocaleString()} entries`;
+
+  if (!data.rows || data.rows.length === 0) {
+    $('gap-tbody').innerHTML = '<tr><td colspan="3" class="null-note" style="text-align:center;padding:16px">No matching gaps found.</td></tr>';
+    $('gap-pager').innerHTML = '';
+    return;
+  }
+
+  $('gap-tbody').innerHTML = data.rows.map(r => `<tr>
+    <td style="font-family:monospace;font-size:10px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.doi_r)}">${esc(r.doi_r || '—')}</td>
+    <td style="font-size:12px">${esc(r.study_r || '—')}</td>
+    <td style="font-size:11px;color:var(--text-muted)">${esc(r.year_r || '—')}</td>
+  </tr>`).join('');
+
+  // Pagination
+  const pages = data.pages;
+  if (pages <= 1) { $('gap-pager').innerHTML = ''; return; }
+  let btns = `<button class="pager-btn" onclick="loadGapPage(${page-1})" ${page<=1?'disabled':''}>← Prev</button>`;
+  for (let p = Math.max(1, page-2); p <= Math.min(pages, page+2); p++) {
+    btns += `<button class="pager-btn ${p===page?'active':''}" onclick="loadGapPage(${p})">${p}</button>`;
+  }
+  btns += `<button class="pager-btn" onclick="loadGapPage(${page+1})" ${page>=pages?'disabled':''}>Next →</button>`;
+  btns += `<span style="font-size:11px;color:var(--text-faint)">Page ${page} of ${pages}</span>`;
+  $('gap-pager').innerHTML = btns;
+}
+
+function scheduleGapSearch() {
+  clearTimeout(_gapSearchTimer);
+  _gapSearchTimer = setTimeout(() => loadGapPage(1), 300);
+}
+
 // ── Main loader ──────────────────────────────────────────────────────────────
 async function loadAll() {
   $('status').textContent = 'Loading…';
+  _valLoaded = false;
+  _analysisLoaded = false;
   try {
     await loadPipeline();
-    if ($('tab-validation').classList.contains('active')) await loadValidation();
+    const activeTab = document.querySelector('.tab-btn.active')?.dataset?.tab;
+    if (activeTab === 'validation') await loadValidation();
+    if (activeTab === 'analysis')   await loadAnalysis();
     $('status').textContent = 'Updated ' + new Date().toLocaleTimeString();
   } catch(e) {
     $('status').textContent = 'Error: ' + e.message;
   }
 }
 
-window.addEventListener('DOMContentLoaded', loadAll);
+window.addEventListener('DOMContentLoaded', () => {
+  loadAll();
+  // If starting on validation or analysis tab, trigger their loaders
+  const activeTab = document.querySelector('.tab-btn.active')?.dataset?.tab;
+  if (activeTab === 'validation') loadValidation();
+  if (activeTab === 'analysis')   loadAnalysis();
+});
 </script>
 {% endblock %}

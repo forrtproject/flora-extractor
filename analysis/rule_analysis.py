@@ -303,3 +303,10 @@ def run_phase1_analysis() -> Dict[str, str]:
         "comparison": str(comparison_path),
         "opportunities": str(oppo_path),
     }
+
+
+if __name__ == "__main__":
+    results = run_phase1_analysis()
+    print("Done. Files written:")
+    for k, v in results.items():
+        print(f"  {v}")

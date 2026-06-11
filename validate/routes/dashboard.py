@@ -9,11 +9,16 @@ Routes:
   GET  /api/dashboard/supabase-corrections → per-field correction frequency
   GET  /api/dashboard/supabase-drilldown → paginated incorrect-DOI table
 """
+import re
+import pathlib
+
 import pandas as pd
 from flask import Blueprint, jsonify, render_template, request
 
-from shared.config import DATA_DIR
+from shared.config import DATA_DIR, BASE_DIR
 from shared import supabase_client as supa
+
+ANALYSIS_DIR = BASE_DIR / "analysis"
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
@@ -192,6 +197,162 @@ def api_supabase_outcomes():
 def api_supabase_corrections():
     """Per-field correction frequency (type / original / outcome)."""
     return jsonify(supa.get_correction_frequency())
+
+
+@dashboard_bp.route("/api/dashboard/analysis-stats")
+def api_analysis_stats():
+    """Summary stats for the Analysis tab — gap KPIs, audit metrics, improvement opportunities."""
+    stats: dict = {}
+
+    # ── Gap summary from gap_summary.md ──────────────────────────────────────
+    summary: dict = {}
+    summary_path = ANALYSIS_DIR / "gap_summary.md"
+    if summary_path.exists():
+        try:
+            text = summary_path.read_text(encoding="utf-8")
+            for label, key in [
+                (r"DOI-matched gaps:\s*(\d+)",   "doi_gaps"),
+                (r"URL-matched gaps:\s*(\d+)",   "url_gaps"),
+                (r"Fuzzy-matched gaps:\s*(\d+)", "fuzzy_gaps"),
+                (r"Total:\s*(\d+)\s*gaps",       "total_gaps"),
+                (r"Filter misclassifications\**:\s*(\d+)", "filter_misclassifications"),
+            ]:
+                m = re.search(label, text)
+                if m:
+                    summary[key] = int(m.group(1))
+            m = re.search(r"Generated:\s*(.+)", text)
+            if m:
+                summary["generated"] = m.group(1).strip()
+        except Exception:
+            pass
+    stats["gap_summary"] = summary
+
+    # ── Extraction audit from extraction_audit.md ─────────────────────────────
+    audit: dict = {}
+    audit_path = ANALYSIS_DIR / "extraction_audit.md"
+    if audit_path.exists():
+        try:
+            text = audit_path.read_text(encoding="utf-8")
+            for pattern, key in [
+                (r"Total extracted rows:\s*(\d+)",      "total_extracted"),
+                (r"Missing DOI[^:]*:\s*(\d+)",          "missing_doi"),
+                (r"API error count:\s*(\d+)",           "api_errors"),
+                (r"Target pending count:\s*(\d+)",      "target_pending"),
+            ]:
+                m = re.search(pattern, text)
+                if m:
+                    audit[key] = int(m.group(1))
+            m = re.search(r"Generated:\s*(.+)", text)
+            if m:
+                audit["generated"] = m.group(1).strip()
+
+            # Parse link method table (markdown table rows)
+            link_methods = []
+            in_link_table = False
+            for line in text.splitlines():
+                if "link_method" in line and "count" in line:
+                    in_link_table = True
+                    continue
+                if in_link_table:
+                    if line.startswith("|:") or line.startswith("| -"):
+                        continue
+                    if not line.startswith("|"):
+                        break
+                    parts = [p.strip() for p in line.strip("|").split("|")]
+                    if len(parts) >= 3:
+                        try:
+                            link_methods.append({
+                                "method": parts[0],
+                                "count": int(parts[1]),
+                                "pct": float(parts[2]),
+                            })
+                        except (ValueError, IndexError):
+                            pass
+            audit["link_methods"] = link_methods
+
+            # Parse confidence table
+            conf_rows = []
+            in_conf = False
+            for line in text.splitlines():
+                if "link_confidence" in line and "count" in line:
+                    in_conf = True
+                    continue
+                if in_conf:
+                    if line.startswith("|:") or line.startswith("| -"):
+                        continue
+                    if not line.startswith("|"):
+                        break
+                    parts = [p.strip() for p in line.strip("|").split("|")]
+                    if len(parts) >= 3:
+                        try:
+                            conf_rows.append({
+                                "level": parts[0],
+                                "count": int(parts[1]),
+                                "pct": float(parts[2]),
+                            })
+                        except (ValueError, IndexError):
+                            pass
+            audit["confidence_rows"] = conf_rows
+        except Exception:
+            pass
+    stats["audit"] = audit
+
+    # ── Rule improvement opportunities ────────────────────────────────────────
+    opp_path = ANALYSIS_DIR / "rule_improvement_opportunities.csv"
+    if opp_path.exists():
+        try:
+            df = pd.read_csv(opp_path, encoding="utf-8-sig", dtype=str, on_bad_lines="skip")
+            stats["improvement_rows"] = df.fillna("").to_dict("records")
+        except Exception:
+            stats["improvement_rows"] = []
+    else:
+        stats["improvement_rows"] = []
+
+    # ── URL-matched gaps (small, return all) ──────────────────────────────────
+    url_path = ANALYSIS_DIR / "gap_analysis_url_matched.csv"
+    if url_path.exists():
+        try:
+            df = pd.read_csv(url_path, encoding="utf-8-sig", dtype=str, on_bad_lines="skip",
+                             usecols=lambda c: c in ("doi_r", "url_r", "study_r", "year_r"))
+            stats["gap_url_count"] = len(df)
+            stats["gap_url_rows"] = df.fillna("").to_dict("records")
+        except Exception:
+            stats["gap_url_count"] = None
+            stats["gap_url_rows"] = []
+    else:
+        stats["gap_url_count"] = None
+        stats["gap_url_rows"] = []
+
+    return jsonify(stats)
+
+
+@dashboard_bp.route("/api/dashboard/analysis-gaps")
+def api_analysis_gaps():
+    """Paginated DOI-matched gap rows with optional title/DOI search."""
+    page     = max(1, int(request.args.get("page", 1)))
+    per_page = min(100, max(10, int(request.args.get("per_page", 50))))
+    search   = request.args.get("search", "").strip().lower()
+
+    doi_path = ANALYSIS_DIR / "gap_analysis_doi_matched.csv"
+    if not doi_path.exists():
+        return jsonify({"total": 0, "pages": 0, "rows": []})
+
+    try:
+        df = pd.read_csv(doi_path, encoding="utf-8-sig", dtype=str, on_bad_lines="skip",
+                         usecols=lambda c: c in ("doi_r", "url_r", "study_r", "year_r"))
+        df = df.fillna("")
+        if search:
+            mask = (df["doi_r"].str.lower().str.contains(search, na=False) |
+                    df["study_r"].str.lower().str.contains(search, na=False))
+            df = df[mask]
+        total = len(df)
+        pages = max(1, (total + per_page - 1) // per_page)
+        page  = min(page, pages)
+        start = (page - 1) * per_page
+        rows  = df.iloc[start:start + per_page][["doi_r", "study_r", "year_r"]].to_dict("records")
+        return jsonify({"total": total, "pages": pages, "page": page, "rows": rows})
+    except Exception as e:
+        return jsonify({"error": str(e), "total": 0, "pages": 0, "rows": []})
 
 
 @dashboard_bp.route("/api/dashboard/supabase-drilldown")
