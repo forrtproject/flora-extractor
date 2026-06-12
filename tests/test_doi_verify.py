@@ -46,9 +46,32 @@ class TestFetchDoiMetadata:
 
     def test_unregistered_doi_404(self):
         from shared.doi_verify import fetch_doi_metadata
-        with patch("shared.doi_verify.requests.get", return_value=_resp(404)):
+        def fake_get(url, **kw):
+            if "crossref.org" in url:
+                return _resp(404)
+            return _resp(200, {"results": []})
+        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
             meta = fetch_doi_metadata("10.9999/does.not.exist")
         assert meta["registered"] is False
+
+    def test_datacite_doi_404_on_crossref_found_in_openalex(self):
+        # Zenodo/OSF DOIs are DataCite-registered: CrossRef 404s on them but
+        # OpenAlex indexes them — they must not be reported as unregistered.
+        from shared.doi_verify import fetch_doi_metadata
+        oa = {"results": [{
+            "title": "Reproduction of a neural network analysis",
+            "publication_year": 2020,
+            "authorships": [{"author": {"display_name": "Ayo Adewale"}}],
+        }]}
+        def fake_get(url, **kw):
+            if "crossref.org" in url:
+                return _resp(404)
+            return _resp(200, oa)
+        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+            meta = fetch_doi_metadata("10.5281/zenodo.18973411")
+        assert meta["registered"] is True
+        assert meta["source"] == "openalex"
+        assert meta["first_author_surname"] == "Adewale"
 
     def test_crossref_down_openalex_fallback(self):
         from shared.doi_verify import fetch_doi_metadata
@@ -202,6 +225,139 @@ class TestResolveDoiByMetadata:
                                           exclude_doi="10.5281/zenodo.18973410")
         assert hit is None
 
+    def test_title_only_gap_accepts_dominant_paraphrase(self):
+        # Real case 10.1111/psyp.13707: author_o and year_o were inherited from
+        # the wrong DOI, title_o is paraphrased (jaccard 0.647 vs the true
+        # original). The dominant-hit tier must still recover it.
+        from shared.doi_verify import resolve_doi_by_metadata
+        search = {"message": {"items": [
+            {"DOI": "10.1111/psyp.13707",   # the replication itself (excluded)
+             "title": ["Blunted cardiovascular reactivity to acute psychological stress predicts low behavioral persistence: replication"],
+             "author": [{"family": "Whittaker"}], "issued": {"date-parts": [[2021]]}},
+            {"DOI": "10.1111/psyp.13449",
+             "title": ["Blunted cardiovascular responses to acute psychological stress predict low behavioral but not self-reported perseverance"],
+             "author": [{"family": "Chauntry"}], "issued": {"date-parts": [[2019]]}},
+            {"DOI": "10.1037/rel0000604",
+             "title": ["Negative religious coping is associated with blunted cardiovascular reactivity"],
+             "author": [{"family": "Dempsey"}], "issued": {"date-parts": [[2022]]}},
+        ]}}
+        def fake_get(url, **kw):
+            if "crossref.org" in url:
+                return _resp(200, search)
+            return _resp(200, {"results": []})
+        title_o = "Blunted cardiac reactivity to acute psychological stress predicts low behavioral but not self-reported perseverance"
+        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+            hit = resolve_doi_by_metadata(title_o, "", None,
+                                          exclude_doi="10.1111/psyp.13707",
+                                          title_only_gap=True)
+        assert hit is not None
+        assert hit["doi"] == "10.1111/psyp.13449"
+
+    def test_excludes_doi_prefix_variants(self):
+        # 10.1037/apl0000891.supp is the replication's own supplementary
+        # material — prefix variants of doi_r must be excluded too.
+        from shared.doi_verify import resolve_doi_by_metadata
+        search = {"message": {"items": [{
+            "DOI": "10.1037/apl0000891.supp",
+            "title": ["Daily microbreaks in a self-regulatory resources lens (supplementary)"],
+            "author": [{"family": "Kim"}],
+            "issued": {"date-parts": [[2022]]},
+        }]}}
+        def fake_get(url, **kw):
+            if "crossref.org" in url:
+                return _resp(200, search)
+            return _resp(200, {"results": []})
+        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+            hit = resolve_doi_by_metadata(
+                "Daily microbreaks in a self-regulatory resources lens", "Kim", 2022,
+                exclude_doi="10.1037/apl0000891")
+        assert hit is None
+
+    def test_rejects_hit_closer_to_replication_title(self):
+        # A preprint replication's published version echoes the original's
+        # title and is not excluded by DOI — reject hits whose title matches
+        # the replication's own title better than the claimed original's.
+        from shared.doi_verify import resolve_doi_by_metadata
+        search = {"message": {"items": [{
+            "DOI": "10.1177/0956797620955209",
+            "title": ["Sick body, vigilant mind: a direct replication and extension"],
+            "author": [{"family": "Vega"}],
+            "issued": {"date-parts": [[2020]]},
+        }]}}
+        def fake_get(url, **kw):
+            if "crossref.org" in url:
+                return _resp(200, search)
+            return _resp(200, {"results": []})
+        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+            hit = resolve_doi_by_metadata(
+                "Sick body, vigilant mind: the biological immune system activates the behavioral immune system",
+                "", None,
+                exclude_doi="10.31234/osf.io/m6ghr",
+                exclude_title="Sick body, vigilant mind: a direct replication and extension",
+                title_only_gap=True)
+        assert hit is None
+
+    def test_rejects_corrigenda_and_errata(self):
+        # A corrigendum title embeds the article title and scores high, but a
+        # correction notice can never be the original study.
+        from shared.doi_verify import resolve_doi_by_metadata
+        search = {"message": {"items": [{
+            "DOI": "10.1177/1368430220933248",
+            "title": ["Corrigendum to Collective existential threat mediates White population decline's effect on defensive reactions"],
+            "author": [{"family": "Bai"}],
+            "issued": {"date-parts": [[2020]]},
+        }]}}
+        def fake_get(url, **kw):
+            if "crossref.org" in url:
+                return _resp(200, search)
+            return _resp(200, {"results": []})
+        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+            hit = resolve_doi_by_metadata(
+                "Collective existential threat mediates White population decline's effect on defensive reactions",
+                "", None, title_only_gap=True)
+        assert hit is None
+
+    def test_title_only_gap_dedupes_same_doi_across_sources(self):
+        # CrossRef and OpenAlex both return the same work — the duplicate must
+        # not defeat the dominance check by tying with itself.
+        from shared.doi_verify import resolve_doi_by_metadata
+        cr = {"message": {"items": [
+            {"DOI": "10.1111/psyp.13449",
+             "title": ["Blunted cardiovascular responses to acute psychological stress predict low behavioral but not self-reported perseverance"],
+             "author": [{"family": "Chauntry"}], "issued": {"date-parts": [[2019]]}},
+        ]}}
+        oa = {"results": [{
+            "id": "https://openalex.org/W999",
+            "doi": "https://doi.org/10.1111/psyp.13449",
+            "title": "Blunted cardiovascular responses to acute psychological stress predict low behavioral but not self-reported perseverance",
+            "publication_year": 2019,
+            "authorships": [{"author": {"display_name": "Pip Chauntry"}}],
+        }]}
+        def fake_get(url, **kw):
+            return _resp(200, cr if "crossref.org" in url else oa)
+        title_o = "Blunted cardiac reactivity to acute psychological stress predicts low behavioral but not self-reported perseverance"
+        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+            hit = resolve_doi_by_metadata(title_o, "", None, title_only_gap=True)
+        assert hit is not None
+        assert hit["doi"] == "10.1111/psyp.13449"
+
+    def test_title_only_gap_rejects_ambiguous_hits(self):
+        from shared.doi_verify import resolve_doi_by_metadata
+        search = {"message": {"items": [
+            {"DOI": "10.1000/a", "title": ["Stress reactivity predicts perseverance in adults"],
+             "author": [{"family": "Smith"}], "issued": {"date-parts": [[2019]]}},
+            {"DOI": "10.1000/b", "title": ["Stress reactivity predicts perseverance in students"],
+             "author": [{"family": "Jones"}], "issued": {"date-parts": [[2018]]}},
+        ]}}
+        def fake_get(url, **kw):
+            if "crossref.org" in url:
+                return _resp(200, search)
+            return _resp(200, {"results": []})
+        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+            hit = resolve_doi_by_metadata("Stress reactivity predicts perseverance", "", None,
+                                          title_only_gap=True)
+        assert hit is None  # two near-equal hits — no dominant winner
+
     def test_negative_result_cached(self):
         from shared.doi_verify import resolve_doi_by_metadata
         empty = {"message": {"items": []}}
@@ -246,6 +402,53 @@ class TestVerifyAndCorrect:
         assert out["doi_o_verification"] == "corrected"
         assert out["doi_o"] == "10.1111/psyp.13449"
         assert "10.1016/j.biopsycho.2015.07.014" in out["evidence_note"]
+
+    def test_corrected_via_yearless_retry(self):
+        # year_o was inherited from the wrong DOI (2015), the real original is
+        # 2019 — the year-constrained search fails, the yearless retry succeeds.
+        from shared import doi_verify as dv
+        wrong_meta = {"registered": True, "title": "Cardiac responses to startling stimuli",
+                      "first_author_surname": "Other", "year": 2015, "source": "crossref"}
+        replacement = {"found": True, "doi": "10.1111/psyp.13449", "title": self.TITLE,
+                       "year": 2019, "openalex_id": "", "source": "crossref"}
+        with patch.object(dv, "fetch_doi_metadata", return_value=wrong_meta), \
+             patch.object(dv, "resolve_doi_by_metadata",
+                          side_effect=[None, replacement]) as res:
+            out = dv.verify_and_correct("10.1016/j.biopsycho.2015.07.014",
+                                        self.TITLE, self.AUTHOR, 2015)
+        assert out["doi_o_verification"] == "corrected"
+        assert out["doi_o"] == "10.1111/psyp.13449"
+        assert res.call_count == 2
+        assert res.call_args_list[1].args[2] is None  # second call without year
+
+    def test_no_yearless_retry_without_author(self):
+        from shared import doi_verify as dv
+        wrong_meta = {"registered": True, "title": "Cardiac responses to startling stimuli",
+                      "first_author_surname": "Other", "year": 2015, "source": "crossref"}
+        with patch.object(dv, "fetch_doi_metadata", return_value=wrong_meta), \
+             patch.object(dv, "resolve_doi_by_metadata", return_value=None) as res:
+            out = dv.verify_and_correct("10.1016/j.biopsycho.2015.07.014",
+                                        self.TITLE, "", 2015)
+        assert out["doi_o_verification"] == "mismatch"
+        # yearless retry requires a known author — goes straight to the
+        # title-only dominance tier instead
+        assert res.call_count == 2
+        assert res.call_args_list[1].kwargs.get("title_only_gap") is True
+
+    def test_search_refinds_same_doi_means_verified(self):
+        # Only year_o was wrong (inherited bad year); the search re-finds the
+        # same DOI — that's a verification, not a correction.
+        from shared import doi_verify as dv
+        meta = {"registered": True, "title": self.TITLE,
+                "first_author_surname": "Schindler", "year": 2010, "source": "crossref"}
+        same = {"found": True, "doi": "10.1111/psyp.13449", "title": self.TITLE,
+                "year": 2010, "openalex_id": "", "source": "crossref"}
+        with patch.object(dv, "fetch_doi_metadata", return_value=meta), \
+             patch.object(dv, "resolve_doi_by_metadata", return_value=same):
+            out = dv.verify_and_correct("10.1111/psyp.13449", self.TITLE, self.AUTHOR, 2019)
+        assert out["doi_o_verification"] == "verified"
+        assert out["doi_o"] == "10.1111/psyp.13449"
+        assert "year" in out["evidence_note"].lower()
 
     def test_mismatch_no_replacement(self):
         from shared import doi_verify as dv

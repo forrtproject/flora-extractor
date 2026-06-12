@@ -480,7 +480,13 @@ python -m extract.audit_dois --extracted-test # audit extracted-test.csv instead
 | `api_error` | CrossRef + OpenAlex both failed after retries | unchanged |
 | `skipped` | Nothing to verify, or row is target_pending/api_error | unchanged |
 
-Matching thresholds live as constants in `shared/doi_verify.py` (`VERIFY_TITLE_JACCARD = 0.5`, `RESOLVE_TITLE_JACCARD = 0.7`, `YEAR_TOLERANCE = 1`). Auto-correction is deliberately strict (title Jaccard ≥ 0.7 AND author surname AND year ±1) — a wrong auto-correction is worse than a flag. All API responses are cached in `cache/doi_verify/`. The Extract / Extract Test detail panels show the status as a "DOI Check" field.
+Matching thresholds live as constants in `shared/doi_verify.py` (`VERIFY_TITLE_JACCARD = 0.5`, `RESOLVE_TITLE_JACCARD = 0.7`, `TITLE_ONLY_JACCARD = 0.6`, `TITLE_ONLY_GAP = 1.5`, `YEAR_TOLERANCE = 1`). Auto-correction tries three tiers, strictest first — a wrong auto-correction is worse than a flag:
+
+1. title Jaccard ≥ 0.7 AND author surname AND year ±1
+2. same, without the year (year_o is often inherited from the wrong DOI) — requires a known author
+3. title-only dominance: best hit ≥ 0.6 AND ≥ 1.5 × the second-best (author_o can be inherited from the wrong DOI too); hits are deduped by DOI across CrossRef/OpenAlex so a duplicate can't tie with itself
+
+All API responses are cached in `cache/doi_verify/`. The Extract / Extract Test detail panels show the status as a "DOI Check" field.
 
 Design spec: `docs/superpowers/specs/2026-06-12-doi-verification-design.md`.
 

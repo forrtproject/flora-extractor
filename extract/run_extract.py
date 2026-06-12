@@ -632,7 +632,9 @@ def _verify_row(row: dict) -> dict:
     old_doi = str(row.get("doi_o", "") or "")
     v = verify_and_correct(old_doi, str(row.get("title_o", "") or ""),
                            str(row.get("authors_o", "") or ""), row.get("year_o", ""),
-                           exclude_doi=clean_doi(str(row.get("doi_r", ""))))
+                           exclude_doi=clean_doi(str(row.get("doi_r", ""))),
+                           exclude_title=str(row.get("title_r", "")
+                                             or row.get("study_r", "") or ""))
     row["doi_o_verification"] = v["doi_o_verification"]
     if v["doi_o"] != old_doi:
         row["doi_o"]   = v["doi_o"]

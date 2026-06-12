@@ -63,7 +63,9 @@ def audit_file(csv_path: Path,
         v = verify_and_correct(old_doi, str(row.get("title_o", "") or ""),
                                str(row.get("authors_o", "") or ""),
                                row.get("year_o", ""),
-                               exclude_doi=clean_doi(str(row["doi_r"])))
+                               exclude_doi=clean_doi(str(row["doi_r"])),
+                               exclude_title=str(row.get("title_r", "")
+                                                 or row.get("study_r", "") or ""))
         status = v["doi_o_verification"]
         counts[status] += 1
         df.at[idx, "doi_o_verification"] = status
