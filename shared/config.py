@@ -22,9 +22,11 @@ OA_CACHE_DIR     = CACHE_DIR / "openalex"
 OA_XML_CACHE_DIR     = CACHE_DIR / "openalex_xml"   # GROBID XML from content.openalex.org
 PARSE_CACHE_DIR      = CACHE_DIR / "parse"           # per-method parse results
 MARKITDOWN_CACHE_DIR = CACHE_DIR / "markdown"        # raw .md files from MarkItDown
+DOI_VERIFY_CACHE_DIR = CACHE_DIR / "doi_verify"      # CrossRef/OpenAlex DOI verification
 
 for _d in [DATA_DIR, PDF_CACHE_DIR, GROBID_CACHE_DIR, LLM_CACHE_DIR,
-           OA_CACHE_DIR, OA_XML_CACHE_DIR, PARSE_CACHE_DIR, MARKITDOWN_CACHE_DIR]:
+           OA_CACHE_DIR, OA_XML_CACHE_DIR, PARSE_CACHE_DIR, MARKITDOWN_CACHE_DIR,
+           DOI_VERIFY_CACHE_DIR]:
     _d.mkdir(parents=True, exist_ok=True)
 
 # ── Input / output files ──────────────────────────────────────────────────────
@@ -100,6 +102,7 @@ GEMINI_FLEX_TIMEOUT = int(os.getenv("GEMINI_FLEX_TIMEOUT", "900"))
 
 # ── Rate limits (seconds between calls) ──────────────────────────────────────
 OPENALEX_RATE_SEC  = float(os.getenv("OPENALEX_RATE_SEC", "0.3"))
+CROSSREF_RATE_SEC  = 0.1
 UNPAYWALL_RATE_SEC = 0.5
 GROBID_RATE_SEC    = 3.0
 LLM_RATE_SEC       = 1.0

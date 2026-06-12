@@ -58,7 +58,13 @@ do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 
 python -m search.run_search --source bob_reed
 python -m search.run_search --source i4r
 
-do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 --max-per-phrase 1000 --source openalex } until ($LASTEXITCODE -eq 2)
+# --no-harvest: skip the per-cycle cache harvest so the loop stays fast.
+# The harvest scans all cached JSON pages and can be slow/memory-heavy.
+# Run it separately once a week (or after an OOM crash) instead:
+do { python -m search.run_search --auto-advance --from-year 2022 --to-year 2026 --max-per-phrase 10000 --no-harvest } until ($LASTEXITCODE -eq 2)
+
+# Harvest only (run separately, ~weekly or after a crash):
+python -m search.run_search --harvest-only
 
 Default (Smart Mode) — Only Process Uncertain Rows
 python recalibrate_outcomes.py --input data/extracted.csv --clear-cache
@@ -66,3 +72,4 @@ python recalibrate_outcomes.py --input data/extracted.csv --clear-cache
 If You Want Fresh LLM on Everything
 python recalibrate_outcomes.py --input data/extracted.csv --clear-cache --reprocess-all
 
+python -m extract.audit_dois --apply

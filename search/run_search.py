@@ -540,6 +540,7 @@ def run_search_auto_advance(
     to_year:   int = 2021,
     max_records_per_phrase: int = 200,
     sources: "Optional[set[str]]" = None,
+    skip_harvest: bool = False,
 ) -> pd.DataFrame:
     """Process exactly ONE (source, phrase, year) job per invocation.
 
@@ -601,8 +602,10 @@ def run_search_auto_advance(
     # Harvest cached pages once per full cycle (at the first job of the first year
     # only, and only after at least one cycle has completed). This catches any rows
     # orphaned by OOM crashes in the previous cycle without adding per-year overhead.
+    # Skipped when skip_harvest=True — use --harvest-only to run it separately.
     harvest_due = (
-        jidx == 0
+        not skip_harvest
+        and jidx == 0
         and year == from_year
         and state.get("cycles_completed", 0) >= 1
     )
@@ -714,6 +717,22 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Force rebuild of the candidates index from candidates.csv, then exit.",
     )
+    parser.add_argument(
+        "--harvest-only",
+        action="store_true",
+        help=(
+            "Harvest all cached OpenAlex/S2 pages into candidates.csv, then exit. "
+            "Run this separately (e.g. once a week) instead of letting auto-advance do it."
+        ),
+    )
+    parser.add_argument(
+        "--no-harvest",
+        action="store_true",
+        help=(
+            "Skip the per-cycle cache harvest in --auto-advance mode. "
+            "Use alongside --harvest-only on a separate schedule."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -729,6 +748,18 @@ if __name__ == "__main__":
             print("candidates.csv not found — nothing to rebuild.")
         raise SystemExit(0)
 
+    if args.harvest_only:
+        out_path = DATA_DIR / "candidates.csv"
+        log.info("Harvest-only: scanning cached OpenAlex and S2 pages...")
+        cached_batch = pd.concat([_harvest_oa_cache(), _harvest_s2_cache()], ignore_index=True)
+        if cached_batch.empty:
+            print("No cached pages found — nothing to harvest.")
+        else:
+            log.info("Harvest-only: %d rows found — merging into candidates.csv", len(cached_batch))
+            _merge_into_candidates_csv(cached_batch, out_path)
+            print(f"Harvest complete: {len(cached_batch)} rows processed.")
+        raise SystemExit(0)
+
     if args.reset_cursors:
         _reset_openalex_cursors()
         _reset_s2_offsets()
@@ -740,6 +771,7 @@ if __name__ == "__main__":
         cycle_done = run_search_auto_advance(
             from_year=from_yr, to_year=to_yr, max_records_per_phrase=max_n,
             sources=set(args.sources) if args.sources else None,
+            skip_harvest=args.no_harvest,
         )
         # Exit code 2 signals a full cycle completed.
         # PowerShell: do { python ... } until ($LASTEXITCODE -eq 2)

@@ -14,6 +14,7 @@ Usage:
 import json
 import re
 import time
+from pathlib import Path
 
 import pandas as pd
 
@@ -26,6 +27,7 @@ from shared.llm_client import call_llm
 from shared.openalex_client import extract_author_year_patterns, find_all_candidates
 from shared.openalex_client import fetch_openalex_by_doi as _oa_by_doi
 from shared.pdf_parsing import parse_all as _parse_all
+from shared.doi_verify import verify_and_correct
 from shared.schema import EXTRACTED_COLS, make_pair_id
 from shared.utils import cache_key, clean_doi
 from extract.link_original import run_for_doi
@@ -616,12 +618,46 @@ def _load_extracted_rows(out_path) -> tuple[dict[str, list[dict]], set[str]]:
     return resolved, pending
 
 
+def _verify_row(row: dict) -> dict:
+    """Verify/correct doi_o in a finished result row before it is written.
+
+    Keeps pair_id and ref_o consistent when the DOI changes, downgrades
+    link_confidence on mismatch, and appends the verification note to
+    link_evidence.
+    """
+    if row.get("link_method") in {"target_pending", "api_error"}:
+        row["doi_o_verification"] = "skipped"
+        return row
+
+    old_doi = str(row.get("doi_o", "") or "")
+    v = verify_and_correct(old_doi, str(row.get("title_o", "") or ""),
+                           str(row.get("authors_o", "") or ""), row.get("year_o", ""),
+                           exclude_doi=clean_doi(str(row.get("doi_r", ""))))
+    row["doi_o_verification"] = v["doi_o_verification"]
+    if v["doi_o"] != old_doi:
+        row["doi_o"]   = v["doi_o"]
+        row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), v["doi_o"])
+        row["ref_o"]   = _fetch_ref_o(v["doi_o"],
+                                      str(row.get("authors_o", "") or ""),
+                                      str(row.get("year_o", "") or ""))
+    if v["doi_o_verification"] == "mismatch":
+        row["link_confidence"] = "low"
+    if v["evidence_note"]:
+        existing = str(row.get("link_evidence", "") or "")
+        # resume mode re-verifies carried-forward rows — don't append the same note twice
+        if v["evidence_note"] not in existing:
+            row["link_evidence"] = f"{existing} | {v['evidence_note']}".strip(" |")
+    return row
+
+
 def _append_row(out_path, result_row: dict, first: bool) -> None:
     """Write one result row to the output CSV immediately after processing.
 
     first=True  → open with mode='w' (creates / truncates the file) and write header.
     first=False → open with mode='a' (append) and skip header.
     """
+    result_row = _verify_row(result_row)
+
     # Sanitize row data to handle problematic characters
     for key, val in result_row.items():
         if isinstance(val, str):

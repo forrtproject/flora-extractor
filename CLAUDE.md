@@ -81,6 +81,7 @@ The web app provides tabbed views for each stage's output:
 | `shared/pdf_parsing.py`        | Six PDF parse methods (openalex_xml, pdfminer, GROBID, docpluck, opendataloader, markitdown); `parse_all()` orchestrator; `score_parse_result()`, `best_parse_result()`, `best_parse_method_name()` scoring API |
 | `shared/grobid.py`             | GROBID reference extraction from PDFs                                       |
 | `shared/disambiguation.py`     | Same-author/year candidate disambiguation — needs validation                |
+| `shared/doi_verify.py`         | DOI verification: `fetch_doi_metadata()` (CrossRef→OpenAlex), `resolve_doi_by_metadata()` search, `verify_and_correct()` orchestrator |
 | `shared/utils.py`              | `clean_doi()`, `cache_key()`, common helpers                                |
 | `shared/config.py`             | All paths, env var loading, rate limits; `MARKITDOWN_CACHE_DIR = cache/markdown/` |
 | `shared/schema.py`             | CSV column definitions — the contract between pipeline stages               |
@@ -112,6 +113,7 @@ The web app provides tabbed views for each stage's output:
 | `extract/multi_original.py`| Multi-original pipeline — finds all target studies (needs improvement)       |
 | `extract/code_outcome.py`  | Keyword + LLM outcome extraction                                             |
 | `extract/promote_test.py`  | CLI + library: merge rows from extracted-test.csv into extracted.csv; `--all`, `--doi`, `--dry-run`, `--force` |
+| `extract/audit_dois.py`    | CLI: retroactive DOI verification of extracted.csv; dry-run by default, `--apply` writes corrections; `--doi`, `--extracted-test` |
 
 ### `validate/` — Stage 4 (Flask web app)
 
@@ -177,6 +179,7 @@ doi_o, title_o, year_o, authors_o
 link_method    — author_year_match | llm_abstract | llm_fulltext | target_pending | api_error
 link_evidence
 link_confidence           — high | medium | low
+doi_o_verification        — verified | corrected | mismatch | no_doi | not_found | no_metadata | api_error | skipped
 outcome        — success | failure | mixed | uninformative | descriptive | pending | api_error
 outcome_phrase, outcome_confidence, out_quote_source
 type           — replication | reproduction
@@ -449,6 +452,40 @@ If a row's parse cache exists but is missing the `markitdown` key (written befor
 
 ---
 
+## DOI Verification — Catching Hallucinated doi_o Values
+
+LLM resolution can produce the right title/author with a **wrong DOI** (a registered DOI pointing to a different paper). `shared/doi_verify.py` catches this by fetching the metadata each `doi_o` actually points to (CrossRef, the registry of record; OpenAlex fallback) and comparing title/year. On mismatch it re-resolves the DOI from title+author via CrossRef bibliographic search, with OpenAlex as fallback because OpenAlex also indexes DOI-less works (old papers, book chapters). The replication's own `doi_r` is always excluded as a correction target — replication titles often echo the original's title, so the search can return the replication paper itself.
+
+**Runs automatically:** every row written by `extract.run_extract` (single-original, multi-original, and `--extracted-test`) passes through `_verify_row()` in `_append_row()` before hitting the CSV. No flag needed. On a correction, `doi_o` is replaced, `pair_id` is recomputed, `ref_o` is re-fetched, and a note is appended to `link_evidence`. On a `mismatch`, `link_confidence` is downgraded to `low`.
+
+**Retroactive audit** of an existing CSV:
+
+```bash
+python -m extract.audit_dois                  # dry-run: console summary + data/doi_audit_report.csv
+python -m extract.audit_dois --apply          # write corrections into extracted.csv
+python -m extract.audit_dois --doi 10.x/y     # single row
+python -m extract.audit_dois --extracted-test # audit extracted-test.csv instead
+```
+
+`doi_o_verification` status values:
+
+| Status | Meaning | Effect on doi_o |
+| --- | --- | --- |
+| `verified` | DOI metadata matches title/year | unchanged |
+| `corrected` | Wrong/unregistered/blank DOI; confident replacement found | replaced or filled |
+| `mismatch` | Metadata disagrees, no confident replacement | kept; `link_confidence` → low |
+| `no_doi` | Original found in OpenAlex but has no registered DOI | blank (intentional) |
+| `not_found` | Blank DOI, no confident match anywhere | stays blank; needs review |
+| `no_metadata` | DOI unregistered, no replacement found | kept; flagged |
+| `api_error` | CrossRef + OpenAlex both failed after retries | unchanged |
+| `skipped` | Nothing to verify, or row is target_pending/api_error | unchanged |
+
+Matching thresholds live as constants in `shared/doi_verify.py` (`VERIFY_TITLE_JACCARD = 0.5`, `RESOLVE_TITLE_JACCARD = 0.7`, `YEAR_TOLERANCE = 1`). Auto-correction is deliberately strict (title Jaccard ≥ 0.7 AND author surname AND year ±1) — a wrong auto-correction is worse than a flag. All API responses are cached in `cache/doi_verify/`. The Extract / Extract Test detail panels show the status as a "DOI Check" field.
+
+Design spec: `docs/superpowers/specs/2026-06-12-doi-verification-design.md`.
+
+---
+
 ## What Is Already Done
 
 The following are implemented and working (ported from the *OpenAlexLLM* prototype — an internal earlier-generation pipeline for the same task):
@@ -466,12 +503,13 @@ The following are implemented and working (ported from the *OpenAlexLLM* prototy
 - **Parse scoring + MarkItDown** — six parse methods, unified scoring formula used by both DOI resolution and outcome extraction, winner badge in UI
 - **Dashboard enhancements** — link-method breakdown, LLM model family breakdown (Gemini / GPT / Qwen), and full Extract Test stats section
 - **Index-based dedup for Stage 1 + 2** — `cache/candidates_index.txt` and `cache/filtered_index.txt` replace full-CSV loads; Stage 1 appends new rows only; Stage 2 reads candidates.csv in 50k-row chunks; both stages support `--rebuild-index` to force a fresh index build
+- **DOI verification (June 2026)** — `shared/doi_verify.py` + `doi_o_verification` column + automatic `_verify_row()` hook in run_extract + `extract.audit_dois` CLI; see "DOI Verification" section above
 
 ## What Needs to Be Written
 
 All core pipeline modules are now implemented. Known gaps:
 
-- `tests/live/` directory — mentioned in `tests/test_filter.py` but not yet created; live LLM integration tests should go here, guarded by `TEST_LIVE_API=1`
+- Live LLM integration tests in `tests/live/` (the directory now exists with `test_doi_verify_live.py`; LLM tests still missing), guarded by `TEST_LIVE_API=1`
 - Unit tests for standalone scripts: `search/sensitivity_check.py`, `extract/mix_for_validation.py`, `validate/csv_to_db.py`
 - Unit tests for orchestrators: `search/deduplicate.py`, `filter/run_filter.py` (currently tested only indirectly)
 - Unit tests for `extract/promote_test.py` promote logic (currently smoke-tested only)

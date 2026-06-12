@@ -854,6 +854,7 @@ function renderDetail(div, d) {
         </div>
         <div class="fg4">
           ${field('Original DOI', d.doi_o, true)}
+          ${field('DOI Check', d.doi_o_verification || '—')}
           ${field('Year', d.year_o)}
           ${field('Authors', d.authors_o)}
           <div><div class="fl">LINK CONFIDENCE</div>${pillConf(d.link_confidence)}</div>

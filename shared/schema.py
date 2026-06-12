@@ -51,6 +51,7 @@ EXTRACT_ADDED_COLS = [
     "link_evidence",       # str   — quote or pattern used for linking
     "link_confidence",     # str   — high | medium | low
     "link_llm_model",      # str   — exact model used for DOI resolution (e.g. gemini-2.0-flash)
+    "doi_o_verification",  # str   — verified | corrected | mismatch | no_doi | not_found | no_metadata | api_error | skipped
 
     # Outcome
     "outcome",             # str   — success | failure | mixed | uninformative | descriptive | pending
@@ -97,6 +98,11 @@ LINK_METHOD_VALUES = {
     # These papers are likely Stage 2 false positives or self-replications; exclude from DB import.
     "no_original_found",
     "target_pending", "api_error",
+}
+
+DOI_VERIFICATION_VALUES = {
+    "verified", "corrected", "mismatch", "no_doi",
+    "not_found", "no_metadata", "api_error", "skipped",
 }
 
 OUTCOME_VALUES = {
