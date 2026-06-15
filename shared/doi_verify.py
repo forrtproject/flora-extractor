@@ -91,6 +91,43 @@ def _surname(author: str) -> str:
     return author.split()[-1]
 
 
+def _fetch_via_content_negotiation(doi: str) -> Optional[dict]:
+    """GET https://doi.org/{doi} with CSL-JSON content negotiation.
+
+    Resolves DOIs registered with any registrar (publisher-direct, DataCite
+    variants not yet indexed by OpenAlex). Returns same shape as fetch_doi_metadata
+    on success, or None if the DOI truly does not resolve.
+    """
+    headers = {**_HEADERS, "Accept": "application/vnd.citationstyles.csl+json"}
+    for delay in _RETRY_DELAYS:
+        if delay:
+            time.sleep(delay)
+        try:
+            r = requests.get(f"https://doi.org/{doi}", headers=headers, timeout=20,
+                             allow_redirects=True)
+            if r.status_code == 404:
+                return None
+            if 400 <= r.status_code < 500 and r.status_code != 429:
+                return None
+            r.raise_for_status()
+            csl = r.json()
+            title = csl.get("title") or ""
+            year = None
+            for k in ("issued", "published-print", "published-online"):
+                parts = (csl.get(k) or {}).get("date-parts") or []
+                if parts and parts[0] and parts[0][0]:
+                    year = int(parts[0][0])
+                    break
+            authors = csl.get("author") or []
+            first_surname = (authors[0].get("family") or "") if authors else ""
+            return {"registered": True, "title": title,
+                    "first_author_surname": first_surname,
+                    "year": year, "source": "content_negotiation"}
+        except Exception as exc:
+            log.warning("doi_verify content-negotiation %s failed: %s", doi, exc)
+    return None
+
+
 def fetch_doi_metadata(doi: str) -> Optional[dict]:
     """Return the metadata *doi* currently points to, or None on api_error.
 
@@ -140,7 +177,12 @@ def fetch_doi_metadata(doi: str) -> Optional[dict]:
         return meta
 
     if not_found:
-        # 404 on CrossRef and absent from OpenAlex → genuinely unregistered
+        # CrossRef 404 + absent OpenAlex: try DOI content negotiation — resolves
+        # ANY registrar (publisher-direct, DataCite variants not yet in OpenAlex).
+        meta = _fetch_via_content_negotiation(doi)
+        if meta:
+            write_cache(DOI_VERIFY_CACHE_DIR, key, meta)
+            return meta
         meta = {"registered": False, "title": "", "first_author_surname": "",
                 "year": None, "source": "crossref"}
         write_cache(DOI_VERIFY_CACHE_DIR, key, meta)
@@ -221,9 +263,9 @@ def resolve_doi_by_metadata(title: str, author: str, year,
 
     cr_data, _ = _get_json("https://api.crossref.org/works",
                            {"query.bibliographic": f"{title} {author}".strip(),
-                            "rows": 5, "mailto": RESEARCHER_EMAIL})
+                            "rows": 10, "mailto": RESEARCHER_EMAIL})
     oa_data, _ = _get_json("https://api.openalex.org/works",
-                           {"search": _sanitize_search(title), "per-page": 5,
+                           {"search": _sanitize_search(title), "per-page": 10,
                             "select": "id,doi,title,authorships,publication_year",
                             "mailto": RESEARCHER_EMAIL})
     if cr_data is None and oa_data is None:

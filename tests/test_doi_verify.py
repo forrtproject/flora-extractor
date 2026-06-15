@@ -49,10 +49,37 @@ class TestFetchDoiMetadata:
         def fake_get(url, **kw):
             if "crossref.org" in url:
                 return _resp(404)
+            if "doi.org" in url:
+                return _resp(404)
             return _resp(200, {"results": []})
         with patch("shared.doi_verify.requests.get", side_effect=fake_get):
             meta = fetch_doi_metadata("10.9999/does.not.exist")
         assert meta["registered"] is False
+
+    def test_content_negotiation_fallback(self):
+        # DOI 404s on CrossRef and is absent from OpenAlex, but resolves via
+        # doi.org content negotiation (publisher-direct registrar).
+        from shared.doi_verify import fetch_doi_metadata
+        csl = {
+            "title": "Some Obscure Publisher Article",
+            "author": [{"family": "Kowalski"}],
+            "issued": {"date-parts": [[2015]]},
+        }
+        def fake_get(url, **kw):
+            if "crossref.org" in url:
+                return _resp(404)
+            if "openalex.org" in url:
+                return _resp(200, {"results": []})
+            if "doi.org" in url:
+                return _resp(200, csl)
+            return _resp(404)
+        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+            meta = fetch_doi_metadata("10.9999/publisher.direct")
+        assert meta["registered"] is True
+        assert meta["title"] == "Some Obscure Publisher Article"
+        assert meta["first_author_surname"] == "Kowalski"
+        assert meta["year"] == 2015
+        assert meta["source"] == "content_negotiation"
 
     def test_datacite_doi_404_on_crossref_found_in_openalex(self):
         # Zenodo/OSF DOIs are DataCite-registered: CrossRef 404s on them but
