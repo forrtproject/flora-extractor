@@ -3,100 +3,168 @@
 
 {% block head %}
 <style>
-/* ── Dashboard local styles ──────────────────────────────────────────────── */
-.dash-page { max-width:1100px; margin:0 auto; padding:20px 16px; }
+/* ── Dashboard shell ────────────────────────────────────────────────────────── */
+.dash-page { max-width:1300px; margin:0 auto; padding:16px; }
 
-.kpi-row {
-  display:flex; flex-wrap:wrap; gap:12px; margin-bottom:20px; align-items:center;
+/* ── Tab strip ──────────────────────────────────────────────────────────────── */
+.tab-strip {
+  display:flex; gap:0; margin-bottom:0;
+  border-bottom:2px solid var(--border);
+  overflow-x:auto; -webkit-overflow-scrolling:touch;
 }
+.tab-btn {
+  flex-shrink:0; padding:8px 16px; font-size:12px; font-weight:600;
+  color:var(--text-muted); background:none; border:none; border-bottom:2px solid transparent;
+  margin-bottom:-2px; cursor:pointer; transition:all .15s; white-space:nowrap;
+}
+.tab-btn:hover  { color:var(--text); background:var(--surface-2); }
+.tab-btn.active { color:var(--accent); border-bottom-color:var(--accent); }
+.tab-label-stage { font-size:9px; font-weight:700; text-transform:uppercase;
+                   color:var(--text-faint); letter-spacing:.4px; display:block; margin-bottom:1px; }
+
+/* ── Tab panels ─────────────────────────────────────────────────────────────── */
+.tab-panel { display:none; padding-top:16px; }
+.tab-panel.active { display:block; }
+
+/* ── 40/60 split ─────────────────────────────────────────────────────────────── */
+.panel-split {
+  display:grid;
+  grid-template-columns:2fr 3fr;
+  gap:16px;
+  align-items:start;
+}
+@media(max-width:900px){ .panel-split{ grid-template-columns:1fr; } }
+
+/* ── Docs panel (left) ───────────────────────────────────────────────────────── */
+.docs-panel { display:flex; flex-direction:column; gap:12px; }
+.docs-card {
+  background:var(--surface); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px;
+}
+.docs-card-head {
+  font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.5px;
+  color:var(--text-faint); margin:0 0 10px;
+}
+.docs-card p { font-size:12px; color:var(--text-muted); line-height:1.6; margin:0 0 8px; }
+.docs-card p:last-child { margin-bottom:0; }
+.docs-card code {
+  font-family:monospace; font-size:11px; background:var(--surface-2);
+  padding:1px 5px; border-radius:3px; color:var(--accent);
+}
+.cli-block {
+  background:var(--surface-2); border:1px solid var(--border); border-radius:6px;
+  padding:10px 12px; font-family:monospace; font-size:11px; color:var(--text);
+  white-space:pre-wrap; line-height:1.7; margin:0;
+}
+.docs-table { width:100%; border-collapse:collapse; font-size:11px; margin-top:4px; }
+.docs-table th {
+  text-align:left; padding:4px 8px; font-weight:700; color:var(--text-muted);
+  border-bottom:2px solid var(--border); white-space:nowrap;
+}
+.docs-table td {
+  padding:4px 8px; border-bottom:1px solid var(--border); color:var(--text);
+  vertical-align:top;
+}
+.docs-table tr:last-child td { border-bottom:none; }
+.docs-table .col-name { font-family:monospace; color:var(--accent); white-space:nowrap; }
+.docs-table .col-desc { color:var(--text-muted); }
+.kw-grid {
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
+  gap:4px; margin-top:4px;
+}
+.kw-pill {
+  background:var(--surface-2); border:1px solid var(--border); border-radius:4px;
+  padding:2px 7px; font-size:10px; font-family:monospace; color:var(--text); white-space:nowrap;
+}
+.kw-pill.excl { border-color:#fee2e2; background:#fef2f2; color:#dc2626; }
+
+/* ── Stats panel (right) ─────────────────────────────────────────────────────── */
+.stats-panel { display:flex; flex-direction:column; gap:12px; }
+
+/* KPI row */
+.kpi-row { display:flex; flex-wrap:wrap; gap:10px; }
 .kpi-card {
   background:var(--surface); border:1px solid var(--border); border-radius:8px;
-  padding:14px 18px; text-align:center; min-width:120px;
+  padding:12px 16px; text-align:center; min-width:110px; flex:1;
 }
 a.kpi-card { text-decoration:none; color:inherit; transition:border-color .15s,box-shadow .15s; }
 a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-ring); }
-.kpi-arrow { font-size:18px; color:var(--text-faint); flex-shrink:0; }
-.kpi-num   { font-size:26px; font-weight:800; line-height:1.1; color:var(--text); }
-.kpi-label { font-size:11px; font-weight:600; color:var(--text-muted); margin-top:3px; }
-.kpi-sub   { font-size:9.5px; color:var(--text-faint); margin-top:2px; font-family:monospace; }
+.kpi-num   { font-size:24px; font-weight:800; line-height:1.1; color:var(--text); }
+.kpi-label { font-size:10px; font-weight:600; color:var(--text-muted); margin-top:3px; }
+.kpi-sub   { font-size:9px; color:var(--text-faint); margin-top:2px; font-family:monospace; }
 
-.two-col   { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
-.three-col { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-bottom:16px; }
-@media(max-width:640px){ .two-col,.three-col{ grid-template-columns:1fr; } }
-
-.stat-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:14px 16px; }
+/* Stat card */
+.stat-card {
+  background:var(--surface); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px;
+}
 .stat-card h3 {
   font-size:10px; font-weight:700; text-transform:uppercase;
   color:var(--text-faint); letter-spacing:.5px; margin:0 0 10px;
 }
 .stat-row {
   display:flex; justify-content:space-between; align-items:center;
-  padding:5px 0; border-bottom:1px solid var(--border); font-size:12px;
-  color:var(--text);
+  padding:5px 0; border-bottom:1px solid var(--border); font-size:12px; color:var(--text);
 }
 .stat-row:last-child { border-bottom:none; }
 .stat-pct { font-size:10px; color:var(--text-faint); margin-left:4px; }
 
+/* Inline two-col inside stats panel */
+.stats-two { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+@media(max-width:640px){ .stats-two{ grid-template-columns:1fr; } }
+
 /* Pie / donut */
-.pie-wrap { display:flex; gap:24px; align-items:center; flex-wrap:wrap; }
-.pie-legend { flex:1; min-width:160px; }
+.pie-wrap { display:flex; gap:20px; align-items:center; flex-wrap:wrap; }
+.pie-legend { flex:1; min-width:140px; }
 .leg-row {
   display:flex; align-items:center; gap:7px;
-  padding:4px 0; border-bottom:1px solid var(--border); font-size:12px;
-  color:var(--text);
+  padding:4px 0; border-bottom:1px solid var(--border); font-size:11px; color:var(--text);
 }
 .leg-row:last-child { border-bottom:none; }
-.leg-dot { width:10px; height:10px; border-radius:2px; flex-shrink:0; }
+.leg-dot { width:9px; height:9px; border-radius:2px; flex-shrink:0; }
 .leg-label { flex:1; }
 .leg-count { font-weight:700; }
 .leg-pct   { font-size:10px; color:var(--text-faint); min-width:34px; text-align:right; }
 
-.dash-section { margin-bottom:20px; }
 .null-note { font-size:11px; color:var(--text-faint); font-style:italic; }
-.section-divider { border:none; border-top:2px solid var(--border); margin:24px 0 16px; }
-.section-badge {
-  display:inline-flex; align-items:center; gap:6px;
-  background:var(--surface-2); border:1px solid var(--border); border-radius:6px;
-  padding:4px 10px; font-size:11px; font-weight:700; color:var(--text-muted);
-  margin-bottom:12px;
-}
 
 /* Supabase not-configured notice */
 .supa-notice {
   background:var(--surface-2); border:1px dashed var(--border-2); border-radius:8px;
-  padding:20px; text-align:center; color:var(--text-muted); font-size:12px; margin-bottom:16px;
+  padding:16px; text-align:center; color:var(--text-muted); font-size:12px;
 }
 .supa-notice a { color:var(--accent); }
 
-/* Correction bar chart */
-.corr-bar-wrap { margin-bottom:10px; }
-.corr-bar-label { display:flex; justify-content:space-between; font-size:12px;
-                  color:var(--text); margin-bottom:3px; }
-.corr-bar-track { width:100%; height:10px; background:var(--border);
-                  border-radius:4px; overflow:hidden; }
-.corr-bar-fill  { height:100%; border-radius:4px; transition:width .3s; }
+/* Progress bar */
+.progress-bar  { background:var(--border); border-radius:4px; overflow:hidden; }
+.progress-fill { height:100%; background:var(--accent); transition:width .3s; }
 
-/* Drilldown table */
+/* Drilldown */
 .drilldown-row { cursor:pointer; }
-.drilldown-row td { transition:background .1s; }
 .drilldown-detail { display:none; }
 .drilldown-detail.open { display:table-row; }
 .drilldown-panel {
   background:var(--surface-2); border:1px solid var(--border);
-  border-radius:6px; padding:14px; margin:4px 0;
+  border-radius:6px; padding:12px; margin:4px 0;
 }
 .drilldown-panel table { width:100%; font-size:11px; border-collapse:collapse; }
 .drilldown-panel th, .drilldown-panel td {
-  padding:4px 8px; border:1px solid var(--border); text-align:left;
-  color:var(--text);
+  padding:4px 8px; border:1px solid var(--border); text-align:left; color:var(--text);
 }
 .drilldown-panel th { background:var(--surface); font-weight:700; color:var(--text-muted); }
 .check-correct   { color:#16a34a; font-weight:700; }
 .check-incorrect { color:#dc2626; font-weight:700; }
 
-/* Pagination */
+/* Correction bar */
+.corr-bar-wrap { margin-bottom:8px; }
+.corr-bar-label { display:flex; justify-content:space-between; font-size:11px;
+                  color:var(--text); margin-bottom:2px; }
+.corr-bar-track { width:100%; height:8px; background:var(--border); border-radius:3px; overflow:hidden; }
+.corr-bar-fill  { height:100%; border-radius:3px; transition:width .3s; }
+
+/* Pager */
 .pager { display:flex; gap:6px; align-items:center; justify-content:center;
-         margin-top:12px; flex-wrap:wrap; }
+         margin-top:10px; flex-wrap:wrap; }
 .pager-btn { padding:4px 10px; font-size:12px; border:1px solid var(--border);
              border-radius:4px; background:var(--surface); color:var(--text);
              cursor:pointer; transition:all .15s; }
@@ -104,651 +172,842 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
 .pager-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
 .pager-btn:disabled { opacity:.4; cursor:default; }
 
-/* Analysis section */
-.analysis-card { background:var(--surface); border:1px solid var(--border); border-radius:8px;
-                 padding:14px 16px; margin-bottom:16px; }
-.analysis-card h3 { font-size:10px; font-weight:700; text-transform:uppercase;
-                    color:var(--text-faint); letter-spacing:.5px; margin:0 0 10px; }
+/* Analysis */
 .analysis-file-list { list-style:none; padding:0; margin:0; }
 .analysis-file-list li { display:flex; align-items:baseline; gap:8px;
                           padding:4px 0; border-bottom:1px solid var(--border); font-size:12px; }
 .analysis-file-list li:last-child { border-bottom:none; }
-.analysis-file-list .fname { font-family:monospace; font-size:11px; color:var(--accent); flex-shrink:0; }
+.analysis-file-list .fname { font-family:monospace; font-size:10px; color:var(--accent); flex-shrink:0; }
 .analysis-file-list .fdesc { color:var(--text-muted); }
-
-/* Analysis priority badge */
 .pri-high   { color:#dc2626; font-weight:700; }
 .pri-medium { color:#f59e0b; font-weight:700; }
 .pri-low    { color:#9ca3af; font-weight:600; }
-
-/* Analysis gap search */
-.gap-search-row { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
-.gap-search-row input { flex:1; min-width:200px; }
+.gap-search-row { display:flex; gap:8px; align-items:center; margin-bottom:10px; }
+.gap-search-row input { flex:1; min-width:160px; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="dash-page">
-  <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px">
-    <h1 style="font-size:16px;font-weight:700;color:var(--text)">Dashboard</h1>
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+    <h1 style="font-size:15px;font-weight:700;color:var(--text)">Dashboard</h1>
     <button class="btn btn-secondary" style="font-size:11px" onclick="loadAll()">↺ Refresh</button>
     <span id="status" style="font-size:11px;color:var(--text-faint)"></span>
   </div>
 
-  <!-- ── Tab strip ─────────────────────────────────────────────────────────── -->
+  <!-- ── Tab strip ──────────────────────────────────────────────────────────── -->
   <div class="tab-strip">
-    <button class="tab-btn active" data-tab="pipeline">Pipeline</button>
-    <button class="tab-btn" data-tab="extract-test">Extract Test</button>
-    <button class="tab-btn" data-tab="validation">Validation</button>
-    <button class="tab-btn" data-tab="analysis">Analysis</button>
+    <button class="tab-btn active" data-tab="search">
+      <span class="tab-label-stage">Stage 1</span>Search
+    </button>
+    <button class="tab-btn" data-tab="filter">
+      <span class="tab-label-stage">Stage 2</span>Filter
+    </button>
+    <button class="tab-btn" data-tab="extract">
+      <span class="tab-label-stage">Stage 3</span>Extract
+    </button>
+    <button class="tab-btn" data-tab="extract-test">
+      <span class="tab-label-stage">Stage 3</span>Extract-Test
+    </button>
+    <button class="tab-btn" data-tab="supabase">
+      <span class="tab-label-stage">Stage 4</span>Supabase
+    </button>
+    <button class="tab-btn" data-tab="old-pipeline">
+      <span class="tab-label-stage">Analysis</span>Old Pipeline
+    </button>
   </div>
 
+
   <!-- ════════════════════════════════════════════════════════════════════════ -->
-  <!-- PIPELINE TAB                                                            -->
+  <!-- SEARCH TAB (Stage 1)                                                    -->
   <!-- ════════════════════════════════════════════════════════════════════════ -->
-  <div class="tab-panel active" id="tab-pipeline">
+  <div class="tab-panel active" id="tab-search">
+    <div class="panel-split">
 
-    <!-- Pipeline Progress -->
-    <div class="dash-section">
-      <div class="section-title">Pipeline Progress</div>
-      <div class="kpi-row">
-        <a href="/search" class="kpi-card">
-          <div class="kpi-num" id="k-candidates">—</div>
-          <div class="kpi-label">Candidates</div>
-          <div class="kpi-sub">candidates.csv</div>
-        </a>
-        <div class="kpi-arrow">→</div>
-        <a href="/filter" class="kpi-card">
-          <div class="kpi-num" id="k-filtered">—</div>
-          <div class="kpi-label">Filtered</div>
-          <div class="kpi-sub">filtered.csv</div>
-        </a>
-        <div class="kpi-arrow">→</div>
-        <a href="/extract" class="kpi-card">
-          <div class="kpi-num" id="k-extracted">—</div>
-          <div class="kpi-label">Extracted</div>
-          <div class="kpi-sub">extracted.csv</div>
-        </a>
-        <div style="width:1px;height:48px;background:var(--border);align-self:center;margin:0 4px"></div>
-        <a href="/target-pending" class="kpi-card">
-          <div class="kpi-num" id="k-target-pending" style="color:#f59e0b">—</div>
-          <div class="kpi-label">Target Pending</div>
-          <div class="kpi-sub">need original ID</div>
-        </a>
+      <!-- Left: docs -->
+      <div class="docs-panel">
+        <div class="docs-card">
+          <div class="docs-card-head">What Stage 1 does</div>
+          <p>Discovers candidate replication papers by querying <strong>OpenAlex</strong> with 23 keyword phrases. Results are deduplicated against <code>candidates.csv</code> using a persistent index (<code>cache/candidates_index.txt</code>) so re-runs never add duplicates. Only new DOIs are appended.</p>
+          <p>Papers matching any of the include phrases (and not matching any exclusion phrase) are written to <code>candidates.csv</code>. A cross-check against <code>data/flora_entry_sheet.csv</code> removes papers already in FLoRA.</p>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">CLI</div>
+          <pre class="cli-block">python -m search.run_search
+
+# Options
+--from-year 2010      # filter by publication year
+--to-year   2024
+--rebuild-index       # rebuild cache/candidates_index.txt from scratch</pre>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Include keywords (23 phrases)</div>
+          <div class="kw-grid">
+            <span class="kw-pill">direct replication</span>
+            <span class="kw-pill">close replication</span>
+            <span class="kw-pill">exact replication</span>
+            <span class="kw-pill">literal replication</span>
+            <span class="kw-pill">strict replication</span>
+            <span class="kw-pill">pre-registered replication</span>
+            <span class="kw-pill">failed replication</span>
+            <span class="kw-pill">replication failure</span>
+            <span class="kw-pill">replication attempt</span>
+            <span class="kw-pill">replication study</span>
+            <span class="kw-pill">replication of</span>
+            <span class="kw-pill">replicate the findings</span>
+            <span class="kw-pill">replicate the results</span>
+            <span class="kw-pill">replicate the effect</span>
+            <span class="kw-pill">reproduction study</span>
+            <span class="kw-pill">computational reproduction</span>
+            <span class="kw-pill">reproducibility study</span>
+            <span class="kw-pill">reproducibility check</span>
+            <span class="kw-pill">Many Labs</span>
+            <span class="kw-pill">Registered Replication</span>
+            <span class="kw-pill">Replication Project</span>
+            <span class="kw-pill">Open Science Collaboration</span>
+            <span class="kw-pill">replication crisis</span>
+          </div>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Exclusion keywords</div>
+          <div class="kw-grid">
+            <span class="kw-pill excl">DNA replication</span>
+            <span class="kw-pill excl">cell replication</span>
+            <span class="kw-pill excl">viral replication</span>
+            <span class="kw-pill excl">replication fork</span>
+            <span class="kw-pill excl">replication origin</span>
+            <span class="kw-pill excl">replication stress</span>
+            <span class="kw-pill excl">code replication</span>
+            <span class="kw-pill excl">data replication</span>
+          </div>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">candidates.csv columns</div>
+          <table class="docs-table">
+            <thead><tr><th>Column</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="col-name">doi_r</td><td class="col-desc">Replication paper DOI (cleaned)</td></tr>
+              <tr><td class="col-name">title_r</td><td class="col-desc">Paper title</td></tr>
+              <tr><td class="col-name">abstract_r</td><td class="col-desc">Abstract text</td></tr>
+              <tr><td class="col-name">year_r</td><td class="col-desc">Publication year</td></tr>
+              <tr><td class="col-name">authors_r</td><td class="col-desc">Author list</td></tr>
+              <tr><td class="col-name">journal_r</td><td class="col-desc">Journal / venue</td></tr>
+              <tr><td class="col-name">url_r</td><td class="col-desc">Landing page URL</td></tr>
+              <tr><td class="col-name">openalex_id_r</td><td class="col-desc">OpenAlex work ID (W…)</td></tr>
+              <tr><td class="col-name">source</td><td class="col-desc">openalex | semantic_scholar | …</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Right: stats -->
+      <div class="stats-panel">
+        <div class="kpi-row">
+          <div class="kpi-card">
+            <div class="kpi-num" id="k-candidates">—</div>
+            <div class="kpi-label">Candidates</div>
+            <div class="kpi-sub">candidates.csv</div>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <h3>Source Breakdown</h3>
+          <div id="search-source-breakdown"><div class="null-note">Loading…</div></div>
+        </div>
+
+        <div class="stat-card">
+          <h3>Deduplication Index</h3>
+          <div class="stat-row">
+            <span>Index file</span>
+            <code>cache/candidates_index.txt</code>
+          </div>
+          <div class="stat-row">
+            <span>Index keys per row</span>
+            <span style="color:var(--text-muted)">up to 4 (DOI → OA ID → URL → title)</span>
+          </div>
+          <div class="stat-row">
+            <span>Dedup strategy</span>
+            <span style="color:var(--text-muted)">exact DOI, fuzzy title (RapidFuzz ≥ 90)</span>
+          </div>
+        </div>
       </div>
     </div>
+  </div><!-- /tab-search -->
 
-    <!-- Filter + Match breakdown -->
-    <div class="two-col">
-      <div class="stat-card">
-        <h3>Filter Results (filtered.csv)</h3>
-        <div class="stat-row">
-          <span>Replications</span>
-          <span><strong id="f-replication" style="color:#16a34a">—</strong>
-            <span class="stat-pct" id="f-replication-pct"></span></span>
+
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <!-- FILTER TAB (Stage 2)                                                    -->
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="tab-filter">
+    <div class="panel-split">
+
+      <!-- Left: docs -->
+      <div class="docs-panel">
+        <div class="docs-card">
+          <div class="docs-card-head">What Stage 2 does</div>
+          <p>Removes false positives and classifies candidates into <code>replication</code>, <code>reproduction</code>, <code>needs_review</code>, or <code>false_positive</code>. Reads <code>candidates.csv</code> in <strong>50 k-row chunks</strong> to avoid loading the full file into memory.</p>
+          <p>Rule-based classification runs first. Only rows the rules cannot decide are sent to the LLM. Results are streamed to <code>filtered.csv</code> via a resume index (<code>cache/filtered_index.txt</code>).</p>
         </div>
-        <div class="stat-row">
-          <span>Reproductions</span>
-          <span><strong id="f-reproduction" style="color:#2563eb">—</strong>
-            <span class="stat-pct" id="f-reproduction-pct"></span></span>
+
+        <div class="docs-card">
+          <div class="docs-card-head">CLI</div>
+          <pre class="cli-block">python -m filter.run_filter
+
+# Options
+--from-year 2010
+--rebuild-index    # rebuild cache/filtered_index.txt</pre>
         </div>
-        <div class="stat-row">
-          <span>Needs review</span>
-          <span><strong id="f-needs-review" style="color:#f59e0b">—</strong>
-            <span class="stat-pct" id="f-needs-review-pct"></span></span>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Decision logic</div>
+          <table class="docs-table">
+            <thead><tr><th>Condition</th><th>Result</th></tr></thead>
+            <tbody>
+              <tr><td>Title/abstract matches exclusion pattern (DNA, code, …)</td><td><code>false_positive</code></td></tr>
+              <tr><td>No include phrase found</td><td><code>false_positive</code></td></tr>
+              <tr><td>Include phrase + author-year citation pattern</td><td><code>replication</code> or <code>reproduction</code></td></tr>
+              <tr><td>Include phrase, no citation — rule uncertain</td><td>→ LLM</td></tr>
+              <tr><td>LLM uncertain</td><td><code>needs_review</code></td></tr>
+            </tbody>
+          </table>
+          <p style="margin-top:8px">LLM: OpenAI (<code>FILTER_OPENAI_MODEL</code>) primary; Gemini fallback. Responses cached by <code>hash(title + abstract)</code>.</p>
         </div>
-        <div class="stat-row">
-          <span>False positives</span>
-          <span><strong id="f-false-positive" style="color:#dc2626">—</strong>
-            <span class="stat-pct" id="f-false-positive-pct"></span></span>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Added columns (filtered.csv)</div>
+          <table class="docs-table">
+            <thead><tr><th>Column</th><th>Values</th></tr></thead>
+            <tbody>
+              <tr><td class="col-name">filter_status</td><td class="col-desc">replication | reproduction | false_positive | needs_review</td></tr>
+              <tr><td class="col-name">filter_method</td><td class="col-desc">rule_based | llm | both</td></tr>
+              <tr><td class="col-name">filter_evidence</td><td class="col-desc">phrase or quote that triggered classification</td></tr>
+              <tr><td class="col-name">filter_confidence</td><td class="col-desc">high | medium | low</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
-      <div class="stat-card">
-        <h3>Match Types (extracted.csv)</h3>
-        <div class="stat-row">
-          <span>Single original</span>
-          <span><strong id="m-single" style="color:#16a34a">—</strong>
-            <span class="stat-pct" id="m-single-pct"></span></span>
+      <!-- Right: stats -->
+      <div class="stats-panel">
+        <div class="kpi-row">
+          <div class="kpi-card">
+            <div class="kpi-num" id="k-filtered">—</div>
+            <div class="kpi-label">Filtered rows</div>
+            <div class="kpi-sub">filtered.csv</div>
+          </div>
         </div>
-        <div class="stat-row">
-          <span>Multiple match</span>
-          <span><strong id="m-multiple-match" style="color:#f59e0b">—</strong>
-            <span class="stat-pct" id="m-multiple-match-pct"></span></span>
-        </div>
-        <div class="stat-row">
-          <span>Multiple original</span>
-          <span><strong id="m-multiple-original" style="color:#7c3aed">—</strong>
-            <span class="stat-pct" id="m-multiple-original-pct"></span></span>
+
+        <div class="stat-card">
+          <h3>Filter Status Distribution</h3>
+          <div class="stat-row">
+            <span>Replications</span>
+            <span><strong id="f-replication" style="color:#16a34a">—</strong>
+              <span class="stat-pct" id="f-replication-pct"></span></span>
+          </div>
+          <div class="stat-row">
+            <span>Reproductions</span>
+            <span><strong id="f-reproduction" style="color:#2563eb">—</strong>
+              <span class="stat-pct" id="f-reproduction-pct"></span></span>
+          </div>
+          <div class="stat-row">
+            <span>Needs review</span>
+            <span><strong id="f-needs-review" style="color:#f59e0b">—</strong>
+              <span class="stat-pct" id="f-needs-review-pct"></span></span>
+          </div>
+          <div class="stat-row">
+            <span>False positives</span>
+            <span><strong id="f-false-positive" style="color:#dc2626">—</strong>
+              <span class="stat-pct" id="f-false-positive-pct"></span></span>
+          </div>
         </div>
       </div>
     </div>
+  </div><!-- /tab-filter -->
 
-    <!-- Link Method + Model -->
-    <div class="two-col">
-      <div class="stat-card">
-        <h3>Link Method (extracted.csv)</h3>
-        <div class="stat-row"><span>Author / year match</span>
-          <span><strong id="lm-author" style="color:#16a34a">—</strong>
-            <span class="stat-pct" id="lm-author-pct"></span></span></div>
-        <div class="stat-row"><span>LLM fulltext</span>
-          <span><strong id="lm-fulltext" style="color:#1d4ed8">—</strong>
-            <span class="stat-pct" id="lm-fulltext-pct"></span></span></div>
-        <div class="stat-row"><span>LLM abstract</span>
-          <span><strong id="lm-abstract" style="color:#0284c7">—</strong>
-            <span class="stat-pct" id="lm-abstract-pct"></span></span></div>
-        <div class="stat-row"><span>No original found</span>
-          <span><strong id="lm-nof" style="color:var(--text-muted)">—</strong>
-            <span class="stat-pct" id="lm-nof-pct"></span></span></div>
-        <div class="stat-row"><span>Target pending</span>
-          <span><strong id="lm-pending" style="color:#f59e0b">—</strong>
-            <span class="stat-pct" id="lm-pending-pct"></span></span></div>
-        <div class="stat-row"><span>API error</span>
-          <span><strong id="lm-err" style="color:#dc2626">—</strong>
-            <span class="stat-pct" id="lm-err-pct"></span></span></div>
-      </div>
-      <div class="stat-card">
-        <h3>LLM Model Used (extracted.csv)</h3>
-        <div class="stat-row"><span>Gemini</span>
-          <span><strong id="mod-gemini" style="color:#059669">—</strong>
-            <span class="stat-pct" id="mod-gemini-pct"></span></span></div>
-        <div class="stat-row"><span>GPT (OpenAI)</span>
-          <span><strong id="mod-gpt" style="color:#2563eb">—</strong>
-            <span class="stat-pct" id="mod-gpt-pct"></span></span></div>
-        <div class="stat-row"><span>Qwen (OpenRouter)</span>
-          <span><strong id="mod-qwen" style="color:#7c3aed">—</strong>
-            <span class="stat-pct" id="mod-qwen-pct"></span></span></div>
-        <div class="stat-row"><span>Other</span>
-          <span><strong id="mod-other" style="color:var(--text-muted)">—</strong>
-            <span class="stat-pct" id="mod-other-pct"></span></span></div>
-        <div class="stat-row"><span>None (rule-based)</span>
-          <span><strong id="mod-none" style="color:var(--text-faint)">—</strong>
-            <span class="stat-pct" id="mod-none-pct"></span></span></div>
-      </div>
-    </div>
 
-    <!-- Outcome Distribution (extracted.csv) -->
-    <div class="stat-card" style="margin-bottom:16px">
-      <h3>Outcome Distribution (extracted.csv)</h3>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:flex-start">
-        <div>
-          <h4 style="font-size:11px;font-weight:600;color:var(--text-faint);margin:0 0 12px">Donut</h4>
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <!-- EXTRACT TAB (Stage 3)                                                   -->
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="tab-extract">
+    <div class="panel-split">
+
+      <!-- Left: docs -->
+      <div class="docs-panel">
+        <div class="docs-card">
+          <div class="docs-card-head">What Stage 3 does</div>
+          <p>For each replication paper: (1) classifies the match type, (2) finds the original target study, (3) codes the replication outcome. Results are streamed to <code>extracted.csv</code> one row at a time.</p>
+          <p><strong>DOI verification</strong> runs automatically on every written row — it fetches CrossRef metadata for <code>doi_o</code> and corrects hallucinated DOIs before they hit the CSV.</p>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">CLI</div>
+          <pre class="cli-block">python -m extract.run_extract
+
+# Options
+--extracted-test   # write to extracted-test.csv (sandbox)
+--resume           # skip already-processed DOIs
+--no-llm           # rule-based only (faster, less accurate)
+--doi 10.x/y       # process a single DOI
+
+# DOI audit
+python -m extract.audit_dois          # dry-run
+python -m extract.audit_dois --apply  # write corrections</pre>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Link pipeline</div>
+          <table class="docs-table">
+            <thead><tr><th>Step</th><th>Method</th><th>When used</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td><code>author_year_match</code></td><td>Citation pattern (Author, YYYY) found in abstract</td></tr>
+              <tr><td>2</td><td><code>llm_abstract</code></td><td>No pattern; abstract fed to LLM</td></tr>
+              <tr><td>3</td><td><code>llm_fulltext</code></td><td>Abstract inconclusive; PDF parsed and fed to LLM</td></tr>
+              <tr><td>—</td><td><code>target_pending</code></td><td>All methods failed; needs manual review</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">PDF parsing — 6 methods</div>
+          <p>Each PDF is processed by all 6 methods. The winner is chosen by:<br>
+          <code>refs×300 + abstract_len + intro_len×2 + min(raw_len÷5, 1000)</code></p>
+          <div class="kw-grid" style="margin-top:6px">
+            <span class="kw-pill">openalex_xml</span>
+            <span class="kw-pill">pdfminer</span>
+            <span class="kw-pill">grobid</span>
+            <span class="kw-pill">docpluck</span>
+            <span class="kw-pill">opendataloader</span>
+            <span class="kw-pill">markitdown</span>
+          </div>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Key added columns</div>
+          <table class="docs-table">
+            <thead><tr><th>Column</th><th>Values</th></tr></thead>
+            <tbody>
+              <tr><td class="col-name">original_match_type</td><td class="col-desc">single_original | multiple_match | multiple_original</td></tr>
+              <tr><td class="col-name">link_method</td><td class="col-desc">author_year_match | llm_abstract | llm_fulltext | target_pending | api_error</td></tr>
+              <tr><td class="col-name">doi_o</td><td class="col-desc">Original study DOI</td></tr>
+              <tr><td class="col-name">doi_o_verification</td><td class="col-desc">verified | corrected | mismatch | no_doi | not_found | no_metadata | api_error | skipped</td></tr>
+              <tr><td class="col-name">outcome</td><td class="col-desc">success | failure | mixed | uninformative | descriptive | pending | api_error</td></tr>
+              <tr><td class="col-name">link_confidence</td><td class="col-desc">high | medium | low</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Right: stats -->
+      <div class="stats-panel">
+        <div class="kpi-row">
+          <div class="kpi-card">
+            <div class="kpi-num" id="k-extracted">—</div>
+            <div class="kpi-label">Extracted</div>
+            <div class="kpi-sub">extracted.csv</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-num" id="k-target-pending" style="color:#f59e0b">—</div>
+            <div class="kpi-label">Target Pending</div>
+            <div class="kpi-sub">need original ID</div>
+          </div>
+        </div>
+
+        <div class="stats-two">
+          <div class="stat-card">
+            <h3>Match Types</h3>
+            <div class="stat-row">
+              <span>Single original</span>
+              <span><strong id="m-single" style="color:#16a34a">—</strong>
+                <span class="stat-pct" id="m-single-pct"></span></span>
+            </div>
+            <div class="stat-row">
+              <span>Multiple match</span>
+              <span><strong id="m-multiple-match" style="color:#f59e0b">—</strong>
+                <span class="stat-pct" id="m-multiple-match-pct"></span></span>
+            </div>
+            <div class="stat-row">
+              <span>Multiple original</span>
+              <span><strong id="m-multiple-original" style="color:#7c3aed">—</strong>
+                <span class="stat-pct" id="m-multiple-original-pct"></span></span>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <h3>LLM Model</h3>
+            <div class="stat-row"><span>Gemini</span>
+              <span><strong id="mod-gemini" style="color:#059669">—</strong>
+                <span class="stat-pct" id="mod-gemini-pct"></span></span></div>
+            <div class="stat-row"><span>GPT (OpenAI)</span>
+              <span><strong id="mod-gpt" style="color:#2563eb">—</strong>
+                <span class="stat-pct" id="mod-gpt-pct"></span></span></div>
+            <div class="stat-row"><span>Qwen</span>
+              <span><strong id="mod-qwen" style="color:#7c3aed">—</strong>
+                <span class="stat-pct" id="mod-qwen-pct"></span></span></div>
+            <div class="stat-row"><span>Other</span>
+              <span><strong id="mod-other" style="color:var(--text-muted)">—</strong>
+                <span class="stat-pct" id="mod-other-pct"></span></span></div>
+            <div class="stat-row"><span>Rule-based</span>
+              <span><strong id="mod-none" style="color:var(--text-faint)">—</strong>
+                <span class="stat-pct" id="mod-none-pct"></span></span></div>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <h3>Link Method</h3>
+          <div class="stat-row"><span>Author / year match</span>
+            <span><strong id="lm-author" style="color:#16a34a">—</strong>
+              <span class="stat-pct" id="lm-author-pct"></span></span></div>
+          <div class="stat-row"><span>LLM fulltext</span>
+            <span><strong id="lm-fulltext" style="color:#1d4ed8">—</strong>
+              <span class="stat-pct" id="lm-fulltext-pct"></span></span></div>
+          <div class="stat-row"><span>LLM abstract</span>
+            <span><strong id="lm-abstract" style="color:#0284c7">—</strong>
+              <span class="stat-pct" id="lm-abstract-pct"></span></span></div>
+          <div class="stat-row"><span>No original found</span>
+            <span><strong id="lm-nof" style="color:var(--text-muted)">—</strong>
+              <span class="stat-pct" id="lm-nof-pct"></span></span></div>
+          <div class="stat-row"><span>Target pending</span>
+            <span><strong id="lm-pending" style="color:#f59e0b">—</strong>
+              <span class="stat-pct" id="lm-pending-pct"></span></span></div>
+          <div class="stat-row"><span>API error</span>
+            <span><strong id="lm-err" style="color:#dc2626">—</strong>
+              <span class="stat-pct" id="lm-err-pct"></span></span></div>
+        </div>
+
+        <div class="stat-card">
+          <h3>Outcome Distribution</h3>
           <div class="pie-wrap">
-            <svg id="pie-svg" width="140" height="140" viewBox="0 0 160 160"
+            <svg id="pie-svg" width="120" height="120" viewBox="0 0 160 160"
                  style="flex-shrink:0;overflow:visible"></svg>
             <div class="pie-legend" id="pie-legend"><div class="null-note">Loading…</div></div>
           </div>
         </div>
-        <div>
-          <h4 style="font-size:11px;font-weight:600;color:var(--text-faint);margin:0 0 12px">Breakdown</h4>
-          <div id="outcome-breakdown"><div class="null-note">Loading…</div></div>
-        </div>
       </div>
     </div>
-
-  </div><!-- /tab-pipeline -->
+  </div><!-- /tab-extract -->
 
 
   <!-- ════════════════════════════════════════════════════════════════════════ -->
-  <!-- EXTRACT TEST TAB                                                        -->
+  <!-- EXTRACT-TEST TAB (Stage 3 sandbox)                                      -->
   <!-- ════════════════════════════════════════════════════════════════════════ -->
   <div class="tab-panel" id="tab-extract-test">
+    <div class="panel-split">
 
-    <div class="kpi-row" style="margin-bottom:16px">
-      <a href="/extract-test" class="kpi-card">
-        <div class="kpi-num" id="k-test-count" style="color:#7c3aed">—</div>
-        <div class="kpi-label">Test Rows</div>
-        <div class="kpi-sub">extracted-test.csv</div>
-      </a>
-      <div class="kpi-card">
-        <div class="kpi-num" id="k-test-pending" style="color:#f59e0b">—</div>
-        <div class="kpi-label">Target Pending</div>
-        <div class="kpi-sub">need original ID</div>
-      </div>
-    </div>
+      <!-- Left: docs -->
+      <div class="docs-panel">
+        <div class="docs-card">
+          <div class="docs-card-head">What Extract-Test is</div>
+          <p>A sandbox for running and reviewing Stage 3 pipelines before committing results to <code>extracted.csv</code>. Writes to <code>extracted-test.csv</code> instead, and automatically skips DOIs already resolved in <code>extracted.csv</code>.</p>
+          <p>Use it to test new prompts, new models, or multi-original rows without risking the production file. Promote individual rows or everything when satisfied.</p>
+        </div>
 
-    <div class="three-col">
-      <div class="stat-card">
-        <h3>Match Types (test)</h3>
-        <div class="stat-row"><span>Single original</span>
-          <span><strong id="tm-single" style="color:#16a34a">—</strong>
-            <span class="stat-pct" id="tm-single-pct"></span></span></div>
-        <div class="stat-row"><span>Multiple match</span>
-          <span><strong id="tm-mmatch" style="color:#f59e0b">—</strong>
-            <span class="stat-pct" id="tm-mmatch-pct"></span></span></div>
-        <div class="stat-row"><span>Multiple original</span>
-          <span><strong id="tm-morig" style="color:#7c3aed">—</strong>
-            <span class="stat-pct" id="tm-morig-pct"></span></span></div>
-      </div>
-      <div class="stat-card">
-        <h3>Link Method (test)</h3>
-        <div class="stat-row"><span>Author / year match</span>
-          <span><strong id="tlm-author" style="color:#16a34a">—</strong>
-            <span class="stat-pct" id="tlm-author-pct"></span></span></div>
-        <div class="stat-row"><span>LLM fulltext</span>
-          <span><strong id="tlm-fulltext" style="color:#1d4ed8">—</strong>
-            <span class="stat-pct" id="tlm-fulltext-pct"></span></span></div>
-        <div class="stat-row"><span>LLM abstract</span>
-          <span><strong id="tlm-abstract" style="color:#0284c7">—</strong>
-            <span class="stat-pct" id="tlm-abstract-pct"></span></span></div>
-        <div class="stat-row"><span>No original found</span>
-          <span><strong id="tlm-nof" style="color:var(--text-muted)">—</strong>
-            <span class="stat-pct" id="tlm-nof-pct"></span></span></div>
-        <div class="stat-row"><span>Target pending</span>
-          <span><strong id="tlm-pending" style="color:#f59e0b">—</strong>
-            <span class="stat-pct" id="tlm-pending-pct"></span></span></div>
-        <div class="stat-row"><span>API error</span>
-          <span><strong id="tlm-err" style="color:#dc2626">—</strong>
-            <span class="stat-pct" id="tlm-err-pct"></span></span></div>
-      </div>
-      <div class="stat-card">
-        <h3>LLM Model Used (test)</h3>
-        <div class="stat-row"><span>Gemini</span>
-          <span><strong id="tmod-gemini" style="color:#059669">—</strong>
-            <span class="stat-pct" id="tmod-gemini-pct"></span></span></div>
-        <div class="stat-row"><span>GPT (OpenAI)</span>
-          <span><strong id="tmod-gpt" style="color:#2563eb">—</strong>
-            <span class="stat-pct" id="tmod-gpt-pct"></span></span></div>
-        <div class="stat-row"><span>Qwen (OpenRouter)</span>
-          <span><strong id="tmod-qwen" style="color:#7c3aed">—</strong>
-            <span class="stat-pct" id="tmod-qwen-pct"></span></span></div>
-        <div class="stat-row"><span>Other</span>
-          <span><strong id="tmod-other" style="color:var(--text-muted)">—</strong>
-            <span class="stat-pct" id="tmod-other-pct"></span></span></div>
-        <div class="stat-row"><span>None (rule-based)</span>
-          <span><strong id="tmod-none" style="color:var(--text-faint)">—</strong>
-            <span class="stat-pct" id="tmod-none-pct"></span></span></div>
-      </div>
-    </div>
+        <div class="docs-card">
+          <div class="docs-card-head">CLI</div>
+          <pre class="cli-block"># Run into sandbox
+python -m extract.run_extract --extracted-test
+python -m extract.run_extract --extracted-test --resume
 
-    <div class="stat-card" style="margin-bottom:16px">
-      <h3>Outcome Distribution (extracted-test.csv)</h3>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:flex-start">
-        <div>
+# Promote to production
+python -m extract.promote_test --all           # promote all
+python -m extract.promote_test --doi 10.x/y   # promote one
+python -m extract.promote_test --all --dry-run # preview</pre>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">How it differs from Extract</div>
+          <table class="docs-table">
+            <thead><tr><th>Behaviour</th><th>Extract</th><th>Extract-Test</th></tr></thead>
+            <tbody>
+              <tr><td>Output file</td><td><code>extracted.csv</code></td><td><code>extracted-test.csv</code></td></tr>
+              <tr><td>Skips resolved DOIs</td><td>From itself</td><td>From both files</td></tr>
+              <tr><td>Target-pending visible</td><td>Both tabs</td><td>Extract-Test tab only</td></tr>
+              <tr><td>Promote button</td><td>—</td><td>Per-row in web UI</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Right: stats -->
+      <div class="stats-panel">
+        <div class="kpi-row">
+          <div class="kpi-card">
+            <div class="kpi-num" id="k-test-count" style="color:#7c3aed">—</div>
+            <div class="kpi-label">Test Rows</div>
+            <div class="kpi-sub">extracted-test.csv</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-num" id="k-test-pending" style="color:#f59e0b">—</div>
+            <div class="kpi-label">Target Pending</div>
+            <div class="kpi-sub">need original ID</div>
+          </div>
+        </div>
+
+        <div class="stats-two">
+          <div class="stat-card">
+            <h3>Match Types (test)</h3>
+            <div class="stat-row"><span>Single original</span>
+              <span><strong id="tm-single" style="color:#16a34a">—</strong>
+                <span class="stat-pct" id="tm-single-pct"></span></span></div>
+            <div class="stat-row"><span>Multiple match</span>
+              <span><strong id="tm-mmatch" style="color:#f59e0b">—</strong>
+                <span class="stat-pct" id="tm-mmatch-pct"></span></span></div>
+            <div class="stat-row"><span>Multiple original</span>
+              <span><strong id="tm-morig" style="color:#7c3aed">—</strong>
+                <span class="stat-pct" id="tm-morig-pct"></span></span></div>
+          </div>
+
+          <div class="stat-card">
+            <h3>Link Method (test)</h3>
+            <div class="stat-row"><span>Author / year</span>
+              <span><strong id="tlm-author" style="color:#16a34a">—</strong>
+                <span class="stat-pct" id="tlm-author-pct"></span></span></div>
+            <div class="stat-row"><span>LLM fulltext</span>
+              <span><strong id="tlm-fulltext" style="color:#1d4ed8">—</strong>
+                <span class="stat-pct" id="tlm-fulltext-pct"></span></span></div>
+            <div class="stat-row"><span>LLM abstract</span>
+              <span><strong id="tlm-abstract" style="color:#0284c7">—</strong>
+                <span class="stat-pct" id="tlm-abstract-pct"></span></span></div>
+            <div class="stat-row"><span>No original</span>
+              <span><strong id="tlm-nof" style="color:var(--text-muted)">—</strong>
+                <span class="stat-pct" id="tlm-nof-pct"></span></span></div>
+            <div class="stat-row"><span>Target pending</span>
+              <span><strong id="tlm-pending" style="color:#f59e0b">—</strong>
+                <span class="stat-pct" id="tlm-pending-pct"></span></span></div>
+            <div class="stat-row"><span>API error</span>
+              <span><strong id="tlm-err" style="color:#dc2626">—</strong>
+                <span class="stat-pct" id="tlm-err-pct"></span></span></div>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <h3>Outcome Distribution (test)</h3>
           <div class="pie-wrap">
-            <svg id="pie-test-svg" width="140" height="140" viewBox="0 0 160 160"
+            <svg id="pie-test-svg" width="120" height="120" viewBox="0 0 160 160"
                  style="flex-shrink:0;overflow:visible"></svg>
             <div class="pie-legend" id="pie-test-legend"><div class="null-note">Loading…</div></div>
           </div>
         </div>
-        <div id="test-outcome-breakdown"><div class="null-note">Loading…</div></div>
       </div>
     </div>
-
   </div><!-- /tab-extract-test -->
 
 
   <!-- ════════════════════════════════════════════════════════════════════════ -->
-  <!-- VALIDATION TAB                                                          -->
+  <!-- SUPABASE TAB (Stage 4 validation)                                       -->
   <!-- ════════════════════════════════════════════════════════════════════════ -->
-  <div class="tab-panel" id="tab-validation">
-    <div id="supa-unconfigured" class="supa-notice" style="display:none">
-      Supabase is not configured — set <code>SUPABASE_URL</code> and <code>SUPABASE_SERVICE_KEY</code>
-      in your <code>.env</code> file to enable this tab.
-      See <a href="#" onclick="return false">.env.example</a> for details.
-    </div>
+  <div class="tab-panel" id="tab-supabase">
+    <div class="panel-split">
 
-    <div id="supa-content">
-      <!-- Supabase KPIs -->
-      <div class="dash-section">
-        <div class="section-title">Validation KPIs</div>
+      <!-- Left: docs -->
+      <div class="docs-panel">
+        <div class="docs-card">
+          <div class="docs-card-head">What Stage 4 does</div>
+          <p>Human validators review each extracted row — checking the original DOI, replication type, and outcome. Votes are stored in <strong>Supabase</strong> (PostgreSQL). Two independent validators vote per row; disagreements are flagged for adjudication.</p>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Configuration</div>
+          <pre class="cli-block">SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_SERVICE_KEY=eyJhbGc...</pre>
+          <p style="margin-top:8px">Add these to your <code>.env</code> file. Without them, this tab shows "not configured".</p>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Correction fields</div>
+          <table class="docs-table">
+            <thead><tr><th>Field</th><th>What validators check</th></tr></thead>
+            <tbody>
+              <tr><td class="col-name">type</td><td class="col-desc">Is this replication or reproduction?</td></tr>
+              <tr><td class="col-name">original</td><td class="col-desc">Is the original DOI correct?</td></tr>
+              <tr><td class="col-name">outcome</td><td class="col-desc">Is the outcome label correct?</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Output columns (validated.csv)</div>
+          <table class="docs-table">
+            <thead><tr><th>Column</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="col-name">validation_status</td><td class="col-desc">confirmed | rejected | pending | needs_review</td></tr>
+              <tr><td class="col-name">vote_count</td><td class="col-desc">Total votes cast</td></tr>
+              <tr><td class="col-name">confirm_votes</td><td class="col-desc">Votes confirming the extraction</td></tr>
+              <tr><td class="col-name">reject_votes</td><td class="col-desc">Votes rejecting the extraction</td></tr>
+              <tr><td class="col-name">validated_doi_o</td><td class="col-desc">Reviewer-corrected original DOI</td></tr>
+              <tr><td class="col-name">validated_outcome</td><td class="col-desc">Reviewer-corrected outcome</td></tr>
+              <tr><td class="col-name">validator_notes</td><td class="col-desc">Free-text notes</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Right: stats -->
+      <div class="stats-panel">
+        <div id="supa-unconfigured" class="supa-notice" style="display:none">
+          Supabase is not configured — set <code>SUPABASE_URL</code> and <code>SUPABASE_SERVICE_KEY</code>
+          in your <code>.env</code> file to enable live stats.
+        </div>
+
+        <div id="supa-content">
+          <div class="kpi-row">
+            <div class="kpi-card">
+              <div class="kpi-num" id="sv-total">—</div>
+              <div class="kpi-label">Total Records</div>
+              <div class="kpi-sub">in Supabase</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-num" id="sv-validated" style="color:#16a34a">—</div>
+              <div class="kpi-label">Validated</div>
+              <div class="kpi-sub" id="sv-validated-pct"></div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-num" id="sv-unvalidated" style="color:#94a3b8">—</div>
+              <div class="kpi-label">Unvalidated</div>
+              <div class="kpi-sub" id="sv-unvalidated-pct"></div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-num" id="sv-needreview" style="color:#dc2626">—</div>
+              <div class="kpi-label">Need Review</div>
+              <div class="kpi-sub" id="sv-needreview-pct"></div>
+            </div>
+          </div>
+
+          <div class="kpi-row">
+            <div class="kpi-card">
+              <div class="kpi-num" id="sv-judgements">—</div>
+              <div class="kpi-label">Judgements</div>
+              <div class="kpi-sub">total votes cast</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-num" id="sv-validators">—</div>
+              <div class="kpi-label">Validators</div>
+              <div class="kpi-sub">active</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-num" id="sv-agreement">—</div>
+              <div class="kpi-label">Agreement</div>
+              <div class="kpi-sub">validated / queue</div>
+            </div>
+          </div>
+
+          <div style="margin-bottom:12px">
+            <div style="display:flex;justify-content:space-between;font-size:11px;
+                        color:var(--text-muted);margin-bottom:4px">
+              <span>Validation Progress</span>
+              <span id="sv-progress-label">—</span>
+            </div>
+            <div class="progress-bar" style="height:8px">
+              <div class="progress-fill" id="sv-progress-fill" style="width:0%"></div>
+            </div>
+          </div>
+
+          <div class="stats-two">
+            <div class="stat-card">
+              <h3>Correction Frequency</h3>
+              <div id="corr-bars"><div class="null-note">Loading…</div></div>
+              <div style="margin-top:12px">
+                <div class="stat-row">
+                  <span>Type incorrect</span>
+                  <span><strong id="corr-type" style="color:#dc2626">—</strong>
+                    <span class="stat-pct" id="corr-type-pct"></span></span>
+                </div>
+                <div class="stat-row">
+                  <span>Original DOI incorrect</span>
+                  <span><strong id="corr-original" style="color:#f59e0b">—</strong>
+                    <span class="stat-pct" id="corr-original-pct"></span></span>
+                </div>
+                <div class="stat-row">
+                  <span>Outcome incorrect</span>
+                  <span><strong id="corr-outcome" style="color:#7c3aed">—</strong>
+                    <span class="stat-pct" id="corr-outcome-pct"></span></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <h3>Validated Outcomes</h3>
+              <div class="pie-wrap">
+                <svg id="pie-val-svg" width="100" height="100" viewBox="0 0 160 160"
+                     style="flex-shrink:0;overflow:visible"></svg>
+                <div class="pie-legend" id="pie-val-legend"><div class="null-note">Loading…</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Drilldown -->
+          <div class="stat-card" style="padding:0;overflow:hidden">
+            <div style="padding:12px 16px;display:flex;gap:10px;align-items:center;
+                        border-bottom:1px solid var(--border);flex-wrap:wrap">
+              <span style="font-size:10px;font-weight:700;text-transform:uppercase;
+                           color:var(--text-faint);letter-spacing:.5px">Incorrect-field drilldown</span>
+              <select id="dd-outcome-filter" style="width:auto;font-size:11px" onchange="loadDrilldown(1)">
+                <option value="all">All outcomes</option>
+                <option value="success">Success</option>
+                <option value="failure">Failure</option>
+                <option value="mixed">Mixed</option>
+                <option value="uninformative">Uninformative</option>
+                <option value="cannot_be_determined">Cannot be determined</option>
+                <option value="descriptive">Descriptive</option>
+                <option value="pending">Pending</option>
+                <option value="api_error">API error</option>
+              </select>
+              <select id="dd-check-filter" style="width:auto;font-size:11px" onchange="loadDrilldown(1)">
+                <option value="all">All fields</option>
+                <option value="type">Type</option>
+                <option value="original">Original DOI</option>
+                <option value="outcome">Outcome</option>
+              </select>
+              <span id="dd-count" style="font-size:11px;color:var(--text-faint)"></span>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Replication DOI</th><th>Original DOI</th>
+                  <th>Outcome</th><th>Type</th><th>Val 1</th><th>Val 2</th>
+                </tr>
+              </thead>
+              <tbody id="dd-tbody">
+                <tr><td colspan="6" class="null-note" style="text-align:center;padding:16px">Loading…</td></tr>
+              </tbody>
+            </table>
+            <div class="pager" id="dd-pager" style="padding:10px"></div>
+          </div>
+        </div><!-- /supa-content -->
+      </div>
+    </div>
+  </div><!-- /tab-supabase -->
+
+
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <!-- OLD PIPELINE TAB (gap analysis / prior work)                            -->
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="tab-old-pipeline">
+    <div class="panel-split">
+
+      <!-- Left: docs -->
+      <div class="docs-panel">
+        <div class="docs-card">
+          <div class="docs-card-head">What this section covers</div>
+          <p>Gap analysis comparing what the current pipeline has extracted against the <strong>FLoRA entry sheet</strong> (107 known replications). Use it to find missed papers, filter misclassifications, and plan re-extraction.</p>
+          <p>All scripts are in <code>analysis/</code>. Data files live in <code>analysis/</code> and are not committed to git.</p>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">CLI</div>
+          <pre class="cli-block">python -m analysis.run_overlap_analysis  # gap analysis
+python -m analysis.rule_analysis         # filter rule audit
+python -m analysis.apa_resolver          # resolve APA citations</pre>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Analysis scripts</div>
+          <ul class="analysis-file-list">
+            <li>
+              <span class="fname">run_overlap_analysis.py</span>
+              <span class="fdesc">Gap analysis — compares extracted.csv against FLoRA entry sheet. Writes gap CSVs and gap_summary.md.</span>
+            </li>
+            <li>
+              <span class="fname">rule_analysis.py</span>
+              <span class="fdesc">Audits filter rules: contribution per rule, false-positive rate, improvement opportunities.</span>
+            </li>
+            <li>
+              <span class="fname">apa_resolver.py</span>
+              <span class="fdesc">Resolves APA-format citations in extracted rows to structured DOIs via CrossRef.</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Output files</div>
+          <ul class="analysis-file-list">
+            <li><span class="fname">gap_analysis_doi_matched.csv</span><span class="fdesc">DOI-matched gap list</span></li>
+            <li><span class="fname">gap_analysis_url_matched.csv</span><span class="fdesc">URL-matched gaps</span></li>
+            <li><span class="fname">gap_vs_extracted_comparison.csv</span><span class="fdesc">Side-by-side comparison</span></li>
+            <li><span class="fname">rule_improvement_opportunities.csv</span><span class="fdesc">Actionable filter improvements</span></li>
+            <li><span class="fname">gap_summary.md</span><span class="fdesc">Human-readable summary</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Right: stats -->
+      <div class="stats-panel">
         <div class="kpi-row">
           <div class="kpi-card">
-            <div class="kpi-num" id="sv-total">—</div>
-            <div class="kpi-label">Total Records</div>
-            <div class="kpi-sub">in Supabase</div>
+            <div class="kpi-num" id="gap-total" style="color:#dc2626">—</div>
+            <div class="kpi-label">Total Gaps</div>
+            <div class="kpi-sub">in FLoRA, not extracted</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-num" id="sv-validated" style="color:#16a34a">—</div>
-            <div class="kpi-label">Validated</div>
-            <div class="kpi-sub" id="sv-validated-pct"></div>
+            <div class="kpi-num" id="gap-doi" style="color:#f59e0b">—</div>
+            <div class="kpi-label">DOI-matched</div>
+            <div class="kpi-sub">gap CSV</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-num" id="sv-unvalidated" style="color:#94a3b8">—</div>
-            <div class="kpi-label">Unvalidated</div>
-            <div class="kpi-sub" id="sv-unvalidated-pct"></div>
+            <div class="kpi-num" id="gap-url" style="color:#2563eb">—</div>
+            <div class="kpi-label">URL-matched</div>
+            <div class="kpi-sub">preprint fallback</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-num" id="sv-inprogress" style="color:#f59e0b">—</div>
-            <div class="kpi-label">In Progress</div>
-            <div class="kpi-sub" id="sv-inprogress-pct"></div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-num" id="sv-needreview" style="color:#dc2626">—</div>
-            <div class="kpi-label">Need Review</div>
-            <div class="kpi-sub" id="sv-needreview-pct"></div>
+            <div class="kpi-num" id="gap-misclass" style="color:#7c3aed">—</div>
+            <div class="kpi-label">Misclassed</div>
+            <div class="kpi-sub">wrongly filtered out</div>
           </div>
         </div>
-        <div class="kpi-row">
-          <div class="kpi-card">
-            <div class="kpi-num" id="sv-judgements">—</div>
-            <div class="kpi-label">Judgements</div>
-            <div class="kpi-sub">total votes cast</div>
+        <div id="gap-generated" style="font-size:10px;color:var(--text-faint);margin-bottom:4px"></div>
+
+        <div class="stats-two">
+          <div class="stat-card">
+            <h3>Link Method Distribution</h3>
+            <div id="audit-link-methods"><div class="null-note">Loading…</div></div>
           </div>
-          <div class="kpi-card">
-            <div class="kpi-num" id="sv-validators">—</div>
-            <div class="kpi-label">Validators</div>
-            <div class="kpi-sub">active</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-num" id="sv-agreement">—</div>
-            <div class="kpi-label">Agreement</div>
-            <div class="kpi-sub">validated / total queue</div>
+          <div class="stat-card">
+            <h3>Link Confidence</h3>
+            <div id="audit-confidence"><div class="null-note">Loading…</div></div>
           </div>
         </div>
 
-        <!-- Progress bar -->
-        <div style="margin-bottom:20px">
-          <div style="display:flex;justify-content:space-between;font-size:11px;
-                      color:var(--text-muted);margin-bottom:4px">
-            <span>Validation Progress</span>
-            <span id="sv-progress-label">—</span>
+        <div class="stat-card" style="padding:0;overflow:hidden">
+          <div style="padding:10px 16px;border-bottom:1px solid var(--border)">
+            <span style="font-size:10px;font-weight:700;text-transform:uppercase;
+                         color:var(--text-faint);letter-spacing:.5px">Rule Improvement Opportunities</span>
           </div>
-          <div class="progress-bar" style="height:8px">
-            <div class="progress-fill" id="sv-progress-fill" style="width:0%"></div>
-          </div>
+          <table class="data-table">
+            <thead><tr><th>Category</th><th style="width:50px;text-align:right">Count</th>
+              <th>Suggested Fix</th><th style="width:60px">Priority</th></tr></thead>
+            <tbody id="improvement-tbody">
+              <tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
+            </tbody>
+          </table>
         </div>
-      </div>
 
-      <!-- Correction Frequency + Outcome Distribution -->
-      <div class="two-col">
-        <div class="stat-card">
-          <h3>Correction Frequency (validated)</h3>
-          <p style="font-size:11px;color:var(--text-faint);margin:0 0 12px">
-            Rows where ≥ 1 validator marked a field incorrect
-          </p>
-          <div id="corr-bars"><div class="null-note">Loading…</div></div>
-          <div style="margin-top:14px">
-            <div class="stat-row">
-              <span>Type field incorrect</span>
-              <span><strong id="corr-type" style="color:#dc2626">—</strong>
-                <span class="stat-pct" id="corr-type-pct"></span></span>
+        <div class="stat-card" style="padding:0;overflow:hidden">
+          <div style="padding:10px 16px;border-bottom:1px solid var(--border);
+                      display:flex;gap:10px;align-items:center">
+            <span style="font-size:10px;font-weight:700;text-transform:uppercase;
+                         color:var(--text-faint);letter-spacing:.5px">Missing Candidates — DOI Gap List</span>
+            <div class="gap-search-row" style="margin:0;flex:1">
+              <input type="text" id="gap-search" placeholder="Search…"
+                     oninput="scheduleGapSearch()" style="font-size:11px;width:100%">
             </div>
-            <div class="stat-row">
-              <span>Original DOI incorrect</span>
-              <span><strong id="corr-original" style="color:#f59e0b">—</strong>
-                <span class="stat-pct" id="corr-original-pct"></span></span>
-            </div>
-            <div class="stat-row">
-              <span>Outcome incorrect</span>
-              <span><strong id="corr-outcome" style="color:#7c3aed">—</strong>
-                <span class="stat-pct" id="corr-outcome-pct"></span></span>
-            </div>
+            <span id="gap-count" style="font-size:11px;color:var(--text-faint);white-space:nowrap"></span>
           </div>
-        </div>
-
-        <div class="stat-card">
-          <h3>Validated Outcomes (validated)</h3>
-          <div class="pie-wrap">
-            <svg id="pie-val-svg" width="120" height="120" viewBox="0 0 160 160"
-                 style="flex-shrink:0;overflow:visible"></svg>
-            <div class="pie-legend" id="pie-val-legend"><div class="null-note">Loading…</div></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Drilldown table -->
-      <hr class="section-divider">
-      <div class="section-badge">🔎 Incorrect DOI Drilldown</div>
-      <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
-        Rows where at least one validator flagged a field as incorrect.
-        Click a row to expand and see per-validator checks and notes.
-      </p>
-
-      <!-- Drilldown filters -->
-      <div class="toolbar" style="margin-bottom:12px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
-        <label style="font-size:11px;font-weight:600;color:var(--text-muted)">Outcome:</label>
-        <select id="dd-outcome-filter" style="width:auto" onchange="loadDrilldown(1)">
-          <option value="all">All outcomes</option>
-          <option value="success">Success</option>
-          <option value="failure">Failure</option>
-          <option value="mixed">Mixed</option>
-          <option value="uninformative">Uninformative</option>
-          <option value="cannot_be_determined">Cannot be determined</option>
-          <option value="descriptive">Descriptive</option>
-          <option value="pending">Pending</option>
-          <option value="api_error">API error</option>
-        </select>
-        <label style="font-size:11px;font-weight:600;color:var(--text-muted)">Field:</label>
-        <select id="dd-check-filter" style="width:auto" onchange="loadDrilldown(1)">
-          <option value="all">All fields</option>
-          <option value="type">Type</option>
-          <option value="original">Original DOI</option>
-          <option value="outcome">Outcome</option>
-        </select>
-        <span id="dd-count" style="font-size:11px;color:var(--text-faint)"></span>
-      </div>
-
-      <div class="card" style="overflow:hidden">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Replication DOI</th>
-              <th>Original DOI</th>
-              <th>Outcome</th>
-              <th>Type</th>
-              <th>Val 1</th>
-              <th>Val 2</th>
-              <th>LLM</th>
-            </tr>
-          </thead>
-          <tbody id="dd-tbody">
-            <tr><td colspan="7" class="null-note" style="text-align:center;padding:20px">Loading…</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="pager" id="dd-pager"></div>
-    </div><!-- /supa-content -->
-  </div><!-- /tab-validation -->
-
-
-  <!-- ════════════════════════════════════════════════════════════════════════ -->
-  <!-- ANALYSIS TAB                                                            -->
-  <!-- ════════════════════════════════════════════════════════════════════════ -->
-  <div class="tab-panel" id="tab-analysis">
-
-    <!-- Gap Summary KPIs -->
-    <div class="dash-section">
-      <div class="section-title">Gap Analysis — Known vs. Extracted</div>
-      <div id="gap-generated" style="font-size:10px;color:var(--text-faint);margin-bottom:12px"></div>
-      <div class="kpi-row">
-        <div class="kpi-card">
-          <div class="kpi-num" id="gap-total" style="color:#dc2626">—</div>
-          <div class="kpi-label">Total Gaps</div>
-          <div class="kpi-sub">in FLoRA, not extracted</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-num" id="gap-doi" style="color:#f59e0b">—</div>
-          <div class="kpi-label">DOI-matched</div>
-          <div class="kpi-sub">gap_analysis_doi_matched.csv</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-num" id="gap-url" style="color:#2563eb">—</div>
-          <div class="kpi-label">URL-matched</div>
-          <div class="kpi-sub">gap_analysis_url_matched.csv</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-num" id="gap-fuzzy" style="color:#9ca3af">—</div>
-          <div class="kpi-label">Fuzzy-matched</div>
-          <div class="kpi-sub">title fallback</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-num" id="gap-misclass" style="color:#7c3aed">—</div>
-          <div class="kpi-label">Filter Misclasses</div>
-          <div class="kpi-sub">wrongly filtered out</div>
+          <table class="data-table">
+            <thead><tr><th style="width:180px">DOI</th><th>Title</th><th style="width:50px">Year</th></tr></thead>
+            <tbody id="gap-tbody">
+              <tr><td colspan="3" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
+            </tbody>
+          </table>
+          <div class="pager" id="gap-pager" style="padding:8px"></div>
         </div>
       </div>
     </div>
+  </div><!-- /tab-old-pipeline -->
 
-    <!-- Extraction Audit KPIs -->
-    <hr class="section-divider">
-    <div class="section-badge">📋 Extraction Audit — extracted.csv</div>
-    <div id="audit-generated" style="font-size:10px;color:var(--text-faint);margin-bottom:12px"></div>
-    <div class="kpi-row" style="margin-bottom:16px">
-      <div class="kpi-card">
-        <div class="kpi-num" id="audit-total" style="color:#16a34a">—</div>
-        <div class="kpi-label">Extracted Rows</div>
-        <div class="kpi-sub">extracted.csv</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-num" id="audit-missing-doi" style="color:#f59e0b">—</div>
-        <div class="kpi-label">Missing DOI</div>
-        <div class="kpi-sub">doi_o empty / pending</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-num" id="audit-api-errors" style="color:#dc2626">—</div>
-        <div class="kpi-label">API Errors</div>
-        <div class="kpi-sub">extraction failures</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-num" id="audit-pending" style="color:#9ca3af">—</div>
-        <div class="kpi-label">Target Pending</div>
-        <div class="kpi-sub">needs manual ID</div>
-      </div>
-    </div>
-
-    <div class="two-col">
-      <div class="stat-card">
-        <h3>Link Method Distribution</h3>
-        <div id="audit-link-methods"><div class="null-note">Loading…</div></div>
-      </div>
-      <div class="stat-card">
-        <h3>Link Confidence Distribution</h3>
-        <div id="audit-confidence"><div class="null-note">Loading…</div></div>
-      </div>
-    </div>
-
-    <!-- Rule Improvement Opportunities -->
-    <hr class="section-divider">
-    <div class="section-badge">🔧 Rule Improvement Opportunities</div>
-    <div class="analysis-card" style="padding:0;overflow:hidden">
-      <table class="data-table" id="improvement-table">
-        <thead>
-          <tr>
-            <th>Category</th>
-            <th style="width:60px;text-align:right">Count</th>
-            <th>Current Status</th>
-            <th>Suggested Fix</th>
-            <th style="width:70px">Priority</th>
-          </tr>
-        </thead>
-        <tbody id="improvement-tbody">
-          <tr><td colspan="5" class="null-note" style="text-align:center;padding:16px">Loading…</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Missing DOIs (DOI-matched gaps) -->
-    <hr class="section-divider">
-    <div class="section-badge">🔍 Missing Candidates — DOI Gap List</div>
-    <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
-      DOIs present in <code style="font-family:monospace;background:var(--surface-2);padding:1px 4px;border-radius:3px">all_replications.csv</code>
-      but not found in <code style="font-family:monospace;background:var(--surface-2);padding:1px 4px;border-radius:3px">candidates.csv</code>.
-      Run <code style="font-family:monospace;background:var(--surface-2);padding:1px 4px;border-radius:3px">python -m analysis.run_overlap_analysis</code> to refresh.
-    </p>
-
-    <div class="gap-search-row">
-      <input type="text" id="gap-search" placeholder="Search DOI or title…"
-             oninput="scheduleGapSearch()" style="font-size:12px">
-      <span id="gap-count" style="font-size:11px;color:var(--text-faint)"></span>
-    </div>
-
-    <div class="card" style="overflow:hidden;margin-bottom:8px">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th style="width:200px">DOI</th>
-            <th>Title</th>
-            <th style="width:60px">Year</th>
-          </tr>
-        </thead>
-        <tbody id="gap-tbody">
-          <tr><td colspan="3" class="null-note" style="text-align:center;padding:16px">Loading…</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <div class="pager" id="gap-pager"></div>
-
-    <!-- URL-matched gaps -->
-    <hr class="section-divider">
-    <div class="section-badge">🔗 URL-matched Gaps</div>
-    <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
-      Entries matched by URL rather than DOI — often preprints or papers with non-standard DOI formatting.
-    </p>
-    <div class="card" style="overflow:hidden;margin-bottom:16px">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>DOI / URL</th>
-            <th>Title</th>
-            <th style="width:60px">Year</th>
-          </tr>
-        </thead>
-        <tbody id="url-gap-tbody">
-          <tr><td colspan="3" class="null-note" style="text-align:center;padding:16px">Loading…</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Documentation -->
-    <hr class="section-divider">
-    <div class="section-badge">📖 Analysis Scripts &amp; Outputs</div>
-    <div class="analysis-card">
-      <h3>How to Run</h3>
-      <ul class="analysis-file-list">
-        <li>
-          <span class="fname">run_overlap_analysis.py</span>
-          <span class="fdesc">Main gap analysis — compares extracted.csv against FLoRA entry sheet to find unextracted DOIs. Writes gap CSVs and gap_summary.md.</span>
-        </li>
-        <li>
-          <span class="fname">rule_analysis.py</span>
-          <span class="fdesc">Audits filter rules: contribution per rule, false-positive rate, improvement opportunities. Writes rule_improvement_opportunities.csv.</span>
-        </li>
-        <li>
-          <span class="fname">apa_resolver.py</span>
-          <span class="fdesc">Resolves APA-format citations in extracted rows to structured DOIs via CrossRef. Writes apa_reference_fallback.csv.</span>
-        </li>
-      </ul>
-      <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px">
-        <code style="font-family:monospace;background:var(--surface-2);padding:3px 8px;border-radius:4px;font-size:11px">python -m analysis.run_overlap_analysis</code>
-        <code style="font-family:monospace;background:var(--surface-2);padding:3px 8px;border-radius:4px;font-size:11px">python -m analysis.rule_analysis</code>
-        <code style="font-family:monospace;background:var(--surface-2);padding:3px 8px;border-radius:4px;font-size:11px">python -m analysis.apa_resolver</code>
-      </div>
-    </div>
-
-    <div class="analysis-card">
-      <h3>Output Files</h3>
-      <ul class="analysis-file-list">
-        <li>
-          <span class="fname">gap_analysis_doi_matched.csv</span>
-          <span class="fdesc">DOIs in FLoRA sheet matched to extracted.csv — full gap list with original and replication metadata</span>
-        </li>
-        <li>
-          <span class="fname">gap_analysis_url_matched.csv</span>
-          <span class="fdesc">URL-matched gap analysis (fallback when DOIs differ by formatting)</span>
-        </li>
-        <li>
-          <span class="fname">gap_vs_extracted_comparison.csv</span>
-          <span class="fdesc">Side-by-side comparison of FLoRA entries vs. what was extracted</span>
-        </li>
-        <li>
-          <span class="fname">rule_improvement_opportunities.csv</span>
-          <span class="fdesc">Actionable suggestions from rule_analysis.py with priority ratings</span>
-        </li>
-        <li>
-          <span class="fname">gap_summary.md</span>
-          <span class="fdesc">Human-readable executive summary of the gap analysis (displayed above)</span>
-        </li>
-        <li>
-          <span class="fname">extraction_audit.md</span>
-          <span class="fdesc">Manual audit notes — accuracy estimate, link method distribution, missing DOI sample</span>
-        </li>
-      </ul>
-    </div>
-
-  </div><!-- /tab-analysis -->
-
-</div>
+</div><!-- /dash-page -->
 {% endblock %}
 
 {% block scripts %}
@@ -756,11 +1015,10 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
 'use strict';
 const $ = id => document.getElementById(id);
 
-// ── Tab switching ────────────────────────────────────────────────────────────
+// ── Tab switching (hash-based) ───────────────────────────────────────────────
 const TAB_LOADERS = {
-  validation:    () => { if (!_valLoaded)      loadValidation(); },
-  'extract-test': () => { /* loaded with pipeline */ },
-  analysis:      () => { if (!_analysisLoaded) loadAnalysis(); },
+  'supabase':     () => { if (!_valLoaded)      loadValidation(); },
+  'old-pipeline': () => { if (!_analysisLoaded) loadAnalysis(); },
 };
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -775,7 +1033,6 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
-// Restore active tab from URL hash
 (function(){
   const h = location.hash.replace('#','');
   if (h && document.querySelector(`[data-tab="${h}"]`)) {
@@ -786,7 +1043,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   }
 })();
 
-// ── Pie chart (pure SVG donut) ───────────────────────────────────────────────
+// ── Donut chart ──────────────────────────────────────────────────────────────
 const PIE_COLORS = {
   success:'#16a34a', failure:'#dc2626', mixed:'#f59e0b',
   uninformative:'#9ca3af', cannot_be_determined:'#6b7280',
@@ -797,60 +1054,46 @@ const PIE_LABELS = {
   uninformative:'Uninformative', cannot_be_determined:'Cannot be determined',
   descriptive:'Descriptive', pending:'Pending', api_error:'API Error',
 };
-const OUTCOME_HELP = {
-  success:               'Replication confirmed the original finding',
-  failure:               'Replication failed to find the original effect',
-  mixed:                 'Some aspects replicated, others did not',
-  uninformative:         'Authors explicitly state outcome is unclear',
-  cannot_be_determined:  'Insufficient detail in abstract to classify',
-  descriptive:           'Adapted methods without testing original claim',
-  pending:               'Outcome not yet extracted',
-  api_error:             'Extraction failed (API error)',
-};
 
 function drawDonut(svgEl, data) {
   svgEl.innerHTML = '';
-  const total = data.reduce((s, d) => s + d.value, 0);
+  const total = data.reduce((s,d)=>s+d.value,0);
   if (total === 0) {
-    svgEl.innerHTML = '<text x="80" y="86" text-anchor="middle" font-size="11" fill="#94a3b8">No data</text>';
+    svgEl.innerHTML='<text x="80" y="86" text-anchor="middle" font-size="11" fill="#94a3b8">No data</text>';
     return;
   }
-  const cx = 80, cy = 80, R = 68, r = 38;
-  let angle = -Math.PI / 2;
+  const cx=80, cy=80, R=68, r=38;
+  let angle = -Math.PI/2;
   data.forEach(d => {
-    if (d.value === 0) return;
-    const slice = (d.value / total) * 2 * Math.PI;
-    const end   = angle + slice;
-    const large = slice > Math.PI ? 1 : 0;
-    const [x1,y1] = [cx+R*Math.cos(angle), cy+R*Math.sin(angle)];
-    const [x2,y2] = [cx+R*Math.cos(end),   cy+R*Math.sin(end)];
-    const [xi1,yi1] = [cx+r*Math.cos(angle), cy+r*Math.sin(angle)];
-    const [xi2,yi2] = [cx+r*Math.cos(end),   cy+r*Math.sin(end)];
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d',
-      `M ${xi1} ${yi1} L ${x1} ${y1} A ${R} ${R} 0 ${large} 1 ${x2} ${y2}` +
-      ` L ${xi2} ${yi2} A ${r} ${r} 0 ${large} 0 ${xi1} ${yi1} Z`);
-    path.setAttribute('fill', d.color);
-    svgEl.appendChild(path);
-    angle = end;
+    if (!d.value) return;
+    const sl = (d.value/total)*2*Math.PI, end = angle+sl;
+    const lg = sl>Math.PI?1:0;
+    const [x1,y1]=[cx+R*Math.cos(angle),cy+R*Math.sin(angle)];
+    const [x2,y2]=[cx+R*Math.cos(end),  cy+R*Math.sin(end)];
+    const [xi1,yi1]=[cx+r*Math.cos(angle),cy+r*Math.sin(angle)];
+    const [xi2,yi2]=[cx+r*Math.cos(end),  cy+r*Math.sin(end)];
+    const p=document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('d',`M ${xi1} ${yi1} L ${x1} ${y1} A ${R} ${R} 0 ${lg} 1 ${x2} ${y2}`+
+                       ` L ${xi2} ${yi2} A ${r} ${r} 0 ${lg} 0 ${xi1} ${yi1} Z`);
+    p.setAttribute('fill',d.color);
+    svgEl.appendChild(p);
+    angle=end;
   });
-  const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-  txt.setAttribute('x', cx); txt.setAttribute('y', cy - 6);
-  txt.setAttribute('text-anchor','middle'); txt.setAttribute('font-size','18');
-  txt.setAttribute('font-weight','800'); txt.setAttribute('fill','currentColor');
-  txt.textContent = total.toLocaleString();
-  svgEl.appendChild(txt);
-  const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-  sub.setAttribute('x', cx); sub.setAttribute('y', cy + 12);
-  sub.setAttribute('text-anchor','middle'); sub.setAttribute('font-size','10');
-  sub.setAttribute('fill','#94a3b8'); sub.textContent = 'total';
-  svgEl.appendChild(sub);
+  const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+  t.setAttribute('x',cx); t.setAttribute('y',cy-6); t.setAttribute('text-anchor','middle');
+  t.setAttribute('font-size','16'); t.setAttribute('font-weight','800');
+  t.setAttribute('fill','currentColor'); t.textContent=total.toLocaleString();
+  svgEl.appendChild(t);
+  const s=document.createElementNS('http://www.w3.org/2000/svg','text');
+  s.setAttribute('x',cx); s.setAttribute('y',cy+12); s.setAttribute('text-anchor','middle');
+  s.setAttribute('font-size','10'); s.setAttribute('fill','#94a3b8'); s.textContent='total';
+  svgEl.appendChild(s);
 }
 
 function renderLegend(legendEl, data, total) {
-  if (total === 0) { legendEl.innerHTML = '<div class="null-note">No data.</div>'; return; }
-  legendEl.innerHTML = data.filter(d => d.value > 0).map(d => {
-    const p = total > 0 ? ((d.value/total)*100).toFixed(1) : '0.0';
+  if (!total) { legendEl.innerHTML='<div class="null-note">No data.</div>'; return; }
+  legendEl.innerHTML = data.filter(d=>d.value>0).map(d=>{
+    const p = total ? ((d.value/total)*100).toFixed(1) : '0.0';
     return `<div class="leg-row">
       <span class="leg-dot" style="background:${d.color}"></span>
       <span class="leg-label">${d.label}</span>
@@ -860,113 +1103,98 @@ function renderLegend(legendEl, data, total) {
   }).join('');
 }
 
-function renderOutcomeBreakdown(el, data, total) {
-  if (total === 0) { el.innerHTML = '<div class="null-note">No data.</div>'; return; }
-  el.innerHTML = data.filter(d=>d.value>0).sort((a,b)=>b.value-a.value).map(d => {
-    const p  = total > 0 ? ((d.value/total)*100).toFixed(1) : '0.0';
-    const bw = total > 0 ? Math.max(2,(d.value/total)*100) : 2;
-    return `<div style="margin-bottom:10px">
-      <div style="display:flex;justify-content:space-between;margin-bottom:3px">
-        <span style="font-size:11px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px">
-          <span style="width:8px;height:8px;background:${d.color};border-radius:2px;flex-shrink:0"></span>${d.label}
-        </span>
-        <span style="font-size:11px;color:var(--text-muted)"><strong>${d.value.toLocaleString()}</strong> (${p}%)</span>
-      </div>
-      <div style="width:100%;height:6px;background:var(--border);border-radius:2px;overflow:hidden">
-        <div style="height:100%;width:${bw}%;background:${d.color};transition:width .2s"></div>
-      </div>
-      <div style="font-size:9px;color:var(--text-faint);margin-top:2px">${OUTCOME_HELP[d.key]||''}</div>
-    </div>`;
-  }).join('');
-}
-
 // ── Helpers ──────────────────────────────────────────────────────────────────
-function pct(n, total) { if (!total) return ''; return `(${((n/total)*100).toFixed(1)}%)`; }
-function fmt(n) { return n == null ? '—' : Number(n).toLocaleString(); }
-function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+const pct = (n,t) => (!t) ? '' : `(${((n/t)*100).toFixed(1)}%)`;
+const fmt = n => (n==null) ? '—' : Number(n).toLocaleString();
+const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
 function fillLinkMethod(pfx, csv, p) {
-  const total = csv[`${p}extracted_count`] || 0;
+  const total = csv[`${p}extracted_count`]||0;
   [['author',`${p}method_author_year_match`],['fulltext',`${p}method_llm_fulltext`],
    ['abstract',`${p}method_llm_abstract`],['nof',`${p}method_no_original_found`],
    ['pending',`${p}method_target_pending`],['err',`${p}method_api_error`]
-  ].forEach(([s, key]) => {
-    const v = csv[key]||0;
-    $(`${pfx}-${s}`).textContent = fmt(v);
-    $(`${pfx}-${s}-pct`).textContent = pct(v, total);
+  ].forEach(([s,key])=>{
+    const v=csv[key]||0;
+    $(`${pfx}-${s}`).textContent=fmt(v);
+    $(`${pfx}-${s}-pct`).textContent=pct(v,total);
   });
 }
 
 function fillModel(pfx, csv, p) {
-  const total = csv[`${p}extracted_count`] || 0;
-  ['gemini','gpt','qwen','other','none'].forEach(f => {
-    const v = csv[`${p}model_${f}`]||0;
-    $(`${pfx}-${f}`).textContent = fmt(v);
-    $(`${pfx}-${f}-pct`).textContent = pct(v, total);
+  const total=csv[`${p}extracted_count`]||0;
+  ['gemini','gpt','qwen','other','none'].forEach(f=>{
+    const v=csv[`${p}model_${f}`]||0;
+    $(`${pfx}-${f}`).textContent=fmt(v);
+    $(`${pfx}-${f}-pct`).textContent=pct(v,total);
   });
 }
 
 const OUTCOMES = ['success','failure','mixed','uninformative','cannot_be_determined','descriptive','pending','api_error'];
 
-// ── Load Pipeline tab ────────────────────────────────────────────────────────
+// ── Load pipeline / CSV stats ────────────────────────────────────────────────
 async function loadPipeline() {
-  const csv = await fetch('/api/dashboard/csv-stats').then(r => r.json());
+  const csv = await fetch('/api/dashboard/csv-stats').then(r=>r.json());
 
-  $('k-candidates').textContent     = fmt(csv.candidates_count);
-  $('k-filtered').textContent       = fmt(csv.filtered_count);
-  $('k-extracted').textContent      = fmt(csv.extracted_count);
-  $('k-target-pending').textContent = fmt(csv.target_pending_count);
+  // Search tab
+  $('k-candidates').textContent = fmt(csv.candidates_count);
+  if (csv.candidates_source && $('search-source-breakdown')) {
+    const total = Object.values(csv.candidates_source).reduce((a,b)=>a+b,0);
+    $('search-source-breakdown').innerHTML = Object.entries(csv.candidates_source)
+      .sort((a,b)=>b[1]-a[1])
+      .map(([src,n])=>`<div class="stat-row">
+        <span style="font-family:monospace;font-size:11px">${esc(src)}</span>
+        <span><strong>${fmt(n)}</strong> <span class="stat-pct">${pct(n,total)}</span></span>
+      </div>`).join('');
+  } else if ($('search-source-breakdown')) {
+    $('search-source-breakdown').innerHTML = '<div class="null-note">Source breakdown not yet available.</div>';
+  }
 
-  const ftotal = csv.filtered_count || 0;
+  // Filter tab
+  $('k-filtered').textContent = fmt(csv.filtered_count);
+  const ftotal = csv.filtered_count||0;
   [['replication','#16a34a'],['reproduction','#2563eb'],
-   ['needs-review','#f59e0b'],['false-positive','#dc2626']].forEach(([k,_]) => {
-    const key = k.replace('-','_');
+   ['needs-review','#f59e0b'],['false-positive','#dc2626']].forEach(([k])=>{
+    const key=k.replace('-','_');
     $(`f-${k}`).textContent     = fmt(csv[`filter_${key}`]);
     $(`f-${k}-pct`).textContent = pct(csv[`filter_${key}`], ftotal);
   });
 
-  const mtotal = (csv.match_single||0)+(csv.match_multiple_match||0)+(csv.match_multiple_original||0);
-  $('m-single').textContent           = fmt(csv.match_single);
-  $('m-single-pct').textContent       = pct(csv.match_single, mtotal);
-  $('m-multiple-match').textContent   = fmt(csv.match_multiple_match);
-  $('m-multiple-match-pct').textContent = pct(csv.match_multiple_match, mtotal);
-  $('m-multiple-original').textContent  = fmt(csv.match_multiple_original);
-  $('m-multiple-original-pct').textContent = pct(csv.match_multiple_original, mtotal);
-
+  // Extract tab
+  $('k-extracted').textContent      = fmt(csv.extracted_count);
+  $('k-target-pending').textContent = fmt(csv.target_pending_count);
+  const mtotal=(csv.match_single||0)+(csv.match_multiple_match||0)+(csv.match_multiple_original||0);
+  $('m-single').textContent               = fmt(csv.match_single);
+  $('m-single-pct').textContent           = pct(csv.match_single, mtotal);
+  $('m-multiple-match').textContent       = fmt(csv.match_multiple_match);
+  $('m-multiple-match-pct').textContent   = pct(csv.match_multiple_match, mtotal);
+  $('m-multiple-original').textContent    = fmt(csv.match_multiple_original);
+  $('m-multiple-original-pct').textContent= pct(csv.match_multiple_original, mtotal);
   fillLinkMethod('lm', csv, '');
   fillModel('mod', csv, '');
-
-  const pieData = OUTCOMES.map(k => ({key:k, label:PIE_LABELS[k], color:PIE_COLORS[k], value:csv[`outcome_${k}`]||0}));
-  const outTotal = pieData.reduce((s,d)=>s+d.value,0);
+  const pieData=OUTCOMES.map(k=>({key:k,label:PIE_LABELS[k],color:PIE_COLORS[k],value:csv[`outcome_${k}`]||0}));
+  const outTotal=pieData.reduce((s,d)=>s+d.value,0);
   drawDonut($('pie-svg'), pieData);
   renderLegend($('pie-legend'), pieData, outTotal);
-  renderOutcomeBreakdown($('outcome-breakdown'), pieData, outTotal);
 
-  // Extract Test tab (loaded together with Pipeline since same API call)
+  // Extract-Test tab
   $('k-test-count').textContent   = fmt(csv.test_extracted_count);
   $('k-test-pending').textContent = fmt(csv.test_target_pending_count);
-
-  const tmtotal = (csv.test_match_single||0)+(csv.test_match_multiple_match||0)+(csv.test_match_multiple_original||0);
+  const tmtotal=(csv.test_match_single||0)+(csv.test_match_multiple_match||0)+(csv.test_match_multiple_original||0);
   $('tm-single').textContent      = fmt(csv.test_match_single);
   $('tm-single-pct').textContent  = pct(csv.test_match_single, tmtotal);
   $('tm-mmatch').textContent      = fmt(csv.test_match_multiple_match);
   $('tm-mmatch-pct').textContent  = pct(csv.test_match_multiple_match, tmtotal);
   $('tm-morig').textContent       = fmt(csv.test_match_multiple_original);
   $('tm-morig-pct').textContent   = pct(csv.test_match_multiple_original, tmtotal);
-
   fillLinkMethod('tlm', csv, 'test_');
-  fillModel('tmod', csv, 'test_');
-
-  const testPieData = OUTCOMES.map(k => ({key:k, label:PIE_LABELS[k], color:PIE_COLORS[k], value:csv[`test_outcome_${k}`]||0}));
-  const testOutTotal = testPieData.reduce((s,d)=>s+d.value,0);
+  const testPieData=OUTCOMES.map(k=>({key:k,label:PIE_LABELS[k],color:PIE_COLORS[k],value:csv[`test_outcome_${k}`]||0}));
+  const testOutTotal=testPieData.reduce((s,d)=>s+d.value,0);
   drawDonut($('pie-test-svg'), testPieData);
   renderLegend($('pie-test-legend'), testPieData, testOutTotal);
-  renderOutcomeBreakdown($('test-outcome-breakdown'), testPieData, testOutTotal);
 }
 
-// ── Load Validation tab ──────────────────────────────────────────────────────
+// ── Validation (Supabase) tab ────────────────────────────────────────────────
 let _valLoaded = false;
-
 async function loadValidation() {
   _valLoaded = true;
   try {
@@ -975,357 +1203,254 @@ async function loadValidation() {
       fetch('/api/dashboard/supabase-corrections').then(r=>r.json()),
       fetch('/api/dashboard/supabase-outcomes').then(r=>r.json()),
     ]);
-
     if (stats.error === 'supabase_not_configured') {
-      $('supa-unconfigured').style.display = '';
-      $('supa-content').style.display = 'none';
+      $('supa-unconfigured').style.display='';
+      $('supa-content').style.display='none';
       return;
     }
-    $('supa-unconfigured').style.display = 'none';
+    $('supa-unconfigured').style.display='none';
 
     $('sv-total').textContent       = fmt(stats.total);
     $('sv-validated').textContent   = fmt(stats.validated);
     $('sv-unvalidated').textContent = fmt(stats.unvalidated);
-    $('sv-inprogress').textContent  = fmt(stats.in_progress);
     $('sv-needreview').textContent  = fmt(stats.need_review);
     $('sv-validated-pct').textContent   = pct(stats.validated, stats.total);
     $('sv-unvalidated-pct').textContent = pct(stats.unvalidated, stats.total);
-    $('sv-inprogress-pct').textContent  = pct(stats.in_progress, stats.total);
     $('sv-needreview-pct').textContent  = pct(stats.need_review, stats.total);
     $('sv-judgements').textContent  = fmt(stats.total_judgements);
     $('sv-validators').textContent  = fmt(stats.active_validators);
-    $('sv-agreement').textContent   = stats.agreement_rate != null
-      ? (stats.agreement_rate * 100).toFixed(1) + '%' : '—';
-
-    const valPct = stats.total > 0 ? (stats.validated / stats.total) * 100 : 0;
-    $('sv-progress-fill').style.width = valPct + '%';
-    $('sv-progress-label').textContent = `${valPct.toFixed(1)}% validated`;
+    $('sv-agreement').textContent   = stats.agreement_rate!=null
+      ? (stats.agreement_rate*100).toFixed(1)+'%' : '—';
+    const vp=stats.total>0?(stats.validated/stats.total)*100:0;
+    $('sv-progress-fill').style.width=vp+'%';
+    $('sv-progress-label').textContent=vp.toFixed(1)+'% validated';
 
     if (!corr.error) {
-      const maxCorr = Math.max(corr.type_incorrect||0, corr.original_incorrect||0, corr.outcome_incorrect||0, 1);
-      const total = stats.validated || 1;
-      $('corr-bars').innerHTML = [
-        {label:'Type', key:'type_incorrect', color:'#dc2626'},
-        {label:'Original DOI', key:'original_incorrect', color:'#f59e0b'},
-        {label:'Outcome', key:'outcome_incorrect', color:'#7c3aed'},
-      ].map(({label, key, color}) => {
-        const v = corr[key] || 0;
-        const w = maxCorr > 0 ? Math.max(2, (v/maxCorr)*100) : 0;
+      const total=stats.validated||1;
+      const maxCorr=Math.max(corr.type_incorrect||0,corr.original_incorrect||0,corr.outcome_incorrect||0,1);
+      $('corr-bars').innerHTML=[
+        {label:'Type',key:'type_incorrect',color:'#dc2626'},
+        {label:'Original DOI',key:'original_incorrect',color:'#f59e0b'},
+        {label:'Outcome',key:'outcome_incorrect',color:'#7c3aed'},
+      ].map(({label,key,color})=>{
+        const v=corr[key]||0;
+        const w=maxCorr>0?Math.max(2,(v/maxCorr)*100):0;
         return `<div class="corr-bar-wrap">
           <div class="corr-bar-label">
             <span style="font-weight:600">${label}</span>
-            <span>${v.toLocaleString()} rows (${((v/total)*100).toFixed(1)}%)</span>
+            <span>${v.toLocaleString()} (${((v/total)*100).toFixed(1)}%)</span>
           </div>
           <div class="corr-bar-track">
             <div class="corr-bar-fill" style="width:${w}%;background:${color}"></div>
           </div>
         </div>`;
       }).join('');
-      $('corr-type').textContent       = fmt(corr.type_incorrect);
-      $('corr-original').textContent   = fmt(corr.original_incorrect);
-      $('corr-outcome').textContent    = fmt(corr.outcome_incorrect);
-      $('corr-type-pct').textContent     = pct(corr.type_incorrect, total);
-      $('corr-original-pct').textContent = pct(corr.original_incorrect, total);
-      $('corr-outcome-pct').textContent  = pct(corr.outcome_incorrect, total);
+      $('corr-type').textContent      = fmt(corr.type_incorrect);
+      $('corr-original').textContent  = fmt(corr.original_incorrect);
+      $('corr-outcome').textContent   = fmt(corr.outcome_incorrect);
+      $('corr-type-pct').textContent    = pct(corr.type_incorrect, total);
+      $('corr-original-pct').textContent= pct(corr.original_incorrect, total);
+      $('corr-outcome-pct').textContent = pct(corr.outcome_incorrect, total);
     } else {
-      $('corr-bars').innerHTML = '<div class="null-note">Correction data unavailable</div>';
+      $('corr-bars').innerHTML='<div class="null-note">Correction data unavailable</div>';
     }
 
     if (!outcomes.error && outcomes.outcomes) {
-      const pieData = OUTCOMES.map(k => ({
-        key:k, label:PIE_LABELS[k], color:PIE_COLORS[k],
-        value:outcomes.outcomes[k]||0,
-      })).concat(
-        Object.keys(outcomes.outcomes).filter(k=>!OUTCOMES.includes(k)).map(k=>({
-          key:k, label:k, color:'#9ca3af', value:outcomes.outcomes[k],
-        }))
-      );
-      const outTotal = pieData.reduce((s,d)=>s+d.value,0);
+      const pieData=OUTCOMES.map(k=>({
+        key:k,label:PIE_LABELS[k],color:PIE_COLORS[k],value:outcomes.outcomes[k]||0,
+      }));
+      const outTotal=pieData.reduce((s,d)=>s+d.value,0);
       drawDonut($('pie-val-svg'), pieData);
       renderLegend($('pie-val-legend'), pieData, outTotal);
     }
 
     loadDrilldown(1);
-
   } catch(e) {
-    $('supa-content').innerHTML = `<div class="null-note">Failed to load Supabase data: ${e.message}</div>`;
+    $('supa-content').innerHTML=`<div class="null-note">Failed to load Supabase data: ${e.message}</div>`;
   }
 }
 
-// ── Drilldown table ──────────────────────────────────────────────────────────
-let _ddPage = 1;
-
+// ── Drilldown ────────────────────────────────────────────────────────────────
 async function loadDrilldown(page) {
-  _ddPage = page;
-  const outcome = $('dd-outcome-filter').value;
-  const check   = $('dd-check-filter').value;
-  $('dd-tbody').innerHTML = '<tr><td colspan="7" style="text-align:center;padding:16px;color:var(--text-faint)">Loading…</td></tr>';
-
-  const data = await fetch(`/api/dashboard/supabase-drilldown?page=${page}&outcome_filter=${outcome}&check_filter=${check}`)
-    .then(r=>r.json());
-
+  const outcome=$('dd-outcome-filter').value;
+  const check  =$('dd-check-filter').value;
+  $('dd-tbody').innerHTML=`<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--text-faint)">Loading…</td></tr>`;
+  const data=await fetch(`/api/dashboard/supabase-drilldown?page=${page}&outcome_filter=${outcome}&check_filter=${check}`).then(r=>r.json());
   if (data.error) {
-    $('dd-tbody').innerHTML = `<tr><td colspan="7" class="null-note" style="text-align:center;padding:16px">${data.error}</td></tr>`;
-    $('dd-pager').innerHTML = '';
-    $('dd-count').textContent = '';
-    return;
+    $('dd-tbody').innerHTML=`<tr><td colspan="6" class="null-note" style="text-align:center;padding:16px">${data.error}</td></tr>`;
+    $('dd-pager').innerHTML=''; $('dd-count').textContent=''; return;
   }
-
-  $('dd-count').textContent = `${data.total.toLocaleString()} records`;
-
-  if (data.rows.length === 0) {
-    $('dd-tbody').innerHTML = '<tr><td colspan="7" class="null-note" style="text-align:center;padding:20px">No records with corrections.</td></tr>';
-    $('dd-pager').innerHTML = '';
-    return;
+  $('dd-count').textContent=`${data.total.toLocaleString()} records`;
+  if (!data.rows.length) {
+    $('dd-tbody').innerHTML='<tr><td colspan="6" class="null-note" style="text-align:center;padding:16px">No records.</td></tr>';
+    $('dd-pager').innerHTML=''; return;
   }
-
-  function checkBadge(val) {
-    if (!val) return '<span style="color:var(--text-faint)">—</span>';
-    if (val === 'correct')   return '<span class="check-correct">✓</span>';
-    if (val === 'incorrect') return '<span class="check-incorrect">✗</span>';
-    return `<span style="color:var(--text-muted)">${val}</span>`;
+  function cb(v){
+    if (!v) return '<span style="color:var(--text-faint)">—</span>';
+    return v==='correct'?'<span class="check-correct">✓</span>':'<span class="check-incorrect">✗</span>';
   }
-
-  function rowBadge(row, field) {
-    const v = ['val1','val2','llm_val']
-      .filter(v => row[`${v}_${field}_check`] === 'incorrect');
-    return v.length ? `<span class="check-incorrect">✗ ${v.join(',')}</span>` : '<span class="check-correct">✓</span>';
-  }
-
-  $('dd-tbody').innerHTML = data.rows.map((row, i) => {
-    const id = `dd-row-${page}-${i}`;
-    const notesHtml = [row.val1_notes, row.val2_notes].filter(Boolean)
-      .map(n=>`<div style="font-size:11px;color:var(--text-muted);margin-top:4px;padding:4px 8px;background:var(--surface);border-radius:4px;border-left:3px solid var(--border-2)">${n}</div>`)
-      .join('');
-
+  $('dd-tbody').innerHTML=data.rows.map((row,i)=>{
+    const id=`dd-r-${page}-${i}`;
     return `<tr class="drilldown-row" onclick="toggleDrilldown('${id}')">
-      <td style="font-family:monospace;font-size:10px;max-width:180px;overflow:hidden;text-overflow:ellipsis">${row.doi_r||'—'}</td>
-      <td style="font-family:monospace;font-size:10px;max-width:180px;overflow:hidden;text-overflow:ellipsis">${row.doi_o||'—'}</td>
-      <td><span class="pill pill-${row.outcome==='success'?'green':row.outcome==='failure'?'red':row.outcome==='mixed'?'yellow':'gray'}">${row.outcome||'—'}</span></td>
-      <td style="font-size:11px">${row.type||'—'}</td>
-      <td>${rowBadge(row,'type')} ${rowBadge(row,'original')} ${rowBadge(row,'outcome')}</td>
-      <td>${checkBadge(row.val1_type_check)} ${checkBadge(row.val1_original_check)} ${checkBadge(row.val1_outcome_check)}</td>
-      <td>${checkBadge(row.val2_type_check)} ${checkBadge(row.val2_original_check)} ${checkBadge(row.val2_outcome_check)}</td>
+      <td style="font-family:monospace;font-size:10px;max-width:160px;overflow:hidden;text-overflow:ellipsis">${esc(row.doi_r||'—')}</td>
+      <td style="font-family:monospace;font-size:10px;max-width:160px;overflow:hidden;text-overflow:ellipsis">${esc(row.doi_o||'—')}</td>
+      <td style="font-size:11px">${esc(row.outcome||'—')}</td>
+      <td style="font-size:11px">${esc(row.type||'—')}</td>
+      <td>${cb(row.val1_type_check)} ${cb(row.val1_original_check)} ${cb(row.val1_outcome_check)}</td>
+      <td>${cb(row.val2_type_check)} ${cb(row.val2_original_check)} ${cb(row.val2_outcome_check)}</td>
     </tr>
     <tr class="drilldown-detail" id="${id}">
-      <td colspan="7">
+      <td colspan="6">
         <div class="drilldown-panel">
-          <strong style="font-size:11px;color:var(--text-muted)">Validator checks — T=type, O=original, C=outcome</strong>
-          <table style="margin-top:8px">
-            <thead><tr><th>Validator</th><th>Type</th><th>Original DOI</th><th>Outcome</th></tr></thead>
+          <table>
+            <thead><tr><th>Validator</th><th>Type</th><th>Original</th><th>Outcome</th></tr></thead>
             <tbody>
-              <tr>
-                <td>Val 1</td>
-                <td>${checkBadge(row.val1_type_check)}</td>
-                <td>${checkBadge(row.val1_original_check)}</td>
-                <td>${checkBadge(row.val1_outcome_check)}</td>
-              </tr>
-              <tr>
-                <td>Val 2</td>
-                <td>${checkBadge(row.val2_type_check)}</td>
-                <td>${checkBadge(row.val2_original_check)}</td>
-                <td>${checkBadge(row.val2_outcome_check)}</td>
-              </tr>
-              <tr>
-                <td>LLM</td>
-                <td>${checkBadge(row.llm_val_type_check)}</td>
-                <td>${checkBadge(row.llm_val_original_check)}</td>
-                <td>${checkBadge(row.llm_val_outcome_check)}</td>
-              </tr>
+              <tr><td>Val 1</td><td>${cb(row.val1_type_check)}</td><td>${cb(row.val1_original_check)}</td><td>${cb(row.val1_outcome_check)}</td></tr>
+              <tr><td>Val 2</td><td>${cb(row.val2_type_check)}</td><td>${cb(row.val2_original_check)}</td><td>${cb(row.val2_outcome_check)}</td></tr>
+              <tr><td>LLM</td><td>${cb(row.llm_val_type_check)}</td><td>${cb(row.llm_val_original_check)}</td><td>${cb(row.llm_val_outcome_check)}</td></tr>
             </tbody>
           </table>
-          ${notesHtml}
         </div>
       </td>
     </tr>`;
   }).join('');
 
-  const pages = data.pages;
-  if (pages <= 1) { $('dd-pager').innerHTML = ''; return; }
-  let btns = `<button class="pager-btn" onclick="loadDrilldown(${page-1})" ${page<=1?'disabled':''}>← Prev</button>`;
-  for (let p = Math.max(1, page-2); p <= Math.min(pages, page+2); p++) {
-    btns += `<button class="pager-btn ${p===page?'active':''}" onclick="loadDrilldown(${p})">${p}</button>`;
-  }
-  btns += `<button class="pager-btn" onclick="loadDrilldown(${page+1})" ${page>=pages?'disabled':''}>Next →</button>`;
-  btns += `<span style="font-size:11px;color:var(--text-faint)">Page ${page} of ${pages}</span>`;
-  $('dd-pager').innerHTML = btns;
+  const pages=data.pages;
+  if (pages<=1){$('dd-pager').innerHTML='';return;}
+  let b=`<button class="pager-btn" onclick="loadDrilldown(${page-1})" ${page<=1?'disabled':''}>← Prev</button>`;
+  b+=`<span style="font-size:11px;color:var(--text-faint)">Page ${page} / ${pages}</span>`;
+  b+=`<button class="pager-btn" onclick="loadDrilldown(${page+1})" ${page>=pages?'disabled':''}>Next →</button>`;
+  $('dd-pager').innerHTML=b;
 }
 
 function toggleDrilldown(id) {
-  const el = $(id);
-  if (!el) return;
-  el.classList.toggle('open');
+  const el=$(id); if (!el) return; el.classList.toggle('open');
 }
 
-// ── Load Analysis tab ────────────────────────────────────────────────────────
-let _analysisLoaded = false;
-let _gapPage = 1;
-let _gapSearchTimer = null;
+// ── Analysis (Old Pipeline) tab ──────────────────────────────────────────────
+let _analysisLoaded=false;
+let _gapPage=1;
+let _gapSearchTimer=null;
 
 async function loadAnalysis() {
-  _analysisLoaded = true;
+  _analysisLoaded=true;
   try {
-    const data = await fetch('/api/dashboard/analysis-stats').then(r => r.json());
-
-    // Gap summary KPIs
-    const gs = data.gap_summary || {};
-    $('gap-total').textContent   = fmt(gs.total_gaps);
-    $('gap-doi').textContent     = fmt(gs.doi_gaps);
-    $('gap-url').textContent     = fmt(gs.url_gaps);
-    $('gap-fuzzy').textContent   = fmt(gs.fuzzy_gaps);
+    const data=await fetch('/api/dashboard/analysis-stats').then(r=>r.json());
+    const gs=data.gap_summary||{};
+    $('gap-total').textContent  = fmt(gs.total_gaps);
+    $('gap-doi').textContent    = fmt(gs.doi_gaps);
+    $('gap-url').textContent    = fmt(gs.url_gaps);
     $('gap-misclass').textContent = fmt(gs.filter_misclassifications);
-    if (gs.generated) $('gap-generated').textContent = 'Last run: ' + gs.generated;
+    if (gs.generated) $('gap-generated').textContent='Last run: '+gs.generated;
 
-    // Extraction audit KPIs
-    const au = data.audit || {};
-    $('audit-total').textContent       = fmt(au.total_extracted);
-    $('audit-missing-doi').textContent = fmt(au.missing_doi);
-    $('audit-api-errors').textContent  = fmt(au.api_errors);
-    $('audit-pending').textContent     = fmt(au.target_pending);
-    if (au.generated) $('audit-generated').textContent = 'Last run: ' + au.generated;
-
-    // Link method distribution
+    const au=data.audit||{};
     if (au.link_methods && au.link_methods.length) {
-      const maxCount = Math.max(...au.link_methods.map(r => r.count), 1);
-      $('audit-link-methods').innerHTML = au.link_methods.map(r => `
-        <div style="margin-bottom:8px">
-          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+      const mx=Math.max(...au.link_methods.map(r=>r.count),1);
+      $('audit-link-methods').innerHTML=au.link_methods.map(r=>`
+        <div style="margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
             <span style="font-family:monospace;color:var(--text)">${esc(r.method)}</span>
             <span style="color:var(--text-muted)">${r.count.toLocaleString()} (${r.pct.toFixed(1)}%)</span>
           </div>
-          <div style="width:100%;height:6px;background:var(--border);border-radius:2px;overflow:hidden">
-            <div style="height:100%;width:${Math.max(2,(r.count/maxCount)*100)}%;background:#2563eb;transition:width .2s"></div>
+          <div style="width:100%;height:5px;background:var(--border);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:${Math.max(2,(r.count/mx)*100)}%;background:#2563eb"></div>
           </div>
         </div>`).join('');
     } else {
-      $('audit-link-methods').innerHTML = '<div class="null-note">No data — run extraction_audit first.</div>';
+      $('audit-link-methods').innerHTML='<div class="null-note">Run extraction_audit first.</div>';
     }
 
-    // Confidence distribution
     if (au.confidence_rows && au.confidence_rows.length) {
-      const CONF_COLORS = {high:'#16a34a', medium:'#f59e0b', low:'#dc2626'};
-      const maxCount = Math.max(...au.confidence_rows.map(r => r.count), 1);
-      $('audit-confidence').innerHTML = au.confidence_rows.map(r => `
-        <div style="margin-bottom:8px">
-          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
-            <span style="color:var(--text);font-weight:600">${esc(r.level)}</span>
+      const CC={high:'#16a34a',medium:'#f59e0b',low:'#dc2626'};
+      const mx=Math.max(...au.confidence_rows.map(r=>r.count),1);
+      $('audit-confidence').innerHTML=au.confidence_rows.map(r=>`
+        <div style="margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
+            <span style="font-weight:600;color:var(--text)">${esc(r.level)}</span>
             <span style="color:var(--text-muted)">${r.count.toLocaleString()} (${r.pct.toFixed(1)}%)</span>
           </div>
-          <div style="width:100%;height:6px;background:var(--border);border-radius:2px;overflow:hidden">
-            <div style="height:100%;width:${Math.max(2,(r.count/maxCount)*100)}%;background:${CONF_COLORS[r.level]||'#9ca3af'};transition:width .2s"></div>
+          <div style="width:100%;height:5px;background:var(--border);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:${Math.max(2,(r.count/mx)*100)}%;background:${CC[r.level]||'#9ca3af'}"></div>
           </div>
         </div>`).join('');
     } else {
-      $('audit-confidence').innerHTML = '<div class="null-note">No data — run extraction_audit first.</div>';
+      $('audit-confidence').innerHTML='<div class="null-note">No confidence data.</div>';
     }
 
-    // Improvement opportunities table
-    const opps = data.improvement_rows || [];
+    const opps=data.improvement_rows||[];
     if (opps.length) {
-      $('improvement-tbody').innerHTML = opps.map(r => {
-        const priClass = r.Priority === 'High' ? 'pri-high' : r.Priority === 'Medium' ? 'pri-medium' : 'pri-low';
+      $('improvement-tbody').innerHTML=opps.map(r=>{
+        const pc=r.Priority==='High'?'pri-high':r.Priority==='Medium'?'pri-medium':'pri-low';
         return `<tr>
-          <td style="font-size:12px">${esc(r.Category||'')}</td>
-          <td style="text-align:right;font-weight:700;font-size:12px">${esc(r.Count||'')}</td>
-          <td style="font-size:11px;color:var(--text-muted)">${esc(r['Current Status']||'')}</td>
-          <td style="font-size:11px">${esc(r['Suggested Fix']||'')}</td>
-          <td class="${priClass}" style="font-size:11px">${esc(r.Priority||'')}</td>
+          <td style="font-size:11px">${esc(r.Category||'')}</td>
+          <td style="text-align:right;font-weight:700;font-size:11px">${esc(r.Count||'')}</td>
+          <td style="font-size:11px;color:var(--text-muted)">${esc(r['Suggested Fix']||'')}</td>
+          <td class="${pc}" style="font-size:11px">${esc(r.Priority||'')}</td>
         </tr>`;
       }).join('');
     } else {
-      $('improvement-tbody').innerHTML = '<tr><td colspan="5" class="null-note" style="text-align:center;padding:12px">No data — run python -m analysis.rule_analysis</td></tr>';
+      $('improvement-tbody').innerHTML='<tr><td colspan="4" class="null-note" style="text-align:center;padding:10px">Run python -m analysis.rule_analysis</td></tr>';
     }
 
-    // URL-matched gaps
-    const urlRows = data.gap_url_rows || [];
-    if (urlRows.length) {
-      $('url-gap-tbody').innerHTML = urlRows.map(r => `<tr>
-        <td style="font-family:monospace;font-size:10px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-          ${esc(r.doi_r || r.url_r || '—')}
-        </td>
-        <td style="font-size:12px">${esc(r.study_r || '—')}</td>
-        <td style="font-size:11px;color:var(--text-muted)">${esc(r.year_r || '—')}</td>
-      </tr>`).join('');
-    } else {
-      $('url-gap-tbody').innerHTML = '<tr><td colspan="3" class="null-note" style="text-align:center;padding:12px">No URL-matched gaps found.</td></tr>';
-    }
-
-    // Load gap table page 1
     loadGapPage(1);
-
   } catch(e) {
-    $('gap-generated').textContent = 'Error loading analysis data: ' + e.message;
+    $('gap-generated').textContent='Error: '+e.message;
   }
 }
 
 async function loadGapPage(page) {
-  _gapPage = page;
-  const search = $('gap-search').value.trim();
-  $('gap-tbody').innerHTML = '<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--text-faint)">Loading…</td></tr>';
-
-  const url = `/api/dashboard/analysis-gaps?page=${page}&per_page=50${search ? '&search=' + encodeURIComponent(search) : ''}`;
-  const data = await fetch(url).then(r => r.json());
-
-  if (data.error) {
-    $('gap-tbody').innerHTML = `<tr><td colspan="3" class="null-note" style="text-align:center;padding:16px">${esc(data.error)}</td></tr>`;
-    $('gap-pager').innerHTML = '';
-    $('gap-count').textContent = '';
-    return;
+  _gapPage=page;
+  const search=$('gap-search').value.trim();
+  $('gap-tbody').innerHTML='<tr><td colspan="3" style="text-align:center;padding:12px;color:var(--text-faint)">Loading…</td></tr>';
+  const url=`/api/dashboard/analysis-gaps?page=${page}&per_page=50${search?'&search='+encodeURIComponent(search):''}`;
+  const data=await fetch(url).then(r=>r.json());
+  if (data.error){
+    $('gap-tbody').innerHTML=`<tr><td colspan="3" class="null-note" style="text-align:center;padding:12px">${esc(data.error)}</td></tr>`;
+    $('gap-pager').innerHTML=''; $('gap-count').textContent=''; return;
   }
-
-  $('gap-count').textContent = `${data.total.toLocaleString()} entries`;
-
-  if (!data.rows || data.rows.length === 0) {
-    $('gap-tbody').innerHTML = '<tr><td colspan="3" class="null-note" style="text-align:center;padding:16px">No matching gaps found.</td></tr>';
-    $('gap-pager').innerHTML = '';
-    return;
+  $('gap-count').textContent=`${data.total.toLocaleString()} entries`;
+  if (!data.rows||!data.rows.length){
+    $('gap-tbody').innerHTML='<tr><td colspan="3" class="null-note" style="text-align:center;padding:12px">No gaps found.</td></tr>';
+    $('gap-pager').innerHTML=''; return;
   }
-
-  $('gap-tbody').innerHTML = data.rows.map(r => `<tr>
-    <td style="font-family:monospace;font-size:10px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.doi_r)}">${esc(r.doi_r || '—')}</td>
-    <td style="font-size:12px">${esc(r.study_r || '—')}</td>
-    <td style="font-size:11px;color:var(--text-muted)">${esc(r.year_r || '—')}</td>
+  $('gap-tbody').innerHTML=data.rows.map(r=>`<tr>
+    <td style="font-family:monospace;font-size:10px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.doi_r)}">${esc(r.doi_r||'—')}</td>
+    <td style="font-size:11px">${esc(r.study_r||'—')}</td>
+    <td style="font-size:11px;color:var(--text-muted)">${esc(r.year_r||'—')}</td>
   </tr>`).join('');
-
-  // Pagination
-  const pages = data.pages;
-  if (pages <= 1) { $('gap-pager').innerHTML = ''; return; }
-  let btns = `<button class="pager-btn" onclick="loadGapPage(${page-1})" ${page<=1?'disabled':''}>← Prev</button>`;
-  for (let p = Math.max(1, page-2); p <= Math.min(pages, page+2); p++) {
-    btns += `<button class="pager-btn ${p===page?'active':''}" onclick="loadGapPage(${p})">${p}</button>`;
-  }
-  btns += `<button class="pager-btn" onclick="loadGapPage(${page+1})" ${page>=pages?'disabled':''}>Next →</button>`;
-  btns += `<span style="font-size:11px;color:var(--text-faint)">Page ${page} of ${pages}</span>`;
-  $('gap-pager').innerHTML = btns;
+  const pages=data.pages;
+  if (pages<=1){$('gap-pager').innerHTML='';return;}
+  let b=`<button class="pager-btn" onclick="loadGapPage(${page-1})" ${page<=1?'disabled':''}>← Prev</button>`;
+  b+=`<span style="font-size:11px;color:var(--text-faint)">Page ${page} / ${pages}</span>`;
+  b+=`<button class="pager-btn" onclick="loadGapPage(${page+1})" ${page>=pages?'disabled':''}>Next →</button>`;
+  $('gap-pager').innerHTML=b;
 }
 
 function scheduleGapSearch() {
   clearTimeout(_gapSearchTimer);
-  _gapSearchTimer = setTimeout(() => loadGapPage(1), 300);
+  _gapSearchTimer=setTimeout(()=>loadGapPage(1),300);
 }
 
 // ── Main loader ──────────────────────────────────────────────────────────────
 async function loadAll() {
-  $('status').textContent = 'Loading…';
-  _valLoaded = false;
-  _analysisLoaded = false;
+  $('status').textContent='Loading…';
+  _valLoaded=false; _analysisLoaded=false;
   try {
     await loadPipeline();
-    const activeTab = document.querySelector('.tab-btn.active')?.dataset?.tab;
-    if (activeTab === 'validation') await loadValidation();
-    if (activeTab === 'analysis')   await loadAnalysis();
-    $('status').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    const activeTab=document.querySelector('.tab-btn.active')?.dataset?.tab;
+    if (activeTab==='supabase')     await loadValidation();
+    if (activeTab==='old-pipeline') await loadAnalysis();
+    $('status').textContent='Updated '+new Date().toLocaleTimeString();
   } catch(e) {
-    $('status').textContent = 'Error: ' + e.message;
+    $('status').textContent='Error: '+e.message;
   }
 }
 
 window.addEventListener('DOMContentLoaded', () => {
   loadAll();
-  // If starting on validation or analysis tab, trigger their loaders
-  const activeTab = document.querySelector('.tab-btn.active')?.dataset?.tab;
-  if (activeTab === 'validation') loadValidation();
-  if (activeTab === 'analysis')   loadAnalysis();
+  const activeTab=document.querySelector('.tab-btn.active')?.dataset?.tab;
+  if (activeTab==='supabase')     loadValidation();
+  if (activeTab==='old-pipeline') loadAnalysis();
 });
 </script>
 {% endblock %}
