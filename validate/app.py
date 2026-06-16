@@ -24,34 +24,13 @@ def create_app(test_config: dict | None = None) -> Flask:
     from validate.routes.multi_originals import multi_orig_bp
     from validate.routes.dashboard import dashboard_bp
     from validate.routes.disambiguation import disambiguation_bp
-    from validate.routes.pipeline import pipeline_bp
-    from validate.routes.extract_view import make_extract_blueprint, add_shared_routes
-    from validate.routes.search_view import search_view_bp
-    from validate.routes.filter_view import filter_view_bp
-    from validate.routes.target_pending import target_pending_bp
-    from validate.routes.input import input_bp
-
-    extract_view_bp = make_extract_blueprint(
-        "extract_view", DATA_DIR / "extracted.csv", "/extract", "extract"
-    )
-    add_shared_routes(extract_view_bp)
-
-    extract_test_view_bp = make_extract_blueprint(
-        "extract_test_view", DATA_DIR / "extracted-test.csv",
-        "/extract-test", "extract_test", test_mode=True,
-    )
+    from validate.routes.check import check_bp
 
     app.register_blueprint(batch_bp)
     app.register_blueprint(multi_orig_bp)
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(disambiguation_bp)
-    app.register_blueprint(pipeline_bp)
-    app.register_blueprint(extract_view_bp)
-    app.register_blueprint(extract_test_view_bp)
-    app.register_blueprint(search_view_bp)
-    app.register_blueprint(filter_view_bp)
-    app.register_blueprint(target_pending_bp)
-    app.register_blueprint(input_bp)
+    app.register_blueprint(check_bp)
 
     @app.route("/pdf/<path:filename>")
     def serve_pdf(filename: str):
@@ -74,7 +53,7 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     @app.route("/pipeline")
     def pipeline_redirect():
-        return redirect(url_for("extract_view.extract_page"), code=301)
+        return redirect(url_for("dashboard.dashboard_page"), code=301)
 
     return app
 

@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+{% block title %}FLoRA — Check{% endblock %}
+
+{% block content %}
+<div class="check-page">
+  <div class="check-header">
+    <h2>Check</h2>
+    <p class="check-subtitle">Filter and search across any pipeline CSV.</p>
+  </div>
+
+  <form class="check-filters" id="checkFilters">
+    <div class="filter-row">
+      <label>Stage
+        <select name="stage" id="stageSelect">
+          <option value="extracted">Extracted</option>
+          <option value="extracted-test">Extracted-Test</option>
+          <option value="filtered">Filtered</option>
+          <option value="candidates">Candidates</option>
+        </select>
+      </label>
+
+      <label>Year from
+        <input type="number" name="year_from" id="yearFrom" placeholder="e.g. 2010" min="1990" max="2030" style="width:100px">
+      </label>
+
+      <label>Year to
+        <input type="number" name="year_to" id="yearTo" placeholder="e.g. 2024" min="1990" max="2030" style="width:100px">
+      </label>
+
+      <label>Type
+        <select name="type" id="typeSelect">
+          <option value="">Any</option>
+          <option value="replication">Replication</option>
+          <option value="reproduction">Reproduction</option>
+        </select>
+      </label>
+
+      <label>Outcome
+        <select name="outcome" id="outcomeSelect">
+          <option value="">Any</option>
+          <option value="success">Success</option>
+          <option value="failure">Failure</option>
+          <option value="mixed">Mixed</option>
+          <option value="uninformative">Uninformative</option>
+          <option value="descriptive">Descriptive</option>
+          <option value="pending">Pending</option>
+          <option value="api_error">API Error</option>
+        </select>
+      </label>
+
+      <label>Link method
+        <select name="link_method" id="linkMethodSelect">
+          <option value="">Any</option>
+          <option value="author_year_match">Author/year match</option>
+          <option value="llm_abstract">LLM abstract</option>
+          <option value="llm_fulltext">LLM fulltext</option>
+          <option value="target_pending">Target pending</option>
+          <option value="api_error">API error</option>
+        </select>
+      </label>
+
+      <label>Match type
+        <select name="match_type" id="matchTypeSelect">
+          <option value="">Any</option>
+          <option value="single_original">Single original</option>
+          <option value="multiple_match">Multiple match</option>
+          <option value="multiple_original">Multiple original</option>
+        </select>
+      </label>
+
+      <label>DOI verified
+        <select name="doi_verified" id="doiVerifiedSelect">
+          <option value="">Any</option>
+          <option value="verified">Verified</option>
+          <option value="corrected">Corrected</option>
+          <option value="mismatch">Mismatch</option>
+          <option value="no_doi">No DOI</option>
+          <option value="not_found">Not found</option>
+          <option value="no_metadata">No metadata</option>
+          <option value="api_error">API error</option>
+          <option value="skipped">Skipped</option>
+        </select>
+      </label>
+
+      <label>Source
+        <select name="source" id="sourceSelect">
+          <option value="">Any</option>
+          <option value="openalex">OpenAlex</option>
+          <option value="semantic_scholar">Semantic Scholar</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="filter-row filter-row-search">
+      <label class="search-label">
+        <input type="text" name="q" id="searchQ" placeholder="Search by DOI or title…" style="width:340px">
+      </label>
+      <button type="submit" class="btn-primary">Search</button>
+      <button type="button" id="resetBtn" class="btn-secondary">Reset</button>
+      <a id="downloadBtn" href="#" class="btn-secondary" download>Download CSV</a>
+    </div>
+  </form>
+
+  <div class="check-results-meta" id="resultsMeta" style="display:none">
+    <span id="resultsCount"></span>
+    <div class="check-pagination" id="pagination"></div>
+  </div>
+
+  <div id="resultsTable" class="check-table-wrap"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var currentPage = 1;
+  var currentTotal = 0;
+  var currentPages = 1;
+
+  function buildQuery(page) {
+    var f = document.getElementById('checkFilters');
+    var params = new URLSearchParams({
+      stage:        f.stage.value,
+      year_from:    f.year_from.value,
+      year_to:      f.year_to.value,
+      type:         f.type.value,
+      outcome:      f.outcome.value,
+      link_method:  f.link_method.value,
+      match_type:   f.match_type.value,
+      doi_verified: f.doi_verified.value,
+      source:       f.source.value,
+      q:            f.q.value,
+      page:         page || 1,
+      per_page:     25,
+    });
+    return params;
+  }
+
+  function search(page) {
+    currentPage = page || 1;
+    var params = buildQuery(currentPage);
+    document.getElementById('resultsTable').innerHTML = '<div class="loading">Loading…</div>';
+    document.getElementById('resultsMeta').style.display = 'none';
+
+    fetch('/api/check/search?' + params.toString())
+      .then(function(r){ return r.json(); })
+      .then(function(data) {
+        currentTotal = data.total;
+        currentPages = data.pages;
+        renderResults(data);
+        updateDownloadLink();
+      })
+      .catch(function(e) {
+        document.getElementById('resultsTable').innerHTML = '<div class="error-msg">Error: ' + e + '</div>';
+      });
+  }
+
+  function renderResults(data) {
+    var meta = document.getElementById('resultsMeta');
+    meta.style.display = 'flex';
+    document.getElementById('resultsCount').textContent =
+      data.total.toLocaleString() + ' row' + (data.total === 1 ? '' : 's') + ' found';
+
+    renderPagination(data.page, data.pages);
+
+    var wrap = document.getElementById('resultsTable');
+    if (!data.rows || data.rows.length === 0) {
+      wrap.innerHTML = '<div class="check-empty">No results.</div>';
+      return;
+    }
+
+    var cols = Object.keys(data.rows[0]);
+    var html = '<table class="check-table"><thead><tr>';
+    html += '<th></th>';
+    cols.forEach(function(c){ html += '<th>' + esc(c) + '</th>'; });
+    html += '</tr></thead><tbody>';
+
+    data.rows.forEach(function(row, i) {
+      var rid = 'row-' + i;
+      html += '<tr class="check-row" data-idx="' + i + '">';
+      html += '<td><button class="expand-btn" data-target="' + rid + '">▶</button></td>';
+      cols.forEach(function(c){
+        var v = row[c] || '';
+        if (v.length > 60) v = v.substring(0, 57) + '…';
+        html += '<td title="' + esc(row[c] || '') + '">' + esc(v) + '</td>';
+      });
+      html += '</tr>';
+      html += '<tr class="check-detail" id="' + rid + '" style="display:none">';
+      html += '<td colspan="' + (cols.length + 1) + '"><div class="check-detail-inner">';
+      cols.forEach(function(c){
+        if (row[c]) {
+          html += '<div class="detail-field"><span class="detail-key">' + esc(c) + '</span>';
+          html += '<span class="detail-val">' + esc(row[c]) + '</span></div>';
+        }
+      });
+      html += '</div></td></tr>';
+    });
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+
+    wrap.querySelectorAll('.expand-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var target = document.getElementById(btn.getAttribute('data-target'));
+        var open = target.style.display !== 'none';
+        target.style.display = open ? 'none' : 'table-row';
+        btn.textContent = open ? '▶' : '▼';
+      });
+    });
+  }
+
+  function renderPagination(page, pages) {
+    var el = document.getElementById('pagination');
+    if (pages <= 1) { el.innerHTML = ''; return; }
+    var html = '';
+    if (page > 1) html += '<button class="page-btn" data-page="' + (page-1) + '">← Prev</button>';
+    html += '<span class="page-info">Page ' + page + ' / ' + pages + '</span>';
+    if (page < pages) html += '<button class="page-btn" data-page="' + (page+1) + '">Next →</button>';
+    el.innerHTML = html;
+    el.querySelectorAll('.page-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        search(parseInt(btn.getAttribute('data-page')));
+      });
+    });
+  }
+
+  function updateDownloadLink() {
+    var params = buildQuery(1);
+    params.delete('page');
+    params.delete('per_page');
+    document.getElementById('downloadBtn').href = '/api/check/download?' + params.toString();
+  }
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  document.getElementById('checkFilters').addEventListener('submit', function(e) {
+    e.preventDefault();
+    search(1);
+  });
+
+  document.getElementById('resetBtn').addEventListener('click', function() {
+    document.getElementById('checkFilters').reset();
+    document.getElementById('resultsTable').innerHTML = '';
+    document.getElementById('resultsMeta').style.display = 'none';
+  });
+
+  // Auto-search on load
+  search(1);
+})();
+</script>
+{% endblock %}

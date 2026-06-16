@@ -106,6 +106,18 @@ def test_pipeline_list_search_no_match(client):
     assert rv.get_json()["total"] == 0
 
 
+# ── New dashboard/check route tests ───────────────────────────────────────────
+
+def test_check_route_accessible(client):
+    """New /check page must exist."""
+    rv = client.get("/check")
+    assert rv.status_code == 200
+
+def test_dashboard_still_works(client):
+    rv = client.get("/dashboard")
+    assert rv.status_code == 200
+
+
 def test_pipeline_detail_returns_full_row(client):
     with patch("validate.routes.pipeline._load_csv", return_value=_pipeline_df()):
         rv = client.get("/api/pipeline/detail?doi=10.1037/test001")

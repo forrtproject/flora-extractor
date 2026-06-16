@@ -20,16 +20,8 @@
   <span class="brand">FLoRA</span>
   <a href="{{ url_for('dashboard.dashboard_page') }}"
      class="{{ 'active' if active_page == 'dashboard' else '' }}">Dashboard</a>
-  <a href="{{ url_for('search_view.search_page') }}"
-     class="{{ 'active' if active_page == 'search' else '' }}">Search</a>
-  <a href="{{ url_for('filter_view.filter_page') }}"
-     class="{{ 'active' if active_page == 'filter' else '' }}">Filter</a>
-  <a href="{{ url_for('extract_view.extract_page') }}"
-     class="{{ 'active' if active_page == 'extract' else '' }}">Extract</a>
-  <a href="{{ url_for('extract_test_view.extract_page') }}"
-     class="{{ 'active' if active_page == 'extract_test' else '' }}">Extract Test</a>
-  <a href="/target-pending"
-     class="{{ 'active' if active_page == 'target_pending' else '' }}">Target Pending</a>
+  <a href="{{ url_for('check.check_page') }}"
+     class="{{ 'active' if active_page == 'check' else '' }}">Check</a>
 
   <button class="theme-toggle" id="themeToggle" title="Toggle light / dark mode" aria-label="Toggle theme">
     <span class="icon" id="themeIcon">🌙</span>
