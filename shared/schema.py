@@ -43,8 +43,8 @@ EXTRACT_ADDED_COLS = [
     "doi_o",               # str   — original study DOI
     "title_o",             # str   — original study title
     "year_o",              # int   — original study publication year
-    "authors_o",           # str   — original study authors
-    "ref_o",               # str   — "Surname · Year · Journal" — fetched from OpenAlex after doi_o resolved
+    "authors_o",           # str   — original study authors, semicolon-separated APA names (e.g. "Bransford, J. D.; Franks, J. J.")
+    "ref_o",               # str   — full APA-style citation fetched from OpenAlex after doi_o resolved
 
     # Linking
     "link_method",         # str   — author_year_match | llm_abstract | llm_fulltext | target_pending

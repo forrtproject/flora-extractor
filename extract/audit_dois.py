@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from extract.run_extract import _fetch_ref_o
+from extract.run_extract import _build_ref_o
 from shared.config import DATA_DIR, log
 from shared.doi_verify import verify_and_correct
 from shared.schema import make_pair_id
@@ -80,11 +80,13 @@ def audit_file(csv_path: Path,
                      v["doi_o"] or "—")
 
         if v["doi_o"] != old_doi:
-            df.at[idx, "doi_o"]   = v["doi_o"]
-            df.at[idx, "pair_id"] = make_pair_id(clean_doi(str(row["doi_r"])), v["doi_o"])
-            df.at[idx, "ref_o"]   = _fetch_ref_o(v["doi_o"],
-                                                 str(row.get("authors_o", "") or ""),
-                                                 str(row.get("year_o", "") or ""))
+            df.at[idx, "doi_o"]    = v["doi_o"]
+            df.at[idx, "pair_id"]  = make_pair_id(clean_doi(str(row["doi_r"])), v["doi_o"])
+            new_ref, new_authors   = _build_ref_o(v["doi_o"],
+                                                   str(row.get("authors_o", "") or ""),
+                                                   str(row.get("year_o", "") or ""))
+            df.at[idx, "ref_o"]    = new_ref
+            df.at[idx, "authors_o"] = new_authors
         if status == "mismatch":
             df.at[idx, "link_confidence"] = "low"
         if v["evidence_note"]:

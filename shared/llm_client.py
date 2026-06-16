@@ -493,13 +493,14 @@ def build_identification_prompt(study_r:        str,
     - Umbrella project papers (#EEGManyLabs, ManyLabs, PSA, StudySwap) are NEVER the
       original — find the specific experiment they ran.
     - When selecting a candidate number, leave selected_doi EMPTY — the candidate's
-      verified DOI will be used. Only populate selected_doi for originals not in the list.
+      verified DOI will be used.
+    - NEVER invent or guess a DOI. DOIs will be resolved from title and author automatically.
+      An invented DOI is worse than no DOI — it silently corrupts the database.
 
     Respond with ONLY this JSON:
     {{
       "selected_candidate_number": <integer or null>,
-      "selected_doi": "<DOI only if not from candidate list, else empty>",
-      "selected_title": "<full title>",
+      "selected_title": "<exact published title — copy from reference list if available>",
       "selected_year": <year or null>,
       "selected_first_author": "<surname>",
       "confidence": "<high|medium|low>",
@@ -604,7 +605,7 @@ def identify_original_with_llm(doi_r:          str,
         return _empty
 
     cand_num       = result.get("selected_candidate_number")
-    resolved_doi   = (result.get("selected_doi")          or "").strip()
+    resolved_doi   = ""
     resolved_title = (result.get("selected_title")        or "").strip()
     resolved_year  = result.get("selected_year")
     resolved_auth  = (result.get("selected_first_author") or "").strip()
@@ -614,14 +615,23 @@ def identify_original_with_llm(doi_r:          str,
             idx = int(cand_num) - 1
             if 0 <= idx < len(candidates):
                 c = candidates[idx]
-                # Prefer the candidate's verified OpenAlex DOI over any DOI the LLM
-                # may have hallucinated — only use resolved_doi if no candidate DOI exists.
-                resolved_doi   = c.get("doi", "") or resolved_doi
+                resolved_doi   = c.get("doi", "")
                 resolved_title = resolved_title or c.get("title",        "")
                 resolved_year  = resolved_year  or c.get("year")
                 resolved_auth  = resolved_auth  or c.get("first_author", "")
         except (ValueError, TypeError):
             pass
+
+    # When the original is not in the candidate list, resolve DOI from title+author
+    # via CrossRef/OpenAlex rather than trusting any DOI the LLM may have fabricated.
+    if not resolved_doi and resolved_title:
+        from shared.doi_verify import resolve_doi_by_metadata
+        hit = resolve_doi_by_metadata(
+            resolved_title, resolved_auth, resolved_year,
+            exclude_doi=doi_r,
+        )
+        if hit:
+            resolved_doi = hit.get("doi", "")
 
     resolved = bool(resolved_title)
 

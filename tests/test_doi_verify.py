@@ -553,7 +553,7 @@ class TestVerifyRowHook:
         v = {"doi_o_verification": "corrected", "doi_o": "10.1111/psyp.13449",
              "evidence_note": "DOI corrected: ..."}
         with patch("extract.run_extract.verify_and_correct", return_value=v), \
-             patch("extract.run_extract._fetch_ref_o", return_value="new ref"):
+             patch("extract.run_extract._build_ref_o", return_value=("new ref", "New Author")):
             row = _verify_row(self._row())
         assert row["doi_o"] == "10.1111/psyp.13449"
         assert row["doi_o_verification"] == "corrected"
@@ -621,7 +621,7 @@ class TestAuditDois:
         path = self._csv(tmp_path)
         before = path.read_text(encoding="utf-8-sig")
         with patch("extract.audit_dois.verify_and_correct", return_value=v), \
-             patch("extract.audit_dois._fetch_ref_o", return_value="ref"):
+             patch("extract.audit_dois._build_ref_o", return_value=("ref", "Author")):
             summary = audit_file(path, apply=False, report_path=tmp_path / "report.csv")
         assert summary["corrected"] == 1
         assert summary["skipped"] == 1
@@ -637,7 +637,7 @@ class TestAuditDois:
              "evidence_note": "DOI corrected: ..."}
         path = self._csv(tmp_path)
         with patch("extract.audit_dois.verify_and_correct", return_value=v), \
-             patch("extract.audit_dois._fetch_ref_o", return_value="ref"):
+             patch("extract.audit_dois._build_ref_o", return_value=("ref", "Author")):
             audit_file(path, apply=True, report_path=tmp_path / "report.csv")
         df = pd.read_csv(path, dtype=str, encoding="utf-8-sig").fillna("")
         row = df[df["doi_r"] == "10.1111/psyp.13707"].iloc[0]

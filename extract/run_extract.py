@@ -26,6 +26,8 @@ from shared import token_counter
 from shared.llm_client import call_llm
 from shared.openalex_client import extract_author_year_patterns, find_all_candidates
 from shared.openalex_client import fetch_openalex_by_doi as _oa_by_doi
+from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
+from shared.openalex_client import _search_crossref_by_title, _search_openalex_by_title
 from shared.pdf_parsing import parse_all as _parse_all
 from shared.doi_verify import verify_and_correct
 from shared.schema import EXTRACTED_COLS, make_pair_id
@@ -34,34 +36,81 @@ from extract.link_original import run_for_doi
 from extract.multi_original import run_multi_original_for_doi
 from extract.code_outcome import extract_outcome, predict_outcome_keyword
 
-def _fetch_ref_o(doi_o: str, author_o: str, year_o: str) -> str:
-    """Build ref_o string for a resolved original study.
+def _build_ref_o(doi_o: str, fallback_author: str = "",
+                  fallback_year: str = "",
+                  title_o: str = "") -> tuple[str, str]:
+    """Build APA-style ref_o and semicolon-separated authors_o for a resolved original.
 
-    Attempts an OpenAlex lookup (cached) to get the journal name.
-    Falls back to 'Author · Year' if doi_o is absent or the lookup fails.
+    Resolution order:
+      1. DOI lookup via OpenAlex then CrossRef (fetch_openalex_full_metadata)
+      2. Title search via CrossRef then OpenAlex (when DOI lookup fails and title_o given)
+      3. Surname · Year fallback (when all API lookups fail)
+
+    Returns (ref_o, authors_o).
     """
-    if not doi_o:
-        surname = str(author_o or "").split()[-1] if author_o else ""
-        return " · ".join(s for s in [surname, str(year_o or "")] if s)
-    try:
-        work = _oa_by_doi(doi_o)
-    except Exception:
-        work = None
-    if work:
-        journal = (work.get("primary_location") or {}).get("source", {}).get("display_name") or ""
-        authorships = work.get("authorships") or []
-        if authorships:
-            display = (authorships[0].get("author") or {}).get("display_name") or author_o or ""
-            parts = str(display).split()
-            surname = parts[-1] if parts else (str(author_o or "").split()[-1] if author_o else "")
-        else:
-            surname = str(author_o or "").split()[-1] if author_o else ""
-        year = str(work.get("publication_year") or year_o or "")
+    meta: dict | None = None
+    if doi_o:
+        try:
+            meta = _oa_full_meta(doi_o)
+        except Exception:
+            pass
+
+    # Title-based fallback for no_metadata / hallucinated DOIs
+    if meta is None and title_o:
+        try:
+            meta = (_search_crossref_by_title(title_o, fallback_year)
+                    or _search_openalex_by_title(title_o, fallback_year))
+            if meta:
+                log.debug("[ref_o] title search hit for %r: %s", title_o[:60], meta.get("doi"))
+        except Exception:
+            pass
+
+    if not meta:
+        surname = str(fallback_author or "").split()[-1] if fallback_author else ""
+        year    = str(fallback_year or "")
+        ref     = " · ".join(s for s in [surname, year] if s)
+        return ref, surname
+
+    authors    = meta.get("authors") or []
+    year       = str(meta.get("year") or fallback_year or "")
+    title      = meta.get("title") or ""
+    journal    = meta.get("journal") or ""
+    volume     = meta.get("volume") or ""
+    issue      = meta.get("issue") or ""
+    first_page = meta.get("first_page") or ""
+    last_page  = meta.get("last_page") or ""
+    doi_val    = meta.get("doi") or doi_o
+
+    authors_o = "; ".join(authors)
+
+    # APA author string
+    if len(authors) == 1:
+        auth_str = authors[0]
+    elif len(authors) == 2:
+        auth_str = f"{authors[0]}, & {authors[1]}"
+    elif authors:
+        auth_str = ", ".join(authors[:-1]) + f", & {authors[-1]}"
     else:
-        surname = str(author_o or "").split()[-1] if author_o else ""
-        year    = str(year_o or "")
-        journal = ""
-    return " · ".join(s for s in [surname, year, journal] if s)
+        auth_str = str(fallback_author or "")
+
+    # Source segment: Journal, vol(issue), pages.
+    source_seg = ""
+    if journal:
+        vol_issue = f", {volume}({issue})" if volume and issue else (f", {volume}" if volume else "")
+        pages     = f", {first_page}–{last_page}" if first_page and last_page else (f", {first_page}" if first_page else "")
+        source_seg = f"{journal}{vol_issue}{pages}."
+
+    doi_url  = f"https://doi.org/{doi_val}" if doi_val else ""
+    parts    = [f"{auth_str} ({year})." if auth_str else f"({year})."]
+    if title:
+        parts.append(f"{title}.")
+    if source_seg:
+        parts.append(source_seg)
+    if doi_url:
+        parts.append(doi_url)
+    ref_o = " ".join(parts)
+
+    return ref_o, authors_o
 
 
 # ── Internal → schema link_method mapping ────────────────────────────────────
@@ -356,10 +405,12 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
         "doi_o":           doi_o_clean,
         "title_o":         str(link.get("resolved_title_o", "") or ""),
         "year_o":          str(link.get("resolved_year_o",  "") or ""),
-        "authors_o":       str(link.get("resolved_author_o","") or ""),
-        "ref_o":           _fetch_ref_o(doi_o_clean,
-                                        str(link.get("resolved_author_o", "") or ""),
-                                        str(link.get("resolved_year_o",   "") or "")),
+        **dict(zip(("ref_o", "authors_o"), _build_ref_o(
+            doi_o_clean,
+            str(link.get("resolved_author_o", "") or ""),
+            str(link.get("resolved_year_o",   "") or ""),
+            str(link.get("resolved_title_o",  "") or ""),
+        ))),
         "link_method":     _map_method(link.get("resolution_method", "target_pending")),
         "link_evidence":   str(link.get("llm_evidence",     "") or ""),
         "link_confidence": (link["llm_confidence"]
@@ -398,10 +449,12 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
         "doi_o":           doi_o_clean,
         "title_o":         str(orig.get("title",        "") or ""),
         "year_o":          str(orig.get("year",         "") or ""),
-        "authors_o":       str(orig.get("first_author", "") or ""),
-        "ref_o":           _fetch_ref_o(doi_o_clean,
-                                        str(orig.get("first_author", "") or ""),
-                                        str(orig.get("year",         "") or "")),
+        **dict(zip(("ref_o", "authors_o"), _build_ref_o(
+            doi_o_clean,
+            str(orig.get("first_author", "") or ""),
+            str(orig.get("year",         "") or ""),
+            str(orig.get("title",        "") or ""),
+        ))),
         "link_method":     "llm_abstract",
         "link_evidence":   str(orig.get("evidence",     "") or ""),
         "link_confidence": conf_str,
@@ -639,9 +692,12 @@ def _verify_row(row: dict) -> dict:
     if v["doi_o"] != old_doi:
         row["doi_o"]   = v["doi_o"]
         row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), v["doi_o"])
-        row["ref_o"]   = _fetch_ref_o(v["doi_o"],
-                                      str(row.get("authors_o", "") or ""),
-                                      str(row.get("year_o", "") or ""))
+        new_ref, new_authors = _build_ref_o(v["doi_o"],
+                                            str(row.get("authors_o", "") or ""),
+                                            str(row.get("year_o",    "") or ""),
+                                            str(row.get("title_o",   "") or ""))
+        row["ref_o"]     = new_ref
+        row["authors_o"] = new_authors
     if v["doi_o_verification"] == "mismatch":
         row["link_confidence"] = "low"
     if v["evidence_note"]:
@@ -697,7 +753,8 @@ def run_extract(no_llm: bool = False,
                 to_year: "int | None" = None,
                 predicted_outcome: "str | None" = None,
                 out_path: "Path | None" = None,
-                source: "str | None" = None) -> pd.DataFrame:
+                source: "str | None" = None,
+                doi_r_filter: "list[str] | None" = None) -> pd.DataFrame:
     """
     Run Stage 3 and stream results to data/extracted.csv.
 
@@ -774,6 +831,13 @@ def run_extract(no_llm: bool = False,
         before = len(df)
         df = df[df["source"].str.lower() == source.lower()].reset_index(drop=True)
         log.info("--source filter %r: %d → %d rows", source, before, len(df))
+
+    # ── doi_r filter ──────────────────────────────────────────────────────────
+    if doi_r_filter:
+        target_set = {clean_doi(d) for d in doi_r_filter}
+        before = len(df)
+        df = df[df["doi_r"].apply(clean_doi).isin(target_set)].reset_index(drop=True)
+        log.info("--doi-r filter: %d → %d rows", before, len(df))
 
     flora_skip: set[str] = set()
     if skip_flora_validated:
@@ -854,7 +918,9 @@ def run_extract(no_llm: bool = False,
             continue
 
         # --extracted-test: skip DOIs already resolved in the production extracted.csv.
-        if test_mode and row_key and row_key in resolved_main:
+        # Exception: --doi-r targets are always processed (explicit re-run request).
+        in_doi_r_filter = doi_r_filter and doi_r_check in {clean_doi(d) for d in doi_r_filter}
+        if test_mode and row_key and row_key in resolved_main and not in_doi_r_filter:
             log.debug("[%s] --extracted-test: resolved in extracted.csv — skipping", doi_r_check)
             continue
 
@@ -1159,6 +1225,13 @@ if __name__ == "__main__":
             "Case-insensitive. Matches the 'source' column in filtered.csv."
         ),
     )
+    parser.add_argument(
+        "--doi-r", type=str, default=None, metavar="DOIS",
+        help=(
+            "Comma-separated list of replication DOIs (doi_r) to process. "
+            "All other rows are skipped. Useful for re-running specific rows."
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -1167,6 +1240,10 @@ if __name__ == "__main__":
         elif args.outcome_only:
             run_outcome_only(no_llm=args.no_llm, limit=args.limit)
         else:
+            doi_r_list = (
+                [d.strip() for d in args.doi_r.split(",") if d.strip()]
+                if args.doi_r else None
+            )
             run_extract(
                 no_llm=args.no_llm,
                 limit=args.limit,
@@ -1181,6 +1258,7 @@ if __name__ == "__main__":
                 predicted_outcome=args.predicted_outcome,
                 out_path=(DATA_DIR / "extracted-test.csv") if args.extracted_test else None,
                 source=args.source,
+                doi_r_filter=doi_r_list,
             )
     finally:
         token_counter.print_summary()
