@@ -307,11 +307,11 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
       <!-- Right: stats -->
       <div class="stats-panel">
         <div class="kpi-row">
-          <div class="kpi-card">
+          <a href="/api/dashboard/download?stage=candidates" class="kpi-card" title="Download candidates.csv">
             <div class="kpi-num" id="k-candidates">—</div>
-            <div class="kpi-label">Candidates</div>
+            <div class="kpi-label">Candidates ↓</div>
             <div class="kpi-sub">candidates.csv</div>
-          </div>
+          </a>
         </div>
 
         <div class="stat-card">
@@ -394,11 +394,11 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
       <!-- Right: stats -->
       <div class="stats-panel">
         <div class="kpi-row">
-          <div class="kpi-card">
+          <a href="/api/dashboard/download?stage=filtered" class="kpi-card" title="Download filtered.csv">
             <div class="kpi-num" id="k-filtered">—</div>
-            <div class="kpi-label">Filtered rows</div>
+            <div class="kpi-label">Filtered rows ↓</div>
             <div class="kpi-sub">filtered.csv</div>
-          </div>
+          </a>
         </div>
 
         <div class="stat-card">
@@ -504,11 +504,11 @@ python -m extract.audit_dois --apply  # write corrections</pre>
       <!-- Right: stats -->
       <div class="stats-panel">
         <div class="kpi-row">
-          <div class="kpi-card">
+          <a href="/api/dashboard/download?stage=extracted" class="kpi-card" title="Download extracted.csv">
             <div class="kpi-num" id="k-extracted">—</div>
-            <div class="kpi-label">Extracted</div>
+            <div class="kpi-label">Extracted ↓</div>
             <div class="kpi-sub">extracted.csv</div>
-          </div>
+          </a>
           <div class="kpi-card">
             <div class="kpi-num" id="k-target-pending" style="color:#f59e0b">—</div>
             <div class="kpi-label">Target Pending</div>
@@ -634,11 +634,11 @@ python -m extract.promote_test --all --dry-run # preview</pre>
       <!-- Right: stats -->
       <div class="stats-panel">
         <div class="kpi-row">
-          <div class="kpi-card">
+          <a href="/api/dashboard/download?stage=extracted-test" class="kpi-card" title="Download extracted-test.csv">
             <div class="kpi-num" id="k-test-count" style="color:#7c3aed">—</div>
-            <div class="kpi-label">Test Rows</div>
+            <div class="kpi-label">Test Rows ↓</div>
             <div class="kpi-sub">extracted-test.csv</div>
-          </div>
+          </a>
           <div class="kpi-card">
             <div class="kpi-num" id="k-test-pending" style="color:#f59e0b">—</div>
             <div class="kpi-label">Target Pending</div>

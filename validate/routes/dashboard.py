@@ -4,16 +4,18 @@ routes/dashboard.py — Read-only monitoring dashboard.
 Routes:
   GET  /dashboard                        → dashboard page
   GET  /api/dashboard/csv-stats          → pipeline stats (column-only CSV reads)
+  GET  /api/dashboard/download           → stream a raw pipeline CSV as attachment
   GET  /api/dashboard/supabase-stats     → Supabase validation KPIs (cached 5 min)
   GET  /api/dashboard/supabase-outcomes  → outcome distribution from validated table
   GET  /api/dashboard/supabase-corrections → per-field correction frequency
   GET  /api/dashboard/supabase-drilldown → paginated incorrect-DOI table
 """
+import datetime
 import re
-import pathlib
+import shutil
 
 import pandas as pd
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, jsonify, render_template, request, send_file
 
 from shared.config import DATA_DIR, BASE_DIR
 from shared import supabase_client as supa
@@ -39,12 +41,21 @@ def api_csv_stats():
     if cand_path.exists():
         try:
             cdf = pd.read_csv(cand_path, encoding="utf-8-sig", dtype=str,
-                              on_bad_lines="skip", usecols=lambda c: c in ("doi_r", "openalex_id_r"))
+                              on_bad_lines="skip",
+                              usecols=lambda c: c in ("doi_r", "openalex_id_r", "source"))
             stats["candidates_count"] = len(cdf)
+            if "source" in cdf.columns:
+                stats["candidates_source"] = {
+                    k: int(v) for k, v in cdf["source"].fillna("unknown").value_counts().items()
+                }
+            else:
+                stats["candidates_source"] = {}
         except Exception:
             stats["candidates_count"] = None
+            stats["candidates_source"] = {}
     else:
         stats["candidates_count"] = None
+        stats["candidates_source"] = {}
 
     # ── Filtered ──────────────────────────────────────────────────────────────
     filt_path = DATA_DIR / "filtered.csv"
@@ -78,6 +89,40 @@ def api_csv_stats():
         _add_extracted_stats(stats, prefix, path)
 
     return jsonify(stats)
+
+
+_STAGE_FILES = {
+    "candidates":     DATA_DIR / "candidates.csv",
+    "filtered":       DATA_DIR / "filtered.csv",
+    "extracted":      DATA_DIR / "extracted.csv",
+    "extracted-test": DATA_DIR / "extracted-test.csv",
+}
+
+
+@dashboard_bp.route("/api/dashboard/download")
+def api_dashboard_download():
+    """Stream a raw pipeline CSV as a download attachment.
+
+    Query params:
+      stage — candidates | filtered | extracted | extracted-test
+    """
+    stage = request.args.get("stage", "extracted").strip()
+    if stage not in _STAGE_FILES:
+        return jsonify({"error": "invalid stage"}), 400
+
+    src = _STAGE_FILES[stage]
+    if not src.exists():
+        return jsonify({"error": f"{stage} CSV not found"}), 404
+
+    download_dir = DATA_DIR / "dashboard" / "download"
+    download_dir.mkdir(parents=True, exist_ok=True)
+    date_str  = datetime.date.today().isoformat()
+    filename  = f"{stage}_{date_str}.csv"
+    dest_path = download_dir / filename
+
+    shutil.copy2(src, dest_path)
+    return send_file(str(dest_path), as_attachment=True,
+                     download_name=filename, mimetype="text/csv")
 
 
 _OUTCOME_KEYS = ("success", "failure", "mixed", "uninformative",
