@@ -764,23 +764,31 @@ if __name__ == "__main__":
         _reset_openalex_cursors()
         _reset_s2_offsets()
 
-    if args.auto_advance:
-        from_yr = args.from_year or 2011
-        to_yr   = args.to_year   or 2021
-        max_n   = args.max_per_phrase or 200
-        cycle_done = run_search_auto_advance(
-            from_year=from_yr, to_year=to_yr, max_records_per_phrase=max_n,
-            sources=set(args.sources) if args.sources else None,
-            skip_harvest=args.no_harvest,
-        )
-        # Exit code 2 signals a full cycle completed.
-        # PowerShell: do { python ... } until ($LASTEXITCODE -eq 2)
-        if cycle_done:
-            raise SystemExit(2)
-    else:
-        run_search(
-            from_year=args.from_year,
-            to_year=args.to_year,
-            max_records_per_phrase=args.max_per_phrase,
-            sources=set(args.sources) if args.sources else None,
-        )
+    _do_refresh = True  # skip mid-cycle refreshes in auto-advance mode
+    try:
+        if args.auto_advance:
+            from_yr = args.from_year or 2011
+            to_yr   = args.to_year   or 2021
+            max_n   = args.max_per_phrase or 200
+            cycle_done = run_search_auto_advance(
+                from_year=from_yr, to_year=to_yr, max_records_per_phrase=max_n,
+                sources=set(args.sources) if args.sources else None,
+                skip_harvest=args.no_harvest,
+            )
+            # Exit code 2 signals a full cycle completed.
+            # PowerShell: do { python ... } until ($LASTEXITCODE -eq 2)
+            if cycle_done:
+                raise SystemExit(2)
+            # More jobs remain — skip the expensive parquet rebuild this iteration.
+            _do_refresh = False
+        else:
+            run_search(
+                from_year=args.from_year,
+                to_year=args.to_year,
+                max_records_per_phrase=args.max_per_phrase,
+                sources=set(args.sources) if args.sources else None,
+            )
+    finally:
+        if _do_refresh:
+            from shared.dashboard_cache import refresh as _dc_refresh
+            _dc_refresh("candidates")

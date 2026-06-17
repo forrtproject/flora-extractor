@@ -3,7 +3,7 @@ routes/dashboard.py — Read-only monitoring dashboard.
 
 Routes:
   GET  /dashboard                        → dashboard page
-  GET  /api/dashboard/csv-stats          → pipeline stats (column-only CSV reads)
+  GET  /api/dashboard/csv-stats          → pipeline stats (Parquet→stats.json→CSV cascade)
   GET  /api/dashboard/download           → stream a raw pipeline CSV as attachment
   GET  /api/dashboard/supabase-stats     → Supabase validation KPIs (cached 5 min)
   GET  /api/dashboard/supabase-outcomes  → outcome distribution from validated table
@@ -15,14 +15,21 @@ import re
 import shutil
 
 import pandas as pd
+import pyarrow.parquet as pq
 from flask import Blueprint, jsonify, render_template, request, send_file
 
 from shared.config import DATA_DIR, BASE_DIR
 from shared import supabase_client as supa
+from shared.dashboard_cache import DASHBOARD_DIR, load_stats
 
 ANALYSIS_DIR = BASE_DIR / "analysis"
 
 dashboard_bp = Blueprint("dashboard", __name__)
+
+_OUTCOME_KEYS = ("success", "failure", "mixed", "uninformative",
+                 "cannot_be_determined", "descriptive", "pending", "api_error")
+_METHOD_KEYS  = ("author_year_match", "llm_abstract", "llm_fulltext",
+                 "no_original_found", "target_pending", "api_error")
 
 
 @dashboard_bp.route("/dashboard")
@@ -31,62 +38,182 @@ def dashboard_page():
 
 
 
+def _stats_json_to_api(sj: dict) -> "dict | None":
+    """Translate stats.json to the flat dict the dashboard JS expects.
+
+    Returns None if the json is missing any required stage key, so the
+    caller can fall back to the CSV read path.
+    """
+    c  = sj.get("candidates")
+    f  = sj.get("filtered")
+    e  = sj.get("extracted")
+    et = sj.get("extracted_test")
+    if not (c and f and e and et):
+        return None
+
+    by_status = f.get("by_filter_status", {})
+    by_method = e.get("by_link_method",   {})
+    by_model  = e.get("by_model",         {})
+    by_outcome= e.get("by_outcome",       {})
+    by_mt     = e.get("by_match_type",    {})
+
+    tbm  = et.get("by_link_method",   {})
+    tmod = et.get("by_model",         {})
+    toc  = et.get("by_outcome",       {})
+    tmt  = et.get("by_match_type",    {})
+
+    out: dict = {
+        # Candidates
+        "candidates_count":  c.get("total"),
+        "candidates_source": c.get("by_source", {}),
+        # Filtered
+        "filtered_count":           f.get("total"),
+        "filter_replication":       by_status.get("replication",    0),
+        "filter_reproduction":      by_status.get("reproduction",   0),
+        "filter_false_positive":    by_status.get("false_positive", 0),
+        "filter_needs_review":      by_status.get("needs_review",   0),
+        "filter_no_doi":            f.get("rep_repro_no_doi",          0),
+        "filter_no_doi_or_url":     f.get("rep_repro_no_doi_or_url",   0),
+        "filter_no_abstract":       f.get("rep_repro_no_abstract",     0),
+        "filter_rep_repro_total":   f.get("rep_repro_total",           0),
+        # Candidates data quality
+        "candidates_no_doi":        c.get("no_doi",        0),
+        "candidates_no_doi_or_url": c.get("no_doi_or_url", 0),
+        "candidates_no_abstract":   c.get("no_abstract",   0),
+        # Extracted
+        "extracted_count":           e.get("total"),
+        "target_pending_count":      e.get("target_pending_count", 0),
+        "match_single":              by_mt.get("single_original",   0),
+        "match_multiple_match":      by_mt.get("multiple_match",    0),
+        "match_multiple_original":   by_mt.get("multiple_original", 0),
+        "method_author_year_match":  by_method.get("author_year_match",  0),
+        "method_llm_abstract":       by_method.get("llm_abstract",       0),
+        "method_llm_fulltext":       by_method.get("llm_fulltext",       0),
+        "method_no_original_found":  by_method.get("no_original_found",  0),
+        "method_target_pending":     by_method.get("target_pending",     0),
+        "method_api_error":          by_method.get("api_error",          0),
+        "model_gemini": by_model.get("gemini", 0),
+        "model_gpt":    by_model.get("gpt",    0),
+        "model_qwen":   by_model.get("qwen",   0),
+        "model_other":  by_model.get("other",  0),
+        "model_none":   by_model.get("none",   0),
+        **{f"outcome_{k}": by_outcome.get(k, 0) for k in _OUTCOME_KEYS},
+        # Extracted-test
+        "test_extracted_count":          et.get("total"),
+        "test_target_pending_count":     et.get("target_pending_count", 0),
+        "test_match_single":             tmt.get("single_original",   0),
+        "test_match_multiple_match":     tmt.get("multiple_match",    0),
+        "test_match_multiple_original":  tmt.get("multiple_original", 0),
+        "test_method_author_year_match": tbm.get("author_year_match",  0),
+        "test_method_llm_abstract":      tbm.get("llm_abstract",       0),
+        "test_method_llm_fulltext":      tbm.get("llm_fulltext",       0),
+        "test_method_no_original_found": tbm.get("no_original_found",  0),
+        "test_method_target_pending":    tbm.get("target_pending",     0),
+        "test_method_api_error":         tbm.get("api_error",          0),
+        "test_model_gemini": tmod.get("gemini", 0),
+        "test_model_gpt":    tmod.get("gpt",    0),
+        "test_model_qwen":   tmod.get("qwen",   0),
+        "test_model_other":  tmod.get("other",  0),
+        "test_model_none":   tmod.get("none",   0),
+        **{f"test_outcome_{k}": toc.get(k, 0) for k in _OUTCOME_KEYS},
+        "_source": "stats_json",
+        "_updated_at": sj.get("updated_at"),
+    }
+    return out
+
+
+def _read_parquet_or_csv(stage: str, cols: list[str]) -> "pd.DataFrame | None":
+    """Read only the listed columns from Parquet if it exists, else from CSV."""
+    pq_path = DASHBOARD_DIR / f"{stage}.parquet"
+    if pq_path.exists():
+        try:
+            existing = pq.read_schema(pq_path).names
+            read_cols = [c for c in cols if c in existing]
+            return pq.read_table(pq_path, columns=read_cols).to_pandas().fillna("")
+        except Exception:
+            pass
+    csv_path = DATA_DIR / (f"{stage}.csv" if stage != "extracted-test" else "extracted-test.csv")
+    if csv_path.exists():
+        try:
+            return pd.read_csv(
+                csv_path, encoding="utf-8-sig", dtype=str, on_bad_lines="skip",
+                usecols=lambda c: c in cols,
+            ).fillna("")
+        except Exception:
+            pass
+    return None
+
+
 @dashboard_bp.route("/api/dashboard/csv-stats")
 def api_csv_stats():
-    """Read pipeline CSVs directly and return counts + distributions."""
-    stats: dict = {}
+    """Return pipeline stats. Fast path: stats.json; mid path: Parquet; slow: CSV."""
+    # ── Fast path: stats.json written by pipeline runners ─────────────────────
+    sj = load_stats()
+    if sj:
+        api_out = _stats_json_to_api(sj)
+        if api_out is not None:
+            return jsonify(api_out)
 
-    # ── Candidates ────────────────────────────────────────────────────────────
-    cand_path = DATA_DIR / "candidates.csv"
-    if cand_path.exists():
-        try:
-            cdf = pd.read_csv(cand_path, encoding="utf-8-sig", dtype=str,
-                              on_bad_lines="skip",
-                              usecols=lambda c: c in ("doi_r", "openalex_id_r", "source"))
-            stats["candidates_count"] = len(cdf)
-            if "source" in cdf.columns:
-                stats["candidates_source"] = {
-                    k: int(v) for k, v in cdf["source"].fillna("unknown").value_counts().items()
-                }
-            else:
-                stats["candidates_source"] = {}
-        except Exception:
-            stats["candidates_count"] = None
+    # ── Slow path: read from Parquet or CSV ────────────────────────────────────
+    stats: dict = {"_source": "csv"}
+
+    # Candidates
+    cdf = _read_parquet_or_csv("candidates", ["doi_r", "url_r", "abstract_r", "openalex_id_r", "source"])
+    if cdf is not None:
+        stats["candidates_count"] = len(cdf)
+        doi_c = cdf["doi_r"].fillna("") if "doi_r" in cdf.columns else pd.Series([""] * len(cdf))
+        url_c = cdf["url_r"].fillna("") if "url_r" in cdf.columns else pd.Series([""] * len(cdf))
+        abs_c = cdf["abstract_r"].fillna("") if "abstract_r" in cdf.columns else pd.Series([""] * len(cdf))
+        stats["candidates_no_doi"]        = int((doi_c == "").sum())
+        stats["candidates_no_doi_or_url"] = int(((doi_c == "") & (url_c == "")).sum())
+        stats["candidates_no_abstract"]   = int((abs_c == "").sum())
+        if "source" in cdf.columns:
+            stats["candidates_source"] = {
+                k: int(v) for k, v in cdf["source"].fillna("unknown").value_counts().items()
+            }
+        else:
             stats["candidates_source"] = {}
     else:
         stats["candidates_count"] = None
-        stats["candidates_source"] = {}
+        stats.update(candidates_no_doi=0, candidates_no_doi_or_url=0,
+                     candidates_no_abstract=0, candidates_source={})
 
-    # ── Filtered ──────────────────────────────────────────────────────────────
-    filt_path = DATA_DIR / "filtered.csv"
-    if filt_path.exists():
-        try:
-            fdf = pd.read_csv(filt_path, encoding="utf-8-sig", dtype=str,
-                              on_bad_lines="skip",
-                              usecols=lambda c: c in ("doi_r", "filter_status"))
-            stats["filtered_count"] = len(fdf)
-            if "filter_status" in fdf.columns:
-                vc = fdf["filter_status"].value_counts().to_dict()
-                stats["filter_replication"]    = int(vc.get("replication",    0))
-                stats["filter_reproduction"]   = int(vc.get("reproduction",   0))
-                stats["filter_false_positive"] = int(vc.get("false_positive", 0))
-                stats["filter_needs_review"]   = int(vc.get("needs_review",   0))
-            else:
-                stats.update(filter_replication=0, filter_reproduction=0,
-                             filter_false_positive=0, filter_needs_review=0)
-        except Exception:
-            stats["filtered_count"] = None
+    # Filtered
+    fdf = _read_parquet_or_csv("filtered", ["doi_r", "url_r", "abstract_r", "filter_status"])
+    if fdf is not None:
+        stats["filtered_count"] = len(fdf)
+        if "filter_status" in fdf.columns:
+            vc = fdf["filter_status"].value_counts().to_dict()
+            stats["filter_replication"]    = int(vc.get("replication",    0))
+            stats["filter_reproduction"]   = int(vc.get("reproduction",   0))
+            stats["filter_false_positive"] = int(vc.get("false_positive", 0))
+            stats["filter_needs_review"]   = int(vc.get("needs_review",   0))
+            # Data quality for rep+repro subset
+            rr = fdf[fdf["filter_status"].isin(["replication", "reproduction"])]
+            doi_f = rr["doi_r"].fillna("") if "doi_r" in rr.columns else pd.Series([""] * len(rr))
+            url_f = rr["url_r"].fillna("") if "url_r" in rr.columns else pd.Series([""] * len(rr))
+            abs_f = rr["abstract_r"].fillna("") if "abstract_r" in rr.columns else pd.Series([""] * len(rr))
+            stats["filter_rep_repro_total"]   = len(rr)
+            stats["filter_no_doi"]            = int((doi_f == "").sum())
+            stats["filter_no_doi_or_url"]     = int(((doi_f == "") & (url_f == "")).sum())
+            stats["filter_no_abstract"]       = int((abs_f == "").sum())
+        else:
             stats.update(filter_replication=0, filter_reproduction=0,
-                         filter_false_positive=0, filter_needs_review=0)
+                         filter_false_positive=0, filter_needs_review=0,
+                         filter_rep_repro_total=0, filter_no_doi=0,
+                         filter_no_doi_or_url=0, filter_no_abstract=0)
     else:
         stats["filtered_count"] = None
         stats.update(filter_replication=0, filter_reproduction=0,
-                     filter_false_positive=0, filter_needs_review=0)
+                     filter_false_positive=0, filter_needs_review=0,
+                     filter_rep_repro_total=0, filter_no_doi=0,
+                     filter_no_doi_or_url=0, filter_no_abstract=0)
 
-    # ── Extracted + Extracted Test ────────────────────────────────────────────
-    for prefix, path in [("", DATA_DIR / "extracted.csv"),
-                         ("test_", DATA_DIR / "extracted-test.csv")]:
-        _add_extracted_stats(stats, prefix, path)
+    # Extracted + Extracted Test
+    for prefix, stage in [("", "extracted"), ("test_", "extracted-test")]:
+        _add_extracted_stats(stats, prefix,
+                             DATA_DIR / f"{stage}.csv",
+                             pq_path=DASHBOARD_DIR / f"{stage}.parquet")
 
     return jsonify(stats)
 
@@ -125,12 +252,6 @@ def api_dashboard_download():
                      download_name=filename, mimetype="text/csv")
 
 
-_OUTCOME_KEYS = ("success", "failure", "mixed", "uninformative",
-                 "cannot_be_determined", "descriptive", "pending", "api_error")
-_METHOD_KEYS  = ("author_year_match", "llm_abstract", "llm_fulltext",
-                 "no_original_found", "target_pending", "api_error")
-
-
 def _model_family(model_str: str) -> str:
     """Bucket a model identifier into gemini / gpt / qwen / none / other."""
     m = str(model_str or "").lower().strip()
@@ -145,7 +266,8 @@ def _model_family(model_str: str) -> str:
     return "other"
 
 
-def _add_extracted_stats(stats: dict, prefix: str, path) -> None:
+def _add_extracted_stats(stats: dict, prefix: str, path,
+                         pq_path=None) -> None:
     """Populate stats dict with extracted-CSV metrics under the given prefix."""
     zero_defaults = {
         f"{prefix}target_pending_count": 0,
@@ -164,12 +286,23 @@ def _add_extracted_stats(stats: dict, prefix: str, path) -> None:
         stats.update(zero_defaults)
         return
 
+    _NEED = ("doi_r", "link_method", "link_llm_model", "original_match_type", "outcome")
     try:
-        edf = pd.read_csv(
-            path, encoding="utf-8-sig", dtype=str, on_bad_lines="skip",
-            usecols=lambda c: c in ("doi_r", "link_method", "link_llm_model",
-                                    "original_match_type", "outcome"),
-        ).fillna("")
+        # Try Parquet first if path provided
+        edf: pd.DataFrame | None = None
+        if pq_path is not None and pq_path.exists():
+            try:
+                existing = pq.read_schema(pq_path).names
+                read_cols = [c for c in _NEED if c in existing]
+                edf = pq.read_table(pq_path, columns=read_cols).to_pandas().fillna("")
+            except Exception:
+                edf = None
+
+        if edf is None:
+            edf = pd.read_csv(
+                path, encoding="utf-8-sig", dtype=str, on_bad_lines="skip",
+                usecols=lambda c: c in _NEED,
+            ).fillna("")
 
         stats[f"{prefix}extracted_count"] = len(edf)
 

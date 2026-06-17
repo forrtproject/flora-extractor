@@ -13,11 +13,17 @@ python -m search.run_search
 # Limit to specific year range
 python -m search.run_search --from-year 2020 --to-year 2024
 
+# Auto-advance: process one (source, phrase, year) job per call; repeat until exit 2
+python -m search.run_search --auto-advance --from-year 2011 --to-year 2024 --max-per-phrase 200
+
+# Harvest cached API pages into candidates.csv without making new API calls
+python -m search.run_search --harvest-only
+
 # Rebuild candidates index (if CSV was modified outside the pipeline)
 python -m search.run_search --rebuild-index
 
-# Dry run — show what would be fetched without writing
-python -m search.run_search --dry-run
+# Reset all cursors to start fetching from page 1 again
+python -m search.run_search --reset-cursors
 ```
 
 **Output:** `data/candidates.csv`
@@ -84,6 +90,24 @@ python -m extract.promote_test --all --dry-run
 
 # Force overwrite (skip conflict check)
 python -m extract.promote_test --all --force
+```
+
+### DOI verification audit
+
+Retroactively verify `doi_o` values in an existing CSV. Runs automatically during extraction; use this to audit rows that predate the feature.
+
+```bash
+# Dry run: print summary + write data/doi_audit_report.csv
+python -m extract.audit_dois
+
+# Write corrections into extracted.csv
+python -m extract.audit_dois --apply
+
+# Audit a single DOI
+python -m extract.audit_dois --doi 10.1234/example
+
+# Audit extracted-test.csv instead
+python -m extract.audit_dois --extracted-test
 ```
 
 ---
@@ -184,17 +208,20 @@ python -c "import shutil; shutil.rmtree('cache/llm', ignore_errors=True)"
 ## Web app routes
 
 | Route | Description |
-|-------|-------------|
+| ----- | ----------- |
 | `/` | Redirects to `/dashboard` |
-| `/dashboard` | Pipeline + Validation monitoring dashboard |
-| `/search` | Stage 1 candidates view |
-| `/filter` | Stage 2 filtered papers view |
-| `/extract` | Stage 3 extraction results |
-| `/extract-test` | Stage 3 test sandbox |
-| `/target-pending` | Papers needing manual original DOI |
-| `/api/dashboard/csv-stats` | Pipeline stats JSON (column-only CSV reads) |
+| `/dashboard` | 6-tab monitoring dashboard — see [dashboard-guide.md](dashboard-guide.md) |
+| `/check` | Search/filter/download across any stage — see [check-page.md](check-page.md) |
+| `/search` | Stage 1 candidates table |
+| `/filter` | Stage 2 filtered papers table |
+| `/extract` | Stage 3 extraction results table |
+| `/extract-test` | Stage 3 test sandbox table (with Promote button) |
+| `/validate` | Stage 4 voting queue |
+| `/api/dashboard/csv-stats` | Pipeline stats JSON (3-tier cascade: stats.json → Parquet → CSV) |
+| `/api/dashboard/download` | Download a full stage CSV (`?stage=candidates\|filtered\|extracted\|extracted-test`) |
+| `/api/check/search` | Filtered/paginated rows as JSON |
+| `/api/check/download` | Filtered rows as CSV attachment |
 | `/api/dashboard/supabase-stats` | Supabase validation KPIs |
 | `/api/dashboard/supabase-outcomes` | Outcome distribution from validated table |
 | `/api/dashboard/supabase-corrections` | Per-field correction frequency |
 | `/api/dashboard/supabase-drilldown` | Paginated incorrect-DOI table |
-| `/set-name` | Set reviewer name (stored in session) |

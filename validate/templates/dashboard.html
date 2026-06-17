@@ -107,6 +107,10 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
   padding:5px 0; border-bottom:1px solid var(--border); font-size:12px; color:var(--text);
 }
 .stat-row:last-child { border-bottom:none; }
+a.stat-row { text-decoration:none; border-radius:4px; margin:0 -4px; padding:5px 4px; }
+a.stat-row:hover { background:var(--surface-2); }
+a.stat-row .dl-hint { font-size:9px; color:var(--accent); opacity:0; transition:opacity .15s; }
+a.stat-row:hover .dl-hint { opacity:1; }
 .stat-pct { font-size:10px; color:var(--text-faint); margin-left:4px; }
 
 /* Inline two-col inside stats panel */
@@ -121,6 +125,8 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
   padding:4px 0; border-bottom:1px solid var(--border); font-size:11px; color:var(--text);
 }
 .leg-row:last-child { border-bottom:none; }
+a.leg-row { text-decoration:none; border-radius:3px; margin:0 -4px; padding:4px 4px; }
+a.leg-row:hover { background:var(--surface-2); }
 .leg-dot { width:9px; height:9px; border-radius:2px; flex-shrink:0; }
 .leg-label { flex:1; }
 .leg-count { font-weight:700; }
@@ -228,18 +234,76 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
       <div class="docs-panel">
         <div class="docs-card">
           <div class="docs-card-head">What Stage 1 does</div>
-          <p>Discovers candidate replication papers by querying <strong>OpenAlex</strong> with 23 keyword phrases. Results are deduplicated against <code>candidates.csv</code> using a persistent index (<code>cache/candidates_index.txt</code>) so re-runs never add duplicates. Only new DOIs are appended.</p>
-          <p>Papers matching any of the include phrases (and not matching any exclusion phrase) are written to <code>candidates.csv</code>. A cross-check against <code>data/flora_entry_sheet.csv</code> removes papers already in FLoRA.</p>
+          <p>Discovers candidate replication papers from two academic databases: <strong>OpenAlex</strong> and <strong>Semantic Scholar</strong>. Each source is queried with 23 keyword phrases. New results are appended to <code>data/candidates.csv</code>; already-seen papers are skipped via a persistent dedup index.</p>
+          <p>Every run also <strong>harvests all cached API responses from disk</strong> first — pages downloaded in any previous run flow into the CSV automatically without re-fetching.</p>
+          <p><code>--auto-advance</code> processes one (source, phrase, year) combination per invocation, cycling through all phrases for all years. State is saved in <code>cache/search_state.json</code> and resumes across runs. Exit code 2 signals a full cycle completed with no new rows.</p>
         </div>
 
         <div class="docs-card">
-          <div class="docs-card-head">CLI</div>
-          <pre class="cli-block">python -m search.run_search
+          <div class="docs-card-head">Sources</div>
+          <table class="docs-table">
+            <thead><tr><th>Source</th><th>Description</th><th>Flag</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="col-name">openalex</td>
+                <td class="col-desc">OpenAlex API — queries 23 phrases, page-resumable via cursor files in <code>cache/openalex/</code></td>
+                <td class="col-desc">enabled by default</td>
+              </tr>
+              <tr>
+                <td class="col-name">semantic_scholar</td>
+                <td class="col-desc">Semantic Scholar API — same 23 phrases, offset-resumable via <code>cache/s2/</code></td>
+                <td class="col-desc">enabled by default</td>
+              </tr>
+              <tr>
+                <td class="col-name">engine</td>
+                <td class="col-desc">Internal engine (when <code>FLORA_USE_ENGINE=1</code>) — replaces OpenAlex and S2</td>
+                <td class="col-desc"><code>FLORA_USE_ENGINE=1</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
-# Options
---from-year 2010      # filter by publication year
---to-year   2024
---rebuild-index       # rebuild cache/candidates_index.txt from scratch</pre>
+        <div class="docs-card">
+          <div class="docs-card-head">CLI — all flags</div>
+          <table class="docs-table">
+            <thead><tr><th style="white-space:nowrap">Flag</th><th>Default</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="col-name">--from-year YYYY</td><td>none</td><td class="col-desc">Earliest publication year to fetch (inclusive)</td></tr>
+              <tr><td class="col-name">--to-year YYYY</td><td>none</td><td class="col-desc">Latest publication year to fetch (inclusive)</td></tr>
+              <tr><td class="col-name">--max-per-phrase N</td><td>unlimited</td><td class="col-desc">Cap new rows per phrase per run; checkpoint saved so next run continues from this point</td></tr>
+              <tr><td class="col-name">--auto-advance</td><td>off</td><td class="col-desc">Process one (source, phrase, year) job per invocation; pair with --from-year, --to-year, --max-per-phrase; run repeatedly to cycle through all combinations</td></tr>
+              <tr><td class="col-name">--source SOURCE</td><td>all</td><td class="col-desc">Limit to one source (repeatable). Values: <code>openalex</code>, <code>semantic_scholar</code>, <code>engine</code></td></tr>
+              <tr><td class="col-name">--rebuild-index</td><td>off</td><td class="col-desc">Force rebuild of <code>cache/candidates_index.txt</code> from <code>candidates.csv</code>, then exit</td></tr>
+              <tr><td class="col-name">--harvest-only</td><td>off</td><td class="col-desc">Merge all cached OA/S2 pages into candidates.csv, then exit — no new API requests</td></tr>
+              <tr><td class="col-name">--no-harvest</td><td>off</td><td class="col-desc">Skip the per-cycle cache harvest in --auto-advance mode (useful when running --harvest-only separately on a schedule)</td></tr>
+              <tr><td class="col-name">--reset-cursors</td><td>off</td><td class="col-desc">Delete all OpenAlex cursor + S2 offset files and start from page 1 for every phrase</td></tr>
+            </tbody>
+          </table>
+          <pre class="cli-block" style="margin-top:10px"># Typical production loop (PowerShell)
+do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2024 --max-per-phrase 200
+} until ($LASTEXITCODE -eq 2)
+
+# Quick test — 1 page per phrase, 2020 only
+python -m search.run_search --from-year 2020 --to-year 2020 --max-per-phrase 200
+
+# Merge only cached pages (no API calls)
+python -m search.run_search --harvest-only</pre>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">5-pass deduplication</div>
+          <p>Applied to each new batch before it is appended to <code>candidates.csv</code>. Runs in <code>search/deduplicate.py</code>.</p>
+          <table class="docs-table">
+            <thead><tr><th>Pass</th><th>What it removes</th></tr></thead>
+            <tbody>
+              <tr><td class="col-name">0a — DOI patterns</td><td class="col-desc">figshare datasets (<code>10.6084/</code>) and PeerJ peer-review objects (<code>/reviews/</code> in DOI) — never scholarly papers</td></tr>
+              <tr><td class="col-name">0b — Versioned preprints</td><td class="col-desc">Lower-version preprint DOIs ending in <code>_v1</code>, <code>_v2</code> etc. Keeps the canonical or highest-version DOI; drops all older versions</td></tr>
+              <tr><td class="col-name">1 — Exact DOI</td><td class="col-desc">Duplicate DOIs after <code>clean_doi()</code> normalisation; keeps the row with more non-empty metadata fields (richness score)</td></tr>
+              <tr><td class="col-name">2 — Fuzzy title</td><td class="col-desc">DOI-less rows whose titles score ≥ 90 on RapidFuzz <code>token_sort_ratio</code>; keeps the richer row</td></tr>
+              <tr><td class="col-name">3 — FLoRA cross-check</td><td class="col-desc">Papers already catalogued in <code>data/flora_entry_sheet.csv</code> (<code>doi_r</code>) and <code>data/flora.csv</code> (<code>doi_r</code> + <code>doi_o</code>) are dropped — no need to re-extract them</td></tr>
+            </tbody>
+          </table>
+          <p style="margin-top:8px">The persistent <strong>candidates index</strong> (<code>cache/candidates_index.txt</code>) stores up to 4 keys per row (OA ID → DOI → URL → title) so duplicates from any identifier are caught without loading the full CSV into memory. Built automatically on first run; ~1s to load thereafter.</p>
         </div>
 
         <div class="docs-card">
@@ -272,7 +336,7 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
         </div>
 
         <div class="docs-card">
-          <div class="docs-card-head">Exclusion keywords</div>
+          <div class="docs-card-head">Exclusion keywords (applied by Stage 2 rule filter)</div>
           <div class="kw-grid">
             <span class="kw-pill excl">DNA replication</span>
             <span class="kw-pill excl">cell replication</span>
@@ -288,17 +352,17 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
         <div class="docs-card">
           <div class="docs-card-head">candidates.csv columns</div>
           <table class="docs-table">
-            <thead><tr><th>Column</th><th>Description</th></tr></thead>
+            <thead><tr><th>Column</th><th>Description</th><th>Example</th></tr></thead>
             <tbody>
-              <tr><td class="col-name">doi_r</td><td class="col-desc">Replication paper DOI (cleaned)</td></tr>
-              <tr><td class="col-name">title_r</td><td class="col-desc">Paper title</td></tr>
-              <tr><td class="col-name">abstract_r</td><td class="col-desc">Abstract text</td></tr>
-              <tr><td class="col-name">year_r</td><td class="col-desc">Publication year</td></tr>
-              <tr><td class="col-name">authors_r</td><td class="col-desc">Author list</td></tr>
-              <tr><td class="col-name">journal_r</td><td class="col-desc">Journal / venue</td></tr>
-              <tr><td class="col-name">url_r</td><td class="col-desc">Landing page URL</td></tr>
-              <tr><td class="col-name">openalex_id_r</td><td class="col-desc">OpenAlex work ID (W…)</td></tr>
-              <tr><td class="col-name">source</td><td class="col-desc">openalex | semantic_scholar | …</td></tr>
+              <tr><td class="col-name">doi_r</td><td class="col-desc">Replication paper DOI (cleaned via <code>clean_doi()</code>)</td><td class="col-desc">10.1126/science.1255484</td></tr>
+              <tr><td class="col-name">title_r</td><td class="col-desc">Paper title</td><td class="col-desc">Estimating the Reproducibility of Psychological Science</td></tr>
+              <tr><td class="col-name">abstract_r</td><td class="col-desc">Abstract text (may be blank if not indexed)</td><td class="col-desc">Reproducibility is a defining feature…</td></tr>
+              <tr><td class="col-name">year_r</td><td class="col-desc">Publication year</td><td class="col-desc">2015</td></tr>
+              <tr><td class="col-name">authors_r</td><td class="col-desc">Semicolon-separated author surnames</td><td class="col-desc">Open Science Collaboration</td></tr>
+              <tr><td class="col-name">journal_r</td><td class="col-desc">Journal or venue name</td><td class="col-desc">Science</td></tr>
+              <tr><td class="col-name">url_r</td><td class="col-desc">Landing page URL (used when DOI is absent)</td><td class="col-desc">https://osf.io/…</td></tr>
+              <tr><td class="col-name">openalex_id_r</td><td class="col-desc">OpenAlex work ID</td><td class="col-desc">W2170235581</td></tr>
+              <tr><td class="col-name">source</td><td class="col-desc">Discovery source</td><td class="col-desc">openalex | semantic_scholar | engine</td></tr>
             </tbody>
           </table>
         </div>
@@ -306,33 +370,33 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
 
       <!-- Right: stats -->
       <div class="stats-panel">
+        <p style="font-size:10px;color:var(--text-faint);margin:0 0 6px">Click a card to download that subset as CSV.</p>
         <div class="kpi-row">
           <a href="/api/dashboard/download?stage=candidates" class="kpi-card" title="Download candidates.csv">
             <div class="kpi-num" id="k-candidates">—</div>
-            <div class="kpi-label">Candidates ↓</div>
+            <div class="kpi-label">Total Candidates ↓</div>
             <div class="kpi-sub">candidates.csv</div>
+          </a>
+          <a href="/api/check/download?stage=candidates&no_doi=1" class="kpi-card" title="Download rows with no DOI">
+            <div class="kpi-num" id="k-cand-no-doi" style="color:#f59e0b">—</div>
+            <div class="kpi-label">No DOI ↓</div>
+            <div class="kpi-sub">URL or title only</div>
+          </a>
+          <a href="/api/check/download?stage=candidates&no_doi_url=1" class="kpi-card" title="Download rows with no DOI or URL">
+            <div class="kpi-num" id="k-cand-no-doi-url" style="color:#dc2626">—</div>
+            <div class="kpi-label">No DOI or URL ↓</div>
+            <div class="kpi-sub">title-only rows</div>
+          </a>
+          <a href="/api/check/download?stage=candidates&no_abstract=1" class="kpi-card" title="Download rows with no abstract">
+            <div class="kpi-num" id="k-cand-no-abstract" style="color:#9ca3af">—</div>
+            <div class="kpi-label">No Abstract ↓</div>
+            <div class="kpi-sub">filter will use title only</div>
           </a>
         </div>
 
         <div class="stat-card">
           <h3>Source Breakdown</h3>
           <div id="search-source-breakdown"><div class="null-note">Loading…</div></div>
-        </div>
-
-        <div class="stat-card">
-          <h3>Deduplication Index</h3>
-          <div class="stat-row">
-            <span>Index file</span>
-            <code>cache/candidates_index.txt</code>
-          </div>
-          <div class="stat-row">
-            <span>Index keys per row</span>
-            <span style="color:var(--text-muted)">up to 4 (DOI → OA ID → URL → title)</span>
-          </div>
-          <div class="stat-row">
-            <span>Dedup strategy</span>
-            <span style="color:var(--text-muted)">exact DOI, fuzzy title (RapidFuzz ≥ 90)</span>
-          </div>
         </div>
       </div>
     </div>
@@ -349,43 +413,81 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
       <div class="docs-panel">
         <div class="docs-card">
           <div class="docs-card-head">What Stage 2 does</div>
-          <p>Removes false positives and classifies candidates into <code>replication</code>, <code>reproduction</code>, <code>needs_review</code>, or <code>false_positive</code>. Reads <code>candidates.csv</code> in <strong>50 k-row chunks</strong> to avoid loading the full file into memory.</p>
-          <p>Rule-based classification runs first. Only rows the rules cannot decide are sent to the LLM. Results are streamed to <code>filtered.csv</code> via a resume index (<code>cache/filtered_index.txt</code>).</p>
-        </div>
-
-        <div class="docs-card">
-          <div class="docs-card-head">CLI</div>
-          <pre class="cli-block">python -m filter.run_filter
-
-# Options
---from-year 2010
---rebuild-index    # rebuild cache/filtered_index.txt</pre>
+          <p>Removes false positives and classifies candidates into <code>replication</code>, <code>reproduction</code>, <code>needs_review</code>, or <code>false_positive</code>. Reads <code>candidates.csv</code> in <strong>50 k-row chunks</strong> to avoid OOM on files with 1M+ rows.</p>
+          <p>The <strong>rule filter</strong> runs first and handles ~99% of rows with no API calls. Only rows marked <code>needs_review</code> by the rules are sent to the <strong>LLM</strong>. Results are streamed row-by-row to <code>filtered.csv</code> via a persistent index (<code>cache/filtered_index.txt</code>) so interrupted runs resume without reprocessing.</p>
         </div>
 
         <div class="docs-card">
           <div class="docs-card-head">Decision logic</div>
           <table class="docs-table">
-            <thead><tr><th>Condition</th><th>Result</th></tr></thead>
+            <thead><tr><th>Condition (checked in order)</th><th>Result</th></tr></thead>
             <tbody>
-              <tr><td>Title/abstract matches exclusion pattern (DNA, code, …)</td><td><code>false_positive</code></td></tr>
-              <tr><td>No include phrase found</td><td><code>false_positive</code></td></tr>
-              <tr><td>Include phrase + author-year citation pattern</td><td><code>replication</code> or <code>reproduction</code></td></tr>
-              <tr><td>Include phrase, no citation — rule uncertain</td><td>→ LLM</td></tr>
-              <tr><td>LLM uncertain</td><td><code>needs_review</code></td></tr>
+              <tr><td>Title/abstract matches a biological/technical exclusion phrase (DNA, cell, viral, replication fork, replication stress, code replication, data replication…)</td><td><code>false_positive</code></td></tr>
+              <tr><td>No include keyword phrase found in title or abstract</td><td><code>false_positive</code></td></tr>
+              <tr><td>Include phrase found AND title/abstract contains an author-year citation pattern like "(Author, YYYY)"</td><td><code>replication</code> or <code>reproduction</code></td></tr>
+              <tr><td>Include phrase found but no citation pattern — rule is uncertain</td><td>→ <strong>LLM</strong></td></tr>
+              <tr><td>LLM returns a definitive classification</td><td><code>replication</code>, <code>reproduction</code>, or <code>false_positive</code></td></tr>
+              <tr><td>LLM cannot decide</td><td><code>needs_review</code></td></tr>
             </tbody>
           </table>
-          <p style="margin-top:8px">LLM: OpenAI (<code>FILTER_OPENAI_MODEL</code>) primary; Gemini fallback. Responses cached by <code>hash(title + abstract)</code>.</p>
         </div>
 
         <div class="docs-card">
-          <div class="docs-card-head">Added columns (filtered.csv)</div>
+          <div class="docs-card-head">LLM prompt (what the model receives)</div>
+          <p>For uncertain rows the LLM receives the paper title and abstract with this instruction:</p>
+          <pre class="cli-block" style="white-space:pre-wrap">Classify this paper as one of:
+  replication   — directly replicates or attempts to reproduce a prior study
+  reproduction  — reproduces methods in a different context, not testing the original claim
+  false_positive — about replication in biology/CS, or unrelated
+
+Title: {title}
+Abstract: {abstract}
+
+Respond with JSON: {"filter_status": "...", "filter_evidence": "...", "filter_confidence": "high|medium|low"}</pre>
+          <p style="margin-top:8px">LLM configured via <code>FILTER_OPENAI_MODEL</code> env var (primary); Gemini fallback via <code>GEMINI_MODEL</code>. Responses cached by <code>hash(title + abstract)</code> so identical rows never re-query the LLM.</p>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">CLI — all flags</div>
           <table class="docs-table">
-            <thead><tr><th>Column</th><th>Values</th></tr></thead>
+            <thead><tr><th style="white-space:nowrap">Flag</th><th>Default</th><th>Description</th></tr></thead>
             <tbody>
-              <tr><td class="col-name">filter_status</td><td class="col-desc">replication | reproduction | false_positive | needs_review</td></tr>
-              <tr><td class="col-name">filter_method</td><td class="col-desc">rule_based | llm | both</td></tr>
-              <tr><td class="col-name">filter_evidence</td><td class="col-desc">phrase or quote that triggered classification</td></tr>
-              <tr><td class="col-name">filter_confidence</td><td class="col-desc">high | medium | low</td></tr>
+              <tr><td class="col-name">--from-year YYYY</td><td>none</td><td class="col-desc">Only process candidates where <code>year_r ≥ YYYY</code></td></tr>
+              <tr><td class="col-name">--to-year YYYY</td><td>none</td><td class="col-desc">Only process candidates where <code>year_r ≤ YYYY</code></td></tr>
+              <tr><td class="col-name">--source SOURCE</td><td>all</td><td class="col-desc">Only process candidates from this source (<code>openalex</code>, <code>semantic_scholar</code>, …)</td></tr>
+              <tr><td class="col-name">--limit N</td><td>none</td><td class="col-desc">Stop after writing N new rows</td></tr>
+              <tr><td class="col-name">--offset N</td><td>none</td><td class="col-desc">Skip the first N unprocessed rows before starting</td></tr>
+              <tr><td class="col-name">--rebuild-index</td><td>off</td><td class="col-desc">Rebuild <code>cache/filtered_index.txt</code> from <code>filtered.csv</code>, then exit</td></tr>
+            </tbody>
+          </table>
+          <pre class="cli-block" style="margin-top:10px">python -m filter.run_filter                     # full run
+python -m filter.run_filter --from-year 2015    # 2015+ only
+python -m filter.run_filter --limit 1000        # first 1 000 new rows
+python -m filter.run_filter --rebuild-index     # rebuild index from filtered.csv</pre>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">filtered.csv — all columns</div>
+          <p style="font-size:11px;color:var(--text-faint);margin:0 0 8px">Inherits all candidates.csv columns plus the 4 added by Stage 2.</p>
+          <table class="docs-table">
+            <thead><tr><th>Column</th><th>Description</th><th>Example</th></tr></thead>
+            <tbody>
+              <tr style="background:var(--surface-2)"><td colspan="3" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Inherited from candidates.csv</td></tr>
+              <tr><td class="col-name">doi_r</td><td class="col-desc">Replication paper DOI</td><td class="col-desc">10.1126/science.1255484</td></tr>
+              <tr><td class="col-name">title_r</td><td class="col-desc">Paper title</td><td class="col-desc">Estimating the Reproducibility…</td></tr>
+              <tr><td class="col-name">abstract_r</td><td class="col-desc">Abstract text (may be blank)</td><td class="col-desc">Reproducibility is a defining feature…</td></tr>
+              <tr><td class="col-name">year_r</td><td class="col-desc">Publication year</td><td class="col-desc">2015</td></tr>
+              <tr><td class="col-name">authors_r</td><td class="col-desc">Semicolon-separated author surnames</td><td class="col-desc">Open Science Collaboration</td></tr>
+              <tr><td class="col-name">journal_r</td><td class="col-desc">Journal or venue name</td><td class="col-desc">Science</td></tr>
+              <tr><td class="col-name">url_r</td><td class="col-desc">Landing page URL (used when DOI absent)</td><td class="col-desc">https://osf.io/…</td></tr>
+              <tr><td class="col-name">openalex_id_r</td><td class="col-desc">OpenAlex work ID</td><td class="col-desc">W2170235581</td></tr>
+              <tr><td class="col-name">source</td><td class="col-desc">Discovery source</td><td class="col-desc">openalex | semantic_scholar</td></tr>
+              <tr><td class="col-name">ref_r</td><td class="col-desc">Formatted reference string</td><td class="col-desc">Open Science Collaboration (2015). Science.</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="3" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Added by Stage 2</td></tr>
+              <tr><td class="col-name">filter_status</td><td class="col-desc">Classification result</td><td class="col-desc">replication | reproduction | false_positive | needs_review</td></tr>
+              <tr><td class="col-name">filter_method</td><td class="col-desc">Which classifier decided</td><td class="col-desc">rule_based | llm | both</td></tr>
+              <tr><td class="col-name">filter_evidence</td><td class="col-desc">Phrase or quote that triggered classification</td><td class="col-desc">phrase:direct replication; cite:(Bargh, 1996)</td></tr>
+              <tr><td class="col-name">filter_confidence</td><td class="col-desc">high | medium | low (categorical)</td><td class="col-desc">high</td></tr>
             </tbody>
           </table>
         </div>
@@ -396,33 +498,57 @@ a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent
         <div class="kpi-row">
           <a href="/api/dashboard/download?stage=filtered" class="kpi-card" title="Download filtered.csv">
             <div class="kpi-num" id="k-filtered">—</div>
-            <div class="kpi-label">Filtered rows ↓</div>
+            <div class="kpi-label">Total Filtered ↓</div>
             <div class="kpi-sub">filtered.csv</div>
           </a>
         </div>
 
+        <p style="font-size:10px;color:var(--text-faint);margin:0 0 6px">Click a card to download that subset as CSV.</p>
+
+        <div class="kpi-row">
+          <a href="/api/check/download?stage=filtered&type=replication" class="kpi-card" title="Download replication rows">
+            <div class="kpi-num" id="f-replication" style="color:#16a34a">—</div>
+            <div class="kpi-label">Replications ↓</div>
+            <div class="kpi-sub" id="f-replication-pct"></div>
+          </a>
+          <a href="/api/check/download?stage=filtered&type=reproduction" class="kpi-card" title="Download reproduction rows">
+            <div class="kpi-num" id="f-reproduction" style="color:#2563eb">—</div>
+            <div class="kpi-label">Reproductions ↓</div>
+            <div class="kpi-sub" id="f-reproduction-pct"></div>
+          </a>
+          <a href="/api/check/download?stage=filtered&type=needs_review" class="kpi-card" title="Download needs-review rows">
+            <div class="kpi-num" id="f-needs-review" style="color:#f59e0b">—</div>
+            <div class="kpi-label">Needs Review ↓</div>
+            <div class="kpi-sub" id="f-needs-review-pct"></div>
+          </a>
+          <a href="/api/check/download?stage=filtered&type=false_positive" class="kpi-card" title="Download false-positive rows">
+            <div class="kpi-num" id="f-false-positive" style="color:#dc2626">—</div>
+            <div class="kpi-label">False Positives ↓</div>
+            <div class="kpi-sub" id="f-false-positive-pct"></div>
+          </a>
+        </div>
+
         <div class="stat-card">
-          <h3>Filter Status Distribution</h3>
+          <h3>Data Quality — Replications &amp; Reproductions only</h3>
           <div class="stat-row">
-            <span>Replications</span>
-            <span><strong id="f-replication" style="color:#16a34a">—</strong>
-              <span class="stat-pct" id="f-replication-pct"></span></span>
+            <span>Rep+Repro total</span>
+            <span><strong id="f-rr-total">—</strong></span>
           </div>
-          <div class="stat-row">
-            <span>Reproductions</span>
-            <span><strong id="f-reproduction" style="color:#2563eb">—</strong>
-              <span class="stat-pct" id="f-reproduction-pct"></span></span>
-          </div>
-          <div class="stat-row">
-            <span>Needs review</span>
-            <span><strong id="f-needs-review" style="color:#f59e0b">—</strong>
-              <span class="stat-pct" id="f-needs-review-pct"></span></span>
-          </div>
-          <div class="stat-row">
-            <span>False positives</span>
-            <span><strong id="f-false-positive" style="color:#dc2626">—</strong>
-              <span class="stat-pct" id="f-false-positive-pct"></span></span>
-          </div>
+          <a class="stat-row" href="/api/check/download?stage=filtered&type=replication&type=reproduction&no_doi=1" title="Download rep+repro rows with no DOI">
+            <span>No DOI <span class="dl-hint">↓</span></span>
+            <span><strong id="f-rr-no-doi" style="color:#f59e0b">—</strong>
+              <span class="stat-pct" id="f-rr-no-doi-pct"></span></span>
+          </a>
+          <a class="stat-row" href="/api/check/download?stage=filtered&type=replication&type=reproduction&no_doi_url=1" title="Download rep+repro rows with no DOI or URL">
+            <span>No DOI or URL <span class="dl-hint">↓</span></span>
+            <span><strong id="f-rr-no-doi-url" style="color:#dc2626">—</strong>
+              <span class="stat-pct" id="f-rr-no-doi-url-pct"></span></span>
+          </a>
+          <a class="stat-row" href="/api/check/download?stage=filtered&type=replication&type=reproduction&no_abstract=1" title="Download rep+repro rows with no abstract">
+            <span>No abstract <span class="dl-hint">↓</span></span>
+            <span><strong id="f-rr-no-abstract" style="color:#9ca3af">—</strong>
+              <span class="stat-pct" id="f-rr-no-abstract-pct"></span></span>
+          </a>
         </div>
       </div>
     </div>
@@ -486,16 +612,42 @@ python -m extract.audit_dois --apply  # write corrections</pre>
         </div>
 
         <div class="docs-card">
-          <div class="docs-card-head">Key added columns</div>
+          <div class="docs-card-head">extracted.csv — all columns</div>
+          <p style="font-size:11px;color:var(--text-faint);margin:0 0 8px">Inherits all filtered.csv columns plus the columns added by Stage 3.</p>
           <table class="docs-table">
-            <thead><tr><th>Column</th><th>Values</th></tr></thead>
+            <thead><tr><th>Column</th><th>Description / Values</th></tr></thead>
             <tbody>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Unique identifier</td></tr>
+              <tr><td class="col-name">pair_id</td><td class="col-desc">Hash of (doi_r, doi_o) — unique row key for dedup and promote</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Inherited from filtered.csv</td></tr>
+              <tr><td class="col-name">doi_r, title_r, abstract_r, year_r, authors_r, journal_r, url_r, openalex_id_r, source, ref_r</td><td class="col-desc">All 10 candidates.csv columns</td></tr>
+              <tr><td class="col-name">filter_status, filter_method, filter_evidence, filter_confidence</td><td class="col-desc">All 4 Stage 2 filter columns</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Match classification — Added by Stage 3</td></tr>
               <tr><td class="col-name">original_match_type</td><td class="col-desc">single_original | multiple_match | multiple_original</td></tr>
+              <tr><td class="col-name">original_match_confidence</td><td class="col-desc">high | medium | low</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Original study — Added by Stage 3</td></tr>
+              <tr><td class="col-name">doi_o</td><td class="col-desc">Original study DOI (blank if not found)</td></tr>
+              <tr><td class="col-name">title_o</td><td class="col-desc">Original study title</td></tr>
+              <tr><td class="col-name">year_o</td><td class="col-desc">Original study publication year</td></tr>
+              <tr><td class="col-name">authors_o</td><td class="col-desc">Semicolon-separated author surnames of original</td></tr>
+              <tr><td class="col-name">ref_o</td><td class="col-desc">Formatted reference string for original</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Link method — Added by Stage 3</td></tr>
               <tr><td class="col-name">link_method</td><td class="col-desc">author_year_match | llm_abstract | llm_fulltext | target_pending | api_error</td></tr>
-              <tr><td class="col-name">doi_o</td><td class="col-desc">Original study DOI</td></tr>
+              <tr><td class="col-name">link_evidence</td><td class="col-desc">Phrase or LLM output that identified the original</td></tr>
+              <tr><td class="col-name">link_confidence</td><td class="col-desc">high | medium | low; downgraded to low on DOI mismatch</td></tr>
+              <tr><td class="col-name">link_llm_model</td><td class="col-desc">Model name used for LLM linking (blank for rule-based)</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">DOI verification — Added by Stage 3</td></tr>
               <tr><td class="col-name">doi_o_verification</td><td class="col-desc">verified | corrected | mismatch | no_doi | not_found | no_metadata | api_error | skipped</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Outcome — Added by Stage 3</td></tr>
               <tr><td class="col-name">outcome</td><td class="col-desc">success | failure | mixed | uninformative | descriptive | pending | api_error</td></tr>
-              <tr><td class="col-name">link_confidence</td><td class="col-desc">high | medium | low</td></tr>
+              <tr><td class="col-name">outcome_phrase</td><td class="col-desc">Keyword phrase that triggered the outcome classification</td></tr>
+              <tr><td class="col-name">outcome_confidence</td><td class="col-desc">high | medium | low</td></tr>
+              <tr><td class="col-name">out_quote_source</td><td class="col-desc">Method that produced the text the outcome was coded from (abstract | fulltext)</td></tr>
+              <tr><td class="col-name">outcome_reasoning</td><td class="col-desc">LLM chain-of-thought for the outcome decision</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Multi-original metadata — Added by Stage 3</td></tr>
+              <tr><td class="col-name">type</td><td class="col-desc">replication | reproduction</td></tr>
+              <tr><td class="col-name">original_rank</td><td class="col-desc">1 for single; 1, 2, 3… for multi-original papers</td></tr>
+              <tr><td class="col-name">n_originals</td><td class="col-desc">Total number of target studies for this replication paper</td></tr>
             </tbody>
           </table>
         </div>
@@ -519,21 +671,21 @@ python -m extract.audit_dois --apply  # write corrections</pre>
         <div class="stats-two">
           <div class="stat-card">
             <h3>Match Types</h3>
-            <div class="stat-row">
-              <span>Single original</span>
+            <a class="stat-row" href="/api/check/download?stage=extracted&match_type=single_original" title="Download single-original rows">
+              <span>Single original <span class="dl-hint">↓</span></span>
               <span><strong id="m-single" style="color:#16a34a">—</strong>
                 <span class="stat-pct" id="m-single-pct"></span></span>
-            </div>
-            <div class="stat-row">
-              <span>Multiple match</span>
+            </a>
+            <a class="stat-row" href="/api/check/download?stage=extracted&match_type=multiple_match" title="Download multiple-match rows">
+              <span>Multiple match <span class="dl-hint">↓</span></span>
               <span><strong id="m-multiple-match" style="color:#f59e0b">—</strong>
                 <span class="stat-pct" id="m-multiple-match-pct"></span></span>
-            </div>
-            <div class="stat-row">
-              <span>Multiple original</span>
+            </a>
+            <a class="stat-row" href="/api/check/download?stage=extracted&match_type=multiple_original" title="Download multiple-original rows">
+              <span>Multiple original <span class="dl-hint">↓</span></span>
               <span><strong id="m-multiple-original" style="color:#7c3aed">—</strong>
                 <span class="stat-pct" id="m-multiple-original-pct"></span></span>
-            </div>
+            </a>
           </div>
 
           <div class="stat-card">
@@ -558,24 +710,30 @@ python -m extract.audit_dois --apply  # write corrections</pre>
 
         <div class="stat-card">
           <h3>Link Method</h3>
-          <div class="stat-row"><span>Author / year match</span>
+          <a class="stat-row" href="/api/check/download?stage=extracted&link_method=author_year_match">
+            <span>Author / year match <span class="dl-hint">↓</span></span>
             <span><strong id="lm-author" style="color:#16a34a">—</strong>
-              <span class="stat-pct" id="lm-author-pct"></span></span></div>
-          <div class="stat-row"><span>LLM fulltext</span>
+              <span class="stat-pct" id="lm-author-pct"></span></span></a>
+          <a class="stat-row" href="/api/check/download?stage=extracted&link_method=llm_fulltext">
+            <span>LLM fulltext <span class="dl-hint">↓</span></span>
             <span><strong id="lm-fulltext" style="color:#1d4ed8">—</strong>
-              <span class="stat-pct" id="lm-fulltext-pct"></span></span></div>
-          <div class="stat-row"><span>LLM abstract</span>
+              <span class="stat-pct" id="lm-fulltext-pct"></span></span></a>
+          <a class="stat-row" href="/api/check/download?stage=extracted&link_method=llm_abstract">
+            <span>LLM abstract <span class="dl-hint">↓</span></span>
             <span><strong id="lm-abstract" style="color:#0284c7">—</strong>
-              <span class="stat-pct" id="lm-abstract-pct"></span></span></div>
-          <div class="stat-row"><span>No original found</span>
+              <span class="stat-pct" id="lm-abstract-pct"></span></span></a>
+          <a class="stat-row" href="/api/check/download?stage=extracted&link_method=no_original_found">
+            <span>No original found <span class="dl-hint">↓</span></span>
             <span><strong id="lm-nof" style="color:var(--text-muted)">—</strong>
-              <span class="stat-pct" id="lm-nof-pct"></span></span></div>
-          <div class="stat-row"><span>Target pending</span>
+              <span class="stat-pct" id="lm-nof-pct"></span></span></a>
+          <a class="stat-row" href="/api/check/download?stage=extracted&link_method=target_pending">
+            <span>Target pending <span class="dl-hint">↓</span></span>
             <span><strong id="lm-pending" style="color:#f59e0b">—</strong>
-              <span class="stat-pct" id="lm-pending-pct"></span></span></div>
-          <div class="stat-row"><span>API error</span>
+              <span class="stat-pct" id="lm-pending-pct"></span></span></a>
+          <a class="stat-row" href="/api/check/download?stage=extracted&link_method=api_error">
+            <span>API error <span class="dl-hint">↓</span></span>
             <span><strong id="lm-err" style="color:#dc2626">—</strong>
-              <span class="stat-pct" id="lm-err-pct"></span></span></div>
+              <span class="stat-pct" id="lm-err-pct"></span></span></a>
         </div>
 
         <div class="stat-card">
@@ -1090,16 +1248,17 @@ function drawDonut(svgEl, data) {
   svgEl.appendChild(s);
 }
 
-function renderLegend(legendEl, data, total) {
+function renderLegend(legendEl, data, total, stage) {
   if (!total) { legendEl.innerHTML='<div class="null-note">No data.</div>'; return; }
+  const st = stage || 'extracted';
   legendEl.innerHTML = data.filter(d=>d.value>0).map(d=>{
     const p = total ? ((d.value/total)*100).toFixed(1) : '0.0';
-    return `<div class="leg-row">
+    return `<a class="leg-row" href="/api/check/download?stage=${st}&outcome=${encodeURIComponent(d.key)}" style="text-decoration:none;color:inherit" title="Download ${d.label} rows">
       <span class="leg-dot" style="background:${d.color}"></span>
       <span class="leg-label">${d.label}</span>
       <span class="leg-count">${d.value.toLocaleString()}</span>
-      <span class="leg-pct">${p}%</span>
-    </div>`;
+      <span class="leg-pct">${p}% <span style="font-size:8px;color:var(--accent);opacity:.6">↓</span></span>
+    </a>`;
   }).join('');
 }
 
@@ -1136,15 +1295,18 @@ async function loadPipeline() {
   const csv = await fetch('/api/dashboard/csv-stats').then(r=>r.json());
 
   // Search tab
-  $('k-candidates').textContent = fmt(csv.candidates_count);
+  $('k-candidates').textContent        = fmt(csv.candidates_count);
+  $('k-cand-no-doi').textContent       = fmt(csv.candidates_no_doi);
+  $('k-cand-no-doi-url').textContent   = fmt(csv.candidates_no_doi_or_url);
+  $('k-cand-no-abstract').textContent  = fmt(csv.candidates_no_abstract);
   if (csv.candidates_source && $('search-source-breakdown')) {
     const total = Object.values(csv.candidates_source).reduce((a,b)=>a+b,0);
     $('search-source-breakdown').innerHTML = Object.entries(csv.candidates_source)
       .sort((a,b)=>b[1]-a[1])
-      .map(([src,n])=>`<div class="stat-row">
+      .map(([src,n])=>`<a class="stat-row" href="/api/check/download?stage=candidates&source=${encodeURIComponent(src)}" title="Download ${esc(src)} rows">
         <span style="font-family:monospace;font-size:11px">${esc(src)}</span>
-        <span><strong>${fmt(n)}</strong> <span class="stat-pct">${pct(n,total)}</span></span>
-      </div>`).join('');
+        <span><strong>${fmt(n)}</strong> <span class="stat-pct">${pct(n,total)}</span> <span class="dl-hint">↓</span></span>
+      </a>`).join('');
   } else if ($('search-source-breakdown')) {
     $('search-source-breakdown').innerHTML = '<div class="null-note">Source breakdown not yet available.</div>';
   }
@@ -1158,6 +1320,15 @@ async function loadPipeline() {
     $(`f-${k}`).textContent     = fmt(csv[`filter_${key}`]);
     $(`f-${k}-pct`).textContent = pct(csv[`filter_${key}`], ftotal);
   });
+  // Filter data quality (rep+repro only)
+  const rrTotal = csv.filter_rep_repro_total||0;
+  $('f-rr-total').textContent        = fmt(rrTotal);
+  $('f-rr-no-doi').textContent       = fmt(csv.filter_no_doi);
+  $('f-rr-no-doi-pct').textContent   = pct(csv.filter_no_doi, rrTotal);
+  $('f-rr-no-doi-url').textContent   = fmt(csv.filter_no_doi_or_url);
+  $('f-rr-no-doi-url-pct').textContent = pct(csv.filter_no_doi_or_url, rrTotal);
+  $('f-rr-no-abstract').textContent  = fmt(csv.filter_no_abstract);
+  $('f-rr-no-abstract-pct').textContent = pct(csv.filter_no_abstract, rrTotal);
 
   // Extract tab
   $('k-extracted').textContent      = fmt(csv.extracted_count);
@@ -1174,7 +1345,7 @@ async function loadPipeline() {
   const pieData=OUTCOMES.map(k=>({key:k,label:PIE_LABELS[k],color:PIE_COLORS[k],value:csv[`outcome_${k}`]||0}));
   const outTotal=pieData.reduce((s,d)=>s+d.value,0);
   drawDonut($('pie-svg'), pieData);
-  renderLegend($('pie-legend'), pieData, outTotal);
+  renderLegend($('pie-legend'), pieData, outTotal, 'extracted');
 
   // Extract-Test tab
   $('k-test-count').textContent   = fmt(csv.test_extracted_count);
@@ -1190,7 +1361,7 @@ async function loadPipeline() {
   const testPieData=OUTCOMES.map(k=>({key:k,label:PIE_LABELS[k],color:PIE_COLORS[k],value:csv[`test_outcome_${k}`]||0}));
   const testOutTotal=testPieData.reduce((s,d)=>s+d.value,0);
   drawDonut($('pie-test-svg'), testPieData);
-  renderLegend($('pie-test-legend'), testPieData, testOutTotal);
+  renderLegend($('pie-test-legend'), testPieData, testOutTotal, 'extracted-test');
 }
 
 // ── Validation (Supabase) tab ────────────────────────────────────────────────

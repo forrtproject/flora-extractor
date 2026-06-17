@@ -354,3 +354,5 @@ if __name__ == "__main__":
             )
         finally:
             token_counter.print_summary()
+            from shared.dashboard_cache import refresh
+            refresh("filtered")

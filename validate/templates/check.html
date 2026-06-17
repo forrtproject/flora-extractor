@@ -1,254 +1,743 @@
 {% extends "base.html" %}
 {% block title %}FLoRA — Check{% endblock %}
 
+{% block head %}
+<style>
+/* ── Page shell ──────────────────────────────────────────────────────────────── */
+.check-page { max-width:1500px; margin:0 auto; padding:16px; }
+.check-header { margin-bottom:12px; }
+.check-header h2 { font-size:16px; font-weight:700; color:var(--text); margin:0 0 2px; }
+.check-subtitle { font-size:12px; color:var(--text-muted); margin:0; }
+.check-subtitle strong { color:var(--accent); }
+
+/* ── Filter bar ──────────────────────────────────────────────────────────────── */
+.check-filters {
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:8px; padding:12px 14px; margin-bottom:10px;
+}
+.filter-section-label {
+  font-size:9px; font-weight:700; text-transform:uppercase;
+  letter-spacing:.5px; color:var(--text-faint); margin-bottom:8px; display:block;
+}
+.filter-row { display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; }
+.filter-row + .filter-row { margin-top:10px; border-top:1px solid var(--border); padding-top:10px; }
+
+/* Year inputs */
+.year-pair { display:flex; gap:4px; align-items:center; }
+.year-pair input {
+  width:80px; font-size:12px; padding:5px 7px;
+  border:1px solid var(--border); border-radius:5px;
+  background:var(--surface-2); color:var(--text); height:30px;
+}
+.year-pair span { font-size:11px; color:var(--text-faint); }
+
+/* Search input */
+.search-wrap { display:flex; gap:6px; align-items:center; flex:1; min-width:240px; }
+.search-wrap input {
+  flex:1; font-size:12px; padding:5px 8px;
+  border:1px solid var(--border); border-radius:5px;
+  background:var(--surface-2); color:var(--text); height:30px;
+}
+
+/* Buttons */
+.btn-primary {
+  padding:5px 14px; font-size:12px; font-weight:600;
+  background:var(--accent); color:#fff; border:none; border-radius:5px;
+  cursor:pointer; height:30px; white-space:nowrap;
+}
+.btn-primary:hover { opacity:.88; }
+.btn-secondary {
+  padding:5px 11px; font-size:12px; background:var(--surface-2); color:var(--text);
+  border:1px solid var(--border); border-radius:5px; cursor:pointer;
+  text-decoration:none; display:inline-flex; align-items:center; height:30px;
+  white-space:nowrap;
+}
+.btn-secondary:hover { background:var(--border); }
+
+/* ── Multi-select dropdown ───────────────────────────────────────────────────── */
+.ms-group { position:relative; display:inline-flex; flex-direction:column; gap:3px; }
+.ms-label-txt {
+  font-size:9px; font-weight:700; text-transform:uppercase;
+  letter-spacing:.4px; color:var(--text-faint);
+}
+.ms-trigger {
+  display:flex; align-items:center; gap:5px; height:30px; min-width:110px;
+  padding:0 9px; font-size:12px; border:1px solid var(--border); border-radius:5px;
+  background:var(--surface-2); color:var(--text); cursor:pointer;
+  white-space:nowrap; position:relative;
+}
+.ms-trigger:after { content:'▾'; font-size:9px; margin-left:auto; padding-left:6px; color:var(--text-faint); }
+.ms-trigger.has-val { border-color:var(--accent); color:var(--accent); }
+.ms-badge {
+  display:inline-flex; align-items:center; justify-content:center;
+  background:var(--accent); color:#fff; border-radius:10px;
+  font-size:9px; font-weight:700; min-width:16px; height:16px; padding:0 4px;
+}
+.ms-panel {
+  display:none; position:absolute; top:calc(100% + 4px); left:0; z-index:200;
+  background:var(--surface); border:1px solid var(--border); border-radius:6px;
+  padding:6px; min-width:180px; max-height:240px; overflow-y:auto;
+  box-shadow:0 4px 16px rgba(0,0,0,.12);
+}
+.ms-panel.open { display:block; }
+.ms-panel label {
+  display:flex; align-items:center; gap:7px; padding:4px 6px;
+  font-size:11px; color:var(--text); cursor:pointer; border-radius:4px;
+  white-space:nowrap;
+}
+.ms-panel label:hover { background:var(--surface-2); }
+.ms-panel label input[type=checkbox] { accent-color:var(--accent); }
+.ms-clear { font-size:10px; color:var(--text-faint); padding:2px 6px; cursor:pointer; border:none; background:none; width:100%; text-align:left; }
+.ms-clear:hover { color:var(--accent); }
+
+/* ── Stage pills ─────────────────────────────────────────────────────────────── */
+.stage-pills { display:flex; gap:6px; flex-wrap:wrap; }
+.stage-pill {
+  display:inline-flex; align-items:center; gap:5px;
+  padding:4px 10px; border-radius:20px; border:1px solid var(--border);
+  font-size:11px; font-weight:600; cursor:pointer;
+  background:var(--surface-2); color:var(--text-muted);
+  transition:all .12s; user-select:none;
+}
+.stage-pill:hover { border-color:var(--accent); color:var(--accent); }
+.stage-pill.active {
+  background:var(--accent); color:#fff; border-color:var(--accent);
+}
+.stage-pill input { display:none; }
+
+/* Stage badge in table */
+.stage-tag {
+  display:inline-block; font-size:9px; font-weight:700;
+  padding:1px 5px; border-radius:3px; letter-spacing:.3px;
+  vertical-align:middle; white-space:nowrap;
+}
+.stage-tag-candidates     { background:#dbeafe; color:#1d4ed8; }
+.stage-tag-filtered       { background:#d1fae5; color:#065f46; }
+.stage-tag-extracted      { background:#ede9fe; color:#5b21b6; }
+.stage-tag-extracted-test { background:#fef3c7; color:#92400e; }
+
+/* ── Results meta ────────────────────────────────────────────────────────────── */
+.check-results-meta {
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:8px; flex-wrap:wrap; gap:8px;
+}
+#resultsCount { font-size:12px; font-weight:600; color:var(--text-muted); }
+.pager-row { display:flex; align-items:center; gap:6px; }
+.page-btn {
+  font-size:11px; padding:4px 10px; border:1px solid var(--border);
+  border-radius:4px; background:var(--surface); color:var(--text); cursor:pointer;
+}
+.page-btn:hover { background:var(--surface-2); }
+.page-btn:disabled { opacity:.35; cursor:default; }
+.page-info { font-size:11px; color:var(--text-faint); }
+.page-jump { display:flex; align-items:center; gap:4px; font-size:11px; color:var(--text-faint); }
+.page-jump input {
+  width:46px; font-size:11px; padding:3px 5px; text-align:center;
+  border:1px solid var(--border); border-radius:4px; background:var(--surface-2); color:var(--text);
+}
+
+/* ── Table ───────────────────────────────────────────────────────────────────── */
+.check-table-wrap {
+  overflow-x:auto; border:1px solid var(--border); border-radius:8px;
+}
+.check-table { width:100%; border-collapse:collapse; font-size:11.5px; }
+.check-table thead { position:sticky; top:0; z-index:2; }
+.check-table thead tr { background:var(--surface-2); }
+.check-table th {
+  padding:7px 10px; text-align:left; font-size:10px; font-weight:700;
+  text-transform:uppercase; letter-spacing:.4px; color:var(--text-faint);
+  border-bottom:2px solid var(--border); white-space:nowrap;
+}
+.check-table td {
+  padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text);
+  max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.check-table td.td-doi { font-family:monospace; font-size:10px; color:var(--accent); }
+.check-table td.td-title { max-width:320px; }
+.check-table .check-row:hover td { background:var(--surface-2); cursor:pointer; }
+.check-table .check-detail td { max-width:none; white-space:normal; padding:0; }
+.expand-btn {
+  font-size:9px; padding:1px 5px; border:1px solid var(--border);
+  border-radius:3px; background:none; color:var(--text-faint); cursor:pointer;
+}
+.expand-btn:hover { background:var(--surface-2); color:var(--text); }
+
+/* Detail panel */
+.check-detail-inner {
+  padding:10px 12px; background:var(--surface-2);
+  display:flex; flex-direction:column; gap:8px;
+}
+.detail-section {
+  background:var(--surface); border:1px solid var(--border); border-radius:6px; overflow:hidden;
+}
+.detail-section-head {
+  font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.5px;
+  color:var(--text-faint); padding:4px 10px; background:var(--surface-2);
+  border-bottom:1px solid var(--border);
+}
+.detail-fields {
+  display:grid; grid-template-columns:1fr 1fr;
+}
+.detail-field {
+  padding:6px 10px; border-bottom:1px solid var(--border);
+  display:flex; flex-direction:column; gap:2px;
+}
+.detail-field.full { grid-column:1/-1; }
+.detail-field:last-child, .detail-field:nth-last-child(2):not(.full) { border-bottom:none; }
+.detail-field-key {
+  font-size:9px; font-weight:700; text-transform:uppercase;
+  letter-spacing:.4px; color:var(--text-faint);
+}
+.detail-field-val { font-size:11.5px; color:var(--text); word-break:break-word; line-height:1.5; }
+.detail-field-val.mono { font-family:monospace; font-size:10.5px; }
+.detail-field-val.empty { color:var(--text-faint); font-style:italic; font-size:11px; }
+.detail-longtext {
+  font-size:11px; color:var(--text); line-height:1.6; word-break:break-word;
+  max-height:72px; overflow:hidden; white-space:pre-wrap;
+}
+.detail-longtext.expanded { max-height:none; }
+.detail-expand-btn {
+  font-size:9px; color:var(--accent); cursor:pointer; border:none; background:none;
+  padding:2px 0; margin-top:1px; display:inline-block;
+}
+.status-badge {
+  display:inline-block; font-size:9.5px; font-weight:700; letter-spacing:.3px;
+  padding:1px 8px; border-radius:10px;
+}
+.doi-link { font-family:monospace; font-size:10.5px; color:var(--accent); text-decoration:none; }
+.doi-link:hover { text-decoration:underline; }
+
+.loading   { padding:32px; text-align:center; color:var(--text-faint); font-size:12px; }
+.error-msg { padding:16px; color:#dc2626; font-size:12px; }
+.check-empty { padding:32px; text-align:center; color:var(--text-faint); font-style:italic; font-size:12px; }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="check-page">
   <div class="check-header">
     <h2>Check</h2>
-    <p class="check-subtitle">Filter and search across any pipeline CSV.</p>
+    <p class="check-subtitle">Filter and search across <strong>any</strong> pipeline stage. Select multiple stages to compare how the same DOI appears at each point.</p>
   </div>
 
-  <form class="check-filters" id="checkFilters">
-    <div class="filter-row">
-      <label>Stage
-        <select name="stage" id="stageSelect">
-          <option value="extracted">Extracted</option>
-          <option value="extracted-test">Extracted-Test</option>
-          <option value="filtered">Filtered</option>
-          <option value="candidates">Candidates</option>
-        </select>
-      </label>
+  <form class="check-filters" id="checkFilters" onsubmit="return false">
 
-      <label>Year from
-        <input type="number" name="year_from" id="yearFrom" placeholder="e.g. 2010" min="1990" max="2030" style="width:100px">
-      </label>
-
-      <label>Year to
-        <input type="number" name="year_to" id="yearTo" placeholder="e.g. 2024" min="1990" max="2030" style="width:100px">
-      </label>
-
-      <label>Type
-        <select name="type" id="typeSelect">
-          <option value="">Any</option>
-          <option value="replication">Replication</option>
-          <option value="reproduction">Reproduction</option>
-        </select>
-      </label>
-
-      <label>Outcome
-        <select name="outcome" id="outcomeSelect">
-          <option value="">Any</option>
-          <option value="success">Success</option>
-          <option value="failure">Failure</option>
-          <option value="mixed">Mixed</option>
-          <option value="uninformative">Uninformative</option>
-          <option value="descriptive">Descriptive</option>
-          <option value="pending">Pending</option>
-          <option value="api_error">API Error</option>
-        </select>
-      </label>
-
-      <label>Link method
-        <select name="link_method" id="linkMethodSelect">
-          <option value="">Any</option>
-          <option value="author_year_match">Author/year match</option>
-          <option value="llm_abstract">LLM abstract</option>
-          <option value="llm_fulltext">LLM fulltext</option>
-          <option value="target_pending">Target pending</option>
-          <option value="api_error">API error</option>
-        </select>
-      </label>
-
-      <label>Match type
-        <select name="match_type" id="matchTypeSelect">
-          <option value="">Any</option>
-          <option value="single_original">Single original</option>
-          <option value="multiple_match">Multiple match</option>
-          <option value="multiple_original">Multiple original</option>
-        </select>
-      </label>
-
-      <label>DOI verified
-        <select name="doi_verified" id="doiVerifiedSelect">
-          <option value="">Any</option>
-          <option value="verified">Verified</option>
-          <option value="corrected">Corrected</option>
-          <option value="mismatch">Mismatch</option>
-          <option value="no_doi">No DOI</option>
-          <option value="not_found">Not found</option>
-          <option value="no_metadata">No metadata</option>
-          <option value="api_error">API error</option>
-          <option value="skipped">Skipped</option>
-        </select>
-      </label>
-
-      <label>Source
-        <select name="source" id="sourceSelect">
-          <option value="">Any</option>
-          <option value="openalex">OpenAlex</option>
-          <option value="semantic_scholar">Semantic Scholar</option>
-        </select>
-      </label>
+    <!-- Stage selector -->
+    <span class="filter-section-label">Stage (select one or more)</span>
+    <div class="stage-pills" id="stagePills">
+      <label class="stage-pill active"><input type="checkbox" name="stage" value="extracted" checked> Extracted</label>
+      <label class="stage-pill"><input type="checkbox" name="stage" value="extracted-test"> Extracted-Test</label>
+      <label class="stage-pill"><input type="checkbox" name="stage" value="filtered"> Filtered</label>
+      <label class="stage-pill"><input type="checkbox" name="stage" value="candidates"> Candidates</label>
     </div>
 
-    <div class="filter-row filter-row-search">
-      <label class="search-label">
-        <input type="text" name="q" id="searchQ" placeholder="Search by DOI or title…" style="width:340px">
-      </label>
-      <button type="submit" class="btn-primary">Search</button>
-      <button type="button" id="resetBtn" class="btn-secondary">Reset</button>
-      <a id="downloadBtn" href="#" class="btn-secondary" download>Download CSV</a>
+    <!-- Row 1: year + type + multi-select filters -->
+    <div class="filter-row" style="margin-top:12px">
+      <div style="display:flex;flex-direction:column;gap:3px">
+        <span class="ms-label-txt">Year range</span>
+        <div class="year-pair">
+          <input type="number" name="year_from" id="yearFrom" placeholder="From" min="1990" max="2030">
+          <span>–</span>
+          <input type="number" name="year_to" id="yearTo" placeholder="To" min="1990" max="2030">
+        </div>
+      </div>
+
+      <!-- Type / filter_status -->
+      <div class="ms-group" id="ms-type">
+        <span class="ms-label-txt">Type / Status</span>
+        <button type="button" class="ms-trigger" id="ms-type-trigger">Any</button>
+        <div class="ms-panel" id="ms-type-panel">
+          <button type="button" class="ms-clear" onclick="clearMs('type')">Clear</button>
+        </div>
+      </div>
+
+      <!-- Outcome -->
+      <div class="ms-group">
+        <span class="ms-label-txt">Outcome</span>
+        <button type="button" class="ms-trigger" data-ms="outcome">Any</button>
+        <div class="ms-panel" data-ms-panel="outcome">
+          <button type="button" class="ms-clear" onclick="clearMs('outcome')">Clear</button>
+          <label><input type="checkbox" data-ms-val="outcome" value="success"> Success</label>
+          <label><input type="checkbox" data-ms-val="outcome" value="failure"> Failure</label>
+          <label><input type="checkbox" data-ms-val="outcome" value="mixed"> Mixed</label>
+          <label><input type="checkbox" data-ms-val="outcome" value="uninformative"> Uninformative</label>
+          <label><input type="checkbox" data-ms-val="outcome" value="cannot_be_determined"> Cannot be determined</label>
+          <label><input type="checkbox" data-ms-val="outcome" value="descriptive"> Descriptive</label>
+          <label><input type="checkbox" data-ms-val="outcome" value="pending"> Pending</label>
+          <label><input type="checkbox" data-ms-val="outcome" value="api_error"> API error</label>
+        </div>
+      </div>
+
+      <!-- Link method -->
+      <div class="ms-group">
+        <span class="ms-label-txt">Link method</span>
+        <button type="button" class="ms-trigger" data-ms="link_method">Any</button>
+        <div class="ms-panel" data-ms-panel="link_method">
+          <button type="button" class="ms-clear" onclick="clearMs('link_method')">Clear</button>
+          <label><input type="checkbox" data-ms-val="link_method" value="author_year_match"> Author/year match</label>
+          <label><input type="checkbox" data-ms-val="link_method" value="llm_abstract"> LLM abstract</label>
+          <label><input type="checkbox" data-ms-val="link_method" value="llm_fulltext"> LLM fulltext</label>
+          <label><input type="checkbox" data-ms-val="link_method" value="no_original_found"> No original found</label>
+          <label><input type="checkbox" data-ms-val="link_method" value="target_pending"> Target pending</label>
+          <label><input type="checkbox" data-ms-val="link_method" value="api_error"> API error</label>
+        </div>
+      </div>
+
+      <!-- Match type -->
+      <div class="ms-group">
+        <span class="ms-label-txt">Match type</span>
+        <button type="button" class="ms-trigger" data-ms="match_type">Any</button>
+        <div class="ms-panel" data-ms-panel="match_type">
+          <button type="button" class="ms-clear" onclick="clearMs('match_type')">Clear</button>
+          <label><input type="checkbox" data-ms-val="match_type" value="single_original"> Single original</label>
+          <label><input type="checkbox" data-ms-val="match_type" value="multiple_match"> Multiple match</label>
+          <label><input type="checkbox" data-ms-val="match_type" value="multiple_original"> Multiple original</label>
+        </div>
+      </div>
+
+      <!-- DOI verified -->
+      <div class="ms-group">
+        <span class="ms-label-txt">DOI verified</span>
+        <button type="button" class="ms-trigger" data-ms="doi_verified">Any</button>
+        <div class="ms-panel" data-ms-panel="doi_verified">
+          <button type="button" class="ms-clear" onclick="clearMs('doi_verified')">Clear</button>
+          <label><input type="checkbox" data-ms-val="doi_verified" value="verified"> Verified</label>
+          <label><input type="checkbox" data-ms-val="doi_verified" value="corrected"> Corrected</label>
+          <label><input type="checkbox" data-ms-val="doi_verified" value="mismatch"> Mismatch</label>
+          <label><input type="checkbox" data-ms-val="doi_verified" value="no_doi"> No DOI</label>
+          <label><input type="checkbox" data-ms-val="doi_verified" value="not_found"> Not found</label>
+          <label><input type="checkbox" data-ms-val="doi_verified" value="no_metadata"> No metadata</label>
+          <label><input type="checkbox" data-ms-val="doi_verified" value="api_error"> API error</label>
+          <label><input type="checkbox" data-ms-val="doi_verified" value="skipped"> Skipped</label>
+        </div>
+      </div>
+
+      <!-- Source -->
+      <div class="ms-group">
+        <span class="ms-label-txt">Source</span>
+        <button type="button" class="ms-trigger" data-ms="source">Any</button>
+        <div class="ms-panel" data-ms-panel="source">
+          <button type="button" class="ms-clear" onclick="clearMs('source')">Clear</button>
+          <label><input type="checkbox" data-ms-val="source" value="openalex"> OpenAlex</label>
+          <label><input type="checkbox" data-ms-val="source" value="semantic_scholar"> Semantic Scholar</label>
+          <label><input type="checkbox" data-ms-val="source" value="engine"> Engine</label>
+          <label><input type="checkbox" data-ms-val="source" value="bob_reed"> Bob Reed</label>
+          <label><input type="checkbox" data-ms-val="source" value="i4r"> I4R</label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 2: search + actions -->
+    <div class="filter-row">
+      <div class="search-wrap">
+        <input type="text" name="q" id="searchQ" placeholder="Search by DOI, title, doi_o, title_o…">
+      </div>
+      <button type="button" class="btn-primary" onclick="search(1)">Search</button>
+      <button type="button" id="resetBtn" class="btn-secondary" onclick="resetFilters()">Reset</button>
+      <a id="downloadBtn" href="#" class="btn-secondary" download>↓ Download CSV</a>
     </div>
   </form>
 
   <div class="check-results-meta" id="resultsMeta" style="display:none">
     <span id="resultsCount"></span>
-    <div class="check-pagination" id="pagination"></div>
+    <div class="pager-row">
+      <button class="page-btn" id="prevBtn" onclick="search(currentPage-1)" disabled>← Prev</button>
+      <span class="page-info" id="pageInfo"></span>
+      <button class="page-btn" id="nextBtn" onclick="search(currentPage+1)" disabled>Next →</button>
+      <div class="page-jump">
+        Go to <input type="number" id="jumpInput" min="1" value="1"> <button class="page-btn" onclick="jumpPage()">Go</button>
+      </div>
+    </div>
   </div>
 
-  <div id="resultsTable" class="check-table-wrap"></div>
+  <div id="resultsTable" class="check-table-wrap" style="display:none"></div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-(function () {
-  var currentPage = 1;
-  var currentTotal = 0;
-  var currentPages = 1;
+'use strict';
+// ── State ─────────────────────────────────────────────────────────────────────
+var currentPage  = 1;
+var currentTotal = 0;
+var currentPages = 1;
 
-  function buildQuery(page) {
-    var f = document.getElementById('checkFilters');
-    var params = new URLSearchParams({
-      stage:        f.stage.value,
-      year_from:    f.year_from.value,
-      year_to:      f.year_to.value,
-      type:         f.type.value,
-      outcome:      f.outcome.value,
-      link_method:  f.link_method.value,
-      match_type:   f.match_type.value,
-      doi_verified: f.doi_verified.value,
-      source:       f.source.value,
-      q:            f.q.value,
-      page:         page || 1,
-      per_page:     25,
+// ── Stage pills ───────────────────────────────────────────────────────────────
+document.querySelectorAll('.stage-pill').forEach(function(pill) {
+  var cb = pill.querySelector('input[type=checkbox]');
+  // Use change event only — letting the browser handle the checkbox toggle via
+  // default label behavior avoids the double-toggle that a click handler causes.
+  cb.addEventListener('change', function() {
+    pill.classList.toggle('active', cb.checked);
+    updateTypePanelOptions();
+  });
+});
+
+function getSelectedStages() {
+  return Array.from(document.querySelectorAll('.stage-pill input:checked')).map(function(cb) { return cb.value; });
+}
+
+// ── Type panel — dynamic options based on selected stages ─────────────────────
+var TYPE_OPTS_EXTRACTED = [
+  {value:'replication',   label:'Replication'},
+  {value:'reproduction',  label:'Reproduction'},
+];
+var TYPE_OPTS_FILTERED = [
+  {value:'replication',   label:'Replication'},
+  {value:'reproduction',  label:'Reproduction'},
+  {value:'needs_review',  label:'Needs review'},
+  {value:'false_positive',label:'False positive'},
+];
+
+function updateTypePanelOptions() {
+  var stages     = getSelectedStages();
+  var hasFiltered  = stages.some(function(s){ return s === 'filtered'; });
+  var hasExtracted = stages.some(function(s){ return s === 'extracted' || s === 'extracted-test'; });
+  var hasCands     = stages.some(function(s){ return s === 'candidates'; });
+
+  var panel = document.getElementById('ms-type-panel');
+  // Remove all children except the Clear button
+  Array.from(panel.children).forEach(function(child) {
+    if (!child.classList.contains('ms-clear')) child.remove();
+  });
+
+  var opts = [];
+  if (hasFiltered) opts = opts.concat(TYPE_OPTS_FILTERED);
+  if (hasExtracted) {
+    TYPE_OPTS_EXTRACTED.forEach(function(o) {
+      if (!opts.some(function(x){ return x.value === o.value; })) opts.push(o);
     });
-    return params;
   }
 
-  function search(page) {
-    currentPage = page || 1;
-    var params = buildQuery(currentPage);
-    document.getElementById('resultsTable').innerHTML = '<div class="loading">Loading…</div>';
-    document.getElementById('resultsMeta').style.display = 'none';
-
-    fetch('/api/check/search?' + params.toString())
-      .then(function(r){ return r.json(); })
-      .then(function(data) {
-        currentTotal = data.total;
-        currentPages = data.pages;
-        renderResults(data);
-        updateDownloadLink();
-      })
-      .catch(function(e) {
-        document.getElementById('resultsTable').innerHTML = '<div class="error-msg">Error: ' + e + '</div>';
-      });
+  if (!opts.length) {
+    var note = document.createElement('div');
+    note.style.cssText = 'font-size:10px;color:var(--text-faint);padding:6px;';
+    note.textContent = hasCands
+      ? 'Candidates stage has no type filter.'
+      : 'Select a stage to see type options.';
+    panel.appendChild(note);
+    return;
   }
 
-  function renderResults(data) {
-    var meta = document.getElementById('resultsMeta');
-    meta.style.display = 'flex';
-    document.getElementById('resultsCount').textContent =
-      data.total.toLocaleString() + ' row' + (data.total === 1 ? '' : 's') + ' found';
+  opts.forEach(function(o) {
+    var lbl = document.createElement('label');
+    lbl.innerHTML = '<input type="checkbox" data-ms-val="type" value="' + o.value + '"> ' + o.label;
+    lbl.querySelector('input').addEventListener('change', function(){ updateMsTrigger('type'); });
+    panel.appendChild(lbl);
+  });
+}
+updateTypePanelOptions();
 
-    renderPagination(data.page, data.pages);
+// ── Multi-select component ────────────────────────────────────────────────────
+function initMs(name) {
+  var trigger = document.querySelector('[data-ms="' + name + '"]');
+  var panel   = document.querySelector('[data-ms-panel="' + name + '"]');
+  if (!trigger || !panel) return;
 
-    var wrap = document.getElementById('resultsTable');
-    if (!data.rows || data.rows.length === 0) {
-      wrap.innerHTML = '<div class="check-empty">No results.</div>';
-      return;
+  trigger.addEventListener('click', function(e) {
+    e.stopPropagation();
+    closeAllPanels();
+    panel.classList.toggle('open');
+  });
+
+  panel.querySelectorAll('input[type=checkbox]').forEach(function(cb) {
+    cb.addEventListener('change', function(){ updateMsTrigger(name); });
+  });
+}
+
+// also wire the type trigger
+document.getElementById('ms-type-trigger').addEventListener('click', function(e) {
+  e.stopPropagation();
+  closeAllPanels();
+  document.getElementById('ms-type-panel').classList.toggle('open');
+});
+
+function closeAllPanels() {
+  document.querySelectorAll('.ms-panel.open').forEach(function(p){ p.classList.remove('open'); });
+}
+document.addEventListener('click', closeAllPanels);
+document.querySelectorAll('.ms-panel').forEach(function(p){
+  p.addEventListener('click', function(e){ e.stopPropagation(); });
+});
+
+['outcome','link_method','match_type','doi_verified','source'].forEach(initMs);
+
+function updateMsTrigger(name) {
+  var isType  = name === 'type';
+  var trigger = isType ? document.getElementById('ms-type-trigger')
+                       : document.querySelector('[data-ms="' + name + '"]');
+  var checked = getMsValues(name);
+  if (!checked.length) {
+    trigger.textContent = 'Any';
+    trigger.classList.remove('has-val');
+  } else {
+    trigger.innerHTML = '<span class="ms-badge">' + checked.length + '</span> selected';
+    trigger.classList.add('has-val');
+  }
+}
+
+function getMsValues(name) {
+  var attr = name === 'type' ? 'type' : name;
+  return Array.from(document.querySelectorAll(
+    'input[data-ms-val="' + attr + '"]:checked'
+  )).map(function(cb){ return cb.value; });
+}
+
+function clearMs(name) {
+  document.querySelectorAll('input[data-ms-val="' + name + '"]').forEach(function(cb){ cb.checked = false; });
+  updateMsTrigger(name);
+}
+
+// ── Build query params ────────────────────────────────────────────────────────
+function buildQuery(page) {
+  var params = new URLSearchParams();
+  getSelectedStages().forEach(function(s){ params.append('stage', s); });
+
+  var yf = document.getElementById('yearFrom').value.trim();
+  var yt = document.getElementById('yearTo').value.trim();
+  if (yf) params.set('year_from', yf);
+  if (yt) params.set('year_to',   yt);
+
+  ['type','outcome','link_method','match_type','doi_verified','source'].forEach(function(n){
+    getMsValues(n).forEach(function(v){ params.append(n, v); });
+  });
+
+  var q = document.getElementById('searchQ').value.trim();
+  if (q) params.set('q', q);
+  params.set('page', page || 1);
+  params.set('per_page', 25);
+  return params;
+}
+
+// ── Search ────────────────────────────────────────────────────────────────────
+function search(page) {
+  currentPage = Math.max(1, page || 1);
+  var params = buildQuery(currentPage);
+
+  var wrap = document.getElementById('resultsTable');
+  wrap.innerHTML = '<div class="loading">Loading…</div>';
+  wrap.style.display = 'block';
+  document.getElementById('resultsMeta').style.display = 'none';
+
+  fetch('/api/check/search?' + params.toString())
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+      currentTotal = data.total;
+      currentPages = data.pages;
+      renderResults(data);
+      updateDownloadLink();
+    })
+    .catch(function(e) {
+      wrap.innerHTML = '<div class="error-msg">Error: ' + e + '</div>';
+    });
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+var MAIN_COLS = ['_stage','doi_r','title_r','doi_o','title_o'];
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+var STAGE_TAG_CLASS = {
+  'candidates':     'stage-tag-candidates',
+  'filtered':       'stage-tag-filtered',
+  'extracted':      'stage-tag-extracted',
+  'extracted-test': 'stage-tag-extracted-test',
+};
+var STAGE_ABBR = {
+  'candidates':'CAND','filtered':'FILT',
+  'extracted':'EXT','extracted-test':'TEST',
+};
+
+// ── Detail panel helpers ──────────────────────────────────────────────────────
+var DETAIL_SECTIONS = [
+  { label: 'Replication Paper', cols: ['doi_r','year_r','title_r','authors_r','journal_r','source','url_r','openalex_id_r','ref_r','abstract_r'] },
+  { label: 'Filter',            cols: ['filter_status','filter_method','filter_confidence','filter_evidence'] },
+  { label: 'Original Study',   cols: ['doi_o','year_o','title_o','authors_o','ref_o'] },
+  { label: 'Link',             cols: ['original_match_type','original_match_confidence','link_method','link_confidence','link_llm_model','link_evidence'] },
+  { label: 'DOI Verification', cols: ['doi_o_verification'] },
+  { label: 'Outcome',          cols: ['outcome','outcome_confidence','out_quote_source','outcome_phrase','outcome_reasoning'] },
+  { label: 'Meta',             cols: ['type','original_rank','n_originals','pair_id'] },
+];
+var DETAIL_LONG_COLS = new Set(['abstract_r','ref_r','ref_o','link_evidence','filter_evidence','outcome_phrase','outcome_reasoning','title_r','title_o','url_r']);
+var DETAIL_DOI_COLS  = new Set(['doi_r','doi_o']);
+var BADGE_COLORS = {
+  success:'#22c55e', failure:'#ef4444', mixed:'#f59e0b', uninformative:'#8b5cf6',
+  cannot_be_determined:'#6b7280', descriptive:'#3b82f6', pending:'#9ca3af', api_error:'#dc2626',
+  replication:'#22c55e', reproduction:'#3b82f6', false_positive:'#ef4444', needs_review:'#f59e0b',
+  high:'#22c55e', medium:'#f59e0b', low:'#ef4444',
+  verified:'#22c55e', corrected:'#3b82f6', mismatch:'#ef4444',
+  no_doi:'#9ca3af', not_found:'#6b7280', no_metadata:'#8b5cf6', skipped:'#9ca3af',
+  author_year_match:'#22c55e', llm_abstract:'#3b82f6', llm_fulltext:'#6366f1',
+  no_original_found:'#9ca3af', target_pending:'#f59e0b',
+  single_original:'#22c55e', multiple_match:'#f59e0b', multiple_original:'#3b82f6',
+  rule_based:'#9ca3af', llm:'#3b82f6', both:'#6366f1',
+  abstract:'#9ca3af', fulltext:'#3b82f6',
+};
+var _ltCounter = 0;
+function fmtKey(k) {
+  return k.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();});
+}
+function fmtDetailVal(col, val) {
+  if (val == null || String(val).trim() === '') return '<span class="detail-field-val empty">—</span>';
+  var s = String(val);
+  if (DETAIL_DOI_COLS.has(col)) {
+    return '<a class="doi-link" href="https://doi.org/' + esc(s) + '" target="_blank">' + esc(s) + '</a>';
+  }
+  var color = BADGE_COLORS[s];
+  if (color) {
+    return '<span class="status-badge" style="background:' + color + '22;color:' + color + ';border:1px solid ' + color + '40">' + esc(s) + '</span>';
+  }
+  if (DETAIL_LONG_COLS.has(col) && s.length > 120) {
+    var ltId = 'lt' + (++_ltCounter);
+    return '<div class="detail-longtext" id="' + ltId + '">' + esc(s) + '</div>' +
+      '<button class="detail-expand-btn" data-target="' + ltId + '">Show more ▾</button>';
+  }
+  var isMono = col.indexOf('doi') !== -1 || col.indexOf('id') !== -1 || col === 'pair_id' || col === 'openalex_id_r';
+  return '<span class="detail-field-val' + (isMono ? ' mono' : '') + '">' + esc(s) + '</span>';
+}
+function renderDetailSection(sec, rowData, presentCols) {
+  var fields = sec.cols.filter(function(c){ return presentCols.indexOf(c) !== -1; });
+  if (!fields.length) return '';
+  var out = '<div class="detail-section"><div class="detail-section-head">' + esc(sec.label) + '</div><div class="detail-fields">';
+  fields.forEach(function(c) {
+    var isLong = DETAIL_LONG_COLS.has(c);
+    out += '<div class="detail-field' + (isLong ? ' full' : '') + '">';
+    out += '<div class="detail-field-key">' + esc(fmtKey(c)) + '</div>';
+    out += '<div class="detail-field-val">' + fmtDetailVal(c, rowData[c]) + '</div>';
+    out += '</div>';
+  });
+  out += '</div></div>';
+  return out;
+}
+
+function renderResults(data) {
+  var meta = document.getElementById('resultsMeta');
+  meta.style.display = 'flex';
+  document.getElementById('resultsCount').textContent =
+    data.total.toLocaleString() + ' row' + (data.total === 1 ? '' : 's') + ' found';
+
+  document.getElementById('pageInfo').textContent = 'Page ' + data.page + ' / ' + data.pages;
+  document.getElementById('jumpInput').value = data.page;
+  document.getElementById('jumpInput').max   = data.pages;
+  document.getElementById('prevBtn').disabled = (data.page <= 1);
+  document.getElementById('nextBtn').disabled = (data.page >= data.pages);
+
+  var wrap = document.getElementById('resultsTable');
+  if (!data.rows || data.rows.length === 0) {
+    wrap.innerHTML = '<div class="check-empty">No results found for the current filters.</div>';
+    return;
+  }
+
+  var allCols = Object.keys(data.rows[0]);
+  var multiStage = allCols.includes('_stage');
+
+  // visible columns = intersection of MAIN_COLS with those present
+  var visCols = MAIN_COLS.filter(function(c){ return allCols.includes(c); });
+
+  var html = '<table class="check-table"><thead><tr><th></th>';
+  if (multiStage) html += '<th>Stage</th>';
+  visCols.filter(function(c){ return c !== '_stage'; }).forEach(function(c){
+    html += '<th>' + esc(c) + '</th>';
+  });
+  html += '</tr></thead><tbody>';
+
+  data.rows.forEach(function(row, i) {
+    var rid = 'row-' + i;
+    html += '<tr class="check-row">';
+    html += '<td><button class="expand-btn" data-target="' + rid + '">▶</button></td>';
+    if (multiStage) {
+      var s = row['_stage'] || '';
+      var cls = STAGE_TAG_CLASS[s] || '';
+      html += '<td><span class="stage-tag ' + cls + '">' + esc(STAGE_ABBR[s] || s) + '</span></td>';
     }
-
-    var cols = Object.keys(data.rows[0]);
-    var html = '<table class="check-table"><thead><tr>';
-    html += '<th></th>';
-    cols.forEach(function(c){ html += '<th>' + esc(c) + '</th>'; });
-    html += '</tr></thead><tbody>';
-
-    data.rows.forEach(function(row, i) {
-      var rid = 'row-' + i;
-      html += '<tr class="check-row" data-idx="' + i + '">';
-      html += '<td><button class="expand-btn" data-target="' + rid + '">▶</button></td>';
-      cols.forEach(function(c){
-        var v = row[c] || '';
-        if (v.length > 60) v = v.substring(0, 57) + '…';
-        html += '<td title="' + esc(row[c] || '') + '">' + esc(v) + '</td>';
-      });
-      html += '</tr>';
-      html += '<tr class="check-detail" id="' + rid + '" style="display:none">';
-      html += '<td colspan="' + (cols.length + 1) + '"><div class="check-detail-inner">';
-      cols.forEach(function(c){
-        if (row[c]) {
-          html += '<div class="detail-field"><span class="detail-key">' + esc(c) + '</span>';
-          html += '<span class="detail-val">' + esc(row[c]) + '</span></div>';
-        }
-      });
-      html += '</div></td></tr>';
+    visCols.filter(function(c){ return c !== '_stage'; }).forEach(function(c){
+      var v = row[c] || '';
+      var cls = c === 'doi_r' || c === 'doi_o' ? ' class="td-doi"' : c === 'title_r' || c === 'title_o' ? ' class="td-title"' : '';
+      var disp = String(v).length > 80 ? String(v).substring(0, 77) + '…' : v;
+      html += '<td' + cls + ' title="' + esc(v) + '">' + esc(disp) + '</td>';
     });
-    html += '</tbody></table>';
-    wrap.innerHTML = html;
+    html += '</tr>';
 
-    wrap.querySelectorAll('.expand-btn').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        var target = document.getElementById(btn.getAttribute('data-target'));
-        var open = target.style.display !== 'none';
-        target.style.display = open ? 'none' : 'table-row';
-        btn.textContent = open ? '▶' : '▼';
+    // Detail row — grouped sections
+    html += '<tr class="check-detail" id="' + rid + '" style="display:none">';
+    html += '<td colspan="' + (visCols.length + (multiStage ? 2 : 1)) + '">';
+    html += '<div class="check-detail-inner">';
+    var presentCols = allCols.filter(function(c){ return c !== '_stage'; });
+    var sectioned = {};
+    DETAIL_SECTIONS.forEach(function(sec){ sec.cols.forEach(function(c){ sectioned[c]=true; }); html += renderDetailSection(sec, row, presentCols); });
+    var extras = presentCols.filter(function(c){ return !sectioned[c]; });
+    if (extras.length) {
+      html += '<div class="detail-section"><div class="detail-section-head">Other</div><div class="detail-fields">';
+      extras.forEach(function(c){
+        html += '<div class="detail-field"><div class="detail-field-key">' + esc(fmtKey(c)) + '</div><div class="detail-field-val">' + fmtDetailVal(c, row[c]) + '</div></div>';
       });
+      html += '</div></div>';
+    }
+    html += '</div></td></tr>';
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+
+  wrap.querySelectorAll('.expand-btn').forEach(function(btn) {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var target = document.getElementById(btn.getAttribute('data-target'));
+      var open   = target.style.display !== 'none';
+      target.style.display = open ? 'none' : 'table-row';
+      btn.textContent = open ? '▶' : '▼';
     });
-  }
-
-  function renderPagination(page, pages) {
-    var el = document.getElementById('pagination');
-    if (pages <= 1) { el.innerHTML = ''; return; }
-    var html = '';
-    if (page > 1) html += '<button class="page-btn" data-page="' + (page-1) + '">← Prev</button>';
-    html += '<span class="page-info">Page ' + page + ' / ' + pages + '</span>';
-    if (page < pages) html += '<button class="page-btn" data-page="' + (page+1) + '">Next →</button>';
-    el.innerHTML = html;
-    el.querySelectorAll('.page-btn').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        search(parseInt(btn.getAttribute('data-page')));
-      });
-    });
-  }
-
-  function updateDownloadLink() {
-    var params = buildQuery(1);
-    params.delete('page');
-    params.delete('per_page');
-    document.getElementById('downloadBtn').href = '/api/check/download?' + params.toString();
-  }
-
-  function esc(s) {
-    return String(s)
-      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
-
-  document.getElementById('checkFilters').addEventListener('submit', function(e) {
-    e.preventDefault();
-    search(1);
   });
 
-  document.getElementById('resetBtn').addEventListener('click', function() {
-    document.getElementById('checkFilters').reset();
-    document.getElementById('resultsTable').innerHTML = '';
-    document.getElementById('resultsMeta').style.display = 'none';
+  wrap.querySelectorAll('.detail-expand-btn').forEach(function(btn) {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var lt = document.getElementById(btn.getAttribute('data-target'));
+      var expanded = lt.classList.toggle('expanded');
+      btn.textContent = expanded ? 'Show less ▴' : 'Show more ▾';
+    });
   });
 
-  // Auto-search on load
+  // click row = expand
+  wrap.querySelectorAll('.check-row').forEach(function(row, i) {
+    row.addEventListener('click', function(e) {
+      if (e.target.closest('.expand-btn')) return;
+      var btn = row.querySelector('.expand-btn');
+      btn.click();
+    });
+  });
+}
+
+// ── Pagination ────────────────────────────────────────────────────────────────
+function jumpPage() {
+  var v = parseInt(document.getElementById('jumpInput').value, 10);
+  if (!isNaN(v) && v >= 1 && v <= currentPages) search(v);
+}
+document.getElementById('jumpInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') jumpPage();
+});
+
+// ── Reset ─────────────────────────────────────────────────────────────────────
+function resetFilters() {
+  document.getElementById('yearFrom').value = '';
+  document.getElementById('yearTo').value   = '';
+  document.getElementById('searchQ').value  = '';
+  ['type','outcome','link_method','match_type','doi_verified','source'].forEach(function(n) {
+    clearMs(n);
+  });
   search(1);
-})();
+}
+
+// ── Download link ─────────────────────────────────────────────────────────────
+function updateDownloadLink() {
+  var params = buildQuery(1);
+  params.delete('page');
+  params.delete('per_page');
+  document.getElementById('downloadBtn').href = '/api/check/download?' + params.toString();
+}
+
+// ── Auto-search on load ───────────────────────────────────────────────────────
+search(1);
 </script>
 {% endblock %}

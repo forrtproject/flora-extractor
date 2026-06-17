@@ -1262,3 +1262,5 @@ if __name__ == "__main__":
             )
     finally:
         token_counter.print_summary()
+        from shared.dashboard_cache import refresh as _dc_refresh
+        _dc_refresh("extracted-test" if args.extracted_test else "extracted")

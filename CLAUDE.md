@@ -142,69 +142,16 @@ The web app provides tabbed views for each stage's output:
 
 ## CSV Schema — The Contract Between Stages
 
-The authoritative schema definition is in **`shared/schema.py`**. The summary below is for orientation; if there is any discrepancy, `schema.py` wins.
+The authoritative schema definition is **`shared/schema.py`**. Human-readable column reference: **[`docs/csv-schema.md`](docs/csv-schema.md)**.
 
 Never change a column name without updating `schema.py` and notifying all teams.
 
-### `data/candidates.csv` (Stage 1 → Stage 2)
+Key constraints:
 
-```text
-doi_r, title_r, abstract_r, year_r, authors_r, journal_r,
-url_r, openalex_id_r, source
-```
-
-`source` values: `openalex | bob_reed | i4r | semantic_scholar | ...`
-
-### `data/filtered.csv` (Stage 2 → Stage 3)
-
-All candidates.csv columns, plus:
-
-```text
-filter_status      — replication | reproduction | false_positive | needs_review
-filter_method      — rule_based | llm | both
-filter_evidence    — phrase or quote that triggered classification
-filter_confidence  — high | medium | low  (categorical)
-```
-
-`filter_confidence` is categorical, not a continuous float. A single LLM call cannot reliably produce calibrated probabilities; a three-level label is more honest and easier to act on.
-
-### `data/extracted.csv` (Stage 3 → Stage 4)
-
-All filtered.csv columns, plus:
-
-```text
-original_match_type       — single_original | multiple_match | multiple_original
-original_match_confidence — high | medium | low
-doi_o, title_o, year_o, authors_o
-link_method    — author_year_match | llm_abstract | llm_fulltext | target_pending | api_error
-link_evidence
-link_confidence           — high | medium | low
-doi_o_verification        — verified | corrected | mismatch | no_doi | not_found | no_metadata | api_error | skipped
-outcome        — success | failure | mixed | uninformative | descriptive | pending | api_error
-outcome_phrase, outcome_confidence, out_quote_source
-type           — replication | reproduction
-original_rank  — 1 for single; 1,2,3... for multi-original papers
-n_originals
-```
-
-`original_match_type` is determined by Stage 3 as its first routing step — not by Stage 2.
-
-`outcome = descriptive`: paper replicated methods in a different context but does not test the original claim. Include in extraction; flag for review during validation.
-
-`api_error`: set when extraction failed after retries. Reviewers see these in the Validate tab.
-
-### `data/validated.csv` (Stage 4 output)
-
-All extracted.csv columns, plus:
-
-```text
-validation_status  — confirmed | rejected | pending | needs_review
-vote_count, confirm_votes, reject_votes, validator_notes
-validated_doi_o    — reviewer-corrected original DOI (blank = accepted unchanged)
-validated_outcome  — reviewer-corrected outcome (blank = accepted unchanged)
-```
-
-`validated_doi_o` and `validated_outcome` enable accuracy measurement by diffing against the extracted values.
+- `filter_confidence` is categorical (`high | medium | low`), not a float — a single LLM call cannot produce calibrated probabilities.
+- `outcome = descriptive`: paper replicated methods in a different context but does not test the original claim. Include in extraction; flag for review during validation.
+- `api_error` in any field means extraction failed after retries — reviewers see these in the Validate tab.
+- `original_match_type` is determined by Stage 3 as its first routing step — not inherited from Stage 2.
 
 ---
 
@@ -467,49 +414,23 @@ python -m extract.audit_dois --doi 10.x/y     # single row
 python -m extract.audit_dois --extracted-test # audit extracted-test.csv instead
 ```
 
-`doi_o_verification` status values:
-
-| Status | Meaning | Effect on doi_o |
-| --- | --- | --- |
-| `verified` | DOI metadata matches title/year | unchanged |
-| `corrected` | Wrong/unregistered/blank DOI; confident replacement found | replaced or filled |
-| `mismatch` | Metadata disagrees, no confident replacement | kept; `link_confidence` → low |
-| `no_doi` | Original found in OpenAlex but has no registered DOI | blank (intentional) |
-| `not_found` | Blank DOI, no confident match anywhere | stays blank; needs review |
-| `no_metadata` | DOI unregistered, no replacement found | kept; flagged |
-| `api_error` | CrossRef + OpenAlex both failed after retries | unchanged |
-| `skipped` | Nothing to verify, or row is target_pending/api_error | unchanged |
-
-Matching thresholds live as constants in `shared/doi_verify.py` (`VERIFY_TITLE_JACCARD = 0.5`, `RESOLVE_TITLE_JACCARD = 0.7`, `TITLE_ONLY_JACCARD = 0.6`, `TITLE_ONLY_GAP = 1.5`, `YEAR_TOLERANCE = 1`). Auto-correction tries three tiers, strictest first — a wrong auto-correction is worse than a flag:
-
-1. title Jaccard ≥ 0.7 AND author surname AND year ±1
-2. same, without the year (year_o is often inherited from the wrong DOI) — requires a known author
-3. title-only dominance: best hit ≥ 0.6 AND ≥ 1.5 × the second-best (author_o can be inherited from the wrong DOI too); hits are deduped by DOI across CrossRef/OpenAlex so a duplicate can't tie with itself
-
-All API responses are cached in `cache/doi_verify/`. The Extract / Extract Test detail panels show the status as a "DOI Check" field.
+Matching thresholds are constants in `shared/doi_verify.py` (`VERIFY_TITLE_JACCARD = 0.5`, `RESOLVE_TITLE_JACCARD = 0.7`, `TITLE_ONLY_JACCARD = 0.6`, `TITLE_ONLY_GAP = 1.5`, `YEAR_TOLERANCE = 1`). Auto-correction tries three tiers strictest-first — a wrong correction is worse than a flag. `doi_o_verification` status values and their meanings are in [`docs/csv-schema.md`](docs/csv-schema.md).
 
 Design spec: `docs/superpowers/specs/2026-06-12-doi-verification-design.md`.
 
 ---
 
-## What Is Already Done
+## Implementation Status
 
-The following are implemented and working (ported from the *OpenAlexLLM* prototype — an internal earlier-generation pipeline for the same task):
+All core pipeline modules are implemented and running. `shared/` was ported from the *OpenAlexLLM* prototype — it works but predates this project's test suite; see caveats in the Module Map above.
 
-- All of `shared/` — but see caveats above about semantic validation
-- `validate/` — Stage 4 app is fully implemented and running
-- `validate/import_csv.py` — imports `data/flora_selected.csv` (107 rows) into SQLite
+For the full feature list and what each module does, read the module map above and the docs:
 
-"Ported from OpenAlexLLM" means the code was adapted from a private prototype that was built for an earlier round of FLoRA extraction. It does what it claims to do but predates this project's test suite and schema definitions.
-
-### Additional features implemented (June 2026)
-
-- **Extract Test sandbox** — `--extracted-test` flag, `promote_test` CLI, Extract Test web tab with Promote button, target-pending rows visible in Extract Test tab only
-- **PDF availability column** — Available / Not Available / Not Needed badge in both Extract and Extract Test tables, with server-side filter
-- **Parse scoring + MarkItDown** — six parse methods, unified scoring formula used by both DOI resolution and outcome extraction, winner badge in UI
-- **Dashboard enhancements** — link-method breakdown, LLM model family breakdown (Gemini / GPT / Qwen), and full Extract Test stats section
-- **Index-based dedup for Stage 1 + 2** — `cache/candidates_index.txt` and `cache/filtered_index.txt` replace full-CSV loads; Stage 1 appends new rows only; Stage 2 reads candidates.csv in 50k-row chunks; both stages support `--rebuild-index` to force a fresh index build
-- **DOI verification (June 2026)** — `shared/doi_verify.py` + `doi_o_verification` column + automatic `_verify_row()` hook in run_extract + `extract.audit_dois` CLI; see "DOI Verification" section above
+- [`docs/csv-schema.md`](docs/csv-schema.md) — all columns across all stages
+- [`docs/cli-reference.md`](docs/cli-reference.md) — all CLI commands and flags
+- [`docs/dashboard-guide.md`](docs/dashboard-guide.md) — 6-tab dashboard, downloadable stats
+- [`docs/check-page.md`](docs/check-page.md) — Check page filters and download API
+- [`docs/parquet-cache.md`](docs/parquet-cache.md) — Parquet backend and stats.json cascade
 
 ## What Needs to Be Written
 

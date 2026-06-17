@@ -1,134 +1,141 @@
 # Dashboard Guide
 
-## Overview
-
-The monitoring dashboard is at `http://localhost:5001/dashboard` (run `python -m validate.app`).
-
-It has two tabs: **Pipeline** and **Validation**.
+The monitoring dashboard lives at `http://localhost:5001/dashboard` (start with `python -m validate.app`).
 
 ---
 
-## Pipeline Tab
+## Tabs
 
-Shows stats from the local CSV files.
+| Tab | Stage | Data source |
+| --- | ----- | ----------- |
+| Search | Stage 1 | `data/candidates.csv` |
+| Filter | Stage 2 | `data/filtered.csv` |
+| Extract | Stage 3 | `data/extracted.csv` |
+| Extract-Test | Stage 3 sandbox | `data/extracted-test.csv` |
+| Supabase | Stage 4 | Live Supabase API |
+| Old Pipeline | Analysis | `analysis/` output files |
 
-### Pipeline Progress KPIs
+Stats are served via a 3-tier cascade (fastest to slowest):
 
-| KPI | Source | Description |
-|-----|--------|-------------|
-| Candidates | `candidates.csv` | Total papers discovered in Stage 1 |
-| Filtered | `filtered.csv` | Papers surviving Stage 2 filter |
-| Extracted | `extracted.csv` | Papers processed by Stage 3 |
-| Target Pending | `extracted.csv` | Papers where `link_method = target_pending` — original DOI must be supplied manually |
+1. `data/dashboard/stats.json` — pre-computed at end of each pipeline run
+2. `data/dashboard/{stage}.parquet` — Parquet mirror written alongside stats.json
+3. Full CSV scan — fallback when neither exists
 
-### Filter Results
-
-Breakdown of `filter_status` values in `filtered.csv`:
-- **Replications** — direct replications
-- **Reproductions** — close reproductions
-- **Needs review** — uncertain cases passed to LLM
-- **False positives** — excluded
-
-### Match Types
-
-How Stage 3 classified each paper:
-- **Single original** — paper targets exactly one original study
-- **Multiple match** — multiple candidate originals, Stage 3 resolved to one
-- **Multiple original** — paper targets multiple independent originals (expands to N rows)
-
-### Link Method
-
-How the original study DOI was resolved:
-- **Author/year match** — rule-based, no LLM
-- **LLM fulltext** — resolved from full PDF text
-- **LLM abstract** — resolved from abstract only
-- **No original found** — pipeline could not identify an original
-- **Target pending** — needs manual input
-- **API error** — failed after retries
-
-### LLM Model Used
-
-Which model was used for DOI resolution:
-- **Gemini** — via Google AI Studio
-- **GPT** — via OpenAI
-- **Qwen** — via OpenRouter
-- **None** — rule-based resolution (no LLM)
-
-### Outcome Distribution
-
-Donut chart + breakdown for `outcome` column in `extracted.csv`. See [csv-schema.md](csv-schema.md) for outcome definitions.
-
-### Extract Test Section
-
-Same stats but for `extracted-test.csv` (the test sandbox). Rows promoted to production via the **Promote** button in the Extract Test tab or via CLI.
-
-### Analysis Section
-
-Links to the analysis scripts and their output files. Run these to understand gaps between what was extracted and what's in the FLoRA entry sheet.
+See [parquet-cache.md](parquet-cache.md) for how the cache is generated and refreshed.
 
 ---
 
-## Validation Tab
+## Search Tab (Stage 1)
 
-Pulls live data from Supabase. Requires `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` in `.env`.
+### Search — stats
 
-If Supabase is not configured, the tab shows a configuration notice.
+| Card | What it shows | Clickable? |
+| ---- | ------------- | ---------- |
+| Total Candidates ↓ | Total rows in `candidates.csv` | Yes — downloads full file |
+| No DOI ↓ | Rows where `doi_r` is blank | Yes — downloads subset |
+| No DOI or URL ↓ | Rows where both `doi_r` and `url_r` are blank | Yes — downloads subset |
+| No Abstract ↓ | Rows where `abstract_r` is blank | Yes — downloads subset |
 
-### Validation KPIs
+All download cards call `/api/check/download?stage=candidates&…` and write the file to `data/dashboard/download/`.
+
+**Source Breakdown** — count per discovery source (`openalex`, `semantic_scholar`, `engine`, …). Each row is a download link for that source's rows.
+
+### Search — docs panel
+
+Left panel covers: what Stage 1 does, all 3 sources, all 9 CLI flags, 5-pass deduplication logic, inclusion keywords (23 phrases), exclusion keywords applied by Stage 2, and all `candidates.csv` columns with examples.
+
+---
+
+## Filter Tab (Stage 2)
+
+### Filter — stats
+
+**Status KPI cards** (each is a download link):
+
+| Card | `filter_status` value |
+| ---- | --------------------- |
+| Total Filtered ↓ | all rows |
+| Replications ↓ | `replication` |
+| Reproductions ↓ | `reproduction` |
+| Needs Review ↓ | `needs_review` |
+| False Positives ↓ | `false_positive` |
+
+**Data Quality — Replications & Reproductions only** (each row downloads that subset):
+
+| Row | Filter applied |
+| --- | -------------- |
+| No DOI ↓ | `stage=filtered&type=replication&type=reproduction&no_doi=1` |
+| No DOI or URL ↓ | `stage=filtered&type=replication&type=reproduction&no_doi_url=1` |
+| No abstract ↓ | `stage=filtered&type=replication&type=reproduction&no_abstract=1` |
+
+### Filter — docs panel
+
+Covers: how Stage 2 works, full decision logic table (rule → LLM flow), the exact LLM prompt text, all 6 CLI flags, and all 14 `filtered.csv` columns (10 inherited + 4 added) with section dividers.
+
+---
+
+## Extract Tab (Stage 3)
+
+### Extract — stats
+
+- **Extracted ↓** / **Target Pending** KPI cards at the top
+- **Match Types** — each row downloads that match-type subset of `extracted.csv`
+- **LLM Model** — Gemini / GPT / Qwen / Other / Rule-based breakdown (display only)
+- **Link Method** — each row downloads that link-method subset
+- **Outcome Distribution** — donut chart; each legend entry downloads that outcome subset
+
+### Extract — docs panel
+
+Covers: what Stage 3 does, CLI flags, link pipeline (author\_year → llm\_abstract → llm\_fulltext → target\_pending), 6 PDF parse methods and scoring formula, and all ~25 `extracted.csv` columns grouped into labeled sections.
+
+---
+
+## Extract-Test Tab (Stage 3 sandbox)
+
+Same layout as Extract tab but reads `extracted-test.csv`. Rows here have not been promoted to production.
+
+Promote via the **Promote** button in the web table or via CLI:
+
+```bash
+python -m extract.promote_test --all           # promote everything
+python -m extract.promote_test --doi 10.xxx/y  # promote one row
+python -m extract.promote_test --all --dry-run # preview
+```
+
+---
+
+## Supabase Tab (Stage 4)
+
+Requires `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` in `.env`. Shows a configuration notice if not set up.
 
 | KPI | Description |
-|-----|-------------|
-| Total Records | All records in the `unvalidated` Supabase table |
-| Validated | Records with `validation_status = validated` |
-| Unvalidated | Records not yet reviewed |
-| In Progress | Currently being reviewed |
-| Need Review | Flagged for additional attention |
-| Judgements | Total completed validator assignments |
-| Validators | Number of unique active validators |
-| Agreement | % of queue assignments completed (validated / total) |
+| --- | ----------- |
+| Total Records | All records in the validation table |
+| Validated | `validation_status = validated` |
+| Unvalidated | Not yet reviewed |
+| Need Review | Flagged for follow-up |
+| Judgements | Total validator assignments completed |
+| Validators | Unique active reviewers |
+| Agreement | % of queue assignments completed |
 
-A progress bar shows overall validation completion.
-
-### Correction Frequency
-
-Bar chart showing how often each field was flagged incorrect across all validated records:
-- **Type** — `replication` vs `reproduction` classification
-- **Original DOI** — the linked original study was wrong
-- **Outcome** — `success` / `failure` / `mixed` etc. classification
-
-### Validated Outcomes
-
-Donut chart of outcome distribution in the `validated` Supabase table.
-
-### Incorrect DOI Drilldown
-
-Paginated table of records where at least one validator flagged a correction.
-
-**Filters:**
-- **Outcome** — filter to a specific outcome value
-- **Field** — filter to a specific field (type / original / outcome)
-
-**Expanding a row** shows per-validator checks:
-- `✓` = correct
-- `✗` = incorrect
-- Validator 1, Validator 2, and LLM validation columns
+Also shows: validation progress bar, Correction Frequency bar chart (type / original DOI / outcome), Validated Outcomes donut, and a paginated Drilldown table filterable by outcome and field.
 
 ---
 
-## Theme Toggle
+## Old Pipeline Tab (Analysis)
 
-Click the **🌙 Dark / ☀️ Light** button in the nav bar to switch themes. Preference is saved in `localStorage` and persists across page loads.
+Shows gap analysis comparing `extracted.csv` against the FLoRA entry sheet. Run `python -m analysis.run_overlap_analysis` to generate the input data first.
 
 ---
 
 ## Refreshing
 
-Click **↺ Refresh** to reload stats without a full page refresh. The Pipeline tab reads CSVs directly (column-only scan, minimal memory). The Validation tab fetches from Supabase with a 5-minute cache.
+Click **↺ Refresh** to reload pipeline stats without a page reload. Supabase data is cached in-process for 5 minutes.
 
 ---
 
-## Performance Notes
+## Downloadable rows
 
-- **CSV stats** use pandas column-only reads (`usecols=lambda c: c in (...)`) — loading only the columns needed. Even a 1M-row CSV takes < 2 seconds.
-- **Index files** (`cache/candidates_index.txt`, `cache/filtered_index.txt`) let Stage 1/2 avoid loading the full CSVs on every run.
-- **Supabase responses** are cached in-process for 5 minutes. Force a refresh by restarting the app or waiting for the TTL.
+Most stat cards and stat rows in the dashboard are clickable download links. Clicking downloads a filtered CSV to `data/dashboard/download/` and serves it as a file attachment. The filename encodes the stage and filters, e.g. `check_filtered_2026-06-16.csv`.
+
+Downloads go through `/api/check/download`, which reads from Parquet (fast) or falls back to chunked CSV. See [check-page.md](check-page.md) for all supported filter parameters.
