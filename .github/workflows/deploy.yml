@@ -2,7 +2,7 @@ name: Deploy to Railway
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/extract]
   workflow_dispatch:  # allow manual trigger from GitHub UI
 
 jobs:
