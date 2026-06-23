@@ -65,4 +65,7 @@ analysis/filter_misclassifications.csv
 analysis/rule_improvement_opportunities.csv
 analysis/source_contribution.csv
 analysis/apa_reference_fallback.csv
-/data/dashboard
+/data/dashboard/*.parquet
+/data/dashboard/*.tmp.parquet
+/data/dashboard/download/
+todo.md

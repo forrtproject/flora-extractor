@@ -27,6 +27,7 @@ import yaml
 # flag carries lastIndex across calls (LESSONS.md #15 in the SciMeto repo).
 # Python's ``re`` API is stateless, so this just means we use ``search``.
 REPLICATION_PHRASES: list[re.Pattern] = [
+    # --- original phrases ---
     re.compile(r"\breplication of\b", re.IGNORECASE),
     re.compile(r"\bwe replicated\b", re.IGNORECASE),
     re.compile(r"\bwe replicate\b", re.IGNORECASE),
@@ -45,6 +46,22 @@ REPLICATION_PHRASES: list[re.Pattern] = [
     re.compile(r"\b(?:close|high[-\s]powered|pre[-\s]?registered|large[-\s]scale)\s+replication\b", re.IGNORECASE),
     re.compile(r"\breplication (?:and|&) extension\b", re.IGNORECASE),
     re.compile(r"\breproduce[ds]?\s+(?:the\s+)?(?:original\s+)?(?:findings?|effects?|results?)\b", re.IGNORECASE),
+    # --- ported from old R pipeline's explicit_replication_claims ---
+    # recovered ~15,862 candidates previously marked false_positive (phrase_coverage_analysis.py)
+    re.compile(r"\battempt\w*\s+to\s+replicate\b", re.IGNORECASE),
+    re.compile(r"\baim\w*\s+to\s+replicate\b", re.IGNORECASE),
+    re.compile(r"\bset\s+out\s+to\s+replicate\b", re.IGNORECASE),
+    re.compile(r"\bsuccess\w*\s+replicat\w*\b", re.IGNORECASE),
+    re.compile(r"\bwe\s+(?:conducted|performed|carried\s+out)\s+a\s+replication\b", re.IGNORECASE),
+    re.compile(r"\b(?:many-?labs?|multi-?site)\s+replication\b", re.IGNORECASE),
+    re.compile(r"\breplicat\w*\s+and\s+exten\w*\b", re.IGNORECASE),
+    re.compile(r"\breplication\s+stud(?:y|ies)\s+of\b", re.IGNORECASE),
+    re.compile(r"\bstudy\s+replicate[sd]\b", re.IGNORECASE),
+    re.compile(r"\bour\s+replication\b", re.IGNORECASE),
+    re.compile(r"\bindependent\s+replication\b", re.IGNORECASE),
+    re.compile(r"\bexact\s+replication\b", re.IGNORECASE),
+    re.compile(r"\breplication\s+attempt\b", re.IGNORECASE),
+    re.compile(r"\bcross-?(?:cultural|national|lab(?:oratory)?)\s+replication\b", re.IGNORECASE),
 ]
 
 # Subset that should be classified as ``reproduction`` rather than ``replication``

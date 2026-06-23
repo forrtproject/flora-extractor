@@ -13,24 +13,30 @@ from shared.config import DATA_DIR, PDF_CACHE_DIR
 
 
 def create_app(test_config: dict | None = None) -> Flask:
+    import os
+
     app = Flask(__name__, template_folder="templates")
-    app.secret_key = "flora-extractor-dev"
+    app.secret_key = os.getenv("FLASK_SECRET_KEY", "flora-extractor-dev")
 
     if test_config:
         app.config.update(test_config)
 
-    # Blueprints
-    from validate.routes.batch import batch_bp
-    from validate.routes.multi_originals import multi_orig_bp
-    from validate.routes.dashboard import dashboard_bp
-    from validate.routes.disambiguation import disambiguation_bp
-    from validate.routes.check import check_bp
+    # FLORA_READONLY=1 skips pipeline blueprints that require heavy deps
+    # (pdfminer, pymupdf, playwright). Used for read-only hosting deployments.
+    readonly = os.getenv("FLORA_READONLY", "").lower() in ("1", "true", "yes")
 
-    app.register_blueprint(batch_bp)
-    app.register_blueprint(multi_orig_bp)
+    from validate.routes.dashboard import dashboard_bp
+    from validate.routes.check import check_bp
     app.register_blueprint(dashboard_bp)
-    app.register_blueprint(disambiguation_bp)
     app.register_blueprint(check_bp)
+
+    if not readonly:
+        from validate.routes.batch import batch_bp
+        from validate.routes.multi_originals import multi_orig_bp
+        from validate.routes.disambiguation import disambiguation_bp
+        app.register_blueprint(batch_bp)
+        app.register_blueprint(multi_orig_bp)
+        app.register_blueprint(disambiguation_bp)
 
     @app.route("/pdf/<path:filename>")
     def serve_pdf(filename: str):

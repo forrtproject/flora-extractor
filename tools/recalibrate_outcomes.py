@@ -12,6 +12,9 @@ Optional: clear the outcome cache first to force fresh LLM calls.
 """
 import argparse
 import json
+import os
+import shutil
+import tempfile
 import time
 from pathlib import Path
 import pandas as pd
@@ -95,6 +98,12 @@ def recalibrate_outcomes(
     df_full = pd.read_csv(input_csv, encoding="utf-8-sig", low_memory=False)
     log.info("Loaded %d rows from %s", len(df_full), input_csv.name)
 
+    # Back up the input before any writes so the original is always recoverable.
+    if not dry_run:
+        backup_path = input_csv.with_suffix(".csv.bak")
+        shutil.copy2(input_csv, backup_path)
+        log.info("Backup created: %s", backup_path)
+
     required_cols = ["doi_r", "title_r", "abstract_r"]
     missing = [c for c in required_cols if c not in df_full.columns]
     if missing:
@@ -158,7 +167,21 @@ def recalibrate_outcomes(
     def _save(label: str = "") -> None:
         if dry_run:
             return
-        df_full.to_csv(output_csv, index=False, encoding="utf-8-sig")
+        # Write to a temp file in the same directory, then atomically replace the
+        # target — a KeyboardInterrupt mid-write can no longer corrupt the output.
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=output_csv.parent, prefix=".recalibrate_tmp_", suffix=".csv"
+        )
+        try:
+            os.close(tmp_fd)
+            df_full.to_csv(tmp_path, index=False, encoding="utf-8-sig")
+            os.replace(tmp_path, output_csv)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         tag = f"[{label}] " if label else ""
         log.info("%sSaved %d rows → %s  (%d updated so far)", tag, len(df_full), output_csv, rows_updated)
 
