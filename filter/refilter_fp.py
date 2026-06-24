@@ -123,9 +123,13 @@ def run_refilter(dry_run: bool = False, limit: int | None = None) -> None:
     # ------------------------------------------------------------------
     pq_path = _parquet_path("filtered")
     if pq_path.exists():
-        import pyarrow.parquet as pq
-        log.info("Loading from Parquet: %s", pq_path)
-        df = pq.read_table(pq_path).to_pandas().fillna("")
+        try:
+            import pyarrow.parquet as pq
+            log.info("Loading from Parquet: %s", pq_path)
+            df = pq.read_table(pq_path).to_pandas().fillna("")
+        except Exception as exc:
+            log.warning("Parquet read failed (%s) — falling back to CSV", exc)
+            df = pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig", low_memory=False).fillna("")
     else:
         log.info("Loading filtered.csv (no Parquet found)...")
         df = pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig", low_memory=False).fillna("")

@@ -77,6 +77,12 @@ def write_parquet(stage: str) -> None:
             chunksize=50_000, on_bad_lines="skip",
         ):
             chunk = chunk.fillna("")
+            # Truncate runaway strings — some abstracts exceed 100k chars and
+            # cause PyArrow to fail on read with "Wrapping ... failed".
+            str_cols = chunk.select_dtypes(include="object").columns
+            chunk[str_cols] = chunk[str_cols].apply(
+                lambda s: s.str.slice(0, 50_000)
+            )
             table = pa.Table.from_pandas(chunk, preserve_index=False)
             if writer is None:
                 writer = pq.ParquetWriter(tmp_path, table.schema, compression="snappy")

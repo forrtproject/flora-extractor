@@ -533,6 +533,27 @@ def api_analysis_gaps():
         return jsonify({"error": str(e), "total": 0, "pages": 0, "rows": []})
 
 
+@dashboard_bp.route("/api/dashboard/old-pipeline-analysis")
+def api_old_pipeline_analysis():
+    """Comparison of old pipeline (all_replications.csv) vs new pipeline.
+
+    Fast path: reads analysis/old_pipeline_comparison.json written by
+    `python -m analysis.old_pipeline_compare`.
+    Returns a stub with generation instructions if the file is missing.
+    """
+    try:
+        from analysis.old_pipeline_compare import load_cached
+        data = load_cached()
+        if data is not None:
+            return jsonify(data)
+    except Exception:
+        pass
+    return jsonify({
+        "error": "comparison not generated yet",
+        "hint": "python -m analysis.old_pipeline_compare",
+    }), 202
+
+
 @dashboard_bp.route("/api/dashboard/supabase-drilldown")
 def api_supabase_drilldown():
     """Paginated table of DOIs where at least one field was corrected.
