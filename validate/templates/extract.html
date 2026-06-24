@@ -792,6 +792,9 @@ function renderDetail(div, d) {
       <div style="margin-bottom:6px"><div class="fl">REPLICATION STUDY</div>
         <div class="fv" style="color:#1e40af;line-height:1.6">${buildCitation(d.authors_r, d.year_r, d.title_r, d.journal_r, d.doi_r)}</div>
       </div>
+      ${d.bibtex_ref_r ? `<div style="margin-bottom:6px"><div class="fl">BIBTEX (R)</div>
+        <pre style="font-size:10px;font-family:monospace;background:#f8fafc;border:1px solid #e2e8f0;border-radius:5px;padding:7px 10px;white-space:pre-wrap;word-break:break-all;color:#334155;margin:0">${esc(d.bibtex_ref_r)}</pre>
+      </div>` : ''}
       <div style="margin-bottom:6px">
         <div class="fl">REPLICATION TITLE</div>
         <div class="fv" style="font-size:13px;font-weight:600">${esc(d.title_r||d.study_r||'—')}</div>
@@ -862,6 +865,9 @@ function renderDetail(div, d) {
         <div style="margin-bottom:6px"><div class="fl">ORIGINAL STUDY</div>
           <div class="fv" style="color:#1e40af;line-height:1.6">${buildCitation(d.authors_o, d.year_o, d.title_o, '', d.doi_o)}</div>
         </div>
+        ${d.bibtex_ref_o ? `<div style="margin-bottom:6px"><div class="fl">BIBTEX (O)</div>
+          <pre style="font-size:10px;font-family:monospace;background:#f8fafc;border:1px solid #e2e8f0;border-radius:5px;padding:7px 10px;white-space:pre-wrap;word-break:break-all;color:#334155;margin:0">${esc(d.bibtex_ref_o)}</pre>
+        </div>` : ''}
         ${d.link_evidence ? `<div><div class="fl">EVIDENCE / QUOTE</div>
           <div class="qbox grn">${esc(d.link_evidence)}</div></div>` : ''}
         ${d.llm_reasoning ? `<div style="margin-top:6px"><div class="fl">LLM REASONING</div>

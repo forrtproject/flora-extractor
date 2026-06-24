@@ -25,6 +25,7 @@ from pathlib import Path
 import pandas as pd
 
 from shared.config import DATA_DIR, log
+from shared.dashboard_cache import refresh as _dashboard_refresh
 from shared.utils import clean_doi
 from extract.run_extract import build_bibtex, _build_bibtex_r, _build_ref_o
 
@@ -112,6 +113,12 @@ def backfill_bibtex(
                 pass
             raise
         log.info("Saved %d rows → %s", len(df), csv_path)
+        stage = "extracted-test" if "extracted-test" in str(csv_path) else "extracted"
+        try:
+            _dashboard_refresh(stage)
+            log.info("Dashboard cache refreshed for stage=%s", stage)
+        except Exception as exc:
+            log.warning("Dashboard cache refresh failed: %s", exc)
     else:
         log.info("Dry run — no changes written")
 
