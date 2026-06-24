@@ -414,13 +414,17 @@ def _fetch_crossref_full_meta(doi: str) -> Optional[dict]:
         if a.get("family") or a.get("given")
     ]
 
-    # Year: prefer published-print, then published-online, then issued
+    # Year: published-print → published → published-online → issued → created (last resort)
     year = None
-    for k in ("published-print", "published-online", "issued", "published"):
+    for k in ("published-print", "published", "published-online", "issued"):
         parts = (msg.get(k) or {}).get("date-parts") or []
         if parts and parts[0] and parts[0][0]:
             year = int(parts[0][0])
             break
+    if year is None:
+        parts = (msg.get("created") or {}).get("date-parts") or []
+        if parts and parts[0] and parts[0][0]:
+            year = int(parts[0][0])
 
     titles = msg.get("title") or []
     title  = titles[0] if titles else ""
@@ -490,7 +494,7 @@ def _fetch_doi_org_full_meta(doi: str) -> Optional[dict]:
     ]
 
     year = None
-    for k in ("issued", "published-print", "published-online"):
+    for k in ("published-print", "issued", "published-online", "created"):
         parts = (csl.get(k) or {}).get("date-parts") or []
         if parts and parts[0] and parts[0][0]:
             year = int(parts[0][0])
@@ -532,7 +536,7 @@ def _search_crossref_by_title(title: str, year: str = "") -> Optional[dict]:
     try:
         r = requests.get(
             "https://api.crossref.org/works",
-            params={"query.title": title, "rows": 5, "select": "DOI,title,author,issued,published-print,published-online,container-title,volume,issue,page"},
+            params={"query.title": title, "rows": 5, "select": "DOI,title,author,issued,published-print,published,published-online,created,container-title,volume,issue,page"},
             headers={"User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})"},
             timeout=20,
         )
@@ -552,7 +556,7 @@ def _search_crossref_by_title(title: str, year: str = "") -> Optional[dict]:
         # Year check
         if year:
             hit_year = None
-            for k in ("published-print", "published-online", "issued"):
+            for k in ("published-print", "published", "published-online", "issued", "created"):
                 parts = (item.get(k) or {}).get("date-parts") or []
                 if parts and parts[0] and parts[0][0]:
                     hit_year = int(parts[0][0])
@@ -573,7 +577,7 @@ def _search_crossref_by_title(title: str, year: str = "") -> Optional[dict]:
         page = item.get("page") or ""
         first_page, _, last_page = page.partition("-") if "-" in page else (page, "", "")
         hit_year_val = None
-        for k in ("published-print", "published-online", "issued"):
+        for k in ("published-print", "published", "published-online", "issued", "created"):
             parts = (item.get(k) or {}).get("date-parts") or []
             if parts and parts[0] and parts[0][0]:
                 hit_year_val = int(parts[0][0])

@@ -86,6 +86,25 @@ python -m filter.refilter_fp --limit 50
 # Start completely fresh (clears checkpoint)
 python -m filter.refilter_fp --reset
 
+# Fix year_o in extracted.csv (clears OA cache + re-fetches with corrected logic)
+python -m tools.fix_years
+
+# Fix year_o in extracted-test.csv (if you have one)
+python -m tools.fix_years --extracted-test
+
+# Preview first without writing
+python -m tools.fix_years --dry-run
+
+# Backfill both bibtex columns on existing extracted.csv
+# bibtex_ref_r is fast (no API calls); bibtex_ref_o uses cached OpenAlex/CrossRef data
+python -m tools.backfill_bibtex
+
+# Same for extracted-test.csv
+python -m tools.backfill_bibtex --extracted-test
+
+# Only fill rows that are currently blank (if you've already run partially)
+python -m tools.backfill_bibtex --only-missing
+
 # Check what you're working with (no API calls)
 python -m search.fetch_abstracts --dry-run
 

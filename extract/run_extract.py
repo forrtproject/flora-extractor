@@ -36,17 +36,69 @@ from extract.link_original import run_for_doi
 from extract.multi_original import run_multi_original_for_doi
 from extract.code_outcome import extract_outcome, predict_outcome_keyword
 
+def build_bibtex(
+    authors: list,
+    year: str,
+    title: str,
+    journal: str = "",
+    volume: str = "",
+    issue: str = "",
+    first_page: str = "",
+    last_page: str = "",
+    doi: str = "",
+    url: str = "",
+) -> str:
+    """Build a BibTeX entry string from metadata fields.
+
+    Entry type is @article when a journal is present, @misc otherwise.
+    Cite key: FirstAuthorSurname_Year (e.g. Smith_2021).
+    Author format follows APA initials convention (Last, F. M.).
+    """
+    year_str = str(year or "")
+    first_surname = (
+        re.sub(r"[^A-Za-z0-9]", "", authors[0].split(",")[0].strip())
+        if authors else "Unknown"
+    )
+    cite_key   = f"{first_surname}_{year_str}" if year_str else first_surname
+    entry_type = "article" if journal else "misc"
+    author_str = " and ".join(str(a) for a in authors) if authors else ""
+    pages = (f"{first_page}--{last_page}" if first_page and last_page
+             else (first_page or ""))
+    doi_url = f"https://doi.org/{doi}" if doi else (url or "")
+
+    fields: dict[str, str] = {"title": title or ""}
+    if author_str:
+        fields["author"] = author_str
+    if journal:
+        fields["journal"] = journal
+    if volume:
+        fields["volume"] = volume
+    if issue:
+        fields["number"] = issue
+    if pages:
+        fields["pages"] = pages
+    if year_str:
+        fields["year"] = year_str
+    if doi:
+        fields["doi"] = doi
+    if doi_url:
+        fields["url"] = doi_url
+
+    body = ", ".join(f"{k}={{{v}}}" for k, v in fields.items())
+    return f"@{entry_type}{{{cite_key}, {body}}}"
+
+
 def _build_ref_o(doi_o: str, fallback_author: str = "",
                   fallback_year: str = "",
-                  title_o: str = "") -> tuple[str, str]:
-    """Build APA-style ref_o and semicolon-separated authors_o for a resolved original.
+                  title_o: str = "") -> tuple[str, str, str]:
+    """Build APA-style ref_o, authors_o, and bibtex_ref_o for a resolved original.
 
     Resolution order:
       1. DOI lookup via OpenAlex then CrossRef (fetch_openalex_full_metadata)
       2. Title search via CrossRef then OpenAlex (when DOI lookup fails and title_o given)
       3. Surname · Year fallback (when all API lookups fail)
 
-    Returns (ref_o, authors_o).
+    Returns (ref_o, authors_o, bibtex_ref_o).
     """
     meta: dict | None = None
     if doi_o:
@@ -69,7 +121,7 @@ def _build_ref_o(doi_o: str, fallback_author: str = "",
         surname = str(fallback_author or "").split()[-1] if fallback_author else ""
         year    = str(fallback_year or "")
         ref     = " · ".join(s for s in [surname, year] if s)
-        return ref, surname
+        return ref, surname, ""
 
     authors    = meta.get("authors") or []
     year       = str(meta.get("year") or fallback_year or "")
@@ -110,7 +162,10 @@ def _build_ref_o(doi_o: str, fallback_author: str = "",
         parts.append(doi_url)
     ref_o = " ".join(parts)
 
-    return ref_o, authors_o
+    bibtex_o = build_bibtex(
+        authors, year, title, journal, volume, issue, first_page, last_page, doi_val,
+    )
+    return ref_o, authors_o, bibtex_o
 
 
 # ── Internal → schema link_method mapping ────────────────────────────────────
@@ -387,6 +442,27 @@ def _build_rep_df(row: pd.Series) -> pd.DataFrame:
     }])
 
 
+# ── BibTeX helper for the replication paper ──────────────────────────────────
+
+def _build_bibtex_r(row: "pd.Series | dict") -> str:
+    """Build a BibTeX entry for the replication paper from its row metadata.
+
+    Uses the r-side columns already present in filtered.csv (doi_r, title_r,
+    authors_r, year_r, journal_r, url_r). Volume/issue/pages are not tracked
+    at Stage 1, so they are omitted here.
+    """
+    authors_raw = str(row.get("authors_r") or "").strip()
+    authors = [a.strip() for a in authors_raw.split(";") if a.strip()]
+    return build_bibtex(
+        authors     = authors,
+        year        = str(row.get("year_r")    or ""),
+        title       = str(row.get("title_r")   or ""),
+        journal     = str(row.get("journal_r") or ""),
+        doi         = str(row.get("doi_r")     or ""),
+        url         = str(row.get("url_r")     or ""),
+    )
+
+
 # ── Row merge helpers ─────────────────────────────────────────────────────────
 
 def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
@@ -405,12 +481,13 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
         "doi_o":           doi_o_clean,
         "title_o":         str(link.get("resolved_title_o", "") or ""),
         "year_o":          str(link.get("resolved_year_o",  "") or ""),
-        **dict(zip(("ref_o", "authors_o"), _build_ref_o(
+        **dict(zip(("ref_o", "authors_o", "bibtex_ref_o"), _build_ref_o(
             doi_o_clean,
             str(link.get("resolved_author_o", "") or ""),
             str(link.get("resolved_year_o",   "") or ""),
             str(link.get("resolved_title_o",  "") or ""),
         ))),
+        "bibtex_ref_r":    _build_bibtex_r(filter_row),
         "link_method":     _map_method(link.get("resolution_method", "target_pending")),
         "link_evidence":   str(link.get("llm_evidence",     "") or ""),
         "link_confidence": (link["llm_confidence"]
@@ -449,12 +526,13 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
         "doi_o":           doi_o_clean,
         "title_o":         str(orig.get("title",        "") or ""),
         "year_o":          str(orig.get("year",         "") or ""),
-        **dict(zip(("ref_o", "authors_o"), _build_ref_o(
+        **dict(zip(("ref_o", "authors_o", "bibtex_ref_o"), _build_ref_o(
             doi_o_clean,
             str(orig.get("first_author", "") or ""),
             str(orig.get("year",         "") or ""),
             str(orig.get("title",        "") or ""),
         ))),
+        "bibtex_ref_r":    _build_bibtex_r(filter_row),
         "link_method":     "llm_abstract",
         "link_evidence":   str(orig.get("evidence",     "") or ""),
         "link_confidence": conf_str,
@@ -481,6 +559,7 @@ def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
         "doi_o": "", "title_o": "", "year_o": "", "authors_o": "", "ref_o": "",
+        "bibtex_ref_o": "", "bibtex_ref_r": _build_bibtex_r(filter_row),
         "link_method": link_method, "link_evidence": "", "link_confidence": "low",
         "link_llm_model": "",
         "outcome": outcome, "outcome_phrase": "",
@@ -697,12 +776,13 @@ def _verify_row(row: dict) -> dict:
     if v["doi_o"] != old_doi:
         row["doi_o"]   = v["doi_o"]
         row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), v["doi_o"])
-        new_ref, new_authors = _build_ref_o(v["doi_o"],
+        new_ref, new_authors, new_bibtex = _build_ref_o(v["doi_o"],
                                             str(row.get("authors_o", "") or ""),
                                             str(row.get("year_o",    "") or ""),
                                             str(row.get("title_o",   "") or ""))
-        row["ref_o"]     = new_ref
-        row["authors_o"] = new_authors
+        row["ref_o"]        = new_ref
+        row["authors_o"]    = new_authors
+        row["bibtex_ref_o"] = new_bibtex
     if v["doi_o_verification"] == "mismatch":
         row["link_confidence"] = "low"
     if v["evidence_note"]:

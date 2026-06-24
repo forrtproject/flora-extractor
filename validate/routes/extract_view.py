@@ -587,7 +587,7 @@ def add_shared_routes(bp: Blueprint) -> None:
                 for a in authors_raw[:6] if a.get("family")
             )
             year = ""
-            for field in ("published-print", "published-online", "issued"):
+            for field in ("published-print", "published", "published-online", "issued", "created"):
                 parts = msg.get(field, {}).get("date-parts", [[""]])
                 if parts and parts[0] and parts[0][0]:
                     year = str(parts[0][0])

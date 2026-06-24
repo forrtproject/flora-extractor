@@ -21,6 +21,7 @@ import pandas as pd
 
 from extract.code_outcome import extract_outcome
 from shared.config import DATA_DIR, LLM_CACHE_DIR, OA_XML_CACHE_DIR, PARSE_CACHE_DIR, PDF_CACHE_DIR, log
+from shared.dashboard_cache import refresh as _dashboard_refresh
 from shared.pdf_parsing import best_parse_result, parse_all as _parse_all
 from shared.utils import cache_key, clean_doi
 
@@ -118,6 +119,7 @@ def recalibrate_outcomes(
     since_year: int = None,
     tail: int = None,
     use_fulltext: bool = False,
+    doi_filter: str = "",
 ) -> dict:
     """
     Re-run outcome extraction for uncertain rows in a CSV.
@@ -137,6 +139,9 @@ def recalibrate_outcomes(
     only_uncertain : bool, default True
         If True, only process rows with outcome="cannot_be_determined" or no outcome.
         If False, reprocess all rows.
+    doi_filter : str, optional
+        If set, process only the row(s) matching this doi_r, bypassing the
+        only_uncertain filter so it works on any outcome value.
 
     Returns
     -------
@@ -155,6 +160,8 @@ def recalibrate_outcomes(
     log.info("Since year: %s", since_year or "all years")
     log.info("Tail: %s", f"last {tail} rows" if tail else "all rows")
     log.info("Limit: %s rows", limit or "unlimited")
+    if doi_filter:
+        log.info("DOI filter: %s (bypasses uncertain-only check)", doi_filter)
 
     if not input_csv.exists():
         log.error("File not found: %s", input_csv)
@@ -180,28 +187,35 @@ def recalibrate_outcomes(
     # Build a boolean mask over df_full.index for which rows to process.
     mask = pd.Series(True, index=df_full.index)
 
-    if tail is not None:
-        tail_mask = pd.Series(False, index=df_full.index)
-        tail_mask.iloc[-tail:] = True
-        mask = mask & tail_mask
-        log.info("Tail filter: last %d of %d rows selected", tail, len(df_full))
+    # --doi pins to a single DOI and bypasses the uncertain-only filter so it
+    # works on any row regardless of its current outcome value.
+    if doi_filter:
+        target = clean_doi(doi_filter)
+        mask = df_full["doi_r"].apply(clean_doi) == target
+        log.info("DOI filter matched %d row(s)", mask.sum())
+    else:
+        if tail is not None:
+            tail_mask = pd.Series(False, index=df_full.index)
+            tail_mask.iloc[-tail:] = True
+            mask = mask & tail_mask
+            log.info("Tail filter: last %d of %d rows selected", tail, len(df_full))
 
-    if since_year is not None:
-        years = pd.to_numeric(df_full.get("year_r", pd.Series(dtype=float)), errors="coerce").fillna(0)
-        before = mask.sum()
-        mask = mask & (years >= since_year)
-        log.info("Year filter (%d+): %d → %d rows", since_year, before, mask.sum())
+        if since_year is not None:
+            years = pd.to_numeric(df_full.get("year_r", pd.Series(dtype=float)), errors="coerce").fillna(0)
+            before = mask.sum()
+            mask = mask & (years >= since_year)
+            log.info("Year filter (%d+): %d → %d rows", since_year, before, mask.sum())
 
-    if only_uncertain:
-        uncertain_mask = (
-            df_full["outcome"].isna() |
-            (df_full["outcome"].astype(str).str.strip() == "") |
-            (df_full["outcome"].astype(str).str.lower() == "cannot_be_determined") |
-            (df_full["outcome"].astype(str).str.lower() == "pending")
-        )
-        before = mask.sum()
-        mask = mask & uncertain_mask
-        log.info("Uncertain filter: %d → %d rows to process", before, mask.sum())
+        if only_uncertain:
+            uncertain_mask = (
+                df_full["outcome"].isna() |
+                (df_full["outcome"].astype(str).str.strip() == "") |
+                (df_full["outcome"].astype(str).str.lower() == "cannot_be_determined") |
+                (df_full["outcome"].astype(str).str.lower() == "pending")
+            )
+            before = mask.sum()
+            mask = mask & uncertain_mask
+            log.info("Uncertain filter: %d → %d rows to process", before, mask.sum())
 
     # The indices we will actually iterate over (honouring --limit)
     candidate_indices = df_full.index[mask].tolist()
@@ -342,6 +356,13 @@ def recalibrate_outcomes(
     cbd_count = 0
     if not dry_run:
         cbd_count = refresh_cannot_be_determined(output_csv)
+        # Determine which stage this CSV belongs to and refresh the dashboard cache.
+        stage = "extracted-test" if "extracted-test" in str(output_csv) else "extracted"
+        try:
+            _dashboard_refresh(stage)
+            log.info("Dashboard cache refreshed for stage=%s", stage)
+        except Exception as exc:
+            log.warning("Dashboard cache refresh failed: %s", exc)
 
     log.info("=" * 70)
     log.info("SUMMARY:")
@@ -438,6 +459,17 @@ def main():
             "running any recalibration. Use this to update the file after a run."
         ),
     )
+    parser.add_argument(
+        "--doi",
+        type=str,
+        default="",
+        metavar="DOI_R",
+        help=(
+            "Re-extract outcome for this single doi_r, regardless of its current outcome value. "
+            "Automatically clears its LLM cache so a fresh call is made. "
+            "Bypasses --reprocess-all, --tail, --since-year, and the uncertain-only filter."
+        ),
+    )
     args = parser.parse_args()
 
     if args.refresh_cbd:
@@ -448,13 +480,14 @@ def main():
     result = recalibrate_outcomes(
         input_csv=args.input,
         output_csv=args.output,
-        clear_cache=args.clear_cache,
+        clear_cache=args.clear_cache or bool(args.doi),
         dry_run=args.dry_run,
         limit=args.limit,
         only_uncertain=not args.reprocess_all,
         since_year=args.since_year,
         tail=args.tail,
         use_fulltext=args.fulltext,
+        doi_filter=args.doi,
     )
 
     return result

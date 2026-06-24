@@ -190,12 +190,19 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
         "4. SUCCESS (confirmation): 'Our findings confirm Smith et al. (2015)'\n\n"
         "CRITICAL: Only output 'cannot_be_determined' when the available text genuinely lacks detail. "
         "Default to 'cannot_be_determined' rather than 'uninformative' when uncertain.\n\n"
-        "Respond with ONLY this JSON:\n"
+        + ("When citing out_quote_source and the evidence came from the full text excerpt, "
+           "identify the specific section by name using the format fulltext_{section} "
+           "(e.g. fulltext_results, fulltext_discussion, fulltext_conclusion, fulltext_abstract, "
+           "fulltext_introduction). Use the section heading nearest to the quoted passage.\n\n"
+           if has_fulltext else "")
+        + "Respond with ONLY this JSON:\n"
         '{"outcome": "<success|failure|mixed|descriptive|cannot_be_determined>", '
         '"outcome_phrase": "<verbatim quote of 2-3 sentences from the text that specifically describes what replicated and what did not>", '
         '"outcome_confidence": "<high|medium|low>", '
-        '"out_quote_source": "<abstract|title|fulltext>", '
-        '"outcome_reasoning": "<one sentence explaining the classification choice>"}'
+        + ('"out_quote_source": "<abstract|title|fulltext_{section}>", '
+           if has_fulltext else
+           '"out_quote_source": "<abstract|title>", ')
+        + '"outcome_reasoning": "<one sentence explaining the classification choice>"}'
     )
 
     token_counter.set_stage("extract_outcome")
@@ -297,9 +304,15 @@ def extract_outcome(doi_r: str,
         if hit:
             return {**hit, **_kw_fallback}
 
-    # Fulltext scan — only act on high-confidence hits
+    # Fulltext scans — only act on high-confidence hits
+    # Pass 1: beginning of fulltext (intro / methods / early results)
     if fulltext:
         hit = _keyword_scan(fulltext[:3000], "fulltext")
+        if hit and hit["outcome_confidence"] == "high":
+            return {**hit, **_kw_fallback}
+    # Pass 2: end of fulltext (conclusion / discussion) — the part the LLM also uses
+    if fulltext and len(fulltext) > 3000:
+        hit = _keyword_scan(fulltext[-3000:], "fulltext_conclusion")
         if hit and hit["outcome_confidence"] == "high":
             return {**hit, **_kw_fallback}
 

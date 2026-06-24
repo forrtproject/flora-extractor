@@ -9,7 +9,7 @@
       "semantic_scholar": 105414
     }
   },
-  "updated_at": "2026-06-24T12:23:57",
+  "updated_at": "2026-06-24T14:59:19",
   "filtered": {
     "total": 1867025,
     "by_filter_status": {
@@ -52,12 +52,12 @@
       "gemini": 156
     },
     "by_outcome": {
-      "success": 693,
-      "failure": 308,
-      "mixed": 206,
+      "success": 707,
+      "failure": 312,
+      "mixed": 213,
       "uninformative": 0,
-      "cannot_be_determined": 343,
-      "descriptive": 49,
+      "cannot_be_determined": 291,
+      "descriptive": 76,
       "pending": 0,
       "api_error": 0
     },

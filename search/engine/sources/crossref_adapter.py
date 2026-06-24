@@ -189,7 +189,7 @@ class CrossrefSourceAdapter(SourceAdapter):
         journal = (journal_titles[0] if journal_titles else "").strip() or None
 
         year: Optional[int] = None
-        for key in ("published-print", "published-online", "issued"):
+        for key in ("published-print", "published", "published-online", "issued", "created"):
             parts = ((work.get(key) or {}).get("date-parts") or [[]])[0]
             if parts:
                 year = parts[0]
