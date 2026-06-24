@@ -19,8 +19,14 @@ PDF_CACHE_DIR    = CACHE_DIR / "pdfs"
 GROBID_CACHE_DIR = CACHE_DIR / "grobid"
 LLM_CACHE_DIR    = CACHE_DIR / "llm"
 OA_CACHE_DIR     = CACHE_DIR / "openalex"
+OA_XML_CACHE_DIR     = CACHE_DIR / "openalex_xml"   # GROBID XML from content.openalex.org
+PARSE_CACHE_DIR      = CACHE_DIR / "parse"           # per-method parse results
+MARKITDOWN_CACHE_DIR = CACHE_DIR / "markdown"        # raw .md files from MarkItDown
+DOI_VERIFY_CACHE_DIR = CACHE_DIR / "doi_verify"      # CrossRef/OpenAlex DOI verification
 
-for _d in [DATA_DIR, PDF_CACHE_DIR, GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR]:
+for _d in [DATA_DIR, PDF_CACHE_DIR, GROBID_CACHE_DIR, LLM_CACHE_DIR,
+           OA_CACHE_DIR, OA_XML_CACHE_DIR, PARSE_CACHE_DIR, MARKITDOWN_CACHE_DIR,
+           DOI_VERIFY_CACHE_DIR]:
     _d.mkdir(parents=True, exist_ok=True)
 
 # ── Input / output files ──────────────────────────────────────────────────────
@@ -38,7 +44,8 @@ MULTI_ORIG_CANDS_PATH    = DATA_DIR / "multi_original_candidates.csv"
 MULTI_ORIG_RESOLVED_PATH = DATA_DIR / "multi_original_resolved.csv"
 
 # ── API keys ──────────────────────────────────────────────────────────────────
-OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY", "")
+OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY",    "")
+OPENALEX_API_KEY  = os.getenv("OPENALEX_API_KEY",  "")  # optional: Bearer token for content.openalex.org + polite-pool upgrade
 
 # SerpAPI keys in rotation order — add SERPAPI_KEY_2 to .env for failover
 SERPAPI_KEYS: list[str] = [
@@ -49,28 +56,53 @@ SERPAPI_KEYS: list[str] = [
 ]
 SERPAPI_KEY = SERPAPI_KEYS[0] if SERPAPI_KEYS else ""  # backward-compat
 
-# All Gemini keys in rotation order
-GEMINI_API_KEYS: list[str] = [
-    k for k in [
-        os.getenv("GEMINI_API_KEY",   ""),
-        os.getenv("GEMINI_API_KEY_2", ""),
-        os.getenv("GEMINI_API_KEY_3", ""),
-        os.getenv("GEMINI_API_KEY_4", ""),
-    ] if k
-]
+# Dynamic Gemini key loading — add GEMINI_API_KEY_N to .env for any N ≥ 2.
+# Keys must be sequential (2, 3, 4, …); loading stops at the first missing slot.
+_gemini_key_list = [os.getenv("GEMINI_API_KEY", "")]
+_key_idx = 2
+while True:
+    _k = os.getenv(f"GEMINI_API_KEY_{_key_idx}", "")
+    if not _k:
+        break
+    _gemini_key_list.append(_k)
+    _key_idx += 1
+GEMINI_API_KEYS: list[str] = [k for k in _gemini_key_list if k]
 GEMINI_API_KEY = GEMINI_API_KEYS[0] if GEMINI_API_KEYS else ""  # backward-compat
 
 RESEARCHER_EMAIL = os.getenv("RESEARCHER_EMAIL", "research@example.com")
+# Semantic Scholar API key — accepts both S2_API_KEY and legacy SEMANTIC_SCHOLAR_KEY
+S2_API_KEY = os.getenv("S2_API_KEY") or os.getenv("SEMANTIC_SCHOLAR_KEY", "")
 
 # ── Model identifiers ─────────────────────────────────────────────────────────
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
+FILTER_OPENAI_MODEL = os.getenv("FILTER_OPENAI_MODEL", "gpt-5-mini")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 
+# Per-task model selection — light for classify_match_type & code_outcome,
+# heavy for the full identify_original_with_llm linking step.
+# Default light to gemini-2.0-flash-lite (stable, high rate limits).
+GEMINI_LIGHT_MODEL = os.getenv("GEMINI_LIGHT_MODEL", "gemini-2.5-flash-lite")
+GEMINI_HEAVY_MODEL = os.getenv("GEMINI_HEAVY_MODEL", GEMINI_MODEL)
+
+# OpenRouter (OpenAI-compatible API at openrouter.ai) — optional alternative LLMs
+OPENROUTER_API_KEY    = os.getenv("OPENROUTER_API_KEY",    "")
+OPENROUTER_LIGHT_MODEL = os.getenv("OPENROUTER_LIGHT_MODEL", "qwen/qwen3.5-35b-a3b")
+OPENROUTER_HEAVY_MODEL = os.getenv("OPENROUTER_HEAVY_MODEL", "qwen/qwen3.5-35b-a3b")
+
 # ── External servers ──────────────────────────────────────────────────────────
-GROBID_SERVER = "https://kermitt2-grobid.hf.space"
+GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")
+
+# ── Gemini flex inference ─────────────────────────────────────────────────────
+# When True, adds service_tier=flex to requests on the first (paid) key only.
+# Flex inference costs 50% less but may take up to 15 minutes per call.
+# Only enable this if GEMINI_API_KEY (key 1) is a paid-tier key.
+GEMINI_USE_FLEX     = os.getenv("GEMINI_USE_FLEX", "").lower() in ("1", "true", "yes")
+# Timeout in seconds for flex calls — must cover the 15-minute worst case.
+GEMINI_FLEX_TIMEOUT = int(os.getenv("GEMINI_FLEX_TIMEOUT", "900"))
 
 # ── Rate limits (seconds between calls) ──────────────────────────────────────
-OPENALEX_RATE_SEC  = 0.1
+OPENALEX_RATE_SEC  = float(os.getenv("OPENALEX_RATE_SEC", "0.3"))
+CROSSREF_RATE_SEC  = 0.1
 UNPAYWALL_RATE_SEC = 0.5
 GROBID_RATE_SEC    = 3.0
 LLM_RATE_SEC       = 1.0

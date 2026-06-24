@@ -1,8 +1,8 @@
 """
 llm.py — LLM-based original study identification.
 
-Primary model  : Gemini (gemini-3-flash-preview)
-Fallback model : OpenAI (gpt-5-mini)
+Primary model  : OpenRouter / Qwen (when OPENROUTER_API_KEY is set)
+Fallback chain : Gemini → OpenAI
 
 Public API:
     identify_original_with_llm(doi_r, study_r, abstract_r, pattern,
@@ -10,6 +10,7 @@ Public API:
 """
 import base64
 import json
+import os
 import re
 import textwrap
 import time
@@ -19,11 +20,93 @@ from typing import Optional
 import requests
 
 from .config import (
-    GEMINI_API_KEYS, GEMINI_MODEL,
+    GEMINI_API_KEYS, GEMINI_MODEL, GEMINI_LIGHT_MODEL, GEMINI_HEAVY_MODEL,
+    GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT,
     LLM_CACHE_DIR, LLM_RATE_SEC,
-    OPENAI_API_KEY, OPENAI_MODEL, log,
+    OPENAI_API_KEY, OPENAI_MODEL,
+    OPENROUTER_API_KEY, OPENROUTER_HEAVY_MODEL,
+    log,
 )
+from . import token_counter
 from .utils import cache_key
+
+# ── OpenAI session-level token guardrail ─────────────────────────────────────
+# Tracks tokens consumed via call_openai() within the current process.
+# When usage crosses OPENAI_WARN_TOKENS, the pipeline pauses and asks the user
+# whether to continue.  Override the threshold via env var (in tokens):
+#   OPENAI_WARN_TOKENS=9000000
+_openai_tokens_session: int = 0
+_openai_limit_prompted: bool = False   # ensure we only prompt once
+_openai_disabled:       bool = False   # set to True when user answers N
+_OPENAI_WARN_THRESHOLD: int = int(os.getenv("OPENAI_WARN_TOKENS", "8000000"))
+
+
+def _track_openai_tokens(n_tokens: int) -> None:
+    """Add n_tokens to the session counter and prompt the user if the threshold is crossed."""
+    global _openai_tokens_session, _openai_limit_prompted, _openai_disabled
+    _openai_tokens_session += n_tokens
+    if _openai_limit_prompted or _openai_tokens_session < _OPENAI_WARN_THRESHOLD:
+        return
+    _openai_limit_prompted = True
+    used_m     = _openai_tokens_session / 1_000_000
+    thresh_m   = _OPENAI_WARN_THRESHOLD  / 1_000_000
+    print(f"\n{'=' * 62}")
+    print(f"  OpenAI token guardrail: {used_m:.1f}M tokens used this session")
+    print(f"  (threshold: {thresh_m:.0f}M — set OPENAI_WARN_TOKENS to change)")
+    print(f"  Continue using OpenAI for remaining rows?")
+    print(f"  Y = keep going   N = disable OpenAI (Gemini-only for rest of run)")
+    print(f"{'=' * 62}")
+    try:
+        answer = input("  Your choice [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = "n"
+    if answer in ("n", "no"):
+        _openai_disabled = True
+        log.info("OpenAI disabled by user at %.1fM tokens", used_m)
+        print("  OpenAI disabled. Remaining rows will use Gemini only.\n")
+    else:
+        log.info("User confirmed continuing OpenAI at %.1fM tokens", used_m)
+        print("  Continuing with OpenAI.\n")
+
+
+# ── Gemini key-0 (paid) session-level token guardrail ────────────────────────
+# Only active when GEMINI_WARN_TOKENS is set to a positive integer (default: 0 = off).
+# Tracks tokens on key 0 only (the paid key). Keys 1+ are free-tier and unaffected.
+# When usage crosses the threshold the pipeline pauses and asks whether to continue.
+_gemini_key0_tokens_session: int  = 0
+_gemini_key0_limit_prompted: bool = False
+_gemini_key0_disabled:       bool = False
+_GEMINI_WARN_THRESHOLD: int = int(os.getenv("GEMINI_WARN_TOKENS", "0"))
+
+
+def _track_gemini_key0_tokens(n_tokens: int) -> None:
+    """Add n_tokens for key-0 and prompt the user if the threshold is crossed."""
+    global _gemini_key0_tokens_session, _gemini_key0_limit_prompted, _gemini_key0_disabled
+    if not _GEMINI_WARN_THRESHOLD:
+        return
+    _gemini_key0_tokens_session += n_tokens
+    if _gemini_key0_limit_prompted or _gemini_key0_tokens_session < _GEMINI_WARN_THRESHOLD:
+        return
+    _gemini_key0_limit_prompted = True
+    used_m   = _gemini_key0_tokens_session / 1_000_000
+    thresh_m = _GEMINI_WARN_THRESHOLD / 1_000_000
+    print(f"\n{'=' * 62}")
+    print(f"  Gemini key-0 guardrail: {used_m:.1f}M tokens used this session")
+    print(f"  (threshold: {thresh_m:.0f}M — set GEMINI_WARN_TOKENS to change)")
+    print(f"  Continue using Gemini key-0 (paid) for remaining rows?")
+    print(f"  Y = keep going   N = skip key-0 (free-tier keys only for rest of run)")
+    print(f"{'=' * 62}")
+    try:
+        answer = input("  Your choice [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = "n"
+    if answer in ("n", "no"):
+        _gemini_key0_disabled = True
+        log.info("Gemini key-0 disabled by user at %.1fM tokens", used_m)
+        print("  Gemini key-0 disabled. Remaining rows will use free-tier keys only.\n")
+    else:
+        log.info("User confirmed continuing Gemini key-0 at %.1fM tokens", used_m)
+        print("  Continuing with Gemini key-0.\n")
 
 
 # ── JSON parsing (handles markdown-fenced output) ─────────────────────────────
@@ -89,15 +172,29 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
         },
     }
 
+    if GEMINI_USE_FLEX:
+        log.debug("Gemini flex inference enabled — key 0 uses service_tier=flex (timeout=%ds)", GEMINI_FLEX_TIMEOUT)
+
     last_error = "all keys exhausted"
     for key_idx, api_key in enumerate(GEMINI_API_KEYS):
+        if key_idx == 0 and _gemini_key0_disabled:
+            log.debug("Gemini key-0 disabled by guardrail — skipping to free-tier keys")
+            continue
+        # Flex inference: apply only on key 0 (the paid key).
+        # Keys 1+ are assumed free-tier and use standard inference.
+        use_flex = GEMINI_USE_FLEX and key_idx == 0
+        if use_flex:
+            payload["service_tier"] = "flex"
+        elif "service_tier" in payload:
+            del payload["service_tier"]
+        call_timeout = GEMINI_FLEX_TIMEOUT if use_flex else 90
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
                f":generateContent?key={api_key}")
         key_label = f"key {key_idx + 1}/{len(GEMINI_API_KEYS)}"
 
         for attempt in range(2):
             try:
-                r = requests.post(url, json=payload, timeout=90)
+                r = requests.post(url, json=payload, timeout=call_timeout)
 
                 if r.status_code == 429:
                     last_error = f"quota exhausted on {key_label} (429)"
@@ -105,6 +202,15 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
                           f"{'trying next key' if key_idx + 1 < len(GEMINI_API_KEYS) else 'no more keys'}")
                     log.warning("Gemini quota exhausted on %s", key_label)
                     break   # break inner retry loop → next key
+
+                if r.status_code == 404:
+                    # Model not found — changing keys won't help; bail out immediately.
+                    err_msg = r.json().get("error", {}).get("message", r.text[:200])
+                    log.error(
+                        "Gemini model not found: %s — update GEMINI_LIGHT_MODEL or "
+                        "GEMINI_HEAVY_MODEL in .env. API said: %s", model, err_msg
+                    )
+                    return None, f"model not found: {model}"
 
                 if r.status_code in (500, 503) and attempt == 0:
                     last_error = f"HTTP {r.status_code} on {key_label} (retrying)"
@@ -131,6 +237,10 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
                 text   = body["candidates"][0]["content"]["parts"][0]["text"]
                 result = _parse_llm_json(text)
                 if result is not None:
+                    n_tok = int((body.get("usageMetadata") or {}).get("totalTokenCount", 0))
+                    token_counter.record("gemini", n_tok)
+                    if key_idx == 0:
+                        _track_gemini_key0_tokens(n_tok)
                     if key_idx > 0:
                         log.info("Gemini succeeded on %s", key_label)
                     return result, ""
@@ -161,6 +271,9 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict],
         log.warning("OPENAI_API_KEY not set — skipping OpenAI")
         return None, "OPENAI_API_KEY not configured"
 
+    if _openai_disabled:
+        return None, "OpenAI disabled — token limit reached and user declined to continue"
+
     import openai
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
@@ -177,12 +290,95 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict],
             response_format={"type": "json_object"},
             max_completion_tokens=1024,
         )
+        if response.usage:
+            _track_openai_tokens(response.usage.total_tokens)
+            token_counter.record("openai", response.usage.total_tokens)
+            log.debug("OpenAI usage: +%d tokens (session total: %d)",
+                      response.usage.total_tokens, _openai_tokens_session)
         result = _parse_llm_json(response.choices[0].message.content)
         return result, ("" if result else "response was not valid JSON")
     except Exception as e:
         print(f"  [OpenAI] Exception: {e}")
         log.warning("OpenAI call failed: %s", e)
         return None, f"exception: {e}"
+
+
+# ── OpenRouter (OpenAI-compatible alternative LLMs) ──────────────────────────
+
+def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
+    """
+    Call any model available on OpenRouter via the OpenAI-compatible API.
+
+    model — OpenRouter model ID e.g. "qwen/qwen3-30b-a3b".
+            Defaults to OPENROUTER_HEAVY_MODEL from config.
+
+    Returns (result_dict_or_None, error_description).
+    """
+    if not OPENROUTER_API_KEY:
+        return None, "OPENROUTER_API_KEY not configured"
+
+    import openai
+    client = openai.OpenAI(
+        api_key=OPENROUTER_API_KEY,
+        base_url="https://openrouter.ai/api/v1",
+    )
+
+    use_model = model or OPENROUTER_HEAVY_MODEL
+    try:
+        response = client.chat.completions.create(
+            model=use_model,
+            messages=[
+                {"role": "system",
+                 "content": ("You are a research methodology expert that identifies "
+                              "original studies from replication papers. "
+                              "Always respond with valid JSON only.")},
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=1024,
+            temperature=0.0,
+        )
+        result = _parse_llm_json(response.choices[0].message.content)
+        if result and response.usage:
+            token_counter.record("openrouter", response.usage.total_tokens)
+        return result, ("" if result else "response was not valid JSON")
+    except Exception as e:
+        log.warning("OpenRouter call failed (model=%s): %s", use_model, e)
+        return None, f"exception: {e}"
+
+
+# ── Unified LLM router ───────────────────────────────────────────────────────
+
+def call_llm(prompt: str, gemini_model: str = "") -> tuple[Optional[dict], str, str]:
+    """
+    Route a prompt through the configured provider chain and return the first
+    successful result.
+
+    Order: Gemini -> OpenAI -> OpenRouter (Qwen as last resort).
+
+    gemini_model — Gemini model to use (defaults to GEMINI_LIGHT_MODEL).
+
+    Returns (result_dict_or_None, model_used, error_description).
+    model_used is the exact model string that answered, or "" if all providers failed.
+    """
+    from .config import GEMINI_LIGHT_MODEL as _LIGHT
+
+    model = gemini_model or _LIGHT
+    result, gemini_err = call_gemini(prompt, model=model)
+    if result:
+        return result, model, ""
+
+    result, openai_err = call_openai(prompt)
+    if result:
+        return result, OPENAI_MODEL, ""
+
+    if OPENROUTER_API_KEY:
+        result, or_err = call_openrouter(prompt)
+        if result:
+            return result, OPENROUTER_HEAVY_MODEL, ""
+        return None, "", f"Gemini: {gemini_err} | OpenAI: {openai_err} | OpenRouter: {or_err}"
+
+    return None, "", f"Gemini: {gemini_err} | OpenAI: {openai_err}"
 
 
 # ── Prompt builder ────────────────────────────────────────────────────────────
@@ -226,9 +422,9 @@ def build_identification_prompt(study_r:        str,
             "excerpts to find the original study. Set selected_candidate_number to null."
         )
 
-    # Reference list (GROBID, up to 50 entries — enough to find the original)
+    # Reference list — 30 entries is enough to find the original; keeps tokens low
     ref_lines = []
-    for ref in sections.get("references", [])[:50]:
+    for ref in sections.get("references", [])[:30]:
         authors = "; ".join(ref["authors"][:2])
         if len(ref["authors"]) > 2:
             authors += " et al."
@@ -236,18 +432,18 @@ def build_identification_prompt(study_r:        str,
     ref_text = "\n".join(ref_lines) if ref_lines else "(no references extracted)"
 
     # Truncated snippets — prefer GROBID intro over abstract (less overlap with OpenAlex)
-    abstract_snip = (abstract_r[:1200] + "…") if len(abstract_r) > 1200 else abstract_r
-    intro_snip    = (sections.get("intro",   "") or "")[:900]
+    abstract_snip = (abstract_r[:700] + "…") if len(abstract_r) > 700 else abstract_r
+    intro_snip    = (sections.get("intro",   "") or "")[:600]
 
     # Include methods only when intro is short (avoid redundancy)
     methods_snip = ""
-    if len(intro_snip) < 400:
-        methods_snip = (sections.get("methods", "") or "")[:600]
+    if len(intro_snip) < 300:
+        methods_snip = (sections.get("methods", "") or "")[:400]
 
-    # HTML text fallback: use first 1500 chars as a substitute intro/body
+    # HTML text fallback: use first 1000 chars as a substitute intro/body
     html_snip = ""
     if html_text and not intro_snip:
-        html_snip = (html_text[:1500] + "…") if len(html_text) > 1500 else html_text
+        html_snip = (html_text[:1000] + "…") if len(html_text) > 1000 else html_text
 
     # PDF URL block — only included when download failed but URL is known
     if pdf_url:
@@ -297,13 +493,14 @@ def build_identification_prompt(study_r:        str,
     - Umbrella project papers (#EEGManyLabs, ManyLabs, PSA, StudySwap) are NEVER the
       original — find the specific experiment they ran.
     - When selecting a candidate number, leave selected_doi EMPTY — the candidate's
-      verified DOI will be used. Only populate selected_doi for originals not in the list.
+      verified DOI will be used.
+    - NEVER invent or guess a DOI. DOIs will be resolved from title and author automatically.
+      An invented DOI is worse than no DOI — it silently corrupts the database.
 
     Respond with ONLY this JSON:
     {{
       "selected_candidate_number": <integer or null>,
-      "selected_doi": "<DOI only if not from candidate list, else empty>",
-      "selected_title": "<full title>",
+      "selected_title": "<exact published title — copy from reference list if available>",
       "selected_year": <year or null>,
       "selected_first_author": "<surname>",
       "confidence": "<high|medium|low>",
@@ -325,14 +522,15 @@ def identify_original_with_llm(doi_r:          str,
                                  sections:       dict,
                                  pdf_url:        str = "",
                                  html_text:      str = "",
-                                 validator_note: str = "") -> dict:
+                                 validator_note: str = "",
+                                 abstract_only:  bool = False) -> dict:
     """
     Identify the original study via LLM.
 
     pdf_url   — URL to include in prompt when PDF download failed.
     html_text — extracted landing-page text as full-text substitute.
 
-    Order: Gemini (primary) → OpenAI (fallback).
+    Order: OpenRouter/Qwen (primary when OPENROUTER_API_KEY set) → Gemini → OpenAI.
     Successful results are cached in LLM_CACHE_DIR.
     """
     cache_file = LLM_CACHE_DIR / f"llm_{cache_key(doi_r)}.json"
@@ -351,19 +549,40 @@ def identify_original_with_llm(doi_r:          str,
                                              validator_note=validator_note)
     result     = None
     llm_source = "none"
+    llm_model  = ""
     llm_error  = ""
+    gemini_err = ""
+    openai_err = ""
+    or_err     = ""
 
-    result, gemini_err = call_gemini(prompt)
+    # Primary: Gemini
+    result, gemini_err = call_gemini(prompt, model=GEMINI_HEAVY_MODEL)
     if result:
         llm_source = "gemini"
+        llm_model  = GEMINI_HEAVY_MODEL
         time.sleep(LLM_RATE_SEC)
-    else:
+
+    # Fallback 1: OpenAI
+    if not result:
         result, openai_err = call_openai(prompt)
         if result:
             llm_source = "openai"
+            llm_model  = OPENAI_MODEL
             time.sleep(LLM_RATE_SEC)
-        else:
-            llm_error = f"Gemini: {gemini_err} | OpenAI: {openai_err}"
+
+    # Fallback 2: OpenRouter (Qwen)
+    if not result and OPENROUTER_API_KEY:
+        result, or_err = call_openrouter(prompt)
+        if result:
+            llm_source = "openrouter"
+            llm_model  = OPENROUTER_HEAVY_MODEL
+            time.sleep(LLM_RATE_SEC)
+
+    if not result:
+        parts = [f"Gemini: {gemini_err}", f"OpenAI: {openai_err}"]
+        if OPENROUTER_API_KEY:
+            parts.append(f"OpenRouter: {or_err}")
+        llm_error = " | ".join(parts)
 
     _empty = {
         "resolved"          : False,
@@ -374,6 +593,7 @@ def identify_original_with_llm(doi_r:          str,
         "resolved_author_o" : "",
         "resolution_score"  : 0.0,
         "llm_source"        : "none",
+        "llm_model"         : "",
         "llm_confidence"    : "",
         "llm_evidence"      : "",
         "llm_reasoning"     : "",
@@ -385,7 +605,7 @@ def identify_original_with_llm(doi_r:          str,
         return _empty
 
     cand_num       = result.get("selected_candidate_number")
-    resolved_doi   = (result.get("selected_doi")          or "").strip()
+    resolved_doi   = ""
     resolved_title = (result.get("selected_title")        or "").strip()
     resolved_year  = result.get("selected_year")
     resolved_auth  = (result.get("selected_first_author") or "").strip()
@@ -395,14 +615,23 @@ def identify_original_with_llm(doi_r:          str,
             idx = int(cand_num) - 1
             if 0 <= idx < len(candidates):
                 c = candidates[idx]
-                # Prefer the candidate's verified OpenAlex DOI over any DOI the LLM
-                # may have hallucinated — only use resolved_doi if no candidate DOI exists.
-                resolved_doi   = c.get("doi", "") or resolved_doi
+                resolved_doi   = c.get("doi", "")
                 resolved_title = resolved_title or c.get("title",        "")
                 resolved_year  = resolved_year  or c.get("year")
                 resolved_auth  = resolved_auth  or c.get("first_author", "")
         except (ValueError, TypeError):
             pass
+
+    # When the original is not in the candidate list, resolve DOI from title+author
+    # via CrossRef/OpenAlex rather than trusting any DOI the LLM may have fabricated.
+    if not resolved_doi and resolved_title:
+        from shared.doi_verify import resolve_doi_by_metadata
+        hit = resolve_doi_by_metadata(
+            resolved_title, resolved_auth, resolved_year,
+            exclude_doi=doi_r,
+        )
+        if hit:
+            resolved_doi = hit.get("doi", "")
 
     resolved = bool(resolved_title)
 
@@ -412,17 +641,21 @@ def identify_original_with_llm(doi_r:          str,
 
     output = {
         "resolved"          : resolved,
-        "resolution_method" : f"llm_{llm_source}",
+        # llm_no_target: LLM ran successfully but concluded no identifiable original exists.
+        # Distinct from llm_failed (all API calls errored) and llm_fulltext (original found).
+        "resolution_method" : (f"llm_abstract_{llm_source}" if abstract_only else f"llm_{llm_source}") if resolved else "llm_no_target",
         "resolved_doi_o"    : resolved_doi,
         "resolved_title_o"  : resolved_title,
         "resolved_year_o"   : resolved_year,
         "resolved_author_o" : resolved_auth,
         "resolution_score"  : conf_score,
         "llm_source"        : llm_source,
+        "llm_model"         : llm_model,
         "llm_confidence"    : conf_str,
         "llm_evidence"      : result.get("evidence",  ""),
         "llm_reasoning"     : result.get("reasoning", ""),
         "llm_prompt"        : prompt,
+        "llm_response"      : json.dumps(result, ensure_ascii=False) if result else "",
         "llm_error"         : "",
     }
 
@@ -521,7 +754,7 @@ def call_gemini_with_pdf(prompt: str,
                f":generateContent?key={api_key}")
         for attempt in range(2):
             try:
-                r = requests.post(url, json=payload, timeout=120)
+                r = requests.post(url, json=payload, timeout=45)
                 if r.status_code == 429:
                     break
                 if r.status_code in (500, 503) and attempt == 0:
@@ -549,12 +782,13 @@ def call_gemini_with_pdf(prompt: str,
 
 # ── Multi-original prompt & dispatcher ────────────────────────────────────────
 
-def build_multi_original_prompt(study_r:    str,
-                                  abstract_r: str,
-                                  candidates: list[dict],
-                                  sections:   dict,
-                                  pdf_url:    str = "",
-                                  html_text:  str = "") -> str:
+def build_multi_original_prompt(study_r:     str,
+                                  abstract_r:  str,
+                                  candidates:  list[dict],
+                                  sections:    dict,
+                                  pdf_url:     str = "",
+                                  html_text:   str = "",
+                                  force_multi: bool = False) -> str:
     """
     Build the LLM prompt for identifying ALL original studies in a multi-target
     replication paper.
@@ -596,6 +830,16 @@ def build_multi_original_prompt(study_r:    str,
             f"    Use it if you can access it to identify all replicated originals.\n"
         )
 
+    force_multi_directive = ""
+    if force_multi:
+        force_multi_directive = textwrap.dedent("""
+    ⚠ CONFIRMED MULTI-TARGET: Automated rules have definitively identified this paper
+    as a large-scale multi-target replication (e.g., Many Labs, Registered Replication
+    Report). You MUST set is_false_positive to false. Every study listed in the reference
+    list that the paper explicitly replicates is an original — list ALL of them. If the
+    abstract says "replications of N studies", aim to find N originals.
+    """).strip()
+
     prompt = textwrap.dedent(f"""
     You are an expert in research methodology identifying ALL original studies
     that are replicated or reproduced in a scientific paper.
@@ -603,6 +847,7 @@ def build_multi_original_prompt(study_r:    str,
     This paper has been classified as potentially targeting MULTIPLE original studies.
     Your task: determine if this classification is correct (true multi-target) or a
     false positive (only 1 original), and list ALL originals found.
+    {force_multi_directive}
 
     ## Replication paper
     **Title:** {study_r}
@@ -635,13 +880,18 @@ def build_multi_original_prompt(study_r:    str,
 
     ## Task
 
-    Identify ALL distinct original studies that this paper directly replicates or reproduces.
+    Identify ALL distinct original studies that this paper directly replicates or reproduces,
+    and for each one determine the replication outcome.
 
     Rules:
     - A study is being replicated if the paper explicitly runs the same procedure again
     - Do NOT include studies that are merely cited for context or background
     - If you find only 1 original, set is_false_positive to true
     - For each candidate number used, reference it in candidate_number (or null if not in list)
+    - For outcome: look for the result for THAT SPECIFIC study (e.g. in a results table or
+      per-study section), NOT the overall aggregate across all studies
+    - outcome values: success (effect confirmed), failure (effect not found), mixed
+      (partial), uninformative (cannot determine from available text)
 
     Respond with **only** this JSON (no prose outside the braces):
     {{
@@ -656,7 +906,9 @@ def build_multi_original_prompt(study_r:    str,
           "first_author_surname": "<surname of first author>",
           "year": <4-digit year or null>,
           "evidence": "<1-2 sentence quote from the paper showing this study is replicated>",
-          "confidence": "<high|medium|low>"
+          "confidence": "<high|medium|low>",
+          "outcome": "<success|failure|mixed|uninformative>",
+          "outcome_evidence": "<1-2 sentence quote showing the outcome for THIS specific study, or empty if not found>"
         }}
       ]
     }}
@@ -665,13 +917,14 @@ def build_multi_original_prompt(study_r:    str,
     return prompt
 
 
-def identify_all_originals_with_llm(doi_r:      str,
-                                      study_r:    str,
-                                      abstract_r: str,
-                                      candidates: list[dict],
-                                      sections:   dict,
-                                      pdf_url:    str = "",
-                                      html_text:  str = "") -> dict:
+def identify_all_originals_with_llm(doi_r:        str,
+                                      study_r:      str,
+                                      abstract_r:   str,
+                                      candidates:   list[dict],
+                                      sections:     dict,
+                                      pdf_url:      str = "",
+                                      html_text:    str = "",
+                                      force_multi:  bool = False) -> dict:
     """
     Identify ALL original studies in a multi-target replication paper.
 
@@ -687,35 +940,51 @@ def identify_all_originals_with_llm(doi_r:      str,
         }
     """
     cache_file = LLM_CACHE_DIR / f"multi_{cache_key(doi_r)}.json"
-    if cache_file.exists():
+    if cache_file.exists() and not force_multi:
+        # When force_multi=True we skip the cache to ensure the stronger prompt runs.
         with cache_file.open(encoding="utf-8") as fh:
             cached = json.load(fh)
         cached.setdefault("llm_source", "cache")
         return cached
 
     _empty = {
-        "resolved"        : False,
+        "resolved"         : False,
         "is_false_positive": False,
-        "n_originals"     : 0,
-        "originals"       : [],
-        "llm_source"      : "none",
-        "llm_reasoning"   : "",
+        "n_originals"      : 0,
+        "originals"        : [],
+        "llm_source"       : "none",
+        "llm_reasoning"    : "",
     }
 
-    prompt     = build_multi_original_prompt(study_r, abstract_r, candidates,
-                                              sections, pdf_url=pdf_url,
-                                              html_text=html_text)
+    prompt = build_multi_original_prompt(study_r, abstract_r, candidates,
+                                          sections, pdf_url=pdf_url,
+                                          html_text=html_text,
+                                          force_multi=force_multi)
     result     = None
     llm_source = "none"
+    llm_model  = ""
 
-    result, _ = call_gemini(prompt)
+    # Primary: Gemini
+    result, _ = call_gemini(prompt, model=GEMINI_HEAVY_MODEL)
     if result:
         llm_source = "gemini"
+        llm_model  = GEMINI_HEAVY_MODEL
         time.sleep(LLM_RATE_SEC)
-    else:
+
+    # Fallback 1: OpenAI
+    if not result:
         result, _ = call_openai(prompt)
         if result:
             llm_source = "openai"
+            llm_model  = OPENAI_MODEL
+            time.sleep(LLM_RATE_SEC)
+
+    # Fallback 2: OpenRouter (Qwen)
+    if not result and OPENROUTER_API_KEY:
+        result, _ = call_openrouter(prompt)
+        if result:
+            llm_source = "openrouter"
+            llm_model  = OPENROUTER_HEAVY_MODEL
             time.sleep(LLM_RATE_SEC)
 
     if not result:
@@ -739,27 +1008,38 @@ def identify_all_originals_with_llm(doi_r:      str,
                     o.setdefault("first_author_surname", c.get("first_author", ""))
             except (ValueError, TypeError):
                 pass
+        raw_outcome = str(o.get("outcome", "uninformative") or "uninformative").lower()
+        if raw_outcome not in {"success", "failure", "mixed", "uninformative", "descriptive"}:
+            raw_outcome = "uninformative"
         originals.append({
-            "rank"           : o.get("rank", len(originals) + 1),
-            "title"          : str(o.get("title", "") or ""),
-            "doi"            : str(o.get("doi",   "") or ""),
-            "first_author"   : str(o.get("first_author_surname", "") or ""),
-            "year"           : o.get("year"),
-            "evidence"       : str(o.get("evidence",   "") or ""),
-            "confidence"     : str(o.get("confidence", "low") or "low"),
-            "candidate_number": cand_num,
+            "rank"             : o.get("rank", len(originals) + 1),
+            "title"            : str(o.get("title", "") or ""),
+            "doi"              : str(o.get("doi",   "") or ""),
+            "first_author"     : str(o.get("first_author_surname", "") or ""),
+            "year"             : o.get("year"),
+            "evidence"         : str(o.get("evidence",        "") or ""),
+            "confidence"       : str(o.get("confidence", "low") or "low"),
+            "candidate_number" : cand_num,
+            "outcome"          : raw_outcome,
+            "outcome_evidence" : str(o.get("outcome_evidence", "") or ""),
         })
 
-    n_originals     = len(originals)
-    is_false_positive = bool(result.get("is_false_positive", n_originals <= 1))
+    n_originals = len(originals)
+    # When force_multi=True the rule already confirmed this is multi-target;
+    # never trust is_false_positive from the LLM in that case.
+    if force_multi:
+        is_false_positive = False
+    else:
+        is_false_positive = bool(result.get("is_false_positive", n_originals <= 1))
 
     output = {
-        "resolved"        : n_originals > 0,
+        "resolved"         : n_originals > 0,
         "is_false_positive": is_false_positive,
-        "n_originals"     : n_originals,
-        "originals"       : originals,
-        "llm_source"      : llm_source,
-        "llm_reasoning"   : str(result.get("reasoning", "") or ""),
+        "n_originals"      : n_originals,
+        "originals"        : originals,
+        "llm_source"       : llm_source,
+        "llm_model"        : llm_model,
+        "llm_reasoning"    : str(result.get("reasoning", "") or ""),
     }
 
     if n_originals > 0:

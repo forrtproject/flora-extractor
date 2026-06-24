@@ -1,5 +1,5 @@
 # ── Data files (too large / sensitive) ───────────────────────────────────────
-data/*.csv
+#data/*.csv
 data/*.xlsx
 data/*.pdf
 data/*.db
@@ -10,6 +10,7 @@ cache/
 
 # ── Environment ───────────────────────────────────────────────────────────────
 .env
+.env.example
 
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
@@ -36,3 +37,37 @@ Thumbs.db
 .claude/
 .superpowers/
 docs/superpowers/
+docs/GITHUB_ISSUES.md
+docs/ARCHITECTURE.md
+.env.example
+/Logs
+load_doi_list.py
+/lookup
+issue.md
+/data/old
+/data/hackathon
+/data/Hackathon_final
+/data/Working
+/data/temp
+misc/download_pdf.py
+data/all_replications.csv
+/data/Search Approaches
+data/candidates.csv
+data/filtered.csv
+data/candidates.csv_backup
+data/filtered.csv_backup
+data/extracted05.06.2026.csv_backup
+data/archive/
+analysis/gap_analysis_*.csv
+analysis/gap_vs_extracted_comparison.csv
+analysis/filter_rules.csv
+analysis/filter_misclassifications.csv
+analysis/rule_improvement_opportunities.csv
+analysis/source_contribution.csv
+analysis/apa_reference_fallback.csv
+/data/dashboard/*.parquet
+/data/dashboard/*.tmp.parquet
+/data/dashboard/download/
+todo.md
+data/filtered.csv.bak
+data/extracted.csv.bak

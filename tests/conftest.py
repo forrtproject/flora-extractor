@@ -1,19 +1,11 @@
 import pytest
 from validate.app import create_app
-from validate.models import db as _db
 
 
 @pytest.fixture()
 def app():
-    test_app = create_app({
-        "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
-        "TESTING": True,
-        "SECRET_KEY": "test",
-    })
-    with test_app.app_context():
-        _db.create_all()
-        yield test_app
-        _db.drop_all()
+    test_app = create_app({"TESTING": True, "SECRET_KEY": "test"})
+    return test_app
 
 
 @pytest.fixture()
@@ -22,9 +14,3 @@ def client(app):
         with c.session_transaction() as sess:
             sess["reviewer_id"] = "tester"
         yield c
-
-
-@pytest.fixture()
-def db(app):
-    from validate.models import db as _db
-    return _db

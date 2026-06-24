@@ -25,7 +25,11 @@ rapidfuzz>=3.0.0         # Fuzzy title matching for deduplication
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 python-dotenv>=1.0.0     # Load .env file
+pyyaml>=6.0              # search/engine reads YAML spec files
 
 # ── Testing ───────────────────────────────────────────────────────────────────
 pytest>=7.0.0
 pytest-mock>=3.0.0
+
+# ── Linting ───────────────────────────────────────────────────────────────────
+ruff>=0.15.0

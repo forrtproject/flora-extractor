@@ -30,7 +30,7 @@ from typing import Optional
 import requests
 
 from .config import (
-    OA_CACHE_DIR, PDF_CACHE_DIR, RESEARCHER_EMAIL,
+    OA_CACHE_DIR, OA_XML_CACHE_DIR, OPENALEX_API_KEY, PDF_CACHE_DIR, RESEARCHER_EMAIL,
     SERPAPI_KEY, SERPAPI_KEYS, UNPAYWALL_RATE_SEC, log,
 )
 from .utils import clean_doi, cache_key
@@ -38,6 +38,16 @@ from .utils import clean_doi, cache_key
 # ── Shared rate-limit state ───────────────────────────────────────────────────
 _unpaywall_last = 0.0
 _ss_last        = 0.0
+
+# Build the OpenAlex request header once — add Authorization if a key is configured.
+# The key is optional: without it you get the polite pool (mailto= parameter);
+# with it you get higher rate limits and access to content.openalex.org bulk endpoints.
+_OA_HEADERS: dict = {
+    "User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})",
+    "Accept": "application/json",
+}
+if OPENALEX_API_KEY:
+    _OA_HEADERS["Authorization"] = f"Bearer {OPENALEX_API_KEY}"
 
 
 # ── Unpaywall ─────────────────────────────────────────────────────────────────
@@ -306,6 +316,99 @@ def get_openalex_oa_url(doi: str) -> Optional[str]:
 
     oa = data.get("open_access") or {}
     return oa.get("oa_url") or None
+
+
+# ── OpenAlex GROBID XML (Tier 0) ──────────────────────────────────────────────
+
+def get_openalex_fulltext(openalex_id: str) -> "dict | None":
+    """
+    Fetch pre-parsed GROBID XML from OpenAlex content API for a work.
+
+    Steps:
+      1. GET api.openalex.org/works/W{id}?select=has_content,content_urls
+         — only proceeds when has_content.grobid_xml == true.
+      2. Download content.openalex.org/works/W{id}.grobid-xml
+      3. Parse TEI XML via shared.grobid.parse_tei_sections()
+      4. Cache result in OA_XML_CACHE_DIR/oa_xml_{hash}.json
+
+    Returns {"source": "openalex_xml", "sections": {...}, "xml_url": str} or None.
+    Never speculatively hits content.openalex.org.
+    """
+    if not openalex_id:
+        return None
+
+    oa_id = openalex_id.strip()
+    if not oa_id.startswith("W"):
+        oa_id = f"W{oa_id}"
+
+    key        = cache_key(oa_id)
+    cache_file = OA_XML_CACHE_DIR / f"oa_xml_{key}.json"
+    if cache_file.exists():
+        try:
+            return json.loads(cache_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    # Step 1 — check has_content flag
+    time.sleep(0.1)
+    try:
+        r = requests.get(
+            f"https://api.openalex.org/works/{oa_id}",
+            params={"select": "has_content,content_urls", "mailto": RESEARCHER_EMAIL},
+            headers=_OA_HEADERS,
+            timeout=15,
+        )
+        if r.status_code != 200:
+            log.debug("OpenAlex has_content check failed (%s) for %s", r.status_code, oa_id)
+            return None
+        data = r.json()
+    except Exception as e:
+        log.debug("OpenAlex has_content request failed for %s: %s", oa_id, e)
+        return None
+
+    has_xml = (data.get("has_content") or {}).get("grobid_xml", False)
+    if not has_xml:
+        return None
+
+    xml_url = (data.get("content_urls") or {}).get(
+        "grobid_xml",
+        f"https://content.openalex.org/works/{oa_id}.grobid-xml",
+    )
+
+    # Step 2 — download the XML
+    try:
+        r2 = requests.get(
+            xml_url, timeout=30,
+            headers=_OA_HEADERS,
+        )
+        if r2.status_code != 200:
+            log.debug("OpenAlex XML download failed (%s) for %s", r2.status_code, oa_id)
+            return None
+        xml_text = r2.text
+    except Exception as e:
+        log.debug("OpenAlex XML download exception for %s: %s", oa_id, e)
+        return None
+
+    # Step 3 — parse using the existing TEI parser
+    try:
+        from .grobid import parse_tei_sections
+        sections = parse_tei_sections(xml_text)
+    except Exception as e:
+        log.debug("OpenAlex XML parse failed for %s: %s", oa_id, e)
+        return None
+
+    result = {"source": "openalex_xml", "sections": sections, "xml_url": xml_url}
+
+    # Step 4 — cache
+    try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        log.debug("OpenAlex XML cache write failed: %s", e)
+
+    log.info("OpenAlex XML acquired for %s (%d refs)", oa_id,
+             len(sections.get("references", [])))
+    return result
 
 
 # ── Landing-page HTML scraper ─────────────────────────────────────────────────
@@ -749,7 +852,7 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = 5_000) -> dict:
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
-def acquire_pdf(doi_r: str, title: str = "") -> dict:
+def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
     """
     Try every PDF source in priority order for *doi_r*.
 
@@ -759,13 +862,15 @@ def acquire_pdf(doi_r: str, title: str = "") -> dict:
         pdf_path       str | None
         pdf_ok         bool
         pdf_url_tried  list[str]
-        html_text      str  — extracted landing-page text when PDF unavailable
+        html_text      str          — extracted landing-page text when PDF unavailable
+        openalex_xml   dict | None  — structured content from OpenAlex GROBID XML (Tier 0)
     """
     doi_r     = clean_doi(doi_r)
     dl        = {"success": False, "path": None, "reason": ""}
     pdf_url   = ""
     pdf_src   = ""
     all_tried: list[str] = []
+    oa_xml    = None
 
     def _try(url: str, label: str) -> bool:
         nonlocal dl, pdf_url, pdf_src
@@ -776,6 +881,13 @@ def acquire_pdf(doi_r: str, title: str = "") -> dict:
             return True
         log.debug("  %s failed (%s): %s", label, dl.get("reason"), url)
         return False
+
+    # Tier 0 — OpenAlex GROBID XML (structured content, no PDF file needed)
+    if openalex_id:
+        oa_xml = get_openalex_fulltext(openalex_id)
+        if oa_xml:
+            log.info("  [%s] OpenAlex XML acquired (source=openalex_xml)", doi_r)
+            pdf_src = "openalex_xml"
 
     # Tier 1 — arXiv direct (before any API calls)
     arxiv = get_arxiv_pdf_url(doi_r, title)
@@ -858,9 +970,10 @@ def acquire_pdf(doi_r: str, title: str = "") -> dict:
 
     return {
         "pdf_url"       : pdf_url,
-        "pdf_source"    : pdf_src if dl["success"] else ("html_text" if html_text else "none"),
+        "pdf_source"    : pdf_src if dl["success"] else ("html_text" if html_text else (pdf_src or "none")),
         "pdf_path"      : str(dl["path"]) if dl.get("path") else None,
         "pdf_ok"        : dl["success"],
         "pdf_url_tried" : all_tried,
         "html_text"     : html_text,
+        "openalex_xml"  : oa_xml,
     }

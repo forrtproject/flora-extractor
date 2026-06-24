@@ -1,0 +1,104 @@
+python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 --max-per-phrase 1000
+while ($true) { python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 --max-per-phrase 1000 }
+
+python -m filter.run_filter --limit 10
+python -m filter.run_filter
+
+python -m extract.run_extract --limit 5 --no-pdf
+python -m extract.run_extract --skip-flora-validated
+python -m extract.run_extract --skip-flora-validated --no-multiple-originals
+
+python -m extract.run_extract --resume --no-pdf --no-multiple-originals --no-reproductions --skip-flora-validated
+python -m extract.run_extract --no-llm --no-pdf --no-multiple-originals --no-reproductions --skip-flora-validated
+
+python -m extract.run_extract -resume --no-llm --no-pdf --resolved-only --no-multiple-originals --no-reproductions --skip-flora-validated
+
+python -m extract.run_extract --resume --no-llm --no-pdf --resolved-only --no-multiple-originals --no-reproductions --skip-flora-validated
+
+python -m extract.run_extract --resume --resolved-only --no-multiple-originals --no-reproductions --skip-flora-validated
+python -m extract.run_extract --resume --no-multiple-originals --no-reproductions --skip-flora-validated --extracted-test
+
+
+------------------------------------------
+# Failures from 2011–2021 (your main extraction pass)
+python -m extract.run_extract --resume --from-year 2011 --to-year 2021 --predicted-outcome failure --no-multiple-originals --no-reproductions --skip-flora-validated
+
+# Other outcomes from any year (the 25% fill)
+python -m extract.run_extract --resume --predicted-outcome other --no-multiple-originals --no-reproductions --skip-flora-validated
+# Default: 75% failures (2011-2021) + 25% others, all available rows
+python -m extract.mix_for_validation --failure-year-from 2011 --failure-year-to 2021
+
+# Cap at 400 rows total
+python -m extract.mix_for_validation --failure-year-from 2011 --failure-year-to 2021 --n 400
+
+# Try 70/30 split
+python -m extract.mix_for_validation --failure-pct 70 --failure-year-from 2011 --failure-year-to 2021
+
+--------------------------------------------
+# Filter only OpenAlex rows from 2015 onwards
+python -m filter.run_filter --source openalex --from-year 2015
+
+# Filter only I4R rows
+python -m filter.run_filter --source i4r
+
+# Filter a specific year range across all sources
+python -m filter.run_filter --from-year 2010 --to-year 2020
+
+# Combine with limit for a quick spot-check
+python -m filter.run_filter --source openalex --from-year 2018 --limit 20
+
+(the source column — openalex, bob_reed, i4r, semantic_scholar)
+
+--------------------------------------------
+# Phrase-based sources (need auto-advance loop)
+do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 --max-per-phrase 1000 --source openalex } until ($LASTEXITCODE -eq 2)
+do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2021 --max-per-phrase 1000 --source semantic_scholar } until ($LASTEXITCODE -eq 2)
+
+# Curated lists (single fetch, no loop needed)
+python -m search.run_search --source bob_reed
+python -m search.run_search --source i4r
+
+# --no-harvest: skip the per-cycle cache harvest so the loop stays fast.
+# The harvest scans all cached JSON pages and can be slow/memory-heavy.
+# Run it separately once a week (or after an OOM crash) instead:
+do { python -m search.run_search --auto-advance --from-year 2022 --to-year 2026 --max-per-phrase 10000 --no-harvest } until ($LASTEXITCODE -eq 2)
+
+# Harvest only (run separately, ~weekly or after a crash):
+python -m search.run_search --harvest-only
+
+Default (Smart Mode) — Only Process Uncertain Rows
+python recalibrate_outcomes.py --input data/extracted.csv --clear-cache
+
+If You Want Fresh LLM on Everything
+python recalibrate_outcomes.py --input data/extracted.csv --clear-cache --reprocess-all
+
+python -m extract.audit_dois --apply
+
+# Quick check — see how many rows will be processed (no LLM, no writes)
+python -m filter.refilter_fp --dry-run
+
+# Run for real — safe to interrupt and restart anytime
+python -m filter.refilter_fp
+
+# Test on 50 rows first
+python -m filter.refilter_fp --limit 50
+
+# Start completely fresh (clears checkpoint)
+python -m filter.refilter_fp --reset
+
+# Check what you're working with (no API calls)
+python -m search.fetch_abstracts --dry-run
+
+# Test on 200 rows first
+python -m search.fetch_abstracts --limit 200
+
+# Full run — safe to interrupt and restart anytime
+python -m search.fetch_abstracts
+
+python -m search.run_search --harvest-only
+
+# One-shot (all concepts, unlimited)
+python -m search.run_search --source openalex_concept --from-year 2011 --to-year 2026
+
+# Auto-advance loop (10k per concept per call)
+do { python -m search.run_search --auto-advance --source openalex_concept --from-year 2011 --to-year 2026 --max-per-phrase 10000 } until ($LASTEXITCODE -eq 2)

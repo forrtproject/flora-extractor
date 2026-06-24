@@ -1,0 +1,12 @@
+# FLoRA Extractor — Web Dashboard Dependencies
+# Minimal set for running the read-only monitoring app on Railway.
+# Does NOT include pipeline deps (pdfminer, pymupdf, playwright, etc.).
+#
+# Install: pip install -r requirements-web.txt
+
+flask>=3.0.0
+pandas>=2.0.0
+pyarrow>=14.0.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+gunicorn>=21.2.0

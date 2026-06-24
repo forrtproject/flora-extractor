@@ -17,7 +17,8 @@ from typing import Optional
 import requests
 
 from .config import (
-    OA_CACHE_DIR, OPENALEX_RATE_SEC, RESEARCHER_EMAIL, log,
+    OA_CACHE_DIR, OPENALEX_API_KEY, OPENALEX_RATE_SEC, CROSSREF_RATE_SEC,
+    RESEARCHER_EMAIL, log,
 )
 from .utils import clean_doi, cache_key
 
@@ -108,30 +109,50 @@ def extract_author_year_patterns(text: str,
 
 # ── OpenAlex API ──────────────────────────────────────────────────────────────
 
-_OA_HEADERS  = {
+_OA_HEADERS: dict[str, str] = {
     "User-Agent": (
         f"FLoRA-DisambiguationPipeline/1.0 (mailto:{RESEARCHER_EMAIL})"
     )
 }
+if OPENALEX_API_KEY:
+    _OA_HEADERS["Authorization"] = OPENALEX_API_KEY
 _oa_last_call = 0.0
 
 
 def _oa_get(url: str, params: dict | None = None) -> Optional[dict]:
-    """GET from OpenAlex with rate limiting and error handling."""
+    """GET from OpenAlex with rate limiting, 429 retry, and error handling."""
     global _oa_last_call
     wait = OPENALEX_RATE_SEC - (time.time() - _oa_last_call)
     if wait > 0:
         time.sleep(wait)
     _oa_last_call = time.time()
 
-    try:
-        r = requests.get(url, headers=_OA_HEADERS, params=params or {},
-                         timeout=30)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        log.warning("OpenAlex request failed: %s — %s", url, e)
-        return None
+    _RETRY_DELAYS = [5, 15, 30]  # seconds to wait after 1st, 2nd, 3rd 429
+    for attempt in range(len(_RETRY_DELAYS) + 1):
+        try:
+            r = requests.get(url, headers=_OA_HEADERS, params=params or {},
+                             timeout=30)
+            if r.status_code == 429:
+                if attempt >= len(_RETRY_DELAYS):
+                    break
+                # Use our own schedule — OpenAlex sometimes sends absurdly large
+                # Retry-After values (e.g. 40000+s) that would stall the pipeline.
+                delay = _RETRY_DELAYS[attempt]
+                log.warning("OpenAlex 429 — waiting %ds before retry %d/%d",
+                            delay, attempt + 1, len(_RETRY_DELAYS))
+                time.sleep(delay)
+                _oa_last_call = time.time()
+                continue
+            r.raise_for_status()
+            return r.json()
+        except requests.exceptions.HTTPError:
+            break
+        except Exception as e:
+            log.warning("OpenAlex request failed: %s — %s", url, e)
+            return None
+
+    log.warning("OpenAlex request failed after retries: %s", url)
+    return None
 
 
 def fetch_referenced_works_metadata(openalex_id: str,
@@ -254,20 +275,22 @@ def find_all_candidates(doi_r: str,
         openalex_id, doi, title, year, first_author,
         match_year_exact, cited_pattern
     """
+
     cache_file = OA_CACHE_DIR / f"candidates_{cache_key(doi_r)}.json"
     if cache_file.exists():
         with cache_file.open(encoding="utf-8") as fh:
             return json.load(fh)
 
     if not openalex_id_r:
+        log.warning("[%s] find_all_candidates: no openalex_id_r — returning empty candidates", doi_r)
         return []
 
-    # Extract author-year patterns: title takes priority, then abstract, then stored pattern
-    patterns = (
-        extract_author_year_patterns(study_r, max_year=year_r)
-        or extract_author_year_patterns(abstract_r, max_year=year_r)
-        or extract_author_year_patterns(pattern_str, max_year=year_r)
-    )
+    # Extract author-year patterns from title and abstract. 
+    # extract_author_year_patterns() always returns a list, so we can concatenate results immediately.
+    patterns = extract_author_year_patterns(study_r, max_year=year_r) \
+        + extract_author_year_patterns(abstract_r, max_year=year_r)
+        # + extract_author_year_patterns(pattern_str, max_year=year_r)
+
     if not patterns:
         return []
 
@@ -314,6 +337,374 @@ def find_all_candidates(doi_r: str,
         json.dump(candidates, fh, ensure_ascii=False, indent=2)
 
     return candidates
+
+
+def format_author_apa(display_name: str) -> str:
+    """Convert OpenAlex display_name to APA format.
+
+    'John D. Bransford' → 'Bransford, J. D.'
+    'J. Richard Barclay' → 'Barclay, J. R.'
+    """
+    parts = display_name.strip().split()
+    if not parts:
+        return display_name
+    if len(parts) == 1:
+        return parts[0]
+    last = parts[-1]
+    firsts = parts[:-1]
+    initials = " ".join(p if p.endswith(".") else (p[0] + ".") for p in firsts if p)
+    return f"{last}, {initials}" if initials else last
+
+
+def _all_authors_apa(work: dict) -> list[str]:
+    """Return APA-formatted names for all authors in an OpenAlex work dict."""
+    names: list[str] = []
+    for auth in work.get("authorships", []):
+        display = (auth.get("author") or {}).get("display_name", "")
+        if display:
+            names.append(format_author_apa(display))
+    return names
+
+
+def _crossref_author_apa(family: str, given: str) -> str:
+    """Format CrossRef family/given pair as APA: 'Family, G. I.'
+
+    CrossRef given names can be full ('John D.') or already initials ('J. D.').
+    Each token is converted to an initial if it doesn't already end with a period.
+    """
+    family = family.strip()
+    if not family:
+        return given.strip()
+    given = given.strip()
+    if not given:
+        return family
+    initials = " ".join(
+        p if p.endswith(".") else (p[0] + ".")
+        for p in given.split() if p
+    )
+    return f"{family}, {initials}" if initials else family
+
+
+def _fetch_crossref_full_meta(doi: str) -> Optional[dict]:
+    """Fetch full metadata from CrossRef API for *doi*.
+
+    Returns same shape as fetch_openalex_full_metadata, or None on failure.
+    CrossRef is the DOI registry of record and covers works OpenAlex doesn't index
+    (book chapters, older papers, DataCite DOIs).
+    """
+    try:
+        r = requests.get(
+            f"https://api.crossref.org/works/{doi}",
+            headers={"User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})"},
+            timeout=20,
+        )
+        time.sleep(CROSSREF_RATE_SEC)
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        msg = r.json().get("message", {})
+    except Exception as exc:
+        log.warning("CrossRef full meta %s failed: %s", doi, exc)
+        return None
+
+    raw_authors = msg.get("author") or []
+    authors = [
+        _crossref_author_apa(a.get("family", ""), a.get("given", ""))
+        for a in raw_authors
+        if a.get("family") or a.get("given")
+    ]
+
+    # Year: prefer published-print, then published-online, then issued
+    year = None
+    for k in ("published-print", "published-online", "issued", "published"):
+        parts = (msg.get(k) or {}).get("date-parts") or []
+        if parts and parts[0] and parts[0][0]:
+            year = int(parts[0][0])
+            break
+
+    titles = msg.get("title") or []
+    title  = titles[0] if titles else ""
+
+    containers = msg.get("container-title") or []
+    journal    = containers[0] if containers else ""
+
+    page = msg.get("page") or ""
+    first_page, last_page = ("", "")
+    if "-" in page:
+        first_page, _, last_page = page.partition("-")
+    elif page:
+        first_page = page
+
+    return {
+        "doi"       : clean_doi(msg.get("DOI", "") or doi),
+        "title"     : title,
+        "year"      : year,
+        "authors"   : authors,
+        "journal"   : journal,
+        "volume"    : msg.get("volume") or "",
+        "issue"     : msg.get("issue") or "",
+        "first_page": first_page.strip(),
+        "last_page" : last_page.strip(),
+    }
+
+
+def _fetch_doi_org_full_meta(doi: str) -> Optional[dict]:
+    """Resolve *doi* via doi.org with CSL-JSON content negotiation.
+
+    Covers DOIs registered with any registrar (DataCite, mEDRA, CrossRef, etc.)
+    — not just CrossRef.  Returns same shape as fetch_openalex_full_metadata,
+    or None if the DOI doesn't resolve.
+    """
+    headers = {
+        "Accept"    : "application/vnd.citationstyles.csl+json",
+        "User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})",
+    }
+    for delay in (0, 1, 2):
+        if delay:
+            time.sleep(delay)
+        try:
+            r = requests.get(f"https://doi.org/{doi}", headers=headers,
+                             timeout=20, allow_redirects=True)
+            time.sleep(CROSSREF_RATE_SEC)
+            if r.status_code == 404:
+                return None
+            if 400 <= r.status_code < 500 and r.status_code != 429:
+                return None
+            r.raise_for_status()
+            csl = r.json()
+            break
+        except Exception as exc:
+            log.debug("doi.org CSL %s failed: %s", doi, exc)
+            csl = None
+    else:
+        return None
+
+    if not csl:
+        return None
+
+    raw_authors = csl.get("author") or []
+    authors = [
+        _crossref_author_apa(a.get("family", ""), a.get("given", ""))
+        for a in raw_authors
+        if a.get("family") or a.get("given")
+    ]
+
+    year = None
+    for k in ("issued", "published-print", "published-online"):
+        parts = (csl.get(k) or {}).get("date-parts") or []
+        if parts and parts[0] and parts[0][0]:
+            year = int(parts[0][0])
+            break
+
+    title      = csl.get("title") or ""
+    journal    = csl.get("container-title") or ""
+    page       = csl.get("page") or ""
+    first_page, _, last_page = page.partition("-") if "-" in page else (page, "", "")
+
+    return {
+        "doi"       : clean_doi(csl.get("DOI", "") or doi),
+        "title"     : title,
+        "year"      : year,
+        "authors"   : authors,
+        "journal"   : journal,
+        "volume"    : str(csl.get("volume") or ""),
+        "issue"     : str(csl.get("issue") or ""),
+        "first_page": first_page.strip(),
+        "last_page" : last_page.strip(),
+    }
+
+
+def _jaccard(a: str, b: str) -> float:
+    ta = set(re.findall(r"\b\w{3,}\b", a.lower()))
+    tb = set(re.findall(r"\b\w{3,}\b", b.lower()))
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def _search_crossref_by_title(title: str, year: str = "") -> Optional[dict]:
+    """Search CrossRef by title and return full metadata if a confident hit is found.
+
+    Uses a Jaccard threshold of 0.7 to confirm the top hit matches *title*,
+    and requires the year to be within ±2 when *year* is provided.
+    Returns same shape as fetch_openalex_full_metadata, or None.
+    """
+    try:
+        r = requests.get(
+            "https://api.crossref.org/works",
+            params={"query.title": title, "rows": 5, "select": "DOI,title,author,issued,published-print,published-online,container-title,volume,issue,page"},
+            headers={"User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})"},
+            timeout=20,
+        )
+        time.sleep(CROSSREF_RATE_SEC)
+        r.raise_for_status()
+        items = r.json().get("message", {}).get("items") or []
+    except Exception as exc:
+        log.debug("CrossRef title search failed: %s", exc)
+        return None
+
+    for item in items:
+        hit_titles = item.get("title") or []
+        hit_title  = hit_titles[0] if hit_titles else ""
+        if _jaccard(hit_title, title) < 0.7:
+            continue
+
+        # Year check
+        if year:
+            hit_year = None
+            for k in ("published-print", "published-online", "issued"):
+                parts = (item.get(k) or {}).get("date-parts") or []
+                if parts and parts[0] and parts[0][0]:
+                    hit_year = int(parts[0][0])
+                    break
+            try:
+                if hit_year and abs(hit_year - int(float(year))) > 2:
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        raw_authors = item.get("author") or []
+        authors = [
+            _crossref_author_apa(a.get("family", ""), a.get("given", ""))
+            for a in raw_authors
+            if a.get("family") or a.get("given")
+        ]
+        containers = item.get("container-title") or []
+        page = item.get("page") or ""
+        first_page, _, last_page = page.partition("-") if "-" in page else (page, "", "")
+        hit_year_val = None
+        for k in ("published-print", "published-online", "issued"):
+            parts = (item.get(k) or {}).get("date-parts") or []
+            if parts and parts[0] and parts[0][0]:
+                hit_year_val = int(parts[0][0])
+                break
+
+        return {
+            "doi"       : clean_doi(item.get("DOI", "") or ""),
+            "title"     : hit_title,
+            "year"      : hit_year_val,
+            "authors"   : authors,
+            "journal"   : containers[0] if containers else "",
+            "volume"    : item.get("volume") or "",
+            "issue"     : item.get("issue") or "",
+            "first_page": first_page.strip(),
+            "last_page" : last_page.strip(),
+        }
+    return None
+
+
+def _search_openalex_by_title(title: str, year: str = "") -> Optional[dict]:
+    """Search OpenAlex by title and return full metadata if a confident hit is found.
+
+    Jaccard threshold 0.7 against *title*; year ±2 when *year* is provided.
+    Returns same shape as fetch_openalex_full_metadata, or None.
+    """
+    params: dict = {
+        "filter" : f"title.search:{title[:200]}",
+        "select" : "id,doi,title,publication_year,authorships,primary_location,biblio",
+        "per-page": "5",
+        "mailto" : RESEARCHER_EMAIL,
+    }
+    data = _oa_get("https://api.openalex.org/works", params)
+    if not data or not data.get("results"):
+        return None
+
+    for work in data["results"]:
+        hit_title = work.get("title", "") or ""
+        if _jaccard(hit_title, title) < 0.7:
+            continue
+
+        if year:
+            hit_year = work.get("publication_year")
+            try:
+                if hit_year and abs(hit_year - int(float(year))) > 2:
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        authors = _all_authors_apa(work)
+        loc     = work.get("primary_location") or {}
+        src     = loc.get("source") or {}
+        biblio  = work.get("biblio") or {}
+        return {
+            "doi"       : clean_doi(work.get("doi", "") or ""),
+            "title"     : hit_title,
+            "year"      : work.get("publication_year"),
+            "authors"   : authors,
+            "journal"   : (src.get("display_name") or "").strip(),
+            "volume"    : biblio.get("volume") or "",
+            "issue"     : biblio.get("issue") or "",
+            "first_page": biblio.get("first_page") or "",
+            "last_page" : biblio.get("last_page") or "",
+        }
+    return None
+
+
+def fetch_openalex_full_metadata(doi: str) -> Optional[dict]:
+    """Fetch full metadata for a DOI: authors (APA-formatted), journal, biblio fields.
+
+    Tries OpenAlex first, then CrossRef as fallback (covers book chapters and
+    older works not indexed by OpenAlex).
+
+    Returns a dict with: doi, title, year, authors (list of APA-formatted names),
+    journal, volume, issue, first_page, last_page.
+    Cached per DOI in OA_CACHE_DIR/doi_full_<hash>.json.
+    """
+    doi = clean_doi(doi)
+    if not doi:
+        return None
+
+    cache_file = OA_CACHE_DIR / f"doi_full_{cache_key(doi)}.json"
+    if cache_file.exists():
+        with cache_file.open(encoding="utf-8") as fh:
+            return json.load(fh)
+
+    # ── Try OpenAlex first ────────────────────────────────────────────────────
+    result: Optional[dict] = None
+    data = _oa_get(
+        "https://api.openalex.org/works",
+        {
+            "filter" : f"doi:{doi}",
+            "select" : "id,doi,title,publication_year,authorships,primary_location,biblio",
+            "mailto" : RESEARCHER_EMAIL,
+        },
+    )
+    if data and data.get("results"):
+        work    = data["results"][0]
+        authors = _all_authors_apa(work)
+        loc     = work.get("primary_location") or {}
+        src     = loc.get("source") or {}
+        biblio  = work.get("biblio") or {}
+        result  = {
+            "doi"       : clean_doi(work.get("doi", "") or ""),
+            "title"     : work.get("title", "") or "",
+            "year"      : work.get("publication_year"),
+            "authors"   : authors,
+            "journal"   : (src.get("display_name") or "").strip(),
+            "volume"    : biblio.get("volume") or "",
+            "issue"     : biblio.get("issue") or "",
+            "first_page": biblio.get("first_page") or "",
+            "last_page" : biblio.get("last_page") or "",
+        }
+
+    # ── CrossRef fallback ─────────────────────────────────────────────────────
+    if result is None:
+        log.debug("OpenAlex miss for %s — trying CrossRef", doi)
+        result = _fetch_crossref_full_meta(doi)
+
+    # ── doi.org content negotiation (any registrar) ───────────────────────────
+    if result is None:
+        log.debug("CrossRef miss for %s — trying doi.org CSL-JSON", doi)
+        result = _fetch_doi_org_full_meta(doi)
+
+    if result is None:
+        return None
+
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    with cache_file.open("w", encoding="utf-8") as fh:
+        json.dump(result, fh, ensure_ascii=False, indent=2)
+
+    return result
 
 
 def fetch_openalex_by_doi(doi: str) -> Optional[dict]:
@@ -363,3 +754,53 @@ def fetch_openalex_by_doi(doi: str) -> Optional[dict]:
         json.dump(result, fh, ensure_ascii=False, indent=2)
 
     return result
+
+
+def resolve_doi_from_url(url: str) -> str:
+    """Try to find a DOI for a paper identified only by URL.
+
+    Resolution strategy:
+      1. If the URL itself is a doi.org URL, extract the DOI directly.
+      2. Query OpenAlex with filter=open_access.oa_url:<url> (open-access PDFs).
+      3. Query OpenAlex with filter=primary_location.landing_page_url:<url> (landing pages).
+
+    Returns the cleaned DOI string if found, or "" if not resolvable.
+    Caches the result (including negative lookups) so subsequent calls are free.
+    """
+    import re as _re
+    url = (url or "").strip()
+    if not url:
+        return ""
+
+    cache_file = OA_CACHE_DIR / f"url_doi_{cache_key(url)}.json"
+    if cache_file.exists():
+        with cache_file.open(encoding="utf-8") as fh:
+            return json.load(fh).get("doi", "")
+
+    def _save(doi: str) -> str:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        with cache_file.open("w", encoding="utf-8") as fh:
+            json.dump({"url": url, "doi": doi}, fh)
+        return doi
+
+    # 1. doi.org URL → extract DOI directly
+    m = _re.match(r"https?://(?:dx\.)?doi\.org/(.+)", url, _re.IGNORECASE)
+    if m:
+        return _save(clean_doi(m.group(1)))
+
+    # 2 & 3. Ask OpenAlex
+    for oa_filter in (
+        f"open_access.oa_url:{url}",
+        f"primary_location.landing_page_url:{url}",
+    ):
+        data = _oa_get(
+            "https://api.openalex.org/works",
+            {"filter": oa_filter, "select": "doi", "mailto": RESEARCHER_EMAIL},
+        )
+        results = (data or {}).get("results") or []
+        if results:
+            doi = clean_doi(results[0].get("doi") or "")
+            if doi:
+                return _save(doi)
+
+    return _save("")

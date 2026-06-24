@@ -303,7 +303,7 @@ def _extract_refs_via_pdf_direct(doi_r: str, pdf_path: Path) -> list[dict]:
         }
     """).strip()
 
-    from .llm import call_gemini_with_pdf
+    from .llm_client import call_gemini_with_pdf
     result = call_gemini_with_pdf(prompt, pdf_bytes)
 
     if not result or not isinstance(result.get("references"), list):
@@ -410,7 +410,7 @@ def _extract_refs_via_pdf_images(doi_r: str, pdf_path: Path) -> list[dict]:
     """).strip()
 
     # Lazy import to avoid circular dependency at module load time
-    from .llm import call_gemini_with_images
+    from .llm_client import call_gemini_with_images
     result = call_gemini_with_images(prompt, images)
 
     if not result or not isinstance(result.get("references"), list):
@@ -458,7 +458,8 @@ def _extract_refs_via_grobid(doi_r: str, pdf_path: Path) -> list:
     return refs
 
 
-def run_grobid(doi_r: str, pdf_path: Optional[Path]) -> dict:
+def run_grobid(doi_r: str, pdf_path: Optional[Path],
+               no_llm: bool = False) -> dict:
     """
     Run the full extraction pipeline for one paper.
 
@@ -470,8 +471,8 @@ def run_grobid(doi_r: str, pdf_path: Optional[Path]) -> dict:
 
     Fallback order when pdfminer finds 0 references:
         1. GROBID public server (https://kermitt2-grobid.hf.space)
-        2. Gemini with full PDF bytes   (success_direct_llm)
-        3. Gemini with rendered images  (success_image_llm)
+        2. Gemini with full PDF bytes   (success_direct_llm)  — skipped when no_llm=True
+        3. Gemini with rendered images  (success_image_llm)   — skipped when no_llm=True
     """
     if not pdf_path:
         return {"grobid_status": "no_pdf", "sections": {}, "n_refs_parsed": 0}
@@ -494,7 +495,7 @@ def run_grobid(doi_r: str, pdf_path: Optional[Path]) -> dict:
             n_refs  = len(grobid_refs)
             status  = "success_grobid"
             log.info("[%s] Used GROBID fallback: %d refs", doi_r, n_refs)
-        else:
+        elif not no_llm:
             direct_refs = _extract_refs_via_pdf_direct(doi_r, pdf_path)
             if direct_refs:
                 sections["references"] = direct_refs

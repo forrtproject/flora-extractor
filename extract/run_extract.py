@@ -1,130 +1,1266 @@
 """
 run_extract.py — Stage 3 orchestrator.
 
-Routes each DOI to the single-original or multi-original pipeline,
-then writes data/extracted.csv.
+For every row in filtered.csv:
+  - false_positive → pass through unchanged (no extraction)
+  - replication/reproduction → classify match type, route to pipeline, write result
+
+Each completed row is appended to data/extracted.csv immediately so that
+Stage 4 validation can begin before the full run finishes.
 
 Usage:
-    python extract/run_extract.py
+    python -m extract.run_extract
 """
+import json
+import re
+import time
+from pathlib import Path
+
 import pandas as pd
 
-from shared.config import DATA_DIR, log
-from shared.schema import EXTRACTED_COLS
-from shared.utils import clean_doi
+from shared.config import (
+    BASE_DIR, DATA_DIR, GEMINI_HEAVY_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC,
+    OA_XML_CACHE_DIR, PARSE_CACHE_DIR, PDF_CACHE_DIR, log,
+)
+from shared import token_counter
+from shared.llm_client import call_llm
+from shared.openalex_client import extract_author_year_patterns, find_all_candidates
+from shared.openalex_client import fetch_openalex_by_doi as _oa_by_doi
+from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
+from shared.openalex_client import _search_crossref_by_title, _search_openalex_by_title
+from shared.pdf_parsing import parse_all as _parse_all
+from shared.doi_verify import verify_and_correct
+from shared.schema import EXTRACTED_COLS, make_pair_id
+from shared.utils import cache_key, clean_doi
 from extract.link_original import run_for_doi
 from extract.multi_original import run_multi_original_for_doi
-from extract.code_outcome import extract_outcome
+from extract.code_outcome import extract_outcome, predict_outcome_keyword
+
+def _build_ref_o(doi_o: str, fallback_author: str = "",
+                  fallback_year: str = "",
+                  title_o: str = "") -> tuple[str, str]:
+    """Build APA-style ref_o and semicolon-separated authors_o for a resolved original.
+
+    Resolution order:
+      1. DOI lookup via OpenAlex then CrossRef (fetch_openalex_full_metadata)
+      2. Title search via CrossRef then OpenAlex (when DOI lookup fails and title_o given)
+      3. Surname · Year fallback (when all API lookups fail)
+
+    Returns (ref_o, authors_o).
+    """
+    meta: dict | None = None
+    if doi_o:
+        try:
+            meta = _oa_full_meta(doi_o)
+        except Exception:
+            pass
+
+    # Title-based fallback for no_metadata / hallucinated DOIs
+    if meta is None and title_o:
+        try:
+            meta = (_search_crossref_by_title(title_o, fallback_year)
+                    or _search_openalex_by_title(title_o, fallback_year))
+            if meta:
+                log.debug("[ref_o] title search hit for %r: %s", title_o[:60], meta.get("doi"))
+        except Exception:
+            pass
+
+    if not meta:
+        surname = str(fallback_author or "").split()[-1] if fallback_author else ""
+        year    = str(fallback_year or "")
+        ref     = " · ".join(s for s in [surname, year] if s)
+        return ref, surname
+
+    authors    = meta.get("authors") or []
+    year       = str(meta.get("year") or fallback_year or "")
+    title      = meta.get("title") or ""
+    journal    = meta.get("journal") or ""
+    volume     = meta.get("volume") or ""
+    issue      = meta.get("issue") or ""
+    first_page = meta.get("first_page") or ""
+    last_page  = meta.get("last_page") or ""
+    doi_val    = meta.get("doi") or doi_o
+
+    authors_o = "; ".join(authors)
+
+    # APA author string
+    if len(authors) == 1:
+        auth_str = authors[0]
+    elif len(authors) == 2:
+        auth_str = f"{authors[0]}, & {authors[1]}"
+    elif authors:
+        auth_str = ", ".join(authors[:-1]) + f", & {authors[-1]}"
+    else:
+        auth_str = str(fallback_author or "")
+
+    # Source segment: Journal, vol(issue), pages.
+    source_seg = ""
+    if journal:
+        vol_issue = f", {volume}({issue})" if volume and issue else (f", {volume}" if volume else "")
+        pages     = f", {first_page}–{last_page}" if first_page and last_page else (f", {first_page}" if first_page else "")
+        source_seg = f"{journal}{vol_issue}{pages}."
+
+    doi_url  = f"https://doi.org/{doi_val}" if doi_val else ""
+    parts    = [f"{auth_str} ({year})." if auth_str else f"({year})."]
+    if title:
+        parts.append(f"{title}.")
+    if source_seg:
+        parts.append(source_seg)
+    if doi_url:
+        parts.append(doi_url)
+    ref_o = " ".join(parts)
+
+    return ref_o, authors_o
 
 
-def run_extract() -> pd.DataFrame:
-    """Run Stage 3 and write data/extracted.csv."""
+# ── Internal → schema link_method mapping ────────────────────────────────────
+_METHOD_MAP = {
+    "citation_context_match":         "author_year_match",
+    "same_author_year_title_overlap": "author_year_match",
+    "single_candidate_after_requery": "author_year_match",
+    "title_pattern_match":            "author_year_match",
+    "grobid_ref_match":               "author_year_match",
+    "llm_gemini":                     "llm_fulltext",
+    "llm_openai":                     "llm_fulltext",
+    "llm_abstract_gemini":            "llm_abstract",
+    "llm_abstract_openai":            "llm_abstract",
+    # LLM ran successfully but concluded no identifiable original study exists.
+    # Distinct from llm_failed (API errors) and llm_fulltext (original found).
+    "llm_no_target":                  "no_original_found",
+    "llm_failed":                     "target_pending",
+    "no_candidates_found":            "target_pending",
+    "needs_fulltext":                 "target_pending",
+    "none":                           "target_pending",
+    "llm_none":                       "target_pending",
+}
+
+_VALID_MATCH_TYPES = {"single_original", "multiple_match", "multiple_original"}
+_VALID_OUTCOMES    = {"success", "failure", "mixed", "uninformative", "descriptive"}
+
+# ── Rule-based multi-original detection ──────────────────────────────────────
+# These patterns catch papers whose title or abstract unambiguously declares
+# that N independent original studies are being replicated (Many Labs, RRR, etc).
+# They run BEFORE the LLM and BEFORE the cache so they cannot be overridden by
+# a stale cached single_original result.
+
+_MULTI_TITLE_RE = re.compile(
+    r"\bmany\s+labs\b"
+    r"|\bregistered\s+replication\s+report\b"
+    r"|\bmany\s+analysts\b"
+    r"|\breplicat(?:ion|ions?)\s+of\s+\d+\b",
+    re.IGNORECASE,
+)
+
+# Each pattern must capture the count of studies in group 1.
+_MULTI_ABSTRACT_RES: list[re.Pattern] = [
+    # "replications of 28"  /  "replication of 10 studies"
+    re.compile(r"\breplicat(?:ion|ions?)\s+of\s+(\d+)\b", re.IGNORECASE),
+    # "replicated 28 original findings"  /  "replicating 10 classic studies"
+    re.compile(
+        r"\b(?:replicated?|replicating)\s+(?:a\s+total\s+of\s+)?(\d+)\s*"
+        r"(?:original|independent|published|classic|contemporary|distinct|previous)?"
+        r"\s*(?:studi(?:es)?|findings?|experiments?|effects?|papers?)\b",
+        re.IGNORECASE,
+    ),
+    # "28 classic and contemporary findings"  /  "27 independent studies"
+    re.compile(
+        r"\b(\d+)\s+(?:original|independent|published|classic|contemporary|distinct)"
+        r"(?:\s+and\s+\w+(?:\s+\w+)?)?\s+(?:studi(?:es)?|findings?|experiments?|effects?)\b",
+        re.IGNORECASE,
+    ),
+]
+
+_MULTI_N_MIN = 3  # counts < 3 might be multiple_match, not multiple_original
+
+
+def _rule_classify_multi_original(title_r: str, abstract_r: str) -> "dict | None":
+    """
+    Return a classification dict if title or abstract contains unambiguous signals
+    that the paper replicates N ≥ 3 independent original studies. Returns None
+    when no rule fires (caller should fall through to LLM).
+    """
+    if _MULTI_TITLE_RE.search(title_r):
+        return {
+            "original_match_type":       "multiple_original",
+            "original_match_confidence": "high",
+            "rule_fired":                True,
+            "reasoning": "Title matches a known multi-target replication project or explicit 'replication of N' pattern.",
+        }
+    for pattern in _MULTI_ABSTRACT_RES:
+        m = pattern.search(abstract_r)
+        if not m:
+            continue
+        try:
+            n = int(m.group(1))
+        except (IndexError, ValueError, TypeError):
+            continue
+        if n >= _MULTI_N_MIN:
+            return {
+                "original_match_type":       "multiple_original",
+                "original_match_confidence": "high",
+                "rule_fired":                True,
+                "reasoning": f"Abstract explicitly states replication of {n} studies.",
+            }
+    return None
+
+
+def _map_method(method: str) -> str:
+    if method in _METHOD_MAP:
+        return _METHOD_MAP[method]
+    if method in {"author_year_match", "llm_abstract", "llm_fulltext",
+                  "no_original_found", "target_pending", "api_error"}:
+        return method
+    if method == "llm_no_target":
+        return "no_original_found"
+    if method.startswith("llm_"):
+        return "llm_fulltext"
+    return "target_pending"
+
+
+def _score_to_confidence(score) -> str:
+    try:
+        f = float(score or 0)
+    except (TypeError, ValueError):
+        return "low"
+    return "high" if f >= 0.8 else "medium" if f >= 0.5 else "low"
+
+
+# ── Match-type classification (Issue 8) ──────────────────────────────────────
+
+def classify_match_type(row: dict, no_llm: bool = False) -> dict:
+    """
+    Classify original_match_type for a filtered.csv row.
+
+    Steps:
+      0. Rule-based pre-screening (title/abstract patterns) — fires before cache
+      1. Extract author-year citation patterns from abstract_r
+      2. Fetch referenced works from OpenAlex, match against patterns
+      3. Call LLM with: title, abstract, matched candidates, count of distinct patterns
+      4. Return {"original_match_type": ..., "original_match_confidence": ...}
+
+    no_llm=True: rules only; returns single_original default when no rule fires.
+    Rules run BEFORE the cache so a stale single_original result from a prior LLM
+    call cannot override a deterministic rule match (e.g. Many Labs, RRR papers).
+    LLM results are cached as cache_key(doi_r + "_match_type"). On OpenAlex failure,
+    defaults to single_original (logs a warning, does not crash).
+    """
+    doi_r      = clean_doi(str(row.get("doi_r", "")))
+    title_r    = str(row.get("title_r",    ""))
+    abstract_r = str(row.get("abstract_r", ""))
+    oa_id_r    = str(row.get("openalex_id_r", ""))
+    year_r_str = str(row.get("year_r", ""))
+
+    # Step 0: deterministic rules — catch Many Labs / RRR / "replications of N" papers
+    # without an LLM call and without being overridden by a cached LLM result.
+    rule = _rule_classify_multi_original(title_r, abstract_r)
+    if rule:
+        log.info("[%s] classify_match_type: rule fired → %s", doi_r, rule["original_match_type"])
+        return rule
+
+    if no_llm:
+        return {"original_match_type": "single_original",
+                "original_match_confidence": "low", "rule_fired": False}
+
+    cache_file = LLM_CACHE_DIR / f"match_type_{cache_key(doi_r + '_match_type')}.json"
+    if cache_file.exists():
+        with cache_file.open(encoding="utf-8") as fh:
+            return json.load(fh)
+
+    try:
+        year_r = int(year_r_str) if year_r_str else 2099
+    except (ValueError, TypeError):
+        year_r = 2099
+
+    # Step 1: extract author-year citation patterns from abstract and title
+    # extract_author_year_patterns() always returns a list, so we can concatenate results immediately.
+    # This steps repeats in find_all_candidates, but we need the patterns here to feed into the LLM prompt
+    patterns = extract_author_year_patterns(title_r, max_year=year_r) + extract_author_year_patterns(abstract_r, max_year=year_r)
+    distinct_pairs = {(p["surname"], p["year"]) for p in patterns}
+
+    # Step 2: fetch OpenAlex referenced works and match against patterns
+    try:
+        candidates = find_all_candidates(doi_r, oa_id_r, title_r, abstract_r, year_r, "")
+    except Exception as e:
+        log.warning("[%s] classify_match_type: OpenAlex failed: %s — defaulting to single_original",
+                    doi_r, e)
+        return {"original_match_type": "single_original", "original_match_confidence": "low"}
+
+    # Step 3: call LLM
+    result = _llm_classify_match_type(doi_r, title_r, abstract_r, distinct_pairs, candidates)
+
+    with cache_file.open("w", encoding="utf-8") as fh:
+        json.dump(result, fh, ensure_ascii=False)
+
+    return result
+
+
+def _llm_classify_match_type(doi_r: str,
+                              title_r: str,
+                              abstract_r: str,
+                              distinct_pairs: set,
+                              candidates: list) -> dict:
+    """LLM call to classify original_match_type. Returns a dict with both fields."""
+    abstract_snip = (abstract_r[:800] + "…") if len(abstract_r) > 800 else abstract_r
+    pattern_lines = "\n".join(
+        f"- {s} ({y})" for s, y in sorted(distinct_pairs)
+    ) or "(none found)"
+    cand_lines = "\n".join(
+        f"{i+1}. \"{c.get('title','?')}\" ({c.get('year','?')}) — {c.get('first_author','?')}"
+        for i, c in enumerate(candidates[:15])
+    ) or "(none found)"
+
+    prompt = (
+        "Classify how many original studies this replication paper targets.\n\n"
+        f"TITLE: {title_r}\n"
+        f"ABSTRACT: {abstract_snip or '(not available)'}\n\n"
+        f"CITED AUTHOR-YEAR PATTERNS IN ABSTRACT ({len(distinct_pairs)} distinct):\n"
+        f"{pattern_lines}\n\n"
+        f"CANDIDATE ORIGINALS FROM OPENALEX ({len(candidates)} found):\n"
+        f"{cand_lines}\n\n"
+        "Classify as ONE of:\n"
+        "- single_original: paper targets one specific original study\n"
+        "- multiple_match: 2–5 candidates share the SAME author/year; paper targets ONE"
+        " original but disambiguation is needed (e.g. two papers by Smith 2005)\n"
+        "- multiple_original: paper explicitly replicates SEVERAL INDEPENDENT original"
+        " studies as its stated goal (will produce N output rows, one per original)\n\n"
+        "Key rules:\n"
+        "1. Merely citing many background studies is NOT multiple_original.\n"
+        "2. A large candidate list from OpenAlex does NOT mean multiple_original —"
+        " it may just reflect many citations.\n"
+        "3. STRONG signals for multiple_original: explicit count in abstract"
+        " (e.g. 'replications of 28 studies'), project names like Many Labs or"
+        " Registered Replication Report, a table of target studies each with its own protocol.\n"
+        "4. multiple_match applies when ONE study is targeted but there are 2–5 candidates"
+        " with the identical author/year — not when there are many different author/year pairs.\n\n"
+        'Respond with ONLY this JSON:\n'
+        '{"original_match_type": "<single_original|multiple_match|multiple_original>", '
+        '"original_match_confidence": "<high|medium|low>", "reasoning": "<brief>"}'
+    )
+
+    token_counter.set_stage("extract_classify")
+    result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_HEAVY_MODEL)
+    if result:
+        time.sleep(LLM_RATE_SEC)
+        mtype = result.get("original_match_type", "single_original")
+        conf  = result.get("original_match_confidence", "low")
+        if mtype not in _VALID_MATCH_TYPES:
+            mtype = "single_original"
+        if conf not in {"high", "medium", "low"}:
+            conf = "low"
+        return {
+            "original_match_type":       mtype,
+            "original_match_confidence": conf,
+            "classify_llm_model":        model_used,
+            "reasoning":                 str(result.get("reasoning", "") or ""),
+        }
+
+    log.warning("[%s] classify_match_type: LLM failed — defaulting to single_original", doi_r)
+    return {"original_match_type": "single_original", "original_match_confidence": "low",
+            "classify_llm_model": ""}
+
+
+# ── Data adapters ─────────────────────────────────────────────────────────────
+
+def _build_cands_df(row: pd.Series) -> pd.DataFrame:
+    """Build a minimal cands_df for link_original.run_for_doi from a filtered.csv row."""
+    return pd.DataFrame([{
+        "doi_r":                 str(row.get("doi_r", "")),
+        "study_r":               str(row.get("title_r", row.get("study_r", ""))),
+        "abstract_r":            str(row.get("abstract_r", "")),
+        "year_r":                str(row.get("year_r",    "")),
+        "openalex_id_r":         str(row.get("openalex_id_r", "")),
+        "url_r":                 str(row.get("url_r",    "")),
+        "author_year_pattern_r": "",
+    }])
+
+
+def _build_rep_df(row: pd.Series) -> pd.DataFrame:
+    """Build a minimal all_rep_df for multi_original.run_multi_original_for_doi."""
+    return pd.DataFrame([{
+        "doi_r":                 str(row.get("doi_r", "")),
+        "study_r":               str(row.get("title_r", row.get("study_r", ""))),
+        "abstract_r":            str(row.get("abstract_r", "")),
+        "year_r":                str(row.get("year_r",    "")),
+        "url_r":                 str(row.get("url_r",    "")),
+        "openalex_id_r":         str(row.get("openalex_id_r", "")),
+        "author_year_pattern_r": "",
+    }])
+
+
+# ── Row merge helpers ─────────────────────────────────────────────────────────
+
+def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
+               match_type: str, match_conf: str,
+               rank: int, n: int) -> dict:
+    row = filter_row.to_dict()
+    # propagate study_r → title_r if title_r is absent (old seeded data uses study_r)
+    if not row.get("title_r"):
+        row["title_r"] = row.get("study_r", "")
+    doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
+    doi_o_clean = clean_doi(link.get("resolved_doi_o", "") or "")
+    row.update({
+        "pair_id":           make_pair_id(doi_r_clean, doi_o_clean),
+        "original_match_type":       match_type,
+        "original_match_confidence": match_conf,
+        "doi_o":           doi_o_clean,
+        "title_o":         str(link.get("resolved_title_o", "") or ""),
+        "year_o":          str(link.get("resolved_year_o",  "") or ""),
+        **dict(zip(("ref_o", "authors_o"), _build_ref_o(
+            doi_o_clean,
+            str(link.get("resolved_author_o", "") or ""),
+            str(link.get("resolved_year_o",   "") or ""),
+            str(link.get("resolved_title_o",  "") or ""),
+        ))),
+        "link_method":     _map_method(link.get("resolution_method", "target_pending")),
+        "link_evidence":   str(link.get("llm_evidence",     "") or ""),
+        "link_confidence": (link["llm_confidence"]
+                            if link.get("llm_confidence") in {"high", "medium", "low"}
+                            else _score_to_confidence(link.get("resolution_score", 0))),
+        "link_llm_model":  str(link.get("llm_model",        "") or ""),
+        "outcome":             outcome.get("outcome",             "uninformative"),
+        "outcome_phrase":      outcome.get("outcome_phrase",      ""),
+        "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
+        "out_quote_source":    outcome.get("out_quote_source",    ""),
+        "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
+        "type":          "reproduction"
+                         if str(filter_row.get("filter_status", "")) == "reproduction"
+                         else "replication",
+        "original_rank": rank,
+        "n_originals":   n,
+    })
+    return row
+
+
+def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
+                     match_type: str, match_conf: str, n: int,
+                     link_llm_model: str = "") -> dict:
+    row = filter_row.to_dict()
+    if not row.get("title_r"):
+        row["title_r"] = row.get("study_r", "")
+    conf_str = orig.get("confidence", "low")
+    if conf_str not in {"high", "medium", "low"}:
+        conf_str = "low"
+    doi_r_clean  = clean_doi(str(filter_row.get("doi_r", "")))
+    doi_o_clean  = clean_doi(orig.get("doi", "") or "")
+    row.update({
+        "pair_id":           make_pair_id(doi_r_clean, doi_o_clean),
+        "original_match_type":       match_type,
+        "original_match_confidence": match_conf,
+        "doi_o":           doi_o_clean,
+        "title_o":         str(orig.get("title",        "") or ""),
+        "year_o":          str(orig.get("year",         "") or ""),
+        **dict(zip(("ref_o", "authors_o"), _build_ref_o(
+            doi_o_clean,
+            str(orig.get("first_author", "") or ""),
+            str(orig.get("year",         "") or ""),
+            str(orig.get("title",        "") or ""),
+        ))),
+        "link_method":     "llm_abstract",
+        "link_evidence":   str(orig.get("evidence",     "") or ""),
+        "link_confidence": conf_str,
+        "link_llm_model":  link_llm_model,
+        "outcome":             outcome.get("outcome",             "uninformative"),
+        "outcome_phrase":      outcome.get("outcome_phrase",      ""),
+        "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
+        "out_quote_source":    outcome.get("out_quote_source",    ""),
+        "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
+        "type":          "replication",
+        "original_rank": orig.get("rank", 1),
+        "n_originals":   n,
+    })
+    return row
+
+
+def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
+               link_method: str = "api_error") -> dict:
+    row = filter_row.to_dict()
+    doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
+    outcome = "api_error" if link_method == "api_error" else "pending"
+    row.update({
+        "pair_id": make_pair_id(doi_r_clean, ""),
+        "original_match_type":       match_type,
+        "original_match_confidence": match_conf,
+        "doi_o": "", "title_o": "", "year_o": "", "authors_o": "", "ref_o": "",
+        "link_method": link_method, "link_evidence": "", "link_confidence": "low",
+        "link_llm_model": "",
+        "outcome": outcome, "outcome_phrase": "",
+        "outcome_confidence": "low", "out_quote_source": "", "outcome_reasoning": "",
+        "type": "", "original_rank": 1, "n_originals": 1,
+    })
+    return row
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _save_parse_cache(doi_r: str) -> None:
+    """Run all PDF parsers for doi_r and cache results to PARSE_CACHE_DIR."""
+    key      = cache_key(doi_r)
+    out_file = PARSE_CACHE_DIR / f"parse_{key}.json"
+    if out_file.exists():
+        return
+
+    pdf_path = PDF_CACHE_DIR / f"{key}.pdf"
+    if not pdf_path.exists():
+        pdf_path = None  # type: ignore[assignment]
+
+    oa_xml_file = OA_XML_CACHE_DIR / f"oa_xml_{key}.json"
+    oa_xml: dict | None = None
+    if oa_xml_file.exists():
+        try:
+            with oa_xml_file.open(encoding="utf-8") as fh:
+                oa_xml = json.load(fh)
+        except Exception:
+            pass
+
+    results = _parse_all(doi_r, pdf_path, oa_xml=oa_xml)
+    try:
+        with out_file.open("w", encoding="utf-8") as fh:
+            json.dump(results, fh, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        log.debug("[%s] _save_parse_cache write failed: %s", doi_r, exc)
+
+
+def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -> dict:
+    abstract_r = str(row.get("abstract_r", ""))
+    title_r    = str(row.get("title_r",    ""))
+
+    # Prefer the best-scoring parse method from the parse cache so the outcome LLM
+    # receives whichever parser extracted the richest text, not always GROBID.
+    fulltext = _best_fulltext_from_cache(doi_r)
+    if not fulltext:
+        # Fallback: GROBID sections that run_for_doi already extracted
+        fulltext = " ".join(filter(None, [
+            str(link.get("grobid_abstract", "") or ""),
+            str(link.get("grobid_intro",    "") or ""),
+            str(link.get("grobid_methods",  "") or ""),
+            str(link.get("html_text",       "") or ""),
+        ]))
+
+    return extract_outcome(
+        doi_r, abstract_r, fulltext, title_r, no_llm=no_llm,
+        original_title=str(link.get("resolved_title_o",  "") or ""),
+        original_authors=str(link.get("resolved_author_o", "") or ""),
+        original_year=str(link.get("resolved_year_o",   "") or ""),
+    )
+
+
+def _best_fulltext_from_cache(doi_r: str) -> str:
+    """
+    Read the parse cache for doi_r, score each method, and return the abstract +
+    intro text of the highest-scoring method.  Returns '' on any failure.
+    """
+    cache_file = PARSE_CACHE_DIR / f"parse_{cache_key(doi_r)}.json"
+    if not cache_file.exists():
+        return ""
+    try:
+        with cache_file.open(encoding="utf-8") as fh:
+            results = json.load(fh)
+        from shared.pdf_parsing import best_parse_result
+        best = best_parse_result(results)
+        if not best:
+            return ""
+        return " ".join(filter(None, [
+            str(best.get("abstract", "") or ""),
+            str(best.get("intro",    "") or ""),
+        ]))
+    except Exception:
+        return ""
+
+
+def _parse_originals(result: dict) -> list[dict]:
+    """Extract originals list from run_multi_original_for_doi result."""
+    raw = result.get("originals")
+    if isinstance(raw, list) and raw:
+        return raw
+    json_str = result.get("originals_json", "[]")
+    if isinstance(json_str, str):
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            return []
+    return []
+
+
+# ── FLoRA entry sheet skip helper ────────────────────────────────────────────
+
+def _load_flora_validated_dois(sheet_path) -> set:
+    """Return the set of doi_r values already validated in the FLoRA entry sheet.
+
+    Skips rows whose validation_status is 'validated - unchanged' or
+    'validated - changed' — these are confirmed and need no re-extraction.
+    Returns an empty set (with a warning) if the file is missing or unreadable.
+    """
+    from pathlib import Path as _Path
+    sheet_path = _Path(sheet_path)
+    if not sheet_path.exists():
+        log.warning(
+            "FLoRA entry sheet not found at %s — --skip-flora-validated has no effect",
+            sheet_path,
+        )
+        return set()
+    try:
+        df = pd.read_csv(sheet_path, dtype=str, encoding="utf-8-sig").fillna("")
+        validated = {"validated - unchanged", "validated - changed"}
+        mask = df["validation_status"].isin(validated)
+        dois = {clean_doi(d) for d in df.loc[mask, "doi_r"] if d}
+        log.info("FLoRA entry sheet: %d already-validated DOIs will be skipped", len(dois))
+        return dois
+    except Exception as exc:
+        log.warning("Could not read FLoRA entry sheet (%s) — no DOIs skipped", exc)
+        return set()
+
+
+# ── Main orchestrator ─────────────────────────────────────────────────────────
+
+def _extract_row_key(row: "dict | pd.Series") -> str:
+    """Return a unique resume key for a row.
+
+    Fallback chain: doi_r → openalex_id_r → url_r → title_r.
+    Prevents multiple no-DOI rows (e.g. from I4R / Replication Network) from
+    collapsing to the same empty-string key and being skipped as already-processed.
+    """
+    doi = clean_doi(str(row.get("doi_r", "") or ""))
+    if doi:
+        return doi
+    oa = str(row.get("openalex_id_r", "") or "").strip()
+    if oa:
+        return f"oa:{oa}"
+    url = str(row.get("url_r", "") or "").strip()
+    if url:
+        return f"url:{url}"
+    title = str(row.get("title_r", "") or "").lower().strip()
+    return f"title:{title}" if title else ""
+
+
+def _load_extracted_rows(out_path) -> tuple[dict[str, list[dict]], set[str]]:
+    """Partition extracted.csv rows by resolution status for --resume mode.
+
+    False_positive rows in the existing file are dropped — they should never have
+    been written to extracted.csv and will not be re-written on resume.
+
+    Returns:
+        resolved — row_key → list of rows that are fully resolved (link_method != target_pending)
+        pending  — set of row_key where at least one row has link_method == target_pending
+    """
+    if not out_path.exists():
+        return {}, set()
+    df = pd.read_csv(out_path, dtype=str, encoding="utf-8-sig").fillna("")
+    # Drop false_positive rows that were incorrectly written in a prior run.
+    df = df[df["filter_status"] != "false_positive"]
+    resolved: dict[str, list[dict]] = {}
+    pending: set[str] = set()
+    for row_key, group in df.groupby(df.apply(_extract_row_key, axis=1), sort=False):
+        if not row_key:
+            continue  # rows with no DOI, no OA ID, and no title — skip; can't dedup
+        rows = group.to_dict("records")
+        # Stale artifact: LLM method written before the no_original_found fix — these
+        # have link_method=llm_fulltext/llm_abstract but an empty doi_o. Re-process them.
+        rows = [
+            r for r in rows
+            if not (r.get("link_method") in {"llm_fulltext", "llm_abstract"}
+                    and not r.get("doi_o", "").strip())
+        ]
+        if not rows:
+            pending.add(row_key)
+            continue
+        is_pending = any(r.get("link_method") == "target_pending" for r in rows)
+        if is_pending:
+            pending.add(row_key)
+        else:
+            resolved[row_key] = rows
+    return resolved, pending
+
+
+def _verify_row(row: dict) -> dict:
+    """Verify/correct doi_o in a finished result row before it is written.
+
+    Keeps pair_id and ref_o consistent when the DOI changes, downgrades
+    link_confidence on mismatch, and appends the verification note to
+    link_evidence.
+    """
+    if row.get("link_method") in {"target_pending", "api_error"}:
+        row["doi_o_verification"] = "skipped"
+        return row
+
+    old_doi = str(row.get("doi_o", "") or "")
+    v = verify_and_correct(old_doi, str(row.get("title_o", "") or ""),
+                           str(row.get("authors_o", "") or ""), row.get("year_o", ""),
+                           exclude_doi=clean_doi(str(row.get("doi_r", ""))),
+                           exclude_title=str(row.get("title_r", "")
+                                             or row.get("study_r", "") or ""))
+    row["doi_o_verification"] = v["doi_o_verification"]
+    if v["doi_o"] != old_doi:
+        row["doi_o"]   = v["doi_o"]
+        row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), v["doi_o"])
+        new_ref, new_authors = _build_ref_o(v["doi_o"],
+                                            str(row.get("authors_o", "") or ""),
+                                            str(row.get("year_o",    "") or ""),
+                                            str(row.get("title_o",   "") or ""))
+        row["ref_o"]     = new_ref
+        row["authors_o"] = new_authors
+    if v["doi_o_verification"] == "mismatch":
+        row["link_confidence"] = "low"
+    if v["evidence_note"]:
+        existing = str(row.get("link_evidence", "") or "")
+        # resume mode re-verifies carried-forward rows — don't append the same note twice
+        if v["evidence_note"] not in existing:
+            row["link_evidence"] = f"{existing} | {v['evidence_note']}".strip(" |")
+    return row
+
+
+def _append_row(out_path, result_row: dict, first: bool) -> None:
+    """Write one result row to the output CSV immediately after processing.
+
+    first=True  → open with mode='w' (creates / truncates the file) and write header.
+    first=False → open with mode='a' (append) and skip header.
+    """
+    result_row = _verify_row(result_row)
+
+    # Sanitize row data to handle problematic characters
+    for key, val in result_row.items():
+        if isinstance(val, str):
+            # Replace control characters and problematic whitespace
+            # but preserve newlines within fields (they'll be quoted)
+            result_row[key] = val.replace('\x00', '').replace('\r', ' ')
+
+    row_df = pd.DataFrame([result_row])
+    for col in EXTRACTED_COLS:
+        if col not in row_df.columns:
+            row_df[col] = ""
+
+    try:
+        row_df[EXTRACTED_COLS].to_csv(
+            out_path, mode="w" if first else "a",
+            index=False, encoding="utf-8-sig", header=first,
+            quoting=1,  # csv.QUOTE_ALL to quote fields with special characters
+            quotechar='"',
+        )
+    except Exception as e:
+        log.error("Failed to write row for DOI %s: %s",
+                  result_row.get("doi_r", "unknown"), str(e))
+        raise
+
+
+def run_extract(no_llm: bool = False,
+                limit: "int | None" = None,
+                no_pdf: bool = False,
+                no_multiple_originals: bool = False,
+                no_reproductions: bool = False,
+                skip_flora_validated: bool = False,
+                resume: bool = False,
+                resolved_only: bool = False,
+                from_year: "int | None" = None,
+                to_year: "int | None" = None,
+                predicted_outcome: "str | None" = None,
+                out_path: "Path | None" = None,
+                source: "str | None" = None,
+                doi_r_filter: "list[str] | None" = None) -> pd.DataFrame:
+    """
+    Run Stage 3 and stream results to data/extracted.csv.
+
+    no_llm              — skip all LLM calls (rule-based only).
+    limit               — process only the first N non-false-positive rows.
+    no_pdf              — skip PDF download; abstract-only LLM resolution only.
+    no_multiple_originals — write multiple_original rows as target_pending instead of running LLM.
+    no_reproductions    — skip rows with filter_status=reproduction (write as target_pending).
+    skip_flora_validated — skip DOIs already validated in the FLoRA entry sheet
+                           (validation_status = 'validated - unchanged' or 'validated - changed').
+    resume              — carry forward already-resolved rows from extracted.csv unchanged;
+                           re-run only rows with link_method == "target_pending".
+    resolved_only       — only write rows that are fully resolved (link_method in
+                           author_year_match / llm_abstract / llm_fulltext with a non-empty doi_o).
+                           target_pending / api_error / no_original_found rows are silently skipped.
+                           Use with --no-llm --no-pdf for a fast rule-based-only pass, then
+                           follow up with --resume for the LLM pass on remaining rows.
+    """
     filtered_path = DATA_DIR / "filtered.csv"
     if not filtered_path.exists():
-        raise FileNotFoundError(f"filtered.csv not found at {filtered_path}. Run Stage 2 first.")
+        sample_path = BASE_DIR / "misc" / "sample_filtered.csv"
+        if sample_path.exists():
+            log.info("data/filtered.csv not found — using misc/sample_filtered.csv")
+            filtered_path = sample_path
+        else:
+            raise FileNotFoundError(
+                f"filtered.csv not found at {filtered_path}. Run Stage 2 first."
+            )
 
     df = pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig").fillna("")
-    log.info("Stage 3: loaded %d filtered rows", len(df))
+    log.info("Stage 3: loaded %d rows from %s", len(df), filtered_path.name)
 
-    # Only process confirmed replications/reproductions, skip false positives
-    df = df[df["filter_status"].isin(["replication", "reproduction"])].copy()
-    log.info("Stage 3: %d rows after dropping false_positives", len(df))
+    # ── Year filter ───────────────────────────────────────────────────────────
+    if from_year is not None or to_year is not None:
+        def _year_int(v: str) -> "int | None":
+            try:
+                return int(v)
+            except (ValueError, TypeError):
+                return None
+        years = df["year_r"].apply(_year_int)
+        mask = pd.Series(True, index=df.index)
+        if from_year is not None:
+            mask &= years.apply(lambda y: y is not None and y >= from_year)
+        if to_year is not None:
+            mask &= years.apply(lambda y: y is not None and y <= to_year)
+        before = len(df)
+        df = df[mask].reset_index(drop=True)
+        log.info(
+            "--year filter %s–%s: %d → %d rows",
+            from_year or "any", to_year or "any", before, len(df),
+        )
+
+    # ── Predicted-outcome filter ──────────────────────────────────────────────
+    # "other" means any outcome that is not failure (success / mixed / descriptive / uninformative).
+    # Uses keyword-only pre-screening on title + abstract — no LLM, no API calls.
+    if predicted_outcome:
+        want = predicted_outcome.lower()
+        before = len(df)
+        def _keep(row: pd.Series) -> bool:
+            pred = predict_outcome_keyword(
+                str(row.get("title_r", "")), str(row.get("abstract_r", ""))
+            )
+            if want == "other":
+                return pred != "failure"
+            return pred == want
+        df = df[df.apply(_keep, axis=1)].reset_index(drop=True)
+        log.info(
+            "--predicted-outcome %r: %d → %d rows",
+            predicted_outcome, before, len(df),
+        )
+
+    # ── Source filter ─────────────────────────────────────────────────────────
+    if source is not None:
+        before = len(df)
+        df = df[df["source"].str.lower() == source.lower()].reset_index(drop=True)
+        log.info("--source filter %r: %d → %d rows", source, before, len(df))
+
+    # ── doi_r filter ──────────────────────────────────────────────────────────
+    if doi_r_filter:
+        target_set = {clean_doi(d) for d in doi_r_filter}
+        before = len(df)
+        df = df[df["doi_r"].apply(clean_doi).isin(target_set)].reset_index(drop=True)
+        log.info("--doi-r filter: %d → %d rows", before, len(df))
+
+    flora_skip: set[str] = set()
+    if skip_flora_validated:
+        sheet_path = DATA_DIR / "FLoRA entry sheet - replication list.csv"
+        flora_skip = _load_flora_validated_dois(sheet_path)
+
+    prod_path = DATA_DIR / "extracted.csv"
+    if out_path is None:
+        out_path = prod_path
+    test_mode = (str(out_path.resolve()) != str(prod_path.resolve()))
 
     output_rows: list[dict] = []
+    first_write = True
+    processed = 0
+
+    # In test mode: always load the production CSV to identify which DOIs to skip
+    # (those already resolved in extracted.csv should not be re-processed or written
+    #  to extracted-test.csv, even without --resume).
+    resolved_main: dict[str, list[dict]] = {}
+    if test_mode:
+        resolved_main, _ = _load_extracted_rows(prod_path)
+        log.info(
+            "--extracted-test: %d DOIs already resolved in extracted.csv will be skipped",
+            len(resolved_main),
+        )
+
+    resolved_rows: dict[str, list[dict]] = {}
+    pending_dois: set[str] = set()
+    if resume:
+        resolved_rows, pending_dois = _load_extracted_rows(out_path)
+        n_resolved_rows = sum(len(v) for v in resolved_rows.values())
+        log.info(
+            "--resume: %d DOIs already resolved (%d rows), %d pending re-processing",
+            len(resolved_rows), n_resolved_rows, len(pending_dois),
+        )
+        # Write ALL resolved rows to the output file immediately, before processing
+        # any pending rows. This prevents data loss if the run is interrupted later —
+        # resolved work is committed up front, not interleaved with slow PDF/LLM calls.
+        for rows in resolved_rows.values():
+            for result_row in rows:
+                _append_row(out_path, result_row, first=first_write)
+                first_write = False
+                output_rows.append(result_row)
+        log.info("--resume: wrote %d resolved rows to %s (safe to interrupt)",
+                 len(output_rows), out_path.name)
+
+    # Deprioritize candidates without abstracts — process abstract-bearing rows first,
+    # then defer the ones missing abstracts to the end so they don't block others.
+    has_abstract = df["abstract_r"].notna() & (df["abstract_r"].astype(str).str.strip() != "")
+    df = pd.concat([df[has_abstract], df[~has_abstract]], ignore_index=True)
+    n_with_abstract = sum(has_abstract)
+    n_without = len(df) - n_with_abstract
+    if n_without > 0:
+        log.info("Prioritization: processing %d with abstract, deferring %d without", n_with_abstract, n_without)
+
+    flora_skip_count = 0
 
     for _, row in df.iterrows():
+        doi_r_check = clean_doi(str(row.get("doi_r", "")))
+        row_key     = _extract_row_key(row)
+
+        # Log when we reach candidates without abstracts (deferred to end)
+        abstract_r = str(row.get("abstract_r", "")).strip()
+        if not abstract_r and n_without > 0 and processed == n_with_abstract:
+            log.info("Deferring candidates without abstracts — processing will continue but at lower priority")
+
+        # Skip rows without abstract if in deferred section
+        if not abstract_r:
+            log.debug("[%s] Deferring — no abstract available", doi_r_check)
+
+        if doi_r_check in flora_skip:
+            log.debug("[%s] already validated in FLoRA — skipping", doi_r_check)
+            flora_skip_count += 1
+            continue
+
+        # --resume: skip rows already written above.
+        if resume and row_key and row_key in resolved_rows:
+            continue
+
+        # --extracted-test: skip DOIs already resolved in the production extracted.csv.
+        # Exception: --doi-r targets are always processed (explicit re-run request).
+        in_doi_r_filter = doi_r_filter and doi_r_check in {clean_doi(d) for d in doi_r_filter}
+        if test_mode and row_key and row_key in resolved_main and not in_doi_r_filter:
+            log.debug("[%s] --extracted-test: resolved in extracted.csv — skipping", doi_r_check)
+            continue
+
+        # False positives are excluded from Stage 3 — only replications and reproductions proceed.
+        if row.get("filter_status") == "false_positive":
+            log.debug("[%s] false_positive — skipping", clean_doi(str(row.get("doi_r", ""))))
+            continue
+
+        if limit is not None and processed >= limit:
+            break
+        processed += 1
+
+        result_rows: list[dict] = []
         doi_r = clean_doi(str(row.get("doi_r", "")))
-        match_type = str(row.get("original_match_type", "single_original")).strip()
+
+        # If DOI is missing, try to resolve one from the URL before processing.
+        # This lets I4R / Replication Network rows participate in the full pipeline.
+        if not doi_r:
+            url_r = str(row.get("url_r", "") or "").strip()
+            if url_r:
+                from shared.openalex_client import resolve_doi_from_url
+                resolved = resolve_doi_from_url(url_r)
+                if resolved:
+                    log.info("[url:%s] resolved DOI %s — using for extraction", url_r[:60], resolved)
+                    doi_r = resolved
+                    row = row.copy()
+                    row["doi_r"] = doi_r
+                else:
+                    log.info("[url:%s] could not resolve DOI — will extract from URL/abstract only", url_r[:60])
+
+        # --no-reproductions: write reproduction rows as target_pending without processing
+        if no_reproductions and str(row.get("filter_status", "")) == "reproduction":
+            if not resolved_only:
+                log.info("[%s] --no-reproductions: writing target_pending", doi_r)
+                result_rows.append(_empty_row(row, "single_original", "low",
+                                              link_method="target_pending"))
+                for result_row in result_rows:
+                    _append_row(out_path, result_row, first=first_write)
+                    first_write = False
+                    output_rows.append(result_row)
+            continue
+
+        match = classify_match_type(row.to_dict(), no_llm=no_llm)
+        match_type = match["original_match_type"]
+        match_conf = match["original_match_confidence"]
+        log.info("[%s] match_type=%s conf=%s", doi_r, match_type, match_conf)
+
+        # --no-multiple-originals: write multiple_original rows as target_pending
+        if no_multiple_originals and match_type == "multiple_original":
+            if not resolved_only:
+                log.info("[%s] --no-multiple-originals: writing target_pending", doi_r)
+                result_rows.append(_empty_row(row, "multiple_original", match_conf,
+                                              link_method="target_pending"))
+                for result_row in result_rows:
+                    _append_row(out_path, result_row, first=first_write)
+                    first_write = False
+                    output_rows.append(result_row)
+            continue
 
         try:
             if match_type == "multiple_original":
-                # Case C: multi-original path → may expand to N rows
-                result = run_multi_original_for_doi(doi_r, df, df)
-                if result.get("is_false_positive") or result.get("n_originals", 0) == 0:
-                    # Treat as single
-                    single = run_for_doi(doi_r)
-                    output_rows.append(_merge_row(row, single, rank=1, n=1))
+                rule_fired = bool(match.get("rule_fired", False))
+                result    = run_multi_original_for_doi(
+                    doi_r, _build_rep_df(row), force_multi=rule_fired
+                )
+                originals = _parse_originals(result)
+                if not originals:
+                    if rule_fired:
+                        log.warning(
+                            "[%s] rule_fired=True but LLM returned no originals — "
+                            "writing target_pending (NOT single_original)", doi_r
+                        )
+                        result_rows.append(_empty_row(row, "multiple_original", match_conf,
+                                                      link_method="target_pending"))
+                    else:
+                        link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
+                                              no_llm=no_llm, no_pdf=no_pdf)
+                        if not no_pdf:
+                            _save_parse_cache(doi_r)
+                        outcome = _get_outcome(doi_r, row, link, no_llm=no_llm)
+                        result_rows.append(
+                            _merge_row(row, link, outcome, "single_original", match_conf, 1, 1)
+                        )
                 else:
-                    originals = result.get("originals", [])
+                    multi_llm_model = str(result.get("llm_model", "") or "")
                     for orig in originals:
-                        output_rows.append(_merge_multi_row(row, result, orig, n=len(originals)))
+                        raw_out = str(orig.get("outcome", "uninformative") or "uninformative").lower()
+                        if raw_out not in _VALID_OUTCOMES:
+                            raw_out = "uninformative"
+                        outcome = {
+                            "outcome":            raw_out,
+                            "outcome_phrase":     str(orig.get("outcome_evidence", "") or ""),
+                            "outcome_confidence": str(orig.get("confidence", "low") or "low"),
+                            "out_quote_source":   "llm_multi",
+                        }
+                        result_rows.append(
+                            _merge_multi_row(row, orig, outcome, match_type, match_conf,
+                                             len(originals), multi_llm_model)
+                        )
             else:
-                # Case A/B: single-original path
-                result = run_for_doi(doi_r)
-                output_rows.append(_merge_row(row, result, rank=1, n=1))
+                link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
+                                      no_llm=no_llm, no_pdf=no_pdf)
+                if not no_pdf:
+                    _save_parse_cache(doi_r)
+                outcome = _get_outcome(doi_r, row, link, no_llm=no_llm)
+                result_rows.append(
+                    _merge_row(row, link, outcome, match_type, match_conf, 1, 1)
+                )
+
         except Exception as e:
             log.error("[%s] extraction failed: %s", doi_r, e)
-            output_rows.append(_empty_row(row))
+            result_rows.append(_empty_row(row, match_type, match_conf))
+
+        for result_row in result_rows:
+            if resolved_only and result_row.get("link_method") in {
+                "target_pending", "api_error", "no_original_found"
+            }:
+                log.debug("[%s] --resolved-only: skipping %s row",
+                          doi_r, result_row.get("link_method"))
+                continue
+            _append_row(out_path, result_row, first=first_write)
+            first_write = False
+            output_rows.append(result_row)
+            log.info("Streamed %d rows → %s", len(output_rows), out_path.name)
+
+    log.info("Stage 3 complete: %d rows → %s", len(output_rows), out_path)
+
+    # Print summary
+    print("\n" + "=" * 70)
+    print("STAGE 3 SUMMARY")
+    print("=" * 70)
+    print(f"  Rows processed:           {processed}")
+    print(f"  Rows output:              {len(output_rows)}")
+    print(f"  Flora-validated skipped:  {flora_skip_count}")
+    if skip_flora_validated:
+        print(f"    (from flora_entry_sheet.csv + flora.csv)")
+    if limit:
+        print(f"  Limit reached:            {processed >= limit}")
+    print("=" * 70 + "\n")
 
     out_df = pd.DataFrame(output_rows)
-    for col in EXTRACTED_COLS:
-        if col not in out_df.columns:
-            out_df[col] = ""
-
-    out_path = DATA_DIR / "extracted.csv"
-    out_df[EXTRACTED_COLS].to_csv(out_path, index=False, encoding="utf-8-sig")
-    log.info("Stage 3 complete: %d rows → %s", len(out_df), out_path)
-    return out_df
+    return out_df.reindex(columns=EXTRACTED_COLS, fill_value="")
 
 
-def _merge_row(filter_row: pd.Series, result: dict,
-               rank: int, n: int) -> dict:
-    """Build one extracted.csv row from a filter row + pipeline result."""
-    row = filter_row.to_dict()
-    row.update({
-        "doi_o"           : result.get("resolved_doi_o",   ""),
-        "title_o"         : result.get("resolved_title_o", ""),
-        "year_o"          : result.get("resolved_year_o",  ""),
-        "authors_o"       : result.get("resolved_author_o",""),
-        "link_method"     : result.get("resolution_method","target_pending"),
-        "link_evidence"   : result.get("llm_evidence",     ""),
-        "link_confidence" : result.get("resolution_score", 0.0),
-        "outcome"         : "pending",
-        "outcome_phrase"  : "",
-        "outcome_confidence": 0.0,
-        "out_quote_source": "",
-        "type"            : str(filter_row.get("filter_status", "replication")),
-        "original_rank"   : rank,
-        "n_originals"     : n,
-    })
-    return row
+def run_match_type_only(no_llm: bool = False,
+                        limit: "int | None" = None) -> pd.DataFrame:
+    """
+    Read filtered.csv, classify match type per row, write data/match_type_only.csv.
+    Useful for evaluating match-type classification in isolation.
+    """
+    filtered_path = DATA_DIR / "filtered.csv"
+    if not filtered_path.exists():
+        filtered_path = BASE_DIR / "misc" / "sample_filtered.csv"
+    df = pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig").fillna("")
+    eligible = df[df["filter_status"] != "false_positive"]
+    if limit is not None:
+        eligible = eligible.head(limit)
+
+    rows = []
+    for _, row in eligible.iterrows():
+        doi_r = clean_doi(str(row.get("doi_r", "")))
+        match = classify_match_type(row.to_dict(), no_llm=no_llm)
+        rows.append({
+            "doi_r":         doi_r,
+            "title_r":       str(row.get("title_r", "")),
+            "filter_status": str(row.get("filter_status", "")),
+            "match_type":    match["original_match_type"],
+            "match_conf":    match["original_match_confidence"],
+            "rule_fired":    str(match.get("rule_fired", False)),
+            "reasoning":     str(match.get("reasoning", "")),
+        })
+
+    out = pd.DataFrame(rows)
+    out_path = DATA_DIR / "match_type_only.csv"
+    out.to_csv(out_path, index=False, encoding="utf-8-sig")
+    log.info("match-type-only: %d rows → %s", len(out), out_path)
+    return out
 
 
-def _merge_multi_row(filter_row: pd.Series, result: dict,
-                     orig: dict, n: int) -> dict:
-    """Build one extracted.csv row for a multi-original result."""
-    row = filter_row.to_dict()
-    row.update({
-        "doi_o"           : orig.get("doi",          ""),
-        "title_o"         : orig.get("title",        ""),
-        "year_o"          : orig.get("year",         ""),
-        "authors_o"       : orig.get("first_author", ""),
-        "link_method"     : "llm_fulltext",
-        "link_evidence"   : orig.get("evidence",     ""),
-        "link_confidence" : {"high": 1.0, "medium": 0.6, "low": 0.3}.get(
-                                orig.get("confidence", "low"), 0.3),
-        "outcome"         : "pending",
-        "outcome_phrase"  : "",
-        "outcome_confidence": 0.0,
-        "out_quote_source": "",
-        "type"            : "replication",
-        "original_rank"   : orig.get("rank", 1),
-        "n_originals"     : n,
-    })
-    return row
+def run_outcome_only(no_llm: bool = False,
+                     limit: "int | None" = None) -> pd.DataFrame:
+    """
+    Read filtered.csv, classify outcome per row, write data/outcome_only.csv.
+    Useful for evaluating outcome classification in isolation.
+    """
+    filtered_path = DATA_DIR / "filtered.csv"
+    if not filtered_path.exists():
+        filtered_path = BASE_DIR / "misc" / "sample_filtered.csv"
+    df = pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig").fillna("")
+    eligible = df[df["filter_status"] != "false_positive"]
+    if limit is not None:
+        eligible = eligible.head(limit)
 
+    rows = []
+    for _, row in eligible.iterrows():
+        doi_r   = clean_doi(str(row.get("doi_r", "")))
+        outcome = extract_outcome(
+            doi_r,
+            str(row.get("abstract_r", "")),
+            fulltext="",
+            title_r=str(row.get("title_r", "")),
+            no_llm=no_llm,
+        )
+        rows.append({
+            "doi_r":              doi_r,
+            "title_r":            str(row.get("title_r", "")),
+            "outcome":            outcome["outcome"],
+            "outcome_phrase":     outcome["outcome_phrase"],
+            "outcome_confidence": outcome["outcome_confidence"],
+            "out_quote_source":   outcome["out_quote_source"],
+        })
 
-def _empty_row(filter_row: pd.Series) -> dict:
-    """Return a row with target_pending status when extraction fails."""
-    row = filter_row.to_dict()
-    row.update({
-        "doi_o": "", "title_o": "", "year_o": "", "authors_o": "",
-        "link_method": "target_pending", "link_evidence": "", "link_confidence": 0.0,
-        "outcome": "pending", "outcome_phrase": "", "outcome_confidence": 0.0,
-        "out_quote_source": "", "type": "", "original_rank": 1, "n_originals": 1,
-    })
-    return row
+    out = pd.DataFrame(rows)
+    out_path = DATA_DIR / "outcome_only.csv"
+    out.to_csv(out_path, index=False, encoding="utf-8-sig")
+    log.info("outcome-only: %d rows → %s", len(out), out_path)
+    return out
 
 
 if __name__ == "__main__":
-    run_extract()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Stage 3 Extract pipeline")
+    parser.add_argument(
+        "--no-llm", action="store_true",
+        help="Skip all LLM calls. Rule-based only.",
+    )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--match-type-only", action="store_true",
+        help="Classify match type only -> data/match_type_only.csv",
+    )
+    group.add_argument(
+        "--outcome-only", action="store_true",
+        help="Classify outcome only -> data/outcome_only.csv",
+    )
+    parser.add_argument(
+        "--limit", type=int, default=None, metavar="N",
+        help="Process only the first N non-false-positive rows.",
+    )
+    parser.add_argument(
+        "--no-pdf", action="store_true",
+        help="Skip PDF download; use abstract-only for LLM resolution.",
+    )
+    parser.add_argument(
+        "--no-multiple-originals", action="store_true",
+        help="Write multiple_original rows as target_pending instead of running LLM.",
+    )
+    parser.add_argument(
+        "--no-reproductions", action="store_true",
+        help="Skip reproduction rows (write as target_pending).",
+    )
+    parser.add_argument(
+        "--skip-flora-validated", action="store_true",
+        help="Skip DOIs already validated in the FLoRA entry sheet "
+             "(validation_status = 'validated - unchanged' or 'validated - changed').",
+    )
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="Carry forward already-resolved rows from extracted.csv; "
+             "re-run only rows with link_method == 'target_pending'.",
+    )
+    parser.add_argument(
+        "--resolved-only", action="store_true",
+        help="Only write rows that are fully resolved (author_year_match / llm_abstract / llm_fulltext). "
+             "target_pending / api_error / no_original_found rows are silently skipped. "
+             "Combine with --no-llm --no-pdf for a fast rule-based pass, then use --resume "
+             "for the LLM pass on the remaining rows.",
+    )
+    parser.add_argument(
+        "--from-year", type=int, default=None, metavar="YYYY",
+        help="Only process rows from filtered.csv where year_r >= YYYY.",
+    )
+    parser.add_argument(
+        "--to-year", type=int, default=None, metavar="YYYY",
+        help="Only process rows from filtered.csv where year_r <= YYYY.",
+    )
+    parser.add_argument(
+        "--predicted-outcome",
+        choices=["failure", "success", "mixed", "descriptive", "uninformative", "other"],
+        default=None,
+        metavar="OUTCOME",
+        help=(
+            "Pre-screen rows using keyword-only outcome prediction on title + abstract "
+            "before running any API calls. 'other' means any predicted outcome except failure. "
+            "Choices: failure | success | mixed | descriptive | uninformative | other."
+        ),
+    )
+    parser.add_argument(
+        "--extracted-test", action="store_true",
+        help=(
+            "Write output to data/extracted-test.csv instead of extracted.csv. "
+            "Skips DOIs already resolved in extracted.csv; re-runs target_pending "
+            "rows and new rows not yet present in either CSV."
+        ),
+    )
+    parser.add_argument(
+        "--source", type=str, default=None, metavar="SOURCE",
+        help=(
+            "Only process rows from this source "
+            "(openalex | bob_reed | i4r | semantic_scholar | …). "
+            "Case-insensitive. Matches the 'source' column in filtered.csv."
+        ),
+    )
+    parser.add_argument(
+        "--doi-r", type=str, default=None, metavar="DOIS",
+        help=(
+            "Comma-separated list of replication DOIs (doi_r) to process. "
+            "All other rows are skipped. Useful for re-running specific rows."
+        ),
+    )
+    args = parser.parse_args()
+
+    try:
+        if args.match_type_only:
+            run_match_type_only(no_llm=args.no_llm, limit=args.limit)
+        elif args.outcome_only:
+            run_outcome_only(no_llm=args.no_llm, limit=args.limit)
+        else:
+            doi_r_list = (
+                [d.strip() for d in args.doi_r.split(",") if d.strip()]
+                if args.doi_r else None
+            )
+            run_extract(
+                no_llm=args.no_llm,
+                limit=args.limit,
+                no_pdf=args.no_pdf,
+                no_multiple_originals=args.no_multiple_originals,
+                no_reproductions=args.no_reproductions,
+                skip_flora_validated=args.skip_flora_validated,
+                resume=args.resume,
+                resolved_only=args.resolved_only,
+                from_year=args.from_year,
+                to_year=args.to_year,
+                predicted_outcome=args.predicted_outcome,
+                out_path=(DATA_DIR / "extracted-test.csv") if args.extracted_test else None,
+                source=args.source,
+                doi_r_filter=doi_r_list,
+            )
+    finally:
+        token_counter.print_summary()
+        from shared.dashboard_cache import refresh as _dc_refresh
+        _dc_refresh("extracted-test" if args.extracted_test else "extracted")

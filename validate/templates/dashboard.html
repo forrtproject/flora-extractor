@@ -3,76 +3,1625 @@
 
 {% block head %}
 <style>
-.dash-page   { max-width:900px; margin:0 auto; padding:20px 16px; }
-.kpi-row     { display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr));
-               gap:12px; margin-bottom:20px; }
-.two-col     { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-@media(max-width:600px){ .two-col{ grid-template-columns:1fr; } }
-.stat-card   { background:#fff; border:1px solid #e2e8f0; border-radius:8px;
-               padding:14px 16px; }
-.stat-card h3{ font-size:11px; font-weight:700; text-transform:uppercase;
-               color:#94a3b8; letter-spacing:.5px; margin-bottom:12px; }
-.stat-row    { display:flex; justify-content:space-between; align-items:center;
-               padding:5px 0; border-bottom:1px solid #f1f5f9; font-size:12px; }
+/* ── Dashboard shell ────────────────────────────────────────────────────────── */
+.dash-page { max-width:1300px; margin:0 auto; padding:16px; }
+
+/* ── Tab strip ──────────────────────────────────────────────────────────────── */
+.tab-strip {
+  display:flex; gap:0; margin-bottom:0;
+  border-bottom:2px solid var(--border);
+  overflow-x:auto; -webkit-overflow-scrolling:touch;
+}
+.tab-btn {
+  flex-shrink:0; padding:8px 16px; font-size:12px; font-weight:600;
+  color:var(--text-muted); background:none; border:none; border-bottom:2px solid transparent;
+  margin-bottom:-2px; cursor:pointer; transition:all .15s; white-space:nowrap;
+}
+.tab-btn:hover  { color:var(--text); background:var(--surface-2); }
+.tab-btn.active { color:var(--accent); border-bottom-color:var(--accent); }
+.tab-label-stage { font-size:9px; font-weight:700; text-transform:uppercase;
+                   color:var(--text-faint); letter-spacing:.4px; display:block; margin-bottom:1px; }
+
+/* ── Tab panels ─────────────────────────────────────────────────────────────── */
+.tab-panel { display:none; padding-top:16px; }
+.tab-panel.active { display:block; }
+
+/* ── 40/60 split ─────────────────────────────────────────────────────────────── */
+.panel-split {
+  display:grid;
+  grid-template-columns:2fr 3fr;
+  gap:16px;
+  align-items:start;
+}
+@media(max-width:900px){ .panel-split{ grid-template-columns:1fr; } }
+
+/* ── Docs panel (left) ───────────────────────────────────────────────────────── */
+.docs-panel { display:flex; flex-direction:column; gap:12px; }
+.docs-card {
+  background:var(--surface); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px;
+}
+.docs-card-head {
+  font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.5px;
+  color:var(--text-faint); margin:0 0 10px;
+}
+.docs-card p { font-size:12px; color:var(--text-muted); line-height:1.6; margin:0 0 8px; }
+.docs-card p:last-child { margin-bottom:0; }
+.docs-card code {
+  font-family:monospace; font-size:11px; background:var(--surface-2);
+  padding:1px 5px; border-radius:3px; color:var(--accent);
+}
+.cli-block {
+  background:var(--surface-2); border:1px solid var(--border); border-radius:6px;
+  padding:10px 12px; font-family:monospace; font-size:11px; color:var(--text);
+  white-space:pre-wrap; line-height:1.7; margin:0;
+}
+.docs-table { width:100%; border-collapse:collapse; font-size:11px; margin-top:4px; }
+.docs-table th {
+  text-align:left; padding:4px 8px; font-weight:700; color:var(--text-muted);
+  border-bottom:2px solid var(--border); white-space:nowrap;
+}
+.docs-table td {
+  padding:4px 8px; border-bottom:1px solid var(--border); color:var(--text);
+  vertical-align:top;
+}
+.docs-table tr:last-child td { border-bottom:none; }
+.docs-table .col-name { font-family:monospace; color:var(--accent); white-space:nowrap; }
+.docs-table .col-desc { color:var(--text-muted); }
+.kw-grid {
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
+  gap:4px; margin-top:4px;
+}
+.kw-pill {
+  background:var(--surface-2); border:1px solid var(--border); border-radius:4px;
+  padding:2px 7px; font-size:10px; font-family:monospace; color:var(--text); white-space:nowrap;
+}
+.kw-pill.excl { border-color:#fee2e2; background:#fef2f2; color:#dc2626; }
+
+/* ── Stats panel (right) ─────────────────────────────────────────────────────── */
+.stats-panel { display:flex; flex-direction:column; gap:12px; }
+
+/* KPI row */
+.kpi-row { display:flex; flex-wrap:wrap; gap:10px; }
+.kpi-card {
+  background:var(--surface); border:1px solid var(--border); border-radius:8px;
+  padding:12px 16px; text-align:center; min-width:110px; flex:1;
+}
+a.kpi-card { text-decoration:none; color:inherit; transition:border-color .15s,box-shadow .15s; }
+a.kpi-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-ring); }
+.kpi-num   { font-size:24px; font-weight:800; line-height:1.1; color:var(--text); }
+.kpi-label { font-size:10px; font-weight:600; color:var(--text-muted); margin-top:3px; }
+.kpi-sub   { font-size:9px; color:var(--text-faint); margin-top:2px; font-family:monospace; }
+
+/* Stat card */
+.stat-card {
+  background:var(--surface); border:1px solid var(--border); border-radius:8px;
+  padding:14px 16px;
+}
+.stat-card h3 {
+  font-size:10px; font-weight:700; text-transform:uppercase;
+  color:var(--text-faint); letter-spacing:.5px; margin:0 0 10px;
+}
+.stat-row {
+  display:flex; justify-content:space-between; align-items:center;
+  padding:5px 0; border-bottom:1px solid var(--border); font-size:12px; color:var(--text);
+}
 .stat-row:last-child { border-bottom:none; }
+a.stat-row { text-decoration:none; border-radius:4px; margin:0 -4px; padding:5px 4px; }
+a.stat-row:hover { background:var(--surface-2); }
+a.stat-row .dl-hint { font-size:9px; color:var(--accent); opacity:0; transition:opacity .15s; }
+a.stat-row:hover .dl-hint { opacity:1; }
+.stat-pct { font-size:10px; color:var(--text-faint); margin-left:4px; }
+
+/* Inline two-col inside stats panel */
+.stats-two { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+@media(max-width:640px){ .stats-two{ grid-template-columns:1fr; } }
+
+/* Pie / donut */
+.pie-wrap { display:flex; gap:20px; align-items:center; flex-wrap:wrap; }
+.pie-legend { flex:1; min-width:140px; }
+.leg-row {
+  display:flex; align-items:center; gap:7px;
+  padding:4px 0; border-bottom:1px solid var(--border); font-size:11px; color:var(--text);
+}
+.leg-row:last-child { border-bottom:none; }
+a.leg-row { text-decoration:none; border-radius:3px; margin:0 -4px; padding:4px 4px; }
+a.leg-row:hover { background:var(--surface-2); }
+.leg-dot { width:9px; height:9px; border-radius:2px; flex-shrink:0; }
+.leg-label { flex:1; }
+.leg-count { font-weight:700; }
+.leg-pct   { font-size:10px; color:var(--text-faint); min-width:34px; text-align:right; }
+
+.null-note { font-size:11px; color:var(--text-faint); font-style:italic; }
+
+/* Supabase not-configured notice */
+.supa-notice {
+  background:var(--surface-2); border:1px dashed var(--border-2); border-radius:8px;
+  padding:16px; text-align:center; color:var(--text-muted); font-size:12px;
+}
+.supa-notice a { color:var(--accent); }
+
+/* Progress bar */
+.progress-bar  { background:var(--border); border-radius:4px; overflow:hidden; }
+.progress-fill { height:100%; background:var(--accent); transition:width .3s; }
+
+/* Drilldown */
+.drilldown-row { cursor:pointer; }
+.drilldown-detail { display:none; }
+.drilldown-detail.open { display:table-row; }
+.drilldown-panel {
+  background:var(--surface-2); border:1px solid var(--border);
+  border-radius:6px; padding:12px; margin:4px 0;
+}
+.drilldown-panel table { width:100%; font-size:11px; border-collapse:collapse; }
+.drilldown-panel th, .drilldown-panel td {
+  padding:4px 8px; border:1px solid var(--border); text-align:left; color:var(--text);
+}
+.drilldown-panel th { background:var(--surface); font-weight:700; color:var(--text-muted); }
+.check-correct   { color:#16a34a; font-weight:700; }
+.check-incorrect { color:#dc2626; font-weight:700; }
+
+/* Correction bar */
+.corr-bar-wrap { margin-bottom:8px; }
+.corr-bar-label { display:flex; justify-content:space-between; font-size:11px;
+                  color:var(--text); margin-bottom:2px; }
+.corr-bar-track { width:100%; height:8px; background:var(--border); border-radius:3px; overflow:hidden; }
+.corr-bar-fill  { height:100%; border-radius:3px; transition:width .3s; }
+
+/* Pager */
+.pager { display:flex; gap:6px; align-items:center; justify-content:center;
+         margin-top:10px; flex-wrap:wrap; }
+.pager-btn { padding:4px 10px; font-size:12px; border:1px solid var(--border);
+             border-radius:4px; background:var(--surface); color:var(--text);
+             cursor:pointer; transition:all .15s; }
+.pager-btn:hover { background:var(--surface-2); }
+.pager-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+.pager-btn:disabled { opacity:.4; cursor:default; }
+
+/* Analysis */
+.analysis-file-list { list-style:none; padding:0; margin:0; }
+.analysis-file-list li { display:flex; align-items:baseline; gap:8px;
+                          padding:4px 0; border-bottom:1px solid var(--border); font-size:12px; }
+.analysis-file-list li:last-child { border-bottom:none; }
+.analysis-file-list .fname { font-family:monospace; font-size:10px; color:var(--accent); flex-shrink:0; }
+.analysis-file-list .fdesc { color:var(--text-muted); }
+.pri-high   { color:#dc2626; font-weight:700; }
+.pri-medium { color:#f59e0b; font-weight:700; }
+.pri-low    { color:#9ca3af; font-weight:600; }
+.gap-search-row { display:flex; gap:8px; align-items:center; margin-bottom:10px; }
+.gap-search-row input { flex:1; min-width:160px; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="dash-page">
-  <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
-    <h1 style="font-size:16px;font-weight:700">Dashboard</h1>
-    <button class="btn btn-secondary" style="font-size:11px" onclick="load()">↺ Refresh</button>
-    <span id="status" style="font-size:11px;color:#94a3b8"></span>
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+    <h1 style="font-size:15px;font-weight:700;color:var(--text)">Dashboard</h1>
+    <button class="btn btn-secondary" style="font-size:11px" onclick="loadAll()">↺ Refresh</button>
+    <span id="status" style="font-size:11px;color:var(--text-faint)"></span>
   </div>
 
-  <!-- KPI row -->
-  <div class="kpi-row" id="kpi-row">
-    <div class="kpi-card"><div class="kpi-num" id="k-total" style="color:#1e293b">—</div>
-      <div class="kpi-label">Total papers</div></div>
-    <div class="kpi-card"><div class="kpi-num" id="k-confirmed" style="color:#16a34a">—</div>
-      <div class="kpi-label">Confirmed</div></div>
-    <div class="kpi-card"><div class="kpi-num" id="k-rejected" style="color:#dc2626">—</div>
-      <div class="kpi-label">Rejected</div></div>
-    <div class="kpi-card"><div class="kpi-num" id="k-needs" style="color:#f59e0b">—</div>
-      <div class="kpi-label">Needs review</div></div>
-    <div class="kpi-card"><div class="kpi-num" id="k-inprog" style="color:#2563eb">—</div>
-      <div class="kpi-label">In progress</div></div>
-    <div class="kpi-card"><div class="kpi-num" id="k-pending" style="color:#94a3b8">—</div>
-      <div class="kpi-label">Pending</div></div>
+  <!-- ── Tab strip ──────────────────────────────────────────────────────────── -->
+  <div class="tab-strip">
+    <button class="tab-btn active" data-tab="search">
+      <span class="tab-label-stage">Stage 1</span>Search
+    </button>
+    <button class="tab-btn" data-tab="filter">
+      <span class="tab-label-stage">Stage 2</span>Filter
+    </button>
+    <button class="tab-btn" data-tab="extract">
+      <span class="tab-label-stage">Stage 3</span>Extract
+    </button>
+    <button class="tab-btn" data-tab="extract-test">
+      <span class="tab-label-stage">Stage 3</span>Extract-Test
+    </button>
+    <button class="tab-btn" data-tab="supabase">
+      <span class="tab-label-stage">Stage 4</span>Supabase
+    </button>
+    <button class="tab-btn" data-tab="old-pipeline">
+      <span class="tab-label-stage">Analysis</span>Old Pipeline
+    </button>
   </div>
 
-  <div class="two-col">
-    <div class="stat-card">
-      <h3>Votes</h3>
-      <div class="stat-row"><span>Total votes cast</span><strong id="k-votes">—</strong></div>
-      <div class="stat-row"><span>Avg votes per paper</span><strong id="k-avg">—</strong></div>
+
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <!-- SEARCH TAB (Stage 1)                                                    -->
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <div class="tab-panel active" id="tab-search">
+    <div class="panel-split">
+
+      <!-- Left: docs -->
+      <div class="docs-panel">
+        <div class="docs-card">
+          <div class="docs-card-head">What Stage 1 does</div>
+          <p>Discovers candidate replication papers from two academic databases: <strong>OpenAlex</strong> and <strong>Semantic Scholar</strong>. Each source is queried with 23 keyword phrases. New results are appended to <code>data/candidates.csv</code>; already-seen papers are skipped via a persistent dedup index.</p>
+          <p>Every run also <strong>harvests all cached API responses from disk</strong> first — pages downloaded in any previous run flow into the CSV automatically without re-fetching.</p>
+          <p><code>--auto-advance</code> processes one (source, phrase, year) combination per invocation, cycling through all phrases for all years. State is saved in <code>cache/search_state.json</code> and resumes across runs. Exit code 2 signals a full cycle completed with no new rows.</p>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Sources</div>
+          <table class="docs-table">
+            <thead><tr><th>Source</th><th>Description</th><th>Flag</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="col-name">openalex</td>
+                <td class="col-desc">OpenAlex API — queries 23 phrases, page-resumable via cursor files in <code>cache/openalex/</code></td>
+                <td class="col-desc">enabled by default</td>
+              </tr>
+              <tr>
+                <td class="col-name">semantic_scholar</td>
+                <td class="col-desc">Semantic Scholar API — same 23 phrases, offset-resumable via <code>cache/s2/</code></td>
+                <td class="col-desc">enabled by default</td>
+              </tr>
+              <tr>
+                <td class="col-name">engine</td>
+                <td class="col-desc">Internal engine (when <code>FLORA_USE_ENGINE=1</code>) — replaces OpenAlex and S2</td>
+                <td class="col-desc"><code>FLORA_USE_ENGINE=1</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">CLI — all flags</div>
+          <table class="docs-table">
+            <thead><tr><th style="white-space:nowrap">Flag</th><th>Default</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="col-name">--from-year YYYY</td><td>none</td><td class="col-desc">Earliest publication year to fetch (inclusive)</td></tr>
+              <tr><td class="col-name">--to-year YYYY</td><td>none</td><td class="col-desc">Latest publication year to fetch (inclusive)</td></tr>
+              <tr><td class="col-name">--max-per-phrase N</td><td>unlimited</td><td class="col-desc">Cap new rows per phrase per run; checkpoint saved so next run continues from this point</td></tr>
+              <tr><td class="col-name">--auto-advance</td><td>off</td><td class="col-desc">Process one (source, phrase, year) job per invocation; pair with --from-year, --to-year, --max-per-phrase; run repeatedly to cycle through all combinations</td></tr>
+              <tr><td class="col-name">--source SOURCE</td><td>all</td><td class="col-desc">Limit to one source (repeatable). Values: <code>openalex</code>, <code>semantic_scholar</code>, <code>engine</code></td></tr>
+              <tr><td class="col-name">--rebuild-index</td><td>off</td><td class="col-desc">Force rebuild of <code>cache/candidates_index.txt</code> from <code>candidates.csv</code>, then exit</td></tr>
+              <tr><td class="col-name">--harvest-only</td><td>off</td><td class="col-desc">Merge all cached OA/S2 pages into candidates.csv, then exit — no new API requests</td></tr>
+              <tr><td class="col-name">--no-harvest</td><td>off</td><td class="col-desc">Skip the per-cycle cache harvest in --auto-advance mode (useful when running --harvest-only separately on a schedule)</td></tr>
+              <tr><td class="col-name">--reset-cursors</td><td>off</td><td class="col-desc">Delete all OpenAlex cursor + S2 offset files and start from page 1 for every phrase</td></tr>
+            </tbody>
+          </table>
+          <pre class="cli-block" style="margin-top:10px"># Typical production loop (PowerShell)
+do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2024 --max-per-phrase 200
+} until ($LASTEXITCODE -eq 2)
+
+# Quick test — 1 page per phrase, 2020 only
+python -m search.run_search --from-year 2020 --to-year 2020 --max-per-phrase 200
+
+# Merge only cached pages (no API calls)
+python -m search.run_search --harvest-only</pre>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">5-pass deduplication</div>
+          <p>Applied to each new batch before it is appended to <code>candidates.csv</code>. Runs in <code>search/deduplicate.py</code>.</p>
+          <table class="docs-table">
+            <thead><tr><th>Pass</th><th>What it removes</th></tr></thead>
+            <tbody>
+              <tr><td class="col-name">0a — DOI patterns</td><td class="col-desc">figshare datasets (<code>10.6084/</code>) and PeerJ peer-review objects (<code>/reviews/</code> in DOI) — never scholarly papers</td></tr>
+              <tr><td class="col-name">0b — Versioned preprints</td><td class="col-desc">Lower-version preprint DOIs ending in <code>_v1</code>, <code>_v2</code> etc. Keeps the canonical or highest-version DOI; drops all older versions</td></tr>
+              <tr><td class="col-name">1 — Exact DOI</td><td class="col-desc">Duplicate DOIs after <code>clean_doi()</code> normalisation; keeps the row with more non-empty metadata fields (richness score)</td></tr>
+              <tr><td class="col-name">2 — Fuzzy title</td><td class="col-desc">DOI-less rows whose titles score ≥ 90 on RapidFuzz <code>token_sort_ratio</code>; keeps the richer row</td></tr>
+              <tr><td class="col-name">3 — FLoRA cross-check</td><td class="col-desc">Papers already catalogued in <code>data/flora_entry_sheet.csv</code> (<code>doi_r</code>) and <code>data/flora.csv</code> (<code>doi_r</code> + <code>doi_o</code>) are dropped — no need to re-extract them</td></tr>
+            </tbody>
+          </table>
+          <p style="margin-top:8px">The persistent <strong>candidates index</strong> (<code>cache/candidates_index.txt</code>) stores up to 4 keys per row (OA ID → DOI → URL → title) so duplicates from any identifier are caught without loading the full CSV into memory. Built automatically on first run; ~1s to load thereafter.</p>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Include keywords (23 phrases)</div>
+          <div class="kw-grid">
+            <span class="kw-pill">direct replication</span>
+            <span class="kw-pill">close replication</span>
+            <span class="kw-pill">exact replication</span>
+            <span class="kw-pill">literal replication</span>
+            <span class="kw-pill">strict replication</span>
+            <span class="kw-pill">pre-registered replication</span>
+            <span class="kw-pill">failed replication</span>
+            <span class="kw-pill">replication failure</span>
+            <span class="kw-pill">replication attempt</span>
+            <span class="kw-pill">replication study</span>
+            <span class="kw-pill">replication of</span>
+            <span class="kw-pill">replicate the findings</span>
+            <span class="kw-pill">replicate the results</span>
+            <span class="kw-pill">replicate the effect</span>
+            <span class="kw-pill">reproduction study</span>
+            <span class="kw-pill">computational reproduction</span>
+            <span class="kw-pill">reproducibility study</span>
+            <span class="kw-pill">reproducibility check</span>
+            <span class="kw-pill">Many Labs</span>
+            <span class="kw-pill">Registered Replication</span>
+            <span class="kw-pill">Replication Project</span>
+            <span class="kw-pill">Open Science Collaboration</span>
+            <span class="kw-pill">replication crisis</span>
+          </div>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Exclusion keywords (applied by Stage 2 rule filter)</div>
+          <div class="kw-grid">
+            <span class="kw-pill excl">DNA replication</span>
+            <span class="kw-pill excl">cell replication</span>
+            <span class="kw-pill excl">viral replication</span>
+            <span class="kw-pill excl">replication fork</span>
+            <span class="kw-pill excl">replication origin</span>
+            <span class="kw-pill excl">replication stress</span>
+            <span class="kw-pill excl">code replication</span>
+            <span class="kw-pill excl">data replication</span>
+          </div>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">candidates.csv columns</div>
+          <table class="docs-table">
+            <thead><tr><th>Column</th><th>Description</th><th>Example</th></tr></thead>
+            <tbody>
+              <tr><td class="col-name">doi_r</td><td class="col-desc">Replication paper DOI (cleaned via <code>clean_doi()</code>)</td><td class="col-desc">10.1126/science.1255484</td></tr>
+              <tr><td class="col-name">title_r</td><td class="col-desc">Paper title</td><td class="col-desc">Estimating the Reproducibility of Psychological Science</td></tr>
+              <tr><td class="col-name">abstract_r</td><td class="col-desc">Abstract text (may be blank if not indexed)</td><td class="col-desc">Reproducibility is a defining feature…</td></tr>
+              <tr><td class="col-name">year_r</td><td class="col-desc">Publication year</td><td class="col-desc">2015</td></tr>
+              <tr><td class="col-name">authors_r</td><td class="col-desc">Semicolon-separated author surnames</td><td class="col-desc">Open Science Collaboration</td></tr>
+              <tr><td class="col-name">journal_r</td><td class="col-desc">Journal or venue name</td><td class="col-desc">Science</td></tr>
+              <tr><td class="col-name">url_r</td><td class="col-desc">Landing page URL (used when DOI is absent)</td><td class="col-desc">https://osf.io/…</td></tr>
+              <tr><td class="col-name">openalex_id_r</td><td class="col-desc">OpenAlex work ID</td><td class="col-desc">W2170235581</td></tr>
+              <tr><td class="col-name">source</td><td class="col-desc">Discovery source</td><td class="col-desc">openalex | semantic_scholar | engine</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Right: stats -->
+      <div class="stats-panel">
+        <p style="font-size:10px;color:var(--text-faint);margin:0 0 6px">Click a card to download that subset as CSV.</p>
+        <div class="kpi-row">
+          <a href="/api/dashboard/download?stage=candidates" class="kpi-card" title="Download candidates.csv">
+            <div class="kpi-num" id="k-candidates">—</div>
+            <div class="kpi-label">Total Candidates ↓</div>
+            <div class="kpi-sub">candidates.csv</div>
+          </a>
+          <a href="/api/check/download?stage=candidates&no_doi=1" class="kpi-card" title="Download rows with no DOI">
+            <div class="kpi-num" id="k-cand-no-doi" style="color:#f59e0b">—</div>
+            <div class="kpi-label">No DOI ↓</div>
+            <div class="kpi-sub">URL or title only</div>
+          </a>
+          <a href="/api/check/download?stage=candidates&no_doi_url=1" class="kpi-card" title="Download rows with no DOI or URL">
+            <div class="kpi-num" id="k-cand-no-doi-url" style="color:#dc2626">—</div>
+            <div class="kpi-label">No DOI or URL ↓</div>
+            <div class="kpi-sub">title-only rows</div>
+          </a>
+          <a href="/api/check/download?stage=candidates&no_abstract=1" class="kpi-card" title="Download rows with no abstract">
+            <div class="kpi-num" id="k-cand-no-abstract" style="color:#9ca3af">—</div>
+            <div class="kpi-label">No Abstract ↓</div>
+            <div class="kpi-sub">filter will use title only</div>
+          </a>
+        </div>
+
+        <div class="stat-card">
+          <h3>Source Breakdown</h3>
+          <div id="search-source-breakdown"><div class="null-note">Loading…</div></div>
+        </div>
+      </div>
     </div>
-    <div class="stat-card">
-      <h3>Reviewers</h3>
-      <div class="stat-row"><span>Active reviewers</span><strong id="k-reviewers">—</strong></div>
+  </div><!-- /tab-search -->
+
+
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <!-- FILTER TAB (Stage 2)                                                    -->
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="tab-filter">
+    <div class="panel-split">
+
+      <!-- Left: docs -->
+      <div class="docs-panel">
+        <div class="docs-card">
+          <div class="docs-card-head">What Stage 2 does</div>
+          <p>Removes false positives and classifies candidates into <code>replication</code>, <code>reproduction</code>, <code>needs_review</code>, or <code>false_positive</code>. Reads <code>candidates.csv</code> in <strong>50 k-row chunks</strong> to avoid OOM on files with 1M+ rows.</p>
+          <p>The <strong>rule filter</strong> runs first and handles ~99% of rows with no API calls. Only rows marked <code>needs_review</code> by the rules are sent to the <strong>LLM</strong>. Results are streamed row-by-row to <code>filtered.csv</code> via a persistent index (<code>cache/filtered_index.txt</code>) so interrupted runs resume without reprocessing.</p>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Decision logic</div>
+          <table class="docs-table">
+            <thead><tr><th>Condition (checked in order)</th><th>Result</th></tr></thead>
+            <tbody>
+              <tr><td>Title/abstract matches a biological/technical exclusion phrase (DNA, cell, viral, replication fork, replication stress, code replication, data replication…)</td><td><code>false_positive</code></td></tr>
+              <tr><td>No include keyword phrase found in title or abstract</td><td><code>false_positive</code></td></tr>
+              <tr><td>Include phrase found AND title/abstract contains an author-year citation pattern like "(Author, YYYY)"</td><td><code>replication</code> or <code>reproduction</code></td></tr>
+              <tr><td>Include phrase found but no citation pattern — rule is uncertain</td><td>→ <strong>LLM</strong></td></tr>
+              <tr><td>LLM returns a definitive classification</td><td><code>replication</code>, <code>reproduction</code>, or <code>false_positive</code></td></tr>
+              <tr><td>LLM cannot decide</td><td><code>needs_review</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">LLM prompt (what the model receives)</div>
+          <p>For uncertain rows the LLM receives the paper title and abstract with this instruction:</p>
+          <pre class="cli-block" style="white-space:pre-wrap">Classify this paper as one of:
+  replication   — directly replicates or attempts to reproduce a prior study
+  reproduction  — reproduces methods in a different context, not testing the original claim
+  false_positive — about replication in biology/CS, or unrelated
+
+Title: {title}
+Abstract: {abstract}
+
+Respond with JSON: {"filter_status": "...", "filter_evidence": "...", "filter_confidence": "high|medium|low"}</pre>
+          <p style="margin-top:8px">LLM configured via <code>FILTER_OPENAI_MODEL</code> env var (primary); Gemini fallback via <code>GEMINI_MODEL</code>. Responses cached by <code>hash(title + abstract)</code> so identical rows never re-query the LLM.</p>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">CLI — all flags</div>
+          <table class="docs-table">
+            <thead><tr><th style="white-space:nowrap">Flag</th><th>Default</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="col-name">--from-year YYYY</td><td>none</td><td class="col-desc">Only process candidates where <code>year_r ≥ YYYY</code></td></tr>
+              <tr><td class="col-name">--to-year YYYY</td><td>none</td><td class="col-desc">Only process candidates where <code>year_r ≤ YYYY</code></td></tr>
+              <tr><td class="col-name">--source SOURCE</td><td>all</td><td class="col-desc">Only process candidates from this source (<code>openalex</code>, <code>semantic_scholar</code>, …)</td></tr>
+              <tr><td class="col-name">--limit N</td><td>none</td><td class="col-desc">Stop after writing N new rows</td></tr>
+              <tr><td class="col-name">--offset N</td><td>none</td><td class="col-desc">Skip the first N unprocessed rows before starting</td></tr>
+              <tr><td class="col-name">--rebuild-index</td><td>off</td><td class="col-desc">Rebuild <code>cache/filtered_index.txt</code> from <code>filtered.csv</code>, then exit</td></tr>
+            </tbody>
+          </table>
+          <pre class="cli-block" style="margin-top:10px">python -m filter.run_filter                     # full run
+python -m filter.run_filter --from-year 2015    # 2015+ only
+python -m filter.run_filter --limit 1000        # first 1 000 new rows
+python -m filter.run_filter --rebuild-index     # rebuild index from filtered.csv</pre>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">filtered.csv — all columns</div>
+          <p style="font-size:11px;color:var(--text-faint);margin:0 0 8px">Inherits all candidates.csv columns plus the 4 added by Stage 2.</p>
+          <table class="docs-table">
+            <thead><tr><th>Column</th><th>Description</th><th>Example</th></tr></thead>
+            <tbody>
+              <tr style="background:var(--surface-2)"><td colspan="3" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Inherited from candidates.csv</td></tr>
+              <tr><td class="col-name">doi_r</td><td class="col-desc">Replication paper DOI</td><td class="col-desc">10.1126/science.1255484</td></tr>
+              <tr><td class="col-name">title_r</td><td class="col-desc">Paper title</td><td class="col-desc">Estimating the Reproducibility…</td></tr>
+              <tr><td class="col-name">abstract_r</td><td class="col-desc">Abstract text (may be blank)</td><td class="col-desc">Reproducibility is a defining feature…</td></tr>
+              <tr><td class="col-name">year_r</td><td class="col-desc">Publication year</td><td class="col-desc">2015</td></tr>
+              <tr><td class="col-name">authors_r</td><td class="col-desc">Semicolon-separated author surnames</td><td class="col-desc">Open Science Collaboration</td></tr>
+              <tr><td class="col-name">journal_r</td><td class="col-desc">Journal or venue name</td><td class="col-desc">Science</td></tr>
+              <tr><td class="col-name">url_r</td><td class="col-desc">Landing page URL (used when DOI absent)</td><td class="col-desc">https://osf.io/…</td></tr>
+              <tr><td class="col-name">openalex_id_r</td><td class="col-desc">OpenAlex work ID</td><td class="col-desc">W2170235581</td></tr>
+              <tr><td class="col-name">source</td><td class="col-desc">Discovery source</td><td class="col-desc">openalex | semantic_scholar</td></tr>
+              <tr><td class="col-name">ref_r</td><td class="col-desc">Formatted reference string</td><td class="col-desc">Open Science Collaboration (2015). Science.</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="3" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Added by Stage 2</td></tr>
+              <tr><td class="col-name">filter_status</td><td class="col-desc">Classification result</td><td class="col-desc">replication | reproduction | false_positive | needs_review</td></tr>
+              <tr><td class="col-name">filter_method</td><td class="col-desc">Which classifier decided</td><td class="col-desc">rule_based | llm | both</td></tr>
+              <tr><td class="col-name">filter_evidence</td><td class="col-desc">Phrase or quote that triggered classification</td><td class="col-desc">phrase:direct replication; cite:(Bargh, 1996)</td></tr>
+              <tr><td class="col-name">filter_confidence</td><td class="col-desc">high | medium | low (categorical)</td><td class="col-desc">high</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Right: stats -->
+      <div class="stats-panel">
+        <div class="kpi-row">
+          <a href="/api/dashboard/download?stage=filtered" class="kpi-card" title="Download filtered.csv">
+            <div class="kpi-num" id="k-filtered">—</div>
+            <div class="kpi-label">Total Filtered ↓</div>
+            <div class="kpi-sub">filtered.csv</div>
+          </a>
+        </div>
+
+        <p style="font-size:10px;color:var(--text-faint);margin:0 0 6px">Click a card to download that subset as CSV.</p>
+
+        <div class="kpi-row">
+          <a href="/api/check/download?stage=filtered&type=replication" class="kpi-card" title="Download replication rows">
+            <div class="kpi-num" id="f-replication" style="color:#16a34a">—</div>
+            <div class="kpi-label">Replications ↓</div>
+            <div class="kpi-sub" id="f-replication-pct"></div>
+          </a>
+          <a href="/api/check/download?stage=filtered&type=reproduction" class="kpi-card" title="Download reproduction rows">
+            <div class="kpi-num" id="f-reproduction" style="color:#2563eb">—</div>
+            <div class="kpi-label">Reproductions ↓</div>
+            <div class="kpi-sub" id="f-reproduction-pct"></div>
+          </a>
+          <a href="/api/check/download?stage=filtered&type=needs_review" class="kpi-card" title="Download needs-review rows">
+            <div class="kpi-num" id="f-needs-review" style="color:#f59e0b">—</div>
+            <div class="kpi-label">Needs Review ↓</div>
+            <div class="kpi-sub" id="f-needs-review-pct"></div>
+          </a>
+          <a href="/api/check/download?stage=filtered&type=false_positive" class="kpi-card" title="Download false-positive rows">
+            <div class="kpi-num" id="f-false-positive" style="color:#dc2626">—</div>
+            <div class="kpi-label">False Positives ↓</div>
+            <div class="kpi-sub" id="f-false-positive-pct"></div>
+          </a>
+        </div>
+
+        <div class="stat-card">
+          <h3>Data Quality — Replications &amp; Reproductions only</h3>
+          <div class="stat-row">
+            <span>Rep+Repro total</span>
+            <span><strong id="f-rr-total">—</strong></span>
+          </div>
+          <a class="stat-row" href="/api/check/download?stage=filtered&type=replication&type=reproduction&no_doi=1" title="Download rep+repro rows with no DOI">
+            <span>No DOI <span class="dl-hint">↓</span></span>
+            <span><strong id="f-rr-no-doi" style="color:#f59e0b">—</strong>
+              <span class="stat-pct" id="f-rr-no-doi-pct"></span></span>
+          </a>
+          <a class="stat-row" href="/api/check/download?stage=filtered&type=replication&type=reproduction&no_doi_url=1" title="Download rep+repro rows with no DOI or URL">
+            <span>No DOI or URL <span class="dl-hint">↓</span></span>
+            <span><strong id="f-rr-no-doi-url" style="color:#dc2626">—</strong>
+              <span class="stat-pct" id="f-rr-no-doi-url-pct"></span></span>
+          </a>
+          <a class="stat-row" href="/api/check/download?stage=filtered&type=replication&type=reproduction&no_abstract=1" title="Download rep+repro rows with no abstract">
+            <span>No abstract <span class="dl-hint">↓</span></span>
+            <span><strong id="f-rr-no-abstract" style="color:#9ca3af">—</strong>
+              <span class="stat-pct" id="f-rr-no-abstract-pct"></span></span>
+          </a>
+        </div>
+      </div>
     </div>
-  </div>
-</div>
+  </div><!-- /tab-filter -->
+
+
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <!-- EXTRACT TAB (Stage 3)                                                   -->
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="tab-extract">
+    <div class="panel-split">
+
+      <!-- Left: docs -->
+      <div class="docs-panel">
+        <div class="docs-card">
+          <div class="docs-card-head">What Stage 3 does</div>
+          <p>For each replication paper: (1) classifies the match type, (2) finds the original target study, (3) codes the replication outcome. Results are streamed to <code>extracted.csv</code> one row at a time.</p>
+          <p><strong>DOI verification</strong> runs automatically on every written row — it fetches CrossRef metadata for <code>doi_o</code> and corrects hallucinated DOIs before they hit the CSV.</p>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">CLI</div>
+          <pre class="cli-block">python -m extract.run_extract
+
+# Options
+--extracted-test   # write to extracted-test.csv (sandbox)
+--resume           # skip already-processed DOIs
+--no-llm           # rule-based only (faster, less accurate)
+--doi 10.x/y       # process a single DOI
+
+# DOI audit
+python -m extract.audit_dois          # dry-run
+python -m extract.audit_dois --apply  # write corrections</pre>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Link pipeline</div>
+          <table class="docs-table">
+            <thead><tr><th>Step</th><th>Method</th><th>When used</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td><code>author_year_match</code></td><td>Citation pattern (Author, YYYY) found in abstract</td></tr>
+              <tr><td>2</td><td><code>llm_abstract</code></td><td>No pattern; abstract fed to LLM</td></tr>
+              <tr><td>3</td><td><code>llm_fulltext</code></td><td>Abstract inconclusive; PDF parsed and fed to LLM</td></tr>
+              <tr><td>—</td><td><code>target_pending</code></td><td>All methods failed; needs manual review</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">PDF parsing — 6 methods</div>
+          <p>Each PDF is processed by all 6 methods. The winner is chosen by:<br>
+          <code>refs×300 + abstract_len + intro_len×2 + min(raw_len÷5, 1000)</code></p>
+          <div class="kw-grid" style="margin-top:6px">
+            <span class="kw-pill">openalex_xml</span>
+            <span class="kw-pill">pdfminer</span>
+            <span class="kw-pill">grobid</span>
+            <span class="kw-pill">docpluck</span>
+            <span class="kw-pill">opendataloader</span>
+            <span class="kw-pill">markitdown</span>
+          </div>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">extracted.csv — all columns</div>
+          <p style="font-size:11px;color:var(--text-faint);margin:0 0 8px">Inherits all filtered.csv columns plus the columns added by Stage 3.</p>
+          <table class="docs-table">
+            <thead><tr><th>Column</th><th>Description / Values</th></tr></thead>
+            <tbody>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Unique identifier</td></tr>
+              <tr><td class="col-name">pair_id</td><td class="col-desc">Hash of (doi_r, doi_o) — unique row key for dedup and promote</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Inherited from filtered.csv</td></tr>
+              <tr><td class="col-name">doi_r, title_r, abstract_r, year_r, authors_r, journal_r, url_r, openalex_id_r, source, ref_r</td><td class="col-desc">All 10 candidates.csv columns</td></tr>
+              <tr><td class="col-name">filter_status, filter_method, filter_evidence, filter_confidence</td><td class="col-desc">All 4 Stage 2 filter columns</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Match classification — Added by Stage 3</td></tr>
+              <tr><td class="col-name">original_match_type</td><td class="col-desc">single_original | multiple_match | multiple_original</td></tr>
+              <tr><td class="col-name">original_match_confidence</td><td class="col-desc">high | medium | low</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Original study — Added by Stage 3</td></tr>
+              <tr><td class="col-name">doi_o</td><td class="col-desc">Original study DOI (blank if not found)</td></tr>
+              <tr><td class="col-name">title_o</td><td class="col-desc">Original study title</td></tr>
+              <tr><td class="col-name">year_o</td><td class="col-desc">Original study publication year</td></tr>
+              <tr><td class="col-name">authors_o</td><td class="col-desc">Semicolon-separated author surnames of original</td></tr>
+              <tr><td class="col-name">ref_o</td><td class="col-desc">Formatted reference string for original</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Link method — Added by Stage 3</td></tr>
+              <tr><td class="col-name">link_method</td><td class="col-desc">author_year_match | llm_abstract | llm_fulltext | target_pending | api_error</td></tr>
+              <tr><td class="col-name">link_evidence</td><td class="col-desc">Phrase or LLM output that identified the original</td></tr>
+              <tr><td class="col-name">link_confidence</td><td class="col-desc">high | medium | low; downgraded to low on DOI mismatch</td></tr>
+              <tr><td class="col-name">link_llm_model</td><td class="col-desc">Model name used for LLM linking (blank for rule-based)</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">DOI verification — Added by Stage 3</td></tr>
+              <tr><td class="col-name">doi_o_verification</td><td class="col-desc">verified | corrected | mismatch | no_doi | not_found | no_metadata | api_error | skipped</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Outcome — Added by Stage 3</td></tr>
+              <tr><td class="col-name">outcome</td><td class="col-desc">success | failure | mixed | uninformative | descriptive | pending | api_error</td></tr>
+              <tr><td class="col-name">outcome_phrase</td><td class="col-desc">Keyword phrase that triggered the outcome classification</td></tr>
+              <tr><td class="col-name">outcome_confidence</td><td class="col-desc">high | medium | low</td></tr>
+              <tr><td class="col-name">out_quote_source</td><td class="col-desc">Method that produced the text the outcome was coded from (abstract | fulltext)</td></tr>
+              <tr><td class="col-name">outcome_reasoning</td><td class="col-desc">LLM chain-of-thought for the outcome decision</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Multi-original metadata — Added by Stage 3</td></tr>
+              <tr><td class="col-name">type</td><td class="col-desc">replication | reproduction</td></tr>
+              <tr><td class="col-name">original_rank</td><td class="col-desc">1 for single; 1, 2, 3… for multi-original papers</td></tr>
+              <tr><td class="col-name">n_originals</td><td class="col-desc">Total number of target studies for this replication paper</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Right: stats -->
+      <div class="stats-panel">
+        <div class="kpi-row">
+          <a href="/api/dashboard/download?stage=extracted" class="kpi-card" title="Download extracted.csv">
+            <div class="kpi-num" id="k-extracted">—</div>
+            <div class="kpi-label">Extracted ↓</div>
+            <div class="kpi-sub">extracted.csv</div>
+          </a>
+          <div class="kpi-card">
+            <div class="kpi-num" id="k-target-pending" style="color:#f59e0b">—</div>
+            <div class="kpi-label">Target Pending</div>
+            <div class="kpi-sub">need original ID</div>
+          </div>
+        </div>
+
+        <div class="stats-two">
+          <div class="stat-card">
+            <h3>Match Types</h3>
+            <a class="stat-row" href="/api/check/download?stage=extracted&match_type=single_original" title="Download single-original rows">
+              <span>Single original <span class="dl-hint">↓</span></span>
+              <span><strong id="m-single" style="color:#16a34a">—</strong>
+                <span class="stat-pct" id="m-single-pct"></span></span>
+            </a>
+            <a class="stat-row" href="/api/check/download?stage=extracted&match_type=multiple_match" title="Download multiple-match rows">
+              <span>Multiple match <span class="dl-hint">↓</span></span>
+              <span><strong id="m-multiple-match" style="color:#f59e0b">—</strong>
+                <span class="stat-pct" id="m-multiple-match-pct"></span></span>
+            </a>
+            <a class="stat-row" href="/api/check/download?stage=extracted&match_type=multiple_original" title="Download multiple-original rows">
+              <span>Multiple original <span class="dl-hint">↓</span></span>
+              <span><strong id="m-multiple-original" style="color:#7c3aed">—</strong>
+                <span class="stat-pct" id="m-multiple-original-pct"></span></span>
+            </a>
+          </div>
+
+          <div class="stat-card">
+            <h3>LLM Model</h3>
+            <div class="stat-row"><span>Gemini</span>
+              <span><strong id="mod-gemini" style="color:#059669">—</strong>
+                <span class="stat-pct" id="mod-gemini-pct"></span></span></div>
+            <div class="stat-row"><span>GPT (OpenAI)</span>
+              <span><strong id="mod-gpt" style="color:#2563eb">—</strong>
+                <span class="stat-pct" id="mod-gpt-pct"></span></span></div>
+            <div class="stat-row"><span>Qwen</span>
+              <span><strong id="mod-qwen" style="color:#7c3aed">—</strong>
+                <span class="stat-pct" id="mod-qwen-pct"></span></span></div>
+            <div class="stat-row"><span>Other</span>
+              <span><strong id="mod-other" style="color:var(--text-muted)">—</strong>
+                <span class="stat-pct" id="mod-other-pct"></span></span></div>
+            <div class="stat-row"><span>Rule-based</span>
+              <span><strong id="mod-none" style="color:var(--text-faint)">—</strong>
+                <span class="stat-pct" id="mod-none-pct"></span></span></div>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <h3>Link Method</h3>
+          <a class="stat-row" href="/api/check/download?stage=extracted&link_method=author_year_match">
+            <span>Author / year match <span class="dl-hint">↓</span></span>
+            <span><strong id="lm-author" style="color:#16a34a">—</strong>
+              <span class="stat-pct" id="lm-author-pct"></span></span></a>
+          <a class="stat-row" href="/api/check/download?stage=extracted&link_method=llm_fulltext">
+            <span>LLM fulltext <span class="dl-hint">↓</span></span>
+            <span><strong id="lm-fulltext" style="color:#1d4ed8">—</strong>
+              <span class="stat-pct" id="lm-fulltext-pct"></span></span></a>
+          <a class="stat-row" href="/api/check/download?stage=extracted&link_method=llm_abstract">
+            <span>LLM abstract <span class="dl-hint">↓</span></span>
+            <span><strong id="lm-abstract" style="color:#0284c7">—</strong>
+              <span class="stat-pct" id="lm-abstract-pct"></span></span></a>
+          <a class="stat-row" href="/api/check/download?stage=extracted&link_method=no_original_found">
+            <span>No original found <span class="dl-hint">↓</span></span>
+            <span><strong id="lm-nof" style="color:var(--text-muted)">—</strong>
+              <span class="stat-pct" id="lm-nof-pct"></span></span></a>
+          <a class="stat-row" href="/api/check/download?stage=extracted&link_method=target_pending">
+            <span>Target pending <span class="dl-hint">↓</span></span>
+            <span><strong id="lm-pending" style="color:#f59e0b">—</strong>
+              <span class="stat-pct" id="lm-pending-pct"></span></span></a>
+          <a class="stat-row" href="/api/check/download?stage=extracted&link_method=api_error">
+            <span>API error <span class="dl-hint">↓</span></span>
+            <span><strong id="lm-err" style="color:#dc2626">—</strong>
+              <span class="stat-pct" id="lm-err-pct"></span></span></a>
+        </div>
+
+        <div class="stat-card">
+          <h3>Outcome Distribution</h3>
+          <div class="pie-wrap">
+            <svg id="pie-svg" width="120" height="120" viewBox="0 0 160 160"
+                 style="flex-shrink:0;overflow:visible"></svg>
+            <div class="pie-legend" id="pie-legend"><div class="null-note">Loading…</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div><!-- /tab-extract -->
+
+
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <!-- EXTRACT-TEST TAB (Stage 3 sandbox)                                      -->
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="tab-extract-test">
+    <div class="panel-split">
+
+      <!-- Left: docs -->
+      <div class="docs-panel">
+        <div class="docs-card">
+          <div class="docs-card-head">What Extract-Test is</div>
+          <p>A sandbox for running and reviewing Stage 3 pipelines before committing results to <code>extracted.csv</code>. Writes to <code>extracted-test.csv</code> instead, and automatically skips DOIs already resolved in <code>extracted.csv</code>.</p>
+          <p>Use it to test new prompts, new models, or multi-original rows without risking the production file. Promote individual rows or everything when satisfied.</p>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">CLI</div>
+          <pre class="cli-block"># Run into sandbox
+python -m extract.run_extract --extracted-test
+python -m extract.run_extract --extracted-test --resume
+
+# Promote to production
+python -m extract.promote_test --all           # promote all
+python -m extract.promote_test --doi 10.x/y   # promote one
+python -m extract.promote_test --all --dry-run # preview</pre>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">How it differs from Extract</div>
+          <table class="docs-table">
+            <thead><tr><th>Behaviour</th><th>Extract</th><th>Extract-Test</th></tr></thead>
+            <tbody>
+              <tr><td>Output file</td><td><code>extracted.csv</code></td><td><code>extracted-test.csv</code></td></tr>
+              <tr><td>Skips resolved DOIs</td><td>From itself</td><td>From both files</td></tr>
+              <tr><td>Target-pending visible</td><td>Both tabs</td><td>Extract-Test tab only</td></tr>
+              <tr><td>Promote button</td><td>—</td><td>Per-row in web UI</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Right: stats -->
+      <div class="stats-panel">
+        <div class="kpi-row">
+          <a href="/api/dashboard/download?stage=extracted-test" class="kpi-card" title="Download extracted-test.csv">
+            <div class="kpi-num" id="k-test-count" style="color:#7c3aed">—</div>
+            <div class="kpi-label">Test Rows ↓</div>
+            <div class="kpi-sub">extracted-test.csv</div>
+          </a>
+          <div class="kpi-card">
+            <div class="kpi-num" id="k-test-pending" style="color:#f59e0b">—</div>
+            <div class="kpi-label">Target Pending</div>
+            <div class="kpi-sub">need original ID</div>
+          </div>
+        </div>
+
+        <div class="stats-two">
+          <div class="stat-card">
+            <h3>Match Types (test)</h3>
+            <div class="stat-row"><span>Single original</span>
+              <span><strong id="tm-single" style="color:#16a34a">—</strong>
+                <span class="stat-pct" id="tm-single-pct"></span></span></div>
+            <div class="stat-row"><span>Multiple match</span>
+              <span><strong id="tm-mmatch" style="color:#f59e0b">—</strong>
+                <span class="stat-pct" id="tm-mmatch-pct"></span></span></div>
+            <div class="stat-row"><span>Multiple original</span>
+              <span><strong id="tm-morig" style="color:#7c3aed">—</strong>
+                <span class="stat-pct" id="tm-morig-pct"></span></span></div>
+          </div>
+
+          <div class="stat-card">
+            <h3>Link Method (test)</h3>
+            <div class="stat-row"><span>Author / year</span>
+              <span><strong id="tlm-author" style="color:#16a34a">—</strong>
+                <span class="stat-pct" id="tlm-author-pct"></span></span></div>
+            <div class="stat-row"><span>LLM fulltext</span>
+              <span><strong id="tlm-fulltext" style="color:#1d4ed8">—</strong>
+                <span class="stat-pct" id="tlm-fulltext-pct"></span></span></div>
+            <div class="stat-row"><span>LLM abstract</span>
+              <span><strong id="tlm-abstract" style="color:#0284c7">—</strong>
+                <span class="stat-pct" id="tlm-abstract-pct"></span></span></div>
+            <div class="stat-row"><span>No original</span>
+              <span><strong id="tlm-nof" style="color:var(--text-muted)">—</strong>
+                <span class="stat-pct" id="tlm-nof-pct"></span></span></div>
+            <div class="stat-row"><span>Target pending</span>
+              <span><strong id="tlm-pending" style="color:#f59e0b">—</strong>
+                <span class="stat-pct" id="tlm-pending-pct"></span></span></div>
+            <div class="stat-row"><span>API error</span>
+              <span><strong id="tlm-err" style="color:#dc2626">—</strong>
+                <span class="stat-pct" id="tlm-err-pct"></span></span></div>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <h3>Outcome Distribution (test)</h3>
+          <div class="pie-wrap">
+            <svg id="pie-test-svg" width="120" height="120" viewBox="0 0 160 160"
+                 style="flex-shrink:0;overflow:visible"></svg>
+            <div class="pie-legend" id="pie-test-legend"><div class="null-note">Loading…</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div><!-- /tab-extract-test -->
+
+
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <!-- SUPABASE TAB (Stage 4 validation)                                       -->
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="tab-supabase">
+    <div class="panel-split">
+
+      <!-- Left: docs -->
+      <div class="docs-panel">
+        <div class="docs-card">
+          <div class="docs-card-head">What Stage 4 does</div>
+          <p>Human validators review each extracted row — checking the original DOI, replication type, and outcome. Votes are stored in <strong>Supabase</strong> (PostgreSQL). Two independent validators vote per row; disagreements are flagged for adjudication.</p>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Configuration</div>
+          <pre class="cli-block">SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_SERVICE_KEY=eyJhbGc...</pre>
+          <p style="margin-top:8px">Add these to your <code>.env</code> file. Without them, this tab shows "not configured".</p>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Correction fields</div>
+          <table class="docs-table">
+            <thead><tr><th>Field</th><th>What validators check</th></tr></thead>
+            <tbody>
+              <tr><td class="col-name">type</td><td class="col-desc">Is this replication or reproduction?</td></tr>
+              <tr><td class="col-name">original</td><td class="col-desc">Is the original DOI correct?</td></tr>
+              <tr><td class="col-name">outcome</td><td class="col-desc">Is the outcome label correct?</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Output columns (validated.csv)</div>
+          <table class="docs-table">
+            <thead><tr><th>Column</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td class="col-name">validation_status</td><td class="col-desc">confirmed | rejected | pending | needs_review</td></tr>
+              <tr><td class="col-name">vote_count</td><td class="col-desc">Total votes cast</td></tr>
+              <tr><td class="col-name">confirm_votes</td><td class="col-desc">Votes confirming the extraction</td></tr>
+              <tr><td class="col-name">reject_votes</td><td class="col-desc">Votes rejecting the extraction</td></tr>
+              <tr><td class="col-name">validated_doi_o</td><td class="col-desc">Reviewer-corrected original DOI</td></tr>
+              <tr><td class="col-name">validated_outcome</td><td class="col-desc">Reviewer-corrected outcome</td></tr>
+              <tr><td class="col-name">validator_notes</td><td class="col-desc">Free-text notes</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Right: stats -->
+      <div class="stats-panel">
+        <div id="supa-unconfigured" class="supa-notice" style="display:none">
+          Supabase is not configured — set <code>SUPABASE_URL</code> and <code>SUPABASE_SERVICE_KEY</code>
+          in your <code>.env</code> file to enable live stats.
+        </div>
+
+        <div id="supa-content">
+          <div class="kpi-row">
+            <div class="kpi-card">
+              <div class="kpi-num" id="sv-total">—</div>
+              <div class="kpi-label">Total Records</div>
+              <div class="kpi-sub">in Supabase</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-num" id="sv-validated" style="color:#16a34a">—</div>
+              <div class="kpi-label">Validated</div>
+              <div class="kpi-sub" id="sv-validated-pct"></div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-num" id="sv-unvalidated" style="color:#94a3b8">—</div>
+              <div class="kpi-label">Unvalidated</div>
+              <div class="kpi-sub" id="sv-unvalidated-pct"></div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-num" id="sv-needreview" style="color:#dc2626">—</div>
+              <div class="kpi-label">Need Review</div>
+              <div class="kpi-sub" id="sv-needreview-pct"></div>
+            </div>
+          </div>
+
+          <div class="kpi-row">
+            <div class="kpi-card">
+              <div class="kpi-num" id="sv-judgements">—</div>
+              <div class="kpi-label">Judgements</div>
+              <div class="kpi-sub">total votes cast</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-num" id="sv-validators">—</div>
+              <div class="kpi-label">Validators</div>
+              <div class="kpi-sub">active</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-num" id="sv-agreement">—</div>
+              <div class="kpi-label">Agreement</div>
+              <div class="kpi-sub">validated / queue</div>
+            </div>
+          </div>
+
+          <div style="margin-bottom:12px">
+            <div style="display:flex;justify-content:space-between;font-size:11px;
+                        color:var(--text-muted);margin-bottom:4px">
+              <span>Validation Progress</span>
+              <span id="sv-progress-label">—</span>
+            </div>
+            <div class="progress-bar" style="height:8px">
+              <div class="progress-fill" id="sv-progress-fill" style="width:0%"></div>
+            </div>
+          </div>
+
+          <div class="stats-two">
+            <div class="stat-card">
+              <h3>Correction Frequency</h3>
+              <div id="corr-bars"><div class="null-note">Loading…</div></div>
+              <div style="margin-top:12px">
+                <div class="stat-row">
+                  <span>Type incorrect</span>
+                  <span><strong id="corr-type" style="color:#dc2626">—</strong>
+                    <span class="stat-pct" id="corr-type-pct"></span></span>
+                </div>
+                <div class="stat-row">
+                  <span>Original DOI incorrect</span>
+                  <span><strong id="corr-original" style="color:#f59e0b">—</strong>
+                    <span class="stat-pct" id="corr-original-pct"></span></span>
+                </div>
+                <div class="stat-row">
+                  <span>Outcome incorrect</span>
+                  <span><strong id="corr-outcome" style="color:#7c3aed">—</strong>
+                    <span class="stat-pct" id="corr-outcome-pct"></span></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <h3>Validated Outcomes</h3>
+              <div class="pie-wrap">
+                <svg id="pie-val-svg" width="100" height="100" viewBox="0 0 160 160"
+                     style="flex-shrink:0;overflow:visible"></svg>
+                <div class="pie-legend" id="pie-val-legend"><div class="null-note">Loading…</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Drilldown -->
+          <div class="stat-card" style="padding:0;overflow:hidden">
+            <div style="padding:12px 16px;display:flex;gap:10px;align-items:center;
+                        border-bottom:1px solid var(--border);flex-wrap:wrap">
+              <span style="font-size:10px;font-weight:700;text-transform:uppercase;
+                           color:var(--text-faint);letter-spacing:.5px">Incorrect-field drilldown</span>
+              <select id="dd-outcome-filter" style="width:auto;font-size:11px" onchange="loadDrilldown(1)">
+                <option value="all">All outcomes</option>
+                <option value="success">Success</option>
+                <option value="failure">Failure</option>
+                <option value="mixed">Mixed</option>
+                <option value="uninformative">Uninformative</option>
+                <option value="cannot_be_determined">Cannot be determined</option>
+                <option value="descriptive">Descriptive</option>
+                <option value="pending">Pending</option>
+                <option value="api_error">API error</option>
+              </select>
+              <select id="dd-check-filter" style="width:auto;font-size:11px" onchange="loadDrilldown(1)">
+                <option value="all">All fields</option>
+                <option value="type">Type</option>
+                <option value="original">Original DOI</option>
+                <option value="outcome">Outcome</option>
+              </select>
+              <span id="dd-count" style="font-size:11px;color:var(--text-faint)"></span>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Replication DOI</th><th>Original DOI</th>
+                  <th>Outcome</th><th>Type</th><th>Val 1</th><th>Val 2</th>
+                </tr>
+              </thead>
+              <tbody id="dd-tbody">
+                <tr><td colspan="6" class="null-note" style="text-align:center;padding:16px">Loading…</td></tr>
+              </tbody>
+            </table>
+            <div class="pager" id="dd-pager" style="padding:10px"></div>
+          </div>
+        </div><!-- /supa-content -->
+      </div>
+    </div>
+  </div><!-- /tab-supabase -->
+
+
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <!-- OLD PIPELINE TAB (gap analysis / prior work)                            -->
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="tab-old-pipeline">
+    <div class="panel-split">
+
+      <!-- Left: docs -->
+      <div class="docs-panel">
+        <div class="docs-card">
+          <div class="docs-card-head">What this section covers</div>
+          <p>Gap analysis comparing what the current pipeline has extracted against the <strong>FLoRA entry sheet</strong> (107 known replications). Use it to find missed papers, filter misclassifications, and plan re-extraction.</p>
+          <p>All scripts are in <code>analysis/</code>. Data files live in <code>analysis/</code> and are not committed to git.</p>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">CLI</div>
+          <pre class="cli-block">python -m analysis.run_overlap_analysis  # gap analysis
+python -m analysis.rule_analysis         # filter rule audit
+python -m analysis.apa_resolver          # resolve APA citations</pre>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Analysis scripts</div>
+          <ul class="analysis-file-list">
+            <li>
+              <span class="fname">run_overlap_analysis.py</span>
+              <span class="fdesc">Gap analysis — compares extracted.csv against FLoRA entry sheet. Writes gap CSVs and gap_summary.md.</span>
+            </li>
+            <li>
+              <span class="fname">rule_analysis.py</span>
+              <span class="fdesc">Audits filter rules: contribution per rule, false-positive rate, improvement opportunities.</span>
+            </li>
+            <li>
+              <span class="fname">apa_resolver.py</span>
+              <span class="fdesc">Resolves APA-format citations in extracted rows to structured DOIs via CrossRef.</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Output files</div>
+          <ul class="analysis-file-list">
+            <li><span class="fname">gap_analysis_doi_matched.csv</span><span class="fdesc">DOI-matched gap list</span></li>
+            <li><span class="fname">gap_analysis_url_matched.csv</span><span class="fdesc">URL-matched gaps</span></li>
+            <li><span class="fname">gap_vs_extracted_comparison.csv</span><span class="fdesc">Side-by-side comparison</span></li>
+            <li><span class="fname">rule_improvement_opportunities.csv</span><span class="fdesc">Actionable filter improvements</span></li>
+            <li><span class="fname">gap_summary.md</span><span class="fdesc">Human-readable summary</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Right: stats -->
+      <div class="stats-panel">
+        <div class="kpi-row">
+          <div class="kpi-card">
+            <div class="kpi-num" id="gap-total" style="color:#dc2626">—</div>
+            <div class="kpi-label">Total Gaps</div>
+            <div class="kpi-sub">in FLoRA, not extracted</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-num" id="gap-doi" style="color:#f59e0b">—</div>
+            <div class="kpi-label">DOI-matched</div>
+            <div class="kpi-sub">gap CSV</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-num" id="gap-url" style="color:#2563eb">—</div>
+            <div class="kpi-label">URL-matched</div>
+            <div class="kpi-sub">preprint fallback</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-num" id="gap-misclass" style="color:#7c3aed">—</div>
+            <div class="kpi-label">Misclassed</div>
+            <div class="kpi-sub">wrongly filtered out</div>
+          </div>
+        </div>
+        <div id="gap-generated" style="font-size:10px;color:var(--text-faint);margin-bottom:4px"></div>
+
+        <div class="stats-two">
+          <div class="stat-card">
+            <h3>Link Method Distribution</h3>
+            <div id="audit-link-methods"><div class="null-note">Loading…</div></div>
+          </div>
+          <div class="stat-card">
+            <h3>Link Confidence</h3>
+            <div id="audit-confidence"><div class="null-note">Loading…</div></div>
+          </div>
+        </div>
+
+        <div class="stat-card" style="padding:0;overflow:hidden">
+          <div style="padding:10px 16px;border-bottom:1px solid var(--border)">
+            <span style="font-size:10px;font-weight:700;text-transform:uppercase;
+                         color:var(--text-faint);letter-spacing:.5px">Rule Improvement Opportunities</span>
+          </div>
+          <table class="data-table">
+            <thead><tr><th>Category</th><th style="width:50px;text-align:right">Count</th>
+              <th>Suggested Fix</th><th style="width:60px">Priority</th></tr></thead>
+            <tbody id="improvement-tbody">
+              <tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="stat-card" style="padding:0;overflow:hidden">
+          <div style="padding:10px 16px;border-bottom:1px solid var(--border);
+                      display:flex;gap:10px;align-items:center">
+            <span style="font-size:10px;font-weight:700;text-transform:uppercase;
+                         color:var(--text-faint);letter-spacing:.5px">Missing Candidates — DOI Gap List</span>
+            <div class="gap-search-row" style="margin:0;flex:1">
+              <input type="text" id="gap-search" placeholder="Search…"
+                     oninput="scheduleGapSearch()" style="font-size:11px;width:100%">
+            </div>
+            <span id="gap-count" style="font-size:11px;color:var(--text-faint);white-space:nowrap"></span>
+          </div>
+          <table class="data-table">
+            <thead><tr><th style="width:180px">DOI</th><th>Title</th><th style="width:50px">Year</th></tr></thead>
+            <tbody id="gap-tbody">
+              <tr><td colspan="3" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
+            </tbody>
+          </table>
+          <div class="pager" id="gap-pager" style="padding:8px"></div>
+        </div>
+      </div>
+    </div>
+  </div><!-- /tab-old-pipeline -->
+
+</div><!-- /dash-page -->
 {% endblock %}
 
 {% block scripts %}
 <script>
+'use strict';
 const $ = id => document.getElementById(id);
-async function load() {
-  $('status').textContent = 'Loading…';
-  const d = await fetch('/api/dashboard/stats').then(r => r.json());
-  $('k-total').textContent     = d.total;
-  $('k-confirmed').textContent = d.confirmed;
-  $('k-rejected').textContent  = d.rejected;
-  $('k-needs').textContent     = d.needs_review;
-  $('k-inprog').textContent    = d.in_progress;
-  $('k-pending').textContent   = d.pending;
-  $('k-votes').textContent     = d.total_votes;
-  $('k-avg').textContent       = d.avg_votes;
-  $('k-reviewers').textContent = d.reviewer_count;
-  $('status').textContent      = 'Updated ' + new Date().toLocaleTimeString();
+
+// ── Tab switching (hash-based) ───────────────────────────────────────────────
+const TAB_LOADERS = {
+  'supabase':     () => { if (!_valLoaded)      loadValidation(); },
+  'old-pipeline': () => { if (!_analysisLoaded) loadAnalysis(); },
+};
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    location.hash = btn.dataset.tab;
+    const loader = TAB_LOADERS[btn.dataset.tab];
+    if (loader) loader();
+  });
+});
+
+(function(){
+  const h = location.hash.replace('#','');
+  if (h && document.querySelector(`[data-tab="${h}"]`)) {
+    document.querySelector('.tab-btn.active').classList.remove('active');
+    document.querySelector('.tab-panel.active').classList.remove('active');
+    document.querySelector(`[data-tab="${h}"]`).classList.add('active');
+    document.getElementById('tab-' + h).classList.add('active');
+  }
+})();
+
+// ── Donut chart ──────────────────────────────────────────────────────────────
+const PIE_COLORS = {
+  success:'#16a34a', failure:'#dc2626', mixed:'#f59e0b',
+  uninformative:'#9ca3af', cannot_be_determined:'#6b7280',
+  descriptive:'#2563eb', pending:'#cbd5e1', api_error:'#f87171',
+};
+const PIE_LABELS = {
+  success:'Success', failure:'Failure', mixed:'Mixed',
+  uninformative:'Uninformative', cannot_be_determined:'Cannot be determined',
+  descriptive:'Descriptive', pending:'Pending', api_error:'API Error',
+};
+
+function drawDonut(svgEl, data) {
+  svgEl.innerHTML = '';
+  const total = data.reduce((s,d)=>s+d.value,0);
+  if (total === 0) {
+    svgEl.innerHTML='<text x="80" y="86" text-anchor="middle" font-size="11" fill="#94a3b8">No data</text>';
+    return;
+  }
+  const cx=80, cy=80, R=68, r=38;
+  let angle = -Math.PI/2;
+  data.forEach(d => {
+    if (!d.value) return;
+    const sl = (d.value/total)*2*Math.PI, end = angle+sl;
+    const lg = sl>Math.PI?1:0;
+    const [x1,y1]=[cx+R*Math.cos(angle),cy+R*Math.sin(angle)];
+    const [x2,y2]=[cx+R*Math.cos(end),  cy+R*Math.sin(end)];
+    const [xi1,yi1]=[cx+r*Math.cos(angle),cy+r*Math.sin(angle)];
+    const [xi2,yi2]=[cx+r*Math.cos(end),  cy+r*Math.sin(end)];
+    const p=document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('d',`M ${xi1} ${yi1} L ${x1} ${y1} A ${R} ${R} 0 ${lg} 1 ${x2} ${y2}`+
+                       ` L ${xi2} ${yi2} A ${r} ${r} 0 ${lg} 0 ${xi1} ${yi1} Z`);
+    p.setAttribute('fill',d.color);
+    svgEl.appendChild(p);
+    angle=end;
+  });
+  const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+  t.setAttribute('x',cx); t.setAttribute('y',cy-6); t.setAttribute('text-anchor','middle');
+  t.setAttribute('font-size','16'); t.setAttribute('font-weight','800');
+  t.setAttribute('fill','currentColor'); t.textContent=total.toLocaleString();
+  svgEl.appendChild(t);
+  const s=document.createElementNS('http://www.w3.org/2000/svg','text');
+  s.setAttribute('x',cx); s.setAttribute('y',cy+12); s.setAttribute('text-anchor','middle');
+  s.setAttribute('font-size','10'); s.setAttribute('fill','#94a3b8'); s.textContent='total';
+  svgEl.appendChild(s);
 }
-window.addEventListener('DOMContentLoaded', load);
+
+function renderLegend(legendEl, data, total, stage) {
+  if (!total) { legendEl.innerHTML='<div class="null-note">No data.</div>'; return; }
+  const st = stage || 'extracted';
+  legendEl.innerHTML = data.filter(d=>d.value>0).map(d=>{
+    const p = total ? ((d.value/total)*100).toFixed(1) : '0.0';
+    return `<a class="leg-row" href="/api/check/download?stage=${st}&outcome=${encodeURIComponent(d.key)}" style="text-decoration:none;color:inherit" title="Download ${d.label} rows">
+      <span class="leg-dot" style="background:${d.color}"></span>
+      <span class="leg-label">${d.label}</span>
+      <span class="leg-count">${d.value.toLocaleString()}</span>
+      <span class="leg-pct">${p}% <span style="font-size:8px;color:var(--accent);opacity:.6">↓</span></span>
+    </a>`;
+  }).join('');
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+const pct = (n,t) => (!t) ? '' : `(${((n/t)*100).toFixed(1)}%)`;
+const fmt = n => (n==null) ? '—' : Number(n).toLocaleString();
+const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+function fillLinkMethod(pfx, csv, p) {
+  const total = csv[`${p}extracted_count`]||0;
+  [['author',`${p}method_author_year_match`],['fulltext',`${p}method_llm_fulltext`],
+   ['abstract',`${p}method_llm_abstract`],['nof',`${p}method_no_original_found`],
+   ['pending',`${p}method_target_pending`],['err',`${p}method_api_error`]
+  ].forEach(([s,key])=>{
+    const v=csv[key]||0;
+    $(`${pfx}-${s}`).textContent=fmt(v);
+    $(`${pfx}-${s}-pct`).textContent=pct(v,total);
+  });
+}
+
+function fillModel(pfx, csv, p) {
+  const total=csv[`${p}extracted_count`]||0;
+  ['gemini','gpt','qwen','other','none'].forEach(f=>{
+    const v=csv[`${p}model_${f}`]||0;
+    $(`${pfx}-${f}`).textContent=fmt(v);
+    $(`${pfx}-${f}-pct`).textContent=pct(v,total);
+  });
+}
+
+const OUTCOMES = ['success','failure','mixed','uninformative','cannot_be_determined','descriptive','pending','api_error'];
+
+// ── Load pipeline / CSV stats ────────────────────────────────────────────────
+async function loadPipeline() {
+  const csv = await fetch('/api/dashboard/csv-stats').then(r=>r.json());
+
+  // Search tab
+  $('k-candidates').textContent        = fmt(csv.candidates_count);
+  $('k-cand-no-doi').textContent       = fmt(csv.candidates_no_doi);
+  $('k-cand-no-doi-url').textContent   = fmt(csv.candidates_no_doi_or_url);
+  $('k-cand-no-abstract').textContent  = fmt(csv.candidates_no_abstract);
+  if (csv.candidates_source && $('search-source-breakdown')) {
+    const total = Object.values(csv.candidates_source).reduce((a,b)=>a+b,0);
+    $('search-source-breakdown').innerHTML = Object.entries(csv.candidates_source)
+      .sort((a,b)=>b[1]-a[1])
+      .map(([src,n])=>`<a class="stat-row" href="/api/check/download?stage=candidates&source=${encodeURIComponent(src)}" title="Download ${esc(src)} rows">
+        <span style="font-family:monospace;font-size:11px">${esc(src)}</span>
+        <span><strong>${fmt(n)}</strong> <span class="stat-pct">${pct(n,total)}</span> <span class="dl-hint">↓</span></span>
+      </a>`).join('');
+  } else if ($('search-source-breakdown')) {
+    $('search-source-breakdown').innerHTML = '<div class="null-note">Source breakdown not yet available.</div>';
+  }
+
+  // Filter tab
+  $('k-filtered').textContent = fmt(csv.filtered_count);
+  const ftotal = csv.filtered_count||0;
+  [['replication','#16a34a'],['reproduction','#2563eb'],
+   ['needs-review','#f59e0b'],['false-positive','#dc2626']].forEach(([k])=>{
+    const key=k.replace('-','_');
+    $(`f-${k}`).textContent     = fmt(csv[`filter_${key}`]);
+    $(`f-${k}-pct`).textContent = pct(csv[`filter_${key}`], ftotal);
+  });
+  // Filter data quality (rep+repro only)
+  const rrTotal = csv.filter_rep_repro_total||0;
+  $('f-rr-total').textContent        = fmt(rrTotal);
+  $('f-rr-no-doi').textContent       = fmt(csv.filter_no_doi);
+  $('f-rr-no-doi-pct').textContent   = pct(csv.filter_no_doi, rrTotal);
+  $('f-rr-no-doi-url').textContent   = fmt(csv.filter_no_doi_or_url);
+  $('f-rr-no-doi-url-pct').textContent = pct(csv.filter_no_doi_or_url, rrTotal);
+  $('f-rr-no-abstract').textContent  = fmt(csv.filter_no_abstract);
+  $('f-rr-no-abstract-pct').textContent = pct(csv.filter_no_abstract, rrTotal);
+
+  // Extract tab
+  $('k-extracted').textContent      = fmt(csv.extracted_count);
+  $('k-target-pending').textContent = fmt(csv.target_pending_count);
+  const mtotal=(csv.match_single||0)+(csv.match_multiple_match||0)+(csv.match_multiple_original||0);
+  $('m-single').textContent               = fmt(csv.match_single);
+  $('m-single-pct').textContent           = pct(csv.match_single, mtotal);
+  $('m-multiple-match').textContent       = fmt(csv.match_multiple_match);
+  $('m-multiple-match-pct').textContent   = pct(csv.match_multiple_match, mtotal);
+  $('m-multiple-original').textContent    = fmt(csv.match_multiple_original);
+  $('m-multiple-original-pct').textContent= pct(csv.match_multiple_original, mtotal);
+  fillLinkMethod('lm', csv, '');
+  fillModel('mod', csv, '');
+  const pieData=OUTCOMES.map(k=>({key:k,label:PIE_LABELS[k],color:PIE_COLORS[k],value:csv[`outcome_${k}`]||0}));
+  const outTotal=pieData.reduce((s,d)=>s+d.value,0);
+  drawDonut($('pie-svg'), pieData);
+  renderLegend($('pie-legend'), pieData, outTotal, 'extracted');
+
+  // Extract-Test tab
+  $('k-test-count').textContent   = fmt(csv.test_extracted_count);
+  $('k-test-pending').textContent = fmt(csv.test_target_pending_count);
+  const tmtotal=(csv.test_match_single||0)+(csv.test_match_multiple_match||0)+(csv.test_match_multiple_original||0);
+  $('tm-single').textContent      = fmt(csv.test_match_single);
+  $('tm-single-pct').textContent  = pct(csv.test_match_single, tmtotal);
+  $('tm-mmatch').textContent      = fmt(csv.test_match_multiple_match);
+  $('tm-mmatch-pct').textContent  = pct(csv.test_match_multiple_match, tmtotal);
+  $('tm-morig').textContent       = fmt(csv.test_match_multiple_original);
+  $('tm-morig-pct').textContent   = pct(csv.test_match_multiple_original, tmtotal);
+  fillLinkMethod('tlm', csv, 'test_');
+  const testPieData=OUTCOMES.map(k=>({key:k,label:PIE_LABELS[k],color:PIE_COLORS[k],value:csv[`test_outcome_${k}`]||0}));
+  const testOutTotal=testPieData.reduce((s,d)=>s+d.value,0);
+  drawDonut($('pie-test-svg'), testPieData);
+  renderLegend($('pie-test-legend'), testPieData, testOutTotal, 'extracted-test');
+}
+
+// ── Validation (Supabase) tab ────────────────────────────────────────────────
+let _valLoaded = false;
+async function loadValidation() {
+  _valLoaded = true;
+  try {
+    const [stats, corr, outcomes] = await Promise.all([
+      fetch('/api/dashboard/supabase-stats').then(r=>r.json()),
+      fetch('/api/dashboard/supabase-corrections').then(r=>r.json()),
+      fetch('/api/dashboard/supabase-outcomes').then(r=>r.json()),
+    ]);
+    if (stats.error === 'supabase_not_configured') {
+      $('supa-unconfigured').style.display='';
+      $('supa-content').style.display='none';
+      return;
+    }
+    $('supa-unconfigured').style.display='none';
+
+    $('sv-total').textContent       = fmt(stats.total);
+    $('sv-validated').textContent   = fmt(stats.validated);
+    $('sv-unvalidated').textContent = fmt(stats.unvalidated);
+    $('sv-needreview').textContent  = fmt(stats.need_review);
+    $('sv-validated-pct').textContent   = pct(stats.validated, stats.total);
+    $('sv-unvalidated-pct').textContent = pct(stats.unvalidated, stats.total);
+    $('sv-needreview-pct').textContent  = pct(stats.need_review, stats.total);
+    $('sv-judgements').textContent  = fmt(stats.total_judgements);
+    $('sv-validators').textContent  = fmt(stats.active_validators);
+    $('sv-agreement').textContent   = stats.agreement_rate!=null
+      ? (stats.agreement_rate*100).toFixed(1)+'%' : '—';
+    const vp=stats.total>0?(stats.validated/stats.total)*100:0;
+    $('sv-progress-fill').style.width=vp+'%';
+    $('sv-progress-label').textContent=vp.toFixed(1)+'% validated';
+
+    if (!corr.error) {
+      const total=stats.validated||1;
+      const maxCorr=Math.max(corr.type_incorrect||0,corr.original_incorrect||0,corr.outcome_incorrect||0,1);
+      $('corr-bars').innerHTML=[
+        {label:'Type',key:'type_incorrect',color:'#dc2626'},
+        {label:'Original DOI',key:'original_incorrect',color:'#f59e0b'},
+        {label:'Outcome',key:'outcome_incorrect',color:'#7c3aed'},
+      ].map(({label,key,color})=>{
+        const v=corr[key]||0;
+        const w=maxCorr>0?Math.max(2,(v/maxCorr)*100):0;
+        return `<div class="corr-bar-wrap">
+          <div class="corr-bar-label">
+            <span style="font-weight:600">${label}</span>
+            <span>${v.toLocaleString()} (${((v/total)*100).toFixed(1)}%)</span>
+          </div>
+          <div class="corr-bar-track">
+            <div class="corr-bar-fill" style="width:${w}%;background:${color}"></div>
+          </div>
+        </div>`;
+      }).join('');
+      $('corr-type').textContent      = fmt(corr.type_incorrect);
+      $('corr-original').textContent  = fmt(corr.original_incorrect);
+      $('corr-outcome').textContent   = fmt(corr.outcome_incorrect);
+      $('corr-type-pct').textContent    = pct(corr.type_incorrect, total);
+      $('corr-original-pct').textContent= pct(corr.original_incorrect, total);
+      $('corr-outcome-pct').textContent = pct(corr.outcome_incorrect, total);
+    } else {
+      $('corr-bars').innerHTML='<div class="null-note">Correction data unavailable</div>';
+    }
+
+    if (!outcomes.error && outcomes.outcomes) {
+      const pieData=OUTCOMES.map(k=>({
+        key:k,label:PIE_LABELS[k],color:PIE_COLORS[k],value:outcomes.outcomes[k]||0,
+      }));
+      const outTotal=pieData.reduce((s,d)=>s+d.value,0);
+      drawDonut($('pie-val-svg'), pieData);
+      renderLegend($('pie-val-legend'), pieData, outTotal);
+    }
+
+    loadDrilldown(1);
+  } catch(e) {
+    $('supa-content').innerHTML=`<div class="null-note">Failed to load Supabase data: ${e.message}</div>`;
+  }
+}
+
+// ── Drilldown ────────────────────────────────────────────────────────────────
+async function loadDrilldown(page) {
+  const outcome=$('dd-outcome-filter').value;
+  const check  =$('dd-check-filter').value;
+  $('dd-tbody').innerHTML=`<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--text-faint)">Loading…</td></tr>`;
+  const data=await fetch(`/api/dashboard/supabase-drilldown?page=${page}&outcome_filter=${outcome}&check_filter=${check}`).then(r=>r.json());
+  if (data.error) {
+    $('dd-tbody').innerHTML=`<tr><td colspan="6" class="null-note" style="text-align:center;padding:16px">${data.error}</td></tr>`;
+    $('dd-pager').innerHTML=''; $('dd-count').textContent=''; return;
+  }
+  $('dd-count').textContent=`${data.total.toLocaleString()} records`;
+  if (!data.rows.length) {
+    $('dd-tbody').innerHTML='<tr><td colspan="6" class="null-note" style="text-align:center;padding:16px">No records.</td></tr>';
+    $('dd-pager').innerHTML=''; return;
+  }
+  function cb(v){
+    if (!v) return '<span style="color:var(--text-faint)">—</span>';
+    return v==='correct'?'<span class="check-correct">✓</span>':'<span class="check-incorrect">✗</span>';
+  }
+  $('dd-tbody').innerHTML=data.rows.map((row,i)=>{
+    const id=`dd-r-${page}-${i}`;
+    return `<tr class="drilldown-row" onclick="toggleDrilldown('${id}')">
+      <td style="font-family:monospace;font-size:10px;max-width:160px;overflow:hidden;text-overflow:ellipsis">${esc(row.doi_r||'—')}</td>
+      <td style="font-family:monospace;font-size:10px;max-width:160px;overflow:hidden;text-overflow:ellipsis">${esc(row.doi_o||'—')}</td>
+      <td style="font-size:11px">${esc(row.outcome||'—')}</td>
+      <td style="font-size:11px">${esc(row.type||'—')}</td>
+      <td>${cb(row.val1_type_check)} ${cb(row.val1_original_check)} ${cb(row.val1_outcome_check)}</td>
+      <td>${cb(row.val2_type_check)} ${cb(row.val2_original_check)} ${cb(row.val2_outcome_check)}</td>
+    </tr>
+    <tr class="drilldown-detail" id="${id}">
+      <td colspan="6">
+        <div class="drilldown-panel">
+          <table>
+            <thead><tr><th>Validator</th><th>Type</th><th>Original</th><th>Outcome</th></tr></thead>
+            <tbody>
+              <tr><td>Val 1</td><td>${cb(row.val1_type_check)}</td><td>${cb(row.val1_original_check)}</td><td>${cb(row.val1_outcome_check)}</td></tr>
+              <tr><td>Val 2</td><td>${cb(row.val2_type_check)}</td><td>${cb(row.val2_original_check)}</td><td>${cb(row.val2_outcome_check)}</td></tr>
+              <tr><td>LLM</td><td>${cb(row.llm_val_type_check)}</td><td>${cb(row.llm_val_original_check)}</td><td>${cb(row.llm_val_outcome_check)}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  const pages=data.pages;
+  if (pages<=1){$('dd-pager').innerHTML='';return;}
+  let b=`<button class="pager-btn" onclick="loadDrilldown(${page-1})" ${page<=1?'disabled':''}>← Prev</button>`;
+  b+=`<span style="font-size:11px;color:var(--text-faint)">Page ${page} / ${pages}</span>`;
+  b+=`<button class="pager-btn" onclick="loadDrilldown(${page+1})" ${page>=pages?'disabled':''}>Next →</button>`;
+  $('dd-pager').innerHTML=b;
+}
+
+function toggleDrilldown(id) {
+  const el=$(id); if (!el) return; el.classList.toggle('open');
+}
+
+// ── Analysis (Old Pipeline) tab ──────────────────────────────────────────────
+let _analysisLoaded=false;
+let _gapPage=1;
+let _gapSearchTimer=null;
+
+async function loadAnalysis() {
+  _analysisLoaded=true;
+  try {
+    const data=await fetch('/api/dashboard/analysis-stats').then(r=>r.json());
+    const gs=data.gap_summary||{};
+    $('gap-total').textContent  = fmt(gs.total_gaps);
+    $('gap-doi').textContent    = fmt(gs.doi_gaps);
+    $('gap-url').textContent    = fmt(gs.url_gaps);
+    $('gap-misclass').textContent = fmt(gs.filter_misclassifications);
+    if (gs.generated) $('gap-generated').textContent='Last run: '+gs.generated;
+
+    const au=data.audit||{};
+    if (au.link_methods && au.link_methods.length) {
+      const mx=Math.max(...au.link_methods.map(r=>r.count),1);
+      $('audit-link-methods').innerHTML=au.link_methods.map(r=>`
+        <div style="margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
+            <span style="font-family:monospace;color:var(--text)">${esc(r.method)}</span>
+            <span style="color:var(--text-muted)">${r.count.toLocaleString()} (${r.pct.toFixed(1)}%)</span>
+          </div>
+          <div style="width:100%;height:5px;background:var(--border);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:${Math.max(2,(r.count/mx)*100)}%;background:#2563eb"></div>
+          </div>
+        </div>`).join('');
+    } else {
+      $('audit-link-methods').innerHTML='<div class="null-note">Run extraction_audit first.</div>';
+    }
+
+    if (au.confidence_rows && au.confidence_rows.length) {
+      const CC={high:'#16a34a',medium:'#f59e0b',low:'#dc2626'};
+      const mx=Math.max(...au.confidence_rows.map(r=>r.count),1);
+      $('audit-confidence').innerHTML=au.confidence_rows.map(r=>`
+        <div style="margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
+            <span style="font-weight:600;color:var(--text)">${esc(r.level)}</span>
+            <span style="color:var(--text-muted)">${r.count.toLocaleString()} (${r.pct.toFixed(1)}%)</span>
+          </div>
+          <div style="width:100%;height:5px;background:var(--border);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:${Math.max(2,(r.count/mx)*100)}%;background:${CC[r.level]||'#9ca3af'}"></div>
+          </div>
+        </div>`).join('');
+    } else {
+      $('audit-confidence').innerHTML='<div class="null-note">No confidence data.</div>';
+    }
+
+    const opps=data.improvement_rows||[];
+    if (opps.length) {
+      $('improvement-tbody').innerHTML=opps.map(r=>{
+        const pc=r.Priority==='High'?'pri-high':r.Priority==='Medium'?'pri-medium':'pri-low';
+        return `<tr>
+          <td style="font-size:11px">${esc(r.Category||'')}</td>
+          <td style="text-align:right;font-weight:700;font-size:11px">${esc(r.Count||'')}</td>
+          <td style="font-size:11px;color:var(--text-muted)">${esc(r['Suggested Fix']||'')}</td>
+          <td class="${pc}" style="font-size:11px">${esc(r.Priority||'')}</td>
+        </tr>`;
+      }).join('');
+    } else {
+      $('improvement-tbody').innerHTML='<tr><td colspan="4" class="null-note" style="text-align:center;padding:10px">Run python -m analysis.rule_analysis</td></tr>';
+    }
+
+    loadGapPage(1);
+  } catch(e) {
+    $('gap-generated').textContent='Error: '+e.message;
+  }
+}
+
+async function loadGapPage(page) {
+  _gapPage=page;
+  const search=$('gap-search').value.trim();
+  $('gap-tbody').innerHTML='<tr><td colspan="3" style="text-align:center;padding:12px;color:var(--text-faint)">Loading…</td></tr>';
+  const url=`/api/dashboard/analysis-gaps?page=${page}&per_page=50${search?'&search='+encodeURIComponent(search):''}`;
+  const data=await fetch(url).then(r=>r.json());
+  if (data.error){
+    $('gap-tbody').innerHTML=`<tr><td colspan="3" class="null-note" style="text-align:center;padding:12px">${esc(data.error)}</td></tr>`;
+    $('gap-pager').innerHTML=''; $('gap-count').textContent=''; return;
+  }
+  $('gap-count').textContent=`${data.total.toLocaleString()} entries`;
+  if (!data.rows||!data.rows.length){
+    $('gap-tbody').innerHTML='<tr><td colspan="3" class="null-note" style="text-align:center;padding:12px">No gaps found.</td></tr>';
+    $('gap-pager').innerHTML=''; return;
+  }
+  $('gap-tbody').innerHTML=data.rows.map(r=>`<tr>
+    <td style="font-family:monospace;font-size:10px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.doi_r)}">${esc(r.doi_r||'—')}</td>
+    <td style="font-size:11px">${esc(r.study_r||'—')}</td>
+    <td style="font-size:11px;color:var(--text-muted)">${esc(r.year_r||'—')}</td>
+  </tr>`).join('');
+  const pages=data.pages;
+  if (pages<=1){$('gap-pager').innerHTML='';return;}
+  let b=`<button class="pager-btn" onclick="loadGapPage(${page-1})" ${page<=1?'disabled':''}>← Prev</button>`;
+  b+=`<span style="font-size:11px;color:var(--text-faint)">Page ${page} / ${pages}</span>`;
+  b+=`<button class="pager-btn" onclick="loadGapPage(${page+1})" ${page>=pages?'disabled':''}>Next →</button>`;
+  $('gap-pager').innerHTML=b;
+}
+
+function scheduleGapSearch() {
+  clearTimeout(_gapSearchTimer);
+  _gapSearchTimer=setTimeout(()=>loadGapPage(1),300);
+}
+
+// ── Main loader ──────────────────────────────────────────────────────────────
+async function loadAll() {
+  $('status').textContent='Loading…';
+  _valLoaded=false; _analysisLoaded=false;
+  try {
+    await loadPipeline();
+    const activeTab=document.querySelector('.tab-btn.active')?.dataset?.tab;
+    if (activeTab==='supabase')     await loadValidation();
+    if (activeTab==='old-pipeline') await loadAnalysis();
+    $('status').textContent='Updated '+new Date().toLocaleTimeString();
+  } catch(e) {
+    $('status').textContent='Error: '+e.message;
+  }
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  loadAll();
+  const activeTab=document.querySelector('.tab-btn.active')?.dataset?.tab;
+  if (activeTab==='supabase')     loadValidation();
+  if (activeTab==='old-pipeline') loadAnalysis();
+});
 </script>
 {% endblock %}

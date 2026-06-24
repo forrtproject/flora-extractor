@@ -5,14 +5,32 @@ multi-target replication papers.
 Public API:
     run_multi_original_for_doi(doi_r, all_rep_df, cands_df) → dict
 
+Pipeline: load metadata → OpenAlex candidates → PDF acquisition → GROBID
+reference extraction → LLM identifies ALL originals.  The LLM step is the
+sole source of the originals list; if it returns fewer items than expected,
+the caller (run_extract.py) detects is_false_positive and re-routes to the
+single-original pipeline.
+
+Known limitations
+-----------------
+- No try/except around PDF or GROBID steps — exceptions propagate to the
+  run_extract.py orchestrator, which catches them and writes an api_error row.
+- originals_json is a JSON string (not a Python list) in the returned dict;
+  callers must parse it with _parse_originals() or json.loads().
+- _rep_row() silently returns "" for any column absent from all_rep_df; columns
+  from the old pipeline (multi_target, readiness_level, etc.) will be blank
+  when called from the filtered.csv-based orchestrator.
+
 The returned dict contains:
-  base_*         — from all_replications.csv
-  pdf_*          — PDF acquisition
-  grobid_*       — GROBID / pdfminer extraction
-  is_false_positive — bool: only 1 original found despite multi_target flag
-  n_originals    — number of originals identified
-  originals      — list of dicts, one per original study
-  llm_*          — LLM step metadata
+  base_*            — metadata from all_rep_df (or filtered.csv)
+  n_candidates      — number of OpenAlex candidate originals found
+  pdf_*             — PDF acquisition result
+  grobid_status     — GROBID extraction status
+  n_grobid_refs     — number of references parsed by GROBID
+  is_false_positive — True when LLM found ≤1 original despite multi_target flag
+  n_originals       — number of originals identified by LLM
+  originals_json    — JSON string: list of {rank, title, doi, first_author, ...}
+  llm_*             — LLM metadata (source, reasoning)
 """
 from __future__ import annotations
 
@@ -57,7 +75,8 @@ def _rep_row(doi_r: str, all_rep_df: pd.DataFrame) -> dict:
 
 def run_multi_original_for_doi(doi_r:       str,
                                 all_rep_df:  Optional[pd.DataFrame] = None,
-                                cands_df:    Optional[pd.DataFrame] = None) -> dict:
+                                cands_df:    Optional[pd.DataFrame] = None,
+                                force_multi: bool = False) -> dict:
     """
     Run the multi-original pipeline for doi_r.
 
@@ -103,11 +122,20 @@ def run_multi_original_for_doi(doi_r:       str,
 
     # ── Stage 5: Multi-original LLM ──────────────────────────────────────────
     pdf_url_for_llm = pdf.get("pdf_url", "") if not pdf.get("pdf_ok") else ""
-    llm = identify_all_originals_with_llm(
-        doi_r, study_r, abstract_r, candidates, sections,
-        pdf_url   = pdf_url_for_llm,
-        html_text = pdf.get("html_text", ""),
-    )
+    try:
+        llm = identify_all_originals_with_llm(
+            doi_r, study_r, abstract_r, candidates, sections,
+            pdf_url     = pdf_url_for_llm,
+            html_text   = pdf.get("html_text", ""),
+            force_multi = force_multi,
+        )
+    except Exception as exc:
+        log.error("[multi/%s] LLM failed: %s — returning empty originals", doi_r, exc)
+        llm = {
+            "n_originals": 0, "is_false_positive": False,
+            "originals": [], "llm_source": "api_error",
+            "llm_model": "", "llm_reasoning": str(exc),
+        }
     log.info("[multi/%s] LLM: n_originals=%d false_positive=%s source=%s",
              doi_r, llm["n_originals"], llm["is_false_positive"], llm["llm_source"])
 
@@ -134,5 +162,6 @@ def run_multi_original_for_doi(doi_r:       str,
         "n_originals"      : llm["n_originals"],
         "originals_json"   : json.dumps(llm["originals"], ensure_ascii=False),
         "llm_source"       : llm["llm_source"],
+        "llm_model"        : llm.get("llm_model", ""),
         "llm_reasoning"    : llm["llm_reasoning"],
     }

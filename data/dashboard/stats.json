@@ -1,0 +1,107 @@
+{
+  "candidates": {
+    "total": 1941984,
+    "no_doi": 217698,
+    "no_doi_or_url": 22950,
+    "no_abstract": 345155,
+    "by_source": {
+      "openalex": 1836570,
+      "semantic_scholar": 105414
+    }
+  },
+  "updated_at": "2026-06-24T07:43:06",
+  "filtered": {
+    "total": 1866955,
+    "by_filter_status": {
+      "false_positive": 1826849,
+      "replication": 30174,
+      "reproduction": 9919,
+      "needs_review": 13
+    },
+    "by_filter_method": {
+      "rule_based": 1763121,
+      "both": 103834
+    },
+    "by_filter_confidence": {
+      "high": 1865554,
+      "medium": 1341,
+      "low": 60
+    },
+    "rep_repro_total": 40093,
+    "rep_repro_no_doi": 6017,
+    "rep_repro_no_doi_or_url": 1521,
+    "rep_repro_no_abstract": 2982
+  },
+  "extracted": {
+    "total": 1599,
+    "target_pending_count": 0,
+    "by_match_type": {
+      "single_original": 1597,
+      "multiple_match": 2
+    },
+    "by_link_method": {
+      "author_year_match": 1441,
+      "llm_abstract": 0,
+      "llm_fulltext": 157,
+      "no_original_found": 1,
+      "target_pending": 0,
+      "api_error": 0
+    },
+    "by_model": {
+      "none": 1443,
+      "gemini": 156
+    },
+    "by_outcome": {
+      "success": 693,
+      "failure": 308,
+      "mixed": 206,
+      "uninformative": 0,
+      "cannot_be_determined": 343,
+      "descriptive": 49,
+      "pending": 0,
+      "api_error": 0
+    },
+    "by_doi_verification": {
+      "verified": 1504,
+      "mismatch": 49,
+      "no_doi": 20,
+      "no_metadata": 17,
+      "not_found": 8,
+      "skipped": 1
+    }
+  },
+  "extracted_test": {
+    "total": 14,
+    "target_pending_count": 1,
+    "by_match_type": {
+      "single_original": 14
+    },
+    "by_link_method": {
+      "author_year_match": 0,
+      "llm_abstract": 0,
+      "llm_fulltext": 13,
+      "no_original_found": 0,
+      "target_pending": 1,
+      "api_error": 0
+    },
+    "by_model": {
+      "gemini": 13,
+      "none": 1
+    },
+    "by_outcome": {
+      "success": 5,
+      "failure": 4,
+      "mixed": 2,
+      "uninformative": 0,
+      "cannot_be_determined": 1,
+      "descriptive": 2,
+      "pending": 0,
+      "api_error": 0
+    },
+    "by_doi_verification": {
+      "not_found": 8,
+      "no_metadata": 5,
+      "skipped": 1
+    }
+  }
+}
