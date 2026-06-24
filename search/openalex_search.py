@@ -58,6 +58,30 @@ SEARCH_PHRASES = [
     "non-replication",
     "reproducibility study",
     "reproduce the findings",
+    # Fix 3: abstract-only phrases — confirmed replications that only use
+    # replication language inside the abstract, not in the title.
+    "our results replicate",
+    "our findings replicate",
+    "results replicate the",
+    "confirm and replicate",
+    "replication across",
+    "cross-cultural replication",
+    "independent replication",
+    "partial replication",
+    "multi-site replication",
+    "multisite replication",
+    "preregistered replication",
+    "exact replication",
+    "systematic replication",
+]
+
+# Concept-based search — catches papers classified by OpenAlex's own ML as
+# being about replication/reproducibility, even when the abstract is absent or
+# uses atypical wording.  IDs verified 2026-06-23 via --list-concepts.
+# To add/remove concepts run:  python -m search.run_search --list-concepts "replication"
+CONCEPT_IDS = [
+    "C12590798",   # Replication (statistics) — 263k works
+    "C9893847",    # Reproducibility — 121k works
 ]
 
 _BASE_URL = "https://api.openalex.org/works"
@@ -67,6 +91,7 @@ _SELECT = (
     "authorships,primary_location,abstract_inverted_index"
 )
 SOURCE_TAG = "openalex"
+SOURCE_TAG_CONCEPT = "openalex_concept"
 _CURSOR_START = "*"
 
 
@@ -464,3 +489,165 @@ def fetch_openalex_candidates(
         return pd.DataFrame(columns=CANDIDATES_COLS)
 
     return pd.DataFrame(all_rows, columns=CANDIDATES_COLS)
+
+
+# ---------------------------------------------------------------------------
+# Concept-based search (Fix 2)
+# ---------------------------------------------------------------------------
+
+
+def fetch_concept(
+    concept_id: str,
+    from_year: Optional[int] = None,
+    to_year: Optional[int] = None,
+    max_records: Optional[int] = None,
+) -> list[dict]:
+    """Fetch OpenAlex works tagged with *concept_id* with resumable cursor.
+
+    Uses the same cursor-checkpoint pattern as ``fetch_phrase`` but filters by
+    ``concepts.id`` instead of ``title_and_abstract.search``.  This catches
+    papers classified as being about replication/reproducibility by OpenAlex's
+    own ML even when the paper has no abstract stored or uses atypical wording.
+
+    Parameters
+    ----------
+    concept_id : str
+        OpenAlex concept ID, e.g. ``"C2911965"``.  The full URL form
+        ``"https://openalex.org/C2911965"`` is also accepted.
+    from_year, to_year : int, optional
+        Publication year bounds (inclusive).
+    max_records : int, optional
+        Stop after this many rows for this call; cursor is saved at the page
+        boundary so the next call continues from there.
+    """
+    # Normalise to bare ID so the cursor path is stable regardless of format.
+    cid = concept_id.replace("https://openalex.org/", "").strip()
+    cursor_path = _cursor_path(f"concept:{cid}", from_year, to_year)
+    state = _load_cursor_state(cursor_path)
+
+    if state["completed"]:
+        log.info("OpenAlex concept=%r already fully fetched — skipping", cid)
+        return []
+
+    cursor = state["cursor"] or _CURSOR_START
+    total_fetched = state["total_fetched"]
+    rows: list[dict] = []
+
+    yr_filt = _year_filter(from_year, to_year)
+    base_filter = f"concepts.id:{cid}"
+    oa_filter = f"{base_filter},{yr_filt}" if yr_filt else base_filter
+
+    log.info(
+        "OpenAlex concept=%r  years=%s–%s  prev_fetched=%d",
+        cid, from_year or "any", to_year or "any", total_fetched,
+    )
+
+    while cursor:
+        params = {
+            "filter": oa_filter,
+            "per-page": _PER_PAGE,
+            "cursor": cursor,
+            "mailto": RESEARCHER_EMAIL,
+            "select": _SELECT,
+        }
+        _save_cursor_state(cursor_path, cursor, total_fetched, completed=False)
+
+        try:
+            data = _get_page(params)
+        except StopIteration as exc:
+            log.warning("  Stopping concept=%r: %s (%d rows kept)", cid, exc, len(rows))
+            break
+
+        results = data.get("results") or []
+        if not results:
+            cursor = None
+            break
+
+        for w in results:
+            row = _extract_row(w)
+            row["source"] = SOURCE_TAG_CONCEPT  # distinguish from phrase-search rows
+            rows.append(row)
+        total_fetched += len(results)
+
+        next_cursor = (data.get("meta") or {}).get("next_cursor")
+        api_total = data.get("meta", {}).get("count", "?")
+        log.info(
+            "  concept=%r  page_rows=%d  run_rows=%d  api_total=%s",
+            cid, len(results), len(rows), api_total,
+        )
+
+        cursor = next_cursor
+        _save_cursor_state(cursor_path, cursor, total_fetched, completed=(not cursor))
+
+        if not cursor:
+            log.info("  concept=%r fully exhausted", cid)
+            break
+
+        if max_records is not None and len(rows) >= max_records:
+            log.info(
+                "  concept=%r  reached max_records=%d — cursor saved at page boundary",
+                cid, max_records,
+            )
+            break
+
+        time.sleep(OPENALEX_RATE_SEC)
+
+    log.info("Done — %d rows for concept=%r", len(rows), cid)
+    return rows
+
+
+def fetch_openalex_concept_candidates(
+    from_year: Optional[int] = None,
+    to_year: Optional[int] = None,
+    max_records_per_concept: Optional[int] = None,
+) -> pd.DataFrame:
+    """Fetch OpenAlex candidates across all ``CONCEPT_IDS``.
+
+    Each concept is an independent resumable job.  Completed concepts are
+    skipped automatically.
+    """
+    if OPENALEX_API_KEY:
+        log.info("OpenAlex concept search: authenticated")
+    else:
+        log.info("OpenAlex concept search: unauthenticated")
+
+    all_rows: list[dict] = []
+    for i, cid in enumerate(CONCEPT_IDS, 1):
+        log.info("%d/%d  concept=%r", i, len(CONCEPT_IDS), cid)
+        all_rows.extend(fetch_concept(cid, from_year, to_year, max_records=max_records_per_concept))
+
+    if not all_rows:
+        return pd.DataFrame(columns=CANDIDATES_COLS)
+    return pd.DataFrame(all_rows, columns=CANDIDATES_COLS)
+
+
+def list_oa_concepts(query: str) -> list[dict]:
+    """Query the OpenAlex concepts endpoint and return matches.
+
+    Use this to find the correct IDs for ``CONCEPT_IDS``:
+        python -m search.run_search --list-concepts "replication"
+
+    Returns a list of dicts with keys: id, name, works_count.
+    """
+    headers: dict = {}
+    if OPENALEX_API_KEY:
+        headers["Authorization"] = f"Bearer {OPENALEX_API_KEY}"
+    elif RESEARCHER_EMAIL:
+        headers["User-Agent"] = f"mailto:{RESEARCHER_EMAIL}"
+
+    resp = requests.get(
+        "https://api.openalex.org/concepts",
+        params={"search": query, "per-page": 15, "mailto": RESEARCHER_EMAIL},
+        headers=headers,
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return [
+        {
+            "id":         c.get("id", "").replace("https://openalex.org/", ""),
+            "name":       c.get("display_name", ""),
+            "works":      c.get("works_count", 0),
+            "level":      c.get("level"),
+        }
+        for c in resp.json().get("results", [])
+    ]

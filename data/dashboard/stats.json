@@ -9,28 +9,28 @@
       "semantic_scholar": 105414
     }
   },
-  "updated_at": "2026-06-20T19:35:25",
+  "updated_at": "2026-06-24T07:43:06",
   "filtered": {
-    "total": 1880197,
+    "total": 1866955,
     "by_filter_status": {
-      "false_positive": 1837016,
-      "replication": 33440,
-      "reproduction": 9728,
+      "false_positive": 1826849,
+      "replication": 30174,
+      "reproduction": 9919,
       "needs_review": 13
     },
     "by_filter_method": {
-      "rule_based": 1773807,
-      "both": 106390
+      "rule_based": 1763121,
+      "both": 103834
     },
     "by_filter_confidence": {
-      "high": 1878718,
-      "medium": 1389,
-      "low": 90
+      "high": 1865554,
+      "medium": 1341,
+      "low": 60
     },
-    "rep_repro_total": 43168,
-    "rep_repro_no_doi": 9472,
-    "rep_repro_no_doi_or_url": 4749,
-    "rep_repro_no_abstract": 3456
+    "rep_repro_total": 40093,
+    "rep_repro_no_doi": 6017,
+    "rep_repro_no_doi_or_url": 1521,
+    "rep_repro_no_abstract": 2982
   },
   "extracted": {
     "total": 1599,

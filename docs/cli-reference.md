@@ -7,16 +7,17 @@ All commands are run from the project root with `python -m <module>`.
 ## Stage 1 — Search
 
 ```bash
-# Run full search (appends new results to candidates.csv)
+# Run full search across all sources (appends new results to candidates.csv)
 python -m search.run_search
 
 # Limit to specific year range
 python -m search.run_search --from-year 2020 --to-year 2024
 
-# Auto-advance: process one (source, phrase, year) job per call; repeat until exit 2
-python -m search.run_search --auto-advance --from-year 2011 --to-year 2024 --max-per-phrase 200
+# Auto-advance: process one (source, phrase/concept, year) job per call; repeat until exit 2
+python -m search.run_search --auto-advance --from-year 2011 --to-year 2026 --max-per-phrase 200
 
 # Harvest cached API pages into candidates.csv without making new API calls
+# (run this first after any crash or cursor deletion to recover orphaned pages)
 python -m search.run_search --harvest-only
 
 # Rebuild candidates index (if CSV was modified outside the pipeline)
@@ -24,6 +25,58 @@ python -m search.run_search --rebuild-index
 
 # Reset all cursors to start fetching from page 1 again
 python -m search.run_search --reset-cursors
+```
+
+### Filtering by source
+
+The `--source` flag restricts which discovery tracks run. It can be repeated.
+
+| Source value | What it searches |
+| --- | --- |
+| `openalex` | 37 keyword phrases via `title_and_abstract.search` |
+| `openalex_concept` | OpenAlex concept tags (`C12590798` Replication, `C9893847` Reproducibility) |
+| `semantic_scholar` | Same 37 phrases via Semantic Scholar bulk search |
+| `engine` | Internal engine source (requires `FLORA_USE_ENGINE=1`) |
+
+```bash
+# Phrase-based sources — need the auto-advance loop
+do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2026 --max-per-phrase 10000 --source openalex } until ($LASTEXITCODE -eq 2)
+do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2026 --max-per-phrase 10000 --source semantic_scholar } until ($LASTEXITCODE -eq 2)
+
+# Concept-based source — single run or auto-advance loop (large result sets)
+python -m search.run_search --source openalex_concept --from-year 2011 --to-year 2026
+do { python -m search.run_search --auto-advance --source openalex_concept --from-year 2011 --to-year 2026 --max-per-phrase 10000 } until ($LASTEXITCODE -eq 2)
+
+# Curated external lists (single fetch, no loop needed)
+python -m search.run_search --source bob_reed
+python -m search.run_search --source i4r
+```
+
+### Concept ID management
+
+Concept IDs are defined in `CONCEPT_IDS` inside `search/openalex_search.py`. To look up IDs:
+
+```bash
+# Print OpenAlex concepts matching a query (live API call, then exit)
+python -m search.run_search --list-concepts "replication"
+python -m search.run_search --list-concepts "reproducibility"
+```
+
+Current verified IDs (as of 2026-06-23):
+
+- `C12590798` — Replication (statistics) — ~263k works
+- `C9893847` — Reproducibility — ~121k works
+
+### Skipping the cache harvest in auto-advance
+
+The harvest step scans all cached JSON pages and can be slow on large caches. Skip it per-call with `--no-harvest` and run it separately on a schedule:
+
+```bash
+# Run auto-advance without per-cycle harvest
+do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2026 --max-per-phrase 10000 --no-harvest } until ($LASTEXITCODE -eq 2)
+
+# Run harvest separately (weekly, or after a crash)
+python -m search.run_search --harvest-only
 ```
 
 **Output:** `data/candidates.csv`
@@ -127,17 +180,26 @@ The app is read-only — it displays pipeline stats and pulls validation data fr
 ## Analysis
 
 ```bash
-# Gap analysis (compare extracted.csv vs FLoRA entry sheet)
-python -m analysis.gap_analysis
+# Overlap / recall gap analysis — compares all_replications.csv against candidates.csv
+# Reports genuine gaps (papers in the reference set not found by Stage 1)
+python -m analysis.run_overlap_analysis
 
-# Filter rule analysis
-python -m analysis.rule_analysis
+# Rule analysis — audit filter rules and extraction link methods
+python -m analysis.run_overlap_analysis  # also produces rule_improvement_opportunities.csv
 
 # APA reference resolver
 python -m analysis.apa_resolver
 ```
 
-**Outputs:** CSV files in `analysis/` (gitignored by default)
+**Outputs:** CSV and Markdown files in `analysis/` (see [code-flow/analysis.md](code-flow/analysis.md) for what each file means)
+
+Key output files:
+
+- `analysis/gap_summary.md` — human-readable recall gap report
+- `analysis/gap_analysis_doi_matched.csv` — gaps where the reference has a DOI
+- `analysis/gap_analysis_url_matched.csv` — gaps where the reference has a URL but no DOI
+- `analysis/rule_improvement_opportunities.csv` — ranked filter/extract improvement suggestions
+- `analysis/extraction_audit.md` — link method and confidence breakdown
 
 ---
 

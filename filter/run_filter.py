@@ -128,6 +128,73 @@ def _append_row(out_path, row_dict: dict, first: bool) -> None:
         raise
 
 
+def dedup_filtered_csv(dry_run: bool = False) -> tuple[int, int]:
+    """Remove duplicate rows from filtered.csv in-place.
+
+    Reads in 50k-row chunks, keeping the first occurrence of each unique
+    identifier (doi > oa_id > url > title).  Writes to a temp file then
+    atomically replaces the original; rebuilds the filtered index afterwards.
+
+    Returns
+    -------
+    (rows_before, rows_after)
+    """
+    path = DATA_DIR / "filtered.csv"
+    if not path.exists():
+        raise FileNotFoundError(f"filtered.csv not found at {path}")
+
+    seen_keys: set[str] = set()
+    rows_before = 0
+    rows_after = 0
+    tmp_path = path.with_suffix(".dedup.tmp")
+    first_write = True
+
+    for chunk in pd.read_csv(
+        path, encoding="utf-8-sig", dtype=str, chunksize=50_000,
+        on_bad_lines="skip", low_memory=False,
+    ):
+        chunk = chunk.fillna("")
+        rows_before += len(chunk)
+
+        keep_mask: list[bool] = []
+        for _, row in chunk.iterrows():
+            key = _row_key(row)
+            if not key or key not in seen_keys:
+                if key:
+                    seen_keys.add(key)
+                keep_mask.append(True)
+                rows_after += 1
+            else:
+                keep_mask.append(False)
+
+        if not dry_run:
+            kept = chunk[keep_mask]
+            if not kept.empty:
+                kept.to_csv(
+                    tmp_path,
+                    mode="w" if first_write else "a",
+                    index=False,
+                    encoding="utf-8-sig" if first_write else "utf-8",
+                    header=first_write,
+                )
+                first_write = False
+
+    removed = rows_before - rows_after
+    log.info(
+        "dedup_filtered_csv: %d -> %d rows (%d duplicates%s)",
+        rows_before, rows_after, removed,
+        " -- dry run, no changes written" if dry_run else "",
+    )
+
+    if not dry_run and not first_write:
+        tmp_path.replace(path)
+        log.info("filtered.csv replaced -- rebuilding filtered index...")
+        _build_filtered_index(path)
+        log.info("Filtered index rebuilt.")
+
+    return rows_before, rows_after
+
+
 def run_filter(limit: "int | None" = None,
                offset: "int | None" = None,
                from_year: "int | None" = None,
@@ -334,6 +401,17 @@ if __name__ == "__main__":
         "--rebuild-index", action="store_true",
         help="Force rebuild of the filtered index from filtered.csv, then exit.",
     )
+    parser.add_argument(
+        "--dedup-filtered", action="store_true",
+        help=(
+            "Remove duplicate rows from filtered.csv in-place, rebuild the "
+            "filtered index, then exit.  Use --dry-run to preview without writing."
+        ),
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="With --dedup-filtered: print counts without modifying any files.",
+    )
     args = parser.parse_args()
 
     if args.rebuild_index:
@@ -343,6 +421,17 @@ if __name__ == "__main__":
             print(f"Rebuilt filtered index: {len(idx)} keys → {_FILTERED_INDEX_PATH}")
         else:
             print("filtered.csv not found — nothing to rebuild.")
+        raise SystemExit(0)
+
+    if args.dedup_filtered:
+        before, after = dedup_filtered_csv(dry_run=args.dry_run)
+        removed = before - after
+        if args.dry_run:
+            print(f"DRY RUN -- would remove {removed:,} duplicates: {before:,} -> {after:,} rows")
+        else:
+            print(f"Done -- removed {removed:,} duplicates: {before:,} -> {after:,} rows")
+            print(f"filtered.csv and {_FILTERED_INDEX_PATH} updated.")
+        raise SystemExit(0)
     else:
         try:
             run_filter(

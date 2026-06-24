@@ -389,10 +389,10 @@ def api_analysis_stats():
         try:
             text = summary_path.read_text(encoding="utf-8")
             for label, key in [
-                (r"DOI-matched gaps:\s*(\d+)",   "doi_gaps"),
-                (r"URL-matched gaps:\s*(\d+)",   "url_gaps"),
-                (r"Fuzzy-matched gaps:\s*(\d+)", "fuzzy_gaps"),
-                (r"Total:\s*(\d+)\s*gaps",       "total_gaps"),
+                (r"Gaps with DOI:\s*(\d+)",              "doi_gaps"),
+                (r"Gaps URL-only[^:]*:\s*(\d+)",         "url_gaps"),
+                (r"Fuzzy-matched[^:]*:\s*(\d+)",         "fuzzy_gaps"),
+                (r"Total genuine gaps:\s*(\d+)",         "total_gaps"),
                 (r"Filter misclassifications\**:\s*(\d+)", "filter_misclassifications"),
             ]:
                 m = re.search(label, text)

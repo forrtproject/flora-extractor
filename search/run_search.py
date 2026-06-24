@@ -36,10 +36,17 @@ import pandas as pd
 from shared.config import CACHE_DIR, DATA_DIR, OA_CACHE_DIR, log
 from shared.schema import CANDIDATES_COLS
 from shared.utils import clean_doi
-from search.openalex_search import fetch_openalex_candidates
+from search.openalex_search import (
+    fetch_openalex_candidates,
+    fetch_openalex_concept_candidates,
+    fetch_concept,
+    list_oa_concepts,
+    CONCEPT_IDS,
+)
 from search.semantic_scholar_search import fetch_semantic_scholar_candidates
 from search.deduplicate import deduplicate_candidates
 from search.engine_source import fetch_engine_candidates, is_engine_enabled
+from search.fetch_abstracts import enrich_abstracts
 
 # ---------------------------------------------------------------------------
 # Candidates index — avoids loading the full CSV to check for duplicates
@@ -379,17 +386,31 @@ def _merge_into_candidates_csv(new_df: pd.DataFrame, out_path: "Path") -> None:
     """
     index = _load_or_build_candidates_index(out_path)
 
-    truly_new = new_df[new_df.apply(
-        lambda row: not any(k in index for k in _row_keys(row)), axis=1
-    )].copy()
+    # seen_in_batch tracks keys chosen from THIS batch so that within-batch
+    # duplicates (same DOI from two phrase searches in the same harvest) are
+    # also caught, not just duplicates against the persisted index.
+    seen_in_batch: set[str] = set()
+
+    def _is_truly_new(row: pd.Series) -> bool:
+        keys = _row_keys(row)
+        if any(k in index or k in seen_in_batch for k in keys):
+            return False
+        seen_in_batch.update(keys)
+        return True
+
+    truly_new = new_df[new_df.apply(_is_truly_new, axis=1)].copy()
 
     n_skipped = len(new_df) - len(truly_new)
     if n_skipped:
-        log.info("Merge: skipped %d already-indexed rows", n_skipped)
+        log.info("Merge: skipped %d already-indexed rows (incl. within-batch dups)", n_skipped)
 
     if truly_new.empty:
         log.info("Merge: no new rows — candidates.csv unchanged (+0 from new batch)")
         return
+
+    # Fill missing abstracts from CrossRef/S2 before writing so candidates
+    # always arrive with the best available abstract for the filter stage.
+    truly_new = enrich_abstracts(truly_new)
 
     log.info("Merge: appending %d new rows to candidates.csv (+%d from new batch)",
              len(truly_new), len(truly_new))
@@ -416,7 +437,7 @@ def _merge_into_candidates_csv(new_df: pd.DataFrame, out_path: "Path") -> None:
 # ---------------------------------------------------------------------------
 
 
-_ALL_SOURCES = frozenset({"openalex", "semantic_scholar", "engine"})
+_ALL_SOURCES = frozenset({"openalex", "semantic_scholar", "engine", "openalex_concept"})
 
 
 def run_search(
@@ -478,9 +499,10 @@ def run_search(
         )
         if not cached_batch.empty:
             log.info(
-                "Cache harvest total: %d rows — merging into candidates.csv",
+                "Cache harvest total: %d rows — deduplicating before merge...",
                 len(cached_batch),
             )
+            cached_batch = deduplicate_candidates(cached_batch)
             _merge_into_candidates_csv(cached_batch, DATA_DIR / "candidates.csv")
     else:
         log.info("Cache harvest skipped (source filter excludes openalex and semantic_scholar)")
@@ -518,6 +540,18 @@ def run_search(
         )
     else:
         log.info("Stage 1: Semantic Scholar source skipped (not in --source list)")
+
+    if _want("openalex_concept"):
+        log.info("Stage 1: fetching OpenAlex concept-based candidates...")
+        frames.append(
+            fetch_openalex_concept_candidates(
+                from_year=from_year,
+                to_year=to_year,
+                max_records_per_concept=max_records_per_phrase,
+            )
+        )
+    else:
+        log.info("Stage 1: OpenAlex concept source skipped (not in --source list)")
 
     combined = (
         pd.concat(frames, ignore_index=True)
@@ -573,9 +607,12 @@ def run_search_auto_advance(
         return sources is None or bool(sources.intersection(names))
 
     # Build the job list filtered to requested sources.
+    # Tuples are (source_tag, job_key) where job_key is a phrase for phrase
+    # jobs or a concept ID for concept jobs.
     ALL_JOBS = (
-        [("openalex",          p) for p in OA_PHRASES]
-        + [("semantic_scholar", p) for p in S2_PHRASES]
+        [("openalex",          p)   for p in OA_PHRASES]
+        + [("semantic_scholar", p)  for p in S2_PHRASES]
+        + [("openalex_concept", cid) for cid in CONCEPT_IDS]
     )
     JOBS = [j for j in ALL_JOBS if _want_src(j[0])] if sources else ALL_JOBS
 
@@ -613,13 +650,17 @@ def run_search_auto_advance(
         log.info("Auto-advance: harvesting cached pages (once per cycle)...")
         cached_batch = pd.concat([_harvest_oa_cache(), _harvest_s2_cache()], ignore_index=True)
         if not cached_batch.empty:
-            log.info("Cache harvest: %d rows — merging into candidates.csv", len(cached_batch))
+            log.info("Cache harvest: %d rows — deduplicating before merge...", len(cached_batch))
+            cached_batch = deduplicate_candidates(cached_batch)
             _merge_into_candidates_csv(cached_batch, out_path)
 
-    # Fetch this job's phrase from the appropriate source.
+    # Fetch this job from the appropriate source.
     if source == "openalex":
         rows = oa_fetch(phrase, from_year=year, to_year=year,
                         max_records=max_records_per_phrase)
+    elif source == "openalex_concept":
+        rows = fetch_concept(phrase, from_year=year, to_year=year,
+                             max_records=max_records_per_phrase)
     else:
         rows = s2_fetch(phrase, from_year=year, to_year=year,
                         max_records=max_records_per_phrase)
@@ -655,6 +696,74 @@ def run_search_auto_advance(
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+
+def dedup_candidates_csv(dry_run: bool = False) -> tuple[int, int]:
+    """Remove duplicate rows from candidates.csv in-place.
+
+    Reads the file in 50k-row chunks, keeping the first occurrence of each
+    unique identifier (oa_id > doi > url > title).  Rows with no identifier
+    are kept unconditionally.  Writes to a temp file then atomically replaces
+    the original; rebuilds the candidates index afterwards.
+
+    Returns
+    -------
+    (rows_before, rows_after) — counts for logging / CLI output.
+    """
+    path = DATA_DIR / "candidates.csv"
+    if not path.exists():
+        raise FileNotFoundError(f"candidates.csv not found at {path}")
+
+    seen_keys: set[str] = set()
+    rows_before = 0
+    rows_after = 0
+    tmp_path = path.with_suffix(".dedup.tmp")
+    first_write = True
+
+    for chunk in pd.read_csv(
+        path, encoding="utf-8-sig", dtype=str, chunksize=50_000,
+        on_bad_lines="skip", low_memory=False,
+    ):
+        chunk = chunk.fillna("")
+        rows_before += len(chunk)
+
+        keep_mask: list[bool] = []
+        for _, row in chunk.iterrows():
+            keys = _row_keys(row)
+            primary = keys[0] if keys else None
+            if primary is None or primary not in seen_keys:
+                seen_keys.update(keys)
+                keep_mask.append(True)
+                rows_after += 1
+            else:
+                keep_mask.append(False)
+
+        if not dry_run:
+            kept = chunk[keep_mask]
+            if not kept.empty:
+                kept.to_csv(
+                    tmp_path,
+                    mode="w" if first_write else "a",
+                    index=False,
+                    encoding="utf-8-sig" if first_write else "utf-8",
+                    header=first_write,
+                )
+                first_write = False
+
+    removed = rows_before - rows_after
+    log.info(
+        "dedup_candidates_csv: %d -> %d rows (%d duplicates%s)",
+        rows_before, rows_after, removed,
+        " -- dry run, no changes written" if dry_run else "",
+    )
+
+    if not dry_run and not first_write:
+        tmp_path.replace(path)
+        log.info("candidates.csv replaced -- rebuilding index...")
+        build_candidates_index(path)
+        log.info("Index rebuilt.")
+
+    return rows_before, rows_after
 
 
 def _parse_args() -> argparse.Namespace:
@@ -708,8 +817,18 @@ def _parse_args() -> argparse.Namespace:
         dest="sources",
         help=(
             "Only fetch from this source (repeatable for multiple). "
-            "Values: openalex, semantic_scholar, engine. "
+            "Values: openalex, semantic_scholar, engine, openalex_concept. "
             "Default: all sources."
+        ),
+    )
+    parser.add_argument(
+        "--list-concepts",
+        metavar="QUERY",
+        default=None,
+        help=(
+            "Query the OpenAlex concepts endpoint and print matching IDs + names, "
+            "then exit.  Use this to verify or update CONCEPT_IDS in openalex_search.py. "
+            "Example: --list-concepts 'replication'"
         ),
     )
     parser.add_argument(
@@ -733,11 +852,37 @@ def _parse_args() -> argparse.Namespace:
             "Use alongside --harvest-only on a separate schedule."
         ),
     )
+    parser.add_argument(
+        "--dedup-candidates",
+        action="store_true",
+        help=(
+            "Remove duplicate rows from candidates.csv in-place, then rebuild "
+            "the candidates index and exit.  Use --dry-run to preview without writing."
+        ),
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="With --dedup-candidates: print counts without modifying any files.",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
+
+    if args.list_concepts:
+        results = list_oa_concepts(args.list_concepts)
+        if not results:
+            print(f"No concepts found for query {args.list_concepts!r}")
+        else:
+            print(f"{'ID':<15} {'works':>8}  {'level':>5}  name")
+            print("-" * 72)
+            for r in results:
+                print(f"{r['id']:<15} {r['works']:>8,}  {str(r['level'] or ''):>5}  {r['name']}")
+            print()
+            print("Current CONCEPT_IDS in openalex_search.py:", CONCEPT_IDS)
+        raise SystemExit(0)
 
     if args.rebuild_index:
         csv_path = DATA_DIR / "candidates.csv"
@@ -746,6 +891,16 @@ if __name__ == "__main__":
             print(f"Rebuilt candidates index: {len(idx)} keys → {_CANDIDATES_INDEX_PATH}")
         else:
             print("candidates.csv not found — nothing to rebuild.")
+        raise SystemExit(0)
+
+    if args.dedup_candidates:
+        before, after = dedup_candidates_csv(dry_run=args.dry_run)
+        removed = before - after
+        if args.dry_run:
+            print(f"DRY RUN -- would remove {removed:,} duplicates: {before:,} -> {after:,} rows")
+        else:
+            print(f"Done -- removed {removed:,} duplicates: {before:,} -> {after:,} rows")
+            print(f"candidates.csv and {_CANDIDATES_INDEX_PATH} updated.")
         raise SystemExit(0)
 
     if args.harvest_only:

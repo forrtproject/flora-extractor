@@ -69,3 +69,5 @@ analysis/apa_reference_fallback.csv
 /data/dashboard/*.tmp.parquet
 /data/dashboard/download/
 todo.md
+data/filtered.csv.bak
+data/extracted.csv.bak

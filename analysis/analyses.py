@@ -8,107 +8,97 @@ import pandas as pd
 from typing import Tuple
 
 from shared.config import log
-from analysis.data_loader import load_candidates, load_filtered, load_all_replications
-from analysis.matching import find_best_match
+from analysis.data_loader import load_all_replications
+
+
+def _build_candidate_index_sets() -> Tuple[set, set]:
+    """Build DOI and URL/OA-ID index sets from candidates.csv in chunks to avoid OOM.
+
+    The URL set includes both url_r (open-access PDF / landing page) AND
+    openalex_id_r (e.g. 'https://openalex.org/W...') so that papers found by
+    the old pipeline via work-ID URL still match correctly.
+
+    Returns:
+        (doi_set, url_set) — cleaned DOIs and all URL/OA-ID values in candidates.
+    """
+    from shared.config import DATA_DIR
+
+    doi_set: set = set()
+    url_set: set = set()
+    path = DATA_DIR / "candidates.csv"
+    chunks = pd.read_csv(
+        path, encoding="utf-8-sig", dtype=str, on_bad_lines="skip",
+        usecols=lambda c: c in ("doi_r", "url_r", "openalex_id_r"), chunksize=50_000,
+    )
+    for chunk in chunks:
+        if "doi_r" in chunk.columns:
+            doi_set.update(chunk["doi_r"].dropna().str.strip().str.lower())
+        if "url_r" in chunk.columns:
+            url_set.update(chunk["url_r"].dropna().str.strip())
+        # Also index the OpenAlex work ID so old-pipeline openalex.org/W... URLs match
+        if "openalex_id_r" in chunk.columns:
+            url_set.update(chunk["openalex_id_r"].dropna().str.strip())
+    doi_set.discard("")
+    url_set.discard("")
+    log.info("Candidate index: %d DOIs, %d URL/OA-IDs", len(doi_set), len(url_set))
+    return doi_set, url_set
 
 
 def analyze_recall_gap() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Analysis 1a: Find replications in all_replications.csv not in candidates.csv.
 
-    Compares replication studies in both datasets to identify gaps (known replications
-    we failed to discover in Stage 1).
-
-    Uses indexed lookups to avoid O(n²) complexity on large datasets.
+    Compares the ground-truth replication set against Stage 1 candidates to find
+    genuine recall gaps — papers we failed to discover.  Uses chunked index sets to
+    handle candidates.csv being too large to load entirely into memory.
 
     Returns:
         (gaps_by_doi, gaps_by_url, gaps_by_fuzzy)
-        Each is a DataFrame of unmatched reference rows, separated by match method.
+        gaps_by_doi  — unmatched rows that have a DOI identifier
+        gaps_by_url  — unmatched rows with a URL but no DOI
+        gaps_by_fuzzy — always empty (fuzzy match disabled for large candidates)
     """
-    candidates = load_candidates()
+    doi_set, url_set = _build_candidate_index_sets()
     all_reps = load_all_replications()
 
-    # Build indices for fast lookup
-    doi_index = candidates.set_index("doi_r")
-    url_index = candidates.set_index("url_r")
+    gaps_by_doi: list = []
+    gaps_by_url: list = []
+    gaps_by_fuzzy: list = []  # kept for API compatibility; always empty
 
-    gaps_by_doi = []
-    gaps_by_url = []
-    gaps_by_fuzzy = []
+    log.info(f"Comparing {len(all_reps)} reference rows against candidate index...")
 
-    log.info(f"Comparing {len(all_reps)} reference rows against {len(candidates)} candidates...")
-
+    matched = 0
     for ref_idx, ref_row in all_reps.iterrows():
         if ref_idx % 5000 == 0:
             log.info(f"  Progress: {ref_idx}/{len(all_reps)}")
 
-        best_method = None
-        best_confidence = 0.0
+        ref_doi = str(ref_row.get("doi_r") or "").strip().lower()
+        ref_url = str(ref_row.get("url_r") or "").strip()
 
-        # Try DOI lookup first (O(1))
-        ref_doi = ref_row.get("doi_r", "")
-        if ref_doi and ref_doi in doi_index.index:
-            best_method = "doi"
-            best_confidence = 1.0
-        else:
-            # Try URL lookup (O(1))
-            ref_url = ref_row.get("url_r", "")
-            if ref_url and ref_url in url_index.index:
-                best_method = "url"
-                best_confidence = 1.0
-            else:
-                # Try fuzzy match on year + author + title for unmatched rows
-                # Only sample candidates to avoid O(n²) - match first 1000 by year/author
-                ref_year = ref_row.get("year_r")
-                ref_authors = str(ref_row.get("authors_r", "")).split(",")[0].strip().lower()
+        if ref_doi and ref_doi in doi_set:
+            matched += 1
+            continue  # found — not a gap
+        if ref_url and ref_url in url_set:
+            matched += 1
+            continue  # found — not a gap
 
-                candidates_same_year = candidates[candidates["year_r"] == ref_year]
-                for cand_idx, cand_row in candidates_same_year.head(1000).iterrows():
-                    cand_dict = {
-                        "doi_r": cand_row.get("doi_r", ""),
-                        "url_r": cand_row.get("url_r", ""),
-                        "title_r": cand_row.get("title_r", ""),
-                        "year_r": cand_row.get("year_r"),
-                        "authors_r": cand_row.get("authors_r", ""),
-                    }
-                    ref_dict = {
-                        "doi_o": ref_row.get("doi_r", ""),
-                        "doi_r": ref_row.get("doi_r", ""),
-                        "url_o": ref_row.get("url_r", ""),
-                        "url_r": ref_row.get("url_r", ""),
-                        "title_o": ref_row.get("study_r", ""),
-                        "title_r": ref_row.get("study_r", ""),
-                        "year_o": ref_row.get("year_r"),
-                        "year_r": ref_row.get("year_r"),
-                        "authors_o": ref_row.get("authors_r", ""),
-                        "authors_r": ref_row.get("authors_r", ""),
-                    }
-
-                    match_result = find_best_match(cand_dict, ref_dict)
-                    if match_result:
-                        method, confidence = match_result
-                        if confidence > best_confidence:
-                            best_method = method
-                            best_confidence = confidence
-                        break  # Found a fuzzy match, stop searching
-
-        # Categorize gap
+        # Genuine gap: record it
         gap_row = ref_row.to_dict()
-        gap_row["match_status"] = "matched" if best_method else "unmatched"
-        gap_row["match_method"] = best_method
-        gap_row["match_confidence"] = best_confidence if best_method else None
+        gap_row["match_status"] = "unmatched"
+        gap_row["match_method"] = None
+        gap_row["match_confidence"] = None
 
-        if best_method == "doi":
+        if ref_doi:
             gaps_by_doi.append(gap_row)
-        elif best_method == "url":
+        elif ref_url:
             gaps_by_url.append(gap_row)
-        elif best_method == "fuzzy_title":
-            gaps_by_fuzzy.append(gap_row)
         else:
-            # Unmatched - add to DOI list for visibility
-            gaps_by_doi.append(gap_row)
+            gaps_by_doi.append(gap_row)  # no identifier; group with DOI gaps
 
-    log.info(f"Analysis 1a complete: {len(gaps_by_doi)} DOI, {len(gaps_by_url)} URL, {len(gaps_by_fuzzy)} Fuzzy matches")
+    log.info(
+        f"Analysis 1a complete: {matched} matched, "
+        f"{len(gaps_by_doi)} gaps with DOI, {len(gaps_by_url)} gaps URL-only"
+    )
 
     return (
         pd.DataFrame(gaps_by_doi) if gaps_by_doi else pd.DataFrame(),

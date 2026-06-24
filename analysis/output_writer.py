@@ -71,11 +71,11 @@ def write_report_markdown(
     total_refs = len(gaps_doi) + len(gaps_url) + len(gaps_fuzzy)
     total_misclass = len(misclassifications)
 
-    lines.append(f"- **Gap Analysis Results**:")
-    lines.append(f"  - DOI-matched gaps: {len(gaps_doi)}")
-    lines.append(f"  - URL-matched gaps: {len(gaps_url)}")
-    lines.append(f"  - Fuzzy-matched gaps: {len(gaps_fuzzy)}")
-    lines.append(f"  - Total: {total_refs} gaps")
+    lines.append(f"- **Gap Analysis Results** (known replications absent from candidates.csv):")
+    lines.append(f"  - Gaps with DOI: {len(gaps_doi)}")
+    lines.append(f"  - Gaps URL-only (no DOI): {len(gaps_url)}")
+    lines.append(f"  - Fuzzy-matched (found via title, not a gap): {len(gaps_fuzzy)}")
+    lines.append(f"  - Total genuine gaps: {total_refs}")
     lines.append(f"- **Filter misclassifications**: {total_misclass} rows")
     if len(source_stats) > 0:
         lines.append(
@@ -87,11 +87,11 @@ def write_report_markdown(
     # Recall Gap Details
     lines.append("## Recall Gaps (Analysis 1a)\n")
     lines.append(
-        f"Replications in all_replications.csv but not in candidates.csv: {total_refs}\n"
+        f"Known replications in all_replications.csv absent from candidates.csv: {total_refs}\n"
     )
 
     if len(gaps_doi) > 0:
-        lines.append(f"### DOI-matched gaps ({len(gaps_doi)} rows)")
+        lines.append(f"### Gaps with DOI ({len(gaps_doi)} rows)")
         try:
             lines.append(gaps_doi[["doi_r", "study_r", "year_r"]].head(10).to_markdown())
         except:
@@ -99,7 +99,7 @@ def write_report_markdown(
         lines.append("\n")
 
     if len(gaps_url) > 0:
-        lines.append(f"### URL-matched gaps ({len(gaps_url)} rows)")
+        lines.append(f"### Gaps URL-only / no DOI ({len(gaps_url)} rows)")
         try:
             lines.append(gaps_url[["url_r", "study_r", "year_r"]].head(10).to_markdown())
         except:
