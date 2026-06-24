@@ -146,33 +146,53 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
 
     abstract_snip = (abstract_r[:1000] + "…") if len(abstract_r) > 1000 else abstract_r
 
+    # For outcome classification the results/conclusion matter most, so take the
+    # last 3000 chars of fulltext (where conclusions live) rather than the start.
+    _FULLTEXT_CHARS = 3000
+    if len(fulltext) > _FULLTEXT_CHARS:
+        fulltext_snip = "…" + fulltext[-_FULLTEXT_CHARS:]
+    else:
+        fulltext_snip = fulltext
+
     original_block = ""
     if original_title:
         original_block = (
             f"This paper replicates: {original_authors} ({original_year}). {original_title}\n\n"
         )
 
+    fulltext_block = ""
+    if fulltext_snip:
+        fulltext_block = f"FULL TEXT EXCERPT (results/conclusion):\n{fulltext_snip}\n\n"
+
+    has_fulltext = bool(fulltext_snip)
+    source_instruction = (
+        "Classify the replication outcome based on the abstract and full text excerpt below."
+        if has_fulltext else
+        "Classify the replication outcome based on what the paper's abstract states."
+    )
+
     prompt = (
-        "You are a research methodology expert. Classify the replication outcome based on what the paper's abstract states.\n\n"
+        f"You are a research methodology expert. {source_instruction}\n\n"
         + original_block
         + f"TITLE: {title_r}\n"
         f"ABSTRACT: {abstract_snip or '(not available)'}\n\n"
-        "Outcome classification rules:\n"
+        + fulltext_block
+        + "Outcome classification rules:\n"
         "- success: authors explicitly state the original finding was confirmed, replicated, or supported\n"
         "- failure: authors explicitly state the original finding was NOT found, contradicted, or failed to replicate\n"
         "- mixed: authors state that SOME but not all aspects of the original finding were confirmed\n"
         "- descriptive: authors adapted or extended methods in a different context/population WITHOUT directly testing the original claim\n"
-        "- cannot_be_determined: the abstract lacks sufficient detail to classify the outcome (not when authors say it's unclear, but when WE cannot tell)\n\n"
+        "- cannot_be_determined: the available text lacks sufficient detail to classify the outcome (not when authors say it's unclear, but when WE cannot tell)\n\n"
         "Few-shot examples:\n"
         "1. UNINFORMATIVE (explicit author statement): 'This conceptual replication extends the theory but does not directly test the original hypothesis.'\n"
         "2. CANNOT_BE_DETERMINED (insufficient detail): 'We conducted a replication study in a different population.' (no mention of success or failure)\n"
         "3. MIXED (partial success): 'We replicated the main effect but not the interaction.'\n"
         "4. SUCCESS (confirmation): 'Our findings confirm Smith et al. (2015)'\n\n"
-        "CRITICAL: Only output 'cannot_be_determined' when the abstract genuinely lacks detail. "
+        "CRITICAL: Only output 'cannot_be_determined' when the available text genuinely lacks detail. "
         "Default to 'cannot_be_determined' rather than 'uninformative' when uncertain.\n\n"
         "Respond with ONLY this JSON:\n"
         '{"outcome": "<success|failure|mixed|descriptive|cannot_be_determined>", '
-        '"outcome_phrase": "<verbatim quote of 2-3 sentences from the abstract that specifically describes what replicated and what did not>", '
+        '"outcome_phrase": "<verbatim quote of 2-3 sentences from the text that specifically describes what replicated and what did not>", '
         '"outcome_confidence": "<high|medium|low>", '
         '"out_quote_source": "<abstract|title|fulltext>", '
         '"outcome_reasoning": "<one sentence explaining the classification choice>"}'
@@ -187,7 +207,8 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
 
     for attempt in range(max_retries):
         try:
-            result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_HEAVY_MODEL)
+            result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_HEAVY_MODEL,
+                                              prefer_openai=True)
             if result:
                 time.sleep(LLM_RATE_SEC)
                 break  # Success, exit retry loop

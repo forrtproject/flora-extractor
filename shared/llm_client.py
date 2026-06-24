@@ -349,12 +349,15 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
 
 # ── Unified LLM router ───────────────────────────────────────────────────────
 
-def call_llm(prompt: str, gemini_model: str = "") -> tuple[Optional[dict], str, str]:
+def call_llm(prompt: str, gemini_model: str = "",
+             prefer_openai: bool = False) -> tuple[Optional[dict], str, str]:
     """
     Route a prompt through the configured provider chain and return the first
     successful result.
 
-    Order: Gemini -> OpenAI -> OpenRouter (Qwen as last resort).
+    Default order : Gemini -> OpenAI -> OpenRouter (Qwen as last resort).
+    prefer_openai : flip to OpenAI -> Gemini -> OpenRouter.
+                    Use when Gemini is overloaded (503/429) and OpenAI is preferred.
 
     gemini_model — Gemini model to use (defaults to GEMINI_LIGHT_MODEL).
 
@@ -363,14 +366,24 @@ def call_llm(prompt: str, gemini_model: str = "") -> tuple[Optional[dict], str, 
     """
     from .config import GEMINI_LIGHT_MODEL as _LIGHT
 
-    model = gemini_model or _LIGHT
-    result, gemini_err = call_gemini(prompt, model=model)
-    if result:
-        return result, model, ""
+    model      = gemini_model or _LIGHT
+    gemini_err = ""
+    openai_err = ""
 
-    result, openai_err = call_openai(prompt)
-    if result:
-        return result, OPENAI_MODEL, ""
+    if prefer_openai:
+        result, openai_err = call_openai(prompt)
+        if result:
+            return result, OPENAI_MODEL, ""
+        result, gemini_err = call_gemini(prompt, model=model)
+        if result:
+            return result, model, ""
+    else:
+        result, gemini_err = call_gemini(prompt, model=model)
+        if result:
+            return result, model, ""
+        result, openai_err = call_openai(prompt)
+        if result:
+            return result, OPENAI_MODEL, ""
 
     if OPENROUTER_API_KEY:
         result, or_err = call_openrouter(prompt)

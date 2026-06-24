@@ -162,38 +162,34 @@ def _build_candidate_index() -> tuple[set, set]:
     return doi_set, oa_set
 
 
-def _overlap_analysis(doi_set: set, oa_set: set) -> dict[str, Any]:
-    """Compare old TP rows against new candidate index. Returns overlap stats + gap rows."""
-    path = DATA_DIR / "all_replications.csv"
-    if not path.exists():
-        return {}
+def _check_rows_against_index(
+    rows: pd.DataFrame, doi_set: set, oa_set: set, label: str
+) -> dict[str, Any]:
+    """Check a set of rows (TP or FP) against the new candidate index.
 
-    df = pd.read_csv(
-        path, dtype=str,
-        usecols=lambda c: c in ("doi_r", "url_r", "study_r", "year_r", "type", "pathway_source"),
+    Returns overlap counts and the rows that are NOT in new candidates.
+    url_r for openalex-sourced no-doi rows is an openalex.org URL — same
+    value as openalex_id_r in candidates.csv, so we check it against oa_set.
+    """
+    doi_rows    = rows[rows["doi_r"] != ""]
+    no_doi_rows = rows[rows["doi_r"] == ""]
+
+    doi_in   = doi_rows[doi_rows["doi_r"].isin(doi_set)]
+    doi_out  = doi_rows[~doi_rows["doi_r"].isin(doi_set)]
+    oaid_in  = no_doi_rows[no_doi_rows["url_r"].isin(oa_set)]
+    oaid_out = no_doi_rows[~no_doi_rows["url_r"].isin(oa_set)]
+
+    keep_cols = ["doi_r", "url_r", "study_r", "year_r", "pathway_source"]
+    gap_doi_rows = doi_out[keep_cols].fillna("").to_dict("records")
+    gap_url_rows = oaid_out[keep_cols].fillna("").to_dict("records")
+
+    log.info(
+        "%s: doi %d/%d in new, oaid %d/%d in new, total gap %d",
+        label, len(doi_in), len(doi_rows), len(oaid_in), len(no_doi_rows),
+        len(doi_out) + len(oaid_out),
     )
-    df["doi_r"]  = df["doi_r"].fillna("").str.strip().str.lower()
-    df["url_r"]  = df["url_r"].fillna("").str.strip()
-    df["type"]   = df["type"].fillna("")
-    typed = df[df["type"].isin(["replication", "reproduction"])].copy()
-
-    doi_rows    = typed[typed["doi_r"] != ""]
-    no_doi_rows = typed[typed["doi_r"] == ""]
-
-    # DOI match
-    doi_in     = doi_rows[doi_rows["doi_r"].isin(doi_set)]
-    doi_out    = doi_rows[~doi_rows["doi_r"].isin(doi_set)]
-
-    # OA-ID match for rows without DOI
-    # url_r for openalex-sourced no-doi rows IS an openalex.org URL — same as openalex_id_r
-    oaid_in    = no_doi_rows[no_doi_rows["url_r"].isin(oa_set)]
-    oaid_out   = no_doi_rows[~no_doi_rows["url_r"].isin(oa_set)]
-
-    gap_doi_rows   = doi_out[["doi_r", "url_r", "study_r", "year_r", "pathway_source"]].fillna("").to_dict("records")
-    gap_url_rows   = oaid_out[["doi_r", "url_r", "study_r", "year_r", "pathway_source"]].fillna("").to_dict("records")
-
     return {
-        "tp_total": len(typed),
+        "total": len(rows),
         "doi_rows": len(doi_rows),
         "doi_in_new": len(doi_in),
         "doi_not_in_new": len(doi_out),
@@ -204,6 +200,49 @@ def _overlap_analysis(doi_set: set, oa_set: set) -> dict[str, Any]:
         "total_not_in_new": len(doi_out) + len(oaid_out),
         "gap_doi_rows": gap_doi_rows,
         "gap_url_rows": gap_url_rows,
+    }
+
+
+def _overlap_analysis(doi_set: set, oa_set: set) -> dict[str, Any]:
+    """Compare old TP and FP rows against new candidate index."""
+    path = DATA_DIR / "all_replications.csv"
+    if not path.exists():
+        return {}
+
+    df = pd.read_csv(
+        path, dtype=str,
+        usecols=lambda c: c in (
+            "doi_r", "url_r", "study_r", "year_r",
+            "type", "pathway_source", "validation_status",
+        ),
+    )
+    df["doi_r"]              = df["doi_r"].fillna("").str.strip().str.lower()
+    df["url_r"]              = df["url_r"].fillna("").str.strip()
+    df["type"]               = df["type"].fillna("")
+    df["validation_status"]  = df["validation_status"].fillna("")
+
+    tp_rows = df[df["type"].isin(["replication", "reproduction"])].copy()
+    fp_rows = df[df["validation_status"] == "false_positive"].copy()
+
+    tp_overlap = _check_rows_against_index(tp_rows, doi_set, oa_set, "TP")
+    fp_overlap = _check_rows_against_index(fp_rows, doi_set, oa_set, "FP")
+
+    # TP-specific alias for backward compat (gap list kept at top level)
+    return {
+        "tp": tp_overlap,
+        "fp": fp_overlap,
+        # top-level aliases so existing JS still works
+        "tp_total":          tp_overlap["total"],
+        "doi_rows":          tp_overlap["doi_rows"],
+        "doi_in_new":        tp_overlap["doi_in_new"],
+        "doi_not_in_new":    tp_overlap["doi_not_in_new"],
+        "oaid_rows":         tp_overlap["oaid_rows"],
+        "oaid_in_new":       tp_overlap["oaid_in_new"],
+        "oaid_not_in_new":   tp_overlap["oaid_not_in_new"],
+        "total_in_new":      tp_overlap["total_in_new"],
+        "total_not_in_new":  tp_overlap["total_not_in_new"],
+        "gap_doi_rows":      tp_overlap["gap_doi_rows"],
+        "gap_url_rows":      tp_overlap["gap_url_rows"],
     }
 
 
@@ -222,7 +261,7 @@ def run_comparison() -> dict[str, Any]:
     log.info("Step 3/4: Building new candidate index …")
     doi_set, oa_set = _build_candidate_index()
 
-    log.info("Step 4/4: Overlap analysis …")
+    log.info("Step 4/4: Overlap analysis (TP + FP) …")
     overlap = _overlap_analysis(doi_set, oa_set)
 
     result: dict[str, Any] = {

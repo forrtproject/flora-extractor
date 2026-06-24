@@ -102,3 +102,7 @@ python -m search.run_search --source openalex_concept --from-year 2011 --to-year
 
 # Auto-advance loop (10k per concept per call)
 do { python -m search.run_search --auto-advance --source openalex_concept --from-year 2011 --to-year 2026 --max-per-phrase 10000 } until ($LASTEXITCODE -eq 2)
+
+python -m extract.run_extract --resume --no-llm --no-pdf --resolved-only --no-multiple-originals --no-reproductions --skip-flora-validated --recalibrate-outcomes
+
+python -c "from shared.dashboard_cache import update_stats; [update_stats(s) for s in ('candidates','filtered','extracted','extracted-test')]"

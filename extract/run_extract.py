@@ -546,8 +546,10 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -
 
 def _best_fulltext_from_cache(doi_r: str) -> str:
     """
-    Read the parse cache for doi_r, score each method, and return the abstract +
-    intro text of the highest-scoring method.  Returns '' on any failure.
+    Read the parse cache for doi_r, score each method, and return the fulltext
+    of the highest-scoring method.  Prefers raw_text (full paper including
+    results/discussion/conclusion); falls back to abstract + intro when raw_text
+    is empty.  Returns '' on any failure.
     """
     cache_file = PARSE_CACHE_DIR / f"parse_{cache_key(doi_r)}.json"
     if not cache_file.exists():
@@ -559,6 +561,9 @@ def _best_fulltext_from_cache(doi_r: str) -> str:
         best = best_parse_result(results)
         if not best:
             return ""
+        raw = str(best.get("raw_text", "") or "").strip()
+        if raw:
+            return raw
         return " ".join(filter(None, [
             str(best.get("abstract", "") or ""),
             str(best.get("intro",    "") or ""),
@@ -754,7 +759,8 @@ def run_extract(no_llm: bool = False,
                 predicted_outcome: "str | None" = None,
                 out_path: "Path | None" = None,
                 source: "str | None" = None,
-                doi_r_filter: "list[str] | None" = None) -> pd.DataFrame:
+                doi_r_filter: "list[str] | None" = None,
+                recalibrate_outcomes: bool = False) -> pd.DataFrame:
     """
     Run Stage 3 and stream results to data/extracted.csv.
 
@@ -772,6 +778,10 @@ def run_extract(no_llm: bool = False,
                            target_pending / api_error / no_original_found rows are silently skipped.
                            Use with --no-llm --no-pdf for a fast rule-based-only pass, then
                            follow up with --resume for the LLM pass on remaining rows.
+    recalibrate_outcomes — run the full outcome pipeline (PDF download + LLM) even when --no-pdf
+                           or --no-llm are set. Only the outcome step is affected; link resolution
+                           still respects those flags. Useful for a fast --no-llm --no-pdf pass
+                           that still gets proper outcomes.
     """
     filtered_path = DATA_DIR / "filtered.csv"
     if not filtered_path.exists():
@@ -998,9 +1008,10 @@ def run_extract(no_llm: bool = False,
                     else:
                         link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                                               no_llm=no_llm, no_pdf=no_pdf)
-                        if not no_pdf:
+                        if not no_pdf or recalibrate_outcomes:
                             _save_parse_cache(doi_r)
-                        outcome = _get_outcome(doi_r, row, link, no_llm=no_llm)
+                        outcome = _get_outcome(doi_r, row, link,
+                                               no_llm=no_llm and not recalibrate_outcomes)
                         result_rows.append(
                             _merge_row(row, link, outcome, "single_original", match_conf, 1, 1)
                         )
@@ -1023,9 +1034,10 @@ def run_extract(no_llm: bool = False,
             else:
                 link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                                       no_llm=no_llm, no_pdf=no_pdf)
-                if not no_pdf:
+                if not no_pdf or recalibrate_outcomes:
                     _save_parse_cache(doi_r)
-                outcome = _get_outcome(doi_r, row, link, no_llm=no_llm)
+                outcome = _get_outcome(doi_r, row, link,
+                                       no_llm=no_llm and not recalibrate_outcomes)
                 result_rows.append(
                     _merge_row(row, link, outcome, match_type, match_conf, 1, 1)
                 )
@@ -1232,6 +1244,15 @@ if __name__ == "__main__":
             "All other rows are skipped. Useful for re-running specific rows."
         ),
     )
+    parser.add_argument(
+        "--recalibrate-outcomes", action="store_true",
+        help=(
+            "Run the full outcome pipeline (PDF download + LLM) even when --no-pdf "
+            "or --no-llm are set. Only the outcome step is affected; link resolution "
+            "still respects those flags. Useful with --no-llm --no-pdf --resume to "
+            "carry forward links but upgrade cannot_be_determined outcomes."
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -1259,6 +1280,7 @@ if __name__ == "__main__":
                 out_path=(DATA_DIR / "extracted-test.csv") if args.extracted_test else None,
                 source=args.source,
                 doi_r_filter=doi_r_list,
+                recalibrate_outcomes=args.recalibrate_outcomes,
             )
     finally:
         token_counter.print_summary()

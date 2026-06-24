@@ -20,8 +20,74 @@ from pathlib import Path
 import pandas as pd
 
 from extract.code_outcome import extract_outcome
-from shared.config import DATA_DIR, LLM_CACHE_DIR, log
+from shared.config import DATA_DIR, LLM_CACHE_DIR, OA_XML_CACHE_DIR, PARSE_CACHE_DIR, PDF_CACHE_DIR, log
+from shared.pdf_parsing import best_parse_result, parse_all as _parse_all
 from shared.utils import cache_key, clean_doi
+
+
+def _ensure_parse_cache(doi_r: str) -> None:
+    """Run all PDF parsers for doi_r and cache to PARSE_CACHE_DIR if not already cached."""
+    key      = cache_key(doi_r)
+    out_file = PARSE_CACHE_DIR / f"parse_{key}.json"
+    if out_file.exists():
+        return
+    pdf_path = PDF_CACHE_DIR / f"{key}.pdf"
+    if not pdf_path.exists():
+        pdf_path = None  # type: ignore[assignment]
+    oa_xml: dict | None = None
+    oa_xml_file = OA_XML_CACHE_DIR / f"oa_xml_{key}.json"
+    if oa_xml_file.exists():
+        try:
+            with oa_xml_file.open(encoding="utf-8") as fh:
+                oa_xml = json.load(fh)
+        except Exception:
+            pass
+    results = _parse_all(doi_r, pdf_path, oa_xml=oa_xml)
+    try:
+        with out_file.open("w", encoding="utf-8") as fh:
+            json.dump(results, fh, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        log.debug("[%s] _ensure_parse_cache write failed: %s", doi_r, exc)
+
+
+def _get_best_fulltext(doi_r: str) -> str:
+    """Return full text from the best-scoring parse method in the cache.
+
+    Prefers raw_text (full paper including results/discussion/conclusion);
+    falls back to abstract + intro when raw_text is empty.
+    """
+    cache_file = PARSE_CACHE_DIR / f"parse_{cache_key(doi_r)}.json"
+    if not cache_file.exists():
+        return ""
+    try:
+        with cache_file.open(encoding="utf-8") as fh:
+            results = json.load(fh)
+        best = best_parse_result(results)
+        if not best:
+            return ""
+        raw = str(best.get("raw_text", "") or "").strip()
+        if raw:
+            return raw
+        return " ".join(filter(None, [
+            str(best.get("abstract", "") or ""),
+            str(best.get("intro",    "") or ""),
+        ]))
+    except Exception:
+        return ""
+
+
+def refresh_cannot_be_determined(extracted_csv: Path) -> int:
+    """Filter extracted_csv for outcome==cannot_be_determined and write cannot_be_determined.csv."""
+    cbd_path = extracted_csv.parent / "cannot_be_determined.csv"
+    try:
+        df = pd.read_csv(extracted_csv, dtype=str, encoding="utf-8-sig").fillna("")
+        cbd = df[df["outcome"].str.strip().str.lower() == "cannot_be_determined"]
+        cbd.to_csv(cbd_path, index=False, encoding="utf-8-sig")
+        log.info("Refreshed %s: %d rows", cbd_path.name, len(cbd))
+        return len(cbd)
+    except Exception as exc:
+        log.warning("Could not refresh cannot_be_determined.csv: %s", exc)
+        return 0
 
 
 def clear_outcome_cache():
@@ -51,6 +117,7 @@ def recalibrate_outcomes(
     only_uncertain: bool = True,
     since_year: int = None,
     tail: int = None,
+    use_fulltext: bool = False,
 ) -> dict:
     """
     Re-run outcome extraction for uncertain rows in a CSV.
@@ -210,11 +277,28 @@ def recalibrate_outcomes(
                 original_authors = str(row.get("authors_o", ""))
                 original_year = str(row.get("year_o", ""))
 
+                fulltext = ""
+                if use_fulltext and doi_r:
+                    _ensure_parse_cache(doi_r)
+                    fulltext = _get_best_fulltext(doi_r)
+                    # Bust cached abstract-only LLM result so the new call uses fulltext.
+                    if fulltext and not clear_cache:
+                        outcome_cache = LLM_CACHE_DIR / f"outcome_{cache_key(doi_r)}.json"
+                        if outcome_cache.exists():
+                            try:
+                                outcome_cache.unlink()
+                            except Exception:
+                                pass
+                    if fulltext:
+                        log.info("  [%s] fulltext available (%d chars)", doi_r, len(fulltext))
+                    else:
+                        log.debug("  [%s] no fulltext — falling back to abstract only", doi_r)
+
                 result = extract_outcome(
                     doi_r=doi_r,
                     title_r=title_r,
                     abstract_r=abstract_r,
-                    fulltext="",
+                    fulltext=fulltext,
                     original_title=original_title if original_title and original_title != "nan" else "",
                     original_authors=original_authors if original_authors and original_authors != "nan" else "",
                     original_year=original_year if original_year and original_year != "nan" else "",
@@ -254,12 +338,18 @@ def recalibrate_outcomes(
     finally:
         _save()
 
+    # Refresh cannot_be_determined.csv from the updated output file.
+    cbd_count = 0
+    if not dry_run:
+        cbd_count = refresh_cannot_be_determined(output_csv)
+
     log.info("=" * 70)
     log.info("SUMMARY:")
     log.info("  Rows processed:  %d", rows_processed)
     log.info("  Rows updated:    %d", rows_updated)
     log.info("  Cache cleared:   %d files", cache_cleared)
     log.info("  Errors:          %d", len(errors))
+    log.info("  cannot_be_determined remaining: %d", cbd_count)
     log.info("=" * 70)
 
     if errors:
@@ -274,6 +364,7 @@ def recalibrate_outcomes(
         "errors": len(errors),
         "output_file": str(output_csv) if not dry_run else None,
         "interrupted": rows_processed < len(candidate_indices),
+        "cannot_be_determined_remaining": cbd_count,
     }
 
 
@@ -330,7 +421,29 @@ def main():
         metavar="N",
         help="Only process the last N rows of the CSV (recently added entries). Defaults to 50 if N is omitted.",
     )
+    parser.add_argument(
+        "--fulltext",
+        action="store_true",
+        help=(
+            "Download PDFs and use full text (abstract + intro) when calling the outcome LLM. "
+            "Automatically busts the cached abstract-only result for each row that has fulltext. "
+            "Useful for rows stuck at cannot_be_determined because the abstract lacked enough detail."
+        ),
+    )
+    parser.add_argument(
+        "--refresh-cbd",
+        action="store_true",
+        help=(
+            "Refresh data/cannot_be_determined.csv from the input CSV and exit without "
+            "running any recalibration. Use this to update the file after a run."
+        ),
+    )
     args = parser.parse_args()
+
+    if args.refresh_cbd:
+        n = refresh_cannot_be_determined(args.input)
+        print(f"cannot_be_determined.csv refreshed: {n} rows")
+        return {"cannot_be_determined_remaining": n}
 
     result = recalibrate_outcomes(
         input_csv=args.input,
@@ -341,6 +454,7 @@ def main():
         only_uncertain=not args.reprocess_all,
         since_year=args.since_year,
         tail=args.tail,
+        use_fulltext=args.fulltext,
     )
 
     return result

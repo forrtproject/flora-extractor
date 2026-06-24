@@ -1542,7 +1542,89 @@ SUPABASE_SERVICE_KEY=eyJhbGc...</pre>
           <span class="overlap-gap-tag" style="font-size:10px;padding:2px 8px" id="op-ov-total-gap"></span>
         </div>
       </div>
-    </div><!-- /overlap -->
+    </div><!-- /tp-overlap -->
+
+    <!-- ── Section B2: FP Overlap Analysis ────────────────────────────────── -->
+    <div class="stat-card" style="margin-bottom:16px">
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">
+        <h3 style="margin:0">False Positive Overlap</h3>
+        <span style="font-size:11px;color:var(--text-muted)">
+          How many old-pipeline FP papers (<code style="font-size:10px">validation_status = false_positive</code>)
+          also appear in new candidates.csv?
+          <span style="color:#dc2626;font-weight:600">High count here = new pipeline is catching known noise — expected.</span>
+          <span style="color:#b45309;font-weight:600">Missing FPs = papers the new pipeline skipped entirely.</span>
+        </span>
+      </div>
+
+      <div class="kpi-row" style="margin-bottom:14px">
+        <div class="kpi-card">
+          <div class="kpi-num" id="op-fp-total" style="color:#7c3aed">—</div>
+          <div class="kpi-label">Old FP Total</div>
+          <div class="kpi-sub">in all_replications.csv</div>
+        </div>
+        <div class="kpi-card" style="border-color:#fde68a">
+          <div class="kpi-num" id="op-fp-in-new" style="color:#b45309">—</div>
+          <div class="kpi-label">In New Candidates</div>
+          <div class="kpi-sub">new pipeline caught them (expected FP)</div>
+        </div>
+        <div class="kpi-card" style="border-color:#e9d5ff">
+          <div class="kpi-num" id="op-fp-not-in-new" style="color:#7c3aed">—</div>
+          <div class="kpi-label">Not in New Candidates</div>
+          <div class="kpi-sub">new pipeline skipped these — good</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-num" id="op-fp-pct">—</div>
+          <div class="kpi-label">FP Capture Rate</div>
+          <div class="kpi-sub">lower = cleaner new search</div>
+        </div>
+      </div>
+
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);margin-bottom:8px">
+        Breakdown by identifier type
+      </div>
+
+      <div class="overlap-row">
+        <div class="overlap-label">
+          <span class="ol-title">DOI-identified FP rows</span>
+          <span class="ol-nums" id="op-fp-doi-nums">? / ?</span>
+          <span class="ol-pct" id="op-fp-doi-pct" style="color:#b45309">—%</span>
+        </div>
+        <div class="overlap-bar">
+          <div class="overlap-bar-fill" id="op-fp-doi-fill" style="width:0%;background:#f59e0b"></div>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">
+          Old FP papers with a DOI that appear in new candidates index
+        </div>
+      </div>
+
+      <div class="overlap-row">
+        <div class="overlap-label">
+          <span class="ol-title">OA-ID-only FP rows (no DOI)</span>
+          <span class="ol-nums" id="op-fp-oaid-nums">? / ?</span>
+          <span class="ol-pct" id="op-fp-oaid-pct" style="color:#b45309">—%</span>
+        </div>
+        <div class="overlap-bar">
+          <div class="overlap-bar-fill" id="op-fp-oaid-fill" style="width:0%;background:#f59e0b"></div>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">
+          Matched by OpenAlex ID (url_r) against new openalex_id_r index
+        </div>
+      </div>
+
+      <div class="overlap-row" style="border-top:2px solid var(--border);padding-top:10px;margin-top:4px">
+        <div class="overlap-label">
+          <span class="ol-title" style="font-weight:800">TOTAL FP IN NEW PIPELINE</span>
+          <span class="ol-nums" id="op-fp-total-nums" style="font-weight:700">? / ?</span>
+          <span class="ol-pct" id="op-fp-total-pct" style="font-size:14px;font-weight:800">—%</span>
+        </div>
+        <div class="overlap-bar" style="height:12px">
+          <div class="overlap-bar-fill" id="op-fp-total-fill" style="width:0%;background:#f59e0b"></div>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:3px">
+          Old FPs present in new candidates — these will be caught by Stage 2 filtering
+        </div>
+      </div>
+    </div><!-- /fp-overlap -->
 
     <!-- ── Section C: Missing Candidates — Gap List ───────────────────────── -->
     <div class="stat-card" style="padding:0;overflow:hidden">
@@ -1560,44 +1642,84 @@ SUPABASE_SERVICE_KEY=eyJhbGc...</pre>
         </div>
       </div>
 
-      <!-- Sub-tabs: DOI gaps / URL-OA-ID gaps -->
+      <!-- Sub-tabs: TP DOI / TP URL / FP DOI / FP URL -->
       <div class="gap-tab-strip" style="padding:0 14px">
-        <button class="gap-tab-btn active" data-gtab="doi" onclick="switchGapTab('doi')">
-          DOI gaps <span id="op-gap-doi-badge" class="flow-badge badge-red" style="font-size:9px">—</span>
+        <button class="gap-tab-btn active" data-gtab="tp-doi" onclick="switchGapTab('tp-doi')">
+          TP — DOI gaps <span id="op-gap-tp-doi-badge" class="flow-badge badge-red" style="font-size:9px">—</span>
         </button>
-        <button class="gap-tab-btn" data-gtab="url" onclick="switchGapTab('url')">
-          URL / OA-ID gaps <span id="op-gap-url-badge" class="flow-badge badge-blue" style="font-size:9px">—</span>
+        <button class="gap-tab-btn" data-gtab="tp-url" onclick="switchGapTab('tp-url')">
+          TP — URL / OA-ID gaps <span id="op-gap-tp-url-badge" class="flow-badge badge-blue" style="font-size:9px">—</span>
+        </button>
+        <button class="gap-tab-btn" data-gtab="fp-doi" onclick="switchGapTab('fp-doi')">
+          FP — DOI gaps <span id="op-gap-fp-doi-badge" class="flow-badge badge-orange" style="font-size:9px">—</span>
+        </button>
+        <button class="gap-tab-btn" data-gtab="fp-url" onclick="switchGapTab('fp-url')">
+          FP — URL / OA-ID gaps <span id="op-gap-fp-url-badge" class="flow-badge badge-purple" style="font-size:9px">—</span>
         </button>
       </div>
 
-      <div class="gap-tab-panel active" id="gap-panel-doi">
+      <div class="gap-tab-panel active" id="gap-panel-tp-doi">
+        <div style="font-size:10px;color:var(--text-muted);padding:6px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)">
+          True Positive papers (replication / reproduction) that have a DOI but were <strong>not found</strong> in new candidates.csv
+        </div>
         <table class="data-table">
           <thead><tr>
-            <th style="width:200px">DOI</th>
-            <th>Title</th>
-            <th style="width:50px">Year</th>
-            <th style="width:120px">Source</th>
+            <th style="width:200px">DOI</th><th>Title</th>
+            <th style="width:50px">Year</th><th style="width:120px">Source</th>
           </tr></thead>
-          <tbody id="gap-tbody-doi">
+          <tbody id="gap-tbody-tp-doi">
             <tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
           </tbody>
         </table>
-        <div class="pager" id="gap-pager-doi" style="padding:8px"></div>
+        <div class="pager" id="gap-pager-tp-doi" style="padding:8px"></div>
       </div>
 
-      <div class="gap-tab-panel" id="gap-panel-url">
+      <div class="gap-tab-panel" id="gap-panel-tp-url">
+        <div style="font-size:10px;color:var(--text-muted);padding:6px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)">
+          True Positive papers with no DOI (OA-ID only) that were <strong>not found</strong> in new candidates.csv
+        </div>
         <table class="data-table">
           <thead><tr>
-            <th style="width:280px">OA URL</th>
-            <th>Title</th>
-            <th style="width:50px">Year</th>
-            <th style="width:120px">Source</th>
+            <th style="width:280px">OA URL</th><th>Title</th>
+            <th style="width:50px">Year</th><th style="width:120px">Source</th>
           </tr></thead>
-          <tbody id="gap-tbody-url">
+          <tbody id="gap-tbody-tp-url">
             <tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
           </tbody>
         </table>
-        <div class="pager" id="gap-pager-url" style="padding:8px"></div>
+        <div class="pager" id="gap-pager-tp-url" style="padding:8px"></div>
+      </div>
+
+      <div class="gap-tab-panel" id="gap-panel-fp-doi">
+        <div style="font-size:10px;color:var(--text-muted);padding:6px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)">
+          False Positive papers (validation_status = false_positive) with a DOI that were <strong>not found</strong> in new candidates.csv — the new pipeline cleanly skipped these
+        </div>
+        <table class="data-table">
+          <thead><tr>
+            <th style="width:200px">DOI</th><th>Title</th>
+            <th style="width:50px">Year</th><th style="width:120px">Source</th>
+          </tr></thead>
+          <tbody id="gap-tbody-fp-doi">
+            <tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
+          </tbody>
+        </table>
+        <div class="pager" id="gap-pager-fp-doi" style="padding:8px"></div>
+      </div>
+
+      <div class="gap-tab-panel" id="gap-panel-fp-url">
+        <div style="font-size:10px;color:var(--text-muted);padding:6px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)">
+          False Positive papers with no DOI (OA-ID only) that were <strong>not found</strong> in new candidates.csv
+        </div>
+        <table class="data-table">
+          <thead><tr>
+            <th style="width:280px">OA URL</th><th>Title</th>
+            <th style="width:50px">Year</th><th style="width:120px">Source</th>
+          </tr></thead>
+          <tbody id="gap-tbody-fp-url">
+            <tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
+          </tbody>
+        </table>
+        <div class="pager" id="gap-pager-fp-url" style="padding:8px"></div>
       </div>
     </div><!-- /gap list -->
 
@@ -1939,10 +2061,10 @@ function toggleDrilldown(id) {
 // ── Old Pipeline tab ──────────────────────────────────────────────────────────
 let _analysisLoaded = false;
 let _gapSearchTimer = null;
-let _gapRows = { doi: [], url: [] };
-let _gapTab = 'doi';
+let _gapRows = { 'tp-doi': [], 'tp-url': [], 'fp-doi': [], 'fp-url': [] };
+let _gapTab = 'tp-doi';
 const GAP_PER_PAGE = 50;
-let _gapPage = { doi: 1, url: 1 };
+let _gapPage = { 'tp-doi': 1, 'tp-url': 1, 'fp-doi': 1, 'fp-url': 1 };
 
 async function loadAnalysis() {
   _analysisLoaded = true;
@@ -2049,11 +2171,43 @@ async function loadAnalysis() {
     $('op-ov-total-fill').style.width = tpTot ? Math.max(2,(totIn/tpTot)*100)+'%' : '0%';
     $('op-ov-total-gap').textContent  = totOut ? `${fmt(totOut)} papers not found` : '';
 
+    // ── FP overlap ────────────────────────────────────────────────────────
+    const fp = (data.overlap || {}).fp || {};
+    const fpTot    = fp.total || 0;
+    const fpIn     = fp.total_in_new || 0;
+    const fpOut    = fp.total_not_in_new || 0;
+    const fpPct    = fpTot ? ((fpIn / fpTot) * 100).toFixed(1) : '—';
+
+    $('op-fp-total').textContent     = fmt(fpTot);
+    $('op-fp-in-new').textContent    = fmt(fpIn);
+    $('op-fp-not-in-new').textContent= fmt(fpOut);
+    $('op-fp-pct').textContent       = fpPct + '%';
+
+    const fpDRows = fp.doi_rows || 0, fpDIn = fp.doi_in_new || 0;
+    const fpDPct  = fpDRows ? ((fpDIn / fpDRows) * 100).toFixed(1) : '—';
+    $('op-fp-doi-nums').textContent = `${fmt(fpDIn)} / ${fmt(fpDRows)}`;
+    $('op-fp-doi-pct').textContent  = fpDPct + '%';
+    $('op-fp-doi-fill').style.width = fpDRows ? Math.max(2,(fpDIn/fpDRows)*100)+'%' : '0%';
+
+    const fpURows = fp.oaid_rows || 0, fpUIn = fp.oaid_in_new || 0;
+    const fpUPct  = fpURows ? ((fpUIn / fpURows) * 100).toFixed(1) : '—';
+    $('op-fp-oaid-nums').textContent = `${fmt(fpUIn)} / ${fmt(fpURows)}`;
+    $('op-fp-oaid-pct').textContent  = fpUPct + '%';
+    $('op-fp-oaid-fill').style.width = fpURows ? Math.max(2,(fpUIn/fpURows)*100)+'%' : '0%';
+
+    $('op-fp-total-nums').textContent = `${fmt(fpIn)} / ${fmt(fpTot)}`;
+    $('op-fp-total-pct').textContent  = fpPct + '%';
+    $('op-fp-total-fill').style.width = fpTot ? Math.max(2,(fpIn/fpTot)*100)+'%' : '0%';
+
     // ── Gap rows ──────────────────────────────────────────────────────────
-    _gapRows.doi = ov.gap_doi_rows || [];
-    _gapRows.url = ov.gap_url_rows || [];
-    $('op-gap-doi-badge').textContent = _gapRows.doi.length;
-    $('op-gap-url-badge').textContent = _gapRows.url.length;
+    _gapRows['tp-doi'] = ov.gap_doi_rows || [];
+    _gapRows['tp-url'] = ov.gap_url_rows || [];
+    _gapRows['fp-doi'] = fp.gap_doi_rows || [];
+    _gapRows['fp-url'] = fp.gap_url_rows || [];
+    $('op-gap-tp-doi-badge').textContent = _gapRows['tp-doi'].length;
+    $('op-gap-tp-url-badge').textContent = _gapRows['tp-url'].length;
+    $('op-gap-fp-doi-badge').textContent = _gapRows['fp-doi'].length;
+    $('op-gap-fp-url-badge').textContent = _gapRows['fp-url'].length;
     renderGapTable();
 
   } catch(e) {
@@ -2073,8 +2227,9 @@ function switchGapTab(tab) {
 }
 
 function renderGapTable() {
-  const tab    = _gapTab;
-  const search = ($('gap-search').value || '').trim().toLowerCase();
+  const tab      = _gapTab;
+  const isDoiTab = tab.endsWith('-doi');
+  const search   = ($('gap-search').value || '').trim().toLowerCase();
   let rows = _gapRows[tab] || [];
 
   if (search) {
@@ -2094,9 +2249,8 @@ function renderGapTable() {
 
   $('gap-count').textContent = total.toLocaleString() + ' entries';
 
-  const tbody  = $(`gap-tbody-${tab}`);
-  const pager  = $(`gap-pager-${tab}`);
-  const isDoiTab = tab === 'doi';
+  const tbody = $(`gap-tbody-${tab}`);
+  const pager = $(`gap-pager-${tab}`);
 
   if (!slice.length) {
     tbody.innerHTML = `<tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">
@@ -2107,11 +2261,11 @@ function renderGapTable() {
   }
 
   tbody.innerHTML = slice.map(r => {
-    const id = isDoiTab
+    const idCell = isDoiTab
       ? `<td style="font-family:monospace;font-size:10px;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${esc(r.doi_r)}">${esc(r.doi_r||'—')}</td>`
       : `<td style="font-size:10px;word-break:break-all;max-width:280px" title="${esc(r.url_r)}">${esc(r.url_r||'—')}</td>`;
     return `<tr>
-      ${id}
+      ${idCell}
       <td style="font-size:11px">${esc(r.study_r||'—')}</td>
       <td style="font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(r.year_r||'—')}</td>
       <td style="font-size:10px;font-family:monospace;color:var(--text-muted)">${esc(r.pathway_source||'—')}</td>
