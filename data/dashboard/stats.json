@@ -1,36 +1,38 @@
 {
   "candidates": {
-    "total": 1941984,
-    "no_doi": 217698,
-    "no_doi_or_url": 22950,
-    "no_abstract": 345155,
+    "total": 1920067,
+    "no_doi": 202382,
+    "no_doi_or_url": 20023,
+    "no_abstract": 344747,
     "by_source": {
-      "openalex": 1836570,
-      "semantic_scholar": 105414
+      "openalex": 1811375,
+      "semantic_scholar": 54727,
+      "openalex_concept": 53895,
+      "backfill_old_pipeline": 70
     }
   },
-  "updated_at": "2026-06-24T19:18:26",
+  "updated_at": "2026-06-25T14:46:27",
   "filtered": {
-    "total": 1867025,
+    "total": 1920922,
     "by_filter_status": {
-      "false_positive": 1826886,
-      "replication": 30207,
-      "reproduction": 9919,
+      "false_positive": 1880626,
+      "replication": 30315,
+      "reproduction": 9968,
       "needs_review": 13
     },
     "by_filter_method": {
-      "rule_based": 1763169,
-      "both": 103856
+      "rule_based": 1816771,
+      "both": 104151
     },
     "by_filter_confidence": {
-      "high": 1865624,
-      "medium": 1341,
+      "high": 1919518,
+      "medium": 1344,
       "low": 60
     },
-    "rep_repro_total": 40126,
-    "rep_repro_no_doi": 6025,
-    "rep_repro_no_doi_or_url": 1525,
-    "rep_repro_no_abstract": 2985
+    "rep_repro_total": 40283,
+    "rep_repro_no_doi": 6034,
+    "rep_repro_no_doi_or_url": 1526,
+    "rep_repro_no_abstract": 2992
   },
   "extracted": {
     "total": 1599,
