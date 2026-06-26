@@ -1,10 +1,27 @@
-# FLoRA Extractor — Web Dashboard Dependencies (Railway)
-# Minimal set for the read-only monitoring dashboard.
-# Full pipeline deps are in requirements-pipeline.txt.
+# FLoRA Extractor — Python Dependencies
+# Install with: pip install -r requirements.txt
+# On Railway, FLORA_READONLY=1 prevents heavy pipeline deps from being imported.
 
+# ── Web / dashboard (Railway uses these) ──────────────────────────────────────
 flask>=3.0.0
+gunicorn>=21.2.0
 pandas>=2.0.0
 pyarrow>=14.0.0
 requests>=2.31.0
 python-dotenv>=1.0.0
-gunicorn>=21.2.0
+
+# ── Pipeline only (not used when FLORA_READONLY=1) ────────────────────────────
+flask-sqlalchemy>=3.1.0
+openpyxl>=3.1.0
+fpdf2>=2.7.0
+openai>=1.0.0
+pdfminer.six>=20221105
+pymupdf>=1.23.0
+playwright>=1.40.0
+rapidfuzz>=3.0.0
+pyyaml>=6.0
+
+# ── Dev / testing ─────────────────────────────────────────────────────────────
+pytest>=7.0.0
+pytest-mock>=3.0.0
+ruff>=0.15.0
