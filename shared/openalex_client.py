@@ -53,6 +53,15 @@ _PATTERNS: list[tuple[str, str]] = [
 
 _COMPILED = [(name, re.compile(pat)) for name, pat in _PATTERNS]
 
+_MONTHS = {
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+}
+_WEEKDAYS = {
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+}
+_NAME_STOPWORDS = _MONTHS | _WEEKDAYS
+
 
 def extract_author_year_patterns(text: str,
                                   max_year: Optional[int] = None) -> list[dict]:
@@ -65,7 +74,10 @@ def extract_author_year_patterns(text: str,
         raw       – matched string
         pattern   – pattern name
         start/end – character offsets
-    Overlapping matches are deduplicated; years > max_year are excluded.
+    Overlapping matches are deduplicated; years > max_year are excluded. Matches where
+    any captured name token is a common non-name word (month/weekday names — the
+    concrete failure mode found in AEA RCT-registry abstracts, e.g. "May and June 2018"
+    read as authors "May" and "June") are discarded entirely.
     """
     if not text:
         return []
@@ -81,6 +93,13 @@ def extract_author_year_patterns(text: str,
 
             groups   = m.groups()
             year_str = groups[-1]
+
+            name_tokens: list[str] = []
+            for g in groups[:-1]:
+                name_tokens.extend(re.findall(r"[A-Za-z\-]+", g))
+            if any(tok.lower() in _NAME_STOPWORDS for tok in name_tokens):
+                continue
+
             surname  = re.sub(r"[\s']", "", groups[0])
             surname  = surname.split()[-1] if " " in surname else surname
 
