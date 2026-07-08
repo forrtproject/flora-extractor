@@ -100,7 +100,10 @@ _DESCRIPTIVE = re.compile(
     re.IGNORECASE,
 )
 
-_VALID_OUTCOMES = {"success", "failure", "mixed", "uninformative", "descriptive", "cannot_be_determined"}
+_VALID_OUTCOMES = {
+    "success", "failure", "mixed", "uninformative", "descriptive",
+    "cannot_be_determined", "not_a_replication",
+}
 
 
 def _keyword_scan(text: str, source: str) -> Optional[dict]:
@@ -190,13 +193,25 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
         "4. SUCCESS (confirmation): 'Our findings confirm Smith et al. (2015)'\n\n"
         "CRITICAL: Only output 'cannot_be_determined' when the available text genuinely lacks detail. "
         "Default to 'cannot_be_determined' rather than 'uninformative' when uncertain.\n\n"
+        "Before classifying the outcome, first judge: does this text describe a genuine "
+        "attempt to replicate OR reproduce the specific original study named above (or "
+        "discussed in the abstract)? Both replications (new data/sample testing whether "
+        "the finding holds) and reproductions (re-analysis of the same original data) "
+        "count as genuine attempts — this judgment does not distinguish between them, "
+        "that classification happens elsewhere in the pipeline. Answer false only when "
+        "the text does not engage with verifying that specific original at all — e.g. "
+        "'replicate'/'reproduce' is used in an unrelated biological or technical sense "
+        "(DNA replication, code reproduction), or metaphorically/colloquially (e.g. "
+        "'a replication of prior interests and positions'), or the text is simply "
+        "unrelated to the named original study.\n\n"
         + ("When citing out_quote_source and the evidence came from the full text excerpt, "
            "identify the specific section by name using the format fulltext_{section} "
            "(e.g. fulltext_results, fulltext_discussion, fulltext_conclusion, fulltext_abstract, "
            "fulltext_introduction). Use the section heading nearest to the quoted passage.\n\n"
            if has_fulltext else "")
         + "Respond with ONLY this JSON:\n"
-        '{"outcome": "<success|failure|mixed|descriptive|cannot_be_determined>", '
+        '{"is_genuine_attempt": <true|false>, '
+        '"outcome": "<success|failure|mixed|descriptive|cannot_be_determined>", '
         '"outcome_phrase": "<verbatim quote of 2-3 sentences from the text that specifically describes what replicated and what did not>", '
         '"outcome_confidence": "<high|medium|low>", '
         + ('"out_quote_source": "<abstract|title|fulltext_{section}>", '
@@ -240,6 +255,12 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
     outcome = str(result.get("outcome", "cannot_be_determined")).lower()
     if outcome not in valid_outcomes:
         outcome = "cannot_be_determined"
+
+    # is_genuine_attempt defaults to True when absent (e.g. a cached response written
+    # before this field existed, or a test double that omits it) — absence must not
+    # silently reclassify existing/mocked rows as false positives.
+    if result.get("is_genuine_attempt", True) is False:
+        outcome = "not_a_replication"
 
     output = {
         "outcome":            outcome,

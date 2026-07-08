@@ -236,6 +236,49 @@ class TestLLMOutcomePrompt:
             result = extract_outcome("10.1234/fail2", abstract_r="ambiguous")
         assert result.get("outcome_reasoning", "") == ""
 
+    def test_prompt_asks_for_is_genuine_attempt(self, tmp_path):
+        _, mock_llm = self._run_llm(tmp_path)
+        prompt = mock_llm.call_args[0][0]
+        assert "is_genuine_attempt" in prompt
+
+    def test_not_a_genuine_attempt_forces_not_a_replication_outcome(self, tmp_path):
+        llm_return = {
+            "is_genuine_attempt": False,
+            "outcome": "success",
+            "outcome_phrase": "unrelated colloquial use of the word replication",
+            "outcome_confidence": "high",
+            "out_quote_source": "abstract",
+            "outcome_reasoning": "The text uses 'replication' metaphorically and never "
+                                 "engages with the named original study.",
+        }
+        result, _ = self._run_llm(tmp_path, llm_return=llm_return)
+        assert result["outcome"] == "not_a_replication"
+
+    def test_genuine_attempt_true_keeps_model_outcome(self, tmp_path):
+        llm_return = {
+            "is_genuine_attempt": True,
+            "outcome": "failure",
+            "outcome_phrase": "We did not find support for the original effect.",
+            "outcome_confidence": "high",
+            "out_quote_source": "abstract",
+            "outcome_reasoning": "Authors explicitly state the effect did not replicate.",
+        }
+        result, _ = self._run_llm(tmp_path, llm_return=llm_return)
+        assert result["outcome"] == "failure"
+
+    def test_missing_is_genuine_attempt_field_defaults_to_true(self, tmp_path):
+        """Backward compatibility: a model response without the new field (e.g. from
+        stale test doubles) must not be treated as a false positive by default."""
+        llm_return = {
+            "outcome": "success",
+            "outcome_phrase": "We confirmed the effect.",
+            "outcome_confidence": "high",
+            "out_quote_source": "abstract",
+            "outcome_reasoning": "All effects replicated.",
+        }
+        result, _ = self._run_llm(tmp_path, llm_return=llm_return)
+        assert result["outcome"] == "success"
+
 
 # ── classify_match_type unit tests (Issue 8) ─────────────────────────────────
 

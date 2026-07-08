@@ -108,7 +108,8 @@ DOI_VERIFICATION_VALUES = {
 }
 
 OUTCOME_VALUES = {
-    "success", "failure", "mixed", "uninformative", "descriptive", "pending", "api_error",
+    "success", "failure", "mixed", "uninformative", "descriptive", "cannot_be_determined",
+    "not_a_replication", "pending", "api_error",
 }
 
 TYPE_VALUES = {"replication", "reproduction"}
