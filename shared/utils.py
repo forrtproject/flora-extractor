@@ -34,3 +34,32 @@ def cache_key(text: str) -> str:
     Uses MD5 (not cryptographic — just for deduplication).
     """
     return hashlib.md5(str(text).encode("utf-8")).hexdigest()
+
+
+_ABBREV_RE = re.compile(
+    r"\b(?:et al|e\.g|i\.e|vs|Dr|Mr|Mrs|Ms|Prof|Fig|No|Vol|pp|cf)\."
+    r"|(?<!\w)\b[A-Z]\.",
+    re.IGNORECASE,
+)
+
+
+def sentence_spans(text: str) -> list[tuple[int, int]]:
+    """
+    Return (start, end) character offsets into *text* for each sentence.
+
+    Splits on whitespace following sentence-ending punctuation, while protecting
+    common abbreviations (et al., e.g., Dr., single-letter initials like "J.") from
+    being treated as sentence boundaries. Offsets index into the original *text*
+    unchanged (the abbreviation mask is applied to a same-length working copy only),
+    so callers can directly compare citation/phrase match offsets against these spans.
+    """
+    if not text:
+        return []
+    masked = _ABBREV_RE.sub(lambda m: "\x00" * len(m.group(0)), text)
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for m in re.finditer(r"(?<=[.!?])\s+", masked):
+        spans.append((start, m.start()))
+        start = m.end()
+    spans.append((start, len(text)))
+    return spans

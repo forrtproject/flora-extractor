@@ -25,10 +25,10 @@ import pandas as pd
 from shared.config import log
 from shared.openalex_client import extract_author_year_patterns
 from shared.schema import FILTER_ADDED_COLS
+from shared.utils import sentence_spans
 
 from filter.phrase_detection import (
-    find_replication_phrase,
-    has_replication_phrase,
+    find_replication_phrase_span,
     is_non_scholarly_context,
     is_reproduction_only,
 )
@@ -50,15 +50,16 @@ def _classify_row(title: str, abstract: str, year: int | None) -> dict:
             "filter_confidence": "high",
         }
 
-    if not has_replication_phrase(text):
+    phrase_match = find_replication_phrase_span(text)
+    if phrase_match is None:
         return {
             "filter_status": "false_positive",
             "filter_method": "rule_based",
             "filter_evidence": "no replication phrase detected",
             "filter_confidence": "high",
         }
+    phrase, phrase_start, _phrase_end = phrase_match
 
-    phrase = find_replication_phrase(text) or ""
     is_repro = is_reproduction_only(text)
     base_status = "reproduction" if is_repro else "replication"
 
@@ -72,10 +73,31 @@ def _classify_row(title: str, abstract: str, year: int | None) -> dict:
             "filter_confidence": "medium",
         }
 
+    # Proximity gate: the citation must fall in the SAME sentence as the replication
+    # phrase. A phrase and a citation that merely co-occur somewhere in the same
+    # title+abstract blob are frequently unrelated (e.g. "replication of COVID-19"
+    # in a literary-analysis abstract that separately cites an unrelated paper) —
+    # this was the confirmed root cause of several false-positive "replication"
+    # classifications that produced meaningless downstream outcome=cannot_be_determined
+    # rows. See docs/superpowers/specs/2026-07-08-classification-accuracy-fixes-design.md.
+    spans = sentence_spans(text)
+    sent_span = next(((s, e) for s, e in spans if s <= phrase_start < e), None)
+    same_sentence_cites = (
+        [c for c in cited if sent_span[0] <= c["start"] < sent_span[1]]
+        if sent_span else []
+    )
+    if not same_sentence_cites:
+        return {
+            "filter_status": "needs_review",
+            "filter_method": "rule_based",
+            "filter_evidence": f"phrase:{phrase!s}; no same-sentence cite",
+            "filter_confidence": "medium",
+        }
+
     sample_cite = (
-        cited[0].get("raw", "")
-        if isinstance(cited[0], dict)
-        else str(cited[0])
+        same_sentence_cites[0].get("raw", "")
+        if isinstance(same_sentence_cites[0], dict)
+        else str(same_sentence_cites[0])
     )
     return {
         "filter_status": base_status,
