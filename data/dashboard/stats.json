@@ -1,48 +1,48 @@
 {
   "candidates": {
-    "total": 1920067,
-    "no_doi": 202382,
-    "no_doi_or_url": 20023,
-    "no_abstract": 344747,
+    "total": 2580194,
+    "no_doi": 341978,
+    "no_doi_or_url": 41883,
+    "no_abstract": 536265,
     "by_source": {
-      "openalex": 1811375,
-      "semantic_scholar": 54727,
-      "openalex_concept": 53895,
+      "openalex": 2392672,
+      "semantic_scholar": 117513,
+      "openalex_concept": 69939,
       "backfill_old_pipeline": 70
     }
   },
-  "updated_at": "2026-06-25T14:46:27",
+  "updated_at": "2026-07-15T06:17:35",
   "filtered": {
-    "total": 1920922,
+    "total": 2320070,
     "by_filter_status": {
-      "false_positive": 1880626,
-      "replication": 30315,
-      "reproduction": 9968,
-      "needs_review": 13
+      "false_positive": 2273548,
+      "replication": 36221,
+      "reproduction": 10286,
+      "needs_review": 15
     },
     "by_filter_method": {
-      "rule_based": 1816771,
-      "both": 104151
+      "rule_based": 2187873,
+      "both": 132197
     },
     "by_filter_confidence": {
-      "high": 1919518,
-      "medium": 1344,
-      "low": 60
+      "high": 2317933,
+      "medium": 2053,
+      "low": 84
     },
-    "rep_repro_total": 40283,
-    "rep_repro_no_doi": 6034,
-    "rep_repro_no_doi_or_url": 1526,
-    "rep_repro_no_abstract": 2992
+    "rep_repro_total": 46507,
+    "rep_repro_no_doi": 7379,
+    "rep_repro_no_doi_or_url": 1633,
+    "rep_repro_no_abstract": 3351
   },
   "extracted": {
-    "total": 1599,
+    "total": 1800,
     "target_pending_count": 0,
     "by_match_type": {
-      "single_original": 1597,
+      "single_original": 1798,
       "multiple_match": 2
     },
     "by_link_method": {
-      "author_year_match": 1441,
+      "author_year_match": 1642,
       "llm_abstract": 0,
       "llm_fulltext": 157,
       "no_original_found": 1,
@@ -50,25 +50,26 @@
       "api_error": 0
     },
     "by_model": {
-      "none": 1443,
+      "none": 1644,
       "gemini": 156
     },
     "by_outcome": {
-      "success": 707,
-      "failure": 312,
-      "mixed": 213,
+      "success": 751,
+      "failure": 334,
+      "mixed": 224,
       "uninformative": 0,
-      "cannot_be_determined": 291,
-      "descriptive": 76,
+      "cannot_be_determined": 366,
+      "descriptive": 78,
       "pending": 0,
-      "api_error": 0
+      "api_error": 0,
+      "_other": 47
     },
     "by_doi_verification": {
-      "verified": 1504,
+      "verified": 1696,
       "mismatch": 49,
-      "no_doi": 20,
+      "no_doi": 28,
       "no_metadata": 17,
-      "not_found": 8,
+      "not_found": 9,
       "skipped": 1
     }
   },
