@@ -62,6 +62,42 @@ If the shared-drive CSVs are available, you can skip Stages 1–2:
 | `data/extracted.csv` | Stage 3 output — load into web app for monitoring |
 | `data/flora_selected.csv` | 107 rows already in FLoRA — used for deduplication |
 
+### Large data files (DVC + Cloudflare R2)
+
+`candidates.csv` (~4.7 GB) and `filtered.csv` (~4.3 GB) are far too large for git or
+the free GitHub LFS tier. They are stored **zipped** in a Cloudflare R2 bucket and
+versioned with [DVC](https://dvc.org); only the small `data/*.zip.dvc` pointer files
+are committed to git. The unzipped CSVs are gitignored working copies.
+
+One-time setup — put R2 credentials (from an R2 "Object Read & Write" API token) in
+`.dvc/config.local`, which is gitignored so secrets never reach git:
+
+```bash
+dvc remote modify --local r2 access_key_id     <R2_ACCESS_KEY_ID>
+dvc remote modify --local r2 secret_access_key <R2_SECRET_ACCESS_KEY>
+```
+
+Then fetch (or later update) the data:
+
+```bash
+./scripts/data.sh pull   # dvc pull the zips from R2, then unzip to CSVs
+./scripts/data.sh pack   # after regenerating the CSVs: re-zip + dvc add (then commit + dvc push)
+```
+
+**Pruning old versions.** At ~3 GB zipped, R2's 10 GB free tier holds roughly three
+versions. To keep only the last N and delete older blobs from both the local cache and
+R2:
+
+```bash
+./scripts/data.sh prune 3          # dry-run: show what would be removed
+./scripts/data.sh prune 3 apply    # actually delete all but the last 3 versions
+```
+
+This wraps `dvc gc --workspace --rev HEAD --num N --cloud`. `--num` counts **git
+commits** back from HEAD (plus the current workspace), not data updates — if code
+commits sit between data updates you may retain fewer than N distinct data versions.
+For exact per-version control, tag each data snapshot and use `dvc gc --all-tags`.
+
 ## Environment Variables
 
 See `.env.example` for the full list with descriptions. Key variables:
