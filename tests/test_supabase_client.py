@@ -60,7 +60,10 @@ def test_validation_stats_shape(monkeypatch):
     assert result["in_progress"] == 1
     assert result["total_judgements"] == 2
     assert result["active_validators"] == 2
-    assert "agreement_rate" in result
+    # completion_rate = filled slots / total slots (a progress metric, not agreement)
+    assert "completion_rate" in result
+    assert result["completion_rate"] == round(2 / 3, 4)
+    assert "agreement_rate" not in result
 
 
 def test_cache_is_used(monkeypatch):
@@ -72,7 +75,7 @@ def test_cache_is_used(monkeypatch):
 
     sentinel = {"total": 99, "unvalidated": 99, "validated": 0, "need_review": 0,
                 "in_progress": 0, "total_judgements": 0, "active_validators": 0,
-                "agreement_rate": 0.0, "tiebreakers": 0}
+                "completion_rate": 0.0, "tiebreakers": 0}
     sc._CACHE["validation_stats"] = {"ts": time.time(), "data": sentinel}
 
     with patch("shared.supabase_client.requests.get") as mock_get:
