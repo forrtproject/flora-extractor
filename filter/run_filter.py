@@ -216,66 +216,17 @@ def run_filter(limit: "int | None" = None,
             f"candidates.csv not found at {candidates_path}. Run Stage 1 first."
         )
 
-    # Read candidates.csv in 50k-row chunks to avoid OOM on large files.
-    # Rows are filtered by year/source per chunk and collected into a list.
+    # Read candidates.csv in 50k-row chunks; filter, classify, and stream each
+    # chunk's surviving rows to filtered.csv without ever holding more than one
+    # chunk in memory.  A default run (no year/source filter) therefore never
+    # loads the whole multi-GB file — the previous implementation concatenated
+    # every surviving chunk into one DataFrame before classifying, defeating the
+    # streaming design.
     def _year_int(v: str) -> "int | None":
         try:
             return int(v)
         except (ValueError, TypeError):
             return None
-
-    chunks: list[pd.DataFrame] = []
-    total_read = 0
-    bad_id_count = 0
-
-    for chunk in pd.read_csv(
-        candidates_path, dtype=str, encoding="utf-8-sig",
-        chunksize=50_000, low_memory=False
-    ):
-        chunk = chunk.fillna("").reindex(columns=CANDIDATES_COLS, fill_value="")
-        total_read += len(chunk)
-
-        # Count rows with no identifying info for the warning
-        has_id = (
-            chunk["doi_r"].str.strip().astype(bool)
-            | chunk["openalex_id_r"].str.strip().astype(bool)
-            | chunk["url_r"].str.strip().astype(bool)
-            | chunk["title_r"].str.strip().astype(bool)
-        )
-        bad_id_count += (~has_id).sum()
-
-        # Year filter
-        if from_year is not None or to_year is not None:
-            years = chunk["year_r"].apply(_year_int)
-            mask = pd.Series(True, index=chunk.index)
-            if from_year is not None:
-                mask &= years.apply(lambda y: y is not None and y >= from_year)
-            if to_year is not None:
-                mask &= years.apply(lambda y: y is not None and y <= to_year)
-            chunk = chunk[mask]
-
-        # Source filter
-        if source is not None:
-            chunk = chunk[chunk["source"].str.lower() == source.lower()]
-
-        if not chunk.empty:
-            chunks.append(chunk)
-
-    df = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame(columns=CANDIDATES_COLS)
-    log.info("Stage 2: loaded %d candidates (%d total read)", len(df), total_read)
-
-    if bad_id_count > 0:
-        log.warning(
-            "Stage 2: %d candidate rows have NO identifying info (doi/oa_id/url/title) — "
-            "these cannot be deduplicated and may reprocess on each run.",
-            bad_id_count,
-        )
-
-    if from_year is not None or to_year is not None:
-        log.info("--year filter %s–%s applied during chunked read",
-                 from_year or "any", to_year or "any")
-    if source is not None:
-        log.info("--source filter %r applied during chunked read", source)
 
     out_path = DATA_DIR / "filtered.csv"
     first_write = not out_path.exists()
@@ -300,64 +251,129 @@ def run_filter(limit: "int | None" = None,
     output_rows: list[dict] = []
     new_rows = 0
     skipped  = 0   # counts unprocessed rows skipped by --offset
+    total_read = 0
+    survived = 0
+    bad_id_count = 0
     rows_with_empty_keys_input = 0
+    # Position of each surviving (post year/source filter) row in read order.
+    # This reproduces exactly the 0-based RangeIndex the previous implementation
+    # obtained from pd.concat(chunks, ignore_index=True): concat renumbers the
+    # surviving rows 0..N-1 in read order, so a running counter over the same
+    # rows yields identical values.  The idx:<n> fallback resume keys therefore
+    # stay byte-for-byte identical, so an existing filtered_index.txt neither
+    # reprocesses nor duplicates the id-less rows after this refactor.
+    pos = 0
+    stop = False
 
-    for row_idx, row in df.iterrows():
-        key = _row_key(row)
-        if not key:
-            # Fallback: use row index as a unique identifier for rows with no identifiers
-            key = f"idx:{row_idx}"
-            rows_with_empty_keys_input += 1
-
-        if key in already_done:
-            continue
-
-        # --offset: skip the first N unprocessed rows
-        if offset is not None and skipped < offset:
-            skipped += 1
-            continue
-
-        # --limit: stop after N new rows have been written
-        if limit is not None and new_rows >= limit:
-            log.info("Stage 2: reached --limit %d — stopping", limit)
+    for chunk in pd.read_csv(
+        candidates_path, dtype=str, encoding="utf-8-sig",
+        chunksize=50_000, low_memory=False
+    ):
+        if stop:
             break
+        chunk = chunk.fillna("").reindex(columns=CANDIDATES_COLS, fill_value="")
+        total_read += len(chunk)
 
-        doi_r    = str(row.get("doi_r")       or "")
-        title    = str(row.get("title_r")    or "")
-        abstract = str(row.get("abstract_r") or "")
+        # Count rows with no identifying info for the warning (pre-filter)
+        has_id = (
+            chunk["doi_r"].str.strip().astype(bool)
+            | chunk["openalex_id_r"].str.strip().astype(bool)
+            | chunk["url_r"].str.strip().astype(bool)
+            | chunk["title_r"].str.strip().astype(bool)
+        )
+        bad_id_count += int((~has_id).sum())
 
-        # Rule filter
-        row_dict = row.to_dict()
-        row_dict.update(_rule_classify(row_dict))
+        # Year filter
+        if from_year is not None or to_year is not None:
+            years = chunk["year_r"].apply(_year_int)
+            mask = pd.Series(True, index=chunk.index)
+            if from_year is not None:
+                mask &= years.apply(lambda y: y is not None and y >= from_year)
+            if to_year is not None:
+                mask &= years.apply(lambda y: y is not None and y <= to_year)
+            chunk = chunk[mask]
 
-        # LLM uplift for rows the rule filter couldn't decide
-        if row_dict.get("filter_status") == "needs_review":
-            verdict = _llm_classify(title, abstract)
-            if verdict:
-                row_dict["filter_status"]     = verdict["filter_status"]
-                row_dict["filter_confidence"] = verdict["filter_confidence"]
-                prior = str(row_dict.get("filter_evidence") or "")
-                row_dict["filter_evidence"] = (
-                    f"{prior} | llm:{verdict['filter_evidence']}"
-                    if prior else f"llm:{verdict['filter_evidence']}"
-                )
-                row_dict["filter_method"] = (
-                    "both" if row_dict.get("filter_method") == "rule_based" else "llm"
-                )
+        # Source filter
+        if source is not None:
+            chunk = chunk[chunk["source"].str.lower() == source.lower()]
 
-        _append_row(out_path, row_dict, first=first_write)
-        first_write = False
-        new_rows += 1
-        output_rows.append(row_dict)
+        if chunk.empty:
+            continue
 
-        # Update the index immediately so resume works even after a crash.
-        if key not in already_done:
-            already_done.add(key)
-            _append_key_to_filtered_index(key)
+        survived += len(chunk)
 
-        log.info("[%s] filter_status=%s — streamed (%d new so far)",
-                 doi_r, row_dict.get("filter_status"), new_rows)
+        for _, row in chunk.iterrows():
+            key = _row_key(row)
+            if not key:
+                # Fallback: position among surviving rows — matches the old
+                # pd.concat(ignore_index=True) index for stable resume keys.
+                key = f"idx:{pos}"
+                rows_with_empty_keys_input += 1
+            pos += 1
 
+            if key in already_done:
+                continue
+
+            # --offset: skip the first N unprocessed rows
+            if offset is not None and skipped < offset:
+                skipped += 1
+                continue
+
+            # --limit: stop after N new rows have been written
+            if limit is not None and new_rows >= limit:
+                log.info("Stage 2: reached --limit %d — stopping", limit)
+                stop = True
+                break
+
+            doi_r    = str(row.get("doi_r")       or "")
+            title    = str(row.get("title_r")    or "")
+            abstract = str(row.get("abstract_r") or "")
+
+            # Rule filter
+            row_dict = row.to_dict()
+            row_dict.update(_rule_classify(row_dict))
+
+            # LLM uplift for rows the rule filter couldn't decide
+            if row_dict.get("filter_status") == "needs_review":
+                verdict = _llm_classify(title, abstract)
+                if verdict:
+                    row_dict["filter_status"]     = verdict["filter_status"]
+                    row_dict["filter_confidence"] = verdict["filter_confidence"]
+                    prior = str(row_dict.get("filter_evidence") or "")
+                    row_dict["filter_evidence"] = (
+                        f"{prior} | llm:{verdict['filter_evidence']}"
+                        if prior else f"llm:{verdict['filter_evidence']}"
+                    )
+                    row_dict["filter_method"] = (
+                        "both" if row_dict.get("filter_method") == "rule_based" else "llm"
+                    )
+
+            _append_row(out_path, row_dict, first=first_write)
+            first_write = False
+            new_rows += 1
+            output_rows.append(row_dict)
+
+            # Update the index immediately so resume works even after a crash.
+            if key not in already_done:
+                already_done.add(key)
+                _append_key_to_filtered_index(key)
+
+            log.info("[%s] filter_status=%s — streamed (%d new so far)",
+                     doi_r, row_dict.get("filter_status"), new_rows)
+
+    log.info("Stage 2: read %d candidates, %d survived filters", total_read, survived)
+    if from_year is not None or to_year is not None:
+        log.info("--year filter %s–%s applied during chunked read",
+                 from_year or "any", to_year or "any")
+    if source is not None:
+        log.info("--source filter %r applied during chunked read", source)
+
+    if bad_id_count > 0:
+        log.warning(
+            "Stage 2: %d candidate rows have NO identifying info (doi/oa_id/url/title) — "
+            "these cannot be deduplicated and may reprocess on each run.",
+            bad_id_count,
+        )
     if rows_with_empty_keys_input > 0:
         log.warning(
             "Stage 2: %d input rows had no identifying key (fallback: used row index) — "
