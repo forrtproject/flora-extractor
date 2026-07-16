@@ -355,8 +355,26 @@ def enrich_abstracts(df: "pd.DataFrame") -> "pd.DataFrame":
     return df
 
 
+def _load_scopus_priority(path: Path) -> dict[str, int]:
+    """Map cleaned DOI → rank (file line order) from a priority-DOI file.
+
+    Lines are one DOI each; earlier lines get the Scopus quota first. Blank
+    lines and '#' comments are skipped.
+    """
+    ranks: dict[str, int] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        doi = clean_doi(line)
+        if doi and doi not in ranks:
+            ranks[doi] = len(ranks)
+    return ranks
+
+
 def run(dry_run: bool = False, limit: Optional[int] = None,
-        scopus_limit: int = SCOPUS_DEFAULT_LIMIT) -> None:
+        scopus_limit: int = SCOPUS_DEFAULT_LIMIT,
+        scopus_priority: Optional[Path] = None) -> None:
     import os
     import pandas as pd
 
@@ -410,7 +428,10 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
     # Phase 1: OpenAlex batch (rows with openalex_id_r)
     # ------------------------------------------------------------------
     oa_rows = missing_df[missing_df["openalex_id_r"].str.strip() != ""].copy()
-    oa_rows = oa_rows[~oa_rows["openalex_id_r"].apply(lambda x: f"oa:{x}" in done)]
+    # .astype(bool) throughout: .apply() on an EMPTY frame yields an object-dtype
+    # Series, and indexing with an empty non-bool Series is treated by pandas as
+    # column selection → KeyError when a phase's queue is empty.
+    oa_rows = oa_rows[~oa_rows["openalex_id_r"].apply(lambda x: f"oa:{x}" in done).astype(bool)]
     log.info("Phase 1 — OpenAlex batch: %d rows to try.", len(oa_rows))
 
     n_found = 0
@@ -464,7 +485,7 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
     # Refresh missing mask after Phase 1 updates
     still_missing = df["abstract_r"].str.strip() == ""
     crossref_rows = df[still_missing & (df["doi_r"].str.strip() != "")].copy()
-    crossref_rows = crossref_rows[~crossref_rows["doi_r"].apply(lambda x: f"doi:{clean_doi(x)}" in done)]
+    crossref_rows = crossref_rows[~crossref_rows["doi_r"].apply(lambda x: f"doi:{clean_doi(x)}" in done).astype(bool)]
     log.info("Phase 2 — CrossRef: %d rows to try.", len(crossref_rows))
 
     phase2_found = 0
@@ -505,7 +526,7 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
     else:
         still_missing2 = df["abstract_r"].str.strip() == ""
         s2_rows = df[still_missing2 & (df["doi_r"].str.strip() != "")].copy()
-        s2_rows = s2_rows[~s2_rows["doi_r"].apply(lambda x: f"s2:{clean_doi(x)}" in done)]
+        s2_rows = s2_rows[~s2_rows["doi_r"].apply(lambda x: f"s2:{clean_doi(x)}" in done).astype(bool)]
         log.info("Phase 3 — Semantic Scholar: %d rows to try.", len(s2_rows))
 
         phase3_found = 0
@@ -546,7 +567,16 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
     else:
         still_missing3 = df["abstract_r"].str.strip() == ""
         scopus_rows = df[still_missing3 & (df["doi_r"].str.strip() != "")].copy()
-        scopus_rows = scopus_rows[~scopus_rows["doi_r"].apply(lambda x: f"scopus:{clean_doi(x)}" in done)]
+        scopus_rows = scopus_rows[~scopus_rows["doi_r"].apply(lambda x: f"scopus:{clean_doi(x)}" in done).astype(bool)]
+        if scopus_priority is not None:
+            # The weekly quota (~10k) is far smaller than the missing-abstract pool,
+            # so which rows get it matters. DOIs in the priority file (in file order)
+            # are tried first; everything else keeps CSV order after them.
+            ranks = _load_scopus_priority(scopus_priority)
+            order = scopus_rows["doi_r"].map(lambda x: ranks.get(clean_doi(str(x)), len(ranks)))
+            scopus_rows = scopus_rows.iloc[order.argsort(kind="stable")]
+            log.info("Phase 4 — Scopus priority: %d DOIs in %s, %d matched in queue.",
+                     len(ranks), scopus_priority, int((order < len(ranks)).sum()))
         if scopus_limit and scopus_limit > 0:
             scopus_rows = scopus_rows.head(scopus_limit)
         log.info("Phase 4 — Scopus: %d rows to try (weekly-quota cap: %s).",
@@ -616,6 +646,10 @@ if __name__ == "__main__":
     parser.add_argument("--scopus-limit", type=int, default=SCOPUS_DEFAULT_LIMIT, metavar="N",
                         help="Max Scopus calls this run (weekly quota ~10k; "
                              f"default {SCOPUS_DEFAULT_LIMIT}). 0 disables the cap.")
+    parser.add_argument("--scopus-priority", type=Path, default=None, metavar="FILE",
+                        help="File of DOIs (one per line, # comments allowed) that get "
+                             "the Scopus quota first, in file order. Rows not listed "
+                             "follow in CSV order.")
     args = parser.parse_args()
 
     if args.reset:
@@ -628,4 +662,5 @@ if __name__ == "__main__":
         n = _drop_openalex_misses()
         print(f"Dropped {n} OpenAlex miss entries from checkpoint — they will be retried.")
 
-    run(dry_run=args.dry_run, limit=args.limit, scopus_limit=args.scopus_limit)
+    run(dry_run=args.dry_run, limit=args.limit, scopus_limit=args.scopus_limit,
+        scopus_priority=args.scopus_priority)
