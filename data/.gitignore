@@ -1,0 +1,5 @@
+/candidates.zip
+/filtered.zip
+# Unzipped working copies (temp; regenerate from the DVC-tracked zips)
+/candidates.csv
+/filtered.csv
