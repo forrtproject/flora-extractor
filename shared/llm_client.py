@@ -28,6 +28,7 @@ from .config import (
     log,
 )
 from . import token_counter
+from .schema import OUTCOME_CATEGORIES
 from .utils import cache_key
 
 # ── OpenAI session-level token guardrail ─────────────────────────────────────
@@ -891,7 +892,8 @@ def build_multi_original_prompt(study_r:     str,
     - For outcome: look for the result for THAT SPECIFIC study (e.g. in a results table or
       per-study section), NOT the overall aggregate across all studies
     - outcome values: success (effect confirmed), failure (effect not found), mixed
-      (partial), uninformative (cannot determine from available text)
+      (partial), descriptive (methods reused in a new context without testing the
+      original claim), cannot_be_determined (the text does not state an outcome)
 
     Respond with **only** this JSON (no prose outside the braces):
     {{
@@ -907,7 +909,7 @@ def build_multi_original_prompt(study_r:     str,
           "year": <4-digit year or null>,
           "evidence": "<1-2 sentence quote from the paper showing this study is replicated>",
           "confidence": "<high|medium|low>",
-          "outcome": "<success|failure|mixed|uninformative>",
+          "outcome": "<success|failure|mixed|descriptive|cannot_be_determined>",
           "outcome_evidence": "<1-2 sentence quote showing the outcome for THIS specific study, or empty if not found>"
         }}
       ]
@@ -1008,9 +1010,9 @@ def identify_all_originals_with_llm(doi_r:        str,
                     o.setdefault("first_author_surname", c.get("first_author", ""))
             except (ValueError, TypeError):
                 pass
-        raw_outcome = str(o.get("outcome", "uninformative") or "uninformative").lower()
-        if raw_outcome not in {"success", "failure", "mixed", "uninformative", "descriptive"}:
-            raw_outcome = "uninformative"
+        raw_outcome = str(o.get("outcome", "cannot_be_determined") or "cannot_be_determined").lower()
+        if raw_outcome not in OUTCOME_CATEGORIES:
+            raw_outcome = "cannot_be_determined"
         originals.append({
             "rank"             : o.get("rank", len(originals) + 1),
             "title"            : str(o.get("title", "") or ""),

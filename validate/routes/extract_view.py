@@ -278,8 +278,8 @@ def _handle_run_doi(req, load_csv_fn):
     link_result, link_error = _call_model(link_prompt, model)
 
     fulltext          = str(sections.get("intro", "") or html_text or "")
-    abstract_snip_out = (abstract_r[:1000] + "…") if len(abstract_r) > 1000 else abstract_r
-    text_snip         = (fulltext[:800] + "…") if len(fulltext) > 800 else fulltext
+    abstract_snip_out = (abstract_r[:3000] + "…") if len(abstract_r) > 3000 else abstract_r
+    text_snip         = (fulltext[:8000] + "…") if len(fulltext) > 8000 else fulltext
     outcome_prompt = (
         "You are a research methodology expert. Classify the replication outcome.\n\n"
         f"TITLE: {title_r}\n"
@@ -289,11 +289,11 @@ def _handle_run_doi(req, load_csv_fn):
         "- success: replication confirmed the original finding\n"
         "- failure: replication failed to find the original effect\n"
         "- mixed: some aspects replicated, others did not\n"
-        "- uninformative: cannot determine from available text\n"
-        "- descriptive: adapted methods in a new context without testing the original claim\n\n"
+        "- descriptive: adapted methods in a new context without testing the original claim\n"
+        "- cannot_be_determined: the available text does not state a replication outcome\n\n"
         'Respond with ONLY this JSON:\n'
         '{"outcome":"<value>","outcome_phrase":"<supporting quote, max 2 sentences>",'
-        '"outcome_confidence":"<high|medium|low>","out_quote_source":"<abstract|fulltext|title>"}'
+        '"outcome_confidence":"<high|medium|low>","out_quote_source":"<abstract|title|fulltext>"}'
     )
     outcome_result, outcome_error = _call_model(outcome_prompt, model)
 

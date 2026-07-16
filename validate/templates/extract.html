@@ -261,8 +261,9 @@ a.dl:hover { text-decoration:underline; }
             <option value="success">success</option>
             <option value="failure">failure</option>
             <option value="mixed">mixed</option>
-            <option value="uninformative">uninformative</option>
             <option value="descriptive">descriptive</option>
+            <option value="cannot_be_determined">cannot_be_determined</option>
+            <option value="uninformative">uninformative</option>
             <option value="pending">pending</option>
             <option value="api_error">api_error</option>
           </select>
@@ -315,7 +316,7 @@ let totalRows  = 0;
 /* ── pill helpers ──────────────────────────────────────────────────────── */
 function pillOutcome(v) {
   const m = {success:'pg',failure:'pr',mixed:'py',uninformative:'psl',
-             descriptive:'pdi',pending:'py',api_error:'pr'};
+             cannot_be_determined:'psl',descriptive:'pdi',pending:'py',api_error:'pr'};
   return `<span class="pp ${m[v]||'psl'}">${v||'—'}</span>`;
 }
 function pillMethod(v) {

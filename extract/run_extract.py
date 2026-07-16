@@ -30,7 +30,7 @@ from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
 from shared.openalex_client import _search_crossref_by_title, _search_openalex_by_title
 from shared.pdf_parsing import parse_all as _parse_all
 from shared.doi_verify import verify_and_correct
-from shared.schema import EXTRACTED_COLS, make_pair_id
+from shared.schema import EXTRACTED_COLS, OUTCOME_CATEGORIES, make_pair_id
 from shared.utils import cache_key, clean_doi
 from extract.link_original import run_for_doi
 from extract.multi_original import run_multi_original_for_doi
@@ -135,7 +135,7 @@ _METHOD_MAP = {
 }
 
 _VALID_MATCH_TYPES = {"single_original", "multiple_match", "multiple_original"}
-_VALID_OUTCOMES    = {"success", "failure", "mixed", "uninformative", "descriptive"}
+_VALID_OUTCOMES    = OUTCOME_CATEGORIES
 
 # ── Rule-based multi-original detection ──────────────────────────────────────
 # These patterns catch papers whose title or abstract unambiguously declares
@@ -417,7 +417,7 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
                             if link.get("llm_confidence") in {"high", "medium", "low"}
                             else _score_to_confidence(link.get("resolution_score", 0))),
         "link_llm_model":  str(link.get("llm_model",        "") or ""),
-        "outcome":             outcome.get("outcome",             "uninformative"),
+        "outcome":             outcome.get("outcome",             "cannot_be_determined"),
         "outcome_phrase":      outcome.get("outcome_phrase",      ""),
         "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
         "out_quote_source":    outcome.get("out_quote_source",    ""),
@@ -459,7 +459,7 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
         "link_evidence":   str(orig.get("evidence",     "") or ""),
         "link_confidence": conf_str,
         "link_llm_model":  link_llm_model,
-        "outcome":             outcome.get("outcome",             "uninformative"),
+        "outcome":             outcome.get("outcome",             "cannot_be_determined"),
         "outcome_phrase":      outcome.get("outcome_phrase",      ""),
         "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
         "out_quote_source":    outcome.get("out_quote_source",    ""),
@@ -808,7 +808,7 @@ def run_extract(no_llm: bool = False,
         )
 
     # ── Predicted-outcome filter ──────────────────────────────────────────────
-    # "other" means any outcome that is not failure (success / mixed / descriptive / uninformative).
+    # "other" means any outcome that is not failure (success / mixed / descriptive / cannot_be_determined).
     # Uses keyword-only pre-screening on title + abstract — no LLM, no API calls.
     if predicted_outcome:
         want = predicted_outcome.lower()
@@ -1007,9 +1007,9 @@ def run_extract(no_llm: bool = False,
                 else:
                     multi_llm_model = str(result.get("llm_model", "") or "")
                     for orig in originals:
-                        raw_out = str(orig.get("outcome", "uninformative") or "uninformative").lower()
+                        raw_out = str(orig.get("outcome", "cannot_be_determined") or "cannot_be_determined").lower()
                         if raw_out not in _VALID_OUTCOMES:
-                            raw_out = "uninformative"
+                            raw_out = "cannot_be_determined"
                         outcome = {
                             "outcome":            raw_out,
                             "outcome_phrase":     str(orig.get("outcome_evidence", "") or ""),
@@ -1200,13 +1200,13 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--predicted-outcome",
-        choices=["failure", "success", "mixed", "descriptive", "uninformative", "other"],
+        choices=["failure", "success", "mixed", "descriptive", "cannot_be_determined", "other"],
         default=None,
         metavar="OUTCOME",
         help=(
             "Pre-screen rows using keyword-only outcome prediction on title + abstract "
             "before running any API calls. 'other' means any predicted outcome except failure. "
-            "Choices: failure | success | mixed | descriptive | uninformative | other."
+            "Choices: failure | success | mixed | descriptive | cannot_be_determined | other."
         ),
     )
     parser.add_argument(

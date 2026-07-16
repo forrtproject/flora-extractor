@@ -54,10 +54,10 @@ EXTRACT_ADDED_COLS = [
     "doi_o_verification",  # str   — verified | corrected | mismatch | no_doi | not_found | no_metadata | api_error | skipped
 
     # Outcome
-    "outcome",             # str   — success | failure | mixed | uninformative | descriptive | pending
+    "outcome",             # str   — success | failure | mixed | descriptive | cannot_be_determined | pending | api_error
     "outcome_phrase",      # str   — supporting quote from the paper
     "outcome_confidence",  # str   — high | medium | low
-    "out_quote_source",    # str   — abstract | fulltext | title
+    "out_quote_source",    # str   — abstract | title | fulltext
     "outcome_reasoning",  # str   — one-sentence LLM note explaining the classification choice
 
     # Record type and multi-original bookkeeping
@@ -105,9 +105,21 @@ DOI_VERIFICATION_VALUES = {
     "not_found", "no_metadata", "api_error", "skipped",
 }
 
-OUTCOME_VALUES = {
-    "success", "failure", "mixed", "uninformative", "descriptive", "pending", "api_error",
+# The canonical outcome enum. This is the single source of truth for the
+# outcome categories a classifier may emit — code_outcome and run_extract both
+# import OUTCOME_CATEGORIES rather than defining their own copies.
+OUTCOME_CATEGORIES = {
+    "success", "failure", "mixed", "descriptive", "cannot_be_determined",
 }
+
+# Pipeline-state markers. These are NOT outcome categories — they record where a
+# row sits in the pipeline, never a judgment about the replication result.
+#   pending   — row not yet processed by the outcome step
+#   api_error — outcome extraction failed after retries
+OUTCOME_STATE_MARKERS = {"pending", "api_error"}
+
+# Every value that may legitimately appear in the `outcome` CSV column.
+OUTCOME_VALUES = OUTCOME_CATEGORIES | OUTCOME_STATE_MARKERS
 
 TYPE_VALUES = {"replication", "reproduction"}
 

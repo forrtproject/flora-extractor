@@ -153,7 +153,7 @@ function trunc(s,n){ s=(s||''); return s.length>n?s.slice(0,n)+'…':s; }
 function vpp(v, cls){ return `<span class="vpp ${cls}">${esc(v||'—')}</span>`; }
 function pillOutcome(v){
   const m={success:'plg',failure:'plr',mixed:'ply',uninformative:'plp',
-           descriptive:'plp',pending:'plp',api_error:'plr'};
+           cannot_be_determined:'plp',descriptive:'plp',pending:'plp',api_error:'plr'};
   return vpp(v, m[v]||'plp');
 }
 function pillMethod(v){

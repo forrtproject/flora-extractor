@@ -12,8 +12,8 @@ from extract.run_extract import classify_match_type
 
 
 class TestNoLlmExtractOutcome:
-    def test_no_llm_skips_llm_and_returns_uninformative_when_no_keyword(self):
-        """With no_llm=True and no keyword match, returns uninformative without calling LLM."""
+    def test_no_llm_skips_llm_and_returns_cannot_be_determined_when_no_keyword(self):
+        """With no_llm=True and no keyword match, returns cannot_be_determined without calling LLM."""
         result = extract_outcome(
             "10.1234/test",
             abstract_r="We conducted a study across multiple labs.",
@@ -21,7 +21,7 @@ class TestNoLlmExtractOutcome:
             title_r="Multi-site study",
             no_llm=True,
         )
-        assert result["outcome"] == "uninformative"
+        assert result["outcome"] == "cannot_be_determined"
         assert result["out_quote_source"] == ""
 
     def test_no_llm_still_returns_keyword_hit(self):
@@ -112,7 +112,7 @@ _EMPTY_LINK = {
     "resolution_score": 0, "llm_evidence": "", "llm_model": "",
 }
 _EMPTY_OUTCOME = {
-    "outcome": "uninformative", "outcome_phrase": "",
+    "outcome": "cannot_be_determined", "outcome_phrase": "",
     "outcome_confidence": "low", "out_quote_source": "",
     "outcome_reasoning": "",
 }

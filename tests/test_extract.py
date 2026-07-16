@@ -12,7 +12,10 @@ from unittest.mock import MagicMock, call, patch
 import pandas as pd
 import pytest
 
-from shared.schema import EXTRACTED_COLS
+from shared.schema import EXTRACTED_COLS, OUTCOME_CATEGORIES
+from shared.cache import read_dual_cache, write_dual_cache
+import extract.code_outcome as code_outcome
+import extract.run_extract as run_extract
 from extract.code_outcome import extract_outcome, _keyword_scan, _expand_to_sentences
 from extract.run_extract import (
     classify_match_type,
@@ -142,11 +145,12 @@ class TestExtractOutcome:
             )
         assert result["outcome"] == "mixed"
 
-    def test_llm_failure_returns_uninformative(self):
-        """LLM failure should return uninformative, not crash."""
-        with patch("extract.code_outcome.call_llm", return_value=(None, "", "quota | error")):
+    def test_llm_failure_returns_cannot_be_determined(self, tmp_path):
+        """LLM failure should return cannot_be_determined, not crash."""
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.call_llm", return_value=(None, "", "quota | error")):
             result = extract_outcome("10.1234/fail", abstract_r="ambiguous text")
-        assert result["outcome"] == "uninformative"
+        assert result["outcome"] == "cannot_be_determined"
         assert result["outcome_confidence"] == "low"
 
     def test_llm_result_cached(self, tmp_path):
@@ -162,14 +166,15 @@ class TestExtractOutcome:
                 mock2.assert_not_called()
         assert r1["outcome"] == r2["outcome"] == "success"
 
-    def test_invalid_llm_outcome_normalised(self):
-        """LLM returning unexpected outcome value should become uninformative."""
+    def test_invalid_llm_outcome_normalised(self, tmp_path):
+        """LLM returning an unexpected outcome value should become cannot_be_determined."""
         mock_result = {"outcome": "uncertain", "outcome_phrase": "",
                        "outcome_confidence": "low", "out_quote_source": ""}
-        with patch("extract.code_outcome.call_llm", return_value=(mock_result, "gemini-model", "")), \
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.call_llm", return_value=(mock_result, "gemini-model", "")), \
              patch("extract.code_outcome.time.sleep"):
             result = extract_outcome("10.1234/bad", abstract_r="ambiguous text")
-        assert result["outcome"] == "uninformative"
+        assert result["outcome"] == "cannot_be_determined"
 
 
 # ── LLM outcome prompt tests ─────────────────────────────────────────────────
@@ -235,6 +240,201 @@ class TestLLMOutcomePrompt:
         with patch("extract.code_outcome.call_llm", return_value=(None, "", "")):
             result = extract_outcome("10.1234/fail2", abstract_r="ambiguous")
         assert result.get("outcome_reasoning", "") == ""
+
+
+# ── Outcome-coding unification tests ─────────────────────────────────────────
+
+class TestOutcomeEnumSingleSource:
+    """The outcome enum is defined once in schema and imported everywhere."""
+
+    def test_code_outcome_valid_is_schema_categories(self):
+        assert code_outcome._VALID_OUTCOMES is OUTCOME_CATEGORIES
+
+    def test_run_extract_valid_is_schema_categories(self):
+        assert run_extract._VALID_OUTCOMES is OUTCOME_CATEGORIES
+
+    def test_uninformative_dropped(self):
+        assert "uninformative" not in OUTCOME_CATEGORIES
+
+    def test_cannot_be_determined_present(self):
+        assert "cannot_be_determined" in OUTCOME_CATEGORIES
+
+    def test_categories_are_exactly_five(self):
+        assert OUTCOME_CATEGORIES == {
+            "success", "failure", "mixed", "descriptive", "cannot_be_determined"
+        }
+
+
+class TestKeywordScanNoFulltext:
+    """The fulltext keyword scan was removed — only title + abstract are scanned."""
+
+    def test_fulltext_only_signal_does_not_fire_keyword(self, tmp_path):
+        # A clear failure phrase lives ONLY in the fulltext (background prose about
+        # another study). With no_llm and no abstract/title signal, the result must
+        # not be classified as failure from the fulltext.
+        result = extract_outcome(
+            "10.1234/ftkw",
+            abstract_r="",
+            fulltext="Prior work by Jones failed to replicate the classic effect.",
+            title_r="",
+            no_llm=True,
+        )
+        assert result["outcome"] == "cannot_be_determined"
+
+    def test_abstract_signal_still_fires(self):
+        result = extract_outcome(
+            "10.1234/abskw",
+            abstract_r="We failed to replicate the original finding.",
+            no_llm=True,
+        )
+        assert result["outcome"] == "failure"
+        assert result["out_quote_source"] == "abstract"
+
+
+class TestFulltextEscalation:
+    _ABS_CBD = {"outcome": "cannot_be_determined", "outcome_phrase": "",
+                "outcome_confidence": "low", "out_quote_source": "abstract",
+                "outcome_reasoning": "abstract too thin"}
+    _FT_FAIL = {"outcome": "failure", "outcome_phrase": "The effect did not replicate.",
+                "outcome_confidence": "high", "out_quote_source": "fulltext",
+                "outcome_reasoning": "results section is explicit"}
+
+    def test_escalation_fires_on_cannot_be_determined(self, tmp_path):
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
+             patch("extract.code_outcome.time.sleep"), \
+             patch("extract.code_outcome.call_llm",
+                   side_effect=[(self._ABS_CBD, "m", ""), (self._FT_FAIL, "m", "")]) as mock_llm:
+            result = extract_outcome(
+                "10.1234/esc", abstract_r="ambiguous abstract",
+                fulltext="RESULTS: the effect did not replicate.", title_r="A Study",
+            )
+        assert mock_llm.call_count == 2
+        # Second (escalation) prompt must contain the parsed fulltext.
+        assert "did not replicate" in mock_llm.call_args_list[1][0][0]
+        assert result["outcome"] == "failure"
+        assert result["out_quote_source"] == "fulltext"
+
+    def test_no_escalation_when_flag_off(self, tmp_path):
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", False), \
+             patch("extract.code_outcome.time.sleep"), \
+             patch("extract.code_outcome.call_llm",
+                   side_effect=[(self._ABS_CBD, "m", ""), (self._FT_FAIL, "m", "")]) as mock_llm:
+            result = extract_outcome(
+                "10.1234/noesc", abstract_r="ambiguous abstract",
+                fulltext="RESULTS: the effect did not replicate.", title_r="A Study",
+            )
+        assert mock_llm.call_count == 1
+        assert result["outcome"] == "cannot_be_determined"
+
+    def test_no_escalation_when_no_fulltext(self, tmp_path):
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
+             patch("extract.code_outcome.time.sleep"), \
+             patch("extract.code_outcome.call_llm",
+                   side_effect=[(self._ABS_CBD, "m", "")]) as mock_llm:
+            result = extract_outcome(
+                "10.1234/noft", abstract_r="ambiguous abstract",
+                fulltext="", title_r="A Study",
+            )
+        assert mock_llm.call_count == 1
+        assert result["outcome"] == "cannot_be_determined"
+
+    def test_escalation_fires_on_empty_abstract(self, tmp_path):
+        # No abstract → escalate even though the abstract call did not return cbd.
+        abs_success = {"outcome": "success", "outcome_phrase": "", "outcome_confidence": "low",
+                       "out_quote_source": "title", "outcome_reasoning": ""}
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
+             patch("extract.code_outcome.time.sleep"), \
+             patch("extract.code_outcome.call_llm",
+                   side_effect=[(abs_success, "m", ""), (self._FT_FAIL, "m", "")]) as mock_llm:
+            result = extract_outcome(
+                "10.1234/emptyabs", abstract_r="",
+                fulltext="RESULTS: the effect did not replicate.", title_r="A Study",
+            )
+        assert mock_llm.call_count == 2
+        assert result["outcome"] == "failure"
+
+
+class TestOutcomePromptContent:
+    def _prompt(self, tmp_path, **kw):
+        ret = {"outcome": "success", "outcome_phrase": "x", "outcome_confidence": "high",
+               "out_quote_source": "abstract", "outcome_reasoning": ""}
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.call_llm", return_value=(ret, "m", "")) as mock_llm, \
+             patch("extract.code_outcome.time.sleep"):
+            extract_outcome("10.1234/pr", abstract_r="ambiguous abstract", title_r="T", **kw)
+        return mock_llm.call_args_list[0][0][0]
+
+    def test_example_one_relabelled_descriptive(self, tmp_path):
+        prompt = self._prompt(tmp_path)
+        assert "1. DESCRIPTIVE" in prompt
+        assert "UNINFORMATIVE" not in prompt
+
+    def test_no_default_to_cannot_be_determined_line(self, tmp_path):
+        prompt = self._prompt(tmp_path)
+        assert "rather than 'uninformative'" not in prompt
+
+    def test_abstract_prompt_quote_source_excludes_fulltext(self, tmp_path):
+        prompt = self._prompt(tmp_path)
+        assert '"out_quote_source": "<abstract|title>"' in prompt
+
+    def test_abstract_truncated_at_3000(self, tmp_path):
+        long_abstract = ("A" * 2999) + "MARKER_INSIDE" + ("B" * 3000) + "MARKER_OUTSIDE"
+        ret = {"outcome": "success", "outcome_phrase": "x", "outcome_confidence": "high",
+               "out_quote_source": "abstract", "outcome_reasoning": ""}
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.call_llm", return_value=(ret, "m", "")) as mock_llm, \
+             patch("extract.code_outcome.time.sleep"):
+            extract_outcome("10.1234/trunc", abstract_r=long_abstract, title_r="T")
+        prompt = mock_llm.call_args_list[0][0][0]
+        assert "MARKER_OUTSIDE" not in prompt
+        assert "MARKER_INSIDE" not in prompt  # sits just past the 3000-char cap
+        assert "…" in prompt
+
+
+class TestDualCache:
+    def test_write_creates_both_keys(self, tmp_path):
+        write_dual_cache(tmp_path, "legacy1", "content1", {"outcome": "success"})
+        assert (tmp_path / "legacy1.json").exists()
+        assert (tmp_path / "content1.json").exists()
+
+    def test_accumulate_prefers_legacy(self, tmp_path):
+        write_cache_json(tmp_path, "legacy2", {"outcome": "OLD"})
+        write_cache_json(tmp_path, "content2", {"outcome": "NEW"})
+        got = read_dual_cache(tmp_path, "legacy2", "content2", mode="accumulate")
+        assert got["outcome"] == "OLD"
+
+    def test_accumulate_falls_back_to_content(self, tmp_path):
+        write_cache_json(tmp_path, "content3", {"outcome": "NEW"})
+        got = read_dual_cache(tmp_path, "legacy3", "content3", mode="accumulate")
+        assert got["outcome"] == "NEW"
+
+    def test_latest_ignores_legacy(self, tmp_path):
+        write_cache_json(tmp_path, "legacy4", {"outcome": "OLD"})
+        # No content entry → latest mode returns None even though legacy exists.
+        assert read_dual_cache(tmp_path, "legacy4", "content4", mode="latest") is None
+        write_cache_json(tmp_path, "content4", {"outcome": "NEW"})
+        got = read_dual_cache(tmp_path, "legacy4", "content4", mode="latest")
+        assert got["outcome"] == "NEW"
+
+    def test_llm_outcome_dual_writes(self, tmp_path):
+        ret = {"outcome": "success", "outcome_phrase": "x", "outcome_confidence": "high",
+               "out_quote_source": "abstract", "outcome_reasoning": ""}
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.call_llm", return_value=(ret, "m", "")), \
+             patch("extract.code_outcome.time.sleep"):
+            extract_outcome("10.1234/dual", abstract_r="ambiguous abstract", title_r="T")
+        files = list(tmp_path.glob("outcome_*.json"))
+        assert len(files) == 2  # legacy DOI key + content key
+
+
+def write_cache_json(cache_dir, key, data):
+    import json as _json
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / f"{key}.json").write_text(_json.dumps(data), encoding="utf-8")
 
 
 # ── classify_match_type unit tests (Issue 8) ─────────────────────────────────
