@@ -37,8 +37,14 @@ _DISPLAY_COLS = {
 }
 
 # Resolved link methods — rows with these methods are ready for validation.
+# Sourced from schema so the granular rule-based methods (citation_context_match,
+# same_author_year_title_overlap, single_candidate_after_requery, title_pattern_match,
+# grobid_ref_match) plus llm_abstract/llm_fulltext stay in sync. Legacy rows migrated
+# to author_year_match_legacy are still resolved, so they import too.
 # no_original_found: LLM ran but concluded no identifiable original exists — excluded.
-_RESOLVED_METHODS = {"author_year_match", "llm_abstract", "llm_fulltext"}
+from shared.schema import RESOLVED_LINK_METHODS as _SCHEMA_RESOLVED_METHODS
+
+_RESOLVED_METHODS = _SCHEMA_RESOLVED_METHODS | {"author_year_match_legacy"}
 _RESOLVED_STATUSES = {"replication", "reproduction"}
 
 # Validator slots created per record

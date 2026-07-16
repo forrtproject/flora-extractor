@@ -43,7 +43,12 @@ _OUTCOME_KEYS = (
     "cannot_be_determined", "descriptive", "pending", "api_error",
 )
 _METHOD_KEYS = (
-    "author_year_match", "llm_abstract", "llm_fulltext",
+    # Granular rule-based resolution methods (formerly collapsed to author_year_match).
+    "citation_context_match", "same_author_year_title_overlap",
+    "single_candidate_after_requery", "title_pattern_match", "grobid_ref_match",
+    # Legacy + un-migrated author_year_match rows.
+    "author_year_match_legacy", "author_year_match",
+    "llm_abstract", "llm_fulltext",
     "no_original_found", "target_pending", "api_error",
 )
 

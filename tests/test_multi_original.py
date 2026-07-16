@@ -157,3 +157,80 @@ class TestMetadata:
     def test_grobid_status_in_result(self):
         result = _run("10.9999/rep", _llm_result([_ORIG_A]))
         assert result["grobid_status"] == "not_attempted"
+
+
+# ── Multi-original DOI resolution (never trust LLM-emitted DOIs) ──────────────
+
+class TestMultiDoiResolution:
+    """identify_all_originals_with_llm must resolve each original's DOI from
+    title+author+year via resolve_doi_by_metadata, ignoring any DOI the LLM
+    emitted — mirroring the single-original path."""
+
+    def _run_identify(self, tmp_path, llm_raw, candidates=None, resolve_hit=None):
+        from shared import llm_client
+        with patch.object(llm_client, "LLM_CACHE_DIR", tmp_path), \
+             patch.object(llm_client, "call_gemini", return_value=(llm_raw, "")), \
+             patch.object(llm_client, "time"), \
+             patch("shared.doi_verify.resolve_doi_by_metadata",
+                   return_value=resolve_hit) as mock_resolve:
+            out = llm_client.identify_all_originals_with_llm(
+                "10.9999/rep", "Multi Replication", "abstract",
+                candidates or [], {},
+            )
+        return out, mock_resolve
+
+    def test_hallucinated_doi_ignored_and_replaced(self, tmp_path):
+        """LLM emits a DOI; output must use the metadata-resolved DOI instead."""
+        llm_raw = {
+            "is_false_positive": False, "reasoning": "multi",
+            "originals": [{
+                "rank": 1, "candidate_number": None,
+                "title": "Real Original Study", "first_author_surname": "Doe",
+                "year": 2011, "doi": "10.9999/HALLUCINATED",
+                "evidence": "e", "confidence": "high", "outcome": "success",
+            }],
+        }
+        out, mock_resolve = self._run_identify(
+            tmp_path, llm_raw,
+            resolve_hit={"doi": "10.1234/real", "title": "Real Original Study",
+                         "year": 2011, "openalex_id": "", "source": "crossref"},
+        )
+        assert out["originals"][0]["doi"] == "10.1234/real"
+        # Resolution used the LLM title/author/year and excluded the replication DOI.
+        args, kwargs = mock_resolve.call_args
+        assert args[0] == "Real Original Study"
+        assert args[1] == "Doe"
+        assert kwargs.get("exclude_doi") == "10.9999/rep"
+
+    def test_hallucinated_doi_dropped_when_unresolvable(self, tmp_path):
+        """If metadata search finds nothing, the hallucinated DOI is not kept."""
+        llm_raw = {
+            "is_false_positive": False, "reasoning": "multi",
+            "originals": [{
+                "rank": 1, "candidate_number": None,
+                "title": "Some Study", "first_author_surname": "Roe",
+                "year": 2005, "doi": "10.9999/FAKE",
+                "evidence": "e", "confidence": "medium", "outcome": "failure",
+            }],
+        }
+        out, _ = self._run_identify(tmp_path, llm_raw, resolve_hit=None)
+        assert out["originals"][0]["doi"] == ""
+
+    def test_candidate_doi_used_without_metadata_search(self, tmp_path):
+        """When a candidate is selected, its verified OpenAlex DOI is used and
+        resolve_doi_by_metadata is not called."""
+        candidates = [{
+            "doi": "10.5555/cand", "title": "Candidate Title", "year": 2009,
+            "first_author": "Cand", "openalex_id": "W1", "all_authors": ["Cand"],
+        }]
+        llm_raw = {
+            "is_false_positive": False, "reasoning": "multi",
+            "originals": [{
+                "rank": 1, "candidate_number": 1, "title": "",
+                "doi": "10.9999/HALLUCINATED", "evidence": "e",
+                "confidence": "high", "outcome": "success",
+            }],
+        }
+        out, mock_resolve = self._run_identify(tmp_path, llm_raw, candidates=candidates)
+        assert out["originals"][0]["doi"] == "10.5555/cand"
+        mock_resolve.assert_not_called()

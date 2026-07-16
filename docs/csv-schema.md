@@ -68,11 +68,19 @@ All `filtered.csv` columns, plus:
 
 ### `link_method` values
 
+The five rule-based methods used to collapse into a single `author_year_match`
+value. They are now emitted distinctly because their reliability differs sharply.
+
 | Value | Meaning |
 | ----- | ------- |
-| `author_year_match` | Matched via author names + year (rule-based, no LLM) |
+| `citation_context_match` | Rule-based: a parenthetical `(Author, Year, Journal)` citation in the abstract scored a single candidate above threshold with a clear gap over the runner-up |
+| `same_author_year_title_overlap` | Rule-based: all candidates share one author + year; chosen by title-Jaccard overlap with abstract/title |
+| `single_candidate_after_requery` | Rule-based: exactly one OpenAlex candidate remained after re-query, auto-accepted at score 1.0 with **no semantic check** (weakest of the rule-based methods) |
+| `title_pattern_match` | Rule-based: the replication title (e.g. "A Replication of X") named the original, matched to a candidate by title Jaccard |
+| `grobid_ref_match` | Rule-based: a GROBID-parsed reference matched a candidate by DOI or author+year |
 | `llm_abstract` | LLM resolved the original from abstract text |
-| `llm_fulltext` | LLM resolved the original from full PDF text |
+| `llm_fulltext` | LLM resolved the original from full PDF text (also multi-original rows when a PDF/GROBID fed the prompt) |
+| `author_year_match_legacy` | Legacy row written before the split; the specific rule-based method cannot be recovered retroactively (see `tools/migrate_link_methods.py`) |
 | `no_original_found` | Pipeline could not identify an original study |
 | `target_pending` | Original DOI must be supplied manually |
 | `api_error` | Extraction failed after retries |

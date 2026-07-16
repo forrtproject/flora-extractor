@@ -12,12 +12,15 @@ from unittest.mock import MagicMock, call, patch
 import pandas as pd
 import pytest
 
-from shared.schema import EXTRACTED_COLS
+from shared.schema import EXTRACTED_COLS, make_pair_id
 from extract.code_outcome import extract_outcome, _keyword_scan, _expand_to_sentences
 from extract.run_extract import (
     classify_match_type,
     _llm_classify_match_type,
     _map_method,
+    _merge_row,
+    _merge_multi_row,
+    _rule_classify_multi_original,
     _score_to_confidence,
 )
 
@@ -604,6 +607,116 @@ class TestRunExtract:
         assert call_kwargs.get("original_title") == "The Original Study"
         assert call_kwargs.get("original_authors") == "Smith"
         assert call_kwargs.get("original_year") == "1935"
+
+
+# ── Granular link_method labels ──────────────────────────────────────────────
+
+class TestGranularLinkMethods:
+    """The five rule-based resolution methods must pass through as distinct public
+    link_method values instead of collapsing to author_year_match."""
+
+    GRANULAR = [
+        "citation_context_match",
+        "same_author_year_title_overlap",
+        "single_candidate_after_requery",
+        "title_pattern_match",
+        "grobid_ref_match",
+    ]
+
+    @pytest.mark.parametrize("method", GRANULAR)
+    def test_map_method_passes_through(self, method):
+        assert _map_method(method) == method
+
+    def test_no_method_maps_to_author_year_match(self):
+        for method in self.GRANULAR:
+            assert _map_method(method) != "author_year_match"
+
+    @pytest.mark.parametrize("method", GRANULAR)
+    def test_merge_row_emits_granular_label(self, method):
+        link = {
+            "resolution_method": method,
+            "resolved_doi_o": "10.1/orig", "resolved_title_o": "Original",
+            "resolved_year_o": 2000, "resolved_author_o": "Smith",
+            "resolution_score": 1.0, "llm_confidence": "high",
+        }
+        filter_row = pd.Series({"doi_r": "10.1/rep", "title_r": "Rep",
+                                "filter_status": "replication"})
+        with patch("extract.run_extract._build_ref_o", return_value=("ref", "auth")):
+            row = _merge_row(filter_row, link, _MOCK_OUTCOME,
+                             "single_original", "high", 1, 1)
+        assert row["link_method"] == method
+
+
+# ── Multi-original pair_id uniqueness + truthful link_method ──────────────────
+
+class TestMergeMultiRow:
+    _FILTER_ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "Rep Paper",
+                             "filter_status": "replication"})
+    _OUTCOME = {"outcome": "success", "outcome_phrase": "",
+                "outcome_confidence": "high", "out_quote_source": "llm_multi"}
+
+    def _merge(self, orig, link_method="llm_fulltext"):
+        with patch("extract.run_extract._build_ref_o", return_value=("", "")):
+            return _merge_multi_row(self._FILTER_ROW, orig, self._OUTCOME,
+                                    "multiple_original", "high", 2,
+                                    link_method=link_method)
+
+    def test_two_unresolved_originals_get_distinct_pair_ids(self):
+        """Empty doi_o must not collapse every original to the same pair_id."""
+        r1 = self._merge({"rank": 1, "doi": "", "title": "Original One",
+                          "first_author": "A", "year": 2001, "confidence": "high"})
+        r2 = self._merge({"rank": 2, "doi": "", "title": "Original Two",
+                          "first_author": "B", "year": 2002, "confidence": "high"})
+        assert r1["pair_id"] != r2["pair_id"]
+        # And neither equals the naive make_pair_id(doi_r, "") that used to collide.
+        collide = make_pair_id("10.1/rep", "")
+        assert r1["pair_id"] != collide
+        assert r2["pair_id"] != collide
+
+    def test_resolved_doi_pair_id_is_deterministic(self):
+        r = self._merge({"rank": 1, "doi": "10.1/x", "title": "X",
+                         "first_author": "A", "year": 2001, "confidence": "high"})
+        assert r["pair_id"] == make_pair_id("10.1/rep", "10.1/x")
+
+    def test_link_method_label_is_passed_through(self):
+        r = self._merge({"rank": 1, "doi": "10.1/x", "title": "X",
+                         "first_author": "A", "year": 2001, "confidence": "high"},
+                        link_method="llm_abstract")
+        assert r["link_method"] == "llm_abstract"
+
+
+# ── Multi-original count regex bound ──────────────────────────────────────────
+
+class TestMultiOriginalCountBound:
+    """3 ≤ N < 1900 — a captured year is not a study count."""
+
+    def test_year_in_title_not_treated_as_count(self):
+        assert _rule_classify_multi_original("Replication of 2019 findings", "") is None
+
+    def test_year_in_abstract_not_treated_as_count(self):
+        assert _rule_classify_multi_original(
+            "A paper", "We report replications of 2019 studies conducted earlier."
+        ) is None
+
+    def test_valid_count_in_title_routes_to_multiple_original(self):
+        r = _rule_classify_multi_original("Replication of 12 studies", "")
+        assert r is not None
+        assert r["original_match_type"] == "multiple_original"
+
+    def test_valid_count_in_abstract_routes_to_multiple_original(self):
+        r = _rule_classify_multi_original(
+            "A paper", "We replicated 28 classic studies across many labs."
+        )
+        assert r is not None
+        assert r["original_match_type"] == "multiple_original"
+
+    def test_count_below_minimum_does_not_route(self):
+        assert _rule_classify_multi_original("Replication of 2 studies", "") is None
+
+    def test_known_project_name_still_routes(self):
+        r = _rule_classify_multi_original("Many Labs 2: replicating effects", "")
+        assert r is not None
+        assert r["original_match_type"] == "multiple_original"
 
 
 # ── Schema integration test ───────────────────────────────────────────────────
