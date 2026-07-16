@@ -136,13 +136,13 @@ def test_resume_no_reprocess_no_duplicate(tmp_path, monkeypatch):
     _write_candidates(tmp_path / "candidates.csv", _ROWS)
 
     with patch.object(rf, "_llm_classify", return_value=None):
-        first = rf.run_filter()
+        first = rf.run_filter()                  # returns count of new rows written
         index_after_first = _read_index(tmp_path)
         second = rf.run_filter()
         index_after_second = _read_index(tmp_path)
 
-    assert len(first) == len(_ROWS)
-    assert len(second) == 0                      # nothing reprocessed
+    assert first == len(_ROWS)
+    assert second == 0                           # nothing reprocessed
     assert index_after_first == index_after_second
     assert len(index_after_first) == len(set(index_after_first))  # no duplicates
 

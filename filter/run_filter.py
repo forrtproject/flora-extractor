@@ -199,7 +199,7 @@ def run_filter(limit: "int | None" = None,
                offset: "int | None" = None,
                from_year: "int | None" = None,
                to_year: "int | None" = None,
-               source: "str | None" = None) -> pd.DataFrame:
+               source: "str | None" = None) -> int:
     """Run the filter pipeline, streaming results to data/filtered.csv.
 
     limit     — stop after processing this many new rows (None = no limit).
@@ -209,6 +209,10 @@ def run_filter(limit: "int | None" = None,
     source    — only process rows where the source column equals this value
                 (e.g. 'openalex', 'bob_reed', 'i4r', 'semantic_scholar').
                 Case-insensitive. None = all sources.
+
+    Returns the number of new rows written.  Rows are streamed to the CSV and
+    never accumulated in memory (a full run writes millions of rows), so the
+    result is a count, not the rows themselves — read filtered.csv for the data.
     """
     candidates_path = DATA_DIR / "candidates.csv"
     if not candidates_path.exists():
@@ -248,7 +252,6 @@ def run_filter(limit: "int | None" = None,
     else:
         already_done = set()
 
-    output_rows: list[dict] = []
     new_rows = 0
     skipped  = 0   # counts unprocessed rows skipped by --offset
     total_read = 0
@@ -351,7 +354,6 @@ def run_filter(limit: "int | None" = None,
             _append_row(out_path, row_dict, first=first_write)
             first_write = False
             new_rows += 1
-            output_rows.append(row_dict)
 
             # Update the index immediately so resume works even after a crash.
             if key not in already_done:
@@ -382,7 +384,7 @@ def run_filter(limit: "int | None" = None,
         )
 
     log.info("Stage 2 complete: %d new rows written → %s", new_rows, out_path)
-    return pd.DataFrame(output_rows)
+    return new_rows
 
 
 if __name__ == "__main__":
