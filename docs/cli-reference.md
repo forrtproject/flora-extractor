@@ -97,10 +97,37 @@ python -m filter.run_filter --rebuild-index
 
 # Filter using only rule-based classifier (no LLM calls)
 python -m filter.run_filter --no-llm
+
+# Reset screening decisions for rows that were decided with an empty abstract
+# and whose abstract has since been backfilled into candidates.csv (dry-run)
+python -m filter.reset_backfilled
+
+# ...and apply: drop those rows from filtered.csv, rebuild the resume index
+python -m filter.reset_backfilled --apply
 ```
 
 **Input:** `data/candidates.csv`  
 **Output:** `data/filtered.csv`
+
+### Resetting backfilled screening decisions
+
+Many candidates were screened by Stage 2 with an **empty abstract** (title-only
+decisions). When `search/fetch_abstracts.py` later backfills abstracts into
+`candidates.csv`, the resume index (`cache/filtered_index.txt`) still makes
+`run_filter` skip those already-decided rows, so the recovered abstracts never
+change the screening decision.
+
+`python -m filter.reset_backfilled` fixes this in three streamed, memory-bounded
+passes: it finds filtered rows decided with an empty abstract, keeps only those
+whose `candidates.csv` row now has an abstract, and — with `--apply` — deletes
+exactly those rows from `filtered.csv` before rebuilding the index. It **deletes
+the row** rather than just its index key: `run_filter` only ever appends, so
+dropping the key alone would produce a second decision for the same paper.
+
+Operational sequence: run the abstract backfill → `reset_backfilled --apply` →
+`run_filter` (the reset rows now come through with abstracts). Dry-run by default;
+`--apply` to write. Do **not** run it while `run_filter` or `fetch_abstracts` is
+writing.
 
 ---
 
