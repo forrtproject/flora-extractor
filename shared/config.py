@@ -72,6 +72,8 @@ GEMINI_API_KEY = GEMINI_API_KEYS[0] if GEMINI_API_KEYS else ""  # backward-compa
 RESEARCHER_EMAIL = os.getenv("RESEARCHER_EMAIL", "research@example.com")
 # Semantic Scholar API key — accepts both S2_API_KEY and legacy SEMANTIC_SCHOLAR_KEY
 S2_API_KEY = os.getenv("S2_API_KEY") or os.getenv("SEMANTIC_SCHOLAR_KEY", "")
+# Elsevier Scopus API key — optional abstract-backfill tier (~10k requests/week quota)
+ELSEVIER_API_KEY = os.getenv("ELSEVIER_API_KEY", "")
 
 # ── Model identifiers ─────────────────────────────────────────────────────────
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
