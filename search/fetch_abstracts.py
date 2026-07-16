@@ -74,6 +74,11 @@ SCOPUS_RATE_SEC    = 1.0   # Elsevier Scopus: ~1 req/sec
 SCOPUS_DEFAULT_LIMIT = 9000  # keep a run under the ~10k/week Scopus quota
 FLUSH_EVERY        = 500   # flush candidates.csv every N abstracts found
 
+# Consecutive transient failures (429/5xx/network) that trip the circuit breaker
+# and stop a phase gracefully — the host is throttling us; rerun to resume the
+# un-checkpointed rows. Mirrors how the Scopus phase stops on quota exhaustion.
+TRANSIENT_BREAKER_LIMIT = 25
+
 # Shared session for CrossRef / Semantic Scholar / Scopus — deliberately carries
 # NO Authorization header. The OpenAlex premium key must never leak to these hosts:
 # CrossRef rejects an unknown Bearer token with 401, silently killing the entire
@@ -145,7 +150,7 @@ def _reconstruct_abstract(inverted_index: Optional[dict]) -> Optional[str]:
 # Source 1: OpenAlex batch
 # ---------------------------------------------------------------------------
 
-def _fetch_openalex_batch(oa_ids: list[str]) -> dict[str, Optional[str]]:
+def _fetch_openalex_batch(oa_ids: list[str]) -> Optional[dict[str, Optional[str]]]:
     """Fetch abstracts for up to OA_BATCH_SIZE OpenAlex IDs in one call.
 
     *oa_ids* may be full URLs ('https://openalex.org/W123') or bare ids ('W123');
@@ -153,6 +158,11 @@ def _fetch_openalex_batch(oa_ids: list[str]) -> dict[str, Optional[str]]:
     exact strings passed in, so the caller can join results back to its CSV values
     and cache keys. Both the query filter and the response are matched on the bare
     'W…' id — mismatching the two forms is what previously made every row a miss.
+
+    Returns None on a whole-batch HTTP failure (exception / non-200) so the caller
+    can decline to checkpoint any id in the batch — one transient batch failure must
+    not poison up to OA_BATCH_SIZE rows as permanent misses. A successful batch that
+    simply lacks a given id returns that id mapped to None (a definitive miss).
     """
     bare_to_input: dict[str, str] = {}
     for oid in oa_ids:
@@ -176,7 +186,8 @@ def _fetch_openalex_batch(oa_ids: list[str]) -> dict[str, Optional[str]]:
             if input_key is not None:
                 result[input_key] = abstract
     except Exception as exc:
-        log.warning("OpenAlex batch error: %s", exc)
+        log.warning("OpenAlex batch error (batch not checkpointed): %s", exc)
+        return None
     return result
 
 
@@ -187,37 +198,85 @@ def _fetch_openalex_batch(oa_ids: list[str]) -> dict[str, Optional[str]]:
 _JATS_RE = re.compile(r"<[^>]+>")
 
 
-def _fetch_crossref_abstract(doi: str) -> Optional[str]:
-    url = f"https://api.crossref.org/works/{doi}"
+def _retry_after_seconds(resp) -> float:
+    """Parse a Retry-After header (integer seconds) into a float; 0 if absent/unparseable."""
+    val = resp.headers.get("Retry-After", "").strip()
     try:
-        resp = _SESSION.get(url, timeout=20)
+        return float(val)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _fetch_crossref_abstract(doi: str) -> tuple[Optional[str], str]:
+    """Fetch an abstract from CrossRef by DOI.
+
+    Returns (abstract, status) where status is:
+      "ok"        — an abstract was found
+      "empty"     — HTTP 200/404 but no abstract (a DEFINITIVE miss to checkpoint)
+      "transient" — 429/5xx/network failure that persisted through all retries
+                    (must NOT be checkpointed, so a later run retries the DOI)
+
+    The polite-pool ?mailto= param earns better rate limits. Transient failures
+    retry 3× with 1s/2s/4s backoff, honouring a 429 Retry-After header when present.
+    """
+    url = f"https://api.crossref.org/works/{doi}?mailto={RESEARCHER_EMAIL}"
+    for attempt in range(3):
+        try:
+            resp = _SESSION.get(url, timeout=20)
+        except Exception as exc:
+            log.warning("CrossRef network error for %s (attempt %d/3): %s", doi, attempt + 1, exc)
+            time.sleep(2 ** attempt)
+            continue
         if resp.status_code == 404:
-            return None
-        resp.raise_for_status()
+            return None, "empty"
+        if resp.status_code == 429 or resp.status_code >= 500:
+            retry_after = _retry_after_seconds(resp)
+            log.warning("CrossRef %s for %s (attempt %d/3) — backing off.",
+                        resp.status_code, doi, attempt + 1)
+            time.sleep(max(retry_after, 2 ** attempt))
+            continue
+        if resp.status_code >= 400:
+            return None, "empty"
         raw = resp.json().get("message", {}).get("abstract", "")
-        if raw:
-            return _JATS_RE.sub("", raw).strip() or None
-    except Exception as exc:
-        log.warning("CrossRef error for %s: %s", doi, exc)
-    return None
+        cleaned = _JATS_RE.sub("", raw).strip() if raw else ""
+        return (cleaned, "ok") if cleaned else (None, "empty")
+    return None, "transient"
 
 
 # ---------------------------------------------------------------------------
 # Source 3: Semantic Scholar by DOI
 # ---------------------------------------------------------------------------
 
-def _fetch_s2_abstract(doi: str, s2_key: str) -> Optional[str]:
+def _fetch_s2_abstract(doi: str, s2_key: str) -> tuple[Optional[str], str]:
+    """Fetch an abstract from Semantic Scholar by DOI.
+
+    Returns (abstract, status) with the same contract as _fetch_crossref_abstract:
+    "ok" / "empty" (definitive miss) / "transient" (429/5xx/network, retried 3×).
+    A 429 was previously treated as a clean miss and checkpointed — that permanently
+    suppressed the row. It is now transient so a later run retries it.
+    """
     url = f"https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}?fields=abstract"
     headers = {"x-api-key": s2_key} if s2_key else {}
-    try:
-        resp = _SESSION.get(url, timeout=20, headers=headers)
-        if resp.status_code in (404, 429):
-            return None
-        resp.raise_for_status()
-        return resp.json().get("abstract") or None
-    except Exception as exc:
-        log.warning("S2 error for %s: %s", doi, exc)
-    return None
+    for attempt in range(3):
+        try:
+            resp = _SESSION.get(url, timeout=20, headers=headers)
+        except Exception as exc:
+            log.warning("S2 network error for %s (attempt %d/3): %s", doi, attempt + 1, exc)
+            time.sleep(2 ** attempt)
+            continue
+        if resp.status_code == 404:
+            return None, "empty"
+        if resp.status_code == 429 or resp.status_code >= 500:
+            retry_after = _retry_after_seconds(resp)
+            log.warning("S2 %s for %s (attempt %d/3) — backing off.",
+                        resp.status_code, doi, attempt + 1)
+            time.sleep(max(retry_after, 2 ** attempt))
+            continue
+        if resp.status_code >= 400:
+            return None, "empty"
+        abstract = resp.json().get("abstract") or None
+        return (abstract, "ok") if abstract else (None, "empty")
+    return None, "transient"
 
 
 # ---------------------------------------------------------------------------
@@ -337,12 +396,15 @@ def enrich_abstracts(df: "pd.DataFrame") -> "pd.DataFrame":
         if not doi:
             continue
 
-        # CrossRef
+        # CrossRef — only cache definitive results; a transient failure is left
+        # uncached so a later run retries the DOI.
         cached = _read_abstract_cache(f"doi:{doi}")
         if cached is None:
             time.sleep(CROSSREF_RATE_SEC)
-            cached = _fetch_crossref_abstract(doi)
-            _write_abstract_cache(f"doi:{doi}", cached if cached else "__none__")
+            cr_abstract, cr_status = _fetch_crossref_abstract(doi)
+            if cr_status != "transient":
+                _write_abstract_cache(f"doi:{doi}", cr_abstract if cr_abstract else "__none__")
+            cached = cr_abstract if cr_abstract else "__none__"
         abstract = cached if cached and cached != "__none__" else None
 
         # S2 fallback
@@ -350,8 +412,10 @@ def enrich_abstracts(df: "pd.DataFrame") -> "pd.DataFrame":
             s2_cached = _read_abstract_cache(f"s2:{doi}")
             if s2_cached is None:
                 time.sleep(S2_RATE_SEC)
-                s2_cached = _fetch_s2_abstract(doi, s2_key)
-                _write_abstract_cache(f"s2:{doi}", s2_cached if s2_cached else "__none__")
+                s2_abstract, s2_status = _fetch_s2_abstract(doi, s2_key)
+                if s2_status != "transient":
+                    _write_abstract_cache(f"s2:{doi}", s2_abstract if s2_abstract else "__none__")
+                s2_cached = s2_abstract if s2_abstract else "__none__"
             abstract = s2_cached if s2_cached and s2_cached != "__none__" else None
 
         if abstract:
@@ -440,15 +504,28 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
             else:
                 uncached_ids.append(oid)
 
+        # A whole-batch HTTP failure returns None: no id in the batch is a
+        # definitive miss, so leave the uncached ids un-cached and un-checkpointed
+        # for a later run to retry. A successful batch missing a specific id IS a
+        # definitive miss for that id (cached + checkpointed below).
+        batch_transient = False
         if uncached_ids:
             time.sleep(OA_RATE_SEC)
             fetched = _fetch_openalex_batch(uncached_ids)
-            for oid, abstract in fetched.items():
-                _write_abstract_cache(f"oa:{oid}", abstract if abstract else "__none__")
-                results[oid] = abstract
+            if fetched is None:
+                batch_transient = True
+                log.warning("Phase 1 — OpenAlex batch failed; %d ids left for retry.",
+                            len(uncached_ids))
+            else:
+                for oid, abstract in fetched.items():
+                    _write_abstract_cache(f"oa:{oid}", abstract if abstract else "__none__")
+                    results[oid] = abstract
 
-        # Write abstracts back to df
+        # Write abstracts back to df. On a transient batch, skip the ids that were
+        # not resolved (no cache, no checkpoint) so they retry next run.
         for oid, idx in zip(batch_ids, batch_idxs):
+            if batch_transient and oid in uncached_ids:
+                continue
             abstract = results.get(oid)
             _append_checkpoint(f"oa:{oid}")
             if abstract:
@@ -475,6 +552,7 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
     log.info("Phase 2 — CrossRef: %d rows to try.", len(crossref_rows))
 
     phase2_found = 0
+    consecutive_transient = 0
     for i, (idx, row) in enumerate(crossref_rows.iterrows(), 1):
         doi = clean_doi(str(row.get("doi_r", "") or ""))
         if not doi:
@@ -485,9 +563,19 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
             abstract = cached if cached != "__none__" else None
         else:
             time.sleep(CROSSREF_RATE_SEC)
-            abstract = _fetch_crossref_abstract(doi)
+            abstract, status = _fetch_crossref_abstract(doi)
+            if status == "transient":
+                # Do NOT cache or checkpoint — a later run must retry this DOI.
+                consecutive_transient += 1
+                log.warning("CrossRef transient failure for %s (not checkpointed).", doi)
+                if consecutive_transient >= TRANSIENT_BREAKER_LIMIT:
+                    log.warning("CrossRef throttling — stopping phase; rerun to resume. "
+                                "(%d consecutive transient failures)", consecutive_transient)
+                    break
+                continue
             _write_abstract_cache(f"doi:{doi}", abstract if abstract else "__none__")
 
+        consecutive_transient = 0
         _append_checkpoint(f"doi:{doi}")
 
         if abstract:
@@ -516,6 +604,7 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
         log.info("Phase 3 — Semantic Scholar: %d rows to try.", len(s2_rows))
 
         phase3_found = 0
+        consecutive_transient = 0
         for i, (idx, row) in enumerate(s2_rows.iterrows(), 1):
             doi = clean_doi(str(row.get("doi_r", "") or ""))
             if not doi:
@@ -526,9 +615,20 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
                 abstract = cached if cached != "__none__" else None
             else:
                 time.sleep(S2_RATE_SEC)
-                abstract = _fetch_s2_abstract(doi, s2_key)
+                abstract, status = _fetch_s2_abstract(doi, s2_key)
+                if status == "transient":
+                    # Do NOT cache or checkpoint — a later run must retry this DOI.
+                    consecutive_transient += 1
+                    log.warning("S2 transient failure for %s (not checkpointed).", doi)
+                    if consecutive_transient >= TRANSIENT_BREAKER_LIMIT:
+                        log.warning("Semantic Scholar throttling — stopping phase; rerun "
+                                    "to resume. (%d consecutive transient failures)",
+                                    consecutive_transient)
+                        break
+                    continue
                 _write_abstract_cache(f"s2:{doi}", abstract if abstract else "__none__")
 
+            consecutive_transient = 0
             _append_checkpoint(f"s2:{doi}")
 
             if abstract:
