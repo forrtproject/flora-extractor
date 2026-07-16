@@ -74,10 +74,17 @@ SCOPUS_RATE_SEC    = 1.0   # Elsevier Scopus: ~1 req/sec
 SCOPUS_DEFAULT_LIMIT = 9000  # keep a run under the ~10k/week Scopus quota
 FLUSH_EVERY        = 500   # flush candidates.csv every N abstracts found
 
+# Shared session for CrossRef / Semantic Scholar / Scopus — deliberately carries
+# NO Authorization header. The OpenAlex premium key must never leak to these hosts:
+# CrossRef rejects an unknown Bearer token with 401, silently killing the entire
+# CrossRef abstract-recovery tier. OpenAlex requests use _OA_SESSION instead.
 _SESSION = requests.Session()
 _SESSION.headers.update({"User-Agent": f"FLoRA-Extractor/1.0 (mailto:{RESEARCHER_EMAIL})"})
+
+_OA_SESSION = requests.Session()
+_OA_SESSION.headers.update({"User-Agent": f"FLoRA-Extractor/1.0 (mailto:{RESEARCHER_EMAIL})"})
 if OPENALEX_API_KEY:
-    _SESSION.headers["Authorization"] = f"Bearer {OPENALEX_API_KEY}"
+    _OA_SESSION.headers["Authorization"] = f"Bearer {OPENALEX_API_KEY}"
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +167,7 @@ def _fetch_openalex_batch(oa_ids: list[str]) -> dict[str, Optional[str]]:
     )
     result: dict[str, Optional[str]] = {oid: None for oid in oa_ids}
     try:
-        resp = _SESSION.get(url, timeout=30)
+        resp = _OA_SESSION.get(url, timeout=30)
         resp.raise_for_status()
         for work in resp.json().get("results", []):
             wid = work.get("id", "").replace("https://openalex.org/", "").strip()

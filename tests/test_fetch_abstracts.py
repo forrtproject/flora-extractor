@@ -48,7 +48,7 @@ def test_openalex_batch_matches_full_url_ids(monkeypatch):
         captured["url"] = url
         return DummyResponse(payload)
 
-    monkeypatch.setattr(fa._SESSION, "get", fake_get)
+    monkeypatch.setattr(fa._OA_SESSION, "get", fake_get)
 
     full_url = "https://openalex.org/W2889412410"
     result = fa._fetch_openalex_batch([full_url])
@@ -62,7 +62,7 @@ def test_openalex_batch_matches_full_url_ids(monkeypatch):
 
 def test_openalex_batch_missing_work_stays_none(monkeypatch):
     """An id with no matching result stays None (a genuine miss)."""
-    monkeypatch.setattr(fa._SESSION, "get", lambda url, timeout: DummyResponse({"results": []}))
+    monkeypatch.setattr(fa._OA_SESSION, "get", lambda url, timeout: DummyResponse({"results": []}))
     result = fa._fetch_openalex_batch(["https://openalex.org/W999"])
     assert result == {"https://openalex.org/W999": None}
 
@@ -217,3 +217,29 @@ def test_phase4_stops_on_quota_and_leaves_rows_retryable(monkeypatch, tmp_path):
     done = fa.CHECKPOINT_PATH.read_text(encoding="utf-8")
     assert "scopus:10.1/a" in done
     assert "scopus:10.1/b" not in done
+
+
+# ---------------------------------------------------------------------------
+# Session auth isolation — the OpenAlex Bearer key must not leak to CrossRef/S2/Scopus
+# ---------------------------------------------------------------------------
+
+def test_openalex_key_does_not_leak_to_shared_session():
+    """The shared session (CrossRef/S2/Scopus) must carry no Authorization header;
+    only the dedicated OpenAlex session may. A leaked Bearer token makes CrossRef 401."""
+    assert "Authorization" not in fa._SESSION.headers
+    # If a key is configured, it lives only on the OpenAlex session.
+    if fa.OPENALEX_API_KEY:
+        assert fa._OA_SESSION.headers.get("Authorization") == f"Bearer {fa.OPENALEX_API_KEY}"
+
+
+def test_crossref_uses_shared_session_without_auth(monkeypatch):
+    """CrossRef fetches must go through the no-auth shared session."""
+    captured = {}
+
+    def fake_get(url, timeout=None, **kwargs):
+        captured["session_headers"] = dict(fa._SESSION.headers)
+        return DummyResponse({"message": {"abstract": "<jats:p>Body</jats:p>"}})
+
+    monkeypatch.setattr(fa._SESSION, "get", fake_get)
+    fa._fetch_crossref_abstract("10.1/x")
+    assert "Authorization" not in captured["session_headers"]
