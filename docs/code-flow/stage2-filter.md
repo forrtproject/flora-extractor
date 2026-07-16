@@ -26,7 +26,7 @@ run_filter.py
     │           → 'replication' / 'reproduction' / 'false_positive' with high confidence
     │           → 'needs_review' with medium/low confidence for uncertain cases
     │
-    │       If 'needs_review' (and --no-llm not set):
+    │       If 'needs_review':
     │           llm_filter.classify_with_llm(row) → updates status + confidence
     │               call_llm() with filter prompt
     │               cache result by DOI

@@ -10,8 +10,8 @@ The web app is a **read-only monitoring dashboard**. It does not write to any pi
 validate/app.py
     │
     ├── create_app()
-    │       register all blueprints
-    │       before_request: session guard for reviewer name
+    │       register the 5 blueprints below (dashboard, check, batch,
+    │           multi_originals, disambiguation) — nothing else
     │       /set-name: session-based reviewer name
     │       /pdf: serve PDFs from cache/
     │
@@ -23,41 +23,24 @@ validate/app.py
     │       GET /api/dashboard/supabase-corrections → correction frequency
     │       GET /api/dashboard/supabase-drilldown   → paginated drilldown table
     │
-    ├── Blueprint: extract_view_bp (routes/extract_view.py)
-    │       GET /extract                        → Extract tab
-    │       GET /api/extract/list               → paginated extracted.csv rows
-    │       GET /api/extract/detail             → single row + PDF availability
-    │       GET /api/extract/promote            → promote test row to production
-    │
-    ├── Blueprint: extract_test_view_bp
-    │       GET /extract-test                   → Extract Test tab
-    │       (same API routes under /extract-test)
-    │
-    ├── Blueprint: search_view_bp (routes/search_view.py)
-    │       GET /search                         → Search tab (candidates.csv)
-    │
-    ├── Blueprint: filter_view_bp (routes/filter_view.py)
-    │       GET /filter                         → Filter tab (filtered.csv)
-    │
-    ├── Blueprint: pipeline_bp (routes/pipeline.py)
-    │       GET /api/pipeline/list              → paginated pipeline list
-    │       GET /api/pipeline/detail            → single row detail
+    ├── Blueprint: check_bp (routes/check.py)
+    │       GET /check                          → filter/inspect extracted rows, download subsets
     │
     ├── Blueprint: batch_bp (routes/batch.py)
-    │       Batch disambiguation for multiple-match papers
+    │       GET /batch                          → batch disambiguation for multiple-match papers
     │
     ├── Blueprint: multi_orig_bp (routes/multi_originals.py)
-    │       Multi-original paper review
+    │       GET /multi-originals                → multi-original paper review
     │
-    ├── Blueprint: disambiguation_bp (routes/disambiguation.py)
-    │       Manual disambiguation UI
-    │
-    ├── Blueprint: target_pending_bp (routes/target_pending.py)
-    │       Papers needing manual original DOI
-    │
-    └── Blueprint: input_bp (routes/input.py)
-            Generate and download pipeline input CSVs
+    └── Blueprint: disambiguation_bp (routes/disambiguation.py)
+            manual disambiguation UI
 ```
+
+> **Orphaned / legacy blueprints.** `routes/extract_view.py`, `routes/search_view.py`,
+> `routes/filter_view.py`, `routes/pipeline.py`, `routes/target_pending.py`, and
+> `routes/input.py` still exist under `validate/routes/` but are **NOT registered** in
+> `app.py` — they are leftovers from an earlier tabbed design (`/extract`, `/search`,
+> `/filter`, etc. are not served by the running app). Do not assume their routes are live.
 
 ## Supabase integration flow
 
@@ -92,6 +75,9 @@ dashboard.html (JavaScript)
 
 Theme preference is stored in `localStorage` as `flora-theme = 'dark' | 'light'`. A `<script>` in `<head>` of `base.html` applies the theme before paint to avoid flash. The toggle button switches the `data-theme` attribute on `<html>`.
 
-## Session guard
+## Reviewer name
 
-All non-API, non-static routes require `session.reviewer_id`. Unauthenticated requests redirect to `/set-name?next=<url>`. The reviewer name is stored in Flask's signed session cookie.
+`/set-name` stores an optional reviewer name in Flask's signed session cookie
+(`session["reviewer_id"]`). The current app does **not** enforce it with a
+`before_request` guard — routes are reachable without setting a name (the earlier
+mandatory-name guard was removed).

@@ -23,17 +23,27 @@ The pipeline produces structured records identifying:
 Stage 1: search/     → discovers candidate papers → data/candidates.csv
 Stage 2: filter/     → removes false positives    → data/filtered.csv
 Stage 3: extract/    → finds original + outcome   → data/extracted.csv
-Stage 4: validate/   → Flask web app with voting  → data/validated.csv
+Stage 4: validate/   → read-only monitoring dashboard (no CSV output)
 ```
 
-Each stage reads one CSV and writes a richer CSV. Stages are independently runnable:
+Stages 1–3 each read one CSV and write a richer CSV. Stage 4 is a **read-only
+monitoring dashboard** over those CSVs plus Supabase validation stats — it does
+not write any pipeline CSV.
+
+**Human validation lives in a separate repo backed by Supabase**, not in this one.
+`extract/csv_to_db.py` pushes resolved rows from `data/extracted.csv` into three
+Supabase tables (`unvalidated`, `record_metadata`, `validation_queue`, with three
+validator slots per record: `human_1`, `human_2`, `llm`). The final artifact is the
+Supabase `validated` table — there is no `data/validated.csv`.
+
+Stages are independently runnable:
 
 ```bash
 python -m search.run_search         # Stage 1 → data/candidates.csv
 python -m filter.run_filter         # Stage 2 → data/filtered.csv
 python -m extract.run_extract       # Stage 3 → data/extracted.csv  (streamed row-by-row)
-python -m validate.import_csv       # load extracted.csv into SQLite
-python -m validate.app              # Stage 4 web app → http://localhost:5001
+python -m extract.csv_to_db         # push resolved rows into the Supabase validation tables
+python -m validate.app              # Stage 4 monitoring dashboard → http://localhost:5001
 ```
 
 Stage 3 streams results to `data/extracted.csv` one row at a time, so you can open the
@@ -52,13 +62,17 @@ python -m extract.promote_test --doi 10.xxx/y  # promote one row
 python -m extract.promote_test --all --dry-run # preview without writing
 ```
 
-The web app provides tabbed views for each stage's output:
+The monitoring app registers these routes (see `validate/app.py`):
 
-- `/search`        — Stage 1 candidates (candidates.csv)
-- `/filter`        — Stage 2 filtered list (filtered.csv)
-- `/extract`       — Stage 3 extraction results with model comparison tool
-- `/extract-test`  — Stage 3 test sandbox (extracted-test.csv) with per-row Promote button
-- `/validate`      — Stage 4 voting queue
+- `/dashboard`      — pipeline stats (CSV column reads) + Supabase validation KPIs
+- `/check`          — Check page: filter/inspect extracted rows, download subsets
+- `/batch`          — batch disambiguation for multiple-match papers
+- `/multi-originals`— multi-original paper review
+- `/` (disambiguation) — manual disambiguation UI
+
+Per-stage tab blueprints (`extract_view`, `search_view`, `filter_view`, `pipeline`,
+`target_pending`, `input`) still exist under `validate/routes/` but are **not
+registered** in `app.py` — treat them as orphaned/legacy.
 
 ---
 
@@ -114,19 +128,27 @@ The web app provides tabbed views for each stage's output:
 | `extract/code_outcome.py`  | Keyword + LLM outcome extraction                                             |
 | `extract/promote_test.py`  | CLI + library: merge rows from extracted-test.csv into extracted.csv; `--all`, `--doi`, `--dry-run`, `--force` |
 | `extract/audit_dois.py`    | CLI: retroactive DOI verification of extracted.csv; dry-run by default, `--apply` writes corrections; `--doi`, `--extracted-test` |
+| `extract/csv_to_db.py`     | CLI: push resolved extracted.csv rows into the Supabase validation DB (creates 1 `unvalidated` + 1 `record_metadata` + 3 `validation_queue` rows per record; slots `human_1`/`human_2`/`llm`); `--input`, `--dry-run` |
 
-### `validate/` — Stage 4 (Flask web app)
+### `validate/` — Stage 4 (read-only monitoring dashboard)
+
+The Flask app is a **read-only monitoring dashboard**. It does not write to any
+pipeline CSV or SQLite database (the old SQLite/SQLAlchemy voting app — `import_csv.py`,
+`models.py`, `routes/review.py`, `routes/flora.py`, `routes/export.py`, the `/vote`
+endpoint, `data/validated.csv` — has been removed). Human validation runs in a
+separate Supabase-backed repo.
 
 | File                           | Purpose                                                             |
 | ------------------------------ | ------------------------------------------------------------------- |
-| `validate/app.py`                  | Flask entry point, `create_app()` factory, blueprint registration                          |
-| `validate/import_csv.py`           | Load `flora_selected.csv` into SQLite (run once before starting)                           |
-| `validate/models.py`               | SQLAlchemy models: Replication, Vote tables                                                |
-| `validate/routes/review.py`        | `GET /validate`, `POST /vote`, `GET /api/validate/log`                                     |
-| `validate/routes/flora.py`         | `GET /flora` master list, API endpoints                                                    |
-| `validate/routes/dashboard.py`     | `GET /dashboard`; CSV stats including link-method breakdown, model family breakdown (Gemini/GPT/Qwen), and full Extract Test section |
-| `validate/routes/export.py`        | `GET /export`, `POST /api/export/download`                                                 |
-| `validate/routes/extract_view.py`  | Blueprint factory (`make_extract_blueprint` + `add_shared_routes`) for Extract + Extract Test tabs; PDF availability column; Promote endpoint; parse winner badge via `best_parse_method_name` |
+| `validate/app.py`                  | Flask entry point, `create_app()` factory. Registers **only** the `dashboard`, `check`, `batch`, `multi_originals`, and `disambiguation` blueprints |
+| `validate/state.py`                | Shared in-memory DataFrames (FLoRA sheet, etc.) populated at startup and imported by blueprints |
+| `validate/routes/dashboard.py`     | `GET /dashboard`; CSV pipeline stats (link-method / model-family breakdowns) + Supabase validation KPIs via `shared/supabase_client.py` |
+| `validate/routes/check.py`         | `GET /check`; filter/inspect extracted rows and download subsets |
+| `validate/routes/batch.py`         | `GET /batch`; batch disambiguation for multiple-match papers |
+| `validate/routes/multi_originals.py` | `GET /multi-originals`; multi-original paper review |
+| `validate/routes/disambiguation.py`  | Manual disambiguation UI |
+| `validate/routes/{extract_view,filter_view,search_view,pipeline,target_pending,input}.py` | **Orphaned/legacy** — present under `routes/` but NOT registered in `app.py`; per-stage tab views from an earlier design |
+| `shared/supabase_client.py`        | Read client for the Supabase validation tables; backs the dashboard's Supabase KPIs |
 
 ### `misc/` — Reference only, do not import
 
@@ -288,7 +310,7 @@ python -m filter.run_filter --rebuild-index   # rebuilds cache/filtered_index.tx
 6. **All CSV writes use `utf-8-sig` encoding** (BOM, Excel-compatible). Exception: when appending to an existing file, use plain `utf-8` to avoid embedding BOM mid-file — Excel handles both correctly.
 7. **All DOIs pass through `clean_doi()`** from `shared/utils.py` before writing or comparing.
 8. **All API responses must be cached** using the pattern above before any result is used.
-9. **Rate limiting:** OpenAlex: 0.1 s between calls. Gemini: 1 s between calls. OpenAI: 0.5 s.
+9. **Rate limiting:** OpenAlex: 0.3 s between calls (`OPENALEX_RATE_SEC` default in `shared/config.py`; override via env). Gemini: 1 s between calls. OpenAI: 0.5 s.
 
 ---
 
@@ -369,17 +391,20 @@ GROBID is optional. If `GROBID_URL` points to a server that is not running, the 
 
 ```text
 main     ← protected; PR + 1 review required; no direct commits
-  └── dev     ← integration branch; protected; PR required
-        ├── feature/search
-        ├── feature/filter
-        ├── feature/extract
-        └── feature/validate
+  └── feature/*   ← feature branches (search / filter / extract / validate)
 ```
 
-- Branch from `dev`, PR back to `dev`.
+**Actual practice (as of 2026-07):** recent PRs branch from `main` and merge **directly
+back to `main`**. The `dev` integration branch described in earlier versions of this doc
+still exists but is **~34 commits behind `main` and effectively stale** — do not base new
+work on it. Base feature branches on `origin/main` and open PRs with `--base main` unless
+the team decides to revive `dev`.
+
 - **Open PRs when a feature is stable, not just at the end.** Partial, working functionality is better to merge than a giant branch at deadline.
 - `data/` and `cache/` are gitignored — add sample files to `misc/` instead.
-- Branch protection rules are enforced on both `main` and `dev`.
+- Branch protection is enforced on `main` (PR + 1 review required).
+- **Team decision needed:** either revive `dev` as a real integration branch or drop it
+  from the documented workflow. This section documents current practice, not an endorsement.
 
 ---
 
@@ -416,9 +441,30 @@ python -m extract.audit_dois --extracted-test # audit extracted-test.csv instead
 
 Matching thresholds are constants in `shared/doi_verify.py` (`VERIFY_TITLE_JACCARD = 0.5`, `RESOLVE_TITLE_JACCARD = 0.7`, `TITLE_ONLY_JACCARD = 0.6`, `TITLE_ONLY_GAP = 1.5`, `YEAR_TOLERANCE = 1`). Auto-correction tries three tiers strictest-first — a wrong correction is worse than a flag. `doi_o_verification` status values and their meanings are in [`docs/csv-schema.md`](docs/csv-schema.md).
 
-Design spec: `docs/superpowers/specs/2026-06-12-doi-verification-design.md`.
-
 ---
+
+## In-Flight Changes — Pending Sibling PRs
+
+The following changes are **in review on sibling branches** and not yet merged. This
+document describes **current `dev`/`main` behaviour**; the items below flag where the
+code is about to move, so docs and code do not race each other:
+
+- **`link_method` granularity** — `author_year_match` (currently a single value in
+  `shared/schema.py`) will be split into five more granular values. Until that merges,
+  `link_method` is `author_year_match | llm_abstract | llm_fulltext | no_original_found | target_pending | api_error`.
+- **Outcome enum unification** — the outcome enum will be unified to
+  `success | failure | mixed | descriptive | cannot_be_determined` (dropping
+  `uninformative`), defined authoritatively in `shared/schema.py`. The current enum is
+  `success | failure | mixed | uninformative | descriptive | pending | api_error`.
+- **Scopus abstract-backfill tier** — a Scopus tier will be added to the abstract
+  backfill waterfall (see [`docs/limitations.md`](docs/limitations.md) item (d)). Not
+  yet wired in.
+
+## Known Limitations & Revisit Obligations
+
+See [`docs/limitations.md`](docs/limitations.md) for the recall bound imposed by the
+Stage-2 phrase gate, exclusion-pattern misfires, the uninformative `filter_confidence`
+field, and the missing-abstract backfill — each with its revisit obligation.
 
 ## Implementation Status
 
@@ -437,7 +483,7 @@ For the full feature list and what each module does, read the module map above a
 All core pipeline modules are now implemented. Known gaps:
 
 - Live LLM integration tests in `tests/live/` (the directory now exists with `test_doi_verify_live.py`; LLM tests still missing), guarded by `TEST_LIVE_API=1`
-- Unit tests for standalone scripts: `search/sensitivity_check.py`, `extract/mix_for_validation.py`, `validate/csv_to_db.py`
+- Unit tests for standalone scripts: `search/sensitivity_check.py`, `extract/mix_for_validation.py`, `extract/csv_to_db.py`
 - Unit tests for orchestrators: `search/deduplicate.py`, `filter/run_filter.py` (currently tested only indirectly)
 - Unit tests for `extract/promote_test.py` promote logic (currently smoke-tested only)
 
@@ -450,7 +496,7 @@ The following CSVs from prior FLoRA extraction work can be used to skip Stages 1
 - `data/openalex_candidates.csv` — confirmed replications with OpenAlex metadata
 - `data/all_replications.csv` — full known replication set from all pathways
 - `data/flora_entry_sheet.csv` — use for deduplication in Stage 1 (skip DOIs already in FLoRA)
-- `data/flora_selected.csv` — 107 rows already loaded into the Stage 4 app
+- `data/flora_selected.csv` — 107 curated rows from prior FLoRA work (legacy seed; the current Stage 4 app is read-only and does not load this file)
 
 These files are in `data/` on the shared drive. If you are setting up from scratch and the files are not present, contact the project leads.
 

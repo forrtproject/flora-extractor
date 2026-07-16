@@ -579,9 +579,10 @@ def run_search_auto_advance(
     """Process exactly ONE (source, phrase, year) job per invocation.
 
     Jobs cycle through all OpenAlex phrases then all Semantic Scholar phrases
-    for the current year before advancing to the next year.  At the start of
-    each year's first job, the curated lists (I4R, Replication Network) are
-    also fetched and merged (unless --source excludes them).
+    (plus OpenAlex concept jobs) for the current year before advancing to the
+    next year.  Curated lists (I4R, Replication Network) are NOT fetched here:
+    ``search/external_lists.py`` provides scrapers but is not wired into this
+    orchestrator, so only OpenAlex and Semantic Scholar sources run.
 
     State is persisted in ``cache/search_state.json`` and resumes across
     invocations.  Old state files that only tracked OpenAlex (``current_phrase_idx``)
