@@ -8,6 +8,29 @@ from shared.config import OA_CACHE_DIR
 from search import openalex_search as oa
 from search.semantic_scholar_search import fetch_semantic_scholar_candidates
 from search.external_lists import fetch_i4r
+from search.run_search import _row_keys
+
+
+# ---------------------------------------------------------------------------
+# Dedup keys (#53): a row with a stronger identifier must NOT dedupe on title,
+# so two distinct DOIs that share a title are both kept.
+# ---------------------------------------------------------------------------
+
+def test_row_keys_doi_row_has_no_title_key():
+    keys = _row_keys({"doi_r": "10.1/abc", "title_r": "A Shared Title"})
+    assert "10.1/abc" in keys
+    assert not any(k.startswith("title:") for k in keys)
+
+
+def test_row_keys_titleless_identifier_rows_dont_collide():
+    a = _row_keys({"doi_r": "10.1/aaa", "title_r": "Registered Replication Report"})
+    b = _row_keys({"doi_r": "10.1/bbb", "title_r": "Registered Replication Report"})
+    assert set(a).isdisjoint(b), "distinct DOIs sharing a title must not share any key"
+
+
+def test_row_keys_doi_less_row_still_uses_title():
+    keys = _row_keys({"title_r": "Only A Title"})
+    assert keys == ["title:only a title"]
 
 
 # ---------------------------------------------------------------------------

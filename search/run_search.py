@@ -68,8 +68,12 @@ def _row_keys(row: "pd.Series | dict") -> list[str]:
     url = str(row.get("url_r", "") or "").strip()
     if url:
         keys.append(f"url:{url}")
+    # #53: title is a LAST-RESORT identifier only. A row with a DOI/OpenAlex id/URL must
+    # dedupe on that, never on its title — otherwise two distinct works sharing a title
+    # (Reply/Commentary pairs, "Registered Replication Report" stubs, identically-titled
+    # corrections) collide and the second is silently dropped.
     title = str(row.get("title_r", "") or "").lower().strip()
-    if title:
+    if title and not keys:
         keys.append(f"title:{title}")
     return keys
 
