@@ -116,7 +116,10 @@ TYPE_VALUES = {"replication", "reproduction"}
 
 VALIDATION_STATUS_VALUES = {"confirmed", "rejected", "pending", "needs_review"}
 
-SOURCE_VALUES = {"openalex", "bob_reed", "i4r", "semantic_scholar"}
+# Sources actually produced by the pipeline. #46: bob_reed / i4r were advertised
+# here but their fetchers (search/external_lists.py) are never called, so no such
+# rows exist — reserved until external_lists is wired into run_search.
+SOURCE_VALUES = {"openalex", "openalex_concept", "semantic_scholar", "backfill_old_pipeline"}
 
 # ── Default empty row builders ────────────────────────────────────────────────
 
