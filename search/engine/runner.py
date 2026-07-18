@@ -143,13 +143,21 @@ def build_default_adapters(
     return adapters
 
 
-def check_spec_freshness(adapters: dict[SourceId, SourceAdapter]) -> None:
+def check_spec_freshness(adapters: dict[SourceId, SourceAdapter], log=None) -> None:
+    """Warn (do not raise) when an adapter spec is stale.
+
+    #48: raising here caused run_discovery to return status="failed", which
+    engine_source silently turns into an empty DataFrame — so a >60-day-old spec
+    dropped the entire engine source with only a buried warning. Warn loudly and
+    let the run proceed; operators re-verify on their own cadence.
+    """
     now = datetime.now(timezone.utc)
     for adapter in adapters.values():
         age_days = (now - adapter.verified_at).total_seconds() / 86_400
-        if age_days > SPEC_FRESHNESS_DAYS:
-            raise RuntimeError(
-                f"Source {adapter.id} verified {int(age_days)} days ago — re-verify before running"
+        if age_days > SPEC_FRESHNESS_DAYS and log:
+            log.warning(
+                "Source %s spec verified %d days ago (> %d) — re-verify soon; running anyway",
+                adapter.id, int(age_days), SPEC_FRESHNESS_DAYS,
             )
 
 
@@ -178,10 +186,7 @@ def run_discovery(
     compiled_exclusions = compile_exclusions(exclusion_patterns)
     ranking = weights or load_ranking_weights(spec_dir)
 
-    try:
-        check_spec_freshness(adapters)
-    except RuntimeError as e:
-        return RunResult(status="failed", stats=RunStats(), error=str(e))
+    check_spec_freshness(adapters, log=log)
 
     expanded: list[ExpandedKeyword] = expand_all(keywords_spec, config.keywords)
     requested = [s for s in config.filters.sources if s in adapters]
