@@ -52,7 +52,7 @@ class SemanticScholarSourceAdapter(SourceAdapter):
             )
         self.verified_at = verified_at
         self._api_key = api_key
-        self._bucket = TokenBucket(rate_per_sec=rate_per_sec, burst=3)
+        self._bucket = TokenBucket(rate_per_sec=rate_per_sec)
         self._or = or_operator
         self._q = phrase_quote
         self._max_phrases = max_phrases_per_query
@@ -112,15 +112,6 @@ class SemanticScholarSourceAdapter(SourceAdapter):
             if next_cursor is None:
                 return
             offset = int(next_cursor)
-
-    def _build_or_expression(self, phrases: list[str]) -> str:
-        return self._or.join(
-            f"{self._q}{self._escape(p)}{self._q}" for p in phrases
-        )
-
-    @staticmethod
-    def _escape(phrase: str) -> str:
-        return phrase.replace('"', "").replace("\\", "")
 
     def _build_url(
         self,

@@ -129,45 +129,6 @@ def _vc(series: "pd.Series", keys: tuple[str, ...] | None = None) -> dict[str, i
     return counts
 
 
-def _compute_candidates_stats(df: pd.DataFrame) -> dict[str, Any]:
-    doi_col  = df["doi_r"].fillna("")   if "doi_r"      in df.columns else pd.Series([""] * len(df))
-    url_col  = df["url_r"].fillna("")   if "url_r"      in df.columns else pd.Series([""] * len(df))
-    abs_col  = df["abstract_r"].fillna("") if "abstract_r" in df.columns else pd.Series([""] * len(df))
-    src_col  = df["source"].fillna("") if "source"     in df.columns else pd.Series([""] * len(df))
-    no_doi   = int((doi_col == "").sum())
-    return {
-        "total":           len(df),
-        "no_doi":          no_doi,
-        "no_doi_or_url":   int(((doi_col == "") & (url_col == "")).sum()),
-        "no_abstract":     int((abs_col == "").sum()),
-        "by_source":       _vc(src_col),
-    }
-
-
-def _compute_filtered_stats(df: pd.DataFrame) -> dict[str, Any]:
-    by_status = _vc(df["filter_status"]) if "filter_status" in df.columns else {}
-
-    # Data quality for replications + reproductions only
-    rep_mask = pd.Series(False, index=df.index)
-    if "filter_status" in df.columns:
-        rep_mask = df["filter_status"].isin(["replication", "reproduction"])
-    rr = df[rep_mask]
-    doi_col = rr["doi_r"].fillna("") if "doi_r" in rr.columns else pd.Series([""] * len(rr))
-    url_col = rr["url_r"].fillna("") if "url_r" in rr.columns else pd.Series([""] * len(rr))
-    abs_col = rr["abstract_r"].fillna("") if "abstract_r" in rr.columns else pd.Series([""] * len(rr))
-
-    return {
-        "total":                  len(df),
-        "by_filter_status":       by_status,
-        "by_filter_method":       _vc(df["filter_method"])      if "filter_method"      in df.columns else {},
-        "by_filter_confidence":   _vc(df["filter_confidence"])  if "filter_confidence"  in df.columns else {},
-        "rep_repro_total":        int(rep_mask.sum()),
-        "rep_repro_no_doi":       int((doi_col == "").sum()),
-        "rep_repro_no_doi_or_url":int(((doi_col == "") & (url_col == "")).sum()),
-        "rep_repro_no_abstract":  int((abs_col == "").sum()),
-    }
-
-
 def _compute_extracted_stats(df: pd.DataFrame) -> dict[str, Any]:
     lm_col  = df["link_method"].fillna("")       if "link_method"         in df.columns else pd.Series([""] * len(df))
     mt_col  = df["original_match_type"].fillna("") if "original_match_type" in df.columns else pd.Series([""] * len(df))
@@ -183,14 +144,6 @@ def _compute_extracted_stats(df: pd.DataFrame) -> dict[str, Any]:
         "by_outcome":             _vc(oc_col, _OUTCOME_KEYS),
         "by_doi_verification":    _vc(dv_col),
     }
-
-
-def _compute_stage_stats(stage: str, df: pd.DataFrame) -> dict[str, Any]:
-    if stage == "candidates":
-        return _compute_candidates_stats(df)
-    if stage == "filtered":
-        return _compute_filtered_stats(df)
-    return _compute_extracted_stats(df)
 
 
 def _read_for_stats(stage: str) -> "pd.DataFrame | None":
@@ -393,7 +346,7 @@ def update_stats(stage: str) -> None:
         if df is None:
             log.warning("dashboard_cache: no data to compute stats for %s", stage)
             return
-        new_stats = _compute_stage_stats(stage, df)
+        new_stats = _compute_extracted_stats(df)
 
     stage_key = stage.replace("-", "_")
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)

@@ -11,38 +11,38 @@
       "backfill_old_pipeline": 70
     }
   },
-  "updated_at": "2026-07-15T06:17:35",
+  "updated_at": "2026-07-18T13:21:40",
   "filtered": {
-    "total": 2320070,
+    "total": 2581092,
     "by_filter_status": {
-      "false_positive": 2273548,
-      "replication": 36221,
-      "reproduction": 10286,
-      "needs_review": 15
+      "false_positive": 2532538,
+      "replication": 38123,
+      "reproduction": 10414,
+      "needs_review": 17
     },
     "by_filter_method": {
-      "rule_based": 2187873,
-      "both": 132197
+      "rule_based": 2437147,
+      "both": 143945
     },
     "by_filter_confidence": {
-      "high": 2317933,
-      "medium": 2053,
-      "low": 84
+      "high": 2578852,
+      "medium": 2153,
+      "low": 87
     },
-    "rep_repro_total": 46507,
-    "rep_repro_no_doi": 7379,
-    "rep_repro_no_doi_or_url": 1633,
-    "rep_repro_no_abstract": 3351
+    "rep_repro_total": 48537,
+    "rep_repro_no_doi": 8201,
+    "rep_repro_no_doi_or_url": 1681,
+    "rep_repro_no_abstract": 3379
   },
   "extracted": {
-    "total": 1800,
+    "total": 1872,
     "target_pending_count": 0,
     "by_match_type": {
-      "single_original": 1798,
+      "single_original": 1870,
       "multiple_match": 2
     },
     "by_link_method": {
-      "author_year_match": 1642,
+      "author_year_match": 1714,
       "llm_abstract": 0,
       "llm_fulltext": 157,
       "no_original_found": 1,
@@ -50,27 +50,28 @@
       "api_error": 0
     },
     "by_model": {
-      "none": 1644,
+      "none": 1716,
       "gemini": 156
     },
     "by_outcome": {
-      "success": 751,
-      "failure": 334,
-      "mixed": 224,
+      "success": 812,
+      "failure": 354,
+      "mixed": 268,
       "uninformative": 0,
-      "cannot_be_determined": 366,
-      "descriptive": 78,
+      "cannot_be_determined": 304,
+      "descriptive": 80,
       "pending": 0,
       "api_error": 0,
-      "_other": 47
+      "_other": 54
     },
     "by_doi_verification": {
-      "verified": 1696,
+      "verified": 1764,
       "mismatch": 49,
-      "no_doi": 28,
+      "no_doi": 31,
       "no_metadata": 17,
       "not_found": 9,
-      "skipped": 1
+      "skipped": 1,
+      "corrected": 1
     }
   },
   "extracted_test": {

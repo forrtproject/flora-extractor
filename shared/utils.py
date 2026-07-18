@@ -4,9 +4,11 @@ utils.py — Common helpers shared across all pipeline stages.
 Public API:
     clean_doi(doi) → str
     cache_key(text) → str
+    pdf_serve_url(doi_r, result) → str
 """
 import hashlib
 import re
+from pathlib import Path
 
 
 def clean_doi(doi: str) -> str:
@@ -17,6 +19,7 @@ def clean_doi(doi: str) -> str:
         "https://doi.org/10.1037/abc123" → "10.1037/abc123"
         "http://dx.doi.org/10.1037/abc123" → "10.1037/abc123"
         "doi:10.1037/abc123"               → "10.1037/abc123"
+        "10.1037/abc123/"                  → "10.1037/abc123"
         "10.1037/abc123"                   → "10.1037/abc123"
     """
     if not doi:
@@ -24,7 +27,7 @@ def clean_doi(doi: str) -> str:
     doi = str(doi).strip()
     doi = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", doi, flags=re.IGNORECASE)
     doi = re.sub(r"^doi:", "", doi, flags=re.IGNORECASE)
-    return doi.strip().lower()
+    return doi.strip().lower().rstrip("/")
 
 
 def cache_key(text: str) -> str:
@@ -34,6 +37,16 @@ def cache_key(text: str) -> str:
     Uses MD5 (not cryptographic — just for deduplication).
     """
     return hashlib.md5(str(text).encode("utf-8")).hexdigest()
+
+
+def pdf_serve_url(doi_r: str, result: dict) -> str:
+    """URL path to serve the cached PDF for *doi_r*, or "" if none is cached."""
+    from shared.config import PDF_CACHE_DIR
+
+    if result.get("pdf_path"):
+        return f"/pdf/{Path(result['pdf_path']).name}"
+    expected = PDF_CACHE_DIR / f"{cache_key(doi_r)}.pdf"
+    return f"/pdf/{expected.name}" if expected.exists() else ""
 
 
 _ABBREV_RE = re.compile(
