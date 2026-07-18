@@ -2,7 +2,7 @@
 run_extract.py — Stage 3 orchestrator.
 
 For every row in filtered.csv:
-  - false_positive → pass through unchanged (no extraction)
+  - false_positive → skipped (known non-replication; not written to extracted.csv)
   - replication/reproduction → classify match type, route to pipeline, write result
 
 Each completed row is appended to data/extracted.csv immediately so that

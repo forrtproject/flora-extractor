@@ -142,11 +142,11 @@ class TestExtractOutcome:
             )
         assert result["outcome"] == "mixed"
 
-    def test_llm_failure_returns_uninformative(self):
-        """LLM failure should return uninformative, not crash."""
+    def test_llm_failure_returns_cannot_be_determined(self):
+        """LLM failure should return cannot_be_determined (we couldn't tell), not crash."""
         with patch("extract.code_outcome.call_llm", return_value=(None, "", "quota | error")):
             result = extract_outcome("10.1234/fail", abstract_r="ambiguous text")
-        assert result["outcome"] == "uninformative"
+        assert result["outcome"] == "cannot_be_determined"
         assert result["outcome_confidence"] == "low"
 
     def test_llm_result_cached(self, tmp_path):
@@ -163,13 +163,13 @@ class TestExtractOutcome:
         assert r1["outcome"] == r2["outcome"] == "success"
 
     def test_invalid_llm_outcome_normalised(self):
-        """LLM returning unexpected outcome value should become uninformative."""
+        """LLM returning an unexpected outcome value should become cannot_be_determined."""
         mock_result = {"outcome": "uncertain", "outcome_phrase": "",
                        "outcome_confidence": "low", "out_quote_source": ""}
         with patch("extract.code_outcome.call_llm", return_value=(mock_result, "gemini-model", "")), \
              patch("extract.code_outcome.time.sleep"):
             result = extract_outcome("10.1234/bad", abstract_r="ambiguous text")
-        assert result["outcome"] == "uninformative"
+        assert result["outcome"] == "cannot_be_determined"
 
 
 # ── LLM outcome prompt tests ─────────────────────────────────────────────────
@@ -209,7 +209,9 @@ class TestLLMOutcomePrompt:
         prompt = mock_llm.call_args[0][0]
         assert "This paper replicates" not in prompt
 
-    def test_fulltext_not_in_prompt(self, tmp_path):
+    def test_fulltext_excerpt_in_prompt(self, tmp_path):
+        # Current design (see code_outcome._llm_outcome + CLAUDE.md): the outcome LLM is fed a
+        # FULL TEXT EXCERPT block (results/conclusion) when fulltext is available.
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_llm", return_value=(
                  {"outcome": "success", "outcome_phrase": "x", "outcome_confidence": "high",
@@ -218,7 +220,7 @@ class TestLLMOutcomePrompt:
              patch("extract.code_outcome.time.sleep"):
             extract_outcome("10.1234/ft", abstract_r="ambiguous text", fulltext="UNIQUE_FULLTEXT_MARKER")
         prompt = mock_llm.call_args[0][0]
-        assert "UNIQUE_FULLTEXT_MARKER" not in prompt
+        assert "UNIQUE_FULLTEXT_MARKER" in prompt
 
     def test_outcome_reasoning_returned_from_llm(self, tmp_path):
         result, _ = self._run_llm(tmp_path)
@@ -467,7 +469,7 @@ class TestRunExtract:
         missing = [c for c in EXTRACTED_COLS if c not in result.columns]
         assert not missing, f"Missing: {missing}"
 
-    def test_false_positives_pass_through_unchanged(self):
+    def test_false_positives_are_skipped(self):
         """False positives must appear in output without calling classify_match_type."""
         csv = (
             "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
@@ -500,10 +502,11 @@ class TestRunExtract:
         fp_path.unlink(missing_ok=True)
         (tmp.parent / "extracted.csv").unlink(missing_ok=True)
 
-        # Both rows in output (false_positive passes through)
-        assert len(result) == 2
+        # false_positive rows are skipped, not written (run_extract.py:1021-1023;
+        # they are known non-replications and must not enter extracted.csv / Stage 4).
+        assert len(result) == 1
         doi_set = set(result["doi_r"])
-        assert "10.1000/fp" in doi_set
+        assert "10.1000/fp" not in doi_set
         assert "10.1000/rep" in doi_set
         # classify_match_type called only for the replication row, not the false positive
         assert mock_classify.call_count == 1

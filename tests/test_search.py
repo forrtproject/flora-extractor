@@ -101,7 +101,7 @@ def test_fetch_openalex_candidates_schema_and_cleaning(monkeypatch, tmp_path):
 
     calls = []
 
-    def fake_get(url, params, timeout):
+    def fake_get(url, params, timeout, **kwargs):
         calls.append((url, params, timeout))
         return DummyResponse(make_payload())
 
@@ -123,7 +123,7 @@ def test_fetch_openalex_candidates_uses_cache_on_second_run(monkeypatch, tmp_pat
 
     call_count = {"n": 0}
 
-    def fake_get(url, params, timeout):
+    def fake_get(url, params, timeout, **kwargs):
         call_count["n"] += 1
         return DummyResponse(make_payload())
 
