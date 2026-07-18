@@ -34,18 +34,12 @@ from shared.schema import CANDIDATES_COLS
 from shared.utils import cache_key, clean_doi
 
 
-SEARCH_PHRASES = [
-    "replication of",
-    "direct replication",
-    "close replication",
-    "conceptual replication",
-    "replication study",
-    "reproduction study",
-    "we replicated",
-    "attempts to replicate",
-    "registered replication report",
-    "pre-registered replication",
-]
+# #47: query the SAME phrase set as the OpenAlex source. The two lists had diverged
+# (S2 = 10 success/neutral phrases only), so failure-signal phrases like "failed to
+# replicate" were discovered via OpenAlex only — a directional bias in the eventual
+# success/failure balance. Import (don't copy) so they cannot silently diverge again.
+# If S2 quota ever needs a subset, slice this list explicitly with a documented reason.
+from search.openalex_search import SEARCH_PHRASES
 
 from shared.config import S2_API_KEY
 S2_CACHE_DIR = OA_CACHE_DIR.parent / "semantic_scholar"

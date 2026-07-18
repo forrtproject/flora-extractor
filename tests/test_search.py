@@ -33,6 +33,16 @@ def test_row_keys_doi_less_row_still_uses_title():
     assert keys == ["title:only a title"]
 
 
+def test_s2_phrases_match_openalex_and_include_failure_signals():
+    """#47: S2 must sample the same phrase set as OpenAlex, incl. failure-signal
+    phrases, or the two sources skew the eventual success/failure balance."""
+    from search.semantic_scholar_search import SEARCH_PHRASES as S2
+    from search.openalex_search import SEARCH_PHRASES as OA
+    assert set(S2) == set(OA)
+    for p in ("failed to replicate", "did not replicate", "could not reproduce"):
+        assert p in S2
+
+
 # ---------------------------------------------------------------------------
 # OpenAlex
 # ---------------------------------------------------------------------------
