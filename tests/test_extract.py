@@ -142,6 +142,21 @@ class TestExtractOutcome:
             )
         assert result["outcome"] == "mixed"
 
+    def test_single_candidate_confidence_capped_at_medium(self):
+        """#51: a lone candidate auto-accepted at score 1.0 must not read as high."""
+        from extract.run_extract import _link_confidence
+        assert _link_confidence(
+            {"resolution_method": "single_candidate_after_requery", "resolution_score": 1.0}
+        ) == "medium"
+        # other methods at 1.0 are unaffected
+        assert _link_confidence(
+            {"resolution_method": "citation_context_match", "resolution_score": 1.0}
+        ) == "high"
+        # an explicit LLM confidence still flows through for non-capped methods
+        assert _link_confidence(
+            {"resolution_method": "llm_abstract", "llm_confidence": "high"}
+        ) == "high"
+
     def test_llm_failure_returns_cannot_be_determined(self):
         """LLM failure should return cannot_be_determined (we couldn't tell), not crash."""
         with patch("extract.code_outcome.call_llm", return_value=(None, "", "quota | error")):

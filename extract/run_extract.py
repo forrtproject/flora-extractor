@@ -280,6 +280,21 @@ def _score_to_confidence(score) -> str:
     return "high" if f >= 0.8 else "medium" if f >= 0.5 else "low"
 
 
+def _link_confidence(link: dict) -> str:
+    """Persisted link_confidence: LLM confidence if present, else derived from score.
+
+    #51: single_candidate_after_requery auto-accepts a lone candidate at score 1.0
+    with NO semantic check — "exactly one candidate came back" is not evidence it is
+    the replication TARGET. Cap it at medium so validation prioritises these rows.
+    """
+    conf = (link["llm_confidence"]
+            if link.get("llm_confidence") in {"high", "medium", "low"}
+            else _score_to_confidence(link.get("resolution_score", 0)))
+    if link.get("resolution_method") == "single_candidate_after_requery" and conf == "high":
+        return "medium"
+    return conf
+
+
 # ── Match-type classification (Issue 8) ──────────────────────────────────────
 
 def classify_match_type(row: dict, no_llm: bool = False) -> dict:
@@ -490,9 +505,7 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
         "bibtex_ref_r":    _build_bibtex_r(filter_row),
         "link_method":     _map_method(link.get("resolution_method", "target_pending")),
         "link_evidence":   str(link.get("llm_evidence",     "") or ""),
-        "link_confidence": (link["llm_confidence"]
-                            if link.get("llm_confidence") in {"high", "medium", "low"}
-                            else _score_to_confidence(link.get("resolution_score", 0))),
+        "link_confidence": _link_confidence(link),
         "link_llm_model":  str(link.get("llm_model",        "") or ""),
         "outcome":             outcome.get("outcome",             "uninformative"),
         "outcome_phrase":      outcome.get("outcome_phrase",      ""),
