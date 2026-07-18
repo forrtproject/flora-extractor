@@ -10,6 +10,18 @@ import hashlib
 import re
 from pathlib import Path
 
+from filelock import FileLock
+
+
+def csv_lock(path, timeout: float = -1) -> FileLock:
+    """Cross-process lock guarding a shared CSV against read-modify-write vs append races.
+
+    Both the streaming extractor (append) and promote_test (full read-rewrite) target
+    data/extracted.csv concurrently; without a shared lock the rewrite clobbers rows the
+    extractor appended between its read and write. timeout=-1 blocks until acquired.
+    """
+    return FileLock(f"{path}.lock", timeout=timeout)
+
 
 def clean_doi(doi: str) -> str:
     """

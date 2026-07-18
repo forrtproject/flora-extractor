@@ -31,7 +31,7 @@ from shared.openalex_client import _search_crossref_by_title, _search_openalex_b
 from shared.pdf_parsing import parse_all as _parse_all
 from shared.doi_verify import verify_and_correct
 from shared.schema import EXTRACTED_COLS, make_pair_id
-from shared.utils import cache_key, clean_doi
+from shared.utils import cache_key, clean_doi, csv_lock
 from extract.link_original import run_for_doi
 from extract.multi_original import run_multi_original_for_doi
 from extract.code_outcome import extract_outcome, predict_outcome_keyword
@@ -814,12 +814,15 @@ def _append_row(out_path, result_row: dict, first: bool) -> None:
             row_df[col] = ""
 
     try:
-        row_df[EXTRACTED_COLS].to_csv(
-            out_path, mode="w" if first else "a",
-            index=False, encoding="utf-8-sig", header=first,
-            quoting=1,  # csv.QUOTE_ALL to quote fields with special characters
-            quotechar='"',
-        )
+        # Hold the shared CSV lock per row so promote_test's full-file rewrite cannot
+        # clobber this append (and vice versa) when both run against extracted.csv (#49).
+        with csv_lock(out_path):
+            row_df[EXTRACTED_COLS].to_csv(
+                out_path, mode="w" if first else "a",
+                index=False, encoding="utf-8-sig", header=first,
+                quoting=1,  # csv.QUOTE_ALL to quote fields with special characters
+                quotechar='"',
+            )
     except Exception as e:
         log.error("Failed to write row for DOI %s: %s",
                   result_row.get("doi_r", "unknown"), str(e))

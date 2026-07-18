@@ -16,7 +16,7 @@ import pandas as pd
 
 from shared.config import DATA_DIR, log
 from shared.schema import EXTRACTED_COLS
-from shared.utils import clean_doi
+from shared.utils import clean_doi, csv_lock
 
 _TEST_PATH = DATA_DIR / "extracted-test.csv"
 _MAIN_PATH = DATA_DIR / "extracted.csv"
@@ -29,6 +29,7 @@ def promote_rows(
     force: bool = False,
     test_path: "Path | None" = None,
     main_path: "Path | None" = None,
+    lock_timeout: float = -1,
 ) -> dict:
     """
     Merge rows from extracted-test.csv into extracted.csv.
@@ -50,67 +51,70 @@ def promote_rows(
     elif not all_rows:
         raise ValueError("Specify dois or all_rows=True")
 
-    if mp.exists():
-        main_df = pd.read_csv(mp, dtype=str, encoding="utf-8-sig").fillna("")
-    else:
-        main_df = pd.DataFrame(columns=EXTRACTED_COLS)
-
-    # Build lookup: doi → link_method for existing production rows
-    main_by_doi: dict[str, str] = {
-        clean_doi(str(r["doi_r"])): str(r.get("link_method", ""))
-        for _, r in main_df.iterrows()
-        if r.get("doi_r")
-    }
-
-    rows_to_write: list[tuple[str, str, dict]] = []  # (doi, action, row_dict)
-    skipped = 0
-
-    for _, test_row in test_df.iterrows():
-        doi = clean_doi(str(test_row.get("doi_r", "") or ""))
-        if not doi:
-            continue
-
-        existing_method = main_by_doi.get(doi)
-        if existing_method is not None:
-            if existing_method == "target_pending" or force:
-                action = "replace"
-            else:
-                log.info(
-                    "[%s] already resolved in extracted.csv — skipping (use --force to overwrite)",
-                    doi,
-                )
-                skipped += 1
-                continue
+    # Lock the whole read-modify-write so a concurrent streaming extractor (which appends
+    # to the same extracted.csv) cannot have its rows clobbered by our full-file rewrite (#49).
+    with csv_lock(mp, timeout=lock_timeout):
+        if mp.exists():
+            main_df = pd.read_csv(mp, dtype=str, encoding="utf-8-sig").fillna("")
         else:
-            action = "append"
+            main_df = pd.DataFrame(columns=EXTRACTED_COLS)
 
-        rows_to_write.append((doi, action, test_row.to_dict()))
+        # Build lookup: doi → link_method for existing production rows
+        main_by_doi: dict[str, str] = {
+            clean_doi(str(r["doi_r"])): str(r.get("link_method", ""))
+            for _, r in main_df.iterrows()
+            if r.get("doi_r")
+        }
+
+        rows_to_write: list[tuple[str, str, dict]] = []  # (doi, action, row_dict)
+        skipped = 0
+
+        for _, test_row in test_df.iterrows():
+            doi = clean_doi(str(test_row.get("doi_r", "") or ""))
+            if not doi:
+                continue
+
+            existing_method = main_by_doi.get(doi)
+            if existing_method is not None:
+                if existing_method == "target_pending" or force:
+                    action = "replace"
+                else:
+                    log.info(
+                        "[%s] already resolved in extracted.csv — skipping (use --force to overwrite)",
+                        doi,
+                    )
+                    skipped += 1
+                    continue
+            else:
+                action = "append"
+
+            rows_to_write.append((doi, action, test_row.to_dict()))
+
+            if dry_run:
+                label = "[REPLACE]" if action == "replace" else "[APPEND ]"
+                print(f"  {label} {doi}")
 
         if dry_run:
-            label = "[REPLACE]" if action == "replace" else "[APPEND ]"
-            print(f"  {label} {doi}")
+            replaced = sum(1 for _, a, _ in rows_to_write if a == "replace")
+            promoted = sum(1 for _, a, _ in rows_to_write if a == "append")
+            return {"promoted": promoted, "replaced": replaced, "skipped": skipped}
 
-    if dry_run:
-        replaced = sum(1 for _, a, _ in rows_to_write if a == "replace")
+        if rows_to_write:
+            replace_dois = {doi for doi, action, _ in rows_to_write if action == "replace"}
+            if replace_dois:
+                main_df = main_df[~main_df["doi_r"].apply(clean_doi).isin(replace_dois)]
+
+            new_rows_df = pd.DataFrame([row for _, _, row in rows_to_write])
+            for col in EXTRACTED_COLS:
+                if col not in new_rows_df.columns:
+                    new_rows_df[col] = ""
+
+            out_df = pd.concat([main_df, new_rows_df[EXTRACTED_COLS]], ignore_index=True)
+            out_df.to_csv(mp, index=False, encoding="utf-8-sig")
+
         promoted = sum(1 for _, a, _ in rows_to_write if a == "append")
+        replaced  = sum(1 for _, a, _ in rows_to_write if a == "replace")
         return {"promoted": promoted, "replaced": replaced, "skipped": skipped}
-
-    if rows_to_write:
-        replace_dois = {doi for doi, action, _ in rows_to_write if action == "replace"}
-        if replace_dois:
-            main_df = main_df[~main_df["doi_r"].apply(clean_doi).isin(replace_dois)]
-
-        new_rows_df = pd.DataFrame([row for _, _, row in rows_to_write])
-        for col in EXTRACTED_COLS:
-            if col not in new_rows_df.columns:
-                new_rows_df[col] = ""
-
-        out_df = pd.concat([main_df, new_rows_df[EXTRACTED_COLS]], ignore_index=True)
-        out_df.to_csv(mp, index=False, encoding="utf-8-sig")
-
-    promoted = sum(1 for _, a, _ in rows_to_write if a == "append")
-    replaced  = sum(1 for _, a, _ in rows_to_write if a == "replace")
-    return {"promoted": promoted, "replaced": replaced, "skipped": skipped}
 
 
 if __name__ == "__main__":
