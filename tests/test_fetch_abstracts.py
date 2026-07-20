@@ -484,3 +484,208 @@ def test_s2_persistent_429_is_transient_and_not_checkpointed(monkeypatch, tmp_pa
     done = _checkpoint()
     assert "doi:10.1/x" in done       # CrossRef definitive miss checkpointed
     assert "s2:10.1/x" not in done    # S2 transient NOT checkpointed — retries next run
+
+
+# ---------------------------------------------------------------------------
+# Streamed worklist + streamed write-back merge (issue #65 — bounded memory)
+# ---------------------------------------------------------------------------
+
+def test_run_fills_from_cache_by_key_priority(monkeypatch, tmp_path):
+    """End-to-end run() with all HTTP mocked. Each row's abstract is recovered by
+    exactly one source; the streamed merge fills the OUTPUT candidates.csv from the
+    right cache key, in oa → doi → s2 → scopus priority. A row whose only hit is a
+    cached '__none__' stays empty. Column order + utf-8-sig BOM header preserved."""
+    import pandas as pd
+    _setup_run(monkeypatch, tmp_path)
+    monkeypatch.setenv("S2_API_KEY", "KEY")
+    monkeypatch.setenv("ELSEVIER_API_KEY", "KEY")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "KEY")
+
+    # Five rows exercising each key type + a definitive miss. Column order is
+    # deliberately not the identifier-first order so we can assert it survives.
+    df = pd.DataFrame({
+        "title_r":       ["t0", "t1", "t2", "t3", "t4"],
+        "abstract_r":    ["", "", "", "", ""],
+        "doi_r":         ["10.1/oa", "10.1/cr", "10.1/s2", "10.1/sc", "10.1/none"],
+        "openalex_id_r": ["https://openalex.org/W0", "", "", "", ""],
+    })
+    df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
+
+    def fake_oa_get(url, timeout=None):
+        # Row 0 (W0) resolves via OpenAlex; all other OA lookups empty.
+        if "W0" in url:
+            return DummyResponse({"results": [
+                {"id": "https://openalex.org/W0",
+                 "abstract_inverted_index": {"OA": [0], "hit": [1]}},
+            ]})
+        return DummyResponse({"results": []})
+
+    monkeypatch.setattr(fa._OA_SESSION, "get", fake_oa_get)
+
+    def fake_get(url, timeout=None, headers=None, **kwargs):
+        if "crossref.org" in url:
+            doi = url.split("/works/", 1)[1].split("?", 1)[0]
+            if doi == "10.1/cr":
+                return DummyResponse({"message": {"abstract": "<jats:p>CR hit</jats:p>"}})
+            return DummyResponse({"message": {}})                       # CrossRef miss
+        if "semanticscholar.org" in url:
+            doi = url.rsplit("DOI:", 1)[1].split("?", 1)[0]
+            if doi == "10.1/s2":
+                return DummyResponse({"abstract": "S2 hit"})
+            return DummyResponse({"abstract": None})                    # S2 miss
+        # Elsevier Scopus
+        doi = url.split("/content/abstract/doi/", 1)[-1]
+        if doi == "10.1/sc":
+            return DummyResponse(
+                {"abstracts-retrieval-response": {"coredata": {"dc:description": "SC hit"}}}
+            )
+        return DummyResponse({}, status_code=404)                       # Scopus miss
+
+    monkeypatch.setattr(fa._SESSION, "get", fake_get)
+
+    fa.run(scopus_limit=9000)
+
+    # Header must keep the BOM; column order must be identical to the input.
+    raw = fa.CANDIDATES_PATH.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf")
+    out = pd.read_csv(fa.CANDIDATES_PATH, dtype=str, encoding="utf-8-sig").fillna("")
+    assert list(out.columns) == ["title_r", "abstract_r", "doi_r", "openalex_id_r"]
+    assert out.loc[0, "abstract_r"] == "OA hit"
+    assert out.loc[1, "abstract_r"] == "CR hit"
+    assert out.loc[2, "abstract_r"] == "S2 hit"
+    assert out.loc[3, "abstract_r"] == "SC hit"
+    assert out.loc[4, "abstract_r"] == ""      # only a '__none__' cache hit → stays empty
+
+
+def test_run_respects_cache_key_priority_over_lower_tiers(monkeypatch, tmp_path):
+    """When more than one key is cached for a row, the oa key wins over doi."""
+    import pandas as pd
+    _setup_run(monkeypatch, tmp_path)
+    monkeypatch.setenv("S2_API_KEY", "")
+    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
+
+    df = pd.DataFrame({
+        "abstract_r":    [""],
+        "doi_r":         ["10.1/x"],
+        "openalex_id_r": ["https://openalex.org/W1"],
+    })
+    df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
+
+    # Pre-seed both an oa hit and a doi hit; oa must win in the merge.
+    fa._write_abstract_cache("oa:https://openalex.org/W1", "OA wins")
+    fa._write_abstract_cache("doi:10.1/x", "DOI loses")
+    # Both identifiers already checkpointed so no phase re-fetches.
+    fa.CHECKPOINT_PATH.write_text("oa:https://openalex.org/W1\ndoi:10.1/x\n", encoding="utf-8")
+
+    monkeypatch.setattr(fa._OA_SESSION, "get",
+                        lambda url, timeout=None: DummyResponse({"results": []}))
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda *a, **k: DummyResponse({"message": {}}))
+
+    fa.run(scopus_limit=0)
+
+    out = pd.read_csv(fa.CANDIDATES_PATH, dtype=str, encoding="utf-8-sig").fillna("")
+    assert out.loc[0, "abstract_r"] == "OA wins"
+
+
+def test_candidates_csv_is_never_read_whole(monkeypatch, tmp_path):
+    """Guard against the OOM anti-pattern: every pd.read_csv of candidates.csv must
+    pass a chunksize (streamed), never an unchunked full-file read."""
+    import pandas as pd
+    _setup_run(monkeypatch, tmp_path)
+    monkeypatch.setenv("S2_API_KEY", "")
+    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
+
+    df = pd.DataFrame({
+        "abstract_r":    ["", ""],
+        "doi_r":         ["", ""],
+        "openalex_id_r": ["https://openalex.org/W1", "https://openalex.org/W2"],
+    })
+    df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
+
+    real_read_csv = pd.read_csv
+
+    def guarded_read_csv(path, *args, **kwargs):
+        if str(path) == str(fa.CANDIDATES_PATH):
+            assert "chunksize" in kwargs, "candidates.csv must be read in chunks"
+        return real_read_csv(path, *args, **kwargs)
+
+    monkeypatch.setattr(pd, "read_csv", guarded_read_csv)
+    monkeypatch.setattr(fa._OA_SESSION, "get",
+                        lambda url, timeout=None: DummyResponse({"results": []}))
+
+    fa.run(scopus_limit=0)   # must not raise the assertion
+
+
+def test_dry_run_writes_nothing_but_reports_counts(monkeypatch, tmp_path, caplog):
+    """--dry-run makes no API calls, rewrites no file, but still counts missing
+    rows by identifier type."""
+    import logging
+    import pandas as pd
+    _setup_run(monkeypatch, tmp_path)
+    monkeypatch.setenv("S2_API_KEY", "")
+    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
+
+    df = pd.DataFrame({
+        "abstract_r":    ["", "", "present"],
+        "doi_r":         ["10.1/a", "", ""],
+        "openalex_id_r": ["https://openalex.org/W1", "https://openalex.org/W2", ""],
+    })
+    df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
+    before = fa.CANDIDATES_PATH.read_bytes()
+
+    # Any HTTP call under dry-run is a bug.
+    def boom(*a, **k):
+        raise AssertionError("no API calls under --dry-run")
+    monkeypatch.setattr(fa._OA_SESSION, "get", boom)
+    monkeypatch.setattr(fa._SESSION, "get", boom)
+
+    with caplog.at_level(logging.INFO):
+        fa.run(dry_run=True)
+
+    # File untouched, no tmp left behind, no checkpoint written.
+    assert fa.CANDIDATES_PATH.read_bytes() == before
+    assert not (fa.CANDIDATES_PATH.parent / (fa.CANDIDATES_PATH.name + ".tmp")).exists()
+    assert not fa.CHECKPOINT_PATH.exists()
+    text = caplog.text
+    assert "Rows missing abstract: 2" in text
+    assert "with openalex_id_r: 2" in text
+    assert "with doi_r:         1" in text
+
+
+def test_limit_caps_processing(monkeypatch, tmp_path):
+    """--limit N caps the worklist to the first N missing rows: only those rows'
+    identifiers are fetched/checkpointed."""
+    import pandas as pd
+    _setup_run(monkeypatch, tmp_path)
+    monkeypatch.setenv("S2_API_KEY", "")
+    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
+
+    df = pd.DataFrame({
+        "abstract_r":    ["", "", "", ""],
+        "doi_r":         ["", "", "", ""],
+        "openalex_id_r": [f"https://openalex.org/W{i}" for i in range(4)],
+    })
+    df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
+
+    requested = []
+
+    def fake_oa_get(url, timeout=None):
+        requested.append(url)
+        return DummyResponse({"results": []})
+
+    monkeypatch.setattr(fa._OA_SESSION, "get", fake_oa_get)
+    fa.run(limit=2, scopus_limit=0)
+
+    done = _checkpoint()
+    assert "oa:https://openalex.org/W0" in done
+    assert "oa:https://openalex.org/W1" in done
+    assert "oa:https://openalex.org/W2" not in done   # beyond the limit
+    assert "oa:https://openalex.org/W3" not in done
+    # Only the first two ids ever reached the OpenAlex batch call.
+    joined = " ".join(requested)
+    assert "W2" not in joined and "W3" not in joined
