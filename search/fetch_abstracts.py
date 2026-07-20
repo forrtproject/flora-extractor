@@ -10,8 +10,14 @@ Strategy (waterfall by identifier type):
                         ELSEVIER_API_KEY; ~10k requests/week quota, so a run is
                         capped by --scopus-limit)
 
-Results are cached per identifier in cache/abstracts/. candidates.csv is updated
-in-place and flushed every 500 abstract-fills to survive interruption.
+Results are cached per identifier in cache/abstracts/ — the durable, crash-safe
+store (paired with the checkpoint below). Memory is bounded: run() streams
+candidates.csv in 50k-row chunks to build a compact worklist of only the
+identifier fields for rows still missing an abstract (never the whole 4.7 GB
+file), runs the fetch phases against the per-identifier cache, and writes the
+recovered abstracts back with a final streamed merge into candidates.csv.tmp
+that is atomically renamed. There is no in-memory full DataFrame and no periodic
+full-file flush.
 
 Checkpoint (cache/fetch_abstracts_done.txt): one identifier per line (oa:<id as
 stored in CSV>, doi:10.x/y, s2:10.x/y, scopus:10.x/y). On restart, already-tried
@@ -72,12 +78,23 @@ CROSSREF_RATE_SEC  = 0.15
 S2_RATE_SEC        = 0.5
 SCOPUS_RATE_SEC    = 1.0   # Elsevier Scopus: ~1 req/sec
 SCOPUS_DEFAULT_LIMIT = 9000  # keep a run under the ~10k/week Scopus quota
-FLUSH_EVERY        = 500   # flush candidates.csv every N abstracts found
 
+# Consecutive transient failures (429/5xx/network) that trip the circuit breaker
+# and stop a phase gracefully — the host is throttling us; rerun to resume the
+# un-checkpointed rows. Mirrors how the Scopus phase stops on quota exhaustion.
+TRANSIENT_BREAKER_LIMIT = 25
+
+# Shared session for CrossRef / Semantic Scholar / Scopus — deliberately carries
+# NO Authorization header. The OpenAlex premium key must never leak to these hosts:
+# CrossRef rejects an unknown Bearer token with 401, silently killing the entire
+# CrossRef abstract-recovery tier. OpenAlex requests use _OA_SESSION instead.
 _SESSION = requests.Session()
 _SESSION.headers.update({"User-Agent": f"FLoRA-Extractor/1.0 (mailto:{RESEARCHER_EMAIL})"})
+
+_OA_SESSION = requests.Session()
+_OA_SESSION.headers.update({"User-Agent": f"FLoRA-Extractor/1.0 (mailto:{RESEARCHER_EMAIL})"})
 if OPENALEX_API_KEY:
-    _SESSION.headers["Authorization"] = f"Bearer {OPENALEX_API_KEY}"
+    _OA_SESSION.headers["Authorization"] = f"Bearer {OPENALEX_API_KEY}"
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +120,29 @@ def _write_abstract_cache(ident: str, abstract: Optional[str]) -> None:
         json.dumps({"ident": ident, "abstract": abstract}),
         encoding="utf-8",
     )
+
+
+def _lookup_cached_abstract(oa_id: str, doi_r: str) -> Optional[str]:
+    """Return the recovered abstract for a row from the per-identifier cache.
+
+    Tries the same keys the phases write, in priority order — oa → doi → s2 →
+    scopus — and returns the first non-`__none__`, non-None hit. The `__none__`
+    sentinel means "tried, no abstract" and is treated as a miss. This is the
+    single source of truth for both the phase "still-missing" checks and the
+    final streamed write-back merge, so the write-back looks up exactly the keys
+    the phases wrote. Returns None if no key yields an abstract.
+    """
+    doi = clean_doi(str(doi_r or ""))
+    keys: list[str] = []
+    if oa_id:
+        keys.append(f"oa:{oa_id}")
+    if doi:
+        keys.extend([f"doi:{doi}", f"s2:{doi}", f"scopus:{doi}"])
+    for k in keys:
+        val = _read_abstract_cache(k)
+        if val is not None and val != "__none__":
+            return val
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +178,7 @@ def _reconstruct_abstract(inverted_index: Optional[dict]) -> Optional[str]:
 # Source 1: OpenAlex batch
 # ---------------------------------------------------------------------------
 
-def _fetch_openalex_batch(oa_ids: list[str]) -> dict[str, Optional[str]]:
+def _fetch_openalex_batch(oa_ids: list[str]) -> Optional[dict[str, Optional[str]]]:
     """Fetch abstracts for up to OA_BATCH_SIZE OpenAlex IDs in one call.
 
     *oa_ids* may be full URLs ('https://openalex.org/W123') or bare ids ('W123');
@@ -146,6 +186,11 @@ def _fetch_openalex_batch(oa_ids: list[str]) -> dict[str, Optional[str]]:
     exact strings passed in, so the caller can join results back to its CSV values
     and cache keys. Both the query filter and the response are matched on the bare
     'W…' id — mismatching the two forms is what previously made every row a miss.
+
+    Returns None on a whole-batch HTTP failure (exception / non-200) so the caller
+    can decline to checkpoint any id in the batch — one transient batch failure must
+    not poison up to OA_BATCH_SIZE rows as permanent misses. A successful batch that
+    simply lacks a given id returns that id mapped to None (a definitive miss).
     """
     bare_to_input: dict[str, str] = {}
     for oid in oa_ids:
@@ -160,7 +205,7 @@ def _fetch_openalex_batch(oa_ids: list[str]) -> dict[str, Optional[str]]:
     )
     result: dict[str, Optional[str]] = {oid: None for oid in oa_ids}
     try:
-        resp = _SESSION.get(url, timeout=30)
+        resp = _OA_SESSION.get(url, timeout=30)
         resp.raise_for_status()
         for work in resp.json().get("results", []):
             wid = work.get("id", "").replace("https://openalex.org/", "").strip()
@@ -169,7 +214,8 @@ def _fetch_openalex_batch(oa_ids: list[str]) -> dict[str, Optional[str]]:
             if input_key is not None:
                 result[input_key] = abstract
     except Exception as exc:
-        log.warning("OpenAlex batch error: %s", exc)
+        log.warning("OpenAlex batch error (batch not checkpointed): %s", exc)
+        return None
     return result
 
 
@@ -180,37 +226,85 @@ def _fetch_openalex_batch(oa_ids: list[str]) -> dict[str, Optional[str]]:
 _JATS_RE = re.compile(r"<[^>]+>")
 
 
-def _fetch_crossref_abstract(doi: str) -> Optional[str]:
-    url = f"https://api.crossref.org/works/{doi}"
+def _retry_after_seconds(resp) -> float:
+    """Parse a Retry-After header (integer seconds) into a float; 0 if absent/unparseable."""
+    val = resp.headers.get("Retry-After", "").strip()
     try:
-        resp = _SESSION.get(url, timeout=20)
+        return float(val)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _fetch_crossref_abstract(doi: str) -> tuple[Optional[str], str]:
+    """Fetch an abstract from CrossRef by DOI.
+
+    Returns (abstract, status) where status is:
+      "ok"        — an abstract was found
+      "empty"     — HTTP 200/404 but no abstract (a DEFINITIVE miss to checkpoint)
+      "transient" — 429/5xx/network failure that persisted through all retries
+                    (must NOT be checkpointed, so a later run retries the DOI)
+
+    The polite-pool ?mailto= param earns better rate limits. Transient failures
+    retry 3× with 1s/2s/4s backoff, honouring a 429 Retry-After header when present.
+    """
+    url = f"https://api.crossref.org/works/{doi}?mailto={RESEARCHER_EMAIL}"
+    for attempt in range(3):
+        try:
+            resp = _SESSION.get(url, timeout=20)
+        except Exception as exc:
+            log.warning("CrossRef network error for %s (attempt %d/3): %s", doi, attempt + 1, exc)
+            time.sleep(2 ** attempt)
+            continue
         if resp.status_code == 404:
-            return None
-        resp.raise_for_status()
+            return None, "empty"
+        if resp.status_code == 429 or resp.status_code >= 500:
+            retry_after = _retry_after_seconds(resp)
+            log.warning("CrossRef %s for %s (attempt %d/3) — backing off.",
+                        resp.status_code, doi, attempt + 1)
+            time.sleep(max(retry_after, 2 ** attempt))
+            continue
+        if resp.status_code >= 400:
+            return None, "empty"
         raw = resp.json().get("message", {}).get("abstract", "")
-        if raw:
-            return _JATS_RE.sub("", raw).strip() or None
-    except Exception as exc:
-        log.warning("CrossRef error for %s: %s", doi, exc)
-    return None
+        cleaned = _JATS_RE.sub("", raw).strip() if raw else ""
+        return (cleaned, "ok") if cleaned else (None, "empty")
+    return None, "transient"
 
 
 # ---------------------------------------------------------------------------
 # Source 3: Semantic Scholar by DOI
 # ---------------------------------------------------------------------------
 
-def _fetch_s2_abstract(doi: str, s2_key: str) -> Optional[str]:
+def _fetch_s2_abstract(doi: str, s2_key: str) -> tuple[Optional[str], str]:
+    """Fetch an abstract from Semantic Scholar by DOI.
+
+    Returns (abstract, status) with the same contract as _fetch_crossref_abstract:
+    "ok" / "empty" (definitive miss) / "transient" (429/5xx/network, retried 3×).
+    A 429 was previously treated as a clean miss and checkpointed — that permanently
+    suppressed the row. It is now transient so a later run retries it.
+    """
     url = f"https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}?fields=abstract"
     headers = {"x-api-key": s2_key} if s2_key else {}
-    try:
-        resp = _SESSION.get(url, timeout=20, headers=headers)
-        if resp.status_code in (404, 429):
-            return None
-        resp.raise_for_status()
-        return resp.json().get("abstract") or None
-    except Exception as exc:
-        log.warning("S2 error for %s: %s", doi, exc)
-    return None
+    for attempt in range(3):
+        try:
+            resp = _SESSION.get(url, timeout=20, headers=headers)
+        except Exception as exc:
+            log.warning("S2 network error for %s (attempt %d/3): %s", doi, attempt + 1, exc)
+            time.sleep(2 ** attempt)
+            continue
+        if resp.status_code == 404:
+            return None, "empty"
+        if resp.status_code == 429 or resp.status_code >= 500:
+            retry_after = _retry_after_seconds(resp)
+            log.warning("S2 %s for %s (attempt %d/3) — backing off.",
+                        resp.status_code, doi, attempt + 1)
+            time.sleep(max(retry_after, 2 ** attempt))
+            continue
+        if resp.status_code >= 400:
+            return None, "empty"
+        abstract = resp.json().get("abstract") or None
+        return (abstract, "ok") if abstract else (None, "empty")
+    return None, "transient"
 
 
 # ---------------------------------------------------------------------------
@@ -330,12 +424,15 @@ def enrich_abstracts(df: "pd.DataFrame") -> "pd.DataFrame":
         if not doi:
             continue
 
-        # CrossRef
+        # CrossRef — only cache definitive results; a transient failure is left
+        # uncached so a later run retries the DOI.
         cached = _read_abstract_cache(f"doi:{doi}")
         if cached is None:
             time.sleep(CROSSREF_RATE_SEC)
-            cached = _fetch_crossref_abstract(doi)
-            _write_abstract_cache(f"doi:{doi}", cached if cached else "__none__")
+            cr_abstract, cr_status = _fetch_crossref_abstract(doi)
+            if cr_status != "transient":
+                _write_abstract_cache(f"doi:{doi}", cr_abstract if cr_abstract else "__none__")
+            cached = cr_abstract if cr_abstract else "__none__"
         abstract = cached if cached and cached != "__none__" else None
 
         # S2 fallback
@@ -343,8 +440,10 @@ def enrich_abstracts(df: "pd.DataFrame") -> "pd.DataFrame":
             s2_cached = _read_abstract_cache(f"s2:{doi}")
             if s2_cached is None:
                 time.sleep(S2_RATE_SEC)
-                s2_cached = _fetch_s2_abstract(doi, s2_key)
-                _write_abstract_cache(f"s2:{doi}", s2_cached if s2_cached else "__none__")
+                s2_abstract, s2_status = _fetch_s2_abstract(doi, s2_key)
+                if s2_status != "transient":
+                    _write_abstract_cache(f"s2:{doi}", s2_abstract if s2_abstract else "__none__")
+                s2_cached = s2_abstract if s2_abstract else "__none__"
             abstract = s2_cached if s2_cached and s2_cached != "__none__" else None
 
         if abstract:
@@ -355,10 +454,104 @@ def enrich_abstracts(df: "pd.DataFrame") -> "pd.DataFrame":
     return df
 
 
+def _build_worklist(dry_run: bool, limit: Optional[int]):
+    """Stream candidates to a compact worklist of rows still missing an abstract.
+
+    Returns (worklist, total_missing, has_oa, has_doi). The worklist is a list of
+    {"oa": stripped openalex_id_r, "doi_r": raw doi_r} dicts holding ONLY the two
+    identifier fields the phases need — never the full 10-column rows — so ~536k
+    missing rows stay well under a few hundred MB instead of the 4.7 GB whole-file
+    load. Under dry_run the worklist is left empty (counts only). The Parquet mirror
+    (already column-pruned and smaller) is a fast path; the CSV path MUST stream in
+    50k-row chunks to bound memory.
+    """
+    import pandas as pd
+
+    needed = ["abstract_r", "doi_r", "openalex_id_r"]
+    pq_path = _parquet_path("candidates")
+    if pq_path.exists():
+        import pyarrow.parquet as pq
+        log.info("Building worklist from Parquet: %s", pq_path)
+        chunks = [pq.read_table(pq_path, columns=needed).to_pandas()]
+    else:
+        log.info("Streaming candidates.csv (50k-row chunks) to build worklist...")
+        chunks = pd.read_csv(
+            CANDIDATES_PATH, dtype=str, encoding="utf-8-sig",
+            low_memory=False, usecols=needed, chunksize=50_000,
+        )
+
+    worklist: list[dict[str, str]] = []
+    total_missing = has_oa = has_doi = 0
+    limit_reached = False
+    for chunk in chunks:
+        chunk = chunk.fillna("")
+        m = chunk[chunk["abstract_r"].str.strip() == ""]
+        if m.empty:
+            continue
+        oa_col  = m["openalex_id_r"].str.strip()
+        doi_col = m["doi_r"].str.strip()
+        total_missing += len(m)
+        has_oa  += int((oa_col != "").sum())
+        has_doi += int((doi_col != "").sum())
+        if dry_run:
+            continue
+        for oa, doi_r in zip(oa_col.tolist(), m["doi_r"].tolist()):
+            worklist.append({"oa": oa, "doi_r": doi_r})
+            if limit and len(worklist) >= limit:
+                limit_reached = True
+                break
+        if limit_reached:
+            break
+
+    return worklist, total_missing, has_oa, has_doi
+
+
+def _merge_abstracts_into_csv():
+    """Stream candidates.csv → candidates.csv.tmp, filling empty abstract_r cells
+    from the per-identifier cache, then atomically replace the original.
+
+    Reads in 50k-row chunks so the full 4.7 GB file is never held whole. For each
+    row whose abstract_r is empty, the abstract is looked up in the cache
+    (oa → doi → s2 → scopus priority). Column order and the original header are
+    preserved; the header is written utf-8-sig (BOM) on the first chunk and each
+    later chunk is appended utf-8 to avoid a mid-file BOM. Returns (filled,
+    still_missing).
+    """
+    import os
+    import pandas as pd
+
+    tmp_path = CANDIDATES_PATH.parent / (CANDIDATES_PATH.name + ".tmp")
+    filled = still_missing = 0
+    first = True
+    for chunk in pd.read_csv(
+        CANDIDATES_PATH, dtype=str, encoding="utf-8-sig",
+        low_memory=False, chunksize=50_000,
+    ):
+        chunk = chunk.fillna("")
+        empty_mask = chunk["abstract_r"].str.strip() == ""
+        for idx in chunk.index[empty_mask.values]:
+            abstract = _lookup_cached_abstract(
+                chunk.at[idx, "openalex_id_r"].strip(), chunk.at[idx, "doi_r"]
+            )
+            if abstract is not None:
+                chunk.at[idx, "abstract_r"] = abstract
+                filled += 1
+            else:
+                still_missing += 1
+        chunk.to_csv(
+            tmp_path, index=False,
+            encoding="utf-8-sig" if first else "utf-8",
+            header=first, mode="w" if first else "a",
+        )
+        first = False
+
+    os.replace(tmp_path, CANDIDATES_PATH)
+    return filled, still_missing
+
+
 def run(dry_run: bool = False, limit: Optional[int] = None,
         scopus_limit: int = SCOPUS_DEFAULT_LIMIT) -> None:
     import os
-    import pandas as pd
 
     if not CANDIDATES_PATH.exists():
         sys.exit(f"ERROR: {CANDIDATES_PATH} not found.")
@@ -367,29 +560,20 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
     elsevier_key = os.getenv("ELSEVIER_API_KEY", "") or ELSEVIER_API_KEY
 
     # ------------------------------------------------------------------
-    # Load candidates — Parquet if available (faster + less RAM), else CSV
+    # Build the worklist by streaming — never load the whole file (issue #65)
     # ------------------------------------------------------------------
-    pq_path = _parquet_path("candidates")
-    if pq_path.exists():
-        import pyarrow.parquet as pq
-        log.info("Loading from Parquet: %s", pq_path)
-        df = pq.read_table(pq_path).to_pandas().fillna("")
-    else:
-        log.info("Loading candidates.csv (no Parquet found)...")
-        df = pd.read_csv(CANDIDATES_PATH, dtype=str, encoding="utf-8-sig", low_memory=False).fillna("")
-    log.info("Loaded %d total rows.", len(df))
-
-    missing_mask = df["abstract_r"].str.strip() == ""
-    missing_df   = df[missing_mask].copy()
-    log.info("Rows missing abstract: %d", len(missing_df))
+    worklist, total_missing, has_oa, has_doi = _build_worklist(dry_run, limit)
+    log.info("Rows missing abstract: %d", total_missing)
 
     if dry_run:
-        has_oa  = (missing_df["openalex_id_r"].str.strip() != "").sum()
-        has_doi = (missing_df["doi_r"].str.strip() != "").sum()
         log.info("  with openalex_id_r: %d  (OpenAlex batch)", has_oa)
         log.info("  with doi_r:         %d  (CrossRef / S2 fallback)", has_doi)
-        log.info("  neither:            %d  (skipped)", len(missing_df) - has_oa)
+        log.info("  neither:            %d  (skipped)", total_missing - has_oa)
         log.info("DRY RUN — no API calls. Re-run without --dry-run to fetch.")
+        return
+
+    if total_missing == 0:
+        log.info("No rows missing an abstract — nothing to do.")
         return
 
     # ------------------------------------------------------------------
@@ -398,30 +582,22 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
     done = _load_checkpoint()
     if done:
         log.info("Checkpoint: %d identifiers already tried — skipping.", len(done))
-
-    # ------------------------------------------------------------------
-    # Apply limit after checkpoint exclusion
-    # ------------------------------------------------------------------
     if limit:
-        missing_df = missing_df.head(limit)
-        log.info("--limit %d: processing first %d missing rows.", limit, len(missing_df))
+        log.info("--limit %d: processing first %d missing rows.", limit, len(worklist))
+
+    # Recovered abstracts land in the per-identifier cache (the durable store);
+    # the streamed write-back merge below reads them back into candidates.csv.
+    # No in-memory full DataFrame, no periodic full-file flushes.
+    n_found = 0
 
     # ------------------------------------------------------------------
     # Phase 1: OpenAlex batch (rows with openalex_id_r)
     # ------------------------------------------------------------------
-    oa_rows = missing_df[missing_df["openalex_id_r"].str.strip() != ""].copy()
-    oa_rows = oa_rows[~oa_rows["openalex_id_r"].apply(lambda x: f"oa:{x}" in done)]
-    log.info("Phase 1 — OpenAlex batch: %d rows to try.", len(oa_rows))
-
-    n_found = 0
-    n_flushed = 0
-
-    oa_ids   = oa_rows["openalex_id_r"].str.strip().tolist()
-    oa_idx   = oa_rows.index.tolist()
+    oa_ids = [r["oa"] for r in worklist if r["oa"] and f"oa:{r['oa']}" not in done]
+    log.info("Phase 1 — OpenAlex batch: %d rows to try.", len(oa_ids))
 
     for batch_start in range(0, len(oa_ids), OA_BATCH_SIZE):
-        batch_ids  = oa_ids[batch_start : batch_start + OA_BATCH_SIZE]
-        batch_idxs = oa_idx[batch_start : batch_start + OA_BATCH_SIZE]
+        batch_ids = oa_ids[batch_start : batch_start + OA_BATCH_SIZE]
 
         # Check cache first — skip call if all cached
         results: dict[str, Optional[str]] = {}
@@ -433,24 +609,31 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
             else:
                 uncached_ids.append(oid)
 
+        # A whole-batch HTTP failure returns None: no id in the batch is a
+        # definitive miss, so leave the uncached ids un-cached and un-checkpointed
+        # for a later run to retry. A successful batch missing a specific id IS a
+        # definitive miss for that id (cached + checkpointed below).
+        batch_transient = False
         if uncached_ids:
             time.sleep(OA_RATE_SEC)
             fetched = _fetch_openalex_batch(uncached_ids)
-            for oid, abstract in fetched.items():
-                _write_abstract_cache(f"oa:{oid}", abstract if abstract else "__none__")
-                results[oid] = abstract
+            if fetched is None:
+                batch_transient = True
+                log.warning("Phase 1 — OpenAlex batch failed; %d ids left for retry.",
+                            len(uncached_ids))
+            else:
+                for oid, abstract in fetched.items():
+                    _write_abstract_cache(f"oa:{oid}", abstract if abstract else "__none__")
+                    results[oid] = abstract
 
-        # Write abstracts back to df
-        for oid, idx in zip(batch_ids, batch_idxs):
-            abstract = results.get(oid)
+        # Checkpoint each resolved id. On a transient batch, skip the ids that were
+        # not resolved (no cache, no checkpoint) so they retry next run.
+        for oid in batch_ids:
+            if batch_transient and oid in uncached_ids:
+                continue
             _append_checkpoint(f"oa:{oid}")
-            if abstract:
-                df.at[idx, "abstract_r"] = abstract
+            if results.get(oid):
                 n_found += 1
-                if n_found - n_flushed >= FLUSH_EVERY:
-                    df.to_csv(CANDIDATES_PATH, index=False, encoding="utf-8-sig")
-                    log.info("  Flushed candidates.csv (Phase 1, %d abstracts found so far)", n_found)
-                    n_flushed = n_found
 
         done_so_far = batch_start + len(batch_ids)
         if done_so_far % 5000 == 0:
@@ -461,15 +644,18 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
     # ------------------------------------------------------------------
     # Phase 2: CrossRef by DOI (rows still missing after Phase 1)
     # ------------------------------------------------------------------
-    # Refresh missing mask after Phase 1 updates
-    still_missing = df["abstract_r"].str.strip() == ""
-    crossref_rows = df[still_missing & (df["doi_r"].str.strip() != "")].copy()
-    crossref_rows = crossref_rows[~crossref_rows["doi_r"].apply(lambda x: f"doi:{clean_doi(x)}" in done)]
-    log.info("Phase 2 — CrossRef: %d rows to try.", len(crossref_rows))
+    crossref_targets = [
+        r["doi_r"] for r in worklist
+        if clean_doi(str(r["doi_r"] or ""))
+        and f"doi:{clean_doi(r['doi_r'])}" not in done
+        and _lookup_cached_abstract(r["oa"], r["doi_r"]) is None
+    ]
+    log.info("Phase 2 — CrossRef: %d rows to try.", len(crossref_targets))
 
     phase2_found = 0
-    for i, (idx, row) in enumerate(crossref_rows.iterrows(), 1):
-        doi = clean_doi(str(row.get("doi_r", "") or ""))
+    consecutive_transient = 0
+    for i, doi_r in enumerate(crossref_targets, 1):
+        doi = clean_doi(str(doi_r or ""))
         if not doi:
             continue
 
@@ -478,22 +664,27 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
             abstract = cached if cached != "__none__" else None
         else:
             time.sleep(CROSSREF_RATE_SEC)
-            abstract = _fetch_crossref_abstract(doi)
+            abstract, status = _fetch_crossref_abstract(doi)
+            if status == "transient":
+                # Do NOT cache or checkpoint — a later run must retry this DOI.
+                consecutive_transient += 1
+                log.warning("CrossRef transient failure for %s (not checkpointed).", doi)
+                if consecutive_transient >= TRANSIENT_BREAKER_LIMIT:
+                    log.warning("CrossRef throttling — stopping phase; rerun to resume. "
+                                "(%d consecutive transient failures)", consecutive_transient)
+                    break
+                continue
             _write_abstract_cache(f"doi:{doi}", abstract if abstract else "__none__")
 
+        consecutive_transient = 0
         _append_checkpoint(f"doi:{doi}")
 
         if abstract:
-            df.at[idx, "abstract_r"] = abstract
             phase2_found += 1
             n_found += 1
-            if n_found - n_flushed >= FLUSH_EVERY:
-                df.to_csv(CANDIDATES_PATH, index=False, encoding="utf-8-sig")
-                log.info("  Flushed candidates.csv (Phase 2, %d total found)", n_found)
-                n_flushed = n_found
 
         if i % 2000 == 0:
-            log.info("  CrossRef progress: %d / %d  (found: %d)", i, len(crossref_rows), phase2_found)
+            log.info("  CrossRef progress: %d / %d  (found: %d)", i, len(crossref_targets), phase2_found)
 
     log.info("Phase 2 complete. Abstracts found: %d", phase2_found)
 
@@ -503,14 +694,18 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
     if not s2_key:
         log.info("Phase 3 — S2: skipped (S2_API_KEY not set in .env).")
     else:
-        still_missing2 = df["abstract_r"].str.strip() == ""
-        s2_rows = df[still_missing2 & (df["doi_r"].str.strip() != "")].copy()
-        s2_rows = s2_rows[~s2_rows["doi_r"].apply(lambda x: f"s2:{clean_doi(x)}" in done)]
-        log.info("Phase 3 — Semantic Scholar: %d rows to try.", len(s2_rows))
+        s2_targets = [
+            r["doi_r"] for r in worklist
+            if clean_doi(str(r["doi_r"] or ""))
+            and f"s2:{clean_doi(r['doi_r'])}" not in done
+            and _lookup_cached_abstract(r["oa"], r["doi_r"]) is None
+        ]
+        log.info("Phase 3 — Semantic Scholar: %d rows to try.", len(s2_targets))
 
         phase3_found = 0
-        for i, (idx, row) in enumerate(s2_rows.iterrows(), 1):
-            doi = clean_doi(str(row.get("doi_r", "") or ""))
+        consecutive_transient = 0
+        for i, doi_r in enumerate(s2_targets, 1):
+            doi = clean_doi(str(doi_r or ""))
             if not doi:
                 continue
 
@@ -519,22 +714,28 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
                 abstract = cached if cached != "__none__" else None
             else:
                 time.sleep(S2_RATE_SEC)
-                abstract = _fetch_s2_abstract(doi, s2_key)
+                abstract, status = _fetch_s2_abstract(doi, s2_key)
+                if status == "transient":
+                    # Do NOT cache or checkpoint — a later run must retry this DOI.
+                    consecutive_transient += 1
+                    log.warning("S2 transient failure for %s (not checkpointed).", doi)
+                    if consecutive_transient >= TRANSIENT_BREAKER_LIMIT:
+                        log.warning("Semantic Scholar throttling — stopping phase; rerun "
+                                    "to resume. (%d consecutive transient failures)",
+                                    consecutive_transient)
+                        break
+                    continue
                 _write_abstract_cache(f"s2:{doi}", abstract if abstract else "__none__")
 
+            consecutive_transient = 0
             _append_checkpoint(f"s2:{doi}")
 
             if abstract:
-                df.at[idx, "abstract_r"] = abstract
                 phase3_found += 1
                 n_found += 1
-                if n_found - n_flushed >= FLUSH_EVERY:
-                    df.to_csv(CANDIDATES_PATH, index=False, encoding="utf-8-sig")
-                    log.info("  Flushed candidates.csv (Phase 3, %d total found)", n_found)
-                    n_flushed = n_found
 
             if i % 2000 == 0:
-                log.info("  S2 progress: %d / %d  (found: %d)", i, len(s2_rows), phase3_found)
+                log.info("  S2 progress: %d / %d  (found: %d)", i, len(s2_targets), phase3_found)
 
         log.info("Phase 3 complete. Abstracts found: %d", phase3_found)
 
@@ -544,17 +745,20 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
     if not elsevier_key:
         log.info("Phase 4 — Scopus: skipped (ELSEVIER_API_KEY not set in .env).")
     else:
-        still_missing3 = df["abstract_r"].str.strip() == ""
-        scopus_rows = df[still_missing3 & (df["doi_r"].str.strip() != "")].copy()
-        scopus_rows = scopus_rows[~scopus_rows["doi_r"].apply(lambda x: f"scopus:{clean_doi(x)}" in done)]
+        scopus_targets = [
+            r["doi_r"] for r in worklist
+            if clean_doi(str(r["doi_r"] or ""))
+            and f"scopus:{clean_doi(r['doi_r'])}" not in done
+            and _lookup_cached_abstract(r["oa"], r["doi_r"]) is None
+        ]
         if scopus_limit and scopus_limit > 0:
-            scopus_rows = scopus_rows.head(scopus_limit)
+            scopus_targets = scopus_targets[:scopus_limit]
         log.info("Phase 4 — Scopus: %d rows to try (weekly-quota cap: %s).",
-                 len(scopus_rows), scopus_limit)
+                 len(scopus_targets), scopus_limit)
 
         phase4_found = 0
-        for i, (idx, row) in enumerate(scopus_rows.iterrows(), 1):
-            doi = clean_doi(str(row.get("doi_r", "") or ""))
+        for i, doi_r in enumerate(scopus_targets, 1):
+            doi = clean_doi(str(doi_r or ""))
             if not doi:
                 continue
 
@@ -573,28 +777,25 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
             _append_checkpoint(f"scopus:{doi}")
 
             if abstract:
-                df.at[idx, "abstract_r"] = abstract
                 phase4_found += 1
                 n_found += 1
-                if n_found - n_flushed >= FLUSH_EVERY:
-                    df.to_csv(CANDIDATES_PATH, index=False, encoding="utf-8-sig")
-                    log.info("  Flushed candidates.csv (Phase 4, %d total found)", n_found)
-                    n_flushed = n_found
 
             if i % 500 == 0:
-                log.info("  Scopus progress: %d / %d  (found: %d)", i, len(scopus_rows), phase4_found)
+                log.info("  Scopus progress: %d / %d  (found: %d)", i, len(scopus_targets), phase4_found)
 
         log.info("Phase 4 complete. Abstracts found: %d", phase4_found)
 
-    # Final flush to CSV, then rebuild Parquet mirror
-    df.to_csv(CANDIDATES_PATH, index=False, encoding="utf-8-sig")
+    # ------------------------------------------------------------------
+    # Final write-back: streamed merge cache → candidates.csv, then Parquet mirror
+    # ------------------------------------------------------------------
+    filled, still_missing_final = _merge_abstracts_into_csv()
     _dc_refresh("candidates")
-    still_missing_final = (df["abstract_r"].str.strip() == "").sum()
 
     log.info("=" * 60)
     log.info("FETCH ABSTRACTS COMPLETE")
     log.info("=" * 60)
     log.info("Abstracts recovered:  %d", n_found)
+    log.info("Rows filled from cache: %d", filled)
     log.info("Still missing:        %d", still_missing_final)
     log.info("=" * 60)
 
