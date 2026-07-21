@@ -44,7 +44,7 @@ def test_openalex_batch_matches_full_url_ids(monkeypatch):
 
     captured = {}
 
-    def fake_get(url, timeout):
+    def fake_get(url, timeout, **kwargs):
         captured["url"] = url
         return DummyResponse(payload)
 
