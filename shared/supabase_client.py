@@ -73,8 +73,13 @@ def get_validation_stats() -> dict:
 
         queue = _get("validation_queue", {"select": "validator_id,is_validated"})
         total_judgements = sum(1 for r in queue if r.get("is_validated"))
+        # validator_id is populated by the external validation app, not by this repo's
+        # writer (csv_to_db.py leaves it unset), so this may read 0 until that app runs.
         active_validators = len({r["validator_id"] for r in queue if r.get("validator_id")})
-        agreement_rate = (total_judgements / len(queue)) if queue else 0.0
+        # completion_rate = filled validator slots / total slots. This is a progress
+        # metric, NOT inter-rater agreement (which needs per-record vote comparison the
+        # external validation repo owns). Do not relabel this as "agreement".
+        completion_rate = (total_judgements / len(queue)) if queue else 0.0
 
         return {
             "total": total,
@@ -84,7 +89,7 @@ def get_validation_stats() -> dict:
             "in_progress": status_counts.get("validation_inprogress", 0),
             "total_judgements": total_judgements,
             "active_validators": active_validators,
-            "agreement_rate": round(agreement_rate, 4),
+            "completion_rate": round(completion_rate, 4),
         }
 
     try:

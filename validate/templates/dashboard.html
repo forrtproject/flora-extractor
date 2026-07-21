@@ -1257,9 +1257,9 @@ SUPABASE_SERVICE_KEY=eyJhbGc...</pre>
               <div class="kpi-sub">active</div>
             </div>
             <div class="kpi-card">
-              <div class="kpi-num" id="sv-agreement">—</div>
-              <div class="kpi-label">Agreement</div>
-              <div class="kpi-sub">validated / queue</div>
+              <div class="kpi-num" id="sv-completion">—</div>
+              <div class="kpi-label">Completion</div>
+              <div class="kpi-sub">judgements / queue slots</div>
             </div>
           </div>
 
@@ -1950,8 +1950,8 @@ async function loadValidation() {
     $('sv-needreview-pct').textContent  = pct(stats.need_review, stats.total);
     $('sv-judgements').textContent  = fmt(stats.total_judgements);
     $('sv-validators').textContent  = fmt(stats.active_validators);
-    $('sv-agreement').textContent   = stats.agreement_rate!=null
-      ? (stats.agreement_rate*100).toFixed(1)+'%' : '—';
+    $('sv-completion').textContent  = stats.completion_rate!=null
+      ? (stats.completion_rate*100).toFixed(1)+'%' : '—';
     const vp=stats.total>0?(stats.validated/stats.total)*100:0;
     $('sv-progress-fill').style.width=vp+'%';
     $('sv-progress-label').textContent=vp.toFixed(1)+'% validated';

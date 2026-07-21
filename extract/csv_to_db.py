@@ -124,9 +124,28 @@ def _build_queue_rows(record_id: str) -> list[dict]:
 
 
 def _load_existing_pair_ids(client: Client) -> set[str]:
-    """Fetch pair_ids already in record_metadata so we can skip them."""
-    response = client.table("record_metadata").select("pair_id").execute()
-    return {r["pair_id"] for r in (response.data or []) if r.get("pair_id")}
+    """Fetch pair_ids already in record_metadata so we can skip them.
+
+    supabase-py caps a single select at 1000 rows, so we page through with
+    .range() until a short page comes back. Without this, re-imports against a
+    DB with >1000 records would miss existing pair_ids and re-insert duplicates.
+    """
+    page_size = 1000
+    pair_ids: set[str] = set()
+    start = 0
+    while True:
+        response = (
+            client.table("record_metadata")
+            .select("pair_id")
+            .range(start, start + page_size - 1)
+            .execute()
+        )
+        batch = response.data or []
+        pair_ids.update(r["pair_id"] for r in batch if r.get("pair_id"))
+        if len(batch) < page_size:
+            break
+        start += page_size
+    return pair_ids
 
 
 def run_import(csv_path: Path, dry_run: bool = False,
@@ -161,16 +180,22 @@ def run_import(csv_path: Path, dry_run: bool = False,
             skipped_audit = int(audit_mask.sum())
             resolved = resolved[~audit_mask].copy()
 
-    skipped_fp = (df["filter_status"] == "false_positive").sum()
-    skipped_pending = (~resolved_mask & ~(df["filter_status"] == "false_positive")).sum()
+    # Bucket every skipped row into exactly one category via disjoint masks, so counts
+    # always sum to len(df) and cannot go negative. A false_positive row that also has
+    # link_method == 'no_original_found' belongs to false_positive only.
+    fp_mask = ~resolved_mask & (df["filter_status"] == "false_positive")
+    no_orig_mask = ~resolved_mask & ~fp_mask & (df["link_method"] == "no_original_found")
+    other_pending_mask = ~resolved_mask & ~fp_mask & ~no_orig_mask
 
-    skipped_no_orig = (df["link_method"] == "no_original_found").sum()
+    skipped_fp = fp_mask.sum()
+    skipped_no_orig = no_orig_mask.sum()
+    skipped_other = other_pending_mask.sum()
 
     print(f"  Total rows:         {len(df)}")
     print(f"  Resolved (import):  {len(resolved)}")
     print(f"  false_positive:     {skipped_fp}  (skipped — not replications)")
     print(f"  no_original_found:  {skipped_no_orig}  (skipped — LLM found no identifiable original)")
-    print(f"  target_pending / api_error / other: {skipped_pending - skipped_no_orig}  (skipped — not yet resolved)")
+    print(f"  target_pending / api_error / other: {skipped_other}  (skipped — not yet resolved)")
     if audit_report is not None:
         print(f"  audit BLOCKER:      {skipped_audit}  (skipped — flagged by pre-validation audit)")
 
@@ -203,10 +228,14 @@ def run_import(csv_path: Path, dry_run: bool = False,
         metadata_row    = _build_metadata_row(record_id, row)
         queue_rows      = _build_queue_rows(record_id)
 
-        # Insert in dependency order: unvalidated first (FK parent), then children
+        # These three inserts are not atomic. record_metadata is the dedup anchor
+        # (_load_existing_pair_ids skips any pair_id already there), so it must be
+        # written LAST: if a run dies partway, an orphaned unvalidated/queue row is
+        # harmless and gets completed on re-run, whereas a record_metadata row without
+        # its siblings would make dedup skip the pair forever, leaving it incomplete.
         client.table("unvalidated").insert(unvalidated_row).execute()
-        client.table("record_metadata").insert(metadata_row).execute()
         client.table("validation_queue").insert(queue_rows).execute()
+        client.table("record_metadata").insert(metadata_row).execute()
 
         inserted += 1
         if inserted % 10 == 0:
