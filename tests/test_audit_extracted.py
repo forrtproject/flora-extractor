@@ -137,9 +137,18 @@ def test_original_postdates_nonnumeric_skipped():
 
 
 def test_outcome_not_canonical_fires():
-    row = _clean_row(outcome="cannot_be_determined")
+    # NB: use a value that is genuinely absent from schema.OUTCOME_VALUES.
+    # "cannot_be_determined" was non-canonical when this check was written but is
+    # now a valid outcome, so it must not be used as the negative example here.
+    row = _clean_row(outcome="totally_bogus_outcome")
     assert "outcome_not_canonical" in _checks_fired([row])
     assert _severity_of([row], "outcome_not_canonical") == WARNING
+
+
+def test_cannot_be_determined_is_canonical():
+    """Regression: cannot_be_determined is a valid outcome and must not be flagged."""
+    row = _clean_row(outcome="cannot_be_determined")
+    assert "outcome_not_canonical" not in _checks_fired([row])
 
 
 def test_outcome_canonical_ok():
