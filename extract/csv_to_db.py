@@ -129,7 +129,8 @@ def _load_existing_pair_ids(client: Client) -> set[str]:
     return {r["pair_id"] for r in (response.data or []) if r.get("pair_id")}
 
 
-def run_import(csv_path: Path, dry_run: bool = False) -> None:
+def run_import(csv_path: Path, dry_run: bool = False,
+               audit_report: "Path | None" = None) -> None:
     supabase_url = os.environ.get("SUPABASE_URL", "")
     supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
     if not supabase_url or not supabase_key:
@@ -146,6 +147,20 @@ def run_import(csv_path: Path, dry_run: bool = False) -> None:
         df["link_method"].isin(_RESOLVED_METHODS)
     )
     resolved = df[resolved_mask].copy()
+
+    # Optional pre-validation audit gate: drop rows whose pair_id carries a
+    # BLOCKER finding in the report. Default behaviour (no --audit-report) is
+    # unchanged.
+    skipped_audit = 0
+    if audit_report is not None:
+        from extract.audit_extracted import blocked_pair_ids
+        blocked = blocked_pair_ids(audit_report)
+        if blocked:
+            audit_mask = resolved["pair_id"].map(
+                lambda v: str(v or "").strip() in blocked)
+            skipped_audit = int(audit_mask.sum())
+            resolved = resolved[~audit_mask].copy()
+
     skipped_fp = (df["filter_status"] == "false_positive").sum()
     skipped_pending = (~resolved_mask & ~(df["filter_status"] == "false_positive")).sum()
 
@@ -156,6 +171,8 @@ def run_import(csv_path: Path, dry_run: bool = False) -> None:
     print(f"  false_positive:     {skipped_fp}  (skipped — not replications)")
     print(f"  no_original_found:  {skipped_no_orig}  (skipped — LLM found no identifiable original)")
     print(f"  target_pending / api_error / other: {skipped_pending - skipped_no_orig}  (skipped — not yet resolved)")
+    if audit_report is not None:
+        print(f"  audit BLOCKER:      {skipped_audit}  (skipped — flagged by pre-validation audit)")
 
     if resolved.empty:
         print("Nothing to import.")
@@ -208,9 +225,14 @@ if __name__ == "__main__":
         "--dry-run", action="store_true",
         help="Print what would be imported without touching the database.",
     )
+    parser.add_argument(
+        "--audit-report", type=Path, default=None,
+        help="Path to a pre_validation_audit.csv; rows whose pair_id has a "
+             "BLOCKER finding are skipped. Omit to disable the gate.",
+    )
     args = parser.parse_args()
 
     if not args.input.exists():
         raise FileNotFoundError(f"Input file not found: {args.input}")
 
-    run_import(args.input, dry_run=args.dry_run)
+    run_import(args.input, dry_run=args.dry_run, audit_report=args.audit_report)
