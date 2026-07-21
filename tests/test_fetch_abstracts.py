@@ -217,3 +217,60 @@ def test_phase4_stops_on_quota_and_leaves_rows_retryable(monkeypatch, tmp_path):
     done = fa.CHECKPOINT_PATH.read_text(encoding="utf-8")
     assert "scopus:10.1/a" in done
     assert "scopus:10.1/b" not in done
+
+
+# ---------------------------------------------------------------------------
+# Scopus priority ordering — --scopus-priority
+# ---------------------------------------------------------------------------
+
+def test_load_scopus_priority(tmp_path):
+    pf = tmp_path / "priority.txt"
+    pf.write_text("# P1 first\n10.1/B\n\nhttps://doi.org/10.1/a\n10.1/b\n", encoding="utf-8")
+    ranks = fa._load_scopus_priority(pf)
+    # cleaned, deduplicated, file order preserved
+    assert ranks == {"10.1/b": 0, "10.1/a": 1}
+
+
+def test_phase4_priority_file_reorders_quota(monkeypatch, tmp_path):
+    import pandas as pd
+
+    monkeypatch.setattr(fa, "ABSTRACT_CACHE_DIR", tmp_path / "abstracts")
+    fa.ABSTRACT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(fa, "CHECKPOINT_PATH", tmp_path / "done.txt")
+    monkeypatch.setattr(fa, "CANDIDATES_PATH", tmp_path / "candidates.csv")
+    monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(fa, "_parquet_path", lambda name: tmp_path / "missing.parquet")
+    monkeypatch.setattr(fa, "_dc_refresh", lambda name: None)
+    monkeypatch.setenv("ELSEVIER_API_KEY", "KEY")
+    monkeypatch.setenv("S2_API_KEY", "")
+
+    df = pd.DataFrame({
+        "abstract_r": ["", "", ""],
+        "doi_r": ["10.1/a", "10.1/b", "10.1/c"],
+        "openalex_id_r": ["", "", ""],
+    })
+    df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
+
+    pf = tmp_path / "priority.txt"
+    pf.write_text("10.1/c\n", encoding="utf-8")
+
+    called_dois: list = []
+
+    def fake_get(url, timeout=None, headers=None):
+        if "crossref.org" in url:
+            return DummyResponse({"message": {}})
+        doi = url.split("/content/abstract/doi/", 1)[-1]
+        called_dois.append(doi)
+        return DummyResponse(
+            {"abstracts-retrieval-response": {"coredata": {"dc:description": f"Abs {doi}"}}}
+        )
+
+    monkeypatch.setattr(fa._SESSION, "get", fake_get)
+
+    # scopus_limit=1: only the priority DOI gets the quota.
+    fa.run(scopus_limit=1, scopus_priority=pf)
+
+    assert called_dois == ["10.1/c"]
+    out = pd.read_csv(fa.CANDIDATES_PATH, dtype=str, encoding="utf-8-sig").fillna("")
+    assert out.loc[2, "abstract_r"] == "Abs 10.1/c"
+    assert out.loc[0, "abstract_r"] == ""
