@@ -151,10 +151,30 @@ python -m extract.run_extract --extracted-test --resume --no-llm
 
 # Limit to N rows
 python -m extract.run_extract --limit 50
+
+# Re-extract papers already in FLoRA (the skip is ON by default)
+python -m extract.run_extract --no-skip-flora-validated
 ```
 
 **Input:** `data/filtered.csv`  
 **Output:** `data/extracted.csv` (or `data/extracted-test.csv` with `--extracted-test`)
+
+### Skipping papers already in FLoRA
+
+`--skip-flora-validated` is **on by default**: Stage 3 will not re-extract a
+replication that FLoRA already has. The skip list is the union of two sources:
+
+| Source | Rows skipped |
+| ------ | ------------ |
+| `data/FLoRA entry sheet - replication list.csv` | rows whose `validation_status` is `validated - unchanged`, `validated - changed`, or `validated - chosen` |
+| `data/flora.csv` | **every** row (`doi_r` and `doi_r_alt`) — the published database, so all of it is already in FLoRA |
+
+Statuses still in flight (`help needed`, `on hold`, `awaiting validation`, blank) are
+**not** skipped, and neither is `validated - discarded` — a discarded entry may warrant
+a fresh look. Pass `--no-skip-flora-validated` to re-extract everything anyway.
+
+A missing or unreadable source logs a warning and contributes nothing, so one bad file
+cannot silently disable the whole skip list.
 
 ### Promoting test results
 

@@ -998,3 +998,70 @@ def test_sample_extracted_schema():
                      on_bad_lines="skip").fillna("")
     missing = [c for c in EXTRACTED_COLS if c not in df.columns]
     assert not missing, f"Missing columns in sample_extracted.csv: {missing}"
+
+
+# ── FLoRA skip-list (entry sheet + flora.csv) ────────────────────────────────
+
+class TestFloraSkipDois:
+    """Stage 3 must never re-extract a replication already in FLoRA.
+
+    Two sources: the entry sheet (rows already validated) and flora.csv (the
+    published database — every row is by definition already in FLoRA).
+    """
+
+    def _sheet(self, tmp_path, rows):
+        p = tmp_path / "sheet.csv"
+        pd.DataFrame(rows).to_csv(p, index=False, encoding="utf-8-sig")
+        return p
+
+    def _flora(self, tmp_path, rows):
+        p = tmp_path / "flora.csv"
+        pd.DataFrame(rows).to_csv(p, index=False, encoding="utf-8-sig")
+        return p
+
+    def test_validated_chosen_is_skipped(self, tmp_path):
+        """Regression: 'validated - chosen' was omitted, so those rows leaked
+        through to extraction and on to validation (e.g. 10.1037/per0000041)."""
+        sheet = self._sheet(tmp_path, [
+            {"doi_r": "10.1/chosen",    "validation_status": "validated - chosen"},
+            {"doi_r": "10.1/unchanged", "validation_status": "validated - unchanged"},
+            {"doi_r": "10.1/changed",   "validation_status": "validated - changed"},
+        ])
+        got = run_extract._load_flora_skip_dois(sheet, None)
+        assert got == {"10.1/chosen", "10.1/unchanged", "10.1/changed"}
+
+    def test_unvalidated_statuses_not_skipped(self, tmp_path):
+        sheet = self._sheet(tmp_path, [
+            {"doi_r": "10.1/blank",    "validation_status": ""},
+            {"doi_r": "10.1/help",     "validation_status": "help needed"},
+            {"doi_r": "10.1/hold",     "validation_status": "on hold"},
+            {"doi_r": "10.1/awaiting", "validation_status": "awaiting validation"},
+        ])
+        assert run_extract._load_flora_skip_dois(sheet, None) == set()
+
+    def test_flora_csv_skipped_wholesale(self, tmp_path):
+        """flora.csv has no validation_status — everything in it is already in FLoRA."""
+        flora = self._flora(tmp_path, [
+            {"doi_r": "10.2/a", "doi_r_alt": ""},
+            {"doi_r": "10.2/b", "doi_r_alt": "10.2/b-alt"},
+            {"doi_r": "",       "doi_r_alt": ""},
+        ])
+        got = run_extract._load_flora_skip_dois(None, flora)
+        assert got == {"10.2/a", "10.2/b", "10.2/b-alt"}
+
+    def test_both_sources_are_unioned(self, tmp_path):
+        sheet = self._sheet(tmp_path, [
+            {"doi_r": "10.1/chosen", "validation_status": "validated - chosen"},
+            {"doi_r": "10.1/blank",  "validation_status": ""},
+        ])
+        flora = self._flora(tmp_path, [{"doi_r": "10.2/a", "doi_r_alt": ""}])
+        assert run_extract._load_flora_skip_dois(sheet, flora) == {"10.1/chosen", "10.2/a"}
+
+    def test_missing_files_are_non_fatal(self, tmp_path):
+        assert run_extract._load_flora_skip_dois(
+            tmp_path / "nope.csv", tmp_path / "also-nope.csv") == set()
+
+    def test_skip_is_on_by_default(self):
+        import inspect
+        sig = inspect.signature(run_extract.run_extract)
+        assert sig.parameters["skip_flora_validated"].default is True
