@@ -60,7 +60,7 @@ All `filtered.csv` columns, plus:
 | `outcome` | string | Replication outcome — see below |
 | `outcome_phrase` | string | Verbatim phrase from paper describing outcome |
 | `outcome_confidence` | string | `high` \| `medium` \| `low` |
-| `out_quote_source` | string | Where the outcome quote came from: `abstract` \| `fulltext` |
+| `out_quote_source` | string | Where the outcome quote came from: `abstract` \| `title` \| `fulltext`. `fulltext` appears only on results escalated to the fulltext LLM pass. |
 | `outcome_reasoning` | string | LLM chain-of-thought for the outcome decision |
 | `type` | string | `replication` \| `reproduction` |
 | `original_rank` | int | 1 for single-original; 1, 2, 3… for multi-original |
@@ -102,17 +102,26 @@ Populated automatically before each row is written. See [doi-verification.md](do
 
 ### `outcome` values
 
+The first five are the **outcome categories** a classifier may emit (defined once in
+`shared/schema.py` as `OUTCOME_CATEGORIES`). `pending` and `api_error` are
+**pipeline-state markers**, not outcomes — they record where a row sits in the pipeline.
+
 | Value | Meaning |
 | ----- | ------- |
 | `success` | Replication confirmed the original finding |
 | `failure` | Replication failed to find the original effect |
 | `mixed` | Some aspects replicated, others did not |
-| `uninformative` | Authors explicitly state outcome is unclear |
-| `cannot_be_determined` | Insufficient detail in abstract to classify |
 | `descriptive` | Adapted methods in a new context, does not test original claim |
+| `cannot_be_determined` | The available text does not state a replication outcome |
 | `not_a_replication` | Text does not describe a genuine attempt to replicate/reproduce the named original (unrelated, biological/technical, or metaphorical use of "replicate"/"reproduce") |
-| `pending` | Outcome not yet extracted |
-| `api_error` | Extraction failed after retries |
+| `pending` | Outcome not yet extracted (pipeline-state marker) |
+| `api_error` | Extraction failed after retries (pipeline-state marker) |
+
+> `uninformative` is no longer emitted by the classifier after the outcome-coding
+> unification — new rows use `cannot_be_determined`. It remains in
+> `schema.OUTCOME_VALUES` (but not `OUTCOME_CATEGORIES`) so legacy rows in
+> `extracted.csv` / `extracted-test.csv` still validate. Dashboards keep it as a
+> read-only legacy bucket.
 
 ---
 

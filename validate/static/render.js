@@ -22,6 +22,7 @@ function pillOutcome(v) {
     failure:      'background:#fee2e2;color:#991b1b',
     mixed:        'background:#fef3c7;color:#92400e',
     uninformative:'background:#e2e8f0;color:#334155',
+    cannot_be_determined:'background:#e2e8f0;color:#334155',
     descriptive:  'background:#e2e8f0;color:#334155',
     pending:      'background:#e2e8f0;color:#334155',
   };

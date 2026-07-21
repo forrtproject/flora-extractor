@@ -1,8 +1,13 @@
 """
 code_outcome.py — Keyword + LLM outcome extraction for Stage 3.
 
-Pass 1: keyword scan on title → abstract → fulltext (first high-confidence hit wins).
-Pass 2: LLM call (Gemini → OpenAI) when keyword pass returns no confident match.
+The outcome of a replication is decided from the ABSTRACT by default: a keyword
+scan of title + abstract, then an abstract-based LLM call for anything the scan
+cannot classify. Parsed fulltext is held in reserve — an introduction routinely
+discusses OTHER studies' failures ("X failed to replicate in prior work"), so
+scanning it at high confidence misfires. Fulltext is used only as an escalation:
+when the abstract LLM returns cannot_be_determined (or there is no abstract), a
+second LLM call reads the parsed text.
 
 Public API:
     extract_outcome(doi_r, abstract_r, fulltext, title_r) → dict
@@ -12,10 +17,24 @@ import re
 import time
 from typing import Optional
 
-from shared.config import GEMINI_HEAVY_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC, log
+from shared.config import (
+    GEMINI_HEAVY_MODEL, LLM_CACHE_DIR, LLM_CACHE_READ, LLM_RATE_SEC,
+    OUTCOME_FULLTEXT_ESCALATION, log,
+)
 from shared import token_counter
+from shared.cache import read_dual_cache, write_dual_cache
 from shared.llm_client import call_llm
+from shared.schema import OUTCOME_CATEGORIES
 from shared.utils import cache_key
+
+# Bump when the prompt or model wiring changes so the content-keyed cache misses
+# stale entries. read_dual_cache in "latest" mode keys on this; "accumulate" mode
+# still prefers the legacy DOI-keyed entry.
+PROMPT_VERSION = "2026-07-16-abstract-escalation"
+
+# Truncation caps (chars) for the abstract-based and fulltext-escalation prompts.
+_ABSTRACT_CAP = 3000
+_FULLTEXT_CAP = 8000
 
 # ── Sentence splitter helpers ─────────────────────────────────────────────────
 
@@ -100,10 +119,9 @@ _DESCRIPTIVE = re.compile(
     re.IGNORECASE,
 )
 
-_VALID_OUTCOMES = {
-    "success", "failure", "mixed", "uninformative", "descriptive",
-    "cannot_be_determined", "not_a_replication",
-}
+# Single source of truth (schema.OUTCOME_CATEGORIES) — includes not_a_replication,
+# which _llm_outcome emits when is_genuine_attempt=false.
+_VALID_OUTCOMES = OUTCOME_CATEGORIES
 
 
 def _keyword_scan(text: str, source: str) -> Optional[dict]:
@@ -136,124 +154,96 @@ def _keyword_scan(text: str, source: str) -> Optional[dict]:
     return None
 
 
-def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
-                 original_title: str = "", original_authors: str = "",
-                 original_year: str = "") -> dict:
-    """LLM-based outcome extraction. Result cached per doi_r."""
-    cache_file = LLM_CACHE_DIR / f"outcome_{cache_key(doi_r)}.json"
-    if cache_file.exists():
-        with cache_file.open(encoding="utf-8") as fh:
-            cached = json.load(fh)
-        cached.setdefault("outcome_reasoning", "")
-        return cached
+_OUTCOME_RULES = (
+    "Outcome classification rules:\n"
+    "- success: authors explicitly state the original finding was confirmed, replicated, or supported\n"
+    "- failure: authors explicitly state the original finding was NOT found, contradicted, or failed to replicate\n"
+    "- mixed: authors state that SOME but not all aspects of the original finding were confirmed\n"
+    "- descriptive: authors adapted or extended methods in a different context/population WITHOUT directly testing the original claim\n"
+    "- cannot_be_determined: the text lacks sufficient detail to classify the outcome (not when authors say it's unclear, but when WE cannot tell)\n\n"
+    "Few-shot examples:\n"
+    "1. DESCRIPTIVE (methods reused, original claim not tested): 'This conceptual replication extends the theory but does not directly test the original hypothesis.'\n"
+    "2. CANNOT_BE_DETERMINED (insufficient detail): 'We conducted a replication study in a different population.' (no mention of success or failure)\n"
+    "3. MIXED (partial success): 'We replicated the main effect but not the interaction.'\n"
+    "4. SUCCESS (confirmation): 'Our findings confirm Smith et al. (2015)'\n\n"
+    "CRITICAL: Only output 'cannot_be_determined' when the text genuinely lacks detail.\n\n"
+    "Before classifying the outcome, first judge: does this text describe a genuine "
+    "attempt to replicate OR reproduce the specific original study named above (or "
+    "discussed in the abstract)? Both replications (new data/sample testing whether "
+    "the finding holds) and reproductions (re-analysis of the same original data) "
+    "count as genuine attempts — this judgment does not distinguish between them, "
+    "that classification happens elsewhere in the pipeline. Answer false only when "
+    "the text does not engage with verifying that specific original at all — e.g. "
+    "'replicate'/'reproduce' is used in an unrelated biological or technical sense "
+    "(DNA replication, code reproduction), or metaphorically/colloquially (e.g. "
+    "'a replication of prior interests and positions'), or the text is simply "
+    "unrelated to the named original study.\n\n"
+)
 
-    abstract_snip = (abstract_r[:1000] + "…") if len(abstract_r) > 1000 else abstract_r
 
-    # For outcome classification the results/conclusion matter most, so take the
-    # last 3000 chars of fulltext (where conclusions live) rather than the start.
-    _FULLTEXT_CHARS = 3000
-    if len(fulltext) > _FULLTEXT_CHARS:
-        fulltext_snip = "…" + fulltext[-_FULLTEXT_CHARS:]
-    else:
-        fulltext_snip = fulltext
-
-    original_block = ""
-    if original_title:
-        original_block = (
-            f"This paper replicates: {original_authors} ({original_year}). {original_title}\n\n"
-        )
-
-    fulltext_block = ""
-    if fulltext_snip:
-        fulltext_block = f"FULL TEXT EXCERPT (results/conclusion):\n{fulltext_snip}\n\n"
-
-    has_fulltext = bool(fulltext_snip)
-    source_instruction = (
-        "Classify the replication outcome based on the abstract and full text excerpt below."
-        if has_fulltext else
-        "Classify the replication outcome based on what the paper's abstract states."
-    )
-
-    prompt = (
-        f"You are a research methodology expert. {source_instruction}\n\n"
+def _abstract_prompt(title_r: str, abstract_snip: str, original_block: str) -> str:
+    return (
+        "You are a research methodology expert. Classify the replication outcome based on what the paper's abstract states.\n\n"
         + original_block
         + f"TITLE: {title_r}\n"
         f"ABSTRACT: {abstract_snip or '(not available)'}\n\n"
-        + fulltext_block
-        + "Outcome classification rules:\n"
-        "- success: authors explicitly state the original finding was confirmed, replicated, or supported\n"
-        "- failure: authors explicitly state the original finding was NOT found, contradicted, or failed to replicate\n"
-        "- mixed: authors state that SOME but not all aspects of the original finding were confirmed\n"
-        "- descriptive: authors adapted or extended methods in a different context/population WITHOUT directly testing the original claim\n"
-        "- cannot_be_determined: the available text lacks sufficient detail to classify the outcome (not when authors say it's unclear, but when WE cannot tell)\n\n"
-        "Few-shot examples:\n"
-        "1. UNINFORMATIVE (explicit author statement): 'This conceptual replication extends the theory but does not directly test the original hypothesis.'\n"
-        "2. CANNOT_BE_DETERMINED (insufficient detail): 'We conducted a replication study in a different population.' (no mention of success or failure)\n"
-        "3. MIXED (partial success): 'We replicated the main effect but not the interaction.'\n"
-        "4. SUCCESS (confirmation): 'Our findings confirm Smith et al. (2015)'\n\n"
-        "CRITICAL: Only output 'cannot_be_determined' when the available text genuinely lacks detail. "
-        "Default to 'cannot_be_determined' rather than 'uninformative' when uncertain.\n\n"
-        "Before classifying the outcome, first judge: does this text describe a genuine "
-        "attempt to replicate OR reproduce the specific original study named above (or "
-        "discussed in the abstract)? Both replications (new data/sample testing whether "
-        "the finding holds) and reproductions (re-analysis of the same original data) "
-        "count as genuine attempts — this judgment does not distinguish between them, "
-        "that classification happens elsewhere in the pipeline. Answer false only when "
-        "the text does not engage with verifying that specific original at all — e.g. "
-        "'replicate'/'reproduce' is used in an unrelated biological or technical sense "
-        "(DNA replication, code reproduction), or metaphorically/colloquially (e.g. "
-        "'a replication of prior interests and positions'), or the text is simply "
-        "unrelated to the named original study.\n\n"
-        + ("When citing out_quote_source and the evidence came from the full text excerpt, "
-           "identify the specific section by name using the format fulltext_{section} "
-           "(e.g. fulltext_results, fulltext_discussion, fulltext_conclusion, fulltext_abstract, "
-           "fulltext_introduction). Use the section heading nearest to the quoted passage.\n\n"
-           if has_fulltext else "")
-        + "Respond with ONLY this JSON:\n"
+        + _OUTCOME_RULES +
+        "Respond with ONLY this JSON:\n"
         '{"is_genuine_attempt": <true|false>, '
         '"outcome": "<success|failure|mixed|descriptive|cannot_be_determined>", '
-        '"outcome_phrase": "<verbatim quote of 2-3 sentences from the text that specifically describes what replicated and what did not>", '
+        '"outcome_phrase": "<verbatim quote of 2-3 sentences from the abstract that specifically describes what replicated and what did not>", '
         '"outcome_confidence": "<high|medium|low>", '
-        + ('"out_quote_source": "<abstract|title|fulltext_{section}>", '
-           if has_fulltext else
-           '"out_quote_source": "<abstract|title>", ')
-        + '"outcome_reasoning": "<one sentence explaining the classification choice>"}'
+        '"out_quote_source": "<abstract|title>", '
+        '"outcome_reasoning": "<one sentence explaining the classification choice>"}'
     )
 
-    token_counter.set_stage("extract_outcome")
 
-    # Retry logic: attempt up to 3 times with exponential backoff
+def _fulltext_prompt(title_r: str, abstract_snip: str, text_snip: str,
+                     original_block: str) -> str:
+    return (
+        "You are a research methodology expert. The abstract alone could not settle "
+        "the replication outcome. Classify it using the paper's full text.\n\n"
+        + original_block
+        + f"TITLE: {title_r}\n"
+        f"ABSTRACT: {abstract_snip or '(not available)'}\n"
+        f"PARSED FULLTEXT: {text_snip or '(not available)'}\n\n"
+        + _OUTCOME_RULES +
+        "Judge the outcome of THIS paper's own replication, not outcomes it reports "
+        "for other studies in its background or literature review.\n\n"
+        "Respond with ONLY this JSON:\n"
+        '{"is_genuine_attempt": <true|false>, '
+        '"outcome": "<success|failure|mixed|descriptive|cannot_be_determined>", '
+        '"outcome_phrase": "<verbatim quote of 2-3 sentences from the paper that specifically describes what replicated and what did not>", '
+        '"outcome_confidence": "<high|medium|low>", '
+        '"out_quote_source": "<abstract|title|fulltext>", '
+        '"outcome_reasoning": "<one sentence explaining the classification choice>"}'
+    )
+
+
+def _call_outcome_llm(prompt: str, doi_r: str) -> tuple[Optional[dict], str]:
+    """Call the outcome LLM with up to 3 retries and exponential backoff."""
     max_retries = 3
-    result = None
-    model_used = ""
-
     for attempt in range(max_retries):
         try:
             result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_HEAVY_MODEL,
                                               prefer_openai=True)
             if result:
                 time.sleep(LLM_RATE_SEC)
-                break  # Success, exit retry loop
+                return result, model_used
         except Exception as e:
             wait_time = 2 ** attempt  # 1s, 2s, 4s
             if attempt < max_retries - 1:
                 log.warning("[%s] outcome LLM failed (attempt %d/%d), retrying in %ds: %s",
-                           doi_r, attempt + 1, max_retries, wait_time, str(e))
+                            doi_r, attempt + 1, max_retries, wait_time, str(e))
                 time.sleep(wait_time)
             else:
                 log.warning("[%s] outcome LLM failed after %d retries: %s", doi_r, max_retries, str(e))
+    return None, ""
 
-    _fallback = {"outcome": "cannot_be_determined", "outcome_phrase": "",
-                 "outcome_confidence": "low", "out_quote_source": "",
-                 "outcome_reasoning": "", "llm_model": ""}
-    if not result:
-        log.warning("[%s] outcome LLM failed after all retries — marking cannot_be_determined", doi_r)
-        return _fallback
 
-    # Add "cannot_be_determined" as valid outcome
-    valid_outcomes = _VALID_OUTCOMES | {"cannot_be_determined"}
+def _normalise(result: dict, prompt: str, model_used: str) -> dict:
     outcome = str(result.get("outcome", "cannot_be_determined")).lower()
-    if outcome not in valid_outcomes:
+    if outcome not in _VALID_OUTCOMES:
         outcome = "cannot_be_determined"
 
     # is_genuine_attempt defaults to True when absent (e.g. a cached response written
@@ -262,7 +252,7 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
     if result.get("is_genuine_attempt", True) is False:
         outcome = "not_a_replication"
 
-    output = {
+    return {
         "outcome":            outcome,
         "outcome_phrase":     str(result.get("outcome_phrase",    "") or ""),
         "outcome_confidence": str(result.get("outcome_confidence", "low") or "low"),
@@ -270,11 +260,63 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
         "outcome_reasoning":  str(result.get("outcome_reasoning", "") or ""),
         "llm_model":          model_used,
         "llm_prompt":         prompt,
-        "llm_response":       json.dumps(result, ensure_ascii=False) if result else "",
+        "llm_response":       json.dumps(result, ensure_ascii=False),
     }
-    with cache_file.open("w", encoding="utf-8") as fh:
-        json.dump(output, fh, ensure_ascii=False, indent=2)
 
+
+def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
+                 original_title: str = "", original_authors: str = "",
+                 original_year: str = "") -> dict:
+    """LLM-based outcome extraction.
+
+    The primary pass reads the abstract. If it returns cannot_be_determined (or the
+    abstract is empty) and parsed fulltext is available, a second, fulltext-based
+    call is made and its result is used. Results are dual-cached (see
+    shared/cache.py): under the legacy DOI key and a content key folding in the
+    model, prompt version and abstract.
+    """
+    legacy_key  = f"outcome_{cache_key(doi_r)}"
+    content_key = f"outcome_{cache_key(doi_r + '|' + GEMINI_HEAVY_MODEL + '|' + PROMPT_VERSION + '|' + abstract_r)}"
+    cached = read_dual_cache(LLM_CACHE_DIR, legacy_key, content_key, mode=LLM_CACHE_READ)
+    if cached is not None:
+        cached.setdefault("outcome_reasoning", "")
+        return cached
+
+    abstract_snip = (abstract_r[:_ABSTRACT_CAP] + "…") if len(abstract_r) > _ABSTRACT_CAP else abstract_r
+
+    original_block = ""
+    if original_title:
+        original_block = (
+            f"This paper replicates: {original_authors} ({original_year}). {original_title}\n\n"
+        )
+
+    token_counter.set_stage("extract_outcome")
+
+    _fallback = {"outcome": "cannot_be_determined", "outcome_phrase": "",
+                 "outcome_confidence": "low", "out_quote_source": "",
+                 "outcome_reasoning": "", "llm_model": ""}
+
+    prompt = _abstract_prompt(title_r, abstract_snip, original_block)
+    result, model_used = _call_outcome_llm(prompt, doi_r)
+    if not result:
+        log.warning("[%s] outcome LLM failed after all retries — marking cannot_be_determined", doi_r)
+        return _fallback
+
+    output = _normalise(result, prompt, model_used)
+
+    # Escalation: the abstract could not settle it → read the parsed fulltext.
+    if (OUTCOME_FULLTEXT_ESCALATION
+            and fulltext
+            and (output["outcome"] == "cannot_be_determined" or not abstract_r)):
+        text_snip = (fulltext[:_FULLTEXT_CAP] + "…") if len(fulltext) > _FULLTEXT_CAP else fulltext
+        esc_prompt = _fulltext_prompt(title_r, abstract_snip, text_snip, original_block)
+        esc_result, esc_model = _call_outcome_llm(esc_prompt, doi_r)
+        if esc_result:
+            output = _normalise(esc_result, esc_prompt, esc_model)
+            if not output["out_quote_source"]:
+                output["out_quote_source"] = "fulltext"
+
+    write_dual_cache(LLM_CACHE_DIR, legacy_key, content_key, output)
     return output
 
 
@@ -325,24 +367,17 @@ def extract_outcome(doi_r: str,
         if hit:
             return {**hit, **_kw_fallback}
 
-    # Fulltext scans — only act on high-confidence hits
-    # Pass 1: beginning of fulltext (intro / methods / early results)
-    if fulltext:
-        hit = _keyword_scan(fulltext[:3000], "fulltext")
-        if hit and hit["outcome_confidence"] == "high":
-            return {**hit, **_kw_fallback}
-    # Pass 2: end of fulltext (conclusion / discussion) — the part the LLM also uses
-    if fulltext and len(fulltext) > 3000:
-        hit = _keyword_scan(fulltext[-3000:], "fulltext_conclusion")
-        if hit and hit["outcome_confidence"] == "high":
-            return {**hit, **_kw_fallback}
+    # Fulltext is deliberately NOT keyword-scanned here: an introduction's
+    # background prose about OTHER studies' outcomes ("X failed to replicate in
+    # prior work") misfires the patterns. Fulltext is used only via the LLM
+    # escalation inside _llm_outcome.
 
     if no_llm:
         return {"outcome": "cannot_be_determined", "outcome_phrase": "",
                 "outcome_confidence": "low", "out_quote_source": "",
                 "outcome_reasoning": ""}
 
-    # LLM pass for uninformative or absent keyword matches
+    # LLM pass (abstract-based, with fulltext escalation) for anything unresolved.
     return _llm_outcome(doi_r, title_r, abstract_r, fulltext,
                         original_title=original_title,
                         original_authors=original_authors,

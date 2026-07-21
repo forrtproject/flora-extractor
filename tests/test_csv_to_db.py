@@ -115,7 +115,7 @@ def test_skip_accounting_is_disjoint(capsys, monkeypatch, tmp_path):
     """Each skipped row lands in exactly one bucket; buckets + resolved == total."""
     df = pd.DataFrame([
         # resolved (imported)
-        {"filter_status": "replication", "link_method": "author_year_match",
+        {"filter_status": "replication", "link_method": "author_year_match_legacy",
          "doi_r": "10.1/a", "doi_o": "10.2/a", "pair_id": "pa"},
         # false_positive that ALSO has no_original_found — must count as FP only,
         # never double-counted or subtracted into a negative "other" bucket.
@@ -128,7 +128,7 @@ def test_skip_accounting_is_disjoint(capsys, monkeypatch, tmp_path):
         {"filter_status": "replication", "link_method": "target_pending",
          "doi_r": "10.1/d", "doi_o": "", "pair_id": "pd"},
         # plain false_positive
-        {"filter_status": "false_positive", "link_method": "author_year_match",
+        {"filter_status": "false_positive", "link_method": "author_year_match_legacy",
          "doi_r": "10.1/e", "doi_o": "", "pair_id": "pe"},
     ])
 
@@ -175,7 +175,7 @@ def test_insert_order_record_metadata_last(monkeypatch, tmp_path):
     monkeypatch.setenv("SUPABASE_SERVICE_KEY", "fake-key")
 
     df = pd.DataFrame([
-        {"filter_status": "replication", "link_method": "author_year_match",
+        {"filter_status": "replication", "link_method": "author_year_match_legacy",
          "doi_r": "10.1/a", "doi_o": "10.2/a", "pair_id": "pa"},
         {"filter_status": "reproduction", "link_method": "llm_fulltext",
          "doi_r": "10.1/b", "doi_o": "10.2/b", "pair_id": "pb"},

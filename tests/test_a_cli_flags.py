@@ -112,7 +112,7 @@ _EMPTY_LINK = {
     "resolution_score": 0, "llm_evidence": "", "llm_model": "",
 }
 _EMPTY_OUTCOME = {
-    "outcome": "uninformative", "outcome_phrase": "",
+    "outcome": "cannot_be_determined", "outcome_phrase": "",
     "outcome_confidence": "low", "out_quote_source": "",
     "outcome_reasoning": "",
 }

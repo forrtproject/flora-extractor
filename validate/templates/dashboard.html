@@ -887,9 +887,9 @@ python -m extract.audit_dois --apply  # write corrections</pre>
               <tr><td class="col-name">link_llm_model</td><td class="col-desc">Model used (blank for rule-based)</td></tr>
               <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">DOI verification — Stage 3</td></tr>
               <tr><td class="col-name">doi_o_verification</td><td class="col-desc">verified | corrected | mismatch | no_doi | not_found | no_metadata | api_error | skipped</td></tr>
-              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Outcome — Stage 3</td></tr>
-              <tr><td class="col-name">outcome</td><td class="col-desc">success | failure | mixed | uninformative | descriptive | pending | api_error</td></tr>
-              <tr><td class="col-name">outcome_phrase</td><td class="col-desc">Keyword phrase that triggered outcome</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Outcome — Added by Stage 3</td></tr>
+              <tr><td class="col-name">outcome</td><td class="col-desc">success | failure | mixed | descriptive | cannot_be_determined | pending | api_error (legacy rows may carry uninformative)</td></tr>
+              <tr><td class="col-name">outcome_phrase</td><td class="col-desc">Keyword phrase that triggered the outcome classification</td></tr>
               <tr><td class="col-name">outcome_confidence</td><td class="col-desc">high | medium | low</td></tr>
               <tr><td class="col-name">out_quote_source</td><td class="col-desc">abstract | fulltext</td></tr>
               <tr><td class="col-name">outcome_reasoning</td><td class="col-desc">LLM chain-of-thought</td></tr>
