@@ -38,7 +38,7 @@ run_search.py
             │
             ├── Semantic Scholar phrase search  (source = "semantic_scholar")
             │       fetch_semantic_scholar_candidates()
-            │           └── for each phrase in SEARCH_PHRASES (37 total):
+            │           └── for each phrase in S2 SEARCH_PHRASES (10 total, its own subset):
             │                   paginate /graph/v1/paper/search
             │                   save offset to cache/s2/<hash>.offset.json
             │
@@ -51,10 +51,22 @@ run_search.py
 
 ---
 
-## Search phrases (37 total)
+## Search phrases
 
-Defined in `SEARCH_PHRASES` in `search/openalex_search.py` and mirrored in
-`search/semantic_scholar_search.py`. Applied to both OpenAlex and Semantic Scholar.
+**OpenAlex** uses all **37** phrases defined in `SEARCH_PHRASES` in
+`search/openalex_search.py` (the three tiers below).
+
+**Semantic Scholar** does **not** mirror these 37. It uses its own **10-phrase** list
+in `search/semantic_scholar_search.py`, which is exactly the "Original tier" below:
+
+```text
+"replication of"          "direct replication"       "close replication"
+"conceptual replication"  "replication study"        "reproduction study"
+"we replicated"           "attempts to replicate"    "registered replication report"
+"pre-registered replication"
+```
+
+The three OpenAlex tiers:
 
 Original tier (high precision):
 
@@ -125,7 +137,7 @@ so they can be filtered separately (e.g. `python -m filter.run_filter --source o
 ## Large-file handling
 
 The candidates index (`cache/candidates_index.txt`) stores all identifiers ever written.
-Key priority per row: `doi` → `oa:<openalex_id>` → `url:<url>` → `title:<lowercased title>`.
+Key priority per row (order in `_row_keys`): `oa:<openalex_id>` → `doi` → `url:<url>` → `title:<lowercased title>`.
 Each row stores up to 4 keys so a duplicate is caught regardless of which identifier is present.
 
 This avoids loading the full CSV (~2M rows) into memory on every merge.
@@ -138,7 +150,7 @@ This avoids loading the full CSV (~2M rows) into memory on every merge.
 Jobs cycle in this order within each year before advancing to the next year:
 
 1. OpenAlex phrase jobs (37 × N years)
-2. Semantic Scholar phrase jobs (37 × N years)
+2. Semantic Scholar phrase jobs (10 × N years)
 3. OpenAlex concept jobs (2 × N years, as of 2026-06-23)
 
 State is saved in `cache/search_state.json`. Run in a loop until exit code 2
@@ -184,7 +196,7 @@ python -m search.run_search --harvest-only
 
 | Source | Limit |
 | --- | --- |
-| OpenAlex (unauthenticated) | 0.1 s between requests |
+| OpenAlex (unauthenticated) | 0.3 s between requests (`OPENALEX_RATE_SEC` default) |
 | OpenAlex (with `OPENALEX_API_KEY`) | higher quota + authenticated content |
 | Semantic Scholar | 1 s between requests |
 

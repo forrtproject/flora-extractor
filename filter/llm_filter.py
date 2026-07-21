@@ -2,7 +2,7 @@
 llm_filter.py — Stage 2 LLM uplift for rows the rule filter couldn't decide.
 
 Only rows with ``filter_status == 'needs_review'`` are sent to the LLM.
-Primary model: OpenAI (FILTER_OPENAI_MODEL, default gpt-5.4-mini).
+Primary model: OpenAI (FILTER_OPENAI_MODEL, default gpt-5-mini).
 Fallback model: Gemini (rotates API keys automatically on 429).
 
 Results are cached by hash(title + abstract). Cache key uses the same
@@ -89,7 +89,7 @@ def classify_with_llm(title: str, abstract: str) -> Optional[dict]:
     err    = "no API keys configured"
     token_counter.set_stage("filter")
 
-    # Primary: OpenAI gpt-5.4-mini
+    # Primary: OpenAI gpt-5-mini (FILTER_OPENAI_MODEL default)
     if OPENAI_API_KEY:
         result, err = call_openai(prompt, model=FILTER_OPENAI_MODEL)
         time.sleep(LLM_RATE_SEC)

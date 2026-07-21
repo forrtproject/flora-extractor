@@ -18,7 +18,7 @@ Produced by `search/run_search.py`. One row per discovered paper.
 | `journal_r` | string | Journal or venue name |
 | `url_r` | string | Canonical URL |
 | `openalex_id_r` | string | OpenAlex work ID (e.g. W1234567890) |
-| `source` | string | Where this paper was discovered: `openalex`, `semantic_scholar`, `engine`, `bob_reed`, `i4r` |
+| `source` | string | Where this paper was discovered: `openalex`, `openalex_concept`, `semantic_scholar`, `backfill_old_pipeline` (see `schema.SOURCE_VALUES`). `bob_reed` / `i4r` are **not** produced — their scrapers exist but are not wired into `run_search` |
 | `ref_r` | string | Formatted reference string for the replication paper |
 
 ---
@@ -102,7 +102,7 @@ Populated automatically before each row is written. See [doi-verification.md](do
 
 ### `outcome` values
 
-The first five are the **outcome categories** a classifier may emit (defined once in
+The first six are the **outcome categories** a classifier may emit (defined once in
 `shared/schema.py` as `OUTCOME_CATEGORIES`). `pending` and `api_error` are
 **pipeline-state markers**, not outcomes — they record where a row sits in the pipeline.
 
@@ -125,18 +125,22 @@ The first five are the **outcome categories** a classifier may emit (defined onc
 
 ---
 
-## validated.csv (Stage 4 output)
+## Stage 4 output — Supabase, not a CSV
 
-All `extracted.csv` columns, plus:
+There is **no `data/validated.csv`**. The old SQLite/CSV voting output has been removed.
+Human validation runs in a **separate repo backed by Supabase**.
 
-| Column | Type | Description |
-| ------ | ---- | ----------- |
-| `validation_status` | string | `confirmed` \| `rejected` \| `pending` \| `needs_review` |
-| `vote_count` | int | Number of votes cast |
-| `confirm_votes` | int | Votes confirming the extraction |
-| `reject_votes` | int | Votes rejecting the extraction |
-| `validator_notes` | string | Free-text notes from reviewers |
-| `validated_doi_o` | string | Reviewer-corrected original DOI (blank = accepted unchanged) |
-| `validated_outcome` | string | Reviewer-corrected outcome (blank = accepted unchanged) |
+`extract/csv_to_db.py` pushes resolved `extracted.csv` rows (those with
+`filter_status ∈ {replication, reproduction}` and a resolved `link_method`) into three
+Supabase tables:
 
-`validated_doi_o` and `validated_outcome` enable accuracy measurement by diffing against the extracted values.
+| Table | Rows per record | Contents |
+| ----- | --------------- | -------- |
+| `unvalidated` | 1 | The record shown to validators (`doi_r`/`study_r`/`doi_o`/`study_o`/`outcome`/…), `validation_status = 'unvalidated'` |
+| `record_metadata` | 1 | Supplementary extraction fields (filter/link/outcome method, confidence, model, ranks) |
+| `validation_queue` | 3 | One slot each for `human_1`, `human_2`, `llm` |
+
+The **final artifact is the Supabase `validated` table**, populated by the separate
+validation app. The monitoring dashboard in this repo reads Supabase KPIs from those
+tables via `shared/supabase_client.py`. See [`supabase-schema.md`](supabase-schema.md)
+for the full table definitions.
