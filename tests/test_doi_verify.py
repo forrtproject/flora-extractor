@@ -553,12 +553,14 @@ class TestVerifyRowHook:
         v = {"doi_o_verification": "corrected", "doi_o": "10.1111/psyp.13449",
              "evidence_note": "DOI corrected: ..."}
         with patch("extract.run_extract.verify_and_correct", return_value=v), \
-             patch("extract.run_extract._build_ref_o", return_value=("new ref", "New Author")):
+             patch("extract.run_extract._build_ref_o",
+                   return_value=("new ref", "New Author", "@article{new}")):
             row = _verify_row(self._row())
         assert row["doi_o"] == "10.1111/psyp.13449"
         assert row["doi_o_verification"] == "corrected"
         assert row["pair_id"] == make_pair_id("10.1111/psyp.13707", "10.1111/psyp.13449")
         assert row["ref_o"] == "new ref"
+        assert row["bibtex_ref_o"] == "@article{new}"
         assert "existing evidence" in row["link_evidence"]
         assert "DOI corrected" in row["link_evidence"]
 
@@ -621,7 +623,7 @@ class TestAuditDois:
         path = self._csv(tmp_path)
         before = path.read_text(encoding="utf-8-sig")
         with patch("extract.audit_dois.verify_and_correct", return_value=v), \
-             patch("extract.audit_dois._build_ref_o", return_value=("ref", "Author")):
+             patch("extract.audit_dois._build_ref_o", return_value=("ref", "Author", "@article{x}")):
             summary = audit_file(path, apply=False, report_path=tmp_path / "report.csv")
         assert summary["corrected"] == 1
         assert summary["skipped"] == 1
@@ -637,7 +639,7 @@ class TestAuditDois:
              "evidence_note": "DOI corrected: ..."}
         path = self._csv(tmp_path)
         with patch("extract.audit_dois.verify_and_correct", return_value=v), \
-             patch("extract.audit_dois._build_ref_o", return_value=("ref", "Author")):
+             patch("extract.audit_dois._build_ref_o", return_value=("ref", "Author", "@article{x}")):
             audit_file(path, apply=True, report_path=tmp_path / "report.csv")
         df = pd.read_csv(path, dtype=str, encoding="utf-8-sig").fillna("")
         row = df[df["doi_r"] == "10.1111/psyp.13707"].iloc[0]
