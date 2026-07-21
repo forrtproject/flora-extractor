@@ -143,7 +143,7 @@ class TestExtractedTestFlag:
         doi_resolved = "10.1111/resolved"
         doi_new      = "10.2222/new"
         test_path = self._run_test_extract(
-            tmp_path, [doi_resolved, doi_new], doi_resolved, "author_year_match"
+            tmp_path, [doi_resolved, doi_new], doi_resolved, "grobid_ref_match"
         )
         assert test_path.exists(), "extracted-test.csv was not created"
         df = pd.read_csv(test_path, dtype=str, encoding="utf-8-sig").fillna("")

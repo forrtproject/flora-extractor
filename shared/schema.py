@@ -49,7 +49,7 @@ EXTRACT_ADDED_COLS = [
     "bibtex_ref_r",        # str   — BibTeX entry for the replication/reproduction paper (@article or @misc)
 
     # Linking
-    "link_method",         # str   — author_year_match | llm_abstract | llm_fulltext | target_pending
+    "link_method",         # str   — citation_context_match | same_author_year_title_overlap | single_candidate_after_requery | title_pattern_match | grobid_ref_match | llm_abstract | llm_fulltext | no_original_found | target_pending | api_error | author_year_match_legacy
     "link_evidence",       # str   — quote or pattern used for linking
     "link_confidence",     # str   — high | medium | low
     "link_llm_model",      # str   — exact model used for DOI resolution (e.g. gemini-2.0-flash)
@@ -94,8 +94,25 @@ FILTER_CONFIDENCE_VALUES = {"high", "medium", "low"}
 
 ORIGINAL_MATCH_TYPE_VALUES = {"single_original", "multiple_match", "multiple_original"}
 
-LINK_METHOD_VALUES = {
-    "author_year_match", "llm_abstract", "llm_fulltext",
+# Resolved link methods — an original study was identified. The five rule-based
+# methods used to collapse into a single "author_year_match" value; they are now
+# kept distinct because their reliability differs sharply (e.g.
+# single_candidate_after_requery auto-accepts a lone candidate at score 1.0 with no
+# semantic check). These are the methods csv_to_db imports for validation.
+RESOLVED_LINK_METHODS = {
+    "citation_context_match",
+    "same_author_year_title_overlap",
+    "single_candidate_after_requery",
+    "title_pattern_match",
+    "grobid_ref_match",
+    "llm_abstract",
+    "llm_fulltext",
+}
+
+LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
+    # Legacy rows written before the granular split, remapped by
+    # tools/migrate_link_methods.py — they cannot be disaggregated retroactively.
+    "author_year_match_legacy",
     # LLM ran with full context but concluded no identifiable original study exists.
     # These papers are likely Stage 2 false positives or self-replications; exclude from DB import.
     "no_original_found",

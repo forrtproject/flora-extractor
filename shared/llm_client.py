@@ -922,7 +922,6 @@ def build_multi_original_prompt(study_r:     str,
           "rank": 1,
           "candidate_number": <integer from candidate list or null>,
           "title": "<full title of the original study>",
-          "doi": "<DOI if identifiable, else empty>",
           "first_author_surname": "<surname of first author>",
           "year": <4-digit year or null>,
           "evidence": "<1-2 sentence quote from the paper showing this study is replicated>",
@@ -1015,27 +1014,41 @@ def identify_all_originals_with_llm(doi_r:        str,
     for o in raw_originals:
         if not isinstance(o, dict):
             continue
-        # If candidate_number given, fill missing fields from candidate list
+        # If candidate_number given, fill missing fields from candidate list.
         cand_num = o.get("candidate_number")
+        cand_doi = ""
         if cand_num is not None:
             try:
                 idx = int(cand_num) - 1
                 if 0 <= idx < len(candidates):
                     c = candidates[idx]
-                    o.setdefault("doi",   c.get("doi",          ""))
+                    cand_doi = c.get("doi", "") or ""
                     o.setdefault("title", c.get("title",        ""))
                     o.setdefault("year",  c.get("year"))
                     o.setdefault("first_author_surname", c.get("first_author", ""))
             except (ValueError, TypeError):
                 pass
+        # Never trust a DOI the LLM emitted (the prompt no longer asks for one).
+        # Use the selected candidate's verified OpenAlex DOI when there was one;
+        # otherwise resolve from title+author+year via CrossRef/OpenAlex. This
+        # mirrors the single-original path in identify_original_with_llm().
+        title_o  = str(o.get("title", "") or "")
+        author_o = str(o.get("first_author_surname", "") or "")
+        year_o   = o.get("year")
+        resolved_doi = cand_doi
+        if not resolved_doi and title_o:
+            from shared.doi_verify import resolve_doi_by_metadata
+            hit = resolve_doi_by_metadata(title_o, author_o, year_o, exclude_doi=doi_r)
+            if hit:
+                resolved_doi = hit.get("doi", "") or ""
         raw_outcome = str(o.get("outcome", "uninformative") or "uninformative").lower()
         if raw_outcome not in {"success", "failure", "mixed", "uninformative", "descriptive"}:
             raw_outcome = "uninformative"
         originals.append({
             "rank"             : o.get("rank", len(originals) + 1),
-            "title"            : str(o.get("title", "") or ""),
-            "doi"              : str(o.get("doi",   "") or ""),
-            "first_author"     : str(o.get("first_author_surname", "") or ""),
+            "title"            : title_o,
+            "doi"              : str(resolved_doi or ""),
+            "first_author"     : author_o,
             "year"             : o.get("year"),
             "evidence"         : str(o.get("evidence",        "") or ""),
             "confidence"       : str(o.get("confidence", "low") or "low"),

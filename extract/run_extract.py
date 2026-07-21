@@ -169,12 +169,18 @@ def _build_ref_o(doi_o: str, fallback_author: str = "",
 
 
 # ── Internal → schema link_method mapping ────────────────────────────────────
+# The five rule-based resolution methods pass through unchanged as their own public
+# link_method values (they used to all collapse to "author_year_match"). They have
+# very different reliability — single_candidate_after_requery auto-accepts a lone
+# candidate at score 1.0 with no semantic check, whereas citation_context_match needs
+# author+year+journal agreement — so downstream consumers must tell them apart. Only
+# the internal LLM source labels are remapped to the public llm_* values.
 _METHOD_MAP = {
-    "citation_context_match":         "author_year_match",
-    "same_author_year_title_overlap": "author_year_match",
-    "single_candidate_after_requery": "author_year_match",
-    "title_pattern_match":            "author_year_match",
-    "grobid_ref_match":               "author_year_match",
+    "citation_context_match":         "citation_context_match",
+    "same_author_year_title_overlap": "same_author_year_title_overlap",
+    "single_candidate_after_requery": "single_candidate_after_requery",
+    "title_pattern_match":            "title_pattern_match",
+    "grobid_ref_match":               "grobid_ref_match",
     "llm_gemini":                     "llm_fulltext",
     "llm_openai":                     "llm_fulltext",
     "llm_abstract_gemini":            "llm_abstract",
@@ -198,12 +204,18 @@ _VALID_OUTCOMES    = {"success", "failure", "mixed", "uninformative", "descripti
 # They run BEFORE the LLM and BEFORE the cache so they cannot be overridden by
 # a stale cached single_original result.
 
+# Known multi-target project names — always fire regardless of any number.
 _MULTI_TITLE_RE = re.compile(
     r"\bmany\s+labs\b"
     r"|\bregistered\s+replication\s+report\b"
-    r"|\bmany\s+analysts\b"
-    r"|\breplicat(?:ion|ions?)\s+of\s+\d+\b",
+    r"|\bmany\s+analysts\b",
     re.IGNORECASE,
+)
+
+# "replication of N" in a title — N is captured so the numeric bound below can
+# reject years ("Replication of 2019 findings") that are not study counts.
+_MULTI_TITLE_COUNT_RE = re.compile(
+    r"\breplicat(?:ion|ions?)\s+of\s+(\d+)\b", re.IGNORECASE,
 )
 
 # Each pattern must capture the count of studies in group 1.
@@ -225,7 +237,13 @@ _MULTI_ABSTRACT_RES: list[re.Pattern] = [
     ),
 ]
 
-_MULTI_N_MIN = 3  # counts < 3 might be multiple_match, not multiple_original
+_MULTI_N_MIN = 3     # counts < 3 might be multiple_match, not multiple_original
+_MULTI_N_MAX = 1900  # maintainer-approved bound: numbers ≥ 1900 are years, not study counts
+
+
+def _valid_multi_count(n: int) -> bool:
+    """True when n is a plausible study count (3 ≤ n < 1900), not a year."""
+    return _MULTI_N_MIN <= n < _MULTI_N_MAX
 
 
 def _rule_classify_multi_original(title_r: str, abstract_r: str) -> "dict | None":
@@ -233,14 +251,30 @@ def _rule_classify_multi_original(title_r: str, abstract_r: str) -> "dict | None
     Return a classification dict if title or abstract contains unambiguous signals
     that the paper replicates N ≥ 3 independent original studies. Returns None
     when no rule fires (caller should fall through to LLM).
+
+    "replication of N" only fires when N is a plausible study count (3 ≤ N < 1900):
+    a captured year such as "replication of 2019 findings" is NOT a study count.
     """
     if _MULTI_TITLE_RE.search(title_r):
         return {
             "original_match_type":       "multiple_original",
             "original_match_confidence": "high",
             "rule_fired":                True,
-            "reasoning": "Title matches a known multi-target replication project or explicit 'replication of N' pattern.",
+            "reasoning": "Title matches a known multi-target replication project (Many Labs, RRR, etc).",
         }
+    m = _MULTI_TITLE_COUNT_RE.search(title_r)
+    if m:
+        try:
+            n = int(m.group(1))
+        except (ValueError, TypeError):
+            n = -1
+        if _valid_multi_count(n):
+            return {
+                "original_match_type":       "multiple_original",
+                "original_match_confidence": "high",
+                "rule_fired":                True,
+                "reasoning": f"Title explicitly states replication of {n} studies.",
+            }
     for pattern in _MULTI_ABSTRACT_RES:
         m = pattern.search(abstract_r)
         if not m:
@@ -249,7 +283,7 @@ def _rule_classify_multi_original(title_r: str, abstract_r: str) -> "dict | None
             n = int(m.group(1))
         except (IndexError, ValueError, TypeError):
             continue
-        if n >= _MULTI_N_MIN:
+        if _valid_multi_count(n):
             return {
                 "original_match_type":       "multiple_original",
                 "original_match_confidence": "high",
@@ -262,7 +296,10 @@ def _rule_classify_multi_original(title_r: str, abstract_r: str) -> "dict | None
 def _map_method(method: str) -> str:
     if method in _METHOD_MAP:
         return _METHOD_MAP[method]
-    if method in {"author_year_match", "llm_abstract", "llm_fulltext",
+    if method in {"citation_context_match", "same_author_year_title_overlap",
+                  "single_candidate_after_requery", "title_pattern_match",
+                  "grobid_ref_match", "author_year_match_legacy",
+                  "llm_abstract", "llm_fulltext",
                   "no_original_found", "target_pending", "api_error"}:
         return method
     if method == "llm_no_target":
@@ -523,7 +560,8 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
 
 def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
                      match_type: str, match_conf: str, n: int,
-                     link_llm_model: str = "") -> dict:
+                     link_llm_model: str = "",
+                     link_method: str = "llm_abstract") -> dict:
     row = filter_row.to_dict()
     if not row.get("title_r"):
         row["title_r"] = row.get("study_r", "")
@@ -532,21 +570,28 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
         conf_str = "low"
     doi_r_clean  = clean_doi(str(filter_row.get("doi_r", "")))
     doi_o_clean  = clean_doi(orig.get("doi", "") or "")
+    rank         = orig.get("rank", 1)
+    title_o      = str(orig.get("title", "") or "")
+    # pair_id is the cross-system row key. make_pair_id(doi_r, "") collides for every
+    # unresolved original of the same paper, so when doi_o is empty seed the hash with
+    # a stable disambiguator (rank + title) instead of "". Done here at the call site,
+    # not in shared.schema.make_pair_id, to keep that helper a pure DOI-pair hash.
+    pair_seed    = doi_o_clean or f"rank:{rank}:{title_o[:120]}"
     row.update({
-        "pair_id":           make_pair_id(doi_r_clean, doi_o_clean),
+        "pair_id":           make_pair_id(doi_r_clean, pair_seed),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
         "doi_o":           doi_o_clean,
-        "title_o":         str(orig.get("title",        "") or ""),
+        "title_o":         title_o,
         "year_o":          str(orig.get("year",         "") or ""),
         **dict(zip(("ref_o", "authors_o", "bibtex_ref_o"), _build_ref_o(
             doi_o_clean,
             str(orig.get("first_author", "") or ""),
             str(orig.get("year",         "") or ""),
-            str(orig.get("title",        "") or ""),
+            title_o,
         ))),
         "bibtex_ref_r":    _build_bibtex_r(filter_row),
-        "link_method":     "llm_abstract",
+        "link_method":     link_method,
         "link_evidence":   str(orig.get("evidence",     "") or ""),
         "link_confidence": conf_str,
         "link_llm_model":  link_llm_model,
@@ -869,8 +914,8 @@ def run_extract(no_llm: bool = False,
                            (validation_status = 'validated - unchanged' or 'validated - changed').
     resume              — carry forward already-resolved rows from extracted.csv unchanged;
                            re-run only rows with link_method == "target_pending".
-    resolved_only       — only write rows that are fully resolved (link_method in
-                           author_year_match / llm_abstract / llm_fulltext with a non-empty doi_o).
+    resolved_only       — only write rows that are fully resolved (any rule-based or
+                           llm_abstract / llm_fulltext link_method with a non-empty doi_o).
                            target_pending / api_error / no_original_found rows are silently skipped.
                            Use with --no-llm --no-pdf for a fast rule-based-only pass, then
                            follow up with --resume for the LLM pass on remaining rows.
@@ -1113,6 +1158,16 @@ def run_extract(no_llm: bool = False,
                         )
                 else:
                     multi_llm_model = str(result.get("llm_model", "") or "")
+                    # Label truthfully: the multi pipeline feeds parsed full text /
+                    # GROBID references into the prompt whenever a PDF was obtained,
+                    # so those rows are llm_fulltext, not llm_abstract.
+                    multi_used_fulltext = (
+                        bool(result.get("pdf_ok"))
+                        or int(result.get("n_grobid_refs") or 0) > 0
+                    )
+                    multi_link_method = (
+                        "llm_fulltext" if multi_used_fulltext else "llm_abstract"
+                    )
                     for orig in originals:
                         raw_out = str(orig.get("outcome", "uninformative") or "uninformative").lower()
                         if raw_out not in _VALID_OUTCOMES:
@@ -1125,7 +1180,8 @@ def run_extract(no_llm: bool = False,
                         }
                         result_rows.append(
                             _merge_multi_row(row, orig, outcome, match_type, match_conf,
-                                             len(originals), multi_llm_model)
+                                             len(originals), multi_llm_model,
+                                             link_method=multi_link_method)
                         )
             else:
                 link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
@@ -1293,7 +1349,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--resolved-only", action="store_true",
-        help="Only write rows that are fully resolved (author_year_match / llm_abstract / llm_fulltext). "
+        help="Only write rows that are fully resolved (any rule-based method or llm_abstract / llm_fulltext). "
              "target_pending / api_error / no_original_found rows are silently skipped. "
              "Combine with --no-llm --no-pdf for a fast rule-based pass, then use --resume "
              "for the LLM pass on the remaining rows.",
