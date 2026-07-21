@@ -72,3 +72,6 @@ todo.txt
 data/filtered.csv.bak
 data/extracted.csv.bak
 *.csv.lock
+
+# Large local data archives — never commit (GitHub hard-limits blobs >100MB)
+data/*.zip
