@@ -64,7 +64,10 @@ def _classify_row(title: str, abstract: str, year: int | None) -> dict:
     base_status = "reproduction" if is_repro else "replication"
 
     # Specific-target gate: at least one author–year citation must be present.
-    cited = extract_author_year_patterns(text, max_year=year) if year else extract_author_year_patterns(text)
+    # strict_bare=True drops single_bare false matches (months, "Study 2019",
+    # date ranges) that would otherwise auto-accept a row past the LLM review.
+    cited = (extract_author_year_patterns(text, max_year=year, strict_bare=True)
+             if year else extract_author_year_patterns(text, strict_bare=True))
     if not cited:
         return {
             "filter_status": "needs_review",

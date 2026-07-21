@@ -65,6 +65,73 @@ class TestExtractAuthorYearPatterns:
         assert any(p["surname"] == "smith" and p["year"] == 2018 for p in patterns)
 
 
+class TestStrictBareGate:
+    """strict_bare=True must drop single_bare false matches (months/structural
+    words) while keeping genuine bare and parenthesised citations, and must not
+    change default (Stage-3) behaviour."""
+
+    @pytest.mark.parametrize("text", [
+        "Data were collected between January 2020 and March 2020.",
+        "The July 2012 wave of the survey was analysed.",
+        "The Beijing Eye Study 2011 was a population-based survey.",
+        "Cases were recorded between 1966 and 1976 in the cohort.",
+        "The COVID 2019 pandemic disrupted data collection.",
+        "Analyses were run in Spring 2020 for the course.",
+    ])
+    def test_strict_drops_false_bare_matches(self, text):
+        assert extract_author_year_patterns(text, strict_bare=True) == []
+
+    def test_month_bare_dropped_even_without_strict(self):
+        # Month/weekday tokens are rejected UNCONDITIONALLY (see _NAME_STOPWORDS):
+        # a month is never an author surname, so the match is wrong in Stage 3 too.
+        # The strict_bare gate remains opt-in for the *other* blacklist categories
+        # (structural words, disease acronyms, sentence-initial function words).
+        patterns = extract_author_year_patterns("Collected in January 2020 overall.")
+        assert patterns == []
+
+    def test_default_still_matches_non_month_structural_bare(self):
+        # Confirms strict_bare really is opt-in for the non-month categories:
+        # "Study 2019" still matches by default, and only drops under strict_bare.
+        text = "Reported in Study 2019 overall."
+        assert any(p["year"] == 2019 for p in extract_author_year_patterns(text))
+        assert extract_author_year_patterns(text, strict_bare=True) == []
+
+    def test_strict_keeps_real_bare_citation(self):
+        patterns = extract_author_year_patterns(
+            "This diverges from Smith 2019, who found the opposite.",
+            strict_bare=True,
+        )
+        assert any(p["surname"] == "smith" and p["year"] == 2019 for p in patterns)
+
+    def test_strict_keeps_comma_bare_citation(self):
+        patterns = extract_author_year_patterns(
+            "As reported by Brown, 2018, the effect held.",
+            strict_bare=True,
+        )
+        assert any(p["surname"] == "brown" and p["year"] == 2018 for p in patterns)
+
+    def test_strict_keeps_paren_citation(self):
+        # single_paren is unaffected by strict_bare.
+        patterns = extract_author_year_patterns(
+            "We replicated Smith (2010).", strict_bare=True,
+        )
+        assert any(p["surname"] == "smith" and p["year"] == 2010 for p in patterns)
+
+    def test_strict_keeps_etal_and_multi(self):
+        patterns = extract_author_year_patterns(
+            "Following Baumeister et al. 2007 and Jones and Lee 2015.",
+            strict_bare=True,
+        )
+        years = {p["year"] for p in patterns}
+        assert 2007 in years and 2015 in years
+
+    def test_strict_bare_max_year_still_applies(self):
+        patterns = extract_author_year_patterns(
+            "See Smith 2030 for details.", max_year=2022, strict_bare=True,
+        )
+        assert not any(p["year"] == 2030 for p in patterns)
+
+
 # ── author_matches ────────────────────────────────────────────────────────────
 
 class TestAuthorMatches:

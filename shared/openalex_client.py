@@ -63,8 +63,71 @@ _WEEKDAYS = {
 _NAME_STOPWORDS = _MONTHS | _WEEKDAYS
 
 
+# ── strict_bare gate ─────────────────────────────────────────────────────────
+# The single_bare pattern ({NAME},?\s+{YEAR}) matches any capitalised >=3-letter
+# token before a year, so date/structural phrases ("January 2020", "Study 2019",
+# "Between 1966", "COVID 2019") fire as if they were citations.  In Stage 2 a
+# single citation match promotes a row from needs_review (LLM review) to a
+# high-confidence accept, so these false matches bypass the LLM.  When
+# strict_bare=True, a single_bare match whose leading name token is one of these
+# words is dropped.  Measured on the full data/filtered.csv (2.3M rows, 16,126
+# gate-firing rows) this flips ~15.7% of them from auto-accept to needs_review,
+# and eyeballing the removed matches ~96-98% are genuine non-citations (dates,
+# months, structural words) with only ~2-4% real citations lost — mostly
+# corporate authors like "…Research Group, 1992", which then simply get LLM
+# review instead of a rule-based accept, so no record is dropped.  A more
+# aggressive rule (requiring a comma before the bare year) flipped ~29% but lost
+# ~12% real bare citations, so the blacklist is the best precision/recall
+# trade-off (see analysis/citation_gate_analysis.py).  Stage 3 candidate finding
+# keeps strict_bare=False, where recall matters more.
+import calendar as _calendar
+
+_BARE_LEADING_BLACKLIST: frozenset[str] = frozenset(
+    w.lower() for w in (
+        {m for m in _calendar.month_name if m}
+        | {m for m in _calendar.month_abbr if m}
+        | {"Winter", "Spring", "Summer", "Fall", "Autumn"}
+        | {  # structural / document words
+            "Study", "Studies", "Table", "Figure", "Fig", "Experiment",
+            "Experiments", "Session", "Sessions", "Wave", "Waves", "Sample",
+            "Samples", "Model", "Models", "Appendix", "Chapter", "Section",
+            "Panel", "Phase", "Trial", "Trials", "Cohort", "Group", "Groups",
+            "Item", "Items", "Question", "Version", "Round", "Block",
+            "Condition", "Column", "Row", "Note", "Equation", "Hypothesis",
+            "Day", "Week", "Month", "Year", "Time", "Age", "Quarter", "Volume",
+            "Vol", "Issue", "Number", "No", "Page", "Part", "Level", "Step",
+            "Set", "Series", "Line", "Site", "Class", "Type", "Grade",
+        }
+        | {  # disease / entity acronyms
+            "COVID", "SARS", "MERS", "HIV", "AIDS", "EU", "US", "USA", "UK",
+            "UN", "WHO", "GDP", "AI", "ML", "PCR", "DNA", "RNA",
+        }
+        | {  # capitalised function words that commonly begin a sentence
+            "Since", "During", "Between", "From", "Until", "After", "Before",
+            "In", "On", "By", "At", "For", "With", "Within", "Over", "Through",
+            "Under", "Around", "About", "Across", "Throughout", "Post", "Pre",
+            "Early", "Late", "The", "This", "That", "These", "Those", "Their",
+            "Our", "Its", "And", "But", "However", "Thus", "Here", "There",
+            "When", "While", "Copyright", "Circa", "Ca", "Fiscal", "Academic",
+            "Christmas", "Easter",
+        }
+    )
+)
+
+
+def _bare_leading_blacklisted(name_group: str) -> bool:
+    """True if the leading name token of a single_bare match is a blacklisted
+    (non-surname) word, e.g. a month, season, or structural document word."""
+    lead = name_group.strip().lower().rstrip(",")
+    if not lead:
+        return False
+    lead_last = lead.split()[-1] if " " in lead else lead
+    return lead in _BARE_LEADING_BLACKLIST or lead_last in _BARE_LEADING_BLACKLIST
+
+
 def extract_author_year_patterns(text: str,
-                                  max_year: Optional[int] = None) -> list[dict]:
+                                  max_year: Optional[int] = None,
+                                  strict_bare: bool = False) -> list[dict]:
     """
     Parse author-year citation patterns from *text*.
 
@@ -74,10 +137,17 @@ def extract_author_year_patterns(text: str,
         raw       – matched string
         pattern   – pattern name
         start/end – character offsets
-    Overlapping matches are deduplicated; years > max_year are excluded. Matches where
-    any captured name token is a common non-name word (month/weekday names — the
-    concrete failure mode found in AEA RCT-registry abstracts, e.g. "May and June 2018"
-    read as authors "May" and "June") are discarded entirely.
+    Overlapping matches are deduplicated; years > max_year are excluded.
+
+    strict_bare – when True, apply two extra gates (both Stage-2 only, since
+    Stage-3 candidate finding is recall-critical and uses the same function):
+      1. drop single_bare matches whose leading token is a blacklisted
+         non-surname word (months, seasons, structural words, disease acronyms,
+         sentence-initial function words);
+      2. drop any match where a captured name token is a month/weekday name —
+         catches the multi-token case the leading-token check misses, e.g.
+         "May and June 2018" in AEA RCT-registry abstracts read as authors
+         "May" and "June".
     """
     if not text:
         return []
@@ -94,6 +164,12 @@ def extract_author_year_patterns(text: str,
             groups   = m.groups()
             year_str = groups[-1]
 
+            if strict_bare and pat_name == "single_bare" \
+                    and _bare_leading_blacklisted(groups[0]):
+                continue
+
+            # Unconditional: a month/weekday token is never an author surname in an
+            # author-year pattern, so this is wrong in Stage 3 as much as Stage 2.
             name_tokens: list[str] = []
             for g in groups[:-1]:
                 name_tokens.extend(re.findall(r"[A-Za-z\-]+", g))

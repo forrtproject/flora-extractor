@@ -107,6 +107,31 @@ def test_rule_filter_reproduction_with_cite():
     assert out.loc[0, "filter_status"] == "reproduction"
 
 
+def test_rule_filter_date_phrase_not_treated_as_cite():
+    """A replication phrase plus only a date range (no real author-year cite)
+    must fall to needs_review, not auto-accept via a single_bare false match."""
+    df = pd.DataFrame([_row(
+        "A replication study",
+        "We attempted to replicate the original effect. "
+        "Data were collected between January 2020 and March 2020.",
+    )])
+    out = apply_rule_filter(df)
+    assert out.loc[0, "filter_status"] == "needs_review"
+    assert "cite:" not in out.loc[0, "filter_evidence"]
+
+
+def test_rule_filter_real_cite_still_accepts():
+    """A genuine author-year citation still promotes to a high-confidence accept."""
+    df = pd.DataFrame([_row(
+        "A replication study",
+        "We attempted a direct replication of Smith (2010) and the effect held.",
+    )])
+    out = apply_rule_filter(df)
+    assert out.loc[0, "filter_status"] == "replication"
+    assert out.loc[0, "filter_confidence"] == "high"
+    assert "cite:" in out.loc[0, "filter_evidence"]
+
+
 def test_rule_filter_phrase_no_cite_needs_review():
     df = pd.DataFrame([_row(
         "We replicate prior findings",
