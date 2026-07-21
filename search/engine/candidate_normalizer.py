@@ -3,24 +3,8 @@ Candidate normalizer — converts RawCandidate → NormalizedCandidate, normaliz
 the DOI, and prepares for ranker scoring.
 """
 
-import re
-
+from shared.utils import clean_doi as normalize_doi
 from .types import MatchedKeyword, NormalizedCandidate, RawCandidate
-
-_DOI_PREFIX_RE = re.compile(r"^https?://(?:dx\.)?doi\.org/", re.IGNORECASE)
-_DOI_PREFIX_TXT_RE = re.compile(r"^doi:\s*", re.IGNORECASE)
-
-
-def normalize_doi(doi: str) -> str:
-    """Lowercase, no leading https://doi.org/ or doi:, no trailing slash."""
-    if not doi:
-        return ""
-    d = doi.strip().lower()
-    d = _DOI_PREFIX_RE.sub("", d)
-    d = _DOI_PREFIX_TXT_RE.sub("", d)
-    if d.endswith("/"):
-        d = d[:-1]
-    return d
 
 
 def _clean(s: str | None) -> str | None:

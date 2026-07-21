@@ -96,7 +96,7 @@ def parse_pdfminer(pdf_path) -> dict:
         "abstract":   sections.get("abstract", ""),
         "intro":      sections.get("intro", ""),
         "references": references,
-        "raw_text":   raw_text[:5000],
+        "raw_text":   raw_text[:50000],
     })
 
 
@@ -139,7 +139,7 @@ def parse_docpluck(pdf_path) -> dict:
         abstract = getattr(doc, "abstract", "") or ""
         return _uniform_shape("docpluck", {
             "abstract": abstract,
-            "raw_text": raw_text[:5000],
+            "raw_text": raw_text[:50000],
         })
     except Exception as exc:
         return _error_result("docpluck", str(exc))
@@ -217,7 +217,7 @@ def parse_opendataloader(pdf_path) -> dict:
         "abstract":   sections.get("abstract", ""),
         "intro":      sections.get("intro", ""),
         "references": references,
-        "raw_text":   raw_text[:5000],
+        "raw_text":   raw_text[:50000],
     })
 
 
@@ -370,7 +370,7 @@ def parse_markitdown(pdf_path, doi_r: str) -> dict:
         "abstract":   abstract,
         "intro":      intro,
         "references": refs,
-        "raw_text":   raw_text[:5000],
+        "raw_text":   raw_text[:50000],
     })
 
 

@@ -23,28 +23,12 @@ from pathlib import Path
 
 from shared.config import DATA_DIR, log
 from shared.schema import CANDIDATES_COLS
-from shared.utils import clean_doi
 
+from ..engine_source import _flatten as _normalized_to_row
 from .runner import RunConfig, build_default_adapters, run_discovery
 from .types import NormalizedCandidate, RunFilters, SourceId
 
 DEFAULT_SOURCES: list[SourceId] = ["openalex", "crossref", "semantic_scholar"]
-
-
-def _normalized_to_row(c: NormalizedCandidate) -> dict[str, object]:
-    """Flatten a NormalizedCandidate into the CANDIDATES_COLS schema."""
-    authors = "; ".join(a.name for a in (c.authors or []) if a.name) or None
-    return {
-        "doi_r": clean_doi(c.doi or ""),
-        "title_r": c.title,
-        "abstract_r": c.abstract,
-        "year_r": c.year,
-        "authors_r": authors,
-        "journal_r": c.journal,
-        "url_r": c.url,
-        "openalex_id_r": c.source_record_id if c.source == "openalex" else None,
-        "source": c.source,
-    }
 
 
 def _csv_writer(out_path: Path):

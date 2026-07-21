@@ -49,7 +49,7 @@ def backfill(csv_path, apply: bool = False, target_doi: str = "") -> None:
         fallback_author = old_authors.split(";")[0].strip() if old_authors else ""
 
         try:
-            new_ref, new_authors = _build_ref_o(
+            new_ref, new_authors, new_bibtex = _build_ref_o(
                 doi_o, fallback_author,
                 str(row.get("year_o", "") or ""),
                 title_o,
@@ -61,8 +61,9 @@ def backfill(csv_path, apply: bool = False, target_doi: str = "") -> None:
         if new_authors != old_authors or new_ref != old_ref:
             changes.append((idx, new_authors, new_ref, old_authors, old_ref, doi_o))
             if apply:
-                df.at[idx, "authors_o"] = new_authors
-                df.at[idx, "ref_o"]     = new_ref
+                df.at[idx, "authors_o"]    = new_authors
+                df.at[idx, "ref_o"]        = new_ref
+                df.at[idx, "bibtex_ref_o"] = new_bibtex
 
     print(f"\nBackfill: {len(changes)} rows changed out of {len(df)} total")
     shown = changes[:20]

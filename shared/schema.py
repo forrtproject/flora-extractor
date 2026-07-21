@@ -45,6 +45,8 @@ EXTRACT_ADDED_COLS = [
     "year_o",              # int   — original study publication year
     "authors_o",           # str   — original study authors, semicolon-separated APA names (e.g. "Bransford, J. D.; Franks, J. J.")
     "ref_o",               # str   — full APA-style citation fetched from OpenAlex after doi_o resolved
+    "bibtex_ref_o",        # str   — BibTeX entry for the original study (@article or @misc)
+    "bibtex_ref_r",        # str   — BibTeX entry for the replication/reproduction paper (@article or @misc)
 
     # Linking
     "link_method",         # str   — author_year_match | llm_abstract | llm_fulltext | target_pending
@@ -106,14 +108,18 @@ DOI_VERIFICATION_VALUES = {
 }
 
 OUTCOME_VALUES = {
-    "success", "failure", "mixed", "uninformative", "descriptive", "pending", "api_error",
+    "success", "failure", "mixed", "uninformative", "descriptive", "cannot_be_determined",
+    "not_a_replication", "pending", "api_error",
 }
 
 TYPE_VALUES = {"replication", "reproduction"}
 
 VALIDATION_STATUS_VALUES = {"confirmed", "rejected", "pending", "needs_review"}
 
-SOURCE_VALUES = {"openalex", "bob_reed", "i4r", "semantic_scholar"}
+# Sources actually produced by the pipeline. #46: bob_reed / i4r were advertised
+# here but their fetchers (search/external_lists.py) are never called, so no such
+# rows exist — reserved until external_lists is wired into run_search.
+SOURCE_VALUES = {"openalex", "openalex_concept", "semantic_scholar", "backfill_old_pipeline"}
 
 # ── Default empty row builders ────────────────────────────────────────────────
 

@@ -277,30 +277,37 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict],
     import openai
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system",
-                 "content": ("You are a research methodology expert that identifies "
-                              "original studies from replication papers. "
-                              "Always respond with valid JSON only.")},
-                {"role": "user", "content": prompt},
-            ],
-            response_format={"type": "json_object"},
-            max_completion_tokens=1024,
-        )
-        if response.usage:
-            _track_openai_tokens(response.usage.total_tokens)
-            token_counter.record("openai", response.usage.total_tokens)
-            log.debug("OpenAI usage: +%d tokens (session total: %d)",
-                      response.usage.total_tokens, _openai_tokens_session)
-        result = _parse_llm_json(response.choices[0].message.content)
-        return result, ("" if result else "response was not valid JSON")
-    except Exception as e:
-        print(f"  [OpenAI] Exception: {e}")
-        log.warning("OpenAI call failed: %s", e)
-        return None, f"exception: {e}"
+    # #45: 3 attempts with exponential backoff (1s, 2s) per the api_error contract, so a
+    # transient outage does not immediately poison a row after a single failure. call_gemini
+    # already retries; this brings the OpenAI fallback to the same contract.
+    last_error = "no attempts made"
+    for attempt in range(3):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system",
+                     "content": ("You are a research methodology expert that identifies "
+                                  "original studies from replication papers. "
+                                  "Always respond with valid JSON only.")},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+                max_completion_tokens=1024,
+            )
+            if response.usage:
+                _track_openai_tokens(response.usage.total_tokens)
+                token_counter.record("openai", response.usage.total_tokens)
+                log.debug("OpenAI usage: +%d tokens (session total: %d)",
+                          response.usage.total_tokens, _openai_tokens_session)
+            result = _parse_llm_json(response.choices[0].message.content)
+            return result, ("" if result else "response was not valid JSON")
+        except Exception as e:
+            last_error = f"exception: {e}"
+            log.warning("OpenAI call failed (attempt %d/3): %s", attempt + 1, e)
+            if attempt < 2:
+                time.sleep(2 ** attempt)  # 1s, 2s
+    return None, last_error
 
 
 # ── OpenRouter (OpenAI-compatible alternative LLMs) ──────────────────────────
@@ -349,12 +356,15 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
 
 # ── Unified LLM router ───────────────────────────────────────────────────────
 
-def call_llm(prompt: str, gemini_model: str = "") -> tuple[Optional[dict], str, str]:
+def call_llm(prompt: str, gemini_model: str = "",
+             prefer_openai: bool = False) -> tuple[Optional[dict], str, str]:
     """
     Route a prompt through the configured provider chain and return the first
     successful result.
 
-    Order: Gemini -> OpenAI -> OpenRouter (Qwen as last resort).
+    Default order : Gemini -> OpenAI -> OpenRouter (Qwen as last resort).
+    prefer_openai : flip to OpenAI -> Gemini -> OpenRouter.
+                    Use when Gemini is overloaded (503/429) and OpenAI is preferred.
 
     gemini_model — Gemini model to use (defaults to GEMINI_LIGHT_MODEL).
 
@@ -363,14 +373,24 @@ def call_llm(prompt: str, gemini_model: str = "") -> tuple[Optional[dict], str, 
     """
     from .config import GEMINI_LIGHT_MODEL as _LIGHT
 
-    model = gemini_model or _LIGHT
-    result, gemini_err = call_gemini(prompt, model=model)
-    if result:
-        return result, model, ""
+    model      = gemini_model or _LIGHT
+    gemini_err = ""
+    openai_err = ""
 
-    result, openai_err = call_openai(prompt)
-    if result:
-        return result, OPENAI_MODEL, ""
+    if prefer_openai:
+        result, openai_err = call_openai(prompt)
+        if result:
+            return result, OPENAI_MODEL, ""
+        result, gemini_err = call_gemini(prompt, model=model)
+        if result:
+            return result, model, ""
+    else:
+        result, gemini_err = call_gemini(prompt, model=model)
+        if result:
+            return result, model, ""
+        result, openai_err = call_openai(prompt)
+        if result:
+            return result, OPENAI_MODEL, ""
 
     if OPENROUTER_API_KEY:
         result, or_err = call_openrouter(prompt)

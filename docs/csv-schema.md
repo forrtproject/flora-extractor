@@ -102,6 +102,7 @@ Populated automatically before each row is written. See [doi-verification.md](do
 | `uninformative` | Authors explicitly state outcome is unclear |
 | `cannot_be_determined` | Insufficient detail in abstract to classify |
 | `descriptive` | Adapted methods in a new context, does not test original claim |
+| `not_a_replication` | Text does not describe a genuine attempt to replicate/reproduce the named original (unrelated, biological/technical, or metaphorical use of "replicate"/"reproduce") |
 | `pending` | Outcome not yet extracted |
 | `api_error` | Extraction failed after retries |
 

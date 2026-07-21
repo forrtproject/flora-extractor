@@ -76,8 +76,9 @@ FLUSH_EVERY        = 500   # flush candidates.csv every N abstracts found
 
 _SESSION = requests.Session()
 _SESSION.headers.update({"User-Agent": f"FLoRA-Extractor/1.0 (mailto:{RESEARCHER_EMAIL})"})
-if OPENALEX_API_KEY:
-    _SESSION.headers["Authorization"] = f"Bearer {OPENALEX_API_KEY}"
+
+# OpenAlex auth header — sent only on OA requests, never on CrossRef/S2 calls.
+_OA_HEADERS = {"Authorization": f"Bearer {OPENALEX_API_KEY}"} if OPENALEX_API_KEY else {}
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +161,7 @@ def _fetch_openalex_batch(oa_ids: list[str]) -> dict[str, Optional[str]]:
     )
     result: dict[str, Optional[str]] = {oid: None for oid in oa_ids}
     try:
-        resp = _SESSION.get(url, timeout=30)
+        resp = _SESSION.get(url, timeout=30, headers=_OA_HEADERS)
         resp.raise_for_status()
         for work in resp.json().get("results", []):
             wid = work.get("id", "").replace("https://openalex.org/", "").strip()
@@ -371,9 +372,13 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
     # ------------------------------------------------------------------
     pq_path = _parquet_path("candidates")
     if pq_path.exists():
-        import pyarrow.parquet as pq
-        log.info("Loading from Parquet: %s", pq_path)
-        df = pq.read_table(pq_path).to_pandas().fillna("")
+        try:
+            import pyarrow.parquet as pq
+            log.info("Loading from Parquet: %s", pq_path)
+            df = pq.read_table(pq_path).to_pandas().fillna("")
+        except Exception as exc:
+            log.warning("Parquet read failed (%s) — falling back to CSV", exc)
+            df = pd.read_csv(CANDIDATES_PATH, dtype=str, encoding="utf-8-sig", low_memory=False).fillna("")
     else:
         log.info("Loading candidates.csv (no Parquet found)...")
         df = pd.read_csv(CANDIDATES_PATH, dtype=str, encoding="utf-8-sig", low_memory=False).fillna("")

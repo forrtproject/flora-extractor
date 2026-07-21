@@ -1,35 +1,28 @@
 # FLoRA Extractor — Python Dependencies
 # Install with: pip install -r requirements.txt
+# On Railway, FLORA_READONLY=1 prevents heavy pipeline deps from being imported.
 
-# ── Web framework ─────────────────────────────────────────────────────────────
+# ── Web / dashboard (Railway uses these) ──────────────────────────────────────
 flask>=3.0.0
-flask-sqlalchemy>=3.1.0
-
-# ── Data processing ───────────────────────────────────────────────────────────
+gunicorn>=21.2.0
 pandas>=2.0.0
-openpyxl>=3.1.0          # Excel export
-fpdf2>=2.7.0             # PDF export
-
-# ── HTTP / API clients ────────────────────────────────────────────────────────
+pyarrow>=14.0.0
 requests>=2.31.0
-openai>=1.0.0            # OpenAI fallback LLM
+python-dotenv>=1.0.0
 
-# ── PDF processing ────────────────────────────────────────────────────────────
-pdfminer.six>=20221105   # Text extraction from PDFs
-pymupdf>=1.23.0          # PDF rendering for image-based ref extraction (fitz)
-playwright>=1.40.0       # Headless browser fallback for PDF acquisition
-                         # After install: python -m playwright install chromium
+# ── Pipeline only (not used when FLORA_READONLY=1) ────────────────────────────
+flask-sqlalchemy>=3.1.0
+openpyxl>=3.1.0
+fpdf2>=2.7.0
+openai>=1.0.0
+pdfminer.six>=20221105
+pymupdf>=1.23.0
+playwright>=1.40.0
+rapidfuzz>=3.0.0
+pyyaml>=6.0
+filelock>=3.12.0
 
-# ── Text matching ─────────────────────────────────────────────────────────────
-rapidfuzz>=3.0.0         # Fuzzy title matching for deduplication
-
-# ── Utilities ─────────────────────────────────────────────────────────────────
-python-dotenv>=1.0.0     # Load .env file
-pyyaml>=6.0              # search/engine reads YAML spec files
-
-# ── Testing ───────────────────────────────────────────────────────────────────
+# ── Dev / testing ─────────────────────────────────────────────────────────────
 pytest>=7.0.0
 pytest-mock>=3.0.0
-
-# ── Linting ───────────────────────────────────────────────────────────────────
 ruff>=0.15.0

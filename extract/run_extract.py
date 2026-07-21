@@ -2,7 +2,7 @@
 run_extract.py — Stage 3 orchestrator.
 
 For every row in filtered.csv:
-  - false_positive → pass through unchanged (no extraction)
+  - false_positive → skipped (known non-replication; not written to extracted.csv)
   - replication/reproduction → classify match type, route to pipeline, write result
 
 Each completed row is appended to data/extracted.csv immediately so that
@@ -31,22 +31,74 @@ from shared.openalex_client import _search_crossref_by_title, _search_openalex_b
 from shared.pdf_parsing import parse_all as _parse_all
 from shared.doi_verify import verify_and_correct
 from shared.schema import EXTRACTED_COLS, make_pair_id
-from shared.utils import cache_key, clean_doi
+from shared.utils import cache_key, clean_doi, csv_lock
 from extract.link_original import run_for_doi
 from extract.multi_original import run_multi_original_for_doi
 from extract.code_outcome import extract_outcome, predict_outcome_keyword
 
+def build_bibtex(
+    authors: list,
+    year: str,
+    title: str,
+    journal: str = "",
+    volume: str = "",
+    issue: str = "",
+    first_page: str = "",
+    last_page: str = "",
+    doi: str = "",
+    url: str = "",
+) -> str:
+    """Build a BibTeX entry string from metadata fields.
+
+    Entry type is @article when a journal is present, @misc otherwise.
+    Cite key: FirstAuthorSurname_Year (e.g. Smith_2021).
+    Author format follows APA initials convention (Last, F. M.).
+    """
+    year_str = str(year or "")
+    first_surname = (
+        re.sub(r"[^A-Za-z0-9]", "", authors[0].split(",")[0].strip())
+        if authors else "Unknown"
+    )
+    cite_key   = f"{first_surname}_{year_str}" if year_str else first_surname
+    entry_type = "article" if journal else "misc"
+    author_str = " and ".join(str(a) for a in authors) if authors else ""
+    pages = (f"{first_page}--{last_page}" if first_page and last_page
+             else (first_page or ""))
+    doi_url = f"https://doi.org/{doi}" if doi else (url or "")
+
+    fields: dict[str, str] = {"title": title or ""}
+    if author_str:
+        fields["author"] = author_str
+    if journal:
+        fields["journal"] = journal
+    if volume:
+        fields["volume"] = volume
+    if issue:
+        fields["number"] = issue
+    if pages:
+        fields["pages"] = pages
+    if year_str:
+        fields["year"] = year_str
+    if doi:
+        fields["doi"] = doi
+    if doi_url:
+        fields["url"] = doi_url
+
+    body = ", ".join(f"{k}={{{v}}}" for k, v in fields.items())
+    return f"@{entry_type}{{{cite_key}, {body}}}"
+
+
 def _build_ref_o(doi_o: str, fallback_author: str = "",
                   fallback_year: str = "",
-                  title_o: str = "") -> tuple[str, str]:
-    """Build APA-style ref_o and semicolon-separated authors_o for a resolved original.
+                  title_o: str = "") -> tuple[str, str, str]:
+    """Build APA-style ref_o, authors_o, and bibtex_ref_o for a resolved original.
 
     Resolution order:
       1. DOI lookup via OpenAlex then CrossRef (fetch_openalex_full_metadata)
       2. Title search via CrossRef then OpenAlex (when DOI lookup fails and title_o given)
       3. Surname · Year fallback (when all API lookups fail)
 
-    Returns (ref_o, authors_o).
+    Returns (ref_o, authors_o, bibtex_ref_o).
     """
     meta: dict | None = None
     if doi_o:
@@ -69,7 +121,7 @@ def _build_ref_o(doi_o: str, fallback_author: str = "",
         surname = str(fallback_author or "").split()[-1] if fallback_author else ""
         year    = str(fallback_year or "")
         ref     = " · ".join(s for s in [surname, year] if s)
-        return ref, surname
+        return ref, surname, ""
 
     authors    = meta.get("authors") or []
     year       = str(meta.get("year") or fallback_year or "")
@@ -110,7 +162,10 @@ def _build_ref_o(doi_o: str, fallback_author: str = "",
         parts.append(doi_url)
     ref_o = " ".join(parts)
 
-    return ref_o, authors_o
+    bibtex_o = build_bibtex(
+        authors, year, title, journal, volume, issue, first_page, last_page, doi_val,
+    )
+    return ref_o, authors_o, bibtex_o
 
 
 # ── Internal → schema link_method mapping ────────────────────────────────────
@@ -223,6 +278,21 @@ def _score_to_confidence(score) -> str:
     except (TypeError, ValueError):
         return "low"
     return "high" if f >= 0.8 else "medium" if f >= 0.5 else "low"
+
+
+def _link_confidence(link: dict) -> str:
+    """Persisted link_confidence: LLM confidence if present, else derived from score.
+
+    #51: single_candidate_after_requery auto-accepts a lone candidate at score 1.0
+    with NO semantic check — "exactly one candidate came back" is not evidence it is
+    the replication TARGET. Cap it at medium so validation prioritises these rows.
+    """
+    conf = (link["llm_confidence"]
+            if link.get("llm_confidence") in {"high", "medium", "low"}
+            else _score_to_confidence(link.get("resolution_score", 0)))
+    if link.get("resolution_method") == "single_candidate_after_requery" and conf == "high":
+        return "medium"
+    return conf
 
 
 # ── Match-type classification (Issue 8) ──────────────────────────────────────
@@ -387,6 +457,27 @@ def _build_rep_df(row: pd.Series) -> pd.DataFrame:
     }])
 
 
+# ── BibTeX helper for the replication paper ──────────────────────────────────
+
+def _build_bibtex_r(row: "pd.Series | dict") -> str:
+    """Build a BibTeX entry for the replication paper from its row metadata.
+
+    Uses the r-side columns already present in filtered.csv (doi_r, title_r,
+    authors_r, year_r, journal_r, url_r). Volume/issue/pages are not tracked
+    at Stage 1, so they are omitted here.
+    """
+    authors_raw = str(row.get("authors_r") or "").strip()
+    authors = [a.strip() for a in authors_raw.split(";") if a.strip()]
+    return build_bibtex(
+        authors     = authors,
+        year        = str(row.get("year_r")    or ""),
+        title       = str(row.get("title_r")   or ""),
+        journal     = str(row.get("journal_r") or ""),
+        doi         = str(row.get("doi_r")     or ""),
+        url         = str(row.get("url_r")     or ""),
+    )
+
+
 # ── Row merge helpers ─────────────────────────────────────────────────────────
 
 def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
@@ -405,17 +496,16 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
         "doi_o":           doi_o_clean,
         "title_o":         str(link.get("resolved_title_o", "") or ""),
         "year_o":          str(link.get("resolved_year_o",  "") or ""),
-        **dict(zip(("ref_o", "authors_o"), _build_ref_o(
+        **dict(zip(("ref_o", "authors_o", "bibtex_ref_o"), _build_ref_o(
             doi_o_clean,
             str(link.get("resolved_author_o", "") or ""),
             str(link.get("resolved_year_o",   "") or ""),
             str(link.get("resolved_title_o",  "") or ""),
         ))),
+        "bibtex_ref_r":    _build_bibtex_r(filter_row),
         "link_method":     _map_method(link.get("resolution_method", "target_pending")),
         "link_evidence":   str(link.get("llm_evidence",     "") or ""),
-        "link_confidence": (link["llm_confidence"]
-                            if link.get("llm_confidence") in {"high", "medium", "low"}
-                            else _score_to_confidence(link.get("resolution_score", 0))),
+        "link_confidence": _link_confidence(link),
         "link_llm_model":  str(link.get("llm_model",        "") or ""),
         "outcome":             outcome.get("outcome",             "uninformative"),
         "outcome_phrase":      outcome.get("outcome_phrase",      ""),
@@ -449,12 +539,13 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
         "doi_o":           doi_o_clean,
         "title_o":         str(orig.get("title",        "") or ""),
         "year_o":          str(orig.get("year",         "") or ""),
-        **dict(zip(("ref_o", "authors_o"), _build_ref_o(
+        **dict(zip(("ref_o", "authors_o", "bibtex_ref_o"), _build_ref_o(
             doi_o_clean,
             str(orig.get("first_author", "") or ""),
             str(orig.get("year",         "") or ""),
             str(orig.get("title",        "") or ""),
         ))),
+        "bibtex_ref_r":    _build_bibtex_r(filter_row),
         "link_method":     "llm_abstract",
         "link_evidence":   str(orig.get("evidence",     "") or ""),
         "link_confidence": conf_str,
@@ -481,6 +572,7 @@ def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
         "doi_o": "", "title_o": "", "year_o": "", "authors_o": "", "ref_o": "",
+        "bibtex_ref_o": "", "bibtex_ref_r": _build_bibtex_r(filter_row),
         "link_method": link_method, "link_evidence": "", "link_confidence": "low",
         "link_llm_model": "",
         "outcome": outcome, "outcome_phrase": "",
@@ -546,8 +638,10 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -
 
 def _best_fulltext_from_cache(doi_r: str) -> str:
     """
-    Read the parse cache for doi_r, score each method, and return the abstract +
-    intro text of the highest-scoring method.  Returns '' on any failure.
+    Read the parse cache for doi_r, score each method, and return the fulltext
+    of the highest-scoring method.  Prefers raw_text (full paper including
+    results/discussion/conclusion); falls back to abstract + intro when raw_text
+    is empty.  Returns '' on any failure.
     """
     cache_file = PARSE_CACHE_DIR / f"parse_{cache_key(doi_r)}.json"
     if not cache_file.exists():
@@ -559,6 +653,9 @@ def _best_fulltext_from_cache(doi_r: str) -> str:
         best = best_parse_result(results)
         if not best:
             return ""
+        raw = str(best.get("raw_text", "") or "").strip()
+        if raw:
+            return raw
         return " ".join(filter(None, [
             str(best.get("abstract", "") or ""),
             str(best.get("intro",    "") or ""),
@@ -692,12 +789,13 @@ def _verify_row(row: dict) -> dict:
     if v["doi_o"] != old_doi:
         row["doi_o"]   = v["doi_o"]
         row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), v["doi_o"])
-        new_ref, new_authors = _build_ref_o(v["doi_o"],
+        new_ref, new_authors, new_bibtex = _build_ref_o(v["doi_o"],
                                             str(row.get("authors_o", "") or ""),
                                             str(row.get("year_o",    "") or ""),
                                             str(row.get("title_o",   "") or ""))
-        row["ref_o"]     = new_ref
-        row["authors_o"] = new_authors
+        row["ref_o"]        = new_ref
+        row["authors_o"]    = new_authors
+        row["bibtex_ref_o"] = new_bibtex
     if v["doi_o_verification"] == "mismatch":
         row["link_confidence"] = "low"
     if v["evidence_note"]:
@@ -729,12 +827,15 @@ def _append_row(out_path, result_row: dict, first: bool) -> None:
             row_df[col] = ""
 
     try:
-        row_df[EXTRACTED_COLS].to_csv(
-            out_path, mode="w" if first else "a",
-            index=False, encoding="utf-8-sig", header=first,
-            quoting=1,  # csv.QUOTE_ALL to quote fields with special characters
-            quotechar='"',
-        )
+        # Hold the shared CSV lock per row so promote_test's full-file rewrite cannot
+        # clobber this append (and vice versa) when both run against extracted.csv (#49).
+        with csv_lock(out_path):
+            row_df[EXTRACTED_COLS].to_csv(
+                out_path, mode="w" if first else "a",
+                index=False, encoding="utf-8-sig", header=first,
+                quoting=1,  # csv.QUOTE_ALL to quote fields with special characters
+                quotechar='"',
+            )
     except Exception as e:
         log.error("Failed to write row for DOI %s: %s",
                   result_row.get("doi_r", "unknown"), str(e))
@@ -754,7 +855,8 @@ def run_extract(no_llm: bool = False,
                 predicted_outcome: "str | None" = None,
                 out_path: "Path | None" = None,
                 source: "str | None" = None,
-                doi_r_filter: "list[str] | None" = None) -> pd.DataFrame:
+                doi_r_filter: "list[str] | None" = None,
+                recalibrate_outcomes: bool = False) -> pd.DataFrame:
     """
     Run Stage 3 and stream results to data/extracted.csv.
 
@@ -772,6 +874,10 @@ def run_extract(no_llm: bool = False,
                            target_pending / api_error / no_original_found rows are silently skipped.
                            Use with --no-llm --no-pdf for a fast rule-based-only pass, then
                            follow up with --resume for the LLM pass on remaining rows.
+    recalibrate_outcomes — run the full outcome pipeline (PDF download + LLM) even when --no-pdf
+                           or --no-llm are set. Only the outcome step is affected; link resolution
+                           still respects those flags. Useful for a fast --no-llm --no-pdf pass
+                           that still gets proper outcomes.
     """
     filtered_path = DATA_DIR / "filtered.csv"
     if not filtered_path.exists():
@@ -998,9 +1104,10 @@ def run_extract(no_llm: bool = False,
                     else:
                         link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                                               no_llm=no_llm, no_pdf=no_pdf)
-                        if not no_pdf:
+                        if not no_pdf or recalibrate_outcomes:
                             _save_parse_cache(doi_r)
-                        outcome = _get_outcome(doi_r, row, link, no_llm=no_llm)
+                        outcome = _get_outcome(doi_r, row, link,
+                                               no_llm=no_llm and not recalibrate_outcomes)
                         result_rows.append(
                             _merge_row(row, link, outcome, "single_original", match_conf, 1, 1)
                         )
@@ -1023,9 +1130,10 @@ def run_extract(no_llm: bool = False,
             else:
                 link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                                       no_llm=no_llm, no_pdf=no_pdf)
-                if not no_pdf:
+                if not no_pdf or recalibrate_outcomes:
                     _save_parse_cache(doi_r)
-                outcome = _get_outcome(doi_r, row, link, no_llm=no_llm)
+                outcome = _get_outcome(doi_r, row, link,
+                                       no_llm=no_llm and not recalibrate_outcomes)
                 result_rows.append(
                     _merge_row(row, link, outcome, match_type, match_conf, 1, 1)
                 )
@@ -1232,6 +1340,15 @@ if __name__ == "__main__":
             "All other rows are skipped. Useful for re-running specific rows."
         ),
     )
+    parser.add_argument(
+        "--recalibrate-outcomes", action="store_true",
+        help=(
+            "Run the full outcome pipeline (PDF download + LLM) even when --no-pdf "
+            "or --no-llm are set. Only the outcome step is affected; link resolution "
+            "still respects those flags. Useful with --no-llm --no-pdf --resume to "
+            "carry forward links but upgrade cannot_be_determined outcomes."
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -1259,6 +1376,7 @@ if __name__ == "__main__":
                 out_path=(DATA_DIR / "extracted-test.csv") if args.extracted_test else None,
                 source=args.source,
                 doi_r_filter=doi_r_list,
+                recalibrate_outcomes=args.recalibrate_outcomes,
             )
     finally:
         token_counter.print_summary()

@@ -47,19 +47,15 @@ from shared.utils import cache_key, clean_doi
 #   Falls back to title-Jaccard relative threshold (best > 0.05, best ≥ second×1.5).
 #   Same logic as the old resolve_same_author_year() in shared/disambiguation.py.
 
-_CITATION_YEAR  = r"(?:19|20)\d{2}"
-_CITATION_NAME  = r"[A-Z][A-Za-z\-\xc0-ɏ]{1,}(?:\s+[A-Z][A-Za-z\-\xc0-ɏ]{1,})*"
-_CITATION_RE    = re.compile(
-    r"\("
-    r"(?P<authors>" + _CITATION_NAME +
-    r"(?:\s*(?:,|&|and|\bet\s+al\.?)\s*" + _CITATION_NAME + r")*)"
-    r"\s*,\s*"
-    r"(?P<year>" + _CITATION_YEAR + r")"
-    r"(?:\s*,\s*(?P<journal>[A-Z][A-Za-z\s&:]+?))?"
-    r"\s*\)",
-    re.UNICODE,
-)
 _STOP_SURNAMES = {"and", "van", "von", "der", "den", "del", "the", "for"}
+
+# Journal-hint lookahead: applied only to "_bare"-style matches from
+# extract_author_year_patterns() (the ones found inside a literal enclosing
+# parenthetical in the source text, e.g. "(Antle, 2010, American Journal of
+# Agricultural Economics)"). "_paren"-style matches already consumed their own
+# closing paren as part of the year, so there's no outer paren left to inspect.
+_JOURNAL_LOOKAHEAD = 120
+_JOURNAL_TAIL_RE = re.compile(r"^\s*,\s*([A-Z][A-Za-z\s&:]+?)\s*\)")
 
 # ── Title-pattern resolver ─────────────────────────────────────────────────────
 # Patterns that extract the original study name from a replication paper's title.
@@ -173,25 +169,40 @@ def _resolve_by_title_pattern(
 
 
 def _extract_cit_contexts(text: str) -> list[dict]:
-    """Return list of {surnames, year, journal} from all parenthetical citations."""
+    """Return list of {surnames, year, journal, raw} from all author-year citations.
+
+    Citation detection delegates to shared.openalex_client.extract_author_year_patterns(),
+    which — unlike the old local-only _CITATION_RE — also catches narrative citations
+    like "Kim et al. (2014)", not just fully-parenthetical "(Antle, 2010)" ones. It is
+    parenthesis-agnostic (its "bare" patterns match "Antle, 2010" whether or not literal
+    parentheses surround it in the source text), so both citation styles are covered by
+    one call. Surnames are re-derived from each match's raw text (not just the shared
+    function's single primary surname) so multi-author citations keep every surname for
+    _resolve_rule_based()'s author-matching score.
+    """
     results: list[dict] = []
     seen: set[tuple] = set()
-    for m in _CITATION_RE.finditer(text):
+    for match in extract_author_year_patterns(text):
+        raw = match["raw"]
         surnames = [
             t.lower()
-            for t in re.findall(r"[A-Z][A-Za-z\-\xc0-ɏ]{2,}", m.group("authors"))
+            for t in re.findall(r"[A-Z][A-Za-z\-\xc0-ɏ]{2,}", raw)
             if t.lower() not in _STOP_SURNAMES
         ]
-        try:
-            year = int(m.group("year"))
-        except ValueError:
-            continue
+        year = match["year"]
         key = (tuple(sorted(surnames)), year)
         if key in seen:
             continue
         seen.add(key)
-        journal = (m.group("journal") or "").strip().rstrip(",;.:")
-        results.append({"surnames": surnames, "year": year, "journal": journal, "raw": m.group(0)})
+
+        journal = ""
+        if match["pattern"].endswith("_bare"):
+            tail = text[match["end"]: match["end"] + _JOURNAL_LOOKAHEAD]
+            jm = _JOURNAL_TAIL_RE.match(tail)
+            if jm:
+                journal = jm.group(1).strip().rstrip(",;.:")
+
+        results.append({"surnames": surnames, "year": year, "journal": journal, "raw": raw})
     return results
 
 

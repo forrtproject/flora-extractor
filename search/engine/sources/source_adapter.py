@@ -34,6 +34,10 @@ class SourceAdapter(ABC):
     id: SourceId
     verified_at: datetime
 
+    # Subclasses set these in __init__ (OR-join token and phrase-quote character).
+    _or: str
+    _q: str
+
     @abstractmethod
     def search(self, args: SearchArgs) -> Iterator[SearchPage]:
         ...
@@ -41,3 +45,13 @@ class SourceAdapter(ABC):
     @abstractmethod
     def report_limits(self) -> RateLimitReport:
         ...
+
+    def _build_or_expression(self, phrases: list[str]) -> str:
+        return self._or.join(
+            f"{self._q}{self._escape(p)}{self._q}" for p in phrases
+        )
+
+    @staticmethod
+    def _escape(phrase: str) -> str:
+        # None of the source query syntaxes support nested quotes/escapes — strip defensively.
+        return phrase.replace('"', "").replace("\\", "")

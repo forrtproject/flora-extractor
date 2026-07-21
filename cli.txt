@@ -86,6 +86,25 @@ python -m filter.refilter_fp --limit 50
 # Start completely fresh (clears checkpoint)
 python -m filter.refilter_fp --reset
 
+# Fix year_o in extracted.csv (clears OA cache + re-fetches with corrected logic)
+python -m tools.fix_years
+
+# Fix year_o in extracted-test.csv (if you have one)
+python -m tools.fix_years --extracted-test
+
+# Preview first without writing
+python -m tools.fix_years --dry-run
+
+# Backfill both bibtex columns on existing extracted.csv
+# bibtex_ref_r is fast (no API calls); bibtex_ref_o uses cached OpenAlex/CrossRef data
+python -m tools.backfill_bibtex
+
+# Same for extracted-test.csv
+python -m tools.backfill_bibtex --extracted-test
+
+# Only fill rows that are currently blank (if you've already run partially)
+python -m tools.backfill_bibtex --only-missing
+
 # Check what you're working with (no API calls)
 python -m search.fetch_abstracts --dry-run
 
@@ -101,4 +120,8 @@ python -m search.run_search --harvest-only
 python -m search.run_search --source openalex_concept --from-year 2011 --to-year 2026
 
 # Auto-advance loop (10k per concept per call)
-do { python -m search.run_search --auto-advance --source openalex_concept --from-year 2011 --to-year 2026 --max-per-phrase 10000 } until ($LASTEXITCODE -eq 2)
+do { python -m search.run_search --auto-advance --from-year 1990 --to-year 2010 --max-per-phrase 10000 } until ($LASTEXITCODE -eq 2)
+
+python -m extract.run_extract --resume --no-llm --no-pdf --resolved-only --no-multiple-originals --no-reproductions --skip-flora-validated --recalibrate-outcomes
+
+python -c "from shared.dashboard_cache import update_stats; [update_stats(s) for s in ('candidates','filtered','extracted','extracted-test')]"

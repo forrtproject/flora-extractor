@@ -33,7 +33,7 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from fpdf import FPDF
 from extract.link_original import run_for_doi
-from shared.utils import cache_key, clean_doi
+from shared.utils import cache_key, clean_doi, pdf_serve_url
 
 VALIDATION_FILE = CACHE_DIR / "validations.json"
 
@@ -253,13 +253,6 @@ def _write_export(export_type: str, fmt: str, dois: list) -> dict:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _pdf_serve_url(doi_r: str, result: dict) -> str:
-    if result.get("pdf_path"):
-        return f"/pdf/{Path(result['pdf_path']).name}"
-    expected = PDF_CACHE_DIR / f"{cache_key(doi_r)}.pdf"
-    return f"/pdf/{expected.name}" if expected.exists() else ""
-
-
 def _flora_tag(result: dict) -> str:
     """Compute the FLoRA comparison tag string for a result dict."""
     res_doi   = (result.get("resolved_doi_o")   or "").lower()
@@ -327,7 +320,7 @@ def _build_candidate_row(row: pd.Series) -> dict:
         "flora_validation_status": flora_validation_status,
         "user_val_status"        : v.get("status",  ""),
         "user_val_comment"       : v.get("comment", ""),
-        "pdf_serve_url"     : _pdf_serve_url(doi_r, result) if result else "",
+        "pdf_serve_url"     : pdf_serve_url(doi_r, result) if result else "",
         "pdf_ok"            : bool(result.get("pdf_ok", False)) if result else False,
         "pdf_url"           : result.get("pdf_url",    "") if result else "",
         "pdf_source"        : result.get("pdf_source", "") if result else "",
@@ -585,7 +578,7 @@ def api_run():
             try:
                 result = run_for_doi(doi_r, state.flora_df, state.cands_df,
                                      force=force_rerun)
-                result["pdf_serve_url"] = _pdf_serve_url(doi_r, result)
+                result["pdf_serve_url"] = pdf_serve_url(doi_r, result)
                 result["flora_tag"]     = _flora_tag(result)
 
                 with state.resolved_lock:
@@ -682,7 +675,7 @@ def api_run_doi():
     try:
         result = run_for_doi(doi_r, state.flora_df, state.cands_df,
                              force=True, validation_comment=comment)
-        result["pdf_serve_url"] = _pdf_serve_url(doi_r, result)
+        result["pdf_serve_url"] = pdf_serve_url(doi_r, result)
         result["flora_tag"]     = _flora_tag(result)
         with state.resolved_lock:
             state.resolved[doi_r] = result

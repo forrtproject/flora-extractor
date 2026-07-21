@@ -45,6 +45,25 @@ class TestExtractAuthorYearPatterns:
         patterns = extract_author_year_patterns("We conducted a study with 100 participants.")
         assert patterns == []
 
+    def test_month_names_not_treated_as_authors(self):
+        patterns = extract_author_year_patterns(
+            "The trial ran from May and June 2018 with no other citations."
+        )
+        assert patterns == []
+
+    def test_single_month_name_not_treated_as_author(self):
+        patterns = extract_author_year_patterns("The report was filed in May, 2018.")
+        assert patterns == []
+
+    def test_weekday_name_not_treated_as_author(self):
+        patterns = extract_author_year_patterns("The event occurred on Friday, 2018.")
+        assert patterns == []
+
+    def test_real_surname_that_is_not_a_stopword_still_matches(self):
+        patterns = extract_author_year_patterns("Friday et al. (2018) is not a real name, "
+                                                  "but Smith (2018) is.")
+        assert any(p["surname"] == "smith" and p["year"] == 2018 for p in patterns)
+
 
 # ── author_matches ────────────────────────────────────────────────────────────
 

@@ -6,14 +6,12 @@ Routes:
   GET  /             → disambiguation page
   POST /api/lookup   → run pipeline for one DOI, return JSON
 """
-from pathlib import Path
-
 from flask import Blueprint, jsonify, render_template, request
 
 from validate import state
-from shared.config import PDF_CACHE_DIR, log
+from shared.config import log
 from extract.link_original import run_for_doi
-from shared.utils import cache_key, clean_doi
+from shared.utils import clean_doi, pdf_serve_url
 
 disambiguation_bp = Blueprint("disambiguation", __name__)
 
@@ -35,15 +33,8 @@ def api_lookup():
     log.info("=== API lookup: %s (force=%s) ===", doi_r, force)
     try:
         result = run_for_doi(doi_r, state.flora_df, state.cands_df, force=force)
-        result["pdf_serve_url"] = _pdf_serve_url(doi_r, result)
+        result["pdf_serve_url"] = pdf_serve_url(doi_r, result)
         return jsonify(result)
     except Exception as e:
         log.exception("Pipeline error for %s", doi_r)
         return jsonify({"error": str(e)}), 500
-
-
-def _pdf_serve_url(doi_r: str, result: dict) -> str:
-    if result.get("pdf_path"):
-        return f"/pdf/{Path(result['pdf_path']).name}"
-    expected = PDF_CACHE_DIR / f"{cache_key(doi_r)}.pdf"
-    return f"/pdf/{expected.name}" if expected.exists() else ""

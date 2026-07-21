@@ -112,8 +112,8 @@ def has_replication_phrase(text: str) -> bool:
     return any(regex.search(text) for regex in REPLICATION_PHRASES)
 
 
-def find_replication_phrase(text: str) -> Optional[str]:
-    """Return the lowercase first matching replication phrase, or None."""
+def find_replication_phrase_span(text: str) -> Optional[tuple[str, int, int]]:
+    """Return (lowercase phrase, start, end) for the first matching replication phrase, or None."""
     if not text:
         return None
     if is_non_scholarly_context(text):
@@ -121,8 +121,14 @@ def find_replication_phrase(text: str) -> Optional[str]:
     for regex in REPLICATION_PHRASES:
         m = regex.search(text)
         if m:
-            return m.group(0).lower()
+            return m.group(0).lower(), m.start(), m.end()
     return None
+
+
+def find_replication_phrase(text: str) -> Optional[str]:
+    """Return the lowercase first matching replication phrase, or None."""
+    match = find_replication_phrase_span(text)
+    return match[0] if match else None
 
 
 def is_reproduction_only(text: str) -> bool:

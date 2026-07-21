@@ -178,18 +178,105 @@ a.leg-row:hover { background:var(--surface-2); }
 .pager-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
 .pager-btn:disabled { opacity:.4; cursor:default; }
 
-/* Analysis */
-.analysis-file-list { list-style:none; padding:0; margin:0; }
-.analysis-file-list li { display:flex; align-items:baseline; gap:8px;
-                          padding:4px 0; border-bottom:1px solid var(--border); font-size:12px; }
-.analysis-file-list li:last-child { border-bottom:none; }
-.analysis-file-list .fname { font-family:monospace; font-size:10px; color:var(--accent); flex-shrink:0; }
-.analysis-file-list .fdesc { color:var(--text-muted); }
+/* Analysis / Old Pipeline */
 .pri-high   { color:#dc2626; font-weight:700; }
 .pri-medium { color:#f59e0b; font-weight:700; }
 .pri-low    { color:#9ca3af; font-weight:600; }
-.gap-search-row { display:flex; gap:8px; align-items:center; margin-bottom:10px; }
-.gap-search-row input { flex:1; min-width:160px; }
+
+/* Comparison split — equal two-panel side by side */
+.compare-split {
+  display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start;
+}
+@media(max-width:800px){ .compare-split{ grid-template-columns:1fr; } }
+
+/* Comparison panel header */
+.cmp-panel-head {
+  font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.6px;
+  padding:9px 14px; border-bottom:1px solid var(--border);
+  display:flex; align-items:baseline; gap:8px;
+}
+.cmp-panel-file { font-family:monospace; font-size:10px; color:var(--accent); }
+.cmp-panel-body { padding:12px 14px; display:flex; flex-direction:column; gap:10px; }
+
+/* Bar row inside comparison panels */
+.bar-row { margin-bottom:4px; }
+.bar-row-label {
+  display:flex; justify-content:space-between; font-size:10px; margin-bottom:2px;
+}
+.bar-row-label .src-name { color:var(--text); font-family:monospace; }
+.bar-row-label .src-cnt  { color:var(--text-muted); }
+.bar-track {
+  width:100%; height:5px; background:var(--border); border-radius:2px; overflow:hidden;
+}
+.bar-fill { height:100%; border-radius:2px; }
+
+/* Keyword grid */
+.kw-grid {
+  display:flex; flex-wrap:wrap; gap:4px; margin-top:2px;
+}
+.kw-pill {
+  background:var(--surface-2); border:1px solid var(--border); border-radius:4px;
+  padding:2px 7px; font-size:10px; font-family:monospace; color:var(--text); white-space:nowrap;
+}
+
+/* Overlap progress bars */
+.overlap-row { margin-bottom:10px; }
+.overlap-label {
+  display:flex; justify-content:space-between; align-items:baseline;
+  font-size:11px; margin-bottom:3px;
+}
+.overlap-label .ol-title { color:var(--text); font-weight:600; }
+.overlap-label .ol-nums  { font-size:10px; font-family:monospace; color:var(--text-muted); }
+.overlap-label .ol-pct   { font-size:11px; font-weight:700; }
+.overlap-bar { height:8px; background:var(--border); border-radius:4px; overflow:hidden; }
+.overlap-bar-fill { height:100%; border-radius:4px; background:#2563eb; transition:width .4s; }
+.overlap-gap-tag {
+  display:inline-block; margin-left:6px; padding:1px 6px; border-radius:3px;
+  font-size:9px; font-weight:700; background:#fee2e2; color:#dc2626;
+}
+
+/* Gap tab strip (DOI / URL) */
+.gap-tab-strip { display:flex; gap:0; border-bottom:2px solid var(--border); margin-bottom:0; }
+.gap-tab-btn {
+  padding:6px 14px; font-size:11px; font-weight:600; color:var(--text-muted);
+  background:none; border:none; border-bottom:2px solid transparent;
+  margin-bottom:-2px; cursor:pointer; transition:all .1s;
+}
+.gap-tab-btn.active { color:var(--accent); border-bottom-color:var(--accent); }
+.gap-tab-panel { display:none; }
+.gap-tab-panel.active { display:block; }
+
+/* ── Flowchart ──────────────────────────────────────────────────────────────── */
+.flow-chart { display:flex; flex-direction:column; gap:0; }
+.flow-node {
+  background:var(--surface-2); border:1px solid var(--border); border-radius:6px;
+  padding:8px 12px; font-size:11px; color:var(--text); line-height:1.5;
+}
+.flow-node code { font-size:10px; background:var(--surface); padding:1px 4px; border-radius:3px; color:var(--accent); }
+.flow-node-head {
+  font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.5px;
+  color:var(--text-faint); margin-bottom:4px;
+}
+.flow-node-cli {
+  background:var(--surface); border:1px solid var(--accent); border-radius:6px;
+  padding:7px 12px; font-family:monospace; font-size:10px; color:var(--accent);
+  line-height:1.7; white-space:pre-wrap;
+}
+.flow-arrow-down {
+  text-align:center; color:var(--border-2); font-size:15px; padding:2px 0;
+  line-height:1.4; font-weight:700; color:var(--text-faint);
+}
+.flow-branch-2 { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.flow-badge {
+  display:inline-block; padding:1px 6px; border-radius:3px; font-size:9px;
+  font-weight:700; font-family:monospace; margin-right:2px;
+}
+.badge-green  { background:#dcfce7; color:#15803d; }
+.badge-red    { background:#fee2e2; color:#b91c1c; }
+.badge-orange { background:#fef3c7; color:#b45309; }
+.badge-blue   { background:#dbeafe; color:#1d4ed8; }
+.badge-gray   { background:var(--border); color:var(--text-muted); }
+.badge-purple { background:#ede9fe; color:#6d28d9; }
 </style>
 {% endblock %}
 
@@ -234,7 +321,7 @@ a.leg-row:hover { background:var(--surface-2); }
       <div class="docs-panel">
         <div class="docs-card">
           <div class="docs-card-head">What Stage 1 does</div>
-          <p>Discovers candidate replication papers from two academic databases: <strong>OpenAlex</strong> and <strong>Semantic Scholar</strong>. Each source is queried with 23 keyword phrases. New results are appended to <code>data/candidates.csv</code>; already-seen papers are skipped via a persistent dedup index.</p>
+          <p>Discovers candidate replication papers from two academic databases: <strong>OpenAlex</strong> and <strong>Semantic Scholar</strong>. OpenAlex is queried with <strong>37 search phrases</strong> plus <strong>concept-based search</strong> (OpenAlex ML concepts for Replication and Reproducibility). Semantic Scholar uses the top 10 phrases. New results are appended to <code>data/candidates.csv</code>; already-seen papers are skipped via a persistent dedup index.</p>
           <p>Every run also <strong>harvests all cached API responses from disk</strong> first — pages downloaded in any previous run flow into the CSV automatically without re-fetching.</p>
           <p><code>--auto-advance</code> processes one (source, phrase, year) combination per invocation, cycling through all phrases for all years. State is saved in <code>cache/search_state.json</code> and resumes across runs. Exit code 2 signals a full cycle completed with no new rows.</p>
         </div>
@@ -307,45 +394,66 @@ python -m search.run_search --harvest-only</pre>
         </div>
 
         <div class="docs-card">
-          <div class="docs-card-head">Include keywords (23 phrases)</div>
+          <div class="docs-card-head">Search phrases — OpenAlex (37 phrases) + S2 (top 10)</div>
+          <p style="font-size:10px;color:var(--text-faint);margin:0 0 6px">OpenAlex also runs concept-based search: <code>C12590798</code> (Replication, statistics) and <code>C9893847</code> (Reproducibility). Semantic Scholar uses only the first 10 phrases below.</p>
           <div class="kw-grid">
+            <span class="kw-pill">replication of</span>
             <span class="kw-pill">direct replication</span>
             <span class="kw-pill">close replication</span>
-            <span class="kw-pill">exact replication</span>
-            <span class="kw-pill">literal replication</span>
-            <span class="kw-pill">strict replication</span>
-            <span class="kw-pill">pre-registered replication</span>
-            <span class="kw-pill">failed replication</span>
-            <span class="kw-pill">replication failure</span>
-            <span class="kw-pill">replication attempt</span>
+            <span class="kw-pill">conceptual replication</span>
             <span class="kw-pill">replication study</span>
-            <span class="kw-pill">replication of</span>
-            <span class="kw-pill">replicate the findings</span>
-            <span class="kw-pill">replicate the results</span>
-            <span class="kw-pill">replicate the effect</span>
             <span class="kw-pill">reproduction study</span>
-            <span class="kw-pill">computational reproduction</span>
-            <span class="kw-pill">reproducibility study</span>
-            <span class="kw-pill">reproducibility check</span>
-            <span class="kw-pill">Many Labs</span>
-            <span class="kw-pill">Registered Replication</span>
-            <span class="kw-pill">Replication Project</span>
-            <span class="kw-pill">Open Science Collaboration</span>
-            <span class="kw-pill">replication crisis</span>
+            <span class="kw-pill">we replicated</span>
+            <span class="kw-pill">attempts to replicate</span>
+            <span class="kw-pill">registered replication report</span>
+            <span class="kw-pill">pre-registered replication</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">failed to replicate</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">did not replicate</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">we replicate</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">replicating the findings</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">could not reproduce</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">successfully replicated</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">reproducibility of</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">replication and extension</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">replicability of</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">attempt to replicate</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">failure to replicate</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">non-replication</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">reproducibility study</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">reproduce the findings</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">our results replicate</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">our findings replicate</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">results replicate the</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">confirm and replicate</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">replication across</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">cross-cultural replication</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">independent replication</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">partial replication</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">multi-site replication</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">multisite replication</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">preregistered replication</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">exact replication</span>
+            <span class="kw-pill" style="border-color:var(--border-2)">systematic replication</span>
           </div>
+          <p style="font-size:10px;color:var(--text-faint);margin:6px 0 0">First 10 (normal border) are used by both OpenAlex and Semantic Scholar. Remaining 27 (faint border) are OpenAlex-only.</p>
         </div>
 
         <div class="docs-card">
-          <div class="docs-card-head">Exclusion keywords (applied by Stage 2 rule filter)</div>
+          <div class="docs-card-head">Exclusion patterns (applied by Stage 2 rule filter)</div>
+          <p style="font-size:10px;color:var(--text-faint);margin:0 0 6px">Loaded from <code>filter/spec/exclusion-patterns.yaml</code>. Any match → <code>false_positive</code>.</p>
           <div class="kw-grid">
-            <span class="kw-pill excl">DNA replication</span>
-            <span class="kw-pill excl">cell replication</span>
-            <span class="kw-pill excl">viral replication</span>
+            <span class="kw-pill excl">DNA/RNA replication</span>
+            <span class="kw-pill excl">viral/virus replication</span>
+            <span class="kw-pill excl">cell/cellular replication</span>
+            <span class="kw-pill excl">chromosome/plasmid replication</span>
             <span class="kw-pill excl">replication fork</span>
             <span class="kw-pill excl">replication origin</span>
             <span class="kw-pill excl">replication stress</span>
-            <span class="kw-pill excl">code replication</span>
-            <span class="kw-pill excl">data replication</span>
+            <span class="kw-pill excl">replication timing</span>
+            <span class="kw-pill excl">code/software replication</span>
+            <span class="kw-pill excl">data/dataset replication</span>
+            <span class="kw-pill excl">model/method replication</span>
+            <span class="kw-pill excl">pipeline/protocol replication</span>
           </div>
         </div>
 
@@ -398,6 +506,55 @@ python -m search.run_search --harvest-only</pre>
           <h3>Source Breakdown</h3>
           <div id="search-source-breakdown"><div class="null-note">Loading…</div></div>
         </div>
+
+        <div class="stat-card" style="padding:14px 16px">
+          <h3>How it works — data flow</h3>
+          <div class="flow-chart" style="gap:2px">
+            <div class="flow-node-cli">python -m search.run_search --auto-advance \
+  --from-year 2011 --to-year 2026 --max-per-phrase 10000</div>
+            <div class="flow-arrow-down">↓</div>
+            <div class="flow-node">
+              <div class="flow-node-head">Step 1 — Harvest cached pages</div>
+              All previously downloaded pages in <code>cache/openalex/</code> and <code>cache/s2/</code> are merged into the batch first — no new API calls needed for already-fetched pages.
+            </div>
+            <div class="flow-arrow-down">↓</div>
+            <div class="flow-node">
+              <div class="flow-node-head">Step 2 — Fetch next job</div>
+              One <em>(source, phrase, year)</em> job per <code>--auto-advance</code> invocation. Cursor/offset saved after each page — interrupted runs resume exactly where they left off.<br>
+              <span style="font-size:10px;color:var(--text-faint)">OpenAlex: 37 phrases + 2 concepts · Semantic Scholar: top 10 phrases</span>
+            </div>
+            <div class="flow-arrow-down">↓</div>
+            <div class="flow-node">
+              <div class="flow-node-head">Step 3 — Abstract enrichment (if missing)</div>
+              <div style="margin-top:4px;display:flex;flex-direction:column;gap:3px">
+                <div><span class="flow-badge badge-green">1st</span> <strong>OpenAlex batch</strong> — 50 IDs per request via <code>filter=</code></div>
+                <div><span class="flow-badge badge-blue">2nd</span> <strong>CrossRef</strong> — by DOI, for those still missing</div>
+                <div><span class="flow-badge badge-gray">3rd</span> <strong>Semantic Scholar</strong> — final fallback (requires S2_API_KEY)</div>
+              </div>
+              Cached per identifier in <code>cache/abstracts/</code>; checkpoint in <code>cache/fetch_abstracts_done.txt</code>.
+            </div>
+            <div class="flow-arrow-down">↓</div>
+            <div class="flow-node">
+              <div class="flow-node-head">Step 4 — 5-pass deduplication</div>
+              <div style="display:flex;flex-direction:column;gap:3px;margin-top:4px">
+                <div><span class="flow-badge badge-red">0a</span> Bad DOI patterns (figshare datasets, PeerJ review objects)</div>
+                <div><span class="flow-badge badge-red">0b</span> Versioned preprints — keep highest version, drop older <code>_v1</code>, <code>_v2</code></div>
+                <div><span class="flow-badge badge-orange">1</span> Exact DOI after <code>clean_doi()</code> normalisation</div>
+                <div><span class="flow-badge badge-orange">2</span> Fuzzy title ≥ 90 RapidFuzz <code>token_sort_ratio</code></div>
+                <div><span class="flow-badge badge-orange">3</span> FLoRA cross-check — skip DOIs already in <code>flora_entry_sheet.csv</code></div>
+              </div>
+            </div>
+            <div class="flow-arrow-down">↓ new rows only</div>
+            <div class="flow-node" style="border-left:3px solid #16a34a">
+              <div class="flow-node-head">Step 5 — Write</div>
+              Rows appended to <code>candidates.csv</code> · Index keys added to <code>cache/candidates_index.txt</code> (up to 4 keys/row: OA ID → DOI → URL → title) · Parquet cache refreshed
+            </div>
+            <div class="flow-arrow-down">↓</div>
+            <div class="flow-node" style="text-align:center;font-size:10px;color:var(--text-faint);border-style:dashed">
+              Exit code 2 = full cycle complete, no new rows — PowerShell loop terminates
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div><!-- /tab-search -->
@@ -430,6 +587,49 @@ python -m search.run_search --harvest-only</pre>
               <tr><td>LLM cannot decide</td><td><code>needs_review</code></td></tr>
             </tbody>
           </table>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Replication phrases (32 patterns — any match passes Rule 2)</div>
+          <p style="font-size:10px;color:var(--text-faint);margin:0 0 6px">Defined in <code>filter/phrase_detection.py</code>. These are regex patterns applied to title + abstract. Pills show the human-readable form; actual matching uses word-boundary anchors and case-insensitive regex. <span style="color:#2563eb">Blue</span> pills also trigger <code>reproduction</code> classification when no replication phrases co-occur.</p>
+          <div class="kw-grid">
+            <span class="kw-pill">replication of</span>
+            <span class="kw-pill">we replicated</span>
+            <span class="kw-pill">we replicate</span>
+            <span class="kw-pill">replicating the findings</span>
+            <span class="kw-pill">direct replication</span>
+            <span class="kw-pill">conceptual replication</span>
+            <span class="kw-pill">preregistered replication</span>
+            <span class="kw-pill">registered replication</span>
+            <span class="kw-pill">failed to replicate</span>
+            <span class="kw-pill">did not replicate</span>
+            <span class="kw-pill" style="border-color:#2563eb;color:#2563eb">could not reproduce</span>
+            <span class="kw-pill">successfully replicated</span>
+            <span class="kw-pill" style="border-color:#2563eb;color:#2563eb">reproducibility of</span>
+            <span class="kw-pill">replication and extension(s)</span>
+            <span class="kw-pill">registered report of</span>
+            <span class="kw-pill">close replication</span>
+            <span class="kw-pill">high-powered replication</span>
+            <span class="kw-pill">large-scale replication</span>
+            <span class="kw-pill" style="border-color:#2563eb;color:#2563eb">reproduced the findings</span>
+            <span class="kw-pill">attempted to replicate</span>
+            <span class="kw-pill">aimed to replicate</span>
+            <span class="kw-pill">set out to replicate</span>
+            <span class="kw-pill">successfully replicat*</span>
+            <span class="kw-pill">we conducted a replication</span>
+            <span class="kw-pill">many-labs replication</span>
+            <span class="kw-pill">multi-site replication</span>
+            <span class="kw-pill">replicating and extending</span>
+            <span class="kw-pill">replication study of</span>
+            <span class="kw-pill">study replicated</span>
+            <span class="kw-pill">our replication</span>
+            <span class="kw-pill">independent replication</span>
+            <span class="kw-pill">exact replication</span>
+            <span class="kw-pill">replication attempt</span>
+            <span class="kw-pill">cross-cultural replication</span>
+            <span class="kw-pill">cross-national replication</span>
+            <span class="kw-pill">cross-lab replication</span>
+          </div>
         </div>
 
         <div class="docs-card">
@@ -550,6 +750,54 @@ python -m filter.run_filter --rebuild-index     # rebuild index from filtered.cs
               <span class="stat-pct" id="f-rr-no-abstract-pct"></span></span>
           </a>
         </div>
+
+        <div class="stat-card" style="padding:14px 16px">
+          <h3>How it works — data flow</h3>
+          <div class="flow-chart" style="gap:2px">
+            <div class="flow-node-cli">python -m filter.run_filter</div>
+            <div class="flow-arrow-down">↓</div>
+            <div class="flow-node">
+              <div class="flow-node-head">Load + resume</div>
+              Reads <code>candidates.csv</code> in <strong>50k-row chunks</strong> (avoids OOM on 1M+ row files). Keys in <code>cache/filtered_index.txt</code> are skipped — run resumes from where it left off.
+            </div>
+            <div class="flow-arrow-down">↓ per row</div>
+            <div class="flow-node" style="border-left:3px solid #dc2626">
+              <div class="flow-node-head">Rule 1 — Exclusion check</div>
+              Title + abstract scanned for biological or technical patterns (DNA/RNA/viral/cell replication, replication fork/origin/stress, code/data/model replication…)<br>
+              <strong>Match →</strong> <code>false_positive</code> [high confidence, rule_based] — stop here
+            </div>
+            <div class="flow-arrow-down">↓ no match</div>
+            <div class="flow-node" style="border-left:3px solid #dc2626">
+              <div class="flow-node-head">Rule 2 — Replication phrase check</div>
+              Any of 35+ replication phrases present in title or abstract?<br>
+              <strong>None found →</strong> <code>false_positive</code> [high, rule_based] — stop here
+            </div>
+            <div class="flow-arrow-down">↓ phrase found</div>
+            <div class="flow-node">
+              <div class="flow-node-head">Rule 3 — Type detection</div>
+              Do only reproduction-flavoured phrases fire (<em>could not reproduce</em>, <em>reproducibility of</em>…)?<br>
+              <strong>Yes →</strong> base_status = <code>reproduction</code> &nbsp; <strong>No →</strong> base_status = <code>replication</code>
+            </div>
+            <div class="flow-arrow-down">↓</div>
+            <div class="flow-node">
+              <div class="flow-node-head">Rule 4 — Specific-target gate</div>
+              Does text contain an author–year citation like <code>(Author, YYYY)</code> within a plausible year range?<br>
+              <strong>Yes →</strong> <code>replication</code> or <code>reproduction</code> [high, rule_based]<br>
+              <strong>No →</strong> uncertain — send to LLM
+            </div>
+            <div class="flow-arrow-down">↓ uncertain rows only (~1%)</div>
+            <div class="flow-node" style="border-left:3px solid #2563eb">
+              <div class="flow-node-head">LLM classify</div>
+              Title + abstract sent to GPT (<code>FILTER_OPENAI_MODEL</code>); Gemini fallback via <code>GEMINI_MODEL</code>. Response cached by <code>hash(title+abstract)</code> — identical rows never re-query.<br>
+              <span style="margin-top:4px;display:block">Output: <code>replication</code> / <code>reproduction</code> / <code>false_positive</code> / <code>needs_review</code> with <code>filter_evidence</code> quote</span>
+            </div>
+            <div class="flow-arrow-down">↓</div>
+            <div class="flow-node" style="border-left:3px solid #16a34a">
+              <div class="flow-node-head">Write</div>
+              Row streamed to <code>filtered.csv</code> · Resume key added to <code>cache/filtered_index.txt</code> · Parquet cache refreshed
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div><!-- /tab-filter -->
@@ -614,42 +862,44 @@ python -m extract.audit_dois --apply  # write corrections</pre>
         <div class="docs-card">
           <div class="docs-card-head">extracted.csv — all columns</div>
           <p style="font-size:11px;color:var(--text-faint);margin:0 0 8px">Inherits all filtered.csv columns plus the columns added by Stage 3.</p>
-          <table class="docs-table">
+          <div style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:4px">
+          <table class="docs-table" style="font-size:10px">
             <thead><tr><th>Column</th><th>Description / Values</th></tr></thead>
             <tbody>
-              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Unique identifier</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Unique identifier</td></tr>
               <tr><td class="col-name">pair_id</td><td class="col-desc">Hash of (doi_r, doi_o) — unique row key for dedup and promote</td></tr>
-              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Inherited from filtered.csv</td></tr>
-              <tr><td class="col-name">doi_r, title_r, abstract_r, year_r, authors_r, journal_r, url_r, openalex_id_r, source, ref_r</td><td class="col-desc">All 10 candidates.csv columns</td></tr>
-              <tr><td class="col-name">filter_status, filter_method, filter_evidence, filter_confidence</td><td class="col-desc">All 4 Stage 2 filter columns</td></tr>
-              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Match classification — Added by Stage 3</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Inherited from filtered.csv</td></tr>
+              <tr><td class="col-name" style="font-size:9px">doi_r, title_r, abstract_r, year_r,<br>authors_r, journal_r, url_r,<br>openalex_id_r, source, ref_r</td><td class="col-desc">All 10 candidates.csv columns</td></tr>
+              <tr><td class="col-name" style="font-size:9px">filter_status, filter_method,<br>filter_evidence, filter_confidence</td><td class="col-desc">All 4 Stage 2 filter columns</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Match classification — Stage 3</td></tr>
               <tr><td class="col-name">original_match_type</td><td class="col-desc">single_original | multiple_match | multiple_original</td></tr>
               <tr><td class="col-name">original_match_confidence</td><td class="col-desc">high | medium | low</td></tr>
-              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Original study — Added by Stage 3</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Original study — Stage 3</td></tr>
               <tr><td class="col-name">doi_o</td><td class="col-desc">Original study DOI (blank if not found)</td></tr>
               <tr><td class="col-name">title_o</td><td class="col-desc">Original study title</td></tr>
               <tr><td class="col-name">year_o</td><td class="col-desc">Original study publication year</td></tr>
-              <tr><td class="col-name">authors_o</td><td class="col-desc">Semicolon-separated author surnames of original</td></tr>
-              <tr><td class="col-name">ref_o</td><td class="col-desc">Formatted reference string for original</td></tr>
-              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Link method — Added by Stage 3</td></tr>
+              <tr><td class="col-name">authors_o</td><td class="col-desc">Semicolon-separated author surnames</td></tr>
+              <tr><td class="col-name">ref_o</td><td class="col-desc">APA-style reference string</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Link method — Stage 3</td></tr>
               <tr><td class="col-name">link_method</td><td class="col-desc">author_year_match | llm_abstract | llm_fulltext | target_pending | api_error</td></tr>
-              <tr><td class="col-name">link_evidence</td><td class="col-desc">Phrase or LLM output that identified the original</td></tr>
-              <tr><td class="col-name">link_confidence</td><td class="col-desc">high | medium | low; downgraded to low on DOI mismatch</td></tr>
-              <tr><td class="col-name">link_llm_model</td><td class="col-desc">Model name used for LLM linking (blank for rule-based)</td></tr>
-              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">DOI verification — Added by Stage 3</td></tr>
+              <tr><td class="col-name">link_evidence</td><td class="col-desc">Phrase / LLM output that identified the original</td></tr>
+              <tr><td class="col-name">link_confidence</td><td class="col-desc">high | medium | low (downgraded on DOI mismatch)</td></tr>
+              <tr><td class="col-name">link_llm_model</td><td class="col-desc">Model used (blank for rule-based)</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">DOI verification — Stage 3</td></tr>
               <tr><td class="col-name">doi_o_verification</td><td class="col-desc">verified | corrected | mismatch | no_doi | not_found | no_metadata | api_error | skipped</td></tr>
-              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Outcome — Added by Stage 3</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Outcome — Stage 3</td></tr>
               <tr><td class="col-name">outcome</td><td class="col-desc">success | failure | mixed | uninformative | descriptive | pending | api_error</td></tr>
-              <tr><td class="col-name">outcome_phrase</td><td class="col-desc">Keyword phrase that triggered the outcome classification</td></tr>
+              <tr><td class="col-name">outcome_phrase</td><td class="col-desc">Keyword phrase that triggered outcome</td></tr>
               <tr><td class="col-name">outcome_confidence</td><td class="col-desc">high | medium | low</td></tr>
-              <tr><td class="col-name">out_quote_source</td><td class="col-desc">Method that produced the text the outcome was coded from (abstract | fulltext)</td></tr>
-              <tr><td class="col-name">outcome_reasoning</td><td class="col-desc">LLM chain-of-thought for the outcome decision</td></tr>
-              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Multi-original metadata — Added by Stage 3</td></tr>
+              <tr><td class="col-name">out_quote_source</td><td class="col-desc">abstract | fulltext</td></tr>
+              <tr><td class="col-name">outcome_reasoning</td><td class="col-desc">LLM chain-of-thought</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Multi-original metadata — Stage 3</td></tr>
               <tr><td class="col-name">type</td><td class="col-desc">replication | reproduction</td></tr>
-              <tr><td class="col-name">original_rank</td><td class="col-desc">1 for single; 1, 2, 3… for multi-original papers</td></tr>
-              <tr><td class="col-name">n_originals</td><td class="col-desc">Total number of target studies for this replication paper</td></tr>
+              <tr><td class="col-name">original_rank</td><td class="col-desc">1 for single; 1, 2, 3… for multi-original</td></tr>
+              <tr><td class="col-name">n_originals</td><td class="col-desc">Total target studies for this replication</td></tr>
             </tbody>
           </table>
+          </div>
         </div>
       </div>
 
@@ -742,6 +992,67 @@ python -m extract.audit_dois --apply  # write corrections</pre>
             <svg id="pie-svg" width="120" height="120" viewBox="0 0 160 160"
                  style="flex-shrink:0;overflow:visible"></svg>
             <div class="pie-legend" id="pie-legend"><div class="null-note">Loading…</div></div>
+          </div>
+        </div>
+
+        <div class="stat-card" style="padding:14px 16px">
+          <h3>How it works — data flow</h3>
+          <div class="flow-chart" style="gap:2px">
+            <div class="flow-node-cli">python -m extract.run_extract --resume</div>
+            <div class="flow-arrow-down">↓</div>
+            <div class="flow-node">
+              <div class="flow-node-head">Load + skip</div>
+              Reads <code>filtered.csv</code>. Skips rows where <code>filter_status = false_positive</code> and DOIs already written to <code>extracted.csv</code> (or <code>extracted-test.csv</code> in sandbox mode).
+            </div>
+            <div class="flow-arrow-down">↓ per replication / reproduction row</div>
+            <div class="flow-node">
+              <div class="flow-node-head">Step 1 — Classify match type</div>
+              Rule check first — title patterns (Many Labs, RRR) or abstract count ≥ 3 → <span class="flow-badge badge-purple">multiple_original</span> immediately.<br>
+              Otherwise LLM classifies: <span class="flow-badge badge-green">single_original</span> <span class="flow-badge badge-orange">multiple_match</span> <span class="flow-badge badge-purple">multiple_original</span>
+            </div>
+            <div class="flow-arrow-down">↓</div>
+            <div class="flow-branch-2">
+              <div class="flow-node" style="border-left:3px solid #7c3aed">
+                <div class="flow-node-head" style="color:#7c3aed">multiple_original</div>
+                Pipeline runs once per target study → N rows appended (original_rank 1, 2, 3…)
+              </div>
+              <div class="flow-node" style="border-left:3px solid #16a34a">
+                <div class="flow-node-head" style="color:#16a34a">single / multiple_match</div>
+                One pipeline run → one CSV row
+              </div>
+            </div>
+            <div class="flow-arrow-down">↓</div>
+            <div class="flow-node">
+              <div class="flow-node-head">Step 2 — Link original study</div>
+              <div style="margin-top:4px;display:flex;flex-direction:column;gap:3px">
+                <div><span class="flow-badge badge-green">1st</span> <strong>Author-year match</strong> — (Author, YYYY) pattern in abstract → OpenAlex candidate lookup + disambiguation</div>
+                <div><span class="flow-badge badge-blue">2nd</span> <strong>LLM abstract</strong> — abstract + title sent to LLM, which identifies the original study and returns a DOI guess</div>
+                <div><span class="flow-badge badge-blue">3rd</span> <strong>LLM fulltext</strong> — PDF acquired via multi-tier waterfall (arXiv → OSF → Unpaywall → CORE…), then parsed by 6 methods; best-scoring parse fed to LLM<br>
+                  <span style="font-size:10px;color:var(--text-faint);padding-left:2px">score = refs×300 + abstract_len + intro_len×2 + min(raw÷5, 1000)</span>
+                </div>
+                <div><span class="flow-badge badge-orange">no match</span> <strong>target_pending</strong> — all methods failed; row flagged for manual review</div>
+              </div>
+            </div>
+            <div class="flow-arrow-down">↓ automatic on every row</div>
+            <div class="flow-node">
+              <div class="flow-node-head">Step 3 — DOI verification</div>
+              CrossRef fetches real metadata for <code>doi_o</code>; title + year compared to what the LLM returned.<br>
+              <span class="flow-badge badge-green">verified</span> OK &nbsp;
+              <span class="flow-badge badge-blue">corrected</span> wrong DOI replaced &nbsp;
+              <span class="flow-badge badge-red">mismatch</span> link_confidence → low<br>
+              Replication's own <code>doi_r</code> always excluded as a correction target.
+            </div>
+            <div class="flow-arrow-down">↓</div>
+            <div class="flow-node">
+              <div class="flow-node-head">Step 4 — Code outcome</div>
+              Keyword rules run first (abstract + fulltext). LLM only fires when no keyword matches.<br>
+              <span class="flow-badge badge-green">success</span> <span class="flow-badge badge-red">failure</span> <span class="flow-badge badge-orange">mixed</span> <span class="flow-badge badge-gray">uninformative</span> <span class="flow-badge badge-blue">descriptive</span>
+            </div>
+            <div class="flow-arrow-down">↓</div>
+            <div class="flow-node" style="border-left:3px solid #16a34a">
+              <div class="flow-node-head">Step 5 — Write (streamed)</div>
+              Row appended immediately to <code>extracted.csv</code> — Stage 4 validation tab can open while the pipeline is still running. Parquet cache refreshed.
+            </div>
           </div>
         </div>
       </div>
@@ -1041,128 +1352,377 @@ SUPABASE_SERVICE_KEY=eyJhbGc...</pre>
 
 
   <!-- ════════════════════════════════════════════════════════════════════════ -->
-  <!-- OLD PIPELINE TAB (gap analysis / prior work)                            -->
-  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <!-- OLD PIPELINE TAB ═══════════════════════════════════════════════════════ -->
   <div class="tab-panel" id="tab-old-pipeline">
-    <div class="panel-split">
 
-      <!-- Left: docs -->
-      <div class="docs-panel">
-        <div class="docs-card">
-          <div class="docs-card-head">What this section covers</div>
-          <p>Gap analysis comparing what the current pipeline has extracted against the <strong>FLoRA entry sheet</strong> (107 known replications). Use it to find missed papers, filter misclassifications, and plan re-extraction.</p>
-          <p>All scripts are in <code>analysis/</code>. Data files live in <code>analysis/</code> and are not committed to git.</p>
-        </div>
-
-        <div class="docs-card">
-          <div class="docs-card-head">CLI</div>
-          <pre class="cli-block">python -m analysis.run_overlap_analysis  # gap analysis
-python -m analysis.rule_analysis         # filter rule audit
-python -m analysis.apa_resolver          # resolve APA citations</pre>
-        </div>
-
-        <div class="docs-card">
-          <div class="docs-card-head">Analysis scripts</div>
-          <ul class="analysis-file-list">
-            <li>
-              <span class="fname">run_overlap_analysis.py</span>
-              <span class="fdesc">Gap analysis — compares extracted.csv against FLoRA entry sheet. Writes gap CSVs and gap_summary.md.</span>
-            </li>
-            <li>
-              <span class="fname">rule_analysis.py</span>
-              <span class="fdesc">Audits filter rules: contribution per rule, false-positive rate, improvement opportunities.</span>
-            </li>
-            <li>
-              <span class="fname">apa_resolver.py</span>
-              <span class="fdesc">Resolves APA-format citations in extracted rows to structured DOIs via CrossRef.</span>
-            </li>
-          </ul>
-        </div>
-
-        <div class="docs-card">
-          <div class="docs-card-head">Output files</div>
-          <ul class="analysis-file-list">
-            <li><span class="fname">gap_analysis_doi_matched.csv</span><span class="fdesc">DOI-matched gap list</span></li>
-            <li><span class="fname">gap_analysis_url_matched.csv</span><span class="fdesc">URL-matched gaps</span></li>
-            <li><span class="fname">gap_vs_extracted_comparison.csv</span><span class="fdesc">Side-by-side comparison</span></li>
-            <li><span class="fname">rule_improvement_opportunities.csv</span><span class="fdesc">Actionable filter improvements</span></li>
-            <li><span class="fname">gap_summary.md</span><span class="fdesc">Human-readable summary</span></li>
-          </ul>
+    <!-- Header row: run button + generated time -->
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+      <div>
+        <div style="font-size:13px;font-weight:700;color:var(--text)">Old Pipeline vs New Pipeline</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">
+          Compares <code style="font-size:10px">all_replications.csv</code> (prior work) against
+          <code style="font-size:10px">candidates.csv</code> (new pipeline) to show coverage, gaps, and keyword differences.
         </div>
       </div>
-
-      <!-- Right: stats -->
-      <div class="stats-panel">
-        <div class="kpi-row">
-          <div class="kpi-card">
-            <div class="kpi-num" id="gap-total" style="color:#dc2626">—</div>
-            <div class="kpi-label">Total Gaps</div>
-            <div class="kpi-sub">in FLoRA, not extracted</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-num" id="gap-doi" style="color:#f59e0b">—</div>
-            <div class="kpi-label">DOI-matched</div>
-            <div class="kpi-sub">gap CSV</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-num" id="gap-url" style="color:#2563eb">—</div>
-            <div class="kpi-label">URL-matched</div>
-            <div class="kpi-sub">preprint fallback</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-num" id="gap-misclass" style="color:#7c3aed">—</div>
-            <div class="kpi-label">Misclassed</div>
-            <div class="kpi-sub">wrongly filtered out</div>
-          </div>
-        </div>
-        <div id="gap-generated" style="font-size:10px;color:var(--text-faint);margin-bottom:4px"></div>
-
-        <div class="stats-two">
-          <div class="stat-card">
-            <h3>Link Method Distribution</h3>
-            <div id="audit-link-methods"><div class="null-note">Loading…</div></div>
-          </div>
-          <div class="stat-card">
-            <h3>Link Confidence</h3>
-            <div id="audit-confidence"><div class="null-note">Loading…</div></div>
-          </div>
-        </div>
-
-        <div class="stat-card" style="padding:0;overflow:hidden">
-          <div style="padding:10px 16px;border-bottom:1px solid var(--border)">
-            <span style="font-size:10px;font-weight:700;text-transform:uppercase;
-                         color:var(--text-faint);letter-spacing:.5px">Rule Improvement Opportunities</span>
-          </div>
-          <table class="data-table">
-            <thead><tr><th>Category</th><th style="width:50px;text-align:right">Count</th>
-              <th>Suggested Fix</th><th style="width:60px">Priority</th></tr></thead>
-            <tbody id="improvement-tbody">
-              <tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="stat-card" style="padding:0;overflow:hidden">
-          <div style="padding:10px 16px;border-bottom:1px solid var(--border);
-                      display:flex;gap:10px;align-items:center">
-            <span style="font-size:10px;font-weight:700;text-transform:uppercase;
-                         color:var(--text-faint);letter-spacing:.5px">Missing Candidates — DOI Gap List</span>
-            <div class="gap-search-row" style="margin:0;flex:1">
-              <input type="text" id="gap-search" placeholder="Search…"
-                     oninput="scheduleGapSearch()" style="font-size:11px;width:100%">
-            </div>
-            <span id="gap-count" style="font-size:11px;color:var(--text-faint);white-space:nowrap"></span>
-          </div>
-          <table class="data-table">
-            <thead><tr><th style="width:180px">DOI</th><th>Title</th><th style="width:50px">Year</th></tr></thead>
-            <tbody id="gap-tbody">
-              <tr><td colspan="3" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
-            </tbody>
-          </table>
-          <div class="pager" id="gap-pager" style="padding:8px"></div>
-        </div>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:10px;flex-shrink:0">
+        <span id="op-generated" style="font-size:10px;color:var(--text-faint)"></span>
+        <span id="op-regen-hint" style="font-size:10px;color:var(--text-faint);display:none">
+          Run: <code style="font-size:10px">python -m analysis.old_pipeline_compare</code>
+        </span>
       </div>
     </div>
+
+    <!-- ── Section A: Pipeline Overview (two panels) ───────────────────────── -->
+    <div class="compare-split" style="margin-bottom:16px">
+
+      <!-- OLD PIPELINE panel -->
+      <div class="stat-card" style="padding:0;overflow:hidden">
+        <div class="cmp-panel-head" style="background:#fef2f2;border-bottom-color:#fecaca">
+          <span style="color:#b91c1c;font-weight:800">OLD PIPELINE</span>
+          <span class="cmp-panel-file">data/all_replications.csv</span>
+        </div>
+        <div class="cmp-panel-body">
+
+          <!-- KPIs -->
+          <div class="kpi-row">
+            <div class="kpi-card" style="min-width:80px">
+              <div class="kpi-num" id="op-old-total" style="font-size:18px">—</div>
+              <div class="kpi-label">Total Rows</div>
+            </div>
+            <div class="kpi-card" style="min-width:80px;border-color:#bbf7d0">
+              <div class="kpi-num" id="op-old-tp" style="font-size:18px;color:#16a34a">—</div>
+              <div class="kpi-label">True Positives</div>
+              <div class="kpi-sub">replication + reproduction</div>
+            </div>
+            <div class="kpi-card" style="min-width:80px;border-color:#fecaca">
+              <div class="kpi-num" id="op-old-fp" style="font-size:18px;color:#dc2626">—</div>
+              <div class="kpi-label">False Positives</div>
+              <div class="kpi-sub">validation_status = FP</div>
+            </div>
+          </div>
+
+          <!-- TP type breakdown -->
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);margin-bottom:4px">TP Breakdown</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap" id="op-old-tp-breakdown">
+            <span class="badge-green flow-badge">— replication</span>
+            <span class="badge-blue flow-badge">— reproduction</span>
+          </div>
+
+          <!-- Sources breakdown -->
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);margin:6px 0 4px">Sources / Pathway</div>
+          <div id="op-old-sources"><div class="null-note">Loading…</div></div>
+
+          <!-- Discovery method note -->
+          <div style="font-size:10px;color:var(--text-muted);border-top:1px solid var(--border);padding-top:8px;margin-top:2px">
+            Discovery: curated lists from 9 pathway sources — no keyword phrase search.
+            Rows come pre-labeled (replication / reproduction) or auto-classified via LLM.
+          </div>
+        </div>
+      </div>
+
+      <!-- NEW PIPELINE panel -->
+      <div class="stat-card" style="padding:0;overflow:hidden">
+        <div class="cmp-panel-head" style="background:#eff6ff;border-bottom-color:#bfdbfe">
+          <span style="color:#1d4ed8;font-weight:800">NEW PIPELINE</span>
+          <span class="cmp-panel-file">data/candidates.csv → filtered.csv</span>
+        </div>
+        <div class="cmp-panel-body">
+
+          <!-- KPIs -->
+          <div class="kpi-row">
+            <div class="kpi-card" style="min-width:80px">
+              <div class="kpi-num" id="op-new-cands" style="font-size:18px">—</div>
+              <div class="kpi-label">Candidates</div>
+              <div class="kpi-sub">after search</div>
+            </div>
+            <div class="kpi-card" style="min-width:80px;border-color:#bbf7d0">
+              <div class="kpi-num" id="op-new-tp" style="font-size:18px;color:#16a34a">—</div>
+              <div class="kpi-label">Filtered TP</div>
+              <div class="kpi-sub">replication + reproduction</div>
+            </div>
+            <div class="kpi-card" style="min-width:80px;border-color:#fecaca">
+              <div class="kpi-num" id="op-new-fp" style="font-size:18px;color:#dc2626">—</div>
+              <div class="kpi-label">Filtered FP</div>
+              <div class="kpi-sub">false_positive</div>
+            </div>
+          </div>
+
+          <!-- Sources breakdown -->
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);margin-bottom:4px">Sources</div>
+          <div id="op-new-sources"><div class="null-note">Loading…</div></div>
+
+          <!-- Keywords -->
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);margin:6px 0 4px">
+            Keyword Phrases (<span id="op-phrase-count">?</span>)
+          </div>
+          <div class="kw-grid" id="op-phrases"><span class="null-note">Loading…</span></div>
+
+          <!-- Concept IDs -->
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);margin:6px 0 4px">OpenAlex Concept IDs</div>
+          <div class="kw-grid" id="op-concepts"><span class="null-note">Loading…</span></div>
+        </div>
+      </div>
+    </div><!-- /compare-split A -->
+
+    <!-- ── Section B: Overlap Analysis ────────────────────────────────────── -->
+    <div class="stat-card" style="margin-bottom:16px">
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">
+        <h3 style="margin:0">Overlap Analysis</h3>
+        <span style="font-size:11px;color:var(--text-muted)">
+          How many old-pipeline TP papers did the new pipeline also discover?
+        </span>
+      </div>
+
+      <!-- Summary KPIs -->
+      <div class="kpi-row" style="margin-bottom:14px">
+        <div class="kpi-card" style="border-color:#bbf7d0">
+          <div class="kpi-num" id="op-ov-total-in" style="color:#16a34a">—</div>
+          <div class="kpi-label">Found in New</div>
+          <div class="kpi-sub">of <span id="op-ov-tp-total">?</span> old TP rows</div>
+        </div>
+        <div class="kpi-card" style="border-color:#fecaca">
+          <div class="kpi-num" id="op-ov-total-out" style="color:#dc2626">—</div>
+          <div class="kpi-label">Not Found (Gap)</div>
+          <div class="kpi-sub">missing from new pipeline</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-num" id="op-ov-pct">—</div>
+          <div class="kpi-label">Coverage</div>
+          <div class="kpi-sub">old TP recall in new pipeline</div>
+        </div>
+      </div>
+
+      <!-- Per-identifier breakdown bars -->
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);margin-bottom:8px">
+        Breakdown by identifier type
+      </div>
+
+      <div class="overlap-row" id="op-ov-doi-row">
+        <div class="overlap-label">
+          <span class="ol-title">DOI-identified rows</span>
+          <span class="ol-nums" id="op-ov-doi-nums">? / ?</span>
+          <span class="ol-pct" id="op-ov-doi-pct" style="color:#16a34a">—%</span>
+        </div>
+        <div class="overlap-bar">
+          <div class="overlap-bar-fill" id="op-ov-doi-fill" style="width:0%;background:#16a34a"></div>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">
+          Matched by <code style="font-size:9px">doi_r</code> → new candidates index
+          <span class="overlap-gap-tag" id="op-ov-doi-gap"></span>
+        </div>
+      </div>
+
+      <div class="overlap-row" id="op-ov-oaid-row">
+        <div class="overlap-label">
+          <span class="ol-title">OA-ID-only rows (no DOI)</span>
+          <span class="ol-nums" id="op-ov-oaid-nums">? / ?</span>
+          <span class="ol-pct" id="op-ov-oaid-pct" style="color:#2563eb">—%</span>
+        </div>
+        <div class="overlap-bar">
+          <div class="overlap-bar-fill" id="op-ov-oaid-fill" style="width:0%;background:#2563eb"></div>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">
+          Matched by <code style="font-size:9px">url_r</code> (openalex.org/W…) → new
+          <code style="font-size:9px">openalex_id_r</code> index
+          <span class="overlap-gap-tag" id="op-ov-oaid-gap"></span>
+        </div>
+      </div>
+
+      <div class="overlap-row" style="border-top:2px solid var(--border);padding-top:10px;margin-top:4px">
+        <div class="overlap-label">
+          <span class="ol-title" style="font-weight:800">TOTAL COVERAGE</span>
+          <span class="ol-nums" id="op-ov-total-nums" style="font-weight:700">? / ?</span>
+          <span class="ol-pct" id="op-ov-total-pct" style="font-size:14px;font-weight:800">—%</span>
+        </div>
+        <div class="overlap-bar" style="height:12px">
+          <div class="overlap-bar-fill" id="op-ov-total-fill" style="width:0%"></div>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:3px">
+          Old pipeline TPs captured by new search
+          <span class="overlap-gap-tag" style="font-size:10px;padding:2px 8px" id="op-ov-total-gap"></span>
+        </div>
+      </div>
+    </div><!-- /tp-overlap -->
+
+    <!-- ── Section B2: FP Overlap Analysis ────────────────────────────────── -->
+    <div class="stat-card" style="margin-bottom:16px">
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">
+        <h3 style="margin:0">False Positive Overlap</h3>
+        <span style="font-size:11px;color:var(--text-muted)">
+          How many old-pipeline FP papers (<code style="font-size:10px">validation_status = false_positive</code>)
+          also appear in new candidates.csv?
+          <span style="color:#dc2626;font-weight:600">High count here = new pipeline is catching known noise — expected.</span>
+          <span style="color:#b45309;font-weight:600">Missing FPs = papers the new pipeline skipped entirely.</span>
+        </span>
+      </div>
+
+      <div class="kpi-row" style="margin-bottom:14px">
+        <div class="kpi-card">
+          <div class="kpi-num" id="op-fp-total" style="color:#7c3aed">—</div>
+          <div class="kpi-label">Old FP Total</div>
+          <div class="kpi-sub">in all_replications.csv</div>
+        </div>
+        <div class="kpi-card" style="border-color:#fde68a">
+          <div class="kpi-num" id="op-fp-in-new" style="color:#b45309">—</div>
+          <div class="kpi-label">In New Candidates</div>
+          <div class="kpi-sub">new pipeline caught them (expected FP)</div>
+        </div>
+        <div class="kpi-card" style="border-color:#e9d5ff">
+          <div class="kpi-num" id="op-fp-not-in-new" style="color:#7c3aed">—</div>
+          <div class="kpi-label">Not in New Candidates</div>
+          <div class="kpi-sub">new pipeline skipped these — good</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-num" id="op-fp-pct">—</div>
+          <div class="kpi-label">FP Capture Rate</div>
+          <div class="kpi-sub">lower = cleaner new search</div>
+        </div>
+      </div>
+
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);margin-bottom:8px">
+        Breakdown by identifier type
+      </div>
+
+      <div class="overlap-row">
+        <div class="overlap-label">
+          <span class="ol-title">DOI-identified FP rows</span>
+          <span class="ol-nums" id="op-fp-doi-nums">? / ?</span>
+          <span class="ol-pct" id="op-fp-doi-pct" style="color:#b45309">—%</span>
+        </div>
+        <div class="overlap-bar">
+          <div class="overlap-bar-fill" id="op-fp-doi-fill" style="width:0%;background:#f59e0b"></div>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">
+          Old FP papers with a DOI that appear in new candidates index
+        </div>
+      </div>
+
+      <div class="overlap-row">
+        <div class="overlap-label">
+          <span class="ol-title">OA-ID-only FP rows (no DOI)</span>
+          <span class="ol-nums" id="op-fp-oaid-nums">? / ?</span>
+          <span class="ol-pct" id="op-fp-oaid-pct" style="color:#b45309">—%</span>
+        </div>
+        <div class="overlap-bar">
+          <div class="overlap-bar-fill" id="op-fp-oaid-fill" style="width:0%;background:#f59e0b"></div>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">
+          Matched by OpenAlex ID (url_r) against new openalex_id_r index
+        </div>
+      </div>
+
+      <div class="overlap-row" style="border-top:2px solid var(--border);padding-top:10px;margin-top:4px">
+        <div class="overlap-label">
+          <span class="ol-title" style="font-weight:800">TOTAL FP IN NEW PIPELINE</span>
+          <span class="ol-nums" id="op-fp-total-nums" style="font-weight:700">? / ?</span>
+          <span class="ol-pct" id="op-fp-total-pct" style="font-size:14px;font-weight:800">—%</span>
+        </div>
+        <div class="overlap-bar" style="height:12px">
+          <div class="overlap-bar-fill" id="op-fp-total-fill" style="width:0%;background:#f59e0b"></div>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:3px">
+          Old FPs present in new candidates — these will be caught by Stage 2 filtering
+        </div>
+      </div>
+    </div><!-- /fp-overlap -->
+
+    <!-- ── Section C: Missing Candidates — Gap List ───────────────────────── -->
+    <div class="stat-card" style="padding:0;overflow:hidden">
+      <div style="padding:10px 16px;border-bottom:1px solid var(--border);
+                  display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <span style="font-size:10px;font-weight:700;text-transform:uppercase;
+                     color:var(--text-faint);letter-spacing:.5px">Missing Candidates — Gap List</span>
+        <span style="font-size:11px;color:var(--text-muted)">
+          Old-pipeline TP papers <strong>not found</strong> in new candidates.csv
+        </span>
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <input type="text" id="gap-search" placeholder="Search DOI or title…"
+                 oninput="scheduleGapSearch()" style="font-size:11px;width:200px">
+          <span id="gap-count" style="font-size:11px;color:var(--text-faint);white-space:nowrap"></span>
+        </div>
+      </div>
+
+      <!-- Sub-tabs: TP DOI / TP URL / FP DOI / FP URL -->
+      <div class="gap-tab-strip" style="padding:0 14px">
+        <button class="gap-tab-btn active" data-gtab="tp-doi" onclick="switchGapTab('tp-doi')">
+          TP — DOI gaps <span id="op-gap-tp-doi-badge" class="flow-badge badge-red" style="font-size:9px">—</span>
+        </button>
+        <button class="gap-tab-btn" data-gtab="tp-url" onclick="switchGapTab('tp-url')">
+          TP — URL / OA-ID gaps <span id="op-gap-tp-url-badge" class="flow-badge badge-blue" style="font-size:9px">—</span>
+        </button>
+        <button class="gap-tab-btn" data-gtab="fp-doi" onclick="switchGapTab('fp-doi')">
+          FP — DOI gaps <span id="op-gap-fp-doi-badge" class="flow-badge badge-orange" style="font-size:9px">—</span>
+        </button>
+        <button class="gap-tab-btn" data-gtab="fp-url" onclick="switchGapTab('fp-url')">
+          FP — URL / OA-ID gaps <span id="op-gap-fp-url-badge" class="flow-badge badge-purple" style="font-size:9px">—</span>
+        </button>
+      </div>
+
+      <div class="gap-tab-panel active" id="gap-panel-tp-doi">
+        <div style="font-size:10px;color:var(--text-muted);padding:6px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)">
+          True Positive papers (replication / reproduction) that have a DOI but were <strong>not found</strong> in new candidates.csv
+        </div>
+        <table class="data-table">
+          <thead><tr>
+            <th style="width:200px">DOI</th><th>Title</th>
+            <th style="width:50px">Year</th><th style="width:120px">Source</th>
+          </tr></thead>
+          <tbody id="gap-tbody-tp-doi">
+            <tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
+          </tbody>
+        </table>
+        <div class="pager" id="gap-pager-tp-doi" style="padding:8px"></div>
+      </div>
+
+      <div class="gap-tab-panel" id="gap-panel-tp-url">
+        <div style="font-size:10px;color:var(--text-muted);padding:6px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)">
+          True Positive papers with no DOI (OA-ID only) that were <strong>not found</strong> in new candidates.csv
+        </div>
+        <table class="data-table">
+          <thead><tr>
+            <th style="width:280px">OA URL</th><th>Title</th>
+            <th style="width:50px">Year</th><th style="width:120px">Source</th>
+          </tr></thead>
+          <tbody id="gap-tbody-tp-url">
+            <tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
+          </tbody>
+        </table>
+        <div class="pager" id="gap-pager-tp-url" style="padding:8px"></div>
+      </div>
+
+      <div class="gap-tab-panel" id="gap-panel-fp-doi">
+        <div style="font-size:10px;color:var(--text-muted);padding:6px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)">
+          False Positive papers (validation_status = false_positive) with a DOI that were <strong>not found</strong> in new candidates.csv — the new pipeline cleanly skipped these
+        </div>
+        <table class="data-table">
+          <thead><tr>
+            <th style="width:200px">DOI</th><th>Title</th>
+            <th style="width:50px">Year</th><th style="width:120px">Source</th>
+          </tr></thead>
+          <tbody id="gap-tbody-fp-doi">
+            <tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
+          </tbody>
+        </table>
+        <div class="pager" id="gap-pager-fp-doi" style="padding:8px"></div>
+      </div>
+
+      <div class="gap-tab-panel" id="gap-panel-fp-url">
+        <div style="font-size:10px;color:var(--text-muted);padding:6px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)">
+          False Positive papers with no DOI (OA-ID only) that were <strong>not found</strong> in new candidates.csv
+        </div>
+        <table class="data-table">
+          <thead><tr>
+            <th style="width:280px">OA URL</th><th>Title</th>
+            <th style="width:50px">Year</th><th style="width:120px">Source</th>
+          </tr></thead>
+          <tbody id="gap-tbody-fp-url">
+            <tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
+          </tbody>
+        </table>
+        <div class="pager" id="gap-pager-fp-url" style="padding:8px"></div>
+      </div>
+    </div><!-- /gap list -->
+
   </div><!-- /tab-old-pipeline -->
 
 </div><!-- /dash-page -->
@@ -1498,108 +2058,230 @@ function toggleDrilldown(id) {
   const el=$(id); if (!el) return; el.classList.toggle('open');
 }
 
-// ── Analysis (Old Pipeline) tab ──────────────────────────────────────────────
-let _analysisLoaded=false;
-let _gapPage=1;
-let _gapSearchTimer=null;
+// ── Old Pipeline tab ──────────────────────────────────────────────────────────
+let _analysisLoaded = false;
+let _gapSearchTimer = null;
+let _gapRows = { 'tp-doi': [], 'tp-url': [], 'fp-doi': [], 'fp-url': [] };
+let _gapTab = 'tp-doi';
+const GAP_PER_PAGE = 50;
+let _gapPage = { 'tp-doi': 1, 'tp-url': 1, 'fp-doi': 1, 'fp-url': 1 };
 
 async function loadAnalysis() {
-  _analysisLoaded=true;
+  _analysisLoaded = true;
   try {
-    const data=await fetch('/api/dashboard/analysis-stats').then(r=>r.json());
-    const gs=data.gap_summary||{};
-    $('gap-total').textContent  = fmt(gs.total_gaps);
-    $('gap-doi').textContent    = fmt(gs.doi_gaps);
-    $('gap-url').textContent    = fmt(gs.url_gaps);
-    $('gap-misclass').textContent = fmt(gs.filter_misclassifications);
-    if (gs.generated) $('gap-generated').textContent='Last run: '+gs.generated;
+    const data = await fetch('/api/dashboard/old-pipeline-analysis').then(r => r.json());
 
-    const au=data.audit||{};
-    if (au.link_methods && au.link_methods.length) {
-      const mx=Math.max(...au.link_methods.map(r=>r.count),1);
-      $('audit-link-methods').innerHTML=au.link_methods.map(r=>`
-        <div style="margin-bottom:6px">
-          <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
-            <span style="font-family:monospace;color:var(--text)">${esc(r.method)}</span>
-            <span style="color:var(--text-muted)">${r.count.toLocaleString()} (${r.pct.toFixed(1)}%)</span>
-          </div>
-          <div style="width:100%;height:5px;background:var(--border);border-radius:2px;overflow:hidden">
-            <div style="height:100%;width:${Math.max(2,(r.count/mx)*100)}%;background:#2563eb"></div>
-          </div>
-        </div>`).join('');
-    } else {
-      $('audit-link-methods').innerHTML='<div class="null-note">Run extraction_audit first.</div>';
+    if (data.error) {
+      $('op-regen-hint').style.display = '';
+      return;
     }
 
-    if (au.confidence_rows && au.confidence_rows.length) {
-      const CC={high:'#16a34a',medium:'#f59e0b',low:'#dc2626'};
-      const mx=Math.max(...au.confidence_rows.map(r=>r.count),1);
-      $('audit-confidence').innerHTML=au.confidence_rows.map(r=>`
-        <div style="margin-bottom:6px">
-          <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
-            <span style="font-weight:600;color:var(--text)">${esc(r.level)}</span>
-            <span style="color:var(--text-muted)">${r.count.toLocaleString()} (${r.pct.toFixed(1)}%)</span>
-          </div>
-          <div style="width:100%;height:5px;background:var(--border);border-radius:2px;overflow:hidden">
-            <div style="height:100%;width:${Math.max(2,(r.count/mx)*100)}%;background:${CC[r.level]||'#9ca3af'}"></div>
-          </div>
-        </div>`).join('');
-    } else {
-      $('audit-confidence').innerHTML='<div class="null-note">No confidence data.</div>';
-    }
+    if (data.generated) $('op-generated').textContent = 'Last run: ' + data.generated;
 
-    const opps=data.improvement_rows||[];
-    if (opps.length) {
-      $('improvement-tbody').innerHTML=opps.map(r=>{
-        const pc=r.Priority==='High'?'pri-high':r.Priority==='Medium'?'pri-medium':'pri-low';
-        return `<tr>
-          <td style="font-size:11px">${esc(r.Category||'')}</td>
-          <td style="text-align:right;font-weight:700;font-size:11px">${esc(r.Count||'')}</td>
-          <td style="font-size:11px;color:var(--text-muted)">${esc(r['Suggested Fix']||'')}</td>
-          <td class="${pc}" style="font-size:11px">${esc(r.Priority||'')}</td>
-        </tr>`;
-      }).join('');
-    } else {
-      $('improvement-tbody').innerHTML='<tr><td colspan="4" class="null-note" style="text-align:center;padding:10px">Run python -m analysis.rule_analysis</td></tr>';
-    }
+    // ── Old pipeline stats ────────────────────────────────────────────────
+    const op = data.old_pipeline || {};
+    $('op-old-total').textContent = fmt(op.total);
+    $('op-old-tp').textContent    = fmt(op.tp_total);
+    $('op-old-fp').textContent    = fmt(op.fp_total);
+    $('op-old-tp-breakdown').innerHTML =
+      `<span class="badge-green flow-badge">${fmt(op.tp_replication)} replication</span>` +
+      `<span class="badge-blue flow-badge">${fmt(op.tp_reproduction)} reproduction</span>`;
 
-    loadGapPage(1);
+    const oldSrc = op.by_source || {};
+    const oldSrcMax = Math.max(...Object.values(oldSrc), 1);
+    $('op-old-sources').innerHTML = Object.entries(oldSrc)
+      .sort((a,b) => b[1]-a[1])
+      .map(([src, cnt]) => {
+        const pct = ((cnt / oldSrcMax) * 100).toFixed(0);
+        return `<div class="bar-row">
+          <div class="bar-row-label">
+            <span class="src-name">${esc(src)}</span>
+            <span class="src-cnt">${cnt.toLocaleString()}</span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:#b91c1c"></div></div>
+        </div>`;
+      }).join('') || '<div class="null-note">No source data</div>';
+
+    // ── New pipeline stats ────────────────────────────────────────────────
+    const np = data.new_pipeline || {};
+    const cands = np.candidates || {};
+    const filt  = np.filtered   || {};
+    $('op-new-cands').textContent = fmt(cands.total);
+    $('op-new-tp').textContent    = fmt(filt.tp);
+    $('op-new-fp').textContent    = fmt(filt.fp);
+
+    const newSrc = cands.by_source || {};
+    const newSrcMax = Math.max(...Object.values(newSrc), 1);
+    $('op-new-sources').innerHTML = Object.entries(newSrc)
+      .sort((a,b) => b[1]-a[1])
+      .map(([src, cnt]) => {
+        const pct = ((cnt / newSrcMax) * 100).toFixed(0);
+        return `<div class="bar-row">
+          <div class="bar-row-label">
+            <span class="src-name">${esc(src)}</span>
+            <span class="src-cnt">${cnt.toLocaleString()}</span>
+          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:#1d4ed8"></div></div>
+        </div>`;
+      }).join('') || '<div class="null-note">No source data</div>';
+
+    const phrases = np.search_phrases || [];
+    $('op-phrase-count').textContent = phrases.length;
+    $('op-phrases').innerHTML = phrases.length
+      ? phrases.map(p => `<span class="kw-pill">${esc(p)}</span>`).join('')
+      : '<span class="null-note">—</span>';
+
+    const concepts = np.concept_ids || [];
+    $('op-concepts').innerHTML = concepts.length
+      ? concepts.map(c => `<span class="kw-pill">${esc(c)}</span>`).join('')
+      : '<span class="null-note">—</span>';
+
+    // ── Overlap stats ─────────────────────────────────────────────────────
+    const ov = data.overlap || {};
+    const tpTot   = ov.tp_total   || 0;
+    const totIn   = ov.total_in_new  || 0;
+    const totOut  = ov.total_not_in_new || 0;
+    const ovPct   = tpTot ? ((totIn / tpTot) * 100).toFixed(1) : '—';
+
+    $('op-ov-tp-total').textContent   = fmt(tpTot);
+    $('op-ov-total-in').textContent   = fmt(totIn);
+    $('op-ov-total-out').textContent  = fmt(totOut);
+    $('op-ov-pct').textContent        = ovPct + '%';
+
+    // DOI bar
+    const dRows = ov.doi_rows || 0, dIn = ov.doi_in_new || 0, dOut = ov.doi_not_in_new || 0;
+    const dPct  = dRows ? ((dIn / dRows) * 100).toFixed(1) : '—';
+    $('op-ov-doi-nums').textContent = `${fmt(dIn)} / ${fmt(dRows)}`;
+    $('op-ov-doi-pct').textContent  = dPct + '%';
+    $('op-ov-doi-fill').style.width = dRows ? Math.max(2,(dIn/dRows)*100)+'%' : '0%';
+    $('op-ov-doi-gap').textContent  = dOut ? `${fmt(dOut)} missing` : '';
+
+    // OA-ID bar
+    const uRows = ov.oaid_rows || 0, uIn = ov.oaid_in_new || 0, uOut = ov.oaid_not_in_new || 0;
+    const uPct  = uRows ? ((uIn / uRows) * 100).toFixed(1) : '—';
+    $('op-ov-oaid-nums').textContent = `${fmt(uIn)} / ${fmt(uRows)}`;
+    $('op-ov-oaid-pct').textContent  = uPct + '%';
+    $('op-ov-oaid-fill').style.width = uRows ? Math.max(2,(uIn/uRows)*100)+'%' : '0%';
+    $('op-ov-oaid-gap').textContent  = uOut ? `${fmt(uOut)} missing` : '';
+
+    // Total bar
+    const tPct = tpTot ? ((totIn / tpTot) * 100).toFixed(1) : '—';
+    $('op-ov-total-nums').textContent = `${fmt(totIn)} / ${fmt(tpTot)}`;
+    $('op-ov-total-pct').textContent  = tPct + '%';
+    $('op-ov-total-fill').style.width = tpTot ? Math.max(2,(totIn/tpTot)*100)+'%' : '0%';
+    $('op-ov-total-gap').textContent  = totOut ? `${fmt(totOut)} papers not found` : '';
+
+    // ── FP overlap ────────────────────────────────────────────────────────
+    const fp = (data.overlap || {}).fp || {};
+    const fpTot    = fp.total || 0;
+    const fpIn     = fp.total_in_new || 0;
+    const fpOut    = fp.total_not_in_new || 0;
+    const fpPct    = fpTot ? ((fpIn / fpTot) * 100).toFixed(1) : '—';
+
+    $('op-fp-total').textContent     = fmt(fpTot);
+    $('op-fp-in-new').textContent    = fmt(fpIn);
+    $('op-fp-not-in-new').textContent= fmt(fpOut);
+    $('op-fp-pct').textContent       = fpPct + '%';
+
+    const fpDRows = fp.doi_rows || 0, fpDIn = fp.doi_in_new || 0;
+    const fpDPct  = fpDRows ? ((fpDIn / fpDRows) * 100).toFixed(1) : '—';
+    $('op-fp-doi-nums').textContent = `${fmt(fpDIn)} / ${fmt(fpDRows)}`;
+    $('op-fp-doi-pct').textContent  = fpDPct + '%';
+    $('op-fp-doi-fill').style.width = fpDRows ? Math.max(2,(fpDIn/fpDRows)*100)+'%' : '0%';
+
+    const fpURows = fp.oaid_rows || 0, fpUIn = fp.oaid_in_new || 0;
+    const fpUPct  = fpURows ? ((fpUIn / fpURows) * 100).toFixed(1) : '—';
+    $('op-fp-oaid-nums').textContent = `${fmt(fpUIn)} / ${fmt(fpURows)}`;
+    $('op-fp-oaid-pct').textContent  = fpUPct + '%';
+    $('op-fp-oaid-fill').style.width = fpURows ? Math.max(2,(fpUIn/fpURows)*100)+'%' : '0%';
+
+    $('op-fp-total-nums').textContent = `${fmt(fpIn)} / ${fmt(fpTot)}`;
+    $('op-fp-total-pct').textContent  = fpPct + '%';
+    $('op-fp-total-fill').style.width = fpTot ? Math.max(2,(fpIn/fpTot)*100)+'%' : '0%';
+
+    // ── Gap rows ──────────────────────────────────────────────────────────
+    _gapRows['tp-doi'] = ov.gap_doi_rows || [];
+    _gapRows['tp-url'] = ov.gap_url_rows || [];
+    _gapRows['fp-doi'] = fp.gap_doi_rows || [];
+    _gapRows['fp-url'] = fp.gap_url_rows || [];
+    $('op-gap-tp-doi-badge').textContent = _gapRows['tp-doi'].length;
+    $('op-gap-tp-url-badge').textContent = _gapRows['tp-url'].length;
+    $('op-gap-fp-doi-badge').textContent = _gapRows['fp-doi'].length;
+    $('op-gap-fp-url-badge').textContent = _gapRows['fp-url'].length;
+    renderGapTable();
+
   } catch(e) {
-    $('gap-generated').textContent='Error: '+e.message;
+    $('op-generated').textContent = 'Error: ' + e.message;
+    $('op-regen-hint').style.display = '';
   }
 }
 
-async function loadGapPage(page) {
-  _gapPage=page;
-  const search=$('gap-search').value.trim();
-  $('gap-tbody').innerHTML='<tr><td colspan="3" style="text-align:center;padding:12px;color:var(--text-faint)">Loading…</td></tr>';
-  const url=`/api/dashboard/analysis-gaps?page=${page}&per_page=50${search?'&search='+encodeURIComponent(search):''}`;
-  const data=await fetch(url).then(r=>r.json());
-  if (data.error){
-    $('gap-tbody').innerHTML=`<tr><td colspan="3" class="null-note" style="text-align:center;padding:12px">${esc(data.error)}</td></tr>`;
-    $('gap-pager').innerHTML=''; $('gap-count').textContent=''; return;
+function switchGapTab(tab) {
+  _gapTab = tab;
+  _gapPage[tab] = 1;
+  document.querySelectorAll('.gap-tab-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.gtab === tab));
+  document.querySelectorAll('.gap-tab-panel').forEach(p =>
+    p.classList.toggle('active', p.id === 'gap-panel-' + tab));
+  renderGapTable();
+}
+
+function renderGapTable() {
+  const tab      = _gapTab;
+  const isDoiTab = tab.endsWith('-doi');
+  const search   = ($('gap-search').value || '').trim().toLowerCase();
+  let rows = _gapRows[tab] || [];
+
+  if (search) {
+    rows = rows.filter(r =>
+      (r.doi_r   || '').toLowerCase().includes(search) ||
+      (r.url_r   || '').toLowerCase().includes(search) ||
+      (r.study_r || '').toLowerCase().includes(search)
+    );
   }
-  $('gap-count').textContent=`${data.total.toLocaleString()} entries`;
-  if (!data.rows||!data.rows.length){
-    $('gap-tbody').innerHTML='<tr><td colspan="3" class="null-note" style="text-align:center;padding:12px">No gaps found.</td></tr>';
-    $('gap-pager').innerHTML=''; return;
+
+  const total   = rows.length;
+  const pages   = Math.max(1, Math.ceil(total / GAP_PER_PAGE));
+  const page    = Math.min(_gapPage[tab], pages);
+  _gapPage[tab] = page;
+  const start   = (page - 1) * GAP_PER_PAGE;
+  const slice   = rows.slice(start, start + GAP_PER_PAGE);
+
+  $('gap-count').textContent = total.toLocaleString() + ' entries';
+
+  const tbody = $(`gap-tbody-${tab}`);
+  const pager = $(`gap-pager-${tab}`);
+
+  if (!slice.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">
+      ${total === 0 && !search ? 'No gaps — full coverage!' : 'No results.'}
+    </td></tr>`;
+    pager.innerHTML = '';
+    return;
   }
-  $('gap-tbody').innerHTML=data.rows.map(r=>`<tr>
-    <td style="font-family:monospace;font-size:10px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.doi_r)}">${esc(r.doi_r||'—')}</td>
-    <td style="font-size:11px">${esc(r.study_r||'—')}</td>
-    <td style="font-size:11px;color:var(--text-muted)">${esc(r.year_r||'—')}</td>
-  </tr>`).join('');
-  const pages=data.pages;
-  if (pages<=1){$('gap-pager').innerHTML='';return;}
-  let b=`<button class="pager-btn" onclick="loadGapPage(${page-1})" ${page<=1?'disabled':''}>← Prev</button>`;
-  b+=`<span style="font-size:11px;color:var(--text-faint)">Page ${page} / ${pages}</span>`;
-  b+=`<button class="pager-btn" onclick="loadGapPage(${page+1})" ${page>=pages?'disabled':''}>Next →</button>`;
-  $('gap-pager').innerHTML=b;
+
+  tbody.innerHTML = slice.map(r => {
+    const idCell = isDoiTab
+      ? `<td style="font-family:monospace;font-size:10px;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${esc(r.doi_r)}">${esc(r.doi_r||'—')}</td>`
+      : `<td style="font-size:10px;word-break:break-all;max-width:280px" title="${esc(r.url_r)}">${esc(r.url_r||'—')}</td>`;
+    return `<tr>
+      ${idCell}
+      <td style="font-size:11px">${esc(r.study_r||'—')}</td>
+      <td style="font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(r.year_r||'—')}</td>
+      <td style="font-size:10px;font-family:monospace;color:var(--text-muted)">${esc(r.pathway_source||'—')}</td>
+    </tr>`;
+  }).join('');
+
+  if (pages <= 1) { pager.innerHTML = ''; return; }
+  pager.innerHTML =
+    `<button class="pager-btn" onclick="_gapPage['${tab}']=${page-1};renderGapTable()" ${page<=1?'disabled':''}>← Prev</button>` +
+    `<span style="font-size:11px;color:var(--text-faint)">Page ${page} / ${pages}</span>` +
+    `<button class="pager-btn" onclick="_gapPage['${tab}']=${page+1};renderGapTable()" ${page>=pages?'disabled':''}>Next →</button>`;
 }
 
 function scheduleGapSearch() {
   clearTimeout(_gapSearchTimer);
-  _gapSearchTimer=setTimeout(()=>loadGapPage(1),300);
+  _gapSearchTimer = setTimeout(() => { _gapPage[_gapTab] = 1; renderGapTable(); }, 300);
 }
 
 // ── Main loader ──────────────────────────────────────────────────────────────

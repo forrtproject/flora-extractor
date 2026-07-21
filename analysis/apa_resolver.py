@@ -114,7 +114,12 @@ def query_crossref(title: str, authors: str, year: int, timeout: int = 30) -> Op
                 "doi": best_match.get("DOI", ""),
                 "title": best_match.get("title", [""])[0] if isinstance(best_match.get("title"), list) else best_match.get("title", ""),
                 "authors": best_match.get("author", []),
-                "year": best_match.get("issued", {}).get("date-parts", [[None]])[0][0],
+                "year": next(
+                    (((best_match.get(k) or {}).get("date-parts") or [[None]])[0][0]
+                     for k in ("published-print", "published", "published-online", "issued", "created")
+                     if ((best_match.get(k) or {}).get("date-parts") or [[None]])[0][0] is not None),
+                    None,
+                ),
                 "journal": best_match.get("container-title", [""])[0] if isinstance(best_match.get("container-title"), list) else best_match.get("container-title", ""),
                 "volume": best_match.get("volume"),
                 "issue": best_match.get("issue"),

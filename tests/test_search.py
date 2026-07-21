@@ -8,6 +8,39 @@ from shared.config import OA_CACHE_DIR
 from search import openalex_search as oa
 from search.semantic_scholar_search import fetch_semantic_scholar_candidates
 from search.external_lists import fetch_i4r
+from search.run_search import _row_keys
+
+
+# ---------------------------------------------------------------------------
+# Dedup keys (#53): a row with a stronger identifier must NOT dedupe on title,
+# so two distinct DOIs that share a title are both kept.
+# ---------------------------------------------------------------------------
+
+def test_row_keys_doi_row_has_no_title_key():
+    keys = _row_keys({"doi_r": "10.1/abc", "title_r": "A Shared Title"})
+    assert "10.1/abc" in keys
+    assert not any(k.startswith("title:") for k in keys)
+
+
+def test_row_keys_titleless_identifier_rows_dont_collide():
+    a = _row_keys({"doi_r": "10.1/aaa", "title_r": "Registered Replication Report"})
+    b = _row_keys({"doi_r": "10.1/bbb", "title_r": "Registered Replication Report"})
+    assert set(a).isdisjoint(b), "distinct DOIs sharing a title must not share any key"
+
+
+def test_row_keys_doi_less_row_still_uses_title():
+    keys = _row_keys({"title_r": "Only A Title"})
+    assert keys == ["title:only a title"]
+
+
+def test_s2_phrases_match_openalex_and_include_failure_signals():
+    """#47: S2 must sample the same phrase set as OpenAlex, incl. failure-signal
+    phrases, or the two sources skew the eventual success/failure balance."""
+    from search.semantic_scholar_search import SEARCH_PHRASES as S2
+    from search.openalex_search import SEARCH_PHRASES as OA
+    assert set(S2) == set(OA)
+    for p in ("failed to replicate", "did not replicate", "could not reproduce"):
+        assert p in S2
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +111,7 @@ def test_fetch_openalex_candidates_schema_and_cleaning(monkeypatch, tmp_path):
 
     calls = []
 
-    def fake_get(url, params, timeout):
+    def fake_get(url, params, timeout, **kwargs):
         calls.append((url, params, timeout))
         return DummyResponse(make_payload())
 
@@ -100,7 +133,7 @@ def test_fetch_openalex_candidates_uses_cache_on_second_run(monkeypatch, tmp_pat
 
     call_count = {"n": 0}
 
-    def fake_get(url, params, timeout):
+    def fake_get(url, params, timeout, **kwargs):
         call_count["n"] += 1
         return DummyResponse(make_payload())
 

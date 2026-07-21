@@ -34,18 +34,12 @@ from shared.schema import CANDIDATES_COLS
 from shared.utils import cache_key, clean_doi
 
 
-SEARCH_PHRASES = [
-    "replication of",
-    "direct replication",
-    "close replication",
-    "conceptual replication",
-    "replication study",
-    "reproduction study",
-    "we replicated",
-    "attempts to replicate",
-    "registered replication report",
-    "pre-registered replication",
-]
+# #47: query the SAME phrase set as the OpenAlex source. The two lists had diverged
+# (S2 = 10 success/neutral phrases only), so failure-signal phrases like "failed to
+# replicate" were discovered via OpenAlex only — a directional bias in the eventual
+# success/failure balance. Import (don't copy) so they cannot silently diverge again.
+# If S2 quota ever needs a subset, slice this list explicitly with a documented reason.
+from search.openalex_search import SEARCH_PHRASES
 
 from shared.config import S2_API_KEY
 S2_CACHE_DIR = OA_CACHE_DIR.parent / "semantic_scholar"
@@ -147,6 +141,23 @@ def _backoff_sleep(attempt: int) -> None:
 # ---------------------------------------------------------------------------
 
 
+class OffsetExhausted(Exception):
+    """Raised when S2 reports offset/limit as unavailable for this query.
+
+    S2 doesn't return an empty page once a filtered query's results run out —
+    it 400s instead. This is distinct from a rate-limit ``StopIteration``: it
+    means the job is genuinely done, not "try again later".
+    """
+
+
+def _offset_exhausted(resp: requests.Response) -> bool:
+    """True if a 400 response means "no more results", not a bad request."""
+    try:
+        return "not available" in resp.json().get("error", "").lower()
+    except Exception:
+        return False
+
+
 def _get_page(params: dict) -> dict:
     """Fetch one S2 results page, serving from disk cache when available.
 
@@ -169,8 +180,10 @@ def _get_page(params: dict) -> dict:
     ------
     StopIteration
         On the first 429 without an API key, or after all retries with one.
+    OffsetExhausted
+        On a 400 that means this offset is past the query's available results.
     requests.HTTPError
-        For non-429 HTTP errors.
+        For other non-retryable HTTP errors.
     """
     key = cache_key(str(sorted(params.items())))
     path = S2_CACHE_DIR / f"{key}.json"
@@ -198,6 +211,8 @@ def _get_page(params: dict) -> dict:
             # 429 = rate limit; 5xx = transient S2 backend error — both warrant backoff+retry.
             _backoff_sleep(attempt)
             resp = requests.get(_BASE_URL, params=params, headers=headers, timeout=30)
+        elif resp.status_code == 400 and _offset_exhausted(resp):
+            raise OffsetExhausted(resp.json().get("error", "offset unavailable"))
         else:
             resp.raise_for_status()
 
@@ -316,6 +331,12 @@ def fetch_phrase(
 
         try:
             data = _get_page(params)
+        except OffsetExhausted as exc:
+            _save_offset_state(offset_path, offset, total_fetched, completed=True)
+            log.info(
+                "  S2 phrase=%r exhausted at offset=%d (%s)", phrase, offset, exc
+            )
+            break
         except StopIteration as exc:
             log.warning(
                 "  Stopping phrase=%r: %s (%d rows kept)", phrase, exc, len(rows)

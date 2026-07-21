@@ -74,10 +74,19 @@ def _to_year(year) -> Optional[int]:
 
 
 def _crossref_year(msg: dict) -> Optional[int]:
-    for k in ("published-print", "published-online", "issued"):
+    """Extract published year from a CrossRef API message.
+
+    Priority: published-print → published → published-online → issued → created.
+    'created' is the DOI registration date — used only as last resort because
+    publishers sometimes register DOIs months before the print date.
+    """
+    for k in ("published-print", "published", "published-online", "issued"):
         parts = (msg.get(k) or {}).get("date-parts") or []
         if parts and parts[0] and parts[0][0]:
             return int(parts[0][0])
+    parts = (msg.get("created") or {}).get("date-parts") or []
+    if parts and parts[0] and parts[0][0]:
+        return int(parts[0][0])
     return None
 
 
@@ -113,7 +122,7 @@ def _fetch_via_content_negotiation(doi: str) -> Optional[dict]:
             csl = r.json()
             title = csl.get("title") or ""
             year = None
-            for k in ("issued", "published-print", "published-online"):
+            for k in ("published-print", "issued", "published-online", "created"):
                 parts = (csl.get(k) or {}).get("date-parts") or []
                 if parts and parts[0] and parts[0][0]:
                     year = int(parts[0][0])

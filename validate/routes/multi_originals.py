@@ -19,9 +19,9 @@ import pandas as pd
 from flask import Blueprint, Response, jsonify, render_template, request, send_file, stream_with_context
 
 from validate import state
-from shared.config import MULTI_ORIG_CANDS_PATH, MULTI_ORIG_RESOLVED_PATH, PDF_CACHE_DIR, log
+from shared.config import MULTI_ORIG_CANDS_PATH, MULTI_ORIG_RESOLVED_PATH, log
 from extract.multi_original import run_multi_original_for_doi
-from shared.utils import cache_key, clean_doi
+from shared.utils import clean_doi, pdf_serve_url
 
 multi_orig_bp = Blueprint("multi_originals", __name__)
 
@@ -41,13 +41,6 @@ _EXPORT_COLS = [
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _pdf_serve_url(doi_r: str, result: dict) -> str:
-    if result.get("pdf_path"):
-        return f"/pdf/{Path(result['pdf_path']).name}"
-    expected = PDF_CACHE_DIR / f"{cache_key(doi_r)}.pdf"
-    return f"/pdf/{expected.name}" if expected.exists() else ""
-
 
 def _row_status(doi_r: str) -> str:
     if doi_r == _run_state.get("current_doi"):
@@ -72,7 +65,7 @@ def _build_candidate_row(row: pd.Series) -> dict:
         "n_originals"     : int(result.get("n_originals", 0)),
         "llm_source"      : result.get("llm_source",  ""),
         "pdf_source"      : result.get("pdf_source",  ""),
-        "pdf_serve_url"   : _pdf_serve_url(doi_r, result) if result else "",
+        "pdf_serve_url"   : pdf_serve_url(doi_r, result) if result else "",
         "pdf_url"         : result.get("pdf_url",     "") if result else "",
         "pdf_ok"          : bool(result.get("pdf_ok", False)) if result else False,
         "has_result"      : bool(result),
@@ -236,7 +229,7 @@ def api_run():
                 result = run_multi_original_for_doi(
                     doi_r, state.all_rep_df, state.cands_df
                 )
-                result["pdf_serve_url"] = _pdf_serve_url(doi_r, result)
+                result["pdf_serve_url"] = pdf_serve_url(doi_r, result)
 
                 with state.multi_orig_lock:
                     state.multi_orig_resolved[doi_r] = result

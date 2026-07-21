@@ -1,5 +1,2 @@
 [variables]
 NIXPACKS_PYTHON_VERSION = "3.11"
-
-[phases.install]
-cmds = ["pip install -r requirements-web.txt"]

@@ -253,11 +253,12 @@ def _dedup_by_doi(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     # Group by normalised DOI and keep the row with the most complete metadata.
-    # Note: pandas groupby.apply on DataFrames may emit a deprecation warning in
-    # newer versions because grouping columns are included by default for now.
-    deduped = (
-        with_doi.groupby("doi_r", sort=False).apply(_best_row).reset_index(drop=True)
-    )
+    # Score all rows at once, then use idxmax() per group — avoids the
+    # np.vstack that groupby.apply() uses internally, which causes MemoryError
+    # on batches of millions of rows.
+    scores = with_doi.apply(_richness, axis=1)
+    best_indices = scores.groupby(with_doi["doi_r"], sort=False).idxmax()
+    deduped = with_doi.loc[best_indices].reset_index(drop=True)
 
     removed = len(with_doi) - len(deduped)
     if removed:

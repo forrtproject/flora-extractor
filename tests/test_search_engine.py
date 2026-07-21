@@ -3,7 +3,35 @@ Smoke tests for the YAML-spec discovery engine. Live API calls are NOT made —
 adapters are exercised via injected sessions in higher-level tests.
 """
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+
+from search.engine.runner import SPEC_FRESHNESS_DAYS, check_spec_freshness
+
+
+def test_stale_spec_warns_not_raises():
+    """#48: a spec older than SPEC_FRESHNESS_DAYS must warn, not raise — a hard raise
+    silently empties the engine source (engine_source swallows the failed run)."""
+    stale = SimpleNamespace(
+        id="openalex",
+        verified_at=datetime.now(timezone.utc) - timedelta(days=SPEC_FRESHNESS_DAYS + 5),
+    )
+    # No logger: must return normally (previously raised RuntimeError).
+    check_spec_freshness({"openalex": stale}, log=None)
+
+    warnings: list = []
+    logger = SimpleNamespace(warning=lambda *a, **k: warnings.append(a))
+    check_spec_freshness({"openalex": stale}, log=logger)
+    assert warnings, "stale spec should emit a warning when a logger is supplied"
+
+
+def test_fresh_spec_no_warning():
+    fresh = SimpleNamespace(id="openalex", verified_at=datetime.now(timezone.utc))
+    warnings: list = []
+    logger = SimpleNamespace(warning=lambda *a, **k: warnings.append(a))
+    check_spec_freshness({"openalex": fresh}, log=logger)
+    assert not warnings
 
 
 from search.engine.candidate_normalizer import (

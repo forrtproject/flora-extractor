@@ -69,7 +69,7 @@ class OpenAlexSourceAdapter(SourceAdapter):
                 f"(got {rate_per_sec})"
             )
         self.verified_at = verified_at
-        self._bucket = TokenBucket(rate_per_sec=rate_per_sec, burst=5)
+        self._bucket = TokenBucket(rate_per_sec=rate_per_sec)
         self._api_key = api_key
         self._mailto = mailto
         self._or = or_operator
@@ -129,16 +129,6 @@ class OpenAlexSourceAdapter(SourceAdapter):
             page += 1
             if page >= self._max_pages:
                 return
-
-    def _build_or_expression(self, phrases: list[str]) -> str:
-        return self._or.join(
-            f"{self._q}{self._escape(p)}{self._q}" for p in phrases
-        )
-
-    @staticmethod
-    def _escape(phrase: str) -> str:
-        # OpenAlex phrase syntax doesn't support nested quotes — strip defensively.
-        return phrase.replace('"', "").replace("\\", "")
 
     def _build_url(
         self,

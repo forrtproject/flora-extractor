@@ -68,8 +68,12 @@ def _row_keys(row: "pd.Series | dict") -> list[str]:
     url = str(row.get("url_r", "") or "").strip()
     if url:
         keys.append(f"url:{url}")
+    # #53: title is a LAST-RESORT identifier only. A row with a DOI/OpenAlex id/URL must
+    # dedupe on that, never on its title — otherwise two distinct works sharing a title
+    # (Reply/Commentary pairs, "Registered Replication Report" stubs, identically-titled
+    # corrections) collide and the second is silently dropped.
     title = str(row.get("title_r", "") or "").lower().strip()
-    if title:
+    if title and not keys:
         keys.append(f"title:{title}")
     return keys
 
@@ -574,14 +578,14 @@ def run_search_auto_advance(
     to_year:   int = 2021,
     max_records_per_phrase: int = 200,
     sources: "Optional[set[str]]" = None,
-    skip_harvest: bool = False,
 ) -> pd.DataFrame:
     """Process exactly ONE (source, phrase, year) job per invocation.
 
     Jobs cycle through all OpenAlex phrases then all Semantic Scholar phrases
-    for the current year before advancing to the next year.  At the start of
-    each year's first job, the curated lists (I4R, Replication Network) are
-    also fetched and merged (unless --source excludes them).
+    for the current year before advancing to the next year.
+
+    NOTE: the curated lists (I4R, Replication Network) are NOT harvested — their
+    fetchers exist in search/external_lists.py but are not yet wired in (#46).
 
     State is persisted in ``cache/search_state.json`` and resumes across
     invocations.  Old state files that only tracked OpenAlex (``current_phrase_idx``)
@@ -635,24 +639,6 @@ def run_search_auto_advance(
     )
 
     out_path = DATA_DIR / "candidates.csv"
-
-    # Harvest cached pages once per full cycle (at the first job of the first year
-    # only, and only after at least one cycle has completed). This catches any rows
-    # orphaned by OOM crashes in the previous cycle without adding per-year overhead.
-    # Skipped when skip_harvest=True — use --harvest-only to run it separately.
-    harvest_due = (
-        not skip_harvest
-        and jidx == 0
-        and year == from_year
-        and state.get("cycles_completed", 0) >= 1
-    )
-    if harvest_due:
-        log.info("Auto-advance: harvesting cached pages (once per cycle)...")
-        cached_batch = pd.concat([_harvest_oa_cache(), _harvest_s2_cache()], ignore_index=True)
-        if not cached_batch.empty:
-            log.info("Cache harvest: %d rows — deduplicating before merge...", len(cached_batch))
-            cached_batch = deduplicate_candidates(cached_batch)
-            _merge_into_candidates_csv(cached_batch, out_path)
 
     # Fetch this job from the appropriate source.
     if source == "openalex":
@@ -807,7 +793,8 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Process one phrase/year combo per run (reads/writes cache/search_state.json). "
             "Pair with --from-year, --to-year, --max-per-phrase. "
-            "Run repeatedly to advance through the year range."
+            "Run repeatedly to advance through the year range. "
+            "Cache harvesting is never done here — run --harvest-only separately."
         ),
     )
     parser.add_argument(
@@ -841,15 +828,8 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help=(
             "Harvest all cached OpenAlex/S2 pages into candidates.csv, then exit. "
-            "Run this separately (e.g. once a week) instead of letting auto-advance do it."
-        ),
-    )
-    parser.add_argument(
-        "--no-harvest",
-        action="store_true",
-        help=(
-            "Skip the per-cycle cache harvest in --auto-advance mode. "
-            "Use alongside --harvest-only on a separate schedule."
+            "Run this separately (e.g. once a week) to pick up any rows cached by "
+            "--auto-advance that weren't merged due to resource exhaustion."
         ),
     )
     parser.add_argument(
@@ -910,7 +890,9 @@ if __name__ == "__main__":
         if cached_batch.empty:
             print("No cached pages found — nothing to harvest.")
         else:
-            log.info("Harvest-only: %d rows found — merging into candidates.csv", len(cached_batch))
+            log.info("Harvest-only: %d rows found — deduplicating...", len(cached_batch))
+            cached_batch = deduplicate_candidates(cached_batch)
+            log.info("Harvest-only: %d rows after dedup — merging into candidates.csv", len(cached_batch))
             _merge_into_candidates_csv(cached_batch, out_path)
             print(f"Harvest complete: {len(cached_batch)} rows processed.")
         raise SystemExit(0)
@@ -928,7 +910,6 @@ if __name__ == "__main__":
             cycle_done = run_search_auto_advance(
                 from_year=from_yr, to_year=to_yr, max_records_per_phrase=max_n,
                 sources=set(args.sources) if args.sources else None,
-                skip_harvest=args.no_harvest,
             )
             # Exit code 2 signals a full cycle completed.
             # PowerShell: do { python ... } until ($LASTEXITCODE -eq 2)

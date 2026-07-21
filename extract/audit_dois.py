@@ -82,11 +82,12 @@ def audit_file(csv_path: Path,
         if v["doi_o"] != old_doi:
             df.at[idx, "doi_o"]    = v["doi_o"]
             df.at[idx, "pair_id"]  = make_pair_id(clean_doi(str(row["doi_r"])), v["doi_o"])
-            new_ref, new_authors   = _build_ref_o(v["doi_o"],
+            new_ref, new_authors, new_bibtex = _build_ref_o(v["doi_o"],
                                                    str(row.get("authors_o", "") or ""),
                                                    str(row.get("year_o", "") or ""))
-            df.at[idx, "ref_o"]    = new_ref
-            df.at[idx, "authors_o"] = new_authors
+            df.at[idx, "ref_o"]        = new_ref
+            df.at[idx, "authors_o"]    = new_authors
+            df.at[idx, "bibtex_ref_o"] = new_bibtex
         if status == "mismatch":
             df.at[idx, "link_confidence"] = "low"
         if v["evidence_note"]:

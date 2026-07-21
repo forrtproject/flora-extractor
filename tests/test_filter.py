@@ -9,6 +9,7 @@ import pandas as pd
 
 from filter.phrase_detection import (
     find_replication_phrase,
+    find_replication_phrase_span,
     has_replication_phrase,
     is_non_scholarly_context,
     is_reproduction_only,
@@ -46,6 +47,31 @@ def test_replication_with_other_phrases_not_flagged_reproduction_only():
     # Both replication and reproduction phrases fire → NOT reproduction-only
     assert has_replication_phrase(text)
     assert not is_reproduction_only(text)
+
+
+def test_find_replication_phrase_span_returns_offsets():
+    # Avoids the literal substring "replication of" (checked first in
+    # REPLICATION_PHRASES) so the match is deterministically "direct replication".
+    text = "Intro sentence. We attempted a direct replication in a new sample of Smith's work (2010)."
+    result = find_replication_phrase_span(text)
+    assert result is not None
+    phrase, start, end = result
+    assert phrase == "direct replication"
+    assert text[start:end] == "direct replication"
+
+
+def test_find_replication_phrase_span_none_when_no_phrase():
+    assert find_replication_phrase_span("A field experiment on consumer choice.") is None
+
+
+def test_find_replication_phrase_span_none_for_dna():
+    assert find_replication_phrase_span("DNA replication in eukaryotic cells.") is None
+
+
+def test_find_replication_phrase_still_works_via_wrapper():
+    """Existing find_replication_phrase() must keep its current signature/behavior."""
+    text = "We replicated the original study by Smith (2010)."
+    assert find_replication_phrase(text) == "we replicated"
 
 
 def _row(title: str, abstract: str, year: int = 2020) -> dict:
@@ -108,6 +134,51 @@ def test_rule_filter_no_phrase_false_positive():
     )])
     out = apply_rule_filter(df)
     assert out.loc[0, "filter_status"] == "false_positive"
+
+
+def test_rule_filter_phrase_and_cite_different_sentences_needs_review():
+    """Reconstructs the confirmed false-positive pattern (Atwood/Oryx and Crake case):
+    a replication-flavored phrase and an unrelated author-year citation appear in
+    different sentences, with no topical connection between them."""
+    df = pd.DataFrame([_row(
+        "Merging facts with fiction: replication of COVID-19 in dystopian fiction",
+        "This article discusses cross-species transplantation themes in dystopian "
+        "fiction. (Glover, 2009) The article by Jayne Glover discusses ecological "
+        "philosophy in the same novel.",
+        # Note: deliberately avoids the word "viral" next to "replication" here —
+        # that would trip the existing BIOLOGICAL exclusion pattern in
+        # exclusion-patterns.yaml (viral/virus/dna/... + replication) and return
+        # false_positive before the proximity gate is even reached, which is not
+        # what this test is checking.
+    )])
+    out = apply_rule_filter(df)
+    assert out.loc[0, "filter_status"] == "needs_review"
+    assert out.loc[0, "filter_confidence"] == "medium"
+    assert "no same-sentence cite" in out.loc[0, "filter_evidence"]
+
+
+def test_rule_filter_same_sentence_still_high_confidence():
+    """Regression check: phrase and citation in the same sentence keep working as before."""
+    df = pd.DataFrame([_row(
+        "A direct replication of the original effect",
+        "We attempted a direct replication of Smith (2010). The results held.",
+    )])
+    out = apply_rule_filter(df)
+    assert out.loc[0, "filter_status"] == "replication"
+    assert out.loc[0, "filter_confidence"] == "high"
+
+
+def test_rule_filter_picks_same_sentence_citation_over_earlier_one():
+    """When multiple citations exist, the same-sentence one must be used as sample_cite,
+    not simply the first citation found in the whole text."""
+    df = pd.DataFrame([_row(
+        "A study of engineering education",
+        "Jones (1999) discussed unrelated background context. "
+        "We attempted a direct replication of Smith (2010) in a new sample.",
+    )])
+    out = apply_rule_filter(df)
+    assert out.loc[0, "filter_status"] == "replication"
+    assert "smith" in out.loc[0, "filter_evidence"].lower()
 
 
 def test_rule_filter_emits_filter_columns():
