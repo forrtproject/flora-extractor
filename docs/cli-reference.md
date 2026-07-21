@@ -166,12 +166,23 @@ replication that FLoRA already has. The skip list is the union of two sources:
 
 | Source | Rows skipped |
 | ------ | ------------ |
-| `data/FLoRA entry sheet - replication list.csv` | rows whose `validation_status` is `validated - unchanged`, `validated - changed`, or `validated - chosen` |
+| `data/FLoRA entry sheet - replication list.csv` | rows whose `validation_status` is `validated - unchanged`, `validated - changed`, `validated - chosen`, or `validated - discarded` |
 | `data/flora.csv` | **every** row (`doi_r` and `doi_r_alt`) — the published database, so all of it is already in FLoRA |
 
 Statuses still in flight (`help needed`, `on hold`, `awaiting validation`, blank) are
-**not** skipped, and neither is `validated - discarded` — a discarded entry may warrant
-a fresh look. Pass `--no-skip-flora-validated` to re-extract everything anyway.
+**not** skipped — those genuinely need the pipeline. Pass `--no-skip-flora-validated`
+to re-extract everything anyway.
+
+The same skip list gates the validation hand-off, so a paper FLoRA already has cannot
+reach validators even if it is already sitting in `extracted.csv`:
+
+```bash
+python -m extract.csv_to_db --input data/extracted.csv        # gate ON by default
+python -m extract.csv_to_db --no-skip-flora                   # import them anyway
+```
+
+Both stages import it from `shared/flora_skip.py`, so extraction and validation can
+never drift apart.
 
 A missing or unreadable source logs a warning and contributes nothing, so one bad file
 cannot silently disable the whole skip list.

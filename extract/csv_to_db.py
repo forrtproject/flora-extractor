@@ -43,6 +43,9 @@ _DISPLAY_COLS = {
 # to author_year_match_legacy are still resolved, so they import too.
 # no_original_found: LLM ran but concluded no identifiable original exists — excluded.
 from shared.schema import RESOLVED_LINK_METHODS as _SCHEMA_RESOLVED_METHODS
+# Same skip list Stage 3 uses, so extraction and validation agree.
+from shared.flora_skip import default_flora_skip_dois
+from shared.utils import clean_doi
 
 _RESOLVED_METHODS = _SCHEMA_RESOLVED_METHODS | {"author_year_match_legacy"}
 _RESOLVED_STATUSES = {"replication", "reproduction"}
@@ -155,7 +158,8 @@ def _load_existing_pair_ids(client: Client) -> set[str]:
 
 
 def run_import(csv_path: Path, dry_run: bool = False,
-               audit_report: "Path | None" = None) -> None:
+               audit_report: "Path | None" = None,
+               skip_flora: bool = True) -> None:
     supabase_url = os.environ.get("SUPABASE_URL", "")
     supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
     if not supabase_url or not supabase_key:
@@ -186,6 +190,19 @@ def run_import(csv_path: Path, dry_run: bool = False,
             skipped_audit = int(audit_mask.sum())
             resolved = resolved[~audit_mask].copy()
 
+    # FLoRA gate: never send a replication FLoRA already has back to validators.
+    # The extraction-time skip only guards NEW rows; rows already sitting in
+    # extracted.csv (e.g. 10.1037/per0000041) would otherwise still be imported.
+    # Same skip list as Stage 3 — see shared/flora_skip.py.
+    skipped_flora = 0
+    if skip_flora:
+        in_flora = default_flora_skip_dois()
+        if in_flora:
+            flora_mask = resolved["doi_r"].map(
+                lambda v: clean_doi(str(v or "")) in in_flora)
+            skipped_flora = int(flora_mask.sum())
+            resolved = resolved[~flora_mask].copy()
+
     # Bucket every skipped row into exactly one category via disjoint masks, so counts
     # always sum to len(df) and cannot go negative. A false_positive row that also has
     # link_method == 'no_original_found' belongs to false_positive only.
@@ -202,6 +219,8 @@ def run_import(csv_path: Path, dry_run: bool = False,
     print(f"  false_positive:     {skipped_fp}  (skipped — not replications)")
     print(f"  no_original_found:  {skipped_no_orig}  (skipped — LLM found no identifiable original)")
     print(f"  target_pending / api_error / other: {skipped_other}  (skipped — not yet resolved)")
+    if skip_flora:
+        print(f"  already in FLoRA:   {skipped_flora}  (skipped — FLoRA already has this replication)")
     if audit_report is not None:
         print(f"  audit BLOCKER:      {skipped_audit}  (skipped — flagged by pre-validation audit)")
 
@@ -265,9 +284,16 @@ if __name__ == "__main__":
         help="Path to a pre_validation_audit.csv; rows whose pair_id has a "
              "BLOCKER finding are skipped. Omit to disable the gate.",
     )
+    parser.add_argument(
+        "--skip-flora", action=argparse.BooleanOptionalAction, default=True,
+        help="Skip rows whose doi_r is already in FLoRA (validated entry-sheet rows "
+             "+ every row in flora.csv). ON by default; pass --no-skip-flora to "
+             "import them anyway.",
+    )
     args = parser.parse_args()
 
     if not args.input.exists():
         raise FileNotFoundError(f"Input file not found: {args.input}")
 
-    run_import(args.input, dry_run=args.dry_run, audit_report=args.audit_report)
+    run_import(args.input, dry_run=args.dry_run, audit_report=args.audit_report,
+               skip_flora=args.skip_flora)

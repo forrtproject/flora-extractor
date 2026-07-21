@@ -200,3 +200,63 @@ def test_insert_order_record_metadata_last(monkeypatch, tmp_path):
         triplet = inserted_tables[i:i + 3]
         assert triplet[-1] == "record_metadata", triplet
         assert set(triplet[:2]) == {"unvalidated", "validation_queue"}
+
+
+# --------------------------------------------------------------------------- #
+# 5. FLoRA gate — never re-validate a replication FLoRA already has            #
+# --------------------------------------------------------------------------- #
+def _resolved_df():
+    return pd.DataFrame([
+        {"filter_status": "replication", "link_method": "author_year_match_legacy",
+         "doi_r": "10.1037/per0000041", "doi_o": "10.2/x", "pair_id": "p_in_flora"},
+        {"filter_status": "replication", "link_method": "author_year_match_legacy",
+         "doi_r": "10.9/novel", "doi_o": "10.2/y", "pair_id": "p_new"},
+    ])
+
+
+def test_flora_rows_are_not_imported(capsys, monkeypatch, tmp_path):
+    """A doi_r already in FLoRA must be gated out before the Supabase insert."""
+    monkeypatch.setenv("SUPABASE_URL", "https://fake.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_KEY", "fake-key")
+    monkeypatch.setattr(csv_to_db, "default_flora_skip_dois",
+                        lambda: {"10.1037/per0000041"})
+    csv_path = tmp_path / "extracted.csv"
+    _resolved_df().to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+    csv_to_db.run_import(csv_path, dry_run=True)
+    out = capsys.readouterr().out
+
+    assert "Resolved (import):  1" in out
+    assert "already in FLoRA:   1" in out
+
+
+def test_flora_gate_can_be_disabled(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv("SUPABASE_URL", "https://fake.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_KEY", "fake-key")
+    monkeypatch.setattr(csv_to_db, "default_flora_skip_dois",
+                        lambda: {"10.1037/per0000041"})
+    csv_path = tmp_path / "extracted.csv"
+    _resolved_df().to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+    csv_to_db.run_import(csv_path, dry_run=True, skip_flora=False)
+    out = capsys.readouterr().out
+
+    assert "Resolved (import):  2" in out
+
+
+def test_flora_gate_blocks_the_actual_insert(monkeypatch, tmp_path):
+    """Not just the count — the gated row must never reach an insert() call."""
+    monkeypatch.setenv("SUPABASE_URL", "https://fake.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_KEY", "fake-key")
+    monkeypatch.setattr(csv_to_db, "default_flora_skip_dois",
+                        lambda: {"10.1037/per0000041"})
+    csv_path = tmp_path / "extracted.csv"
+    _resolved_df().to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+    fake = _FakeClient(select_pages={"record_metadata": []})
+    with patch.object(csv_to_db, "create_client", return_value=fake):
+        csv_to_db.run_import(csv_path, dry_run=False)
+
+    payloads = [str(p) for _, p in fake.call_log]
+    assert not any("10.1037/per0000041" in p for p in payloads)
+    assert any("10.9/novel" in p for p in payloads)

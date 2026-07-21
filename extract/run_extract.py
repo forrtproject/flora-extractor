@@ -32,6 +32,11 @@ from shared.pdf_parsing import parse_all as _parse_all
 from shared.doi_verify import verify_and_correct
 from shared.schema import EXTRACTED_COLS, OUTCOME_CATEGORIES, make_pair_id
 from shared.utils import cache_key, clean_doi, csv_lock
+# Shared with csv_to_db so extraction and validation skip the same set (see shared/flora_skip.py)
+from shared.flora_skip import (
+    FLORA_VALIDATED_STATUSES,
+    load_flora_skip_dois as _load_flora_skip_dois,
+)
 from extract.link_original import run_for_doi
 from extract.multi_original import run_multi_original_for_doi
 from extract.code_outcome import extract_outcome, predict_outcome_keyword
@@ -725,68 +730,6 @@ def _parse_originals(result: dict) -> list[dict]:
 
 # ── FLoRA entry sheet skip helper ────────────────────────────────────────────
 
-# Entry-sheet statuses meaning "already adjudicated into FLoRA" — these must not be
-# re-extracted. "validated - chosen" was originally missing, which let replications
-# already in FLoRA (e.g. 10.1037/per0000041) reach validation a second time.
-# Deliberately NOT included: "validated - discarded" (rejected — may warrant a fresh
-# look), plus "help needed" / "on hold" / "awaiting validation" / blank, all in flight.
-FLORA_VALIDATED_STATUSES = {
-    "validated - unchanged",
-    "validated - changed",
-    "validated - chosen",
-}
-
-
-def _load_flora_skip_dois(sheet_path=None, flora_path=None) -> set:
-    """doi_r values already in FLoRA, which Stage 3 must not re-extract.
-
-    Two sources, unioned:
-      * entry sheet — only rows whose validation_status is in
-        FLORA_VALIDATED_STATUSES; every other status is still being worked on.
-      * flora.csv — the published FLoRA database. It has no validation_status
-        column because every row in it is by definition already in FLoRA, so
-        doi_r and doi_r_alt are skipped unconditionally.
-
-    A missing or unreadable source warns and contributes nothing, so one bad file
-    can never silently disable the entire skip list.
-    """
-    from pathlib import Path as _Path
-    skip: set[str] = set()
-
-    if sheet_path is not None:
-        p = _Path(sheet_path)
-        if not p.exists():
-            log.warning("FLoRA entry sheet not found at %s — its DOIs will not be skipped", p)
-        else:
-            try:
-                df = pd.read_csv(p, dtype=str, encoding="utf-8-sig").fillna("")
-                mask = (df["validation_status"].str.strip().str.lower()
-                        .isin(FLORA_VALIDATED_STATUSES))
-                found = {clean_doi(d) for d in df.loc[mask, "doi_r"] if d}
-                skip |= found
-                log.info("FLoRA entry sheet: %d already-validated DOIs will be skipped",
-                         len(found))
-            except Exception as exc:
-                log.warning("Could not read FLoRA entry sheet (%s) — its DOIs not skipped", exc)
-
-    if flora_path is not None:
-        p = _Path(flora_path)
-        if not p.exists():
-            log.warning("flora.csv not found at %s — its DOIs will not be skipped", p)
-        else:
-            try:
-                df = pd.read_csv(p, dtype=str, encoding="utf-8-sig").fillna("")
-                found: set[str] = set()
-                for col in ("doi_r", "doi_r_alt"):
-                    if col in df.columns:
-                        found |= {clean_doi(d) for d in df[col] if str(d).strip()}
-                skip |= found
-                log.info("flora.csv: %d already-in-FLoRA DOIs will be skipped", len(found))
-            except Exception as exc:
-                log.warning("Could not read flora.csv (%s) — its DOIs not skipped", exc)
-
-    skip.discard("")
-    return skip
 
 
 # ── Main orchestrator ─────────────────────────────────────────────────────────
