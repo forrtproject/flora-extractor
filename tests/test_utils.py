@@ -1,5 +1,26 @@
 """Tests for shared/utils.py helpers."""
-from shared.utils import sentence_spans
+from shared.utils import bare_work_id, sentence_spans
+
+
+class TestBareWorkId:
+    def test_strips_openalex_url(self):
+        assert bare_work_id("https://openalex.org/W2884670852") == "W2884670852"
+
+    def test_passes_through_bare_id(self):
+        assert bare_work_id("W2884670852") == "W2884670852"
+
+    def test_uppercases_and_trims(self):
+        assert bare_work_id("  w2884670852/ ") == "W2884670852"
+
+    def test_rejects_non_work_entities(self):
+        """Author/source/institution ids share the URL shape but are not work ids."""
+        assert bare_work_id("https://openalex.org/A5023888391") == ""
+        assert bare_work_id("https://openalex.org/S137773608") == ""
+
+    def test_rejects_junk_and_blank(self):
+        assert bare_work_id("") == ""
+        assert bare_work_id("10.1037/abc123") == ""
+        assert bare_work_id(None) == ""
 
 
 class TestSentenceSpans:

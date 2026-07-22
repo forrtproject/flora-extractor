@@ -288,6 +288,12 @@ python tools/load_doi_list.py path/to/dois.txt
 
 # Clean up duplicate sources in candidates.csv
 python tools/cleanup_sources.py
+
+# Backfill oa_work_id_r / oa_work_id_o on rows written before those columns existed.
+# New rows get them automatically from run_extract — this is only for old rows.
+python -m tools.backfill_oa_work_ids                                    # dry-run
+python -m tools.backfill_oa_work_ids --apply                            # write
+python -m tools.backfill_oa_work_ids --input data/extracted-test.csv --apply
 ```
 
 ---

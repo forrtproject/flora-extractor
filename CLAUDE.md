@@ -122,7 +122,7 @@ registered** in `app.py` — treat them as orphaned/legacy.
 
 | File                       | Purpose                                                                      |
 | -------------------------- | ---------------------------------------------------------------------------- |
-| `extract/run_extract.py`   | Orchestrator: classifies match type, routes to single or multi-original; supports `--extracted-test` flag; `_best_fulltext_from_cache()` feeds the best-scoring parse result to the outcome LLM |
+| `extract/run_extract.py`   | Orchestrator: classifies match type, routes to single or multi-original; supports `--extracted-test` flag; `_best_fulltext_from_cache()` feeds the best-scoring parse result to the outcome LLM; `_fill_work_ids()` stamps `oa_work_id_r`/`oa_work_id_o` on every row after DOI verification |
 | `extract/link_original.py` | Single-original pipeline; runs `parse_all()` on the PDF, scores all methods, uses the winner's text for the DOI-resolution LLM; uses shared `best_parse_result()` scoring |
 | `extract/multi_original.py`| Multi-original pipeline — finds all target studies (needs improvement)       |
 | `extract/code_outcome.py`  | Keyword + LLM outcome extraction                                             |
@@ -465,7 +465,7 @@ For the full feature list and what each module does, read the module map above a
 All core pipeline modules are now implemented. Known gaps:
 
 - Live LLM integration tests in `tests/live/` (the directory now exists with `test_doi_verify_live.py`; LLM tests still missing), guarded by `TEST_LIVE_API=1`
-- Unit tests for standalone scripts: `search/sensitivity_check.py`, `extract/mix_for_validation.py`, `extract/csv_to_db.py`
+- Unit tests for standalone scripts: `search/sensitivity_check.py`, `extract/csv_to_db.py`
 - Unit tests for orchestrators: `search/deduplicate.py`, `filter/run_filter.py` (currently tested only indirectly)
 - Unit tests for `extract/promote_test.py` promote logic (currently smoke-tested only)
 

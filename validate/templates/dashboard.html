@@ -753,6 +753,8 @@ python -m search.run_search --harvest-only</pre>
             Records fetched from OpenAlex per phrase, rebuilt from the cursor checkpoints in
             <code>cache/openalex/</code>. These are <strong>pre-deduplication</strong> counts — a paper
             matching three phrases is counted three times, so this column does not sum to Total Candidates.
+            <strong>Expected</strong> is OpenAlex's own result count for the same jobs: anything well
+            below 100% is unfetched recall, not a small phrase.
             <span id="phrase-total"></span>
           </p>
           <div class="table-scroll">
@@ -761,10 +763,11 @@ python -m search.run_search --harvest-only</pre>
                 <th data-sort="phrase">Phrase</th>
                 <th data-sort="jobs" class="num" style="text-align:right">Jobs</th>
                 <th data-sort="fetched" class="num" style="text-align:right">Records ▼</th>
-                <th style="width:28%">Share</th>
+                <th data-sort="expected" class="num" style="text-align:right">Expected</th>
+                <th style="width:22%">Share</th>
               </tr></thead>
               <tbody id="phrase-tbody">
-                <tr><td colspan="4" class="null-note" style="padding:12px">Loading…</td></tr>
+                <tr><td colspan="5" class="null-note" style="padding:12px">Loading…</td></tr>
               </tbody>
             </table>
           </div>
@@ -2432,9 +2435,33 @@ async function loadPhrases() {
   if (_phraseRows) return;
   const data = await fetch('/api/dashboard/search-phrases').then(r=>r.json());
   _phraseRows = data.rows || [];
-  $('phrase-total').innerHTML = `Total fetched across all phrases: <strong>${fmt(data.total_fetched)}</strong>.` +
-    (data.unattributed_files ? ` ${data.unattributed_files} cursor file(s) could not be matched to a phrase.` : '');
+
+  const parts = [`Total fetched: <strong>${fmt(data.total_fetched)}</strong>`];
+  if (data.total_expected) {
+    const covPct = (data.total_fetched / data.total_expected) * 100;
+    parts.push(`of <strong>${fmt(data.total_expected)}</strong> reported by OpenAlex ` +
+               `(<strong>${covPct.toFixed(1)}%</strong> coverage)`);
+  }
+  if (data.expected_partial)
+    parts.push('<span style="color:var(--warn,#b45309)">some jobs predate coverage tracking, ' +
+               'so the expected column is an undercount — re-run to refresh</span>');
+  if (data.unattributed_files)
+    parts.push(`${data.unattributed_files} cursor file(s) could not be matched to a phrase`);
+  $('phrase-total').innerHTML = parts.join(' · ') + '.';
   drawPhraseTable();
+}
+
+function yearGapLabel(years) {
+  if (!years || !years.length) return '';
+  // Contiguous runs read as ranges; that is the normal shape (a run that stopped early).
+  const runs = [];
+  let start = years[0], prev = years[0];
+  for (const y of years.slice(1)) {
+    if (y !== prev + 1) { runs.push([start, prev]); start = y; }
+    prev = y;
+  }
+  runs.push([start, prev]);
+  return runs.map(([a,b]) => a === b ? `${a}` : `${a}–${b}`).join(', ');
 }
 
 function drawPhraseTable() {
@@ -2442,13 +2469,32 @@ function drawPhraseTable() {
   const rows = [..._phraseRows].sort((a,b) =>
     _phraseSort === 'phrase' ? a.phrase.localeCompare(b.phrase) : b[_phraseSort] - a[_phraseSort]);
   const max = Math.max(1, ...rows.map(r => r.fetched));
-  $('phrase-tbody').innerHTML = rows.map(r => `<tr>
+  $('phrase-tbody').innerHTML = rows.map(r => {
+    const cov = r.expected ? (r.fetched / r.expected) * 100 : null;
+    const covCell = cov === null
+      ? '<span class="null-note">—</span>'
+      : `${fmt(r.expected)} <span class="stat-pct">${cov.toFixed(0)}%</span>`;
+    const flags = [];
+    if (r.degenerate)
+      flags.push('<span class="flow-badge badge-red" title="OpenAlex drops the stopword, ' +
+                 'so this matches every paper containing the single remaining word — ' +
+                 'not a phrase match">not a phrase</span>');
+    if (r.incomplete)
+      flags.push(`<span class="flow-badge badge-orange" title="${r.incomplete} job(s) stopped ` +
+                 `mid-pagination">${r.incomplete} cut off</span>`);
+    if (r.years_missing && r.years_missing.length)
+      flags.push(`<span class="flow-badge badge-orange" title="Years with no search job at all">` +
+                 `never run: ${yearGapLabel(r.years_missing)}</span>`);
+    return `<tr>
       <td><span style="font-family:monospace">${esc(r.phrase)}</span>${
-        r.source === 'concept' ? ' <span class="flow-badge badge-purple">concept</span>' : ''}</td>
+        r.source === 'concept' ? ' <span class="flow-badge badge-purple">concept</span>' : ''}
+        ${flags.length ? '<div style="margin-top:3px">' + flags.join(' ') + '</div>' : ''}</td>
       <td class="num">${fmt(r.jobs)}</td>
       <td class="num">${fmt(r.fetched)}</td>
+      <td class="num">${covCell}</td>
       <td><div class="yield-bar" style="width:${(r.fetched/max)*100}%"></div></td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
 document.querySelectorAll('#phrase-table th[data-sort]').forEach(th => {

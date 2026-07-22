@@ -42,6 +42,26 @@ def clean_doi(doi: str) -> str:
     return doi.strip().lower().rstrip("/")
 
 
+def bare_work_id(value: str) -> str:
+    """
+    Normalise an OpenAlex work identifier to its bare form.
+
+    Stage 1 stores openalex_id_r as the full URL, while the validation DB and the
+    OpenAlex "work ID" users look up are the bare W-number. Anything that is not a
+    W-id (an author/source/institution id, a stray DOI, junk) returns "".
+
+    Examples:
+        "https://openalex.org/W2884670852" → "W2884670852"
+        "W2884670852"                      → "W2884670852"
+        "w2884670852"                      → "W2884670852"
+        "https://openalex.org/A5023888391" → ""
+    """
+    if not value:
+        return ""
+    tail = str(value).strip().rstrip("/").rsplit("/", 1)[-1]
+    return tail.upper() if re.fullmatch(r"[Ww]\d+", tail) else ""
+
+
 def cache_key(text: str) -> str:
     """
     Return a stable, filesystem-safe cache key for *text*.

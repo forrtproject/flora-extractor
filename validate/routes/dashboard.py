@@ -174,11 +174,19 @@ def api_search_phrases():
     re-run the pipeline).
     """
     persisted = (load_stats().get("candidates") or {}).get("by_phrase")
-    if persisted and persisted.get("rows"):
+    # "coverage_from_year" is only written by the post-#68 phrase_yield. An older
+    # snapshot has no expected/incomplete/years_missing fields, and serving it would
+    # silently hide the very under-fetching this endpoint now exists to surface.
+    if persisted and persisted.get("rows") and "coverage_from_year" in persisted:
         return jsonify({**persisted, "_source": "stats_json"})
 
     from search.openalex_search import phrase_yield
     live = phrase_yield()
+    if persisted and persisted.get("rows") and not live["total_fetched"]:
+        return jsonify({**persisted, "_source": "stats_json_legacy",
+                        "note": "stats.json predates coverage tracking and no cursor "
+                                "checkpoints are available — coverage columns are blank. "
+                                "Re-run the Stage 1 pipeline to refresh."})
     if not live["total_fetched"]:
         live["note"] = ("No cursor checkpoints found in cache/openalex/ and none "
                         "recorded in stats.json — run the Stage 1 pipeline, or "

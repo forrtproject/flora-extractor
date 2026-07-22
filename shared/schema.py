@@ -39,6 +39,13 @@ EXTRACT_ADDED_COLS = [
     "original_match_type",       # str   — single_original | multiple_match | multiple_original
     "original_match_confidence", # str   — high | medium | low
 
+    # OpenAlex work IDs — bare form (e.g. W2884670852), not the https://openalex.org/ URL.
+    # openalex_id_r above carries the URL form inherited from Stage 1; these two are the
+    # canonical bare IDs the validation DB keys on, and oa_work_id_o is only obtainable
+    # here because it needs doi_o, which does not exist before Stage 3.
+    "oa_work_id_r",        # str   — OpenAlex work ID of the replication paper
+    "oa_work_id_o",        # str   — OpenAlex work ID of the original study
+
     # Original study
     "doi_o",               # str   — original study DOI
     "title_o",             # str   — original study title

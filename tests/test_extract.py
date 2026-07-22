@@ -1235,6 +1235,63 @@ class TestMismatchClearsDoi:
         assert out["bibtex_ref_o"] == "@article{old}"
 
 
+# ── OpenAlex work ids on every written row (issue #69) ───────────────────────
+
+class TestFillWorkIds:
+    def test_r_side_comes_from_stage1_url_without_an_api_call(self):
+        row = {"openalex_id_r": "https://openalex.org/W111", "doi_r": "10.1/r", "doi_o": ""}
+        with patch("extract.run_extract._oa_by_doi") as oa:
+            out = run_extract._fill_work_ids(row)
+        assert out["oa_work_id_r"] == "W111"
+        oa.assert_not_called(), "openalex_id_r already carries the id — no lookup needed"
+
+    def test_o_side_resolved_from_doi_o(self):
+        row = {"openalex_id_r": "https://openalex.org/W111", "doi_r": "10.1/r",
+               "doi_o": "10.2/o"}
+        with patch("extract.run_extract._oa_by_doi",
+                   return_value={"openalex_id": "https://openalex.org/W222"}):
+            out = run_extract._fill_work_ids(row)
+        assert out["oa_work_id_o"] == "W222"
+
+    def test_r_side_falls_back_to_doi_lookup(self):
+        row = {"openalex_id_r": "", "doi_r": "10.1/r", "doi_o": ""}
+        with patch("extract.run_extract._oa_by_doi",
+                   return_value={"openalex_id": "https://openalex.org/W333"}):
+            out = run_extract._fill_work_ids(row)
+        assert out["oa_work_id_r"] == "W333"
+
+    def test_unresolvable_ids_are_blank_not_missing(self):
+        row = {"openalex_id_r": "", "doi_r": "", "doi_o": ""}
+        with patch("extract.run_extract._oa_by_doi", return_value=None):
+            out = run_extract._fill_work_ids(row)
+        assert out["oa_work_id_r"] == ""
+        assert out["oa_work_id_o"] == ""
+
+    def test_runs_after_verification_so_a_corrected_doi_o_wins(self):
+        """_verify_row can replace doi_o; the o-side id must describe the DOI that
+        actually got written, not the one the LLM originally proposed."""
+        row = {"doi_r": "10.1/r", "title_r": "R", "doi_o": "10.2/wrong",
+               "title_o": "Orig", "year_o": "2010", "authors_o": "Smith",
+               "link_method": "llm_fulltext", "link_confidence": "high",
+               "openalex_id_r": "https://openalex.org/W111", "pair_id": "p"}
+        v = {"doi_o_verification": "corrected", "doi_o": "10.2/right",
+             "evidence_note": "corrected"}
+        by_doi = {"10.2/wrong": "https://openalex.org/W999",
+                  "10.2/right": "https://openalex.org/W222"}
+        with patch("extract.run_extract.verify_and_correct", return_value=v), \
+             patch("extract.run_extract._build_ref_o", return_value=("r", "a", "b")), \
+             patch("extract.run_extract._oa_by_doi") as oa:
+            oa.side_effect = lambda d: {"openalex_id": by_doi.get(d, "")}
+            out = run_extract._fill_work_ids(run_extract._verify_row(row))
+        assert out["doi_o"] == "10.2/right"
+        assert out["oa_work_id_o"] == "W222", "the id must follow the corrected DOI"
+
+    def test_schema_declares_both_columns(self):
+        from shared.schema import EXTRACTED_COLS
+        assert "oa_work_id_r" in EXTRACTED_COLS
+        assert "oa_work_id_o" in EXTRACTED_COLS
+
+
 # ── Title-search provenance is visible in link_method (fix 2) ────────────────
 
 class TestTitleSearchProvenance:

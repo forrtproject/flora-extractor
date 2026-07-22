@@ -20,6 +20,7 @@ Public API
 import datetime
 import functools
 import json
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -112,46 +113,81 @@ def _cursor_path(phrase: str, from_year: Optional[int], to_year: Optional[int]) 
 
 
 @functools.lru_cache(maxsize=1)
-def _job_key_index() -> "tuple[list[str], dict[str, str]]":
-    """(labels, {job_key: label}) for every plausible (phrase, year-range) job.
+def _job_key_index() -> "tuple[list[str], dict[str, tuple]]":
+    """(labels, {job_key: (label, from_year, to_year)}) for every plausible job.
 
     Cursor filenames are hashes, so attribution is done by hashing every phrase
     against every year combination the pipeline could have used and matching the
-    result to the files on disk.
+    result to the files on disk. The year range is kept alongside the label so
+    coverage gaps can be reported per year, not just per phrase.
     """
-    import datetime
-
     years: list = [None, *range(1900, datetime.date.today().year + 3)]
     labels = [*SEARCH_PHRASES, *(f"concept:{c}" for c in CONCEPT_IDS)]
     return labels, {
-        _job_key(label, a, b): label
+        _job_key(label, a, b): (label, a, b)
         for label in labels
         for a in years for b in years
         if a is None or b is None or a <= b
     }
 
 
+# The year span Stage 1 is meant to cover. Used only to report which years still have
+# no search job — a phrase whose jobs stop at 2011 has not "finished", it was never run
+# for 2012+, and fetched-vs-expected alone cannot show that.
+COVERAGE_FROM_YEAR = 1990
+
+# OpenAlex drops stopwords before matching, so a quoted "phrase" whose only surviving
+# content word is a single term degenerates into that one-word query.
+#
+# Measured against the live API on 2026-07-22 (publication_year:1990-2026), by checking
+# whether reversing the word order changes the count — if it does not, no phrase match
+# is happening:
+#     "replication of" = "of replication" = "replication"   → 1,299,397   DEGENERATE
+#     "direct replication" 1,809  vs reversed 115                         phrase ok
+#     "we replicated"     14,023  vs reversed 9,168                       phrase ok
+#     "could not reproduce" 6,381 vs reversed 1,133                       phrase ok
+#     "did not replicate"   2,409 vs reversed 414                         phrase ok
+#
+# So only "of" is confirmed dropped; "we"/"not"/"did"/"could" are NOT — do not add words
+# here on intuition, measure them first (scripts in the issue #68 thread). Under-flagging
+# is safe, over-flagging puts a false warning on a phrase that works.
+_OA_STOPWORDS = {"of"}
+
+
+def _content_tokens(phrase: str) -> list[str]:
+    """Tokens of *phrase* that survive OpenAlex's stopword removal."""
+    return [t for t in re.findall(r"[a-z]+", phrase.lower()) if t not in _OA_STOPWORDS]
+
+
 def phrase_yield() -> dict:
-    """How many records each search phrase pulled from OpenAlex.
+    """Per-phrase OpenAlex yield *and* how much of each phrase is still unfetched.
 
-    Reconstructed from the cursor checkpoints in OA_CACHE_DIR, because
-    candidates.csv has no phrase column. Counts are records FETCHED, before
-    deduplication — a paper matching three phrases is counted three times, so
-    they do not sum to the candidate total.
+    Reconstructed from the cursor checkpoints in OA_CACHE_DIR, because candidates.csv
+    has no phrase column. ``fetched`` counts records pulled, pre-deduplication — a paper
+    matching three phrases is counted three times, so it does not sum to the candidate
+    total.
 
-    Returns {"rows": [...], "total_fetched": int, "unattributed_files": int}.
-    Every count is 0 when the cache directory is absent (e.g. on a deployment
-    that ships only the CSVs), which is why the result is persisted to
-    stats.json rather than computed per request.
+    ``expected`` is OpenAlex's own meta.count for the same jobs, so fetched/expected is
+    real coverage rather than a number with nothing to compare it against. Jobs
+    checkpointed before api_total was recorded contribute to ``fetched`` but not to
+    ``expected``, which is why ``expected_partial`` flags an incomplete denominator.
+
+    ``years_missing`` lists years in COVERAGE_FROM_YEAR..this year that have no cursor
+    file at all — work never attempted, as distinct from ``incomplete`` jobs that were
+    started and cut off.
+
+    Every count is 0 when the cache directory is absent (e.g. on a deployment that ships
+    only the CSVs), which is why the result is persisted to stats.json rather than
+    computed per request.
     """
-    labels, key_to_label = _job_key_index()
-    totals = {label: 0 for label in labels}
-    jobs   = {label: 0 for label in labels}
+    labels, key_to_job = _job_key_index()
+    agg = {label: {"fetched": 0, "expected": 0, "jobs": 0, "incomplete": 0,
+                   "no_api_total": 0, "years": set()} for label in labels}
     unattributed = 0
 
     for path in OA_CACHE_DIR.glob("*.cursor.json"):
-        label = key_to_label.get(path.name.replace(".cursor.json", ""))
-        if label is None:
+        job = key_to_job.get(path.name.replace(".cursor.json", ""))
+        if job is None:
             unattributed += 1
             continue
         try:
@@ -159,17 +195,43 @@ def phrase_yield() -> dict:
                 state = json.load(f)
         except Exception:
             continue
-        totals[label] += int(state.get("total_fetched") or 0)
-        jobs[label]   += 1
+        label, from_year, to_year = job
+        a = agg[label]
+        a["fetched"] += int(state.get("total_fetched") or 0)
+        a["jobs"]    += 1
+        if not state.get("completed"):
+            a["incomplete"] += 1
+        if state.get("api_total") is None:
+            a["no_api_total"] += 1
+        else:
+            a["expected"] += int(state["api_total"])
+        if from_year is not None and from_year == to_year:
+            a["years"].add(from_year)
 
-    rows = [
-        {"phrase": label, "fetched": totals[label], "jobs": jobs[label],
-         "source": "concept" if label.startswith("concept:") else "phrase"}
-        for label in labels
-    ]
+    target_years = set(range(COVERAGE_FROM_YEAR, datetime.date.today().year + 1))
+    rows = []
+    for label in labels:
+        a = agg[label]
+        # Only meaningful for phrases actually run as one-job-per-year, which is what
+        # run_search's --auto-advance loop does; an unrun phrase reports the whole span.
+        missing = sorted(target_years - a["years"])
+        rows.append({
+            "phrase": label,
+            "fetched": a["fetched"],
+            "expected": a["expected"],
+            "jobs": a["jobs"],
+            "incomplete": a["incomplete"],
+            "expected_partial": a["no_api_total"] > 0,
+            "years_missing": missing,
+            "degenerate": len(_content_tokens(label)) < 2 and not label.startswith("concept:"),
+            "source": "concept" if label.startswith("concept:") else "phrase",
+        })
     rows.sort(key=lambda r: -r["fetched"])
     return {"rows": rows,
-            "total_fetched": sum(totals.values()),
+            "total_fetched": sum(r["fetched"] for r in rows),
+            "total_expected": sum(r["expected"] for r in rows),
+            "expected_partial": any(r["expected_partial"] for r in rows),
+            "coverage_from_year": COVERAGE_FROM_YEAR,
             "unattributed_files": unattributed}
 
 
@@ -181,13 +243,19 @@ def _load_cursor_state(path: Path) -> dict:
                 return json.load(f)
         except Exception:
             pass
-    return {"cursor": _CURSOR_START, "total_fetched": 0, "completed": False}
+    return {"cursor": _CURSOR_START, "total_fetched": 0, "completed": False, "api_total": None}
 
 
 def _save_cursor_state(
-    path: Path, cursor: Optional[str], total: int, completed: bool
+    path: Path, cursor: Optional[str], total: int, completed: bool,
+    api_total: Optional[int] = None,
 ) -> None:
-    """Atomically write cursor state so a crashed process leaves a valid checkpoint file."""
+    """Atomically write cursor state so a crashed process leaves a valid checkpoint file.
+
+    *api_total* is OpenAlex's own meta.count for the job. Storing it is what makes
+    under-fetching detectable offline: without it, a job that stopped at 10k of 33k
+    looks identical to a job that genuinely had 10k results.
+    """
     tmp = path.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(
@@ -195,6 +263,7 @@ def _save_cursor_state(
                 "cursor": cursor,
                 "total_fetched": total,
                 "completed": completed,
+                "api_total": api_total,
                 "last_updated": datetime.datetime.now().isoformat(timespec="seconds"),
             },
             f,
@@ -427,6 +496,7 @@ def fetch_phrase(
 
     cursor = state["cursor"] or _CURSOR_START
     total_fetched = state["total_fetched"]
+    api_total = state.get("api_total")
     rows: list[dict] = []
 
     yr_filt = _year_filter(from_year, to_year)
@@ -452,7 +522,7 @@ def fetch_phrase(
 
         # Checkpoint current cursor before the request (crash-safe: the next
         # run retries this page rather than skipping it).
-        _save_cursor_state(cursor_path, cursor, total_fetched, completed=False)
+        _save_cursor_state(cursor_path, cursor, total_fetched, False, api_total)
 
         try:
             data = _get_page(params)
@@ -460,8 +530,13 @@ def fetch_phrase(
             log.warning("  Stopping phrase=%r: %s (%d rows kept)", phrase, exc, len(rows))
             break
 
+        api_total = (data.get("meta") or {}).get("count", api_total)
         results = data.get("results") or []
         if not results:
+            # A job with genuinely zero results ends here. Without this checkpoint it
+            # stays completed=False forever, so every later run re-requests it and the
+            # dashboard cannot tell a real zero from a truncated fetch.
+            _save_cursor_state(cursor_path, None, total_fetched, True, api_total)
             cursor = None
             break
 
@@ -469,7 +544,6 @@ def fetch_phrase(
         total_fetched += len(results)
 
         next_cursor = (data.get("meta") or {}).get("next_cursor")
-        api_total = data.get("meta", {}).get("count", "?")
         log.info(
             "  phrase=%r  page_rows=%d  run_rows=%d  api_total=%s",
             phrase,
@@ -481,7 +555,7 @@ def fetch_phrase(
         cursor = next_cursor  # None → phrase fully exhausted
 
         # Checkpoint the next cursor, advancing the bookmark past this page.
-        _save_cursor_state(cursor_path, cursor, total_fetched, completed=(not cursor))
+        _save_cursor_state(cursor_path, cursor, total_fetched, not cursor, api_total)
 
         if not cursor:
             log.info("  phrase=%r fully exhausted", phrase)
@@ -594,6 +668,7 @@ def fetch_concept(
 
     cursor = state["cursor"] or _CURSOR_START
     total_fetched = state["total_fetched"]
+    api_total = state.get("api_total")
     rows: list[dict] = []
 
     yr_filt = _year_filter(from_year, to_year)
@@ -613,7 +688,7 @@ def fetch_concept(
             "mailto": RESEARCHER_EMAIL,
             "select": _SELECT,
         }
-        _save_cursor_state(cursor_path, cursor, total_fetched, completed=False)
+        _save_cursor_state(cursor_path, cursor, total_fetched, False, api_total)
 
         try:
             data = _get_page(params)
@@ -621,8 +696,11 @@ def fetch_concept(
             log.warning("  Stopping concept=%r: %s (%d rows kept)", cid, exc, len(rows))
             break
 
+        api_total = (data.get("meta") or {}).get("count", api_total)
         results = data.get("results") or []
         if not results:
+            # See fetch_phrase: a genuinely empty job must checkpoint as complete.
+            _save_cursor_state(cursor_path, None, total_fetched, True, api_total)
             cursor = None
             break
 
@@ -633,14 +711,13 @@ def fetch_concept(
         total_fetched += len(results)
 
         next_cursor = (data.get("meta") or {}).get("next_cursor")
-        api_total = data.get("meta", {}).get("count", "?")
         log.info(
             "  concept=%r  page_rows=%d  run_rows=%d  api_total=%s",
             cid, len(results), len(rows), api_total,
         )
 
         cursor = next_cursor
-        _save_cursor_state(cursor_path, cursor, total_fetched, completed=(not cursor))
+        _save_cursor_state(cursor_path, cursor, total_fetched, not cursor, api_total)
 
         if not cursor:
             log.info("  concept=%r fully exhausted", cid)

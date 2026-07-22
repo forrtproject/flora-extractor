@@ -1,6 +1,7 @@
 """
 Tests for search functions
 """
+import json
 import os
 import pytest
 
@@ -149,6 +150,100 @@ def test_fetch_openalex_candidates_uses_cache_on_second_run(monkeypatch, tmp_pat
     # Second call returns empty (phrase already fully fetched, nothing new to add)
     assert len(df1) == 1
     assert len(df2) == 0
+
+
+class TestCursorCompleteness:
+    """A job must checkpoint what it knows, so under-fetching is detectable later (#68)."""
+
+    def _run(self, monkeypatch, tmp_path, payload):
+        monkeypatch.setattr(oa, "OA_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(oa.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(oa.requests, "get",
+                            lambda url, params, timeout, **kw: DummyResponse(payload))
+        rows = oa.fetch_phrase("direct replication", 2020, 2020)
+        state = json.loads(
+            (tmp_path / f"{oa._job_key('direct replication', 2020, 2020)}.cursor.json")
+            .read_text(encoding="utf-8"))
+        return rows, state
+
+    def test_empty_result_set_is_marked_complete(self, monkeypatch, tmp_path):
+        """A phrase-year with genuinely zero hits used to break out of the loop before
+        the completed checkpoint, so every later run re-requested it forever."""
+        rows, state = self._run(
+            monkeypatch, tmp_path, {"meta": {"count": 0, "next_cursor": None}, "results": []})
+        assert rows == []
+        assert state["completed"] is True
+        assert state["api_total"] == 0
+
+    def test_api_total_is_recorded_for_a_non_empty_job(self, monkeypatch, tmp_path):
+        _, state = self._run(monkeypatch, tmp_path, make_payload())
+        assert state["completed"] is True
+        assert state["api_total"] == 1
+        assert state["total_fetched"] == 1
+
+    def test_empty_job_is_not_refetched(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(oa, "OA_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(oa.time, "sleep", lambda *_: None)
+        n = {"calls": 0}
+
+        def fake_get(url, params, timeout, **kw):
+            n["calls"] += 1
+            return DummyResponse({"meta": {"count": 0, "next_cursor": None}, "results": []})
+
+        monkeypatch.setattr(oa.requests, "get", fake_get)
+        oa.fetch_phrase("direct replication", 2020, 2020)
+        oa.fetch_phrase("direct replication", 2020, 2020)
+        assert n["calls"] == 1, "the second run must skip a job already known to be empty"
+
+
+class TestPhraseYieldCoverage:
+    def test_reports_expected_incomplete_and_missing_years(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(oa, "OA_CACHE_DIR", tmp_path)
+        phrase = oa.SEARCH_PHRASES[0]
+        this_year = oa.datetime.date.today().year
+        # One finished year and one that stopped a long way short of api_total.
+        for year, fetched, total, done in [(oa.COVERAGE_FROM_YEAR, 10, 10, True),
+                                           (oa.COVERAGE_FROM_YEAR + 1, 5, 500, False)]:
+            (tmp_path / f"{oa._job_key(phrase, year, year)}.cursor.json").write_text(
+                json.dumps({"total_fetched": fetched, "completed": done,
+                            "api_total": total}), encoding="utf-8")
+
+        row = next(r for r in oa.phrase_yield()["rows"] if r["phrase"] == phrase)
+
+        assert row["fetched"] == 15
+        assert row["expected"] == 510, "coverage needs OpenAlex's own count as denominator"
+        assert row["incomplete"] == 1
+        assert row["expected_partial"] is False
+        # Every year of the target span except the two that have cursor files.
+        assert row["years_missing"] == list(
+            range(oa.COVERAGE_FROM_YEAR + 2, this_year + 1))
+
+    def test_missing_api_total_flags_a_partial_denominator(self, monkeypatch, tmp_path):
+        """Checkpoints written before api_total existed must not silently read as
+        'expected 0' — a 0 denominator would look like 100% coverage."""
+        monkeypatch.setattr(oa, "OA_CACHE_DIR", tmp_path)
+        phrase = oa.SEARCH_PHRASES[0]
+        (tmp_path / f"{oa._job_key(phrase, 2020, 2020)}.cursor.json").write_text(
+            json.dumps({"total_fetched": 7, "completed": True}), encoding="utf-8")
+
+        out = oa.phrase_yield()
+        row = next(r for r in out["rows"] if r["phrase"] == phrase)
+        assert row["fetched"] == 7
+        assert row["expected"] == 0
+        assert row["expected_partial"] is True
+        assert out["expected_partial"] is True
+
+    def test_stopword_only_phrases_are_flagged_degenerate(self, monkeypatch, tmp_path):
+        """OpenAlex strips stopwords, so "replication of" matches the same 1.3M works
+        as bare "replication" — it is a firehose, not a high-precision phrase."""
+        monkeypatch.setattr(oa, "OA_CACHE_DIR", tmp_path)   # never read the real cache
+        rows = {r["phrase"]: r for r in oa.phrase_yield()["rows"]}
+        for p in ("replication of", "reproducibility of", "replicability of"):
+            assert rows[p]["degenerate"] is True, p
+        # Measured as genuine phrase matches — flagging these would be a false warning.
+        for p in ("direct replication", "we replicated", "could not reproduce",
+                  "did not replicate"):
+            assert rows[p]["degenerate"] is False, p
 
 
 @pytest.mark.skipif(

@@ -219,24 +219,41 @@ def test_phrase_yield_attributes_cursor_files(tmp_path, monkeypatch):
     assert out["unattributed_files"] == 1
 
 
-def test_search_phrases_endpoint_survives_a_missing_cache(tmp_path, monkeypatch):
-    """cache/ is gitignored, so a deployed instance has no cursor files — the
-    endpoint must fall back to the phrase yield persisted in stats.json."""
+def _phrase_endpoint(tmp_path, monkeypatch, persisted):
     import search.openalex_search as oas
     import validate.routes.dashboard as dash
 
     monkeypatch.setattr(oas, "OA_CACHE_DIR", tmp_path)   # empty: live scan yields 0
-    monkeypatch.setattr(dash, "load_stats", lambda: {"candidates": {"by_phrase": {
-        "rows": [{"phrase": "replication of", "fetched": 42, "jobs": 1, "source": "phrase"}],
-        "total_fetched": 42, "unattributed_files": 0,
-    }}})
-
+    monkeypatch.setattr(dash, "load_stats",
+                        lambda: {"candidates": {"by_phrase": persisted}})
     from validate.app import create_app
-    client = create_app().test_client()
-    data = client.get("/api/dashboard/search-phrases").get_json()
+    return create_app().test_client().get("/api/dashboard/search-phrases").get_json()
 
+
+def test_search_phrases_endpoint_survives_a_missing_cache(tmp_path, monkeypatch):
+    """cache/ is gitignored, so a deployed instance has no cursor files — the
+    endpoint must fall back to the phrase yield persisted in stats.json."""
+    data = _phrase_endpoint(tmp_path, monkeypatch, {
+        "rows": [{"phrase": "replication of", "fetched": 42, "jobs": 1,
+                  "expected": 100, "source": "phrase"}],
+        "total_fetched": 42, "total_expected": 100, "unattributed_files": 0,
+        "coverage_from_year": 1990,
+    })
     assert data["_source"] == "stats_json"
     assert data["total_fetched"] == 42
+
+
+def test_legacy_stats_json_is_labelled_not_silently_served(tmp_path, monkeypatch):
+    """A snapshot written before coverage tracking has no expected/incomplete fields.
+    Serving it as if current would hide the under-fetching the coverage columns exist
+    to surface (#68), so it must be marked and carry an explanation."""
+    data = _phrase_endpoint(tmp_path, monkeypatch, {
+        "rows": [{"phrase": "replication of", "fetched": 42, "jobs": 1, "source": "phrase"}],
+        "total_fetched": 42, "unattributed_files": 0,
+    })
+    assert data["_source"] == "stats_json_legacy"
+    assert data["total_fetched"] == 42, "the old numbers are still served, just labelled"
+    assert "note" in data
 
 
 # ── Set-aside CSVs ───────────────────────────────────────────────────────────

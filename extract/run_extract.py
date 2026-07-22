@@ -31,7 +31,7 @@ from shared.openalex_client import _search_crossref_by_title, _search_openalex_b
 from shared.pdf_parsing import parse_all as _parse_all
 from shared.doi_verify import verify_and_correct
 from shared.schema import EXTRACTED_COLS, OUTCOME_CATEGORIES, make_pair_id
-from shared.utils import cache_key, clean_doi, csv_lock
+from shared.utils import bare_work_id, cache_key, clean_doi, csv_lock
 # Shared with csv_to_db so extraction and validation skip the same set (see shared/flora_skip.py)
 from shared.flora_skip import (
     FLORA_VALIDATED_STATUSES,
@@ -930,13 +930,31 @@ def _verify_row(row: dict) -> dict:
     return row
 
 
+def _fill_work_ids(row: dict) -> dict:
+    """Populate oa_work_id_r / oa_work_id_o (bare OpenAlex W-ids) on a finished row.
+
+    The r-side is free — Stage 1 already carries openalex_id_r as a URL — so the API is
+    only touched for rows that arrived without one, and for the o-side. Must run *after*
+    _verify_row, which can replace doi_o and would otherwise leave a stale o-side id.
+    """
+    if not row.get("oa_work_id_r"):
+        row["oa_work_id_r"] = bare_work_id(str(row.get("openalex_id_r", "") or ""))
+
+    for col, doi_col in (("oa_work_id_r", "doi_r"), ("oa_work_id_o", "doi_o")):
+        if row.get(col):
+            continue
+        doi = clean_doi(str(row.get(doi_col, "") or ""))
+        row[col] = bare_work_id((_oa_by_doi(doi) or {}).get("openalex_id", "")) if doi else ""
+    return row
+
+
 def _append_row(out_path, result_row: dict, first: bool) -> None:
     """Write one result row to the output CSV immediately after processing.
 
     first=True  → open with mode='w' (creates / truncates the file) and write header.
     first=False → open with mode='a' (append) and skip header.
     """
-    result_row = _verify_row(result_row)
+    result_row = _fill_work_ids(_verify_row(result_row))
 
     # Sanitize row data to handle problematic characters
     for key, val in result_row.items():

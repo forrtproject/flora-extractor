@@ -47,6 +47,8 @@ All `filtered.csv` columns, plus:
 | `pair_id` | string | Hash of `(doi_r, doi_o)` — unique row key; recomputed if `doi_o` is corrected |
 | `original_match_type` | string | `single_original` \| `multiple_match` \| `multiple_original` |
 | `original_match_confidence` | string | `high` \| `medium` \| `low` |
+| `oa_work_id_r` | string | OpenAlex work ID of the replication paper, **bare** form (`W2884670852`). Derived from `openalex_id_r`, which stores the URL form; falls back to a DOI lookup |
+| `oa_work_id_o` | string | OpenAlex work ID of the original study, bare form. Resolved from `doi_o` *after* DOI verification, so it always describes the DOI actually written. Blank when `doi_o` is blank or unindexed in OpenAlex |
 | `doi_o` | string | DOI of the original (target) study |
 | `title_o` | string | Title of the original study |
 | `year_o` | int | Publication year of the original study |

@@ -140,6 +140,8 @@ def _build_metadata_row(record_id: str, row: pd.Series) -> dict:
         "authors_o":                  _s(row.get("authors_o")),
         "journal_r":                  _s(row.get("journal_r")),
         "openalex_id_r":              _s(row.get("openalex_id_r")),
+        "oa_work_id_r":               _s(row.get("oa_work_id_r")),
+        "oa_work_id_o":               _s(row.get("oa_work_id_o")),
         "source":                     _s(row.get("source")),
         "original_rank":              _int_or_none(row.get("original_rank")),
         "n_originals":                _int_or_none(row.get("n_originals")),
