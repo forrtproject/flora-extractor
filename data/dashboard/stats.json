@@ -11,7 +11,7 @@
       "backfill_old_pipeline": 70
     }
   },
-  "updated_at": "2026-07-22T06:36:57",
+  "updated_at": "2026-07-22T10:00:50",
   "filtered": {
     "total": 2581092,
     "by_filter_status": {
@@ -35,83 +35,87 @@
     "rep_repro_no_abstract": 3379
   },
   "extracted": {
-    "total": 1910,
+    "total": 1611,
     "target_pending_count": 0,
     "by_match_type": {
-      "single_original": 1908,
+      "single_original": 1609,
       "multiple_match": 2
     },
     "by_link_method": {
-      "citation_context_match": 4,
+      "citation_context_match": 3,
       "same_author_year_title_overlap": 3,
-      "single_candidate_after_requery": 300,
+      "single_candidate_after_requery": 290,
       "title_pattern_match": 4,
       "grobid_ref_match": 0,
       "author_year_match_legacy": 0,
-      "author_year_match": 1441,
-      "llm_abstract": 0,
-      "llm_fulltext": 157,
-      "no_original_found": 1,
+      "author_year_match": 1156,
+      "llm_abstract": 1,
+      "llm_fulltext": 154,
+      "no_original_found": 0,
       "target_pending": 0,
       "api_error": 0
     },
     "by_model": {
-      "none": 1754,
-      "gemini": 156
+      "none": 1458,
+      "gemini": 153
     },
     "by_outcome": {
-      "success": 852,
-      "failure": 368,
-      "mixed": 288,
-      "descriptive": 82,
-      "cannot_be_determined": 262,
+      "success": 739,
+      "failure": 298,
+      "mixed": 249,
+      "descriptive": 80,
+      "cannot_be_determined": 236,
       "pending": 0,
       "api_error": 0,
       "uninformative": 0,
-      "_other": 58
+      "_other": 9
     },
     "by_doi_verification": {
-      "verified": 1800,
-      "mismatch": 49,
-      "no_doi": 33,
-      "no_metadata": 17,
-      "not_found": 9,
-      "skipped": 1,
+      "verified": 1514,
+      "mismatch": 43,
+      "no_doi": 23,
+      "no_metadata": 15,
+      "not_found": 15,
       "corrected": 1
     }
   },
   "extracted_test": {
-    "total": 14,
-    "target_pending_count": 1,
+    "total": 8,
+    "target_pending_count": 0,
     "by_match_type": {
-      "single_original": 14
+      "single_original": 8
     },
     "by_link_method": {
+      "citation_context_match": 0,
+      "same_author_year_title_overlap": 0,
+      "single_candidate_after_requery": 0,
+      "title_pattern_match": 0,
+      "grobid_ref_match": 0,
+      "author_year_match_legacy": 0,
       "author_year_match": 0,
       "llm_abstract": 0,
-      "llm_fulltext": 13,
+      "llm_fulltext": 8,
       "no_original_found": 0,
-      "target_pending": 1,
+      "target_pending": 0,
       "api_error": 0
     },
     "by_model": {
-      "gemini": 13,
-      "none": 1
+      "gemini": 8
     },
     "by_outcome": {
-      "success": 5,
-      "failure": 4,
-      "mixed": 2,
-      "uninformative": 0,
-      "cannot_be_determined": 1,
-      "descriptive": 2,
+      "success": 0,
+      "failure": 0,
+      "mixed": 0,
+      "descriptive": 0,
+      "cannot_be_determined": 2,
       "pending": 0,
-      "api_error": 0
+      "api_error": 0,
+      "uninformative": 0,
+      "_other": 6
     },
     "by_doi_verification": {
-      "not_found": 8,
-      "no_metadata": 5,
-      "skipped": 1
+      "verified": 5,
+      "not_found": 3
     }
   }
 }
