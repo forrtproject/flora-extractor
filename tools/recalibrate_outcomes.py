@@ -308,11 +308,19 @@ def recalibrate_outcomes(
                     else:
                         log.debug("  [%s] no fulltext — falling back to abstract only", doi_r)
 
+                # filter_status/type decides the outcome VOCABULARY: a reproduction is
+                # coded on the computation/robustness grid, never success/failure.
+                # Omitting this silently re-coded reproductions in replication terms.
+                record_type = ("reproduction"
+                               if str(row.get("filter_status", "") or row.get("type", "")
+                                      ).strip().lower() == "reproduction"
+                               else "replication")
                 result = extract_outcome(
                     doi_r=doi_r,
                     title_r=title_r,
                     abstract_r=abstract_r,
                     fulltext=fulltext,
+                    record_type=record_type,
                     original_title=original_title if original_title and original_title != "nan" else "",
                     original_authors=original_authors if original_authors and original_authors != "nan" else "",
                     original_year=original_year if original_year and original_year != "nan" else "",

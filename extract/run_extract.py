@@ -1381,6 +1381,9 @@ def run_outcome_only(no_llm: bool = False,
             fulltext="",
             title_r=str(row.get("title_r", "")),
             no_llm=no_llm,
+            record_type=("reproduction"
+                 if str(row.get("filter_status", "")).strip().lower() == "reproduction"
+                 else "replication"),
         )
         rows.append({
             "doi_r":              doi_r,

@@ -1249,3 +1249,37 @@ class TestTitleSearchProvenance:
 
     def test_candidate_derived_link_is_not_title_search(self):
         assert run_extract._map_method("llm_gemini") == "llm_fulltext"
+
+
+class TestOutcomeVocabularyNeverCrosses:
+    """A reproduction must only ever carry one of the 9 grid values (or
+    cannot_be_determined / not_a_replication), and a replication only the
+    replication enum. Every caller of extract_outcome must pass record_type —
+    tools/recalibrate_outcomes.py did not, and coded a reproduction as 'success'."""
+
+    def test_every_production_caller_passes_record_type(self):
+        import inspect, re
+        import extract.run_extract as rx
+        import tools.recalibrate_outcomes as rc
+        for mod in (rx, rc):
+            src = inspect.getsource(mod)
+            for m in re.finditer(r"extract_outcome\(", src):
+                tail = src[m.end():m.end() + 900]
+                depth, body = 1, []
+                for ch in tail:
+                    if ch == "(":
+                        depth += 1
+                    elif ch == ")":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    body.append(ch)
+                call = "".join(body)
+                assert "record_type" in call, (
+                    f"{mod.__name__} calls extract_outcome without record_type; a "
+                    f"reproduction would silently be coded in replication vocabulary")
+
+    def test_reproduction_rejects_replication_vocabulary(self):
+        from shared.schema import outcome_categories_for
+        assert "success" not in outcome_categories_for("reproduction")
+        assert "computationally successful, robust" not in outcome_categories_for("replication")
