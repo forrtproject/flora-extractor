@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -254,9 +255,18 @@ def _fetch_scopus_abstract(doi: str, api_key: str) -> tuple[Optional[str], bool]
     """
     url = f"https://api.elsevier.com/content/abstract/doi/{doi}"
     headers = {"X-ELS-APIKey": api_key, "Accept": "application/json"}
+    # view=META_ABS is REQUIRED: the endpoint's default view (META) omits
+    # dc:description entirely, so without this the tier returns HTTP 200 and no
+    # abstract for every DOI — silently recovering nothing.
+    params = {"view": "META_ABS"}
+    # An institutional token grants entitlement off the subscribing network;
+    # without it Elsevier entitlement is IP-bound (campus network / VPN).
+    inst_token = os.getenv("ELSEVIER_INSTTOKEN", "").strip()
+    if inst_token:
+        headers["X-ELS-Insttoken"] = inst_token
     for attempt in range(3):
         try:
-            resp = _SESSION.get(url, timeout=20, headers=headers)
+            resp = _SESSION.get(url, timeout=20, headers=headers, params=params)
         except Exception as exc:
             log.warning("Scopus error for %s: %s", doi, exc)
             time.sleep(2 ** attempt)
@@ -267,6 +277,14 @@ def _fetch_scopus_abstract(doi: str, api_key: str) -> tuple[Optional[str], bool]
             time.sleep(2 ** attempt)
             continue
         if resp.status_code in (400, 404):
+            return None, False
+        if resp.status_code in (401, 403):
+            # AUTHORIZATION_ERROR — the key is valid but not entitled to the
+            # abstract view. Retrying cannot help, and it is NOT a spent quota.
+            log.warning(
+                "Scopus not entitled to the abstract view for %s (HTTP %d). "
+                "Elsevier entitlement is IP-bound: run from the subscribing "
+                "network/VPN, or set ELSEVIER_INSTTOKEN.", doi, resp.status_code)
             return None, False
         if resp.status_code >= 400:
             time.sleep(2 ** attempt)

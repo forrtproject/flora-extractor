@@ -121,7 +121,7 @@ def test_scopus_parse_strips_tags_and_handles_missing():
 def test_scopus_fetch_success(monkeypatch):
     payload = {"abstracts-retrieval-response": {"coredata": {"dc:description": "Found it"}}}
     monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout, headers: DummyResponse(payload))
+                        lambda url, timeout, headers, **kw: DummyResponse(payload))
     abstract, exhausted = fa._fetch_scopus_abstract("10.1/x", "KEY")
     assert abstract == "Found it"
     assert exhausted is False
@@ -129,7 +129,7 @@ def test_scopus_fetch_success(monkeypatch):
 
 def test_scopus_fetch_404_is_clean_miss(monkeypatch):
     monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout, headers: DummyResponse({}, status_code=404))
+                        lambda url, timeout, headers, **kw: DummyResponse({}, status_code=404))
     abstract, exhausted = fa._fetch_scopus_abstract("10.1/x", "KEY")
     assert abstract is None
     assert exhausted is False
@@ -139,7 +139,7 @@ def test_scopus_fetch_quota_exhausted_via_header(monkeypatch):
     monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
     monkeypatch.setattr(
         fa._SESSION, "get",
-        lambda url, timeout, headers: DummyResponse(
+        lambda url, timeout, headers, **kw: DummyResponse(
             {}, status_code=429, headers={"X-RateLimit-Remaining": "0"}
         ),
     )
@@ -153,7 +153,7 @@ def test_scopus_fetch_persistent_429_exhausts(monkeypatch):
     calls = {"n": 0}
     monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
 
-    def fake_get(url, timeout, headers):
+    def fake_get(url, timeout, headers, **kw):
         calls["n"] += 1
         return DummyResponse({}, status_code=429, headers={})
 
@@ -197,7 +197,7 @@ def test_phase4_stops_on_quota_and_leaves_rows_retryable(monkeypatch, tmp_path):
         "10.1/b": DummyResponse({}, status_code=429, headers={"X-RateLimit-Remaining": "0"}),
     }
 
-    def fake_get(url, timeout=None, headers=None):
+    def fake_get(url, timeout=None, headers=None, **kw):
         if "openalex.org" in url:
             return DummyResponse({"results": []})           # no OA abstracts
         if "crossref.org" in url:
@@ -256,7 +256,7 @@ def test_phase4_priority_file_reorders_quota(monkeypatch, tmp_path):
 
     called_dois: list = []
 
-    def fake_get(url, timeout=None, headers=None):
+    def fake_get(url, timeout=None, headers=None, **kw):
         if "crossref.org" in url:
             return DummyResponse({"message": {}})
         doi = url.split("/content/abstract/doi/", 1)[-1]
