@@ -1,0 +1,443 @@
+﻿pair_id,doi_r,check,severity,detail
+64ba887b9588d4b43ee9f2ff33062d74,10.1038/s41562-020-0878-x,missing_display_field,BLOCKER,empty: abstract_r
+4fb8cb7e5afc5b35b221be0153653623,10.1111/bjhp.12331,low_link_confidence,WARNING,link_confidence=low
+5538cbaa2809b2fdd4003d0db8aadae8,10.17605/osf.io/x5b6d,doi_o_unverified,BLOCKER,doi_o_verification=no_metadata
+895aa477a007986290154e6e322b3834,10.17605/osf.io/d2epg,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+895aa477a007986290154e6e322b3834,10.17605/osf.io/d2epg,low_link_confidence,WARNING,link_confidence=low
+a68c13a3b19adbde98ad2852a32e112f,10.1080/23743603.2017.1378071,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+a68c13a3b19adbde98ad2852a32e112f,10.1080/23743603.2017.1378071,low_link_confidence,WARNING,link_confidence=low
+7515b1bbeace99f4a5dc7023c2bf4963,10.31234/osf.io/fg8yz,low_link_confidence,WARNING,link_confidence=low
+6cd8b68de03caaca581e5bed339d1ed8,10.31234/osf.io/kmx75,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+6cd8b68de03caaca581e5bed339d1ed8,10.31234/osf.io/kmx75,low_link_confidence,WARNING,link_confidence=low
+8264d6108dceb81754a783f58bf571e8,10.5465/ambpp.2020.236,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+8264d6108dceb81754a783f58bf571e8,10.5465/ambpp.2020.236,low_link_confidence,WARNING,link_confidence=low
+9e45738f3f32f56889e1199cd1fba466,10.1167/19.10.156,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+9e45738f3f32f56889e1199cd1fba466,10.1167/19.10.156,low_link_confidence,WARNING,link_confidence=low
+9e45738f3f32f56889e1199cd1fba466,10.1167/19.10.156,low_outcome_confidence,WARNING,outcome_confidence=low
+0180e70d35eab33163199c7f7f761b6c,10.17605/osf.io/q8twv,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+0180e70d35eab33163199c7f7f761b6c,10.17605/osf.io/q8twv,low_link_confidence,WARNING,link_confidence=low
+7c28ce084316c5c204dce984f55c8639,10.17705/1atrr.00011,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=84)
+afc65af6fbd7e25f067b68c2ef667db1,10.17705/1atrr.00010,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=79)
+451ef6feeb724dc66f7aa4ff4e8886e7,10.17705/1atrr.00032,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=74)
+cbfc8c6ca96d6154256a0eb3874c7f79,10.23668/psycharchives.2392,doi_o_unverified,BLOCKER,doi_o_verification=skipped
+cbfc8c6ca96d6154256a0eb3874c7f79,10.23668/psycharchives.2392,unresolved_stage,BLOCKER,"outcome=descriptive, link_method=no_original_found"
+cbfc8c6ca96d6154256a0eb3874c7f79,10.23668/psycharchives.2392,missing_display_field,BLOCKER,empty: title_o
+cbfc8c6ca96d6154256a0eb3874c7f79,10.23668/psycharchives.2392,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=75)
+f57df8f0ddeabe17cbb77a9a614aeca9,10.1016/j.chest.2020.10.083,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=72)
+908ac9ff37dceaa1314cf2605cf5cdcd,10.3758/s13414-016-1205-5,missing_display_field,BLOCKER,empty: abstract_r
+6e768cb40ed4516235dc66a19a4b7a11,10.1016/j.cortex.2022.02.001,missing_display_field,BLOCKER,empty: abstract_r
+ca496fcc0a7e2bd6134d3f2919d07446,10.1108/jea-03-2014-0035,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=78)
+ca496fcc0a7e2bd6134d3f2919d07446,10.1108/jea-03-2014-0035,low_outcome_confidence,WARNING,outcome_confidence=low
+01e61b86e75c165afd32abf53ca4bd13,10.1016/j.socec.2020.101617,missing_display_field,BLOCKER,empty: abstract_r
+187f88f4c5aca956c4ea015b20eefe14,10.1177/001872679204501005,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=81)
+273c85934f0f445c4edb74c06a95ddfd,10.1016/j.earlhumdev.2020.105273,missing_display_field,BLOCKER,empty: abstract_r
+ff1e10430776b898c771c26e2d47f0cb,10.3758/s13414-021-02420-z,missing_display_field,BLOCKER,empty: abstract_r
+5c2ef37577101be3e02b74f02929f4fe,10.1017/s0261444817000222,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=81)
+c35337fbf045a1a16c18256fabba3de8,10.1080/00050067108259680,missing_display_field,BLOCKER,empty: abstract_r
+c35337fbf045a1a16c18256fabba3de8,10.1080/00050067108259680,low_outcome_confidence,WARNING,outcome_confidence=low
+422738f9134f6255828b6088979c7ae3,10.34917/4332616,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+1adb11348a435ea2f6bcdca6de71cb9e,10.1016/0885-2014(95)90011-x,missing_display_field,BLOCKER,empty: abstract_r
+d39d0b1867bb9f1205a4cc4a32432506,10.2139/ssrn.4811444,missing_display_field,BLOCKER,empty: abstract_r
+9979e0eab818ca57b0a77e492d08a4bc,10.1016/j.eneco.2017.08.033,missing_display_field,BLOCKER,empty: abstract_r
+d6704bc84f28182bea5ff86fceb81d40,10.1016/j.jbtep.2011.02.009,missing_display_field,BLOCKER,empty: abstract_r
+d6704bc84f28182bea5ff86fceb81d40,10.1016/j.jbtep.2011.02.009,low_outcome_confidence,WARNING,outcome_confidence=low
+36ea4d9c5f569160f312a8b885c9a5a0,10.1037/0278-7393.14.3.558,missing_display_field,BLOCKER,empty: abstract_r
+710c93dc5794b45062eae351ae7ac3e4,10.1016/0094-730x(95)00060-k,missing_display_field,BLOCKER,empty: abstract_r
+710c93dc5794b45062eae351ae7ac3e4,10.1016/0094-730x(95)00060-k,low_outcome_confidence,WARNING,outcome_confidence=low
+49d132bcf6f8d55cafed20dc0e73628c,10.1016/j.jrp.2022.104265,missing_display_field,BLOCKER,empty: abstract_r
+87cd059b234334db3769b10afbd95090,10.3758/s13428-022-01989-z,missing_display_field,BLOCKER,empty: abstract_r
+6f769769e143049f4038517ce38b7921,10.1007/s12012-026-10111-0,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=50)
+95f49730b2f3918d59ebe20d3a68333d,10.1080/10871209.2020.1860270,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=78)
+59de692ba482f85de9aa87c488a62e16,10.1080/15267430902963342,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=76)
+8d9fd9e60f5b66697338f370099a8e29,10.1016/s0191-8869(03)00085-0,missing_display_field,BLOCKER,empty: abstract_r
+c8163b8ef30a638da9904c76264facfa,10.1007/s12144-025-08136-9,missing_display_field,BLOCKER,empty: abstract_r
+b68cf2c96ce11f4da83507b93f557d10,10.1086/260573,low_link_confidence,WARNING,link_confidence=low
+853a12484a336b42e761b3220606481e,10.1007/bf02409656,missing_display_field,BLOCKER,empty: abstract_r
+68e77d1b953ede0187e626e671ff59ef,10.1007/s40732-024-00628-7,missing_display_field,BLOCKER,empty: abstract_r
+fdccf1535686ea2b5b09dcc554e11f05,10.1016/j.intell.2004.12.001,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+fdccf1535686ea2b5b09dcc554e11f05,10.1016/j.intell.2004.12.001,missing_display_field,BLOCKER,empty: abstract_r
+fc01b532e7e68d8543ce3783c3ad2955,10.1016/j.eneco.2019.104536,missing_display_field,BLOCKER,empty: abstract_r
+1e6919c7e44f6cac7e7c46c4e2dd6d1d,10.1007/bf03395084,missing_display_field,BLOCKER,empty: abstract_r
+3918a3834ab3b235366b221c177b1167,10.1037/1040-3590.5.3.377,low_link_confidence,WARNING,link_confidence=low
+5cc9d426364633cc588844405bb62314,10.1016/j.jbvi.2019.e00144,missing_display_field,BLOCKER,empty: abstract_r
+2339c9f7c1436cd3de3fb161f670bcb4,10.1007/s11292-017-9305-3,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=84)
+7924dcc7d85b19ccd0055347169ce99d,10.1037/xge0000354,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=84)
+37ee4a39dec626d8050be45be857a403,10.1098/rsos.250508,low_link_confidence,WARNING,link_confidence=low
+d9e9a4d2509624bb8f1662d8ca601dfb,10.1017/cbo9781139084390.002,missing_display_field,BLOCKER,empty: abstract_r
+d9e9a4d2509624bb8f1662d8ca601dfb,10.1017/cbo9781139084390.002,low_outcome_confidence,WARNING,outcome_confidence=low
+4342d3fd748ffc847b88d835d36e228a,10.2139/ssrn.4731552,missing_display_field,BLOCKER,empty: abstract_r
+a513493d769635ca4f0ec2cbf50237e1,10.1007/s00181-021-02139-8,missing_display_field,BLOCKER,empty: abstract_r
+ec707d638f11d716815274a231a91933,10.1016/j.jneuroling.2026.101317,missing_display_field,BLOCKER,empty: abstract_r
+62a133ea52581b1f46ac5d03949db979,10.1080/08824096.2025.2455692,missing_display_field,BLOCKER,empty: abstract_r
+e095d45c316837c106c45efd048a4710,10.3389/fpsyg.2019.01461,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=78)
+eb2e7c99c3a06c16faa8eaee7d43d98c,10.1016/j.paid.2025.113572,missing_display_field,BLOCKER,empty: abstract_r
+84d381744ea1af8089fafcf28bd31913,10.1016/j.jrp.2014.06.006,missing_display_field,BLOCKER,empty: abstract_r
+5454d3127ebf1f837c0f2c0be1eb5da7,10.1007/s10071-013-0623-1,missing_display_field,BLOCKER,empty: abstract_r
+fddfee4385439f0dc1aac1d99812aec0,10.2139/ssrn.2256286,missing_display_field,BLOCKER,empty: abstract_r
+fddfee4385439f0dc1aac1d99812aec0,10.2139/ssrn.2256286,low_outcome_confidence,WARNING,outcome_confidence=low
+9819f346851322cc7bc63b266c604485,10.1016/j.socscimed.2012.01.043,missing_display_field,BLOCKER,empty: abstract_r
+9801af9935753d80ac9c45d765a462cf,10.3758/s13423-019-01686-7,missing_display_field,BLOCKER,empty: abstract_r
+9801af9935753d80ac9c45d765a462cf,10.3758/s13423-019-01686-7,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=0)
+2a027ea63a8a18987581cb312f636021,10.1007/s00181-019-01708-2,missing_display_field,BLOCKER,empty: abstract_r
+2a027ea63a8a18987581cb312f636021,10.1007/s00181-019-01708-2,low_outcome_confidence,WARNING,outcome_confidence=low
+a82242ef5e3f476351f69a88412f2e97,10.2139/ssrn.2616810,missing_display_field,BLOCKER,empty: abstract_r
+733c70677b9f7c89734a3d4dd43dea46,10.26226/morressier.5d077cbadedfa8cbd87c7b39,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+6a700ca5ea6c44eaa800bf2c523de2a1,10.1108/pijpsm-06-2016-0083,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=78)
+412fe7f08df9a599c3b09114a85299da,10.14195/978-989-26-0884-6_32,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=73)
+5e54c9785194e653d0aeeec422134f70,10.1024/1421-0185/a000131,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=75)
+33990d1a7a9f70de45aaf7544fba2666,10.1080/10361146.2013.786674,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=72)
+c6a8b73e4c76af67d029f1f4a4e84486,10.1080/13218719.2018.1482570,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=84)
+55415fba232417a501611dd06fbc75a3,10.1037/a0029015,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=79)
+530b71b71978aceb825b61ad7f7d945d,10.17705/1atrr.00073,low_link_confidence,WARNING,link_confidence=low
+ecd23b4791e3acc84ce615e792c97e5a,10.1017/cbo9780511545313.027,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=73)
+275214e2077a434582b89e64192a92d0,10.2139/ssrn.3809061,missing_display_field,BLOCKER,empty: abstract_r
+a7137851a85b3b52056b75022825aa42,10.2139/ssrn.5636391,missing_display_field,BLOCKER,empty: abstract_r
+fa2f451fc9541986d0e4c47e0ca150fc,10.21203/rs.3.rs-8552040/v1,missing_display_field,BLOCKER,empty: abstract_r
+84aaf7391bfae42fe055f8e75938d90c,10.1002/jae.1169,missing_display_field,BLOCKER,empty: abstract_r
+8395d576ff994d9957cd817294758dfd,10.1016/j.ebiom.2023.104944,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=76)
+2d119126b51abc5976839518b1a2d1a4,10.20982/tqmp.21.1.p013,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=78)
+0b018c4adc190aef69c8228ea5ba4fff,10.17605/osf.io/jk2g7,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=80)
+09ba3cfecf95c1cc9b293552b6b3882d,10.1002/1097-4679(198601)42:1<197::aid-jclp2270420134>3.0.co;2-j,low_link_confidence,WARNING,link_confidence=low
+052803297392d8acce613fca106b5293,10.1007/978-3-8349-8099-1_4,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=75)
+2fcb333432487e4714c89833d290768e,10.1037//0022-006x.55.1.115,doi_o_unverified,BLOCKER,doi_o_verification=not_found
+356638bf771be5909cc2e460e61fe323,10.1080/00050068608256917,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=73)
+b53dfec21dbb12d91d8ff5049ec2f9fd,10.1037/0735-7036.122.4.428,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=74)
+feff1f4566a2607e2a14730968465845,10.1037/h0041137,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+2804cca270e5d8f03eb4f937decf70c1,10.1145/3641825.3689500,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=72)
+28923d21310d469c9979e0ffd390d92f,10.1901/jeab.1984.41-17,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=80)
+d9dd1028a393ad1c8dc5e77a6b7acce2,10.1901/jaba.2007.40-571,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=79)
+d9dd1028a393ad1c8dc5e77a6b7acce2,10.1901/jaba.2007.40-571,low_link_confidence,WARNING,link_confidence=low
+25562ab39bac6adcf4e9411ead62c729,10.4995/muse.2019.10390,low_link_confidence,WARNING,link_confidence=low
+0c77ec08bc9a349bf0423bbb536c73bc,10.1037//0022-006x.61.1.16,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=81)
+0c77ec08bc9a349bf0423bbb536c73bc,10.1037//0022-006x.61.1.16,low_link_confidence,WARNING,link_confidence=low
+6529c5cb9a7145dcccbdce44b88688b6,10.3758/s13423-019-01601-0,missing_display_field,BLOCKER,empty: abstract_r
+6529c5cb9a7145dcccbdce44b88688b6,10.3758/s13423-019-01601-0,low_outcome_confidence,WARNING,outcome_confidence=low
+3d9d4f629ba321fa2193b158bc133322,10.1016/s0010-9452(08)70068-6,missing_display_field,BLOCKER,empty: abstract_r
+3d9d4f629ba321fa2193b158bc133322,10.1016/s0010-9452(08)70068-6,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=0)
+2818706bd40c43ba7a3067241aadd530,10.2139/ssrn.4316977,missing_display_field,BLOCKER,empty: abstract_r
+39cbacafd81c2ed0e4098e88a1ccf6ff,10.1016/j.jenvp.2025.102827,missing_display_field,BLOCKER,empty: abstract_r
+d21741cb3a0b53f6688772fd7e12cd07,10.1016/j.jneuroling.2010.05.001,missing_display_field,BLOCKER,empty: abstract_r
+db593aa939ea679b8437db66c3485b12,10.1016/0191-8869(94)00166-p,missing_display_field,BLOCKER,empty: abstract_r
+7382391f5eeddbad068b7c0a6650a770,10.1016/j.bodyim.2006.01.002,missing_display_field,BLOCKER,empty: abstract_r
+0cb8783169ada8ee51180ee84d1fc32f,10.3758/bf03200862,missing_display_field,BLOCKER,empty: abstract_r
+0cb8783169ada8ee51180ee84d1fc32f,10.3758/bf03200862,low_outcome_confidence,WARNING,outcome_confidence=low
+ca0016b301f97218ab7892784dc5d5da,10.1007/bf01904229,missing_display_field,BLOCKER,empty: abstract_r
+7d1c3b0f5ca70ecfeb56aa2cd7505a73,10.1080/02702711.2017.1344165,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+15e724ef89b46d3d7f9283133568ace7,10.1080/00223891.2018.1481858,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=48)
+4f4917e8498b021facc539eb588db981,10.1145/2168556.2168644,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+9cec472aa5292191d6bc56ea0eb980bc,10.1167/12.9.300,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=79)
+b60795f45bcd711c18a6c5d5d938eba8,10.5281/zenodo.19974626,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+6c6225651dc72616d15e86f994686456,10.1007/s10826-026-03274-5,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=73)
+1ec7820cea5ee620534abb617451a67f,10.1037/tra0001304,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=53)
+bb7f7950bc02f064af68a66c69a4c231,10.1080/23311908.2025.2524938,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=74)
+c5f99fd106470624d7275a240b2ca972,10.16910/jemr.17.3.2,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+7240ac43820e016bddcc8a14d05d7ad1,10.3386/w25094,low_link_confidence,WARNING,link_confidence=low
+c0d3163622b53d6465583b818a2546c4,10.18632/aging.101294,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+c0d3163622b53d6465583b818a2546c4,10.18632/aging.101294,low_link_confidence,WARNING,link_confidence=low
+c2ab33884db191b05ec15c96fb7126c6,10.1145/3041008.3041009,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+c2ab33884db191b05ec15c96fb7126c6,10.1145/3041008.3041009,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=59)
+c2ab33884db191b05ec15c96fb7126c6,10.1145/3041008.3041009,low_link_confidence,WARNING,link_confidence=low
+adcf1d4472c160143531701c8b5f1434,10.1037/a0027967,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+e50c9e0c4753931e88b7d44de02d4394,10.1093/ectj/utaa032,missing_display_field,BLOCKER,empty: title_r
+e50c9e0c4753931e88b7d44de02d4394,10.1093/ectj/utaa032,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=73)
+a264977ffd896382ffce61e26735d093,10.58379/lzzz5040,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+8a4b2610ecfeb833e0dfb007110f0a8a,10.1002/jeab.169,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=74)
+45ae8539b7d3aa1760784c362925a671,10.3389/fpsyg.2015.01365,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+45ae8539b7d3aa1760784c362925a671,10.3389/fpsyg.2015.01365,low_link_confidence,WARNING,link_confidence=low
+1a46973955d9ac330adb854c80b13762,10.1113/jp281472,doi_o_unverified,BLOCKER,doi_o_verification=no_metadata
+251df7d23bfc8a50cba2b386e80ea418,10.13135/2384-8677/3380,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+251df7d23bfc8a50cba2b386e80ea418,10.13135/2384-8677/3380,low_link_confidence,WARNING,link_confidence=low
+9a08bd57e7af5ed47f38f26823ae0fa7,10.17605/osf.io/rp768,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+9a08bd57e7af5ed47f38f26823ae0fa7,10.17605/osf.io/rp768,low_link_confidence,WARNING,link_confidence=low
+ff92503acc0a79c26059e3ccc03b4824,10.5117/2017.045.002.008,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=70)
+92721220ef1f588df9f88fe1ed7225d4,10.1117/12.2583654,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+92721220ef1f588df9f88fe1ed7225d4,10.1117/12.2583654,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=73)
+92721220ef1f588df9f88fe1ed7225d4,10.1117/12.2583654,low_link_confidence,WARNING,link_confidence=low
+1c287284a4e26d0933debbd92ab636af,10.31234/osf.io/m6ghr,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+1c287284a4e26d0933debbd92ab636af,10.31234/osf.io/m6ghr,low_link_confidence,WARNING,link_confidence=low
+4926660f54a777ae572740395184831a,10.17605/osf.io/xba78,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+4926660f54a777ae572740395184831a,10.17605/osf.io/xba78,low_link_confidence,WARNING,link_confidence=low
+50aba566f4cb573e617151c044bf77df,10.17605/osf.io/7khjv,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+50aba566f4cb573e617151c044bf77df,10.17605/osf.io/7khjv,low_link_confidence,WARNING,link_confidence=low
+82131780fe2deeb48ab710eaacd41aea,10.1126/science.1202596,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=82)
+9afbc78e457f38ef908b7b4ab5436c83,10.31234/osf.io/6kmjv,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+9afbc78e457f38ef908b7b4ab5436c83,10.31234/osf.io/6kmjv,low_link_confidence,WARNING,link_confidence=low
+68088bb74528f1597fdd5013b9c8dd1b,10.5117/tvt2017.1.jans,doi_o_unverified,BLOCKER,doi_o_verification=no_metadata
+167e9483a6debe8e133c0ac1d188e282,10.1101/189522,doi_o_unverified,BLOCKER,doi_o_verification=no_metadata
+f176b736245f930459506aa43cad1d1e,10.5281/zenodo.18530249,doi_o_unverified,BLOCKER,doi_o_verification=no_metadata
+f176b736245f930459506aa43cad1d1e,10.5281/zenodo.18530249,original_postdates_replication,WARNING,year_o=2021 > year_r=2014 + 1
+0a96fec59fcdd78ac9e793a8a752296b,10.5281/zenodo.18530250,doi_o_unverified,BLOCKER,doi_o_verification=no_metadata
+0a96fec59fcdd78ac9e793a8a752296b,10.5281/zenodo.18530250,original_postdates_replication,WARNING,year_o=2021 > year_r=2014 + 1
+1416454363de804040b1c0174fb937d7,10.5281/zenodo.18965684,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+1416454363de804040b1c0174fb937d7,10.5281/zenodo.18965684,low_link_confidence,WARNING,link_confidence=low
+fb996c29dd59acfdbf72391b207de583,10.5281/zenodo.18965683,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+fb996c29dd59acfdbf72391b207de583,10.5281/zenodo.18965683,low_link_confidence,WARNING,link_confidence=low
+bbc67db880cba3593b5ec0d35be34a83,10.5281/zenodo.18970256,doi_o_unverified,BLOCKER,doi_o_verification=no_metadata
+bbc67db880cba3593b5ec0d35be34a83,10.5281/zenodo.18970256,original_postdates_replication,WARNING,year_o=2021 > year_r=2018 + 1
+69d409ab5c43ba2ce78646753d0e6e05,10.3389/fpsyg.2019.01601,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+69d409ab5c43ba2ce78646753d0e6e05,10.3389/fpsyg.2019.01601,low_link_confidence,WARNING,link_confidence=low
+34e386b9c64a31931ef1c86c08743ce2,10.31234/osf.io/2h59n,doi_o_unverified,BLOCKER,doi_o_verification=no_metadata
+8fc64043a9283be0e2deffa595bf7a6f,10.32872/spb.4391,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=69)
+6b48ad48e05243e8b6a338d0ff63cafa,10.1016/j.physbeh.2021.113324,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+6b48ad48e05243e8b6a338d0ff63cafa,10.1016/j.physbeh.2021.113324,low_link_confidence,WARNING,link_confidence=low
+2d2acff9a1a75e71cd1b88945612c54e,10.1177/0018720818823570,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+2d2acff9a1a75e71cd1b88945612c54e,10.1177/0018720818823570,low_link_confidence,WARNING,link_confidence=low
+77dfec39aadea94aab577ae8cc37546f,10.1037/ppm0000325,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+77dfec39aadea94aab577ae8cc37546f,10.1037/ppm0000325,low_link_confidence,WARNING,link_confidence=low
+0ed0fc56877040e1e5e136a78ca774c8,10.17705/1atrr.00030,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+2dd11c4a919001ae764c94ad4eaedf12,10.1561/107.00000066,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=76)
+cdf75ad846841f276d76eb17fcdad14b,10.1101/2021.11.12.467812,doi_o_unverified,BLOCKER,doi_o_verification=no_metadata
+81e5d16beea8d5c4ecd4eb9f7a4dd2e1,10.31235/osf.io/hujgs,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+81e5d16beea8d5c4ecd4eb9f7a4dd2e1,10.31235/osf.io/hujgs,low_link_confidence,WARNING,link_confidence=low
+31a596853e8148d85a53a1c669039313,10.1016/j.neuroscience.2021.06.032,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+31a596853e8148d85a53a1c669039313,10.1016/j.neuroscience.2021.06.032,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=76)
+31a596853e8148d85a53a1c669039313,10.1016/j.neuroscience.2021.06.032,low_link_confidence,WARNING,link_confidence=low
+813aa76e8e02f6e9bf9a05449f07a648,10.31234/osf.io/84sf7,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+813aa76e8e02f6e9bf9a05449f07a648,10.31234/osf.io/84sf7,low_link_confidence,WARNING,link_confidence=low
+17ff53051bc710440572bfb43fd6131c,10.1080/09658211.2016.1265130,doi_o_unverified,BLOCKER,doi_o_verification=no_metadata
+2c21f49c52e0a24e28eb11ce402eab62,10.1177/1948550618766399,doi_o_unverified,BLOCKER,doi_o_verification=no_metadata
+6c04da8a3817209b8a2ea38edb5caa7c,10.31275/20211931,low_link_confidence,WARNING,link_confidence=low
+70ac852ad52ed757f8e2dc684690fe03,10.1111/rmir.12197,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+70ac852ad52ed757f8e2dc684690fe03,10.1111/rmir.12197,low_link_confidence,WARNING,link_confidence=low
+49d10453861d1c073180f5fbe1afe1d7,10.17705/1atrr.00068,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+49d10453861d1c073180f5fbe1afe1d7,10.17705/1atrr.00068,low_link_confidence,WARNING,link_confidence=low
+35e5d723f0b2a70e489f325e87e5bd0b,10.1371/journal.pone.0209368,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+35e5d723f0b2a70e489f325e87e5bd0b,10.1371/journal.pone.0209368,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=76)
+35e5d723f0b2a70e489f325e87e5bd0b,10.1371/journal.pone.0209368,low_link_confidence,WARNING,link_confidence=low
+febc4368a92eaa44a639ac69c9464898,10.1016/j.prdoa.2021.100117,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+febc4368a92eaa44a639ac69c9464898,10.1016/j.prdoa.2021.100117,low_link_confidence,WARNING,link_confidence=low
+faacaf40d67e53cb69b83f1c50414e40,10.1111/psyp.13419,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+faacaf40d67e53cb69b83f1c50414e40,10.1111/psyp.13419,low_link_confidence,WARNING,link_confidence=low
+cd88722f9b4ceafddf271127c7bb5d68,10.1109/compsac.2013.82,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+cd88722f9b4ceafddf271127c7bb5d68,10.1109/compsac.2013.82,low_link_confidence,WARNING,link_confidence=low
+3fd33c5526eaf18ee0e668e58fd82132,10.1007/s40881-021-00103-x,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+3fd33c5526eaf18ee0e668e58fd82132,10.1007/s40881-021-00103-x,low_link_confidence,WARNING,link_confidence=low
+b2c7bf5eafe1efe56608ec7b0aca9221,10.1111/psyp.13707,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+b2c7bf5eafe1efe56608ec7b0aca9221,10.1111/psyp.13707,low_link_confidence,WARNING,link_confidence=low
+3b05b3e237132d255d4937610ec569be,10.1037/apl0000891,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+3b05b3e237132d255d4937610ec569be,10.1037/apl0000891,low_link_confidence,WARNING,link_confidence=low
+f8d0eed303ffccb002b02038e5570c74,10.1186/s13148-019-0636-y,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+f8d0eed303ffccb002b02038e5570c74,10.1186/s13148-019-0636-y,low_link_confidence,WARNING,link_confidence=low
+a7dce7706aa79c4f3cbedf4eb1f6089a,10.1152/jn.00286.2019,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+a7dce7706aa79c4f3cbedf4eb1f6089a,10.1152/jn.00286.2019,low_link_confidence,WARNING,link_confidence=low
+d0f6aa3dbdd93656ef2260d8d76dbef1,10.1097/wnr.0b013e328344f45c,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+d0f6aa3dbdd93656ef2260d8d76dbef1,10.1097/wnr.0b013e328344f45c,low_link_confidence,WARNING,link_confidence=low
+50989243746649b1b86f0378cd3361d2,10.1016/j.jecp.2015.11.007,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+50989243746649b1b86f0378cd3361d2,10.1016/j.jecp.2015.11.007,low_link_confidence,WARNING,link_confidence=low
+e284ad5eefa7db1b13c3cdac678038a1,10.1097/fpc.0b013e32834e1641,doi_o_unverified,BLOCKER,doi_o_verification=no_metadata
+2a9f3d39b2efd947c52460bf8ea38915,10.1177/1368430219839763,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+2a9f3d39b2efd947c52460bf8ea38915,10.1177/1368430219839763,low_link_confidence,WARNING,link_confidence=low
+aa7234f997183a17ac308c506315d348,10.1038/ijo.2017.70,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+aa7234f997183a17ac308c506315d348,10.1038/ijo.2017.70,low_link_confidence,WARNING,link_confidence=low
+ec752b45b73a0450b4d5fc138f658535,10.3389/fpsyg.2013.00632,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+ec752b45b73a0450b4d5fc138f658535,10.3389/fpsyg.2013.00632,low_link_confidence,WARNING,link_confidence=low
+b223c2618e8f7ba6e46a281aac8bdba7,10.1017/s1366728916000651,doi_o_unverified,BLOCKER,doi_o_verification=no_metadata
+959187d52f6054e5eeafe77288dede29,10.1038/s41598-017-02721-0,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+959187d52f6054e5eeafe77288dede29,10.1038/s41598-017-02721-0,low_link_confidence,WARNING,link_confidence=low
+560c0f1ba2e079366dde9cf7b090b65a,10.1097/won.0b013e3182435579,doi_o_unverified,BLOCKER,doi_o_verification=no_metadata
+4ba8db91015ae5942e1cd274f63c4dc7,10.1152/jn.00558.2020,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+4ba8db91015ae5942e1cd274f63c4dc7,10.1152/jn.00558.2020,low_link_confidence,WARNING,link_confidence=low
+743e7f9fea778e5cce610c0b225094ce,10.1109/tse.2018.2863303,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+743e7f9fea778e5cce610c0b225094ce,10.1109/tse.2018.2863303,low_link_confidence,WARNING,link_confidence=low
+e42f9ebdc8c983b1f89ae881c28d48be,10.1503/jpn.120060,doi_o_unverified,BLOCKER,doi_o_verification=no_metadata
+4f43ca57e198985412d9750d0dc734d1,10.1111/acps.12778,doi_o_unverified,BLOCKER,doi_o_verification=no_metadata
+4f43ca57e198985412d9750d0dc734d1,10.1111/acps.12778,low_link_confidence,WARNING,link_confidence=low
+0d340b1c105a20527643b138da80234c,10.5465/amj.2014.0261,doi_o_unverified,BLOCKER,doi_o_verification=no_metadata
+36f83c5584d798b28059f08f1e41d7c3,10.1016/j.respol.2021.104399,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+36f83c5584d798b28059f08f1e41d7c3,10.1016/j.respol.2021.104399,low_link_confidence,WARNING,link_confidence=low
+b59903dd13eebbb2b9c36cdf4eb9e339,10.1371/journal.pone.0176856,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+b59903dd13eebbb2b9c36cdf4eb9e339,10.1371/journal.pone.0176856,low_link_confidence,WARNING,link_confidence=low
+b1f01b1eb723b5367550411ec5daad79,10.1038/s41598-018-33202-7,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+b1f01b1eb723b5367550411ec5daad79,10.1038/s41598-018-33202-7,low_link_confidence,WARNING,link_confidence=low
+f2a5d0106570bf5cb4fe1754adea196e,10.1002/da.22586,doi_o_unverified,BLOCKER,doi_o_verification=mismatch
+f2a5d0106570bf5cb4fe1754adea196e,10.1002/da.22586,low_link_confidence,WARNING,link_confidence=low
+37233e7057d86751f28b4658c9c4cfb6,10.31234/osf.io/vkarq,low_link_confidence,WARNING,link_confidence=low
+1071aea1b02fc49217a690b53f676578,10.5334/gjgl.1201,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=72)
+e991660d49ae108922395cb5220a9be7,10.1016/j.joep.2023.102664,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=84)
+88085cb316638e13a66f32afe97751c8,10.1177/0013164490503005,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=82)
+fcc314f72fa6d8bb9cf1cc77ebc5c87e,10.1515/jbnst-2025-0084,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+bf5e68f63f1af5bf0bcae7e32846cc2b,10.1037/tra0000563,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=56)
+1d48d15565b98981b4808a9c0a01cbc4,10.1037/0021-9010.89.1.150,low_link_confidence,WARNING,link_confidence=low
+6cc7885f6a9cc2876ed34e64fd39c264,10.1080/17470218.2016.1237980,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=85)
+e5939a0f8cde39198079ab8f5070322e,10.1108/ccm-11-2013-0180,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+5337fa9cd86f017f7825b8c04972cdef,10.17705/1atrr.00005,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+0016b7edb30172104ae28eb6d8f7a4d4,10.1080/17459435.2011.601524,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=64)
+5f81ed7a62305aa9af44277f80472cb8,10.2753/mer1052-8008210306,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=75)
+0655c10d24e44a1c6d1c27f806da10cd,10.1075/z.167.29dri,low_link_confidence,WARNING,link_confidence=low
+c52b0d3a39ab3b059ac054fbb2c038d1,10.1080/02687039108248520,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=75)
+a1819683e097ca33d1b2bf3017dec9d4,10.1002/bin.2360100202,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=83)
+fb4df76b48bfdf0719c7e43fe7ec1414,10.1111/cogs.12849,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+c40dc0493cb6952158aba3ce9fe7b31a,10.1017/prp.2020.6,low_link_confidence,WARNING,link_confidence=low
+3b0cb29a19988393d123be562c325f80,10.1016/j.dib.2020.105449,low_link_confidence,WARNING,link_confidence=low
+bfceba62add385564730f37713d23d43,10.31234/osf.io/adkn8,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=74)
+f386bf7c3c9bc4a9260c7bba2a3ea852,10.5334/joc.432,low_link_confidence,WARNING,link_confidence=low
+b607082f5bfeb984a3fd50729d73e05d,10.1007/s41809-024-00162-6,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+c999fe0e3eccd099fee39d10e550b375,10.1111/j.1744-6570.1996.tb01806.x,low_link_confidence,WARNING,link_confidence=low
+f9f4747476da635b8c6f8bf9ba12540a,10.2307/257015,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=44)
+33e5e9e1372ab870c86c8711558dd277,10.31234/osf.io/4qnfk,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+8e43c1145c8e09c05746de82a6b29395,10.31234/osf.io/6tn4f,low_link_confidence,WARNING,link_confidence=low
+f2157ba2dae4773b4c979db625e8e980,10.1111/caje.12757,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=75)
+f5099fb0532a8020e763b08e033aface,10.31234/osf.io/2dyn7,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=78)
+9a13c0b31dd75c5cefc6343fd6d4f18b,10.1080/13504860903075621,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+fd38b758bc766f31a763184d1e1e6383,10.1017/s0958344023000034,doi_o_unverified,BLOCKER,doi_o_verification=not_found
+d5876288253560a251b1f57085ff098a,10.1017/s0272263120000273,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=72)
+80db86b2846d09d9ee585587745b5d0f,10.1016/j.econlet.2025.112569,low_link_confidence,WARNING,link_confidence=low
+982bf938913b403e8c5546b8f53333c7,10.31234/osf.io/nwg7p,low_link_confidence,WARNING,link_confidence=low
+0351bcf6c3b71bd965568cf69920f517,10.1007/s41465-025-00316-6,missing_display_field,BLOCKER,empty: abstract_r
+be52ebad59fd018797a6ee8c8cd5e870,10.1177/08902070221099688,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=83)
+098a81551203cf634f7b4680fb0332c0,10.1287/mnsc.2023.4904,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=69)
+b2eb729318385e05a15202e4060c14e8,10.1109/thms.2018.2806200,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+756e8ffe4c5b4b0e2c6ca9c2edd55200,10.5281/zenodo.19974627,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+d4221acfa39491325762c67f62f6a55f,10.1037/0022-0167.55.2.263,low_link_confidence,WARNING,link_confidence=low
+ec3ff7ce77dc64da3467c1ddf3380e58,10.31234/osf.io/m9qnc,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+c9ffe7d9f667bb3391c0c30d594edaa0,10.1016/j.concog.2019.102836,missing_display_field,BLOCKER,empty: abstract_r
+1475913f8a5204786b2d23002f09ed9b,10.1111/j.1469-8986.1992.tb02035.x,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+40aebf574b5fa3fed492de3fc178fe6c,10.1177/019874290503100104,low_link_confidence,WARNING,link_confidence=low
+457adaa3cb65080ca529b082248cd077,10.1002/jaba.2910,low_link_confidence,WARNING,link_confidence=low
+802750dd09bd5c716a272a7ac0ef843d,10.1037/pspa0000304,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+d326871a57bd7380e402602d079dd810,10.1002/jae.2979,low_link_confidence,WARNING,link_confidence=low
+ff6e365a499f09c573ba4d9f2236e680,10.1016/j.socscimed.2018.12.039,missing_display_field,BLOCKER,empty: abstract_r
+34cf0e72aa9f0bc895b3295e57e21a49,10.17605/osf.io/6v8e2,missing_display_field,BLOCKER,empty: abstract_r
+93417095fac11f24dbc3fb131d6a6893,10.3758/s13428-018-1118-4,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+632dd4a70e409ec853ab79b1595cddc4,10.1080/00224545.2017.1331991,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=71)
+709cefd479bed0c0f2fb4e696759cfd7,10.1080/10668926.2016.1179606,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=78)
+f32959d3c202cbcc04766cff98e209c9,10.5964/jnc.6057,low_link_confidence,WARNING,link_confidence=low
+52c46976d88908226ad5fedbdf3fd657,10.5406/21627223.231.03,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=76)
+2e9d0f9e1b78cfdd3aa242bcd8dc0e2e,10.16930/2237-7662202131531,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=80)
+e21e709cda17231cadffcb7987c7bb29,10.16930/2237-766220213153,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=80)
+fb80dbc16aa069e3f0f763fe5e3e3da5,10.7275/11867619,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=81)
+6b9252d38e9f7dfd3286735f2e8576ff,10.3233/mas-231459,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=76)
+4a245a3c0fe2eb2222a4c6654ae8dce9,10.21193/kjspp.2013.27.3.004,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=78)
+bafe0a3b19fc6081d59cbfeaa858a631,10.17605/osf.io/n7q3x,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=72)
+8c35f76504d9f1ad61a27aeb5e66f1d4,10.1177/1091142114568659,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=83)
+21a004801e1326b3ca4069bcb3310b3b,10.31235/osf.io/a2d5p,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=81)
+f14afbc08e7fff2bc16e5d4260532a8f,10.3905/jod.2019.26.4.035,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=71)
+52107bb56f430d8055fa26add4d6c244,10.31219/osf.io/axn6z,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+4f9818e2f02a57b6babbde50b28a7fe7,10.1521/soco.2012.30.5.537,low_link_confidence,WARNING,link_confidence=low
+26eba44a749862a5a4a4653ca8f36859,10.5406/bulcouresmusedu.193.0045,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+872ef82f7f609d460fd3fe3db5bed2d0,10.1177/153944929301300303,low_link_confidence,WARNING,link_confidence=low
+3570de24a4fa3f17e7835fbbe6e35baf,10.1080/00223980109603695,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=74)
+337c27fae647dfd092596129accd5186,10.1016/s0140-1971(86)80040-9,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=79)
+90760186ee55dec5371dbe0117dacab7,10.2307/747949,low_link_confidence,WARNING,link_confidence=low
+26b201fcef673dae290510f619580413,10.34917/1439129,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=78)
+ea93787d27012c066eeb667265eb04eb,10.1017/s1352465800017598,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=75)
+04f50f4d36a8bd72524964c7d16116e4,10.1021/tx0002684,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=73)
+9e1beaf0e65b042ab7be6fd7ccaa4d82,10.1017/s0958344023000071,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=80)
+b31a2a6d4827900b8e29cb11b33a54f2,10.7282/t3mp51q9,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+00de1e5c8c17b0e0baa5f1bf179679d6,10.13189/sa.2013.010207,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=71)
+31fafad83f29aedac15794ebe1a35009,10.12688/openreseurope.13700.3,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=73)
+0546ee28016a5b299f5f4bbde5286b52,10.31234/osf.io/eqkua,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=73)
+8496a6a5d8d5ac803ec35941dea5b1d3,10.12688/openreseurope.13700.2,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=75)
+bf979714adb7e4e3ead652818bdb4692,10.2139/ssrn.5280271,missing_display_field,BLOCKER,empty: abstract_r
+b518a599ade6247566d1933b1296650f,10.3758/s13414-024-02942-2,missing_display_field,BLOCKER,empty: abstract_r
+fc75f845acc4aea2a63bdfdb833c52c8,10.1007/bf01544213,missing_display_field,BLOCKER,empty: abstract_r
+fc75f845acc4aea2a63bdfdb833c52c8,10.1007/bf01544213,low_outcome_confidence,WARNING,outcome_confidence=low
+d5faed21ab4da4d61f6a669042ef3a97,10.1016/j.annepidem.2022.05.005,missing_display_field,BLOCKER,empty: abstract_r
+54dbec7fc8aef240f9805ff2aeccbfe0,10.1016/j.appet.2007.03.003,missing_display_field,BLOCKER,empty: abstract_r
+c55e4c4287c56a1437d19d459ebc6c00,10.1080/00223980109603712,missing_display_field,BLOCKER,empty: abstract_r
+66ca3fc0d7774faad73e6cd43db32624,10.1016/j.jml.2022.104357,doi_o_unverified,BLOCKER,doi_o_verification=not_found
+66ca3fc0d7774faad73e6cd43db32624,10.1016/j.jml.2022.104357,missing_display_field,BLOCKER,empty: abstract_r
+76c13f8b897ce8a66df20b63ac1619ea,10.1016/0005-7967(94)00062-o,missing_display_field,BLOCKER,empty: abstract_r
+76c13f8b897ce8a66df20b63ac1619ea,10.1016/0005-7967(94)00062-o,low_link_confidence,WARNING,link_confidence=low
+e22a58172072def97d4da9861cba1e3f,10.3758/bf03209529,missing_display_field,BLOCKER,empty: abstract_r
+e22a58172072def97d4da9861cba1e3f,10.3758/bf03209529,low_outcome_confidence,WARNING,outcome_confidence=low
+44afd4f4983f53181b43e461e917bf78,10.1111/hypa.12480,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+44afd4f4983f53181b43e461e917bf78,10.1111/hypa.12480,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=80)
+7cd1a6fa1e864db0009422e4e34f40e3,10.21511/im.13(2).2017.03,doi_o_unverified,BLOCKER,doi_o_verification=not_found
+9d975b44121d9deddda1673a45ab4728,10.4133/sageep.33-159,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=69)
+d3f24793f5f1f3c62e0aba88f36f7dd0,10.1101/350603,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=76)
+7833319b9978c0e55a1e41c0e6e3f99a,10.17615/kw62-eb77,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=75)
+d2dcd642575620d8c16b82d3eaef79a4,10.31219/osf.io/ah8ct,doi_o_unverified,BLOCKER,doi_o_verification=not_found
+0f1e374f584edeed063845a7b105d14b,10.1101/2022.04.14.488400,low_link_confidence,WARNING,link_confidence=low
+6bf845021280e9664cffcb1c8f410c6d,10.1016/j.ynirp.2022.100135,low_link_confidence,WARNING,link_confidence=low
+d8f531e8b5daec406b61a3f2d6c13119,10.36615/jcsa.v23i1.1780,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=84)
+d8f531e8b5daec406b61a3f2d6c13119,10.36615/jcsa.v23i1.1780,low_link_confidence,WARNING,link_confidence=low
+3c28001667fe3cbc6c02aab70d453386,10.1017/s0332586522000154,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=75)
+69f7ba1909b6f922d1da0f9a9749f415,10.1177/03616843221123745,doi_o_unverified,BLOCKER,doi_o_verification=not_found
+f3c88fc24ad68b6620736b221d29cacb,10.31820/pt.31.2.12,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+39adef1b9b661d536c057439659f4934,10.1080/08856257.2023.2253061,low_link_confidence,WARNING,link_confidence=low
+5025960d0d2fb5c4ce2197749d01f001,10.31234/osf.io/zty83,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=80)
+c02f7026dbc05b67faeb08d216865f49,10.1002/jclp.70011,low_link_confidence,WARNING,link_confidence=low
+d860a746c5315fb8af22c75e346ffe8a,10.3758/s13414-023-02696-3,missing_display_field,BLOCKER,empty: abstract_r
+d860a746c5315fb8af22c75e346ffe8a,10.3758/s13414-023-02696-3,low_outcome_confidence,WARNING,outcome_confidence=low
+d19269a3e0e28752a66f59b780150771,10.1080/14459795.2022.2135227,low_link_confidence,WARNING,link_confidence=low
+33dc3d7420d223fc0671e42cd4ed4719,10.1101/2022.03.23.485532,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=51)
+d23a8c1c290e703bb65e81542959697b,10.1016/j.respol.2023.104819,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=81)
+dc15bd98654404d55cae1d19d9a71b61,10.1016/j.dib.2023.109853,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=84)
+7758985cbfca9a55ff76caa564037b16,10.1017/s027226312400007x,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+5ab65cba0f18cf1cb6fa9150a9f4e093,10.1007/s40806-023-00377-w,missing_display_field,BLOCKER,empty: abstract_r
+c8dae54d82df59bd54f8aa71815fbec1,10.1080/10474412.2023.2261921,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=83)
+9fdde0b4bf0236672e0ab216bb2c6374,10.57709/1061138,low_outcome_confidence,WARNING,outcome_confidence=low
+4b7858c865cda3497fe1839e09b479f2,10.1080/09658416.2023.2195666,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=81)
+1241360fd3f527cab90fb346d3b55fda,10.1097/scs.0000000000012671,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=72)
+e1c6a73c211047685492236e3be1a964,10.2478/wd-2024-0125,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=76)
+cfb6f3ced8a3ba4a24ac3de92e76520b,10.1177/01461672251327169,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=80)
+d9d5c6ba6d78dbe8e1c603dccdbdc2ed,10.1111/jep.70328,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=76)
+4abb74430283ac7b8a26f522398e08e0,10.31234/osf.io/p3tdf,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=76)
+f34edd21a9d67080f8170ef0bbdbe530,10.1037/0022-0663.83.4.444,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+465436e95e7cdc32636db53be2f0c532,10.2466/pr0.1991.69.2.659,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=73)
+7b486b53ce13a9c18aaca1d84b56911d,10.1177/017084069201300201,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+23f047e43af2a4d3b0bc557f3ef41880,10.15288/jsa.1992.53.335,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+d36dffafa6e2b547be88fb51d88eb3df,10.1177/0022343392029001004,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=72)
+35f66a3988ce8acedcfe91870c8c8a8a,10.1207/s15324834basp1304_5,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=80)
+85ce28a048b9cbace267ea2455a110fb,10.2307/1422981,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+2245ec37e261304887dcb436f379784a,10.1111/j.1471-6402.1993.tb00442.x,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=81)
+6309a6f8eee710015b130e8718fb47ac,10.1111/j.1530-0277.1993.tb00746.x,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=82)
+9cebbfbbf60158a99c2efc80aaa1d62c,10.2466/pr0.1993.73.3.872,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+7d7ac00e518643322becbdc93276f468,10.1080/00224545.1994.9712200,doi_o_unverified,BLOCKER,doi_o_verification=not_found
+277d3bdeccb2e7b7da4d164f9036a9cc,10.1177/0265407594111008,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=83)
+ea32b4197979d6fd8b5036dd679c3031,10.1080/00140139508925225,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=76)
+9263a86eba40adf70146b748cfd3030f,10.1016/0920-9964(94)00067-i,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=79)
+3ace737676d383fcc480a72a12c058dc,10.1017/s0272263100013784,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=83)
+16658e72db2d6fa0685353f9a478b947,10.1901/jeab.1995.63-239,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=73)
+4b445ddb03a00fe8bcbe5c26b271eb52,10.2307/2991738,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=79)
+4b427e62d199b9452c7e3965cd5309de,10.1046/j.1365-201x.1998.t01-1-00358.x,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=76)
+d31e832834f727e7b735ae8fb31d2dde,10.1177/019251398019004005,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=83)
+7583495bc14a55f78aaa758ad12d292c,10.1177/002221949903200513,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=76)
+aed58e86b612c33ae8bdc277426aaeb3,10.1023/a:1021910303807,missing_display_field,BLOCKER,empty: title_r
+7b4a5b0b4946c259346d94dcdfa1e46b,10.1002/(sici)1520-6807(199905)36:3<219::aid-pits5>3.0.co;2-0,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+7ac039a61f9722c80f9a2a77006b7a47,10.1080/08934219909367706,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+7ac039a61f9722c80f9a2a77006b7a47,10.1080/08934219909367706,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=71)
+c99f53925234f36784a678282a8af673,10.1300/j075v19n03_09,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=75)
+975e97324fcf3384c6cf4a58b3737d8e,10.1353/hsj.2003.0018,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=80)
+efd6a087e383ada51aec37b235a8e920,10.1002/mar.10097,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=79)
+98b6625c03d1396e396d51c1866fe348,10.1177/153244000300300403,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=79)
+1d093217f5b9ed9f1a92c5ffd546c174,10.1111/j.0026-7902.2004.00238.x,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+d6a5c23563cf6bfa31b74637efffbe14,10.1017/s1366728904001592,low_link_confidence,WARNING,link_confidence=low
+620e8a31230f9f74e2ec618b1ff99dbe,10.1111/j.1937-5956.2004.tb00510.x,low_link_confidence,WARNING,link_confidence=low
+8f6eb2e0a884ccf4e337426fbe40fb75,10.1002/bin.202,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=74)
+3d026bc6691738746d67589a2df223f7,10.1111/j.1559-1816.2005.tb02168.x,doi_o_unverified,BLOCKER,doi_o_verification=no_doi
+bcee85b1f09b793cb12360ec6a44b76a,10.1891/jcop.2005.19.4.309,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=74)
+c40af6f18d6b7a9335e9295bbdd7c8fa,10.1348/014466607x248903,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=79)
+54efffd2f660d43a7dddd04c9847e816,10.1080/02783190802527349,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=75)
+b7f137297f6a1a43269d72729aa95c19,10.1080/01690960801962372,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=73)
+99f9def72bc86823e286bc068df9437e,10.1080/03640210701703683,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=83)
+cf69b12dd2f07a59862c6996d1cee853,10.1348/096317908x280935,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+5c4a847e0eeeede7bf812f8a70ada149,10.1167/8.13.8,low_link_confidence,WARNING,link_confidence=low
+cd74bc36a81b01dbc1a018eeae390ec3,10.31274/etd-180810-1493,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=82)
+4dfdbe9f5f3e4682a94a8e3bac41990a,10.1080/17470210802696096,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+7aba0d443ae96138e36c9e9ce3045390,10.1177/1354068800006002007,doi_o_unverified,BLOCKER,doi_o_verification=not_found
+f1b9af57dbe652bfb167f717ab48897d,10.2502/janip.50.119,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=84)
+1a449e8b3f8de5c39bff665ebd3e242e,10.1207/s15327957pspr0403_5,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=80)
+848b13bb68f8eaa28622b653a77e7e09,10.1108/s1085-4622(2000)0000002013,doi_o_unverified,BLOCKER,doi_o_verification=not_found
+7916b9bf68e229cbf8a8925a40dee6bc,10.15760/etd.5326,doi_o_unverified,BLOCKER,doi_o_verification=not_found
+80bf0e45446d53d0b828957d77379639,10.1080/13548500125641,low_link_confidence,WARNING,link_confidence=low
+8cc1a454a22a7a14ed5fd34e55caeb6c,10.1046/j.1365-246x.2001.00473.x,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=68)
+dc19cceb973976b916f5fe56c4ce9d13,10.1186/1744-9081-2-23,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=74)
+f590c4f7a6b17e7cde8c84da5be4cb3f,10.18061/1811/28854,doi_o_unverified,BLOCKER,doi_o_verification=not_found
+18b2d4fdbb4eb0b5042915a7b79b5029,10.1590/s1980-57642008dn10100011,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=77)
+e56531a5e051abbff22e19a34e5bd605,10.1037/a0014291,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=76)
+d3b927ccc6864e030283f5b1b6d692d3,10.17760/d10019649,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=80)
+99c33569f8365de5bf2f2c6ad574bdcc,10.7282/t3r211mg,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=76)
+eda0bc88134f205e30596cbe6325eb00,10.1016/j.brainres.2010.09.026,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=82)
+bbf9477dd9ae8f89ed632599e12f4a2b,10.1111/j.1532-7078.2009.00002.x,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=74)
+b09562d3dbf3e226eb97ecf67721d782,10.2478/v10057-010-0002-9,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=82)
+205c821a2ec458dc893f0b0e08c104e5,10.1177/1932202x1002100305,doi_o_unverified,BLOCKER,doi_o_verification=not_found
+974e13e51533797d9d8d905b6b1fc3fb,10.1080/15021149.2010.11434339,quote_not_in_abstract,WARNING,outcome_phrase not found in abstract_r (partial_ratio=75)
+5bd23bf4ef76d9eff398ac486cecf9b7,10.5281/zenodo.18965956,doi_o_unverified,BLOCKER,doi_o_verification=not_found
+e302605cce3e8aa56309f3952b32e0f1,10.5281/zenodo.18965955,doi_o_unverified,BLOCKER,doi_o_verification=not_found
+3c8e41269056e3d9df9916d8762f461a,10.1017/jog.2016.121,doi_o_unverified,BLOCKER,doi_o_verification=not_found
+0fdf60b8375cbb9224d7509033ddde7e,10.1016/j.brs.2019.01.010,low_outcome_confidence,WARNING,outcome_confidence=low
+18b80414a35b02daae4b9ef9d51608d0,10.1177/0160017619869781,doi_o_unverified,BLOCKER,doi_o_verification=skipped
+18b80414a35b02daae4b9ef9d51608d0,10.1177/0160017619869781,unresolved_stage,BLOCKER,"outcome=cannot_be_determined, link_method=target_pending"
+18b80414a35b02daae4b9ef9d51608d0,10.1177/0160017619869781,low_link_confidence,WARNING,link_confidence=low
