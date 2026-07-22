@@ -800,6 +800,88 @@ def _load_extracted_rows(out_path) -> tuple[dict[str, list[dict]], set[str]]:
     return resolved, pending
 
 
+def _norm_title(t: str) -> str:
+    """Lowercase, strip punctuation/whitespace — for comparing two titles for identity."""
+    return re.sub(r"[^a-z0-9]+", " ", str(t or "").lower()).strip()
+
+
+# A title this short is boilerplate ("n/a", "unknown"), not a usable original.
+_MIN_USABLE_TITLE = 10
+
+
+def _guard_original_link(row: dict) -> dict:
+    """Reject self-links and recover a missing doi_o before the row is written.
+
+    A validator needs a real original to compare against, so:
+
+    1. A paper is never its own original. Matching doi_r/doi_o, or an identical
+       title, means the linker looped back on itself — always rejected, however
+       confident the LLM was.
+    2. doi_o empty but title_o present → actively try to recover the DOI via
+       CrossRef then OpenAlex title search before giving up.
+    3. Still no DOI, but the title is substantive and distinct → KEEP the row and
+       set doi_o_verification="no_doi". Plenty of genuine originals (old papers,
+       book chapters, working papers) have no registered DOI; dropping them would
+       discard valid links. Marked explicitly so it is never mistaken for verified.
+    4. No DOI and no usable title → target_pending; there is nothing to validate.
+    """
+    if row.get("link_method") in {"target_pending", "api_error", "no_original_found"}:
+        return row
+
+    doi_r = clean_doi(str(row.get("doi_r", "") or ""))
+    doi_o = clean_doi(str(row.get("doi_o", "") or ""))
+    title_r, title_o = str(row.get("title_r", "") or ""), str(row.get("title_o", "") or "")
+
+    def _reject(reason: str) -> dict:
+        log.info("[%s] original-link rejected (%s) — writing target_pending", doi_r, reason)
+        row["link_method"] = "target_pending"
+        row["doi_o"] = ""
+        row["doi_o_verification"] = "skipped"
+        row["link_confidence"] = "low"
+        prior = str(row.get("link_evidence", "") or "")
+        row["link_evidence"] = (f"{prior} | rejected: {reason}" if prior else f"rejected: {reason}")
+        return row
+
+    def _is_self(cand_doi: str) -> str:
+        if cand_doi and doi_r and cand_doi == doi_r:
+            return "resolved original is the replication itself (same DOI)"
+        if title_o and title_r and _norm_title(title_o) == _norm_title(title_r):
+            return "resolved original has the same title as the replication"
+        return ""
+
+    reason = _is_self(doi_o)
+    if reason:
+        return _reject(reason)
+
+    # 2. best-effort DOI recovery from the title
+    if not doi_o and len(_norm_title(title_o)) >= _MIN_USABLE_TITLE:
+        year_o = str(row.get("year_o", "") or "")
+        try:
+            meta = (_search_crossref_by_title(title_o, year_o)
+                    or _search_openalex_by_title(title_o, year_o))
+        except Exception as exc:
+            meta = None
+            log.debug("[%s] doi_o title-recovery failed: %s", doi_r, exc)
+        found = clean_doi(str((meta or {}).get("doi", "") or ""))
+        if found:
+            reason = _is_self(found)
+            if reason:
+                return _reject(f"recovered DOI is a self-link — {reason}")
+            log.info("[%s] recovered doi_o=%s from title search", doi_r, found)
+            row["doi_o"] = found
+            row["pair_id"] = make_pair_id(doi_r, found)
+            return row
+
+    # 3/4. no DOI: keep only if the title is a usable, distinct original
+    if not doi_o:
+        if len(_norm_title(title_o)) >= _MIN_USABLE_TITLE:
+            row["doi_o_verification"] = "no_doi"
+            return row
+        return _reject("no doi_o and no usable title_o")
+
+    return row
+
+
 def _verify_row(row: dict) -> dict:
     """Verify/correct doi_o in a finished result row before it is written.
 
@@ -1198,6 +1280,9 @@ def run_extract(no_llm: bool = False,
             result_rows.append(_empty_row(row, match_type, match_conf))
 
         for result_row in result_rows:
+            # Reject self-links / recover missing doi_o BEFORE the resolved_only gate,
+            # so a rejected row is filtered out rather than written as a bogus link.
+            result_row = _guard_original_link(result_row)
             if resolved_only and result_row.get("link_method") in {
                 "target_pending", "api_error", "no_original_found"
             }:

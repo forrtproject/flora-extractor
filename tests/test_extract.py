@@ -1144,3 +1144,64 @@ class TestReproductionOutcome:
             assert "COMPLETE sentences" in p
             assert "1200" in p
             assert "Never truncate" in p
+
+
+# ── Original-link guard: self-links, DOI recovery, graceful empties ──────────
+
+class TestGuardOriginalLink:
+    def _row(self, **kw):
+        r = {"doi_r": "10.1/repl", "title_r": "A Study of Things",
+             "doi_o": "10.2/orig", "title_o": "The Original Work",
+             "link_method": "llm_fulltext", "link_confidence": "high",
+             "pair_id": "p", "doi_o_verification": "verified", "ref_o": "x"}
+        r.update(kw); return r
+
+    def test_self_link_by_doi_rejected(self):
+        out = run_extract._guard_original_link(self._row(doi_o="10.1/repl"))
+        assert out["link_method"] == "target_pending"
+        assert out["doi_o"] == ""
+
+    def test_self_link_by_title_rejected(self):
+        out = run_extract._guard_original_link(
+            self._row(doi_o="", title_o="A Study of Things"))
+        assert out["link_method"] == "target_pending"
+
+    def test_self_link_title_match_ignores_case_and_punctuation(self):
+        out = run_extract._guard_original_link(
+            self._row(doi_o="", title_o="  a study of THINGS.  "))
+        assert out["link_method"] == "target_pending"
+
+    def test_good_link_untouched(self):
+        out = run_extract._guard_original_link(self._row())
+        assert out["link_method"] == "llm_fulltext"
+        assert out["doi_o"] == "10.2/orig"
+
+    def test_missing_doi_recovered_from_title(self):
+        with patch("extract.run_extract._search_crossref_by_title",
+                   return_value={"doi": "10.9/found"}):
+            out = run_extract._guard_original_link(self._row(doi_o=""))
+        assert out["doi_o"] == "10.9/found"
+        assert out["link_method"] == "llm_fulltext"
+
+    def test_recovered_doi_that_is_a_self_link_is_rejected(self):
+        """Recovery must not resurrect the replication itself as its own original."""
+        with patch("extract.run_extract._search_crossref_by_title",
+                   return_value={"doi": "10.1/repl"}):
+            out = run_extract._guard_original_link(self._row(doi_o=""))
+        assert out["link_method"] == "target_pending"
+
+    def test_genuinely_empty_doi_with_real_title_is_kept(self):
+        """No DOI anywhere, but a substantive distinct title -> keep the row and
+        mark it explicitly rather than dropping a valid original."""
+        with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
+             patch("extract.run_extract._search_openalex_by_title", return_value=None):
+            out = run_extract._guard_original_link(self._row(doi_o=""))
+        assert out["link_method"] == "llm_fulltext"
+        assert out["doi_o"] == ""
+        assert out["doi_o_verification"] == "no_doi"
+
+    def test_no_doi_and_no_usable_title_is_pending(self):
+        with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
+             patch("extract.run_extract._search_openalex_by_title", return_value=None):
+            out = run_extract._guard_original_link(self._row(doi_o="", title_o="n/a"))
+        assert out["link_method"] == "target_pending"
