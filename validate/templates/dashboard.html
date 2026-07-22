@@ -26,17 +26,33 @@
 .tab-panel { display:none; padding-top:16px; }
 .tab-panel.active { display:block; }
 
-/* ── 40/60 split ─────────────────────────────────────────────────────────────── */
-.panel-split {
-  display:grid;
-  grid-template-columns:2fr 3fr;
-  gap:16px;
-  align-items:start;
-}
-@media(max-width:900px){ .panel-split{ grid-template-columns:1fr; } }
+/* ── Stage panel ─────────────────────────────────────────────────────────────── */
+/* Stats own the full width. Reference prose lives in a collapsed drawer above them
+   (wrapped at runtime by wrapDocsDrawers) so numbers are never squeezed into 60%. */
+.panel-split { display:flex; flex-direction:column; gap:14px; }
 
-/* ── Docs panel (left) ───────────────────────────────────────────────────────── */
-.docs-panel { display:flex; flex-direction:column; gap:12px; }
+.docs-drawer {
+  border:1px solid var(--border); border-radius:8px; background:var(--surface);
+}
+.docs-drawer > summary {
+  cursor:pointer; padding:9px 14px; font-size:11px; font-weight:600;
+  color:var(--text-muted); list-style:none; display:flex; align-items:center; gap:7px;
+}
+.docs-drawer > summary::-webkit-details-marker { display:none; }
+.docs-drawer > summary::before {
+  content:'▸'; font-size:10px; color:var(--text-faint); transition:transform .15s;
+}
+.docs-drawer[open] > summary::before { transform:rotate(90deg); }
+.docs-drawer > summary:hover { color:var(--text); }
+.docs-drawer[open] > summary { border-bottom:1px solid var(--border); }
+.docs-drawer .doc-hint { color:var(--text-faint); font-weight:400; }
+
+/* ── Docs panel (inside the drawer) ──────────────────────────────────────────── */
+/* Multi-column once opened — full-width prose in one column is unreadable. */
+.docs-panel {
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr));
+  gap:12px; align-items:start; padding:12px;
+}
 .docs-card {
   background:var(--surface); border:1px solid var(--border); border-radius:8px;
   padding:14px 16px;
@@ -170,7 +186,16 @@ a.leg-row:hover { background:var(--surface-2); }
 
 /* Pager */
 .pager { display:flex; gap:6px; align-items:center; justify-content:center;
-         margin-top:10px; flex-wrap:wrap; }
+         padding:10px; flex-wrap:wrap; }
+.pager-jump { font-size:11px; color:var(--text-muted); display:flex;
+              align-items:center; gap:5px; margin:0 4px; }
+.pager-input {
+  width:56px; padding:3px 6px; font-size:11px; text-align:center;
+  border:1px solid var(--border); border-radius:4px;
+  background:var(--surface); color:var(--text);
+}
+.pager-input:focus { outline:none; border-color:var(--accent);
+                     box-shadow:0 0 0 2px var(--accent-ring); }
 .pager-btn { padding:4px 10px; font-size:12px; border:1px solid var(--border);
              border-radius:4px; background:var(--surface); color:var(--text);
              cursor:pointer; transition:all .15s; }
@@ -277,6 +302,209 @@ a.leg-row:hover { background:var(--surface-2); }
 .badge-blue   { background:#dbeafe; color:#1d4ed8; }
 .badge-gray   { background:var(--border); color:var(--text-muted); }
 .badge-purple { background:#ede9fe; color:#6d28d9; }
+
+/* ── Flowchart live counts ──────────────────────────────────────────────────── */
+.flow-count {
+  float:right; font-family:monospace; font-size:11px; font-weight:700;
+  color:var(--text); background:var(--surface); border:1px solid var(--border);
+  border-radius:4px; padding:0 6px; margin-left:8px;
+}
+.flow-count .fc-pct { font-weight:400; font-size:9px; color:var(--text-faint); margin-left:3px; }
+.flow-count.stop { color:#b91c1c; border-color:#fecaca; background:#fef2f2; }
+.flow-count.pass { color:#15803d; border-color:#bbf7d0; background:#f0fdf4; }
+.flow-count.llm  { color:#1d4ed8; border-color:#bfdbfe; background:#eff6ff; }
+.flow-split { margin-top:5px; font-size:10px; color:var(--text-muted); font-family:monospace; }
+
+/* ── Year distribution bars ─────────────────────────────────────────────────── */
+/* .year-bar-area needs an explicit height: a percentage height only resolves against
+   a parent with a definite height, otherwise every bar collapses to min-height. */
+.year-chart { display:flex; align-items:flex-end; gap:2px; margin-top:6px; }
+.year-col { flex:1; display:flex; flex-direction:column; align-items:center;
+            gap:3px; min-width:0; }
+.year-bar-area { height:130px; width:100%; display:flex; align-items:flex-end;
+                 position:relative; }
+.year-bar { width:100%; background:var(--accent); border-radius:2px 2px 0 0; min-height:2px; }
+.year-col:hover .year-bar { filter:brightness(1.25); }
+
+/* Hover readout — sits above the hovered bar, never clipped by the card. */
+.year-tip {
+  position:absolute; bottom:100%; left:50%; transform:translate(-50%,-6px);
+  background:var(--text); color:var(--surface); border-radius:5px;
+  padding:5px 9px; font-size:11px; line-height:1.45; white-space:nowrap;
+  opacity:0; visibility:hidden; transition:opacity .12s; pointer-events:none;
+  z-index:20; box-shadow:0 3px 10px rgba(0,0,0,.22); text-align:center;
+}
+.year-tip b { display:block; font-size:12px; }
+.year-tip span { display:block; opacity:.7; font-size:10px; }
+.year-col:hover .year-tip,
+.year-col.tip-on .year-tip { opacity:1; visibility:visible; }
+.year-tick { font-size:8px; color:var(--text-faint); transform:rotate(-60deg);
+             transform-origin:top center; white-space:nowrap; height:26px; }
+.year-caption { font-size:10px; color:var(--text-faint); margin-top:22px; }
+
+/* ── Sortable data table (phrase yield) ─────────────────────────────────────── */
+.mini-table { width:100%; border-collapse:collapse; font-size:11px; }
+.mini-table th {
+  text-align:left; padding:5px 8px; font-size:10px; font-weight:700;
+  color:var(--text-muted); border-bottom:2px solid var(--border);
+  position:sticky; top:0; background:var(--surface); cursor:pointer; user-select:none;
+}
+.mini-table th:hover { color:var(--text); }
+.mini-table td { padding:4px 8px; border-bottom:1px solid var(--border); color:var(--text); }
+.mini-table td.num { text-align:right; font-family:monospace; }
+.mini-table tr:last-child td { border-bottom:none; }
+.table-scroll { max-height:420px; overflow-y:auto; }
+.yield-bar { height:4px; background:var(--accent); border-radius:2px; min-width:1px; }
+
+/* ── Reproduction 3x3 heatmap ───────────────────────────────────────────────── */
+.heat-grid { display:grid; grid-template-columns:auto repeat(3,1fr); gap:3px; font-size:10px; }
+.heat-corner { }
+.heat-head, .heat-side {
+  color:var(--text-muted); font-weight:600; font-size:9px;
+  display:flex; align-items:center; padding:3px 4px; line-height:1.25;
+}
+.heat-head { justify-content:center; text-align:center; }
+.heat-cell {
+  border-radius:4px; padding:10px 4px; text-align:center; font-weight:800;
+  font-size:14px; color:var(--text); border:1px solid var(--border);
+}
+.heat-cell.zero { color:var(--text-faint); font-weight:400; }
+
+/* ── Section heading between cards ──────────────────────────────────────────── */
+.section-head { margin:22px 0 12px; }
+.section-head h2 {
+  font-size:13px; font-weight:700; color:var(--text); margin:0 0 5px;
+}
+.section-head p {
+  font-size:11px; color:var(--text-muted); line-height:1.65; margin:0; max-width:none;
+}
+.card-sub { font-size:10px; color:var(--text-faint); margin:-4px 0 10px; line-height:1.5; }
+
+/* ── Validation agreement cards ─────────────────────────────────────────────── */
+.agree-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:14px; }
+.agree-card {
+  border:1px solid var(--border); border-radius:10px; background:var(--surface);
+  padding:16px 18px 6px; display:flex; flex-direction:column;
+}
+.agree-card-head { margin-bottom:14px; }
+.agree-card h4 {
+  font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.6px;
+  color:var(--text); margin:0 0 8px;
+}
+.agree-row {
+  display:flex; justify-content:space-between; align-items:baseline; gap:8px;
+  padding:5px 0; border-bottom:1px solid var(--border); font-size:11px;
+}
+.agree-row:last-child { border-bottom:none; }
+.agree-row .av { font-weight:700; font-family:monospace; }
+.agree-tag { width:8px; height:8px; border-radius:2px; display:inline-block; margin-right:6px; }
+
+/* One outcome bucket (both kept / both changed / only one changed) */
+.bucket { border-left:3px solid var(--border); padding:0 0 0 12px; margin-bottom:16px; }
+.bucket-ok   { border-left-color:#16a34a; }
+.bucket-bad  { border-left-color:#dc2626; }
+.bucket-warn { border-left-color:#f59e0b; }
+.bucket-head {
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+}
+.bucket-title { font-size:11.5px; font-weight:600; color:var(--text); line-height:1.4; }
+.bucket-num   { font-size:16px; font-weight:800; color:var(--text); white-space:nowrap; }
+.bucket-num .stat-pct { font-size:10px; font-weight:400; margin-left:4px; }
+.bucket-sub {
+  display:flex; justify-content:space-between; gap:8px;
+  font-size:10.5px; color:var(--text-muted); padding:3px 0 0;
+}
+.bucket-sub .av { font-family:monospace; font-weight:600; }
+.stack-bar { display:flex; height:9px; border-radius:3px; overflow:hidden; margin:8px 0 10px; }
+.stack-bar span { display:block; }
+
+/* Terminal state of an agreement bucket */
+.res-line {
+  margin:9px 0 0; padding:8px 10px; background:var(--surface-2);
+  border:1px solid var(--border); border-radius:6px;
+  display:flex; flex-wrap:wrap; gap:5px 12px; align-items:baseline;
+}
+.res-head { font-size:9px; font-weight:700; text-transform:uppercase;
+            letter-spacing:.4px; color:var(--text-faint); width:100%; margin-bottom:1px; }
+.res-chip { font-size:10.5px; color:var(--text-muted); white-space:nowrap; }
+.res-chip b { color:var(--text); }
+
+/* ── Set tabs (rows kept out of extracted.csv) ──────────────────────────────── */
+.tab-strip-sep {
+  align-self:center; margin:0 4px; padding-left:10px; font-size:9px; font-weight:700;
+  letter-spacing:.5px; color:var(--text-faint); text-transform:uppercase;
+  border-left:1px solid var(--border);
+}
+.set-note {
+  background:var(--surface); border:1px solid var(--border); border-left:3px solid var(--accent);
+  border-radius:8px; padding:12px 16px; font-size:12px; color:var(--text-muted); line-height:1.6;
+}
+.set-note .set-why { color:var(--text); }
+.set-note .set-action { display:block; margin-top:6px; font-size:11px; }
+/* Primary breakdown beside the entry count */
+.set-primary-card { text-align:left; padding:12px 18px; flex:2.4; }
+.set-primary { display:flex; flex-wrap:wrap; gap:6px 18px; margin-top:7px; }
+.set-primary-item { font-size:12px; color:var(--text-muted); white-space:nowrap; }
+.set-primary-item b { font-size:17px; font-weight:800; color:var(--text); margin-right:4px; }
+
+/* Entries table */
+.set-table-card { padding:0; overflow:hidden; }
+.set-toolbar {
+  display:flex; gap:12px; align-items:center; flex-wrap:wrap;
+  padding:12px 16px; border-bottom:1px solid var(--border); background:var(--surface);
+}
+.set-toolbar h3 { margin:0; flex-shrink:0; }
+.set-search {
+  flex:1; min-width:190px; width:auto; font-size:11px; padding:5px 10px;
+  border:1px solid var(--border); border-radius:5px;
+  background:var(--surface-2); color:var(--text);
+}
+.set-search:focus { outline:none; border-color:var(--accent);
+                    box-shadow:0 0 0 2px var(--accent-ring); background:var(--surface); }
+.set-total { font-size:11px; color:var(--text-faint); font-family:monospace; margin-left:auto; }
+
+.set-table-wrap { overflow-x:auto; }
+.set-table { width:100%; border-collapse:collapse; font-size:11px; }
+.set-table th {
+  text-align:left; padding:8px 10px; font-size:9px; font-weight:700; letter-spacing:.5px;
+  text-transform:uppercase; color:var(--text-faint); white-space:nowrap;
+  border-bottom:1px solid var(--border); background:var(--surface-2);
+  position:sticky; top:0; z-index:2;
+}
+.set-table td {
+  padding:7px 10px; border-bottom:1px solid var(--border); color:var(--text);
+  vertical-align:top; max-width:230px; overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap;
+}
+.set-table .col-toggle { width:22px; padding-left:12px; padding-right:0; }
+.set-table .col-wide { max-width:420px; }
+.set-table tr.set-row { cursor:pointer; }
+.set-table tr.set-row:nth-child(4n+1) td { background:var(--surface-2); }
+.set-table tr.set-row:hover td { background:var(--accent-ring); }
+.row-chevron { color:var(--text-faint); font-size:13px; display:inline-block;
+               transition:transform .15s; }
+.set-row.open .row-chevron { transform:rotate(90deg); color:var(--accent); }
+.cell-doi { font-family:monospace; font-size:10px; color:var(--text-muted); }
+.cell-num { font-family:monospace; color:var(--text-muted); }
+.cell-empty { color:var(--text-faint); }
+
+.chip {
+  display:inline-block; padding:1px 7px; border-radius:10px; font-size:10px;
+  font-weight:600; white-space:nowrap; border:1px solid transparent;
+}
+.chip-ok      { background:#dcfce7; color:#15803d; border-color:#bbf7d0; }
+.chip-bad     { background:#fee2e2; color:#b91c1c; border-color:#fecaca; }
+.chip-warn    { background:#fef3c7; color:#b45309; border-color:#fde68a; }
+.chip-info    { background:#dbeafe; color:#1d4ed8; border-color:#bfdbfe; }
+.chip-neutral { background:var(--surface-2); color:var(--text-muted); border-color:var(--border); }
+
+.set-detail-grid {
+  display:grid; grid-template-columns:max-content 1fr; gap:5px 16px; font-size:11px;
+  padding:14px 18px; margin:0 12px; background:var(--surface-2);
+  border:1px solid var(--border); border-radius:8px; white-space:normal;
+}
+.set-detail-grid dt { font-family:monospace; color:var(--accent); font-size:10px; }
+.set-detail-grid dd { margin:0; color:var(--text); word-break:break-word; line-height:1.55; }
 </style>
 {% endblock %}
 
@@ -308,6 +536,12 @@ a.leg-row:hover { background:var(--surface-2); }
     <button class="tab-btn" data-tab="old-pipeline">
       <span class="tab-label-stage">Analysis</span>Old Pipeline
     </button>
+    <span class="tab-strip-sep">Set&nbsp;aside</span>
+    {% for key, spec in set_files.items() %}
+    <button class="tab-btn" data-tab="set-{{ key }}">
+      <span class="tab-label-stage">Set</span>{{ spec.title }}
+    </button>
+    {% endfor %}
   </div>
 
 
@@ -502,9 +736,38 @@ python -m search.run_search --harvest-only</pre>
           </a>
         </div>
 
+        <div class="stats-two">
+          <div class="stat-card">
+            <h3>Source Breakdown</h3>
+            <div id="search-source-breakdown"><div class="null-note">Loading…</div></div>
+          </div>
+          <div class="stat-card">
+            <h3>Candidates by Publication Year</h3>
+            <div id="cand-year-chart"><div class="null-note">Loading…</div></div>
+          </div>
+        </div>
+
         <div class="stat-card">
-          <h3>Source Breakdown</h3>
-          <div id="search-source-breakdown"><div class="null-note">Loading…</div></div>
+          <h3>Yield per Search Phrase</h3>
+          <p style="font-size:10px;color:var(--text-faint);margin:0 0 8px">
+            Records fetched from OpenAlex per phrase, rebuilt from the cursor checkpoints in
+            <code>cache/openalex/</code>. These are <strong>pre-deduplication</strong> counts — a paper
+            matching three phrases is counted three times, so this column does not sum to Total Candidates.
+            <span id="phrase-total"></span>
+          </p>
+          <div class="table-scroll">
+            <table class="mini-table" id="phrase-table">
+              <thead><tr>
+                <th data-sort="phrase">Phrase</th>
+                <th data-sort="jobs" class="num" style="text-align:right">Jobs</th>
+                <th data-sort="fetched" class="num" style="text-align:right">Records ▼</th>
+                <th style="width:28%">Share</th>
+              </tr></thead>
+              <tbody id="phrase-tbody">
+                <tr><td colspan="4" class="null-note" style="padding:12px">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <div class="stat-card" style="padding:14px 16px">
@@ -751,8 +1014,13 @@ python -m filter.run_filter --rebuild-index     # rebuild index from filtered.cs
           </a>
         </div>
 
+        <div class="stat-card">
+          <h3>Filtered by Publication Year</h3>
+          <div id="filt-year-chart"><div class="null-note">Loading…</div></div>
+        </div>
+
         <div class="stat-card" style="padding:14px 16px">
-          <h3>How it works — data flow</h3>
+          <h3>How it works — data flow <span style="font-weight:400;text-transform:none;letter-spacing:0">· live counts from filtered.csv</span></h3>
           <div class="flow-chart" style="gap:2px">
             <div class="flow-node-cli">python -m filter.run_filter</div>
             <div class="flow-arrow-down">↓</div>
@@ -762,34 +1030,54 @@ python -m filter.run_filter --rebuild-index     # rebuild index from filtered.cs
             </div>
             <div class="flow-arrow-down">↓ per row</div>
             <div class="flow-node" style="border-left:3px solid #dc2626">
+              <span class="flow-count stop" id="fe-r1">—</span>
               <div class="flow-node-head">Rule 1 — Exclusion check</div>
               Title + abstract scanned for biological or technical patterns (DNA/RNA/viral/cell replication, replication fork/origin/stress, code/data/model replication…)<br>
               <strong>Match →</strong> <code>false_positive</code> [high confidence, rule_based] — stop here
             </div>
-            <div class="flow-arrow-down">↓ no match</div>
+            <div class="flow-arrow-down">↓ no match <span id="fe-after-r1" style="font-size:10px;font-family:monospace"></span></div>
             <div class="flow-node" style="border-left:3px solid #dc2626">
+              <span class="flow-count stop" id="fe-r2">—</span>
               <div class="flow-node-head">Rule 2 — Replication phrase check</div>
               Any of 35+ replication phrases present in title or abstract?<br>
               <strong>None found →</strong> <code>false_positive</code> [high, rule_based] — stop here
             </div>
-            <div class="flow-arrow-down">↓ phrase found</div>
+            <div class="flow-arrow-down">↓ phrase found <span id="fe-after-r2" style="font-size:10px;font-family:monospace"></span></div>
             <div class="flow-node">
               <div class="flow-node-head">Rule 3 — Type detection</div>
               Do only reproduction-flavoured phrases fire (<em>could not reproduce</em>, <em>reproducibility of</em>…)?<br>
               <strong>Yes →</strong> base_status = <code>reproduction</code> &nbsp; <strong>No →</strong> base_status = <code>replication</code>
+              <div class="flow-split">Not an exit — every surviving row continues to Rule 4.</div>
             </div>
             <div class="flow-arrow-down">↓</div>
             <div class="flow-node">
+              <span class="flow-count llm" id="fe-r4">—</span>
               <div class="flow-node-head">Rule 4 — Specific-target gate</div>
               Does text contain an author–year citation like <code>(Author, YYYY)</code> within a plausible year range?<br>
-              <strong>Yes →</strong> <code>replication</code> or <code>reproduction</code> [high, rule_based]<br>
+              <strong>No →</strong> uncertain — send to LLM &nbsp; <strong>Yes →</strong> continue to the proximity gate
+            </div>
+            <div class="flow-arrow-down">↓ cite found</div>
+            <div class="flow-node">
+              <span class="flow-count llm" id="fe-r5">—</span>
+              <div class="flow-node-head">Rule 5 — Same-sentence proximity gate</div>
+              Is the citation in the <strong>same sentence</strong> as the replication phrase? A phrase and a
+              citation that merely co-occur somewhere in the abstract are frequently unrelated.<br>
               <strong>No →</strong> uncertain — send to LLM
             </div>
-            <div class="flow-arrow-down">↓ uncertain rows only (~1%)</div>
+            <div class="flow-arrow-down">↓ same sentence</div>
+            <div class="flow-node" style="border-left:3px solid #16a34a">
+              <span class="flow-count pass" id="fe-r6">—</span>
+              <div class="flow-node-head">Rule pass — accepted by rules alone</div>
+              Phrase and citation co-located → <code>replication</code> or <code>reproduction</code> [high, rule_based], no API call.
+              <div class="flow-split" id="fe-r6-split"></div>
+            </div>
+            <div class="flow-arrow-down">↓ uncertain rows from Rules 4 + 5</div>
             <div class="flow-node" style="border-left:3px solid #2563eb">
+              <span class="flow-count llm" id="fe-llm">—</span>
               <div class="flow-node-head">LLM classify</div>
               Title + abstract sent to GPT (<code>FILTER_OPENAI_MODEL</code>); Gemini fallback via <code>GEMINI_MODEL</code>. Response cached by <code>hash(title+abstract)</code> — identical rows never re-query.<br>
               <span style="margin-top:4px;display:block">Output: <code>replication</code> / <code>reproduction</code> / <code>false_positive</code> / <code>needs_review</code> with <code>filter_evidence</code> quote</span>
+              <div class="flow-split" id="fe-llm-split"></div>
             </div>
             <div class="flow-arrow-down">↓</div>
             <div class="flow-node" style="border-left:3px solid #16a34a">
@@ -911,6 +1199,16 @@ python -m extract.audit_dois --apply  # write corrections</pre>
             <div class="kpi-label">Extracted ↓</div>
             <div class="kpi-sub">extracted.csv</div>
           </a>
+          <a href="/api/check/download?stage=extracted&type=replication" class="kpi-card" title="Download replication rows">
+            <div class="kpi-num" id="k-ext-replication" style="color:#16a34a">—</div>
+            <div class="kpi-label">Replications ↓</div>
+            <div class="kpi-sub" id="k-ext-replication-pct"></div>
+          </a>
+          <a href="/api/check/download?stage=extracted&type=reproduction" class="kpi-card" title="Download reproduction rows">
+            <div class="kpi-num" id="k-ext-reproduction" style="color:#2563eb">—</div>
+            <div class="kpi-label">Reproductions ↓</div>
+            <div class="kpi-sub" id="k-ext-reproduction-pct"></div>
+          </a>
           <div class="kpi-card">
             <div class="kpi-num" id="k-target-pending" style="color:#f59e0b">—</div>
             <div class="kpi-label">Target Pending</div>
@@ -986,13 +1284,31 @@ python -m extract.audit_dois --apply  # write corrections</pre>
               <span class="stat-pct" id="lm-err-pct"></span></span></a>
         </div>
 
-        <div class="stat-card">
-          <h3>Outcome Distribution</h3>
-          <div class="pie-wrap">
-            <svg id="pie-svg" width="120" height="120" viewBox="0 0 160 160"
-                 style="flex-shrink:0;overflow:visible"></svg>
-            <div class="pie-legend" id="pie-legend"><div class="null-note">Loading…</div></div>
+        <div class="stats-two">
+          <div class="stat-card">
+            <h3>Outcome Distribution — Replications</h3>
+            <div class="pie-wrap">
+              <svg id="pie-svg" width="120" height="120" viewBox="0 0 160 160"
+                   style="flex-shrink:0;overflow:visible"></svg>
+              <div class="pie-legend" id="pie-legend"><div class="null-note">Loading…</div></div>
+            </div>
           </div>
+
+          <div class="stat-card">
+            <h3>Outcome Distribution — Reproductions</h3>
+            <p style="font-size:10px;color:var(--text-faint);margin:0 0 8px">
+              Reproductions re-run the original data and code, so they are coded on two independent
+              axes rather than the replication categories. Rows = did the computation reproduce;
+              columns = does the result survive alternative specifications.
+            </p>
+            <div id="repro-heat"><div class="null-note">Loading…</div></div>
+            <div id="repro-extra" style="margin-top:8px"></div>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <h3>Extracted by Publication Year</h3>
+          <div id="ext-year-chart"><div class="null-note">Loading…</div></div>
         </div>
 
         <div class="stat-card" style="padding:14px 16px">
@@ -1153,12 +1469,13 @@ python -m extract.promote_test --all --dry-run # preview</pre>
         </div>
 
         <div class="stat-card">
-          <h3>Outcome Distribution (test)</h3>
+          <h3>Outcome Distribution (test) — Replications</h3>
           <div class="pie-wrap">
             <svg id="pie-test-svg" width="120" height="120" viewBox="0 0 160 160"
                  style="flex-shrink:0;overflow:visible"></svg>
             <div class="pie-legend" id="pie-test-legend"><div class="null-note">Loading…</div></div>
           </div>
+          <div id="test-repro-note" style="font-size:10px;color:var(--text-faint);margin-top:8px"></div>
         </div>
       </div>
     </div>
@@ -1247,54 +1564,64 @@ SUPABASE_SERVICE_KEY=eyJhbGc...</pre>
 
           <div class="kpi-row">
             <div class="kpi-card">
-              <div class="kpi-num" id="sv-judgements">—</div>
-              <div class="kpi-label">Judgements</div>
-              <div class="kpi-sub">total votes cast</div>
+              <div class="kpi-num" id="sv-onevote">—</div>
+              <div class="kpi-label">Have ≥ 1 Vote</div>
+              <div class="kpi-sub" id="sv-onevote-pct"></div>
             </div>
             <div class="kpi-card">
-              <div class="kpi-num" id="sv-validators">—</div>
-              <div class="kpi-label">Validators</div>
-              <div class="kpi-sub">active</div>
+              <div class="kpi-num" id="sv-both">—</div>
+              <div class="kpi-label">Both Humans Done</div>
+              <div class="kpi-sub" id="sv-both-pct"></div>
             </div>
             <div class="kpi-card">
-              <div class="kpi-num" id="sv-completion">—</div>
-              <div class="kpi-label">Completion</div>
-              <div class="kpi-sub">judgements / queue slots</div>
+              <div class="kpi-num" id="sv-tiebreak" style="color:#7c3aed">—</div>
+              <div class="kpi-label">Tiebreakers</div>
+              <div class="kpi-sub">sent to adjudication</div>
             </div>
-          </div>
-
-          <div style="margin-bottom:12px">
-            <div style="display:flex;justify-content:space-between;font-size:11px;
-                        color:var(--text-muted);margin-bottom:4px">
-              <span>Validation Progress</span>
-              <span id="sv-progress-label">—</span>
-            </div>
-            <div class="progress-bar" style="height:8px">
-              <div class="progress-fill" id="sv-progress-fill" style="width:0%"></div>
+            <div class="kpi-card">
+              <div class="kpi-num" id="sv-adminchecked">—</div>
+              <div class="kpi-label">Admin Checked</div>
+              <div class="kpi-sub" id="sv-override"></div>
             </div>
           </div>
 
           <div class="stats-two">
             <div class="stat-card">
-              <h3>Correction Frequency</h3>
-              <div id="corr-bars"><div class="null-note">Loading…</div></div>
-              <div style="margin-top:12px">
-                <div class="stat-row">
-                  <span>Type incorrect</span>
-                  <span><strong id="corr-type" style="color:#dc2626">—</strong>
-                    <span class="stat-pct" id="corr-type-pct"></span></span>
-                </div>
-                <div class="stat-row">
-                  <span>Original DOI incorrect</span>
-                  <span><strong id="corr-original" style="color:#f59e0b">—</strong>
-                    <span class="stat-pct" id="corr-original-pct"></span></span>
-                </div>
-                <div class="stat-row">
-                  <span>Outcome incorrect</span>
-                  <span><strong id="corr-outcome" style="color:#7c3aed">—</strong>
-                    <span class="stat-pct" id="corr-outcome-pct"></span></span>
-                </div>
-              </div>
+              <h3>Slot Coverage</h3>
+              <p class="card-sub">How many of the three validator slots are filled per record.</p>
+              <div id="sv-coverage-bar" class="stack-bar"></div>
+              <div id="sv-coverage-rows"></div>
+            </div>
+            <div class="stat-card">
+              <h3>Workflow Status</h3>
+              <p class="card-sub">Where each record sits in the validation queue.</p>
+              <div id="sv-status-bar" class="stack-bar"></div>
+              <div id="sv-status-rows"></div>
+            </div>
+          </div>
+
+          <div class="section-head">
+            <h2>Did the validators keep the pipeline's answer?</h2>
+            <p>
+              Among the <strong id="sv-agree-n">—</strong> records where <strong>both</strong> human
+              validators finished. <em>Kept</em> = the validator marked the pipeline value correct;
+              <em>changed</em> = marked it incorrect and supplied a replacement. Where the two humans
+              disagree, the LLM slot's verdict shows which of them it sided with. Each block then
+              reports how the reviewer finally settled it.
+            </p>
+          </div>
+          <div class="agree-grid" id="sv-agreement">
+            <div class="null-note">Loading…</div>
+          </div>
+
+          <div class="stats-two">
+            <div class="stat-card">
+              <h3>Final Record vs Pipeline</h3>
+              <p style="font-size:10px;color:var(--text-faint);margin:0 0 10px">
+                For records the reviewer has finalised: does the agreed value differ from what
+                extraction originally produced?
+              </p>
+              <div id="sv-final"><div class="null-note">Loading…</div></div>
             </div>
 
             <div class="stat-card">
@@ -1725,6 +2052,55 @@ SUPABASE_SERVICE_KEY=eyJhbGc...</pre>
 
   </div><!-- /tab-old-pipeline -->
 
+
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  <!-- SET-ASIDE TABS — one per CSV in dashboard.SET_FILES                      -->
+  <!-- ════════════════════════════════════════════════════════════════════════ -->
+  {% for key, spec in set_files.items() %}
+  <div class="tab-panel" id="tab-set-{{ key }}" data-set="{{ key }}">
+    <div class="panel-split">
+      <div class="set-note">
+        <span class="set-why">{{ spec.why }}</span>
+        <span class="set-action"><strong>What to do:</strong> {{ spec.action }}
+          · source file <code>data/{{ spec.file }}</code></span>
+      </div>
+
+      <div class="stats-panel">
+        <div class="kpi-row">
+          <a href="/api/dashboard/set-download?set={{ key }}" class="kpi-card"
+             title="Download {{ spec.file }}">
+            <div class="kpi-num" id="set-{{ key }}-count">—</div>
+            <div class="kpi-label">Entries ↓</div>
+            <div class="kpi-sub">{{ spec.file }}</div>
+          </a>
+          <div class="kpi-card set-primary-card">
+            <div class="kpi-label" id="set-{{ key }}-primary-label">Breakdown</div>
+            <div id="set-{{ key }}-primary" class="set-primary"></div>
+          </div>
+        </div>
+
+        <div class="stat-card set-table-card">
+          <div class="set-toolbar">
+            <h3>All entries</h3>
+            <input type="search" id="set-{{ key }}-search" placeholder="Search all columns…"
+                   class="set-search" oninput="setSearchDebounced('{{ key }}')">
+            <span id="set-{{ key }}-total" class="set-total"></span>
+          </div>
+          <div class="set-table-wrap">
+            <table class="set-table">
+              <thead><tr id="set-{{ key }}-thead"></tr></thead>
+              <tbody id="set-{{ key }}-tbody">
+                <tr><td class="null-note" style="padding:14px">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pager" id="set-{{ key }}-pager"></div>
+        </div>
+      </div>
+    </div>
+  </div><!-- /tab-set-{{ key }} -->
+  {% endfor %}
+
 </div><!-- /dash-page -->
 {% endblock %}
 
@@ -1735,31 +2111,157 @@ const $ = id => document.getElementById(id);
 
 // ── Tab switching (hash-based) ───────────────────────────────────────────────
 const TAB_LOADERS = {
+  'search':       () => loadPhrases(),
   'supabase':     () => { if (!_valLoaded)      loadValidation(); },
   'old-pipeline': () => { if (!_analysisLoaded) loadAnalysis(); },
 };
+// Set tabs are generated from the server-side registry — register their loaders
+// by reading the panels rather than repeating the key list here.
+document.querySelectorAll('.tab-panel[data-set]').forEach(panel => {
+  TAB_LOADERS['set-' + panel.dataset.set] = () => loadSet(panel.dataset.set);
+});
+
+function activateTab(name) {
+  const btn = document.querySelector(`[data-tab="${name}"]`);
+  const panel = document.getElementById('tab-' + name);
+  if (!btn || !panel) return false;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  panel.classList.add('active');
+  const loader = TAB_LOADERS[name];
+  if (loader) loader();
+  return true;
+}
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    activateTab(btn.dataset.tab);
     location.hash = btn.dataset.tab;
-    const loader = TAB_LOADERS[btn.dataset.tab];
-    if (loader) loader();
   });
 });
 
-(function(){
-  const h = location.hash.replace('#','');
-  if (h && document.querySelector(`[data-tab="${h}"]`)) {
-    document.querySelector('.tab-btn.active').classList.remove('active');
-    document.querySelector('.tab-panel.active').classList.remove('active');
-    document.querySelector(`[data-tab="${h}"]`).classList.add('active');
-    document.getElementById('tab-' + h).classList.add('active');
-  }
+// Deep links (#supabase, #set-not_a_replication) must work both on first paint and
+// when the fragment changes after load — the browser may apply it either way.
+// The initial call is deferred to DOMContentLoaded: activateTab runs a tab loader,
+// and the loaders close over `let` bindings declared further down this script.
+const _tabFromHash = () => activateTab(location.hash.replace('#', ''));
+window.addEventListener('hashchange', _tabFromHash);
+
+// ── Docs drawers ─────────────────────────────────────────────────────────────
+// Each tab ships a .docs-panel of reference prose. Wrapping it in a collapsed
+// <details> here (rather than in the markup) keeps one implementation for all
+// tabs and leaves the stats panel owning the full width by default.
+(function wrapDocsDrawers(){
+  const LABELS = {
+    'tab-search':       'Stage 1 reference — sources, search phrases, dedup passes, CLI flags',
+    'tab-filter':       'Stage 2 reference — decision logic, phrase list, LLM prompt, CLI flags',
+    'tab-extract':      'Stage 3 reference — pipeline steps, column dictionary, CLI flags',
+    'tab-extract-test': 'Stage 3 sandbox reference — test workflow and promote commands',
+    'tab-supabase':     'Stage 4 reference — validation workflow, configuration, field meanings',
+  };
+  document.querySelectorAll('.panel-split').forEach(split => {
+    const docs = split.querySelector('.docs-panel');
+    if (!docs) return;
+    const panelId = split.closest('.tab-panel')?.id || '';
+    const details = document.createElement('details');
+    details.className = 'docs-drawer';
+    const summary = document.createElement('summary');
+    summary.innerHTML = `How this stage works <span class="doc-hint">· ${
+      LABELS[panelId] || 'reference documentation'}</span>`;
+    details.appendChild(summary);
+    docs.parentNode.insertBefore(details, docs);
+    details.appendChild(docs);
+  });
 })();
+
+// ── Year distribution bars ───────────────────────────────────────────────────
+function renderYearChart(el, byYear, minYear) {
+  const all = Object.entries(byYear || {})
+    .map(([y,n]) => [parseInt(y,10), n])
+    .filter(([y]) => !isNaN(y) && (!minYear || y >= minYear))
+    .sort((a,b) => a[0]-b[0]);
+  if (!all.length) { el.innerHTML = '<div class="null-note">No year data.</div>'; return; }
+
+  // Trim the long thin tails (a handful of 1950s rows against a 200k peak flattens
+  // every bar). Keep the smallest contiguous window holding 99% of the rows.
+  const grand = all.reduce((s,e) => s+e[1], 0);
+  const cut = grand * 0.005;
+  let lo = 0, hi = all.length - 1, acc = 0;
+  while (lo < hi && (acc += all[lo][1]) <= cut) lo++;
+  acc = 0;
+  while (hi > lo && (acc += all[hi][1]) <= cut) hi--;
+  const entries = all.slice(lo, hi + 1);
+  const trimmed = grand - entries.reduce((s,e) => s+e[1], 0);
+
+  const max = Math.max(...entries.map(e => e[1]));
+  const total = entries.reduce((s,e) => s+e[1], 0);
+  // Label every year when there is room, else every other one.
+  const step = entries.length > 24 ? 2 : 1;
+  el.innerHTML = `<div class="year-chart">${entries.map(([y,n],i) => `
+      <div class="year-col">
+        <div class="year-bar-area">
+          <div class="year-tip"><b>${y}</b>${n.toLocaleString()} rows
+            <span>${((n/total)*100).toFixed(1)}%</span></div>
+          <div class="year-bar" style="height:${Math.max(1,(n/max)*100)}%"></div>
+        </div>
+        <div class="year-tick">${i % step === 0 ? y : ''}</div>
+      </div>`).join('')}</div>
+    <div class="year-caption">
+      ${entries[0][0]}–${entries[entries.length-1][0]} · ${total.toLocaleString()} rows ·
+      peak ${max.toLocaleString()} in ${entries.reduce((a,b)=>b[1]>a[1]?b:a)[0]}${
+        trimmed ? ` · ${trimmed.toLocaleString()} outside this range` : ''}
+    </div>`;
+
+  // Pointer events back the :hover rule so the readout also works for touch and
+  // pen input, where :hover never fires.
+  el.querySelectorAll('.year-col').forEach(col => {
+    col.addEventListener('pointerenter', () => col.classList.add('tip-on'));
+    col.addEventListener('pointerleave', () => col.classList.remove('tip-on'));
+  });
+}
+
+// ── Reproduction 3x3 heatmap ─────────────────────────────────────────────────
+const REPRO_ROWS = ['computationally successful','computational issues','computation not checked'];
+const REPRO_COLS = ['robust','robustness challenges','robustness not checked'];
+
+function renderReproHeat(el, extraEl, byOutcome) {
+  const data = byOutcome || {};
+  const grid = {}; let inGrid = 0;
+  REPRO_ROWS.forEach(r => REPRO_COLS.forEach(c => {
+    const v = data[`${r}, ${c}`] || 0;
+    grid[`${r}|${c}`] = v; inGrid += v;
+  }));
+  // Anything not on the 3x3 grid (cannot_be_determined, api_error, legacy values).
+  const off = Object.entries(data)
+    .filter(([k]) => !(REPRO_ROWS.some(r => k.startsWith(r + ',')) ))
+    .sort((a,b) => b[1]-a[1]);
+
+  if (!inGrid && !off.length) {
+    el.innerHTML = '<div class="null-note">No reproduction rows yet.</div>';
+    extraEl.innerHTML = ''; return;
+  }
+  const max = Math.max(1, ...Object.values(grid));
+  const shade = v => v === 0 ? 'transparent'
+    : `rgba(37,99,235,${(0.12 + 0.68*(v/max)).toFixed(3)})`;
+
+  el.innerHTML = `<div class="heat-grid">
+    <div class="heat-corner"></div>
+    ${REPRO_COLS.map(c => `<div class="heat-head">${c}</div>`).join('')}
+    ${REPRO_ROWS.map(r => `
+      <div class="heat-side">${r}</div>
+      ${REPRO_COLS.map(c => {
+        const v = grid[`${r}|${c}`];
+        return `<div class="heat-cell${v?'':' zero'}" style="background:${shade(v)}"
+                     title="${r}, ${c}: ${v}">${v}</div>`;
+      }).join('')}`).join('')}
+  </div>`;
+
+  extraEl.innerHTML = off.length ? `<div class="stat-row" style="border:none;padding-top:8px">
+      <span style="font-size:10px;color:var(--text-faint)">Not on the grid</span></div>` +
+    off.map(([k,v]) => `<div class="stat-row"><span>${esc(k)}</span><strong>${v}</strong></div>`).join('')
+    : '';
+}
 
 // ── Donut chart ──────────────────────────────────────────────────────────────
 const PIE_COLORS = {
@@ -1822,6 +2324,35 @@ function renderLegend(legendEl, data, total, stage) {
   }).join('');
 }
 
+// ── Pager with page jump ─────────────────────────────────────────────────────
+// Shared by every paginated table. `go` receives the 1-based target page.
+function renderPager(el, page, pages, go) {
+  if (!el) return;
+  if (pages <= 1) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <button class="pager-btn" data-go="1"        ${page<=1?'disabled':''} title="First page">«</button>
+    <button class="pager-btn" data-go="${page-1}" ${page<=1?'disabled':''}>‹ Prev</button>
+    <span class="pager-jump">Page
+      <input type="number" class="pager-input" min="1" max="${pages}" value="${page}"
+             aria-label="Jump to page"> of ${pages}</span>
+    <button class="pager-btn" data-go="${page+1}" ${page>=pages?'disabled':''}>Next ›</button>
+    <button class="pager-btn" data-go="${pages}"  ${page>=pages?'disabled':''} title="Last page">»</button>`;
+
+  el.querySelectorAll('[data-go]').forEach(b =>
+    b.addEventListener('click', () => go(Number(b.dataset.go))));
+
+  const input = el.querySelector('.pager-input');
+  const jump = () => {
+    const v = Math.min(pages, Math.max(1, parseInt(input.value, 10) || 1));
+    input.value = v;
+    go(v);
+  };
+  input.addEventListener('change', jump);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); jump(); }
+  });
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const pct = (n,t) => (!t) ? '' : `(${((n/t)*100).toFixed(1)}%)`;
 const fmt = n => (n==null) ? '—' : Number(n).toLocaleString();
@@ -1850,6 +2381,80 @@ function fillModel(pfx, csv, p) {
 
 const OUTCOMES = ['success','failure','mixed','uninformative','cannot_be_determined','descriptive','pending','api_error'];
 
+// ── Stage 2 flowchart live counts ────────────────────────────────────────────
+function renderRuleFlow(csv) {
+  const ex = csv.filter_by_rule_exit || {};
+  const st = csv.filter_rule_exit_status || {};
+  const total = csv.filtered_count || 0;
+  if (!total || !Object.keys(ex).length) return;
+
+  const setCount = (id, n) => {
+    const el = $(id); if (!el) return;
+    el.innerHTML = `${fmt(n)}<span class="fc-pct">${
+      total ? ((n/total)*100).toFixed(1)+'%' : ''}</span>`;
+  };
+  const r1 = ex.r1_exclusion||0, r2 = ex.r2_no_phrase||0;
+  const r3 = ex.r3_no_cite||0,   r4 = ex.r4_no_same_sentence||0, r5 = ex.r5_pass||0;
+
+  setCount('fe-r1', r1);
+  setCount('fe-r2', r2);
+  setCount('fe-r4', r3);
+  setCount('fe-r5', r4);
+  setCount('fe-r6', r5);
+  setCount('fe-llm', r3 + r4);
+
+  const survived1 = total - r1;
+  const survived2 = survived1 - r2;
+  $('fe-after-r1').textContent = `${fmt(survived1)} continue`;
+  $('fe-after-r2').textContent = `${fmt(survived2)} continue`;
+
+  // The type split is only observable on rows the rules accepted outright.
+  const pass = st.r5_pass || {};
+  $('fe-r6-split').textContent =
+    `${fmt(pass.replication||0)} replication · ${fmt(pass.reproduction||0)} reproduction — no API call`;
+
+  // What the LLM did with everything Rules 4 + 5 handed it.
+  const llmIn = {};
+  [st.r3_no_cite||{}, st.r4_no_same_sentence||{}].forEach(o =>
+    Object.entries(o).forEach(([k,v]) => llmIn[k] = (llmIn[k]||0) + v));
+  const llmTotal = Object.values(llmIn).reduce((a,b)=>a+b,0);
+  $('fe-llm-split').innerHTML = llmTotal
+    ? 'LLM verdicts: ' + ['replication','reproduction','false_positive','needs_review']
+        .filter(k => llmIn[k])
+        .map(k => `<strong>${fmt(llmIn[k])}</strong> ${k} (${((llmIn[k]/llmTotal)*100).toFixed(1)}%)`)
+        .join(' · ')
+    : '';
+}
+
+// ── Stage 1 phrase yield table ───────────────────────────────────────────────
+let _phraseRows = null, _phraseSort = 'fetched';
+async function loadPhrases() {
+  if (_phraseRows) return;
+  const data = await fetch('/api/dashboard/search-phrases').then(r=>r.json());
+  _phraseRows = data.rows || [];
+  $('phrase-total').innerHTML = `Total fetched across all phrases: <strong>${fmt(data.total_fetched)}</strong>.` +
+    (data.unattributed_files ? ` ${data.unattributed_files} cursor file(s) could not be matched to a phrase.` : '');
+  drawPhraseTable();
+}
+
+function drawPhraseTable() {
+  if (!_phraseRows) return;
+  const rows = [..._phraseRows].sort((a,b) =>
+    _phraseSort === 'phrase' ? a.phrase.localeCompare(b.phrase) : b[_phraseSort] - a[_phraseSort]);
+  const max = Math.max(1, ...rows.map(r => r.fetched));
+  $('phrase-tbody').innerHTML = rows.map(r => `<tr>
+      <td><span style="font-family:monospace">${esc(r.phrase)}</span>${
+        r.source === 'concept' ? ' <span class="flow-badge badge-purple">concept</span>' : ''}</td>
+      <td class="num">${fmt(r.jobs)}</td>
+      <td class="num">${fmt(r.fetched)}</td>
+      <td><div class="yield-bar" style="width:${(r.fetched/max)*100}%"></div></td>
+    </tr>`).join('');
+}
+
+document.querySelectorAll('#phrase-table th[data-sort]').forEach(th => {
+  th.addEventListener('click', () => { _phraseSort = th.dataset.sort; drawPhraseTable(); });
+});
+
 // ── Load pipeline / CSV stats ────────────────────────────────────────────────
 async function loadPipeline() {
   const csv = await fetch('/api/dashboard/csv-stats').then(r=>r.json());
@@ -1870,6 +2475,8 @@ async function loadPipeline() {
   } else if ($('search-source-breakdown')) {
     $('search-source-breakdown').innerHTML = '<div class="null-note">Source breakdown not yet available.</div>';
   }
+  // Pre-1950 rows are sparse noise that flattens the useful part of the axis.
+  renderYearChart($('cand-year-chart'), csv.candidates_by_year, 1950);
 
   // Filter tab
   $('k-filtered').textContent = fmt(csv.filtered_count);
@@ -1889,6 +2496,8 @@ async function loadPipeline() {
   $('f-rr-no-doi-url-pct').textContent = pct(csv.filter_no_doi_or_url, rrTotal);
   $('f-rr-no-abstract').textContent  = fmt(csv.filter_no_abstract);
   $('f-rr-no-abstract-pct').textContent = pct(csv.filter_no_abstract, rrTotal);
+  renderYearChart($('filt-year-chart'), csv.filtered_by_year, 1950);
+  renderRuleFlow(csv);
 
   // Extract tab
   $('k-extracted').textContent      = fmt(csv.extracted_count);
@@ -1902,10 +2511,21 @@ async function loadPipeline() {
   $('m-multiple-original-pct').textContent= pct(csv.match_multiple_original, mtotal);
   fillLinkMethod('lm', csv, '');
   fillModel('mod', csv, '');
-  const pieData=OUTCOMES.map(k=>({key:k,label:PIE_LABELS[k],color:PIE_COLORS[k],value:csv[`outcome_${k}`]||0}));
+  const etypes = csv.extracted_by_type || {};
+  const etotal = csv.extracted_count || 0;
+  $('k-ext-replication').textContent      = fmt(etypes.replication  || 0);
+  $('k-ext-replication-pct').textContent  = pct(etypes.replication  || 0, etotal);
+  $('k-ext-reproduction').textContent     = fmt(etypes.reproduction || 0);
+  $('k-ext-reproduction-pct').textContent = pct(etypes.reproduction || 0, etotal);
+
+  // Replication outcomes only — reproductions use a disjoint vocabulary.
+  const replOut = csv.extracted_outcome_replication || {};
+  const pieData=OUTCOMES.map(k=>({key:k,label:PIE_LABELS[k],color:PIE_COLORS[k],value:replOut[k]||0}));
   const outTotal=pieData.reduce((s,d)=>s+d.value,0);
   drawDonut($('pie-svg'), pieData);
   renderLegend($('pie-legend'), pieData, outTotal, 'extracted');
+  renderReproHeat($('repro-heat'), $('repro-extra'), csv.extracted_outcome_reproduction);
+  renderYearChart($('ext-year-chart'), csv.extracted_by_year, 1950);
 
   // Extract-Test tab
   $('k-test-count').textContent   = fmt(csv.test_extracted_count);
@@ -1918,10 +2538,16 @@ async function loadPipeline() {
   $('tm-morig').textContent       = fmt(csv.test_match_multiple_original);
   $('tm-morig-pct').textContent   = pct(csv.test_match_multiple_original, tmtotal);
   fillLinkMethod('tlm', csv, 'test_');
-  const testPieData=OUTCOMES.map(k=>({key:k,label:PIE_LABELS[k],color:PIE_COLORS[k],value:csv[`test_outcome_${k}`]||0}));
+  const testRepl = csv.test_extracted_outcome_replication || {};
+  const testPieData=OUTCOMES.map(k=>({key:k,label:PIE_LABELS[k],color:PIE_COLORS[k],value:testRepl[k]||0}));
   const testOutTotal=testPieData.reduce((s,d)=>s+d.value,0);
   drawDonut($('pie-test-svg'), testPieData);
   renderLegend($('pie-test-legend'), testPieData, testOutTotal, 'extracted-test');
+  const testRepro = Object.entries(csv.test_extracted_outcome_reproduction || {});
+  $('test-repro-note').innerHTML = testRepro.length
+    ? 'Reproductions (separate vocabulary): ' +
+      testRepro.sort((a,b)=>b[1]-a[1]).map(([k,v]) => `<strong>${v}</strong> ${esc(k)}`).join(' · ')
+    : 'No reproduction rows in the test set.';
 }
 
 // ── Validation (Supabase) tab ────────────────────────────────────────────────
@@ -1929,9 +2555,9 @@ let _valLoaded = false;
 async function loadValidation() {
   _valLoaded = true;
   try {
-    const [stats, corr, outcomes] = await Promise.all([
+    const [stats, an, outcomes] = await Promise.all([
       fetch('/api/dashboard/supabase-stats').then(r=>r.json()),
-      fetch('/api/dashboard/supabase-corrections').then(r=>r.json()),
+      fetch('/api/dashboard/supabase-analytics').then(r=>r.json()),
       fetch('/api/dashboard/supabase-outcomes').then(r=>r.json()),
     ]);
     if (stats.error === 'supabase_not_configured') {
@@ -1948,42 +2574,10 @@ async function loadValidation() {
     $('sv-validated-pct').textContent   = pct(stats.validated, stats.total);
     $('sv-unvalidated-pct').textContent = pct(stats.unvalidated, stats.total);
     $('sv-needreview-pct').textContent  = pct(stats.need_review, stats.total);
-    $('sv-judgements').textContent  = fmt(stats.total_judgements);
-    $('sv-validators').textContent  = fmt(stats.active_validators);
-    $('sv-completion').textContent  = stats.completion_rate!=null
-      ? (stats.completion_rate*100).toFixed(1)+'%' : '—';
-    const vp=stats.total>0?(stats.validated/stats.total)*100:0;
-    $('sv-progress-fill').style.width=vp+'%';
-    $('sv-progress-label').textContent=vp.toFixed(1)+'% validated';
-
-    if (!corr.error) {
-      const total=stats.validated||1;
-      const maxCorr=Math.max(corr.type_incorrect||0,corr.original_incorrect||0,corr.outcome_incorrect||0,1);
-      $('corr-bars').innerHTML=[
-        {label:'Type',key:'type_incorrect',color:'#dc2626'},
-        {label:'Original DOI',key:'original_incorrect',color:'#f59e0b'},
-        {label:'Outcome',key:'outcome_incorrect',color:'#7c3aed'},
-      ].map(({label,key,color})=>{
-        const v=corr[key]||0;
-        const w=maxCorr>0?Math.max(2,(v/maxCorr)*100):0;
-        return `<div class="corr-bar-wrap">
-          <div class="corr-bar-label">
-            <span style="font-weight:600">${label}</span>
-            <span>${v.toLocaleString()} (${((v/total)*100).toFixed(1)}%)</span>
-          </div>
-          <div class="corr-bar-track">
-            <div class="corr-bar-fill" style="width:${w}%;background:${color}"></div>
-          </div>
-        </div>`;
-      }).join('');
-      $('corr-type').textContent      = fmt(corr.type_incorrect);
-      $('corr-original').textContent  = fmt(corr.original_incorrect);
-      $('corr-outcome').textContent   = fmt(corr.outcome_incorrect);
-      $('corr-type-pct').textContent    = pct(corr.type_incorrect, total);
-      $('corr-original-pct').textContent= pct(corr.original_incorrect, total);
-      $('corr-outcome-pct').textContent = pct(corr.outcome_incorrect, total);
+    if (an.error) {
+      $('sv-agreement').innerHTML = `<div class="null-note">Validation analytics unavailable: ${esc(an.error)}</div>`;
     } else {
-      $('corr-bars').innerHTML='<div class="null-note">Correction data unavailable</div>';
+      renderValidationAnalytics(an);
     }
 
     if (!outcomes.error && outcomes.outcomes) {
@@ -1999,6 +2593,257 @@ async function loadValidation() {
   } catch(e) {
     $('supa-content').innerHTML=`<div class="null-note">Failed to load Supabase data: ${e.message}</div>`;
   }
+}
+
+// ── Validation analytics ─────────────────────────────────────────────────────
+const FIELD_LABELS = {type:'Type', original:'Original DOI', outcome:'Outcome'};
+
+// How a bucket was finally settled. Only records that have left the queue count;
+// for a split vote, "kept pipeline" is the reviewer siding with the validator who
+// kept it and "took correction" is siding with the one who changed it.
+function resolutionLine(res, bucket) {
+  const r = res || {};
+  const settled = (r.reviewer_kept_pipeline||0) + (r.reviewer_took_correction||0) +
+                  (r.reviewer_took_other||0) + (r.excluded||0);
+  if (!settled && !(r.pending||0)) return '';
+  const keptLabel = bucket === 'one_changed' ? 'sided with the keeper' : 'kept pipeline value';
+  const corrLabel = bucket === 'one_changed' ? 'sided with the changer' : 'took a validator’s value';
+  const parts = [
+    [r.reviewer_kept_pipeline,  keptLabel,             '#16a34a'],
+    [r.reviewer_took_correction, corrLabel,            '#2563eb'],
+    [r.reviewer_took_other,      'took a third value', '#7c3aed'],
+    [r.excluded,                 'excluded / rejected','#6b7280'],
+  ].filter(([n]) => n);
+  return `<div class="res-line">
+      <span class="res-head">Finally settled — ${fmt(settled)} of ${fmt(settled + (r.pending||0))}</span>
+      ${parts.map(([n,label,c]) =>
+        `<span class="res-chip"><span class="agree-tag" style="background:${c}"></span><b>${fmt(n)}</b> ${label}</span>`).join('')}
+      ${r.pending ? `<span class="res-chip" style="opacity:.6">${fmt(r.pending)} still in review</span>` : ''}
+    </div>`;
+}
+
+function renderValidationAnalytics(an) {
+  const total = an.total || 0;
+  $('sv-onevote').textContent      = fmt(an.at_least_one_vote);
+  $('sv-onevote-pct').textContent  = pct(an.at_least_one_vote, total);
+  $('sv-both').textContent         = fmt(an.both_humans);
+  $('sv-both-pct').textContent     = pct(an.both_humans, total);
+  $('sv-tiebreak').textContent     = fmt(an.tiebreakers);
+  $('sv-adminchecked').textContent = fmt(an.admin_checked);
+  $('sv-override').textContent     = `${fmt(an.admin_override)} overrides`;
+
+  // ── Coverage: how many validator slots are filled per record ──
+  const sf = an.slots_filled || {};
+  const cov = [
+    {label:'No votes yet',       n:sf['0']||0, color:'#e2e8f0'},
+    {label:'1 slot filled',      n:sf['1']||0, color:'#fbbf24'},
+    {label:'2 slots filled',     n:sf['2']||0, color:'#60a5fa'},
+    {label:'All 3 slots filled', n:sf['3']||0, color:'#16a34a'},
+  ];
+  const legendRows = items => items.filter(c=>c.n).map(c => `<div class="agree-row">
+      <span><span class="agree-tag" style="background:${c.color}"></span>${esc(c.label)}</span>
+      <span><span class="av">${fmt(c.n)}</span> <span class="stat-pct">${pct(c.n,total)}</span></span>
+    </div>`).join('');
+  const stackBar = items => items.filter(c=>c.n).map(c =>
+      `<span style="width:${(c.n/Math.max(1,total))*100}%;background:${c.color}"
+             title="${esc(c.label)}: ${c.n}"></span>`).join('');
+
+  $('sv-coverage-bar').innerHTML  = stackBar(cov);
+  $('sv-coverage-rows').innerHTML = legendRows(cov);
+
+  const STATUS_COLORS = {
+    validated:'#16a34a', consensus_reached:'#4ade80', validation_inprogress:'#60a5fa',
+    need_review:'#f59e0b', rejected:'#dc2626', unvalidated:'#e2e8f0',
+  };
+  const statusItems = Object.entries(an.by_status||{})
+    .sort((a,b) => b[1]-a[1])
+    .map(([k,v]) => ({label:k || 'unset', n:v, color:STATUS_COLORS[k] || '#94a3b8'}));
+  $('sv-status-bar').innerHTML  = stackBar(statusItems);
+  $('sv-status-rows').innerHTML = legendRows(statusItems);
+
+  // ── Per-field: kept / changed, and who the LLM sided with ──
+  $('sv-agree-n').textContent = fmt((an.agreement||{}).outcome?.n || 0);
+
+  const bucketBlock = (tone, title, count, n, subRows, res, bucket) => `
+    <div class="bucket bucket-${tone}">
+      <div class="bucket-head">
+        <span class="bucket-title">${title}</span>
+        <span class="bucket-num">${fmt(count)}<span class="stat-pct">${pct(count,n)}</span></span>
+      </div>
+      ${subRows.filter(([,v]) => v != null).map(([label,v]) =>
+        `<div class="bucket-sub"><span>${label}</span><span class="av">${fmt(v)}</span></div>`).join('')}
+      ${resolutionLine(res, bucket)}
+    </div>`;
+
+  $('sv-agreement').innerHTML = Object.keys(FIELD_LABELS).map(f => {
+    const a = (an.agreement||{})[f] || {};
+    const n = a.n || 0;
+    const res = a.resolution || {};
+    const bar = [
+      {n:a.both_kept||0,    color:'#16a34a'},
+      {n:a.one_changed||0,  color:'#f59e0b'},
+      {n:a.both_changed||0, color:'#dc2626'},
+    ].filter(s=>s.n);
+
+    return `<div class="agree-card">
+      <div class="agree-card-head">
+        <h4>${FIELD_LABELS[f]}</h4>
+        <div class="stack-bar">${bar.map(s =>
+          `<span style="width:${(s.n/Math.max(1,n))*100}%;background:${s.color}"></span>`).join('')}</div>
+      </div>
+
+      ${bucketBlock('ok', 'Both kept the pipeline value', a.both_kept, n,
+                    [], res.both_kept, 'both_kept')}
+
+      ${bucketBlock('bad', 'Both changed it', a.both_changed, n, [
+        ['…to the same value',     a.both_changed_same],
+        ['…to different values',   a.both_changed_differ],
+      ], res.both_changed, 'both_changed')}
+
+      ${bucketBlock('warn', 'Only one changed it', a.one_changed, n, [
+        ['LLM agreed with the one who <strong>changed</strong>', a.llm_with_changer],
+        ['LLM agreed with the one who <strong>kept</strong>',    a.llm_with_keeper],
+        ['no LLM verdict',                                      a.llm_absent],
+      ], res.one_changed, 'one_changed')}
+    </div>`;
+  }).join('');
+
+  // ── Reviewer's final value vs what extraction produced ──
+  $('sv-final').innerHTML = Object.keys(FIELD_LABELS).map(f => {
+    const d = (an.final_vs_pipeline||{})[f] || {};
+    const n = d.n || 0;
+    return `<div style="margin-bottom:10px">
+      <div class="agree-row" style="border-bottom:none;padding-bottom:2px">
+        <span style="font-weight:600">${FIELD_LABELS[f]}</span>
+        <span class="stat-pct">${fmt(n)} finalised</span>
+      </div>
+      <div class="stack-bar" style="margin:3px 0 5px">
+        <span style="width:${(( d.kept||0)/Math.max(1,n))*100}%;background:#16a34a"></span>
+        <span style="width:${((d.changed||0)/Math.max(1,n))*100}%;background:#dc2626"></span>
+      </div>
+      <div class="agree-row" style="border-bottom:none;padding:0">
+        <span style="font-size:10px;color:var(--text-muted)">
+          <span class="agree-tag" style="background:#16a34a"></span>kept ${fmt(d.kept)} ${pct(d.kept,n)}</span>
+        <span style="font-size:10px;color:var(--text-muted)">
+          <span class="agree-tag" style="background:#dc2626"></span>changed ${fmt(d.changed)} ${pct(d.changed,n)}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Set-aside tabs ───────────────────────────────────────────────────────────
+// One generic implementation drives every tab built from dashboard.SET_FILES.
+const _setState = {};   // key → {loaded, page, search, timer}
+
+// The first few columns worth showing before the rest; anything else follows.
+const SET_LEAD_COLS = ['doi_r','title_r','year_r','type','outcome','doi_o','title_o',
+                       'link_method','link_confidence','doi_o_verification',
+                       'check','severity','detail','status','old_doi_o','proposed_doi_o'];
+
+async function loadSet(key) {
+  const st = _setState[key] || (_setState[key] = {page:1, search:''});
+  if (!st.loaded) {
+    const s = await fetch(`/api/dashboard/set-stats?set=${key}`).then(r=>r.json());
+    $(`set-${key}-count`).textContent = s.missing ? '—' : fmt(s.total);
+
+    const entries = Object.entries(s.primary || {}).sort((a,b) => b[1]-a[1]);
+    $(`set-${key}-primary-label`).textContent = s.primary_col
+      ? `By ${s.primary_col}` : 'Breakdown';
+    $(`set-${key}-primary`).innerHTML = entries.length
+      ? entries.map(([k,v]) =>
+          `<span class="set-primary-item"><b>${fmt(v)}</b> ${esc(k)}</span>`).join('')
+      : '<span class="null-note">not categorised</span>';
+    st.loaded = true;
+  }
+  loadSetRows(key);
+}
+
+// Values rendered as a coloured chip rather than plain text.
+const CHIP_COLS = new Set(['type','outcome','status','severity','check','link_method',
+                           'link_confidence','doi_o_verification','filter_status',
+                           'original_match_type']);
+const CHIP_TONE = {
+  high:'ok', success:'ok', verified:'ok', replication:'ok', corrected:'ok',
+  low:'bad', failure:'bad', mismatch:'bad', error:'bad', api_error:'bad',
+  medium:'warn', mixed:'warn', no_doi:'warn', not_found:'warn', reproduction:'info',
+};
+
+function setCell(col, val) {
+  const v = String(val || '');
+  if (!v) return '<span class="cell-empty">—</span>';
+  if (CHIP_COLS.has(col)) {
+    const tone = CHIP_TONE[v.toLowerCase()] || 'neutral';
+    return `<span class="chip chip-${tone}">${esc(v)}</span>`;
+  }
+  if (col.startsWith('doi') || col.startsWith('old_doi') || col.startsWith('proposed_doi'))
+    return `<span class="cell-doi">${esc(v)}</span>`;
+  // Years arrive as "2020.0" whenever pandas round-tripped the column as a float.
+  if (col.startsWith('year'))
+    return `<span class="cell-num">${esc(v.replace(/\.0+$/, ''))}</span>`;
+  return esc(v);
+}
+
+async function loadSetRows(key) {
+  const st = _setState[key];
+  const tbody = $(`set-${key}-tbody`);
+  tbody.innerHTML = `<tr><td class="null-note" style="padding:14px">Loading…</td></tr>`;
+  const d = await fetch(`/api/dashboard/set-rows?set=${key}&page=${st.page}` +
+                        `&search=${encodeURIComponent(st.search)}`).then(r=>r.json());
+
+  $(`set-${key}-total`).textContent = st.search
+    ? `${fmt(d.total)} matching` : `${fmt(d.total)} entries`;
+  if (!d.rows.length) {
+    $(`set-${key}-thead`).innerHTML = '';
+    tbody.innerHTML = '<tr><td class="null-note" style="padding:14px">No entries.</td></tr>';
+    $(`set-${key}-pager`).innerHTML = ''; return;
+  }
+
+  const cols = [...d.columns].sort((a,b) => {
+    const ia = SET_LEAD_COLS.indexOf(a), ib = SET_LEAD_COLS.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  }).slice(0, 7);
+
+  $(`set-${key}-thead`).innerHTML =
+    '<th class="col-toggle"></th>' +
+    cols.map(c => `<th class="${c.startsWith('title')?'col-wide':''}">${esc(c)}</th>`).join('');
+
+  tbody.innerHTML = d.rows.map((row, i) => `
+    <tr class="set-row" onclick="toggleSetDetail('${key}',${i})">
+      <td class="col-toggle"><span class="row-chevron">›</span></td>
+      ${cols.map(c => `<td class="${c.startsWith('title')?'col-wide':''}"
+           title="${esc(row[c])}">${setCell(c, row[c])}</td>`).join('')}
+    </tr>
+    <tr class="drilldown-detail" id="set-${key}-detail-${i}">
+      <td colspan="${cols.length+1}" style="padding:0 0 10px">
+        <dl class="set-detail-grid">${
+          d.columns.filter(c => String(row[c]||'').trim())
+                   .map(c => `<dt>${esc(c)}</dt><dd>${esc(row[c])}</dd>`).join('')
+        }</dl>
+      </td>
+    </tr>`).join('');
+
+  renderPager($(`set-${key}-pager`), d.page, d.pages, p => setGoPage(key, p));
+}
+
+function toggleSetDetail(key, i) {
+  const detail = $(`set-${key}-detail-${i}`);
+  detail.classList.toggle('open');
+  detail.previousElementSibling?.classList.toggle('open');
+}
+
+function setGoPage(key, page) {
+  _setState[key].page = page;
+  loadSetRows(key);
+}
+
+function setSearchDebounced(key) {
+  const st = _setState[key] || (_setState[key] = {page:1, search:''});
+  clearTimeout(st.timer);
+  st.timer = setTimeout(() => {
+    st.search = $(`set-${key}-search`).value.trim();
+    st.page = 1;
+    loadSetRows(key);
+  }, 300);
 }
 
 // ── Drilldown ────────────────────────────────────────────────────────────────
@@ -2046,12 +2891,7 @@ async function loadDrilldown(page) {
     </tr>`;
   }).join('');
 
-  const pages=data.pages;
-  if (pages<=1){$('dd-pager').innerHTML='';return;}
-  let b=`<button class="pager-btn" onclick="loadDrilldown(${page-1})" ${page<=1?'disabled':''}>← Prev</button>`;
-  b+=`<span style="font-size:11px;color:var(--text-faint)">Page ${page} / ${pages}</span>`;
-  b+=`<button class="pager-btn" onclick="loadDrilldown(${page+1})" ${page>=pages?'disabled':''}>Next →</button>`;
-  $('dd-pager').innerHTML=b;
+  renderPager($('dd-pager'), page, data.pages, loadDrilldown);
 }
 
 function toggleDrilldown(id) {
@@ -2272,11 +3112,7 @@ function renderGapTable() {
     </tr>`;
   }).join('');
 
-  if (pages <= 1) { pager.innerHTML = ''; return; }
-  pager.innerHTML =
-    `<button class="pager-btn" onclick="_gapPage['${tab}']=${page-1};renderGapTable()" ${page<=1?'disabled':''}>← Prev</button>` +
-    `<span style="font-size:11px;color:var(--text-faint)">Page ${page} / ${pages}</span>` +
-    `<button class="pager-btn" onclick="_gapPage['${tab}']=${page+1};renderGapTable()" ${page>=pages?'disabled':''}>Next →</button>`;
+  renderPager(pager, page, pages, p => { _gapPage[tab] = p; renderGapTable(); });
 }
 
 function scheduleGapSearch() {
@@ -2287,10 +3123,11 @@ function scheduleGapSearch() {
 // ── Main loader ──────────────────────────────────────────────────────────────
 async function loadAll() {
   $('status').textContent='Loading…';
-  _valLoaded=false; _analysisLoaded=false;
+  _valLoaded=false; _analysisLoaded=false; _phraseRows=null;
   try {
     await loadPipeline();
     const activeTab=document.querySelector('.tab-btn.active')?.dataset?.tab;
+    if (activeTab==='search')       await loadPhrases();
     if (activeTab==='supabase')     await loadValidation();
     if (activeTab==='old-pipeline') await loadAnalysis();
     $('status').textContent='Updated '+new Date().toLocaleTimeString();
@@ -2301,9 +3138,11 @@ async function loadAll() {
 
 window.addEventListener('DOMContentLoaded', () => {
   loadAll();
-  const activeTab=document.querySelector('.tab-btn.active')?.dataset?.tab;
-  if (activeTab==='supabase')     loadValidation();
-  if (activeTab==='old-pipeline') loadAnalysis();
+  // Honour a deep link; falls back to whichever tab is marked active in the markup.
+  if (!_tabFromHash()) {
+    const loader = TAB_LOADERS[document.querySelector('.tab-btn.active')?.dataset?.tab];
+    if (loader) loader();
+  }
 });
 </script>
 {% endblock %}

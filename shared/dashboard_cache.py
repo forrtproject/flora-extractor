@@ -56,6 +56,42 @@ _METHOD_KEYS = (
 )
 
 
+# Stage-2 rule exits, in the order rule_filter._classify_row checks them. The exit
+# is recovered from filter_evidence rather than a dedicated column because
+# run_filter.py PREPENDS the rule evidence to the LLM verdict ("<rule> | llm:<...>"),
+# so the marker survives even on rows the LLM later reclassified.
+_RULE_EXIT_KEYS = ("r1_exclusion", "r2_no_phrase", "r3_no_cite",
+                   "r4_no_same_sentence", "r5_pass", "unknown")
+
+
+def classify_rule_exit(evidence: str) -> str:
+    """Which rule_filter exit produced this row, from its filter_evidence string."""
+    e = str(evidence or "")
+    if e.startswith("exclusion:"):
+        return "r1_exclusion"
+    if e.startswith("no replication phrase detected"):
+        return "r2_no_phrase"
+    if "; no author-year cite" in e:
+        return "r3_no_cite"
+    if "; no same-sentence cite" in e:
+        return "r4_no_same_sentence"
+    if "; cite:" in e:
+        return "r5_pass"
+    return "unknown"
+
+
+def _year_counts(series: "pd.Series") -> dict[str, int]:
+    """Count rows per publication year, dropping blanks and non-numeric junk."""
+    s = series.fillna("").astype(str).str.strip().str.slice(0, 4)
+    s = s[s.str.fullmatch(r"\d{4}", na=False)]
+    return {str(k): int(v) for k, v in s.value_counts().items()}
+
+
+def _merge_counts(target: dict[str, int], src: dict[str, int]) -> None:
+    for k, v in src.items():
+        target[k] = target.get(k, 0) + int(v)
+
+
 def _parquet_path(stage: str) -> Path:
     return DASHBOARD_DIR / f"{stage}.parquet"
 
@@ -143,6 +179,12 @@ def _compute_extracted_stats(df: pd.DataFrame) -> dict[str, Any]:
     oc_col  = df["outcome"].fillna("")           if "outcome"             in df.columns else pd.Series([""] * len(df))
     dv_col  = df["doi_o_verification"].fillna("") if "doi_o_verification"  in df.columns else pd.Series([""] * len(df))
     mod_col = df["link_llm_model"].fillna("").apply(_model_family) if "link_llm_model" in df.columns else pd.Series(["none"] * len(df))
+    ty_col  = df["type"].fillna("").str.strip().str.lower() if "type" in df.columns else pd.Series([""] * len(df))
+    yr_col  = df["year_r"] if "year_r" in df.columns else pd.Series([""] * len(df))
+
+    # Replications and reproductions use disjoint outcome vocabularies
+    # (see shared/schema.py) — a single merged distribution is meaningless.
+    is_repro = ty_col == "reproduction"
     return {
         "total":                  len(df),
         "target_pending_count":   int((lm_col == "target_pending").sum()),
@@ -151,6 +193,10 @@ def _compute_extracted_stats(df: pd.DataFrame) -> dict[str, Any]:
         "by_model":               _vc(mod_col),
         "by_outcome":             _vc(oc_col, _OUTCOME_KEYS),
         "by_doi_verification":    _vc(dv_col),
+        "by_type":                _vc(ty_col),
+        "by_outcome_replication": _vc(oc_col[~is_repro]),
+        "by_outcome_reproduction": _vc(oc_col[is_repro]),
+        "by_year":                _year_counts(yr_col),
     }
 
 
@@ -162,13 +208,14 @@ def _read_for_stats(stage: str) -> "pd.DataFrame | None":
     prefer _compute_large_stage_stats instead and only use this for small stages.
     """
     _STATS_COLS: dict[str, list[str]] = {
-        "candidates":     ["doi_r", "url_r", "abstract_r", "source"],
-        "filtered":       ["doi_r", "url_r", "abstract_r",
-                           "filter_status", "filter_method", "filter_confidence"],
+        "candidates":     ["doi_r", "url_r", "abstract_r", "source", "year_r"],
+        "filtered":       ["doi_r", "url_r", "abstract_r", "year_r",
+                           "filter_status", "filter_method", "filter_confidence",
+                           "filter_evidence"],
         "extracted":      ["link_method", "link_llm_model", "original_match_type",
-                           "outcome", "doi_o_verification"],
+                           "outcome", "doi_o_verification", "type", "year_r"],
         "extracted-test": ["link_method", "link_llm_model", "original_match_type",
-                           "outcome", "doi_o_verification"],
+                           "outcome", "doi_o_verification", "type", "year_r"],
     }
     cols = _STATS_COLS[stage]
     pq_path = _parquet_path(stage)
@@ -214,6 +261,7 @@ def _compute_large_stage_stats(stage: str) -> "dict[str, Any] | None":
     if stage == "candidates":
         total = no_doi = no_doi_or_url = no_abstract = 0
         src_counts: dict[str, int] = {}
+        year_counts: dict[str, int] = {}
 
         def _process_cand_chunk(chunk: pd.DataFrame) -> None:
             nonlocal total, no_doi, no_doi_or_url, no_abstract
@@ -228,10 +276,12 @@ def _compute_large_stage_stats(stage: str) -> "dict[str, Any] | None":
             no_abstract     += int((abs_c == "").sum())
             for k, v in src_c.value_counts().items():
                 src_counts[str(k)] = src_counts.get(str(k), 0) + int(v)
+            if "year_r" in chunk.columns:
+                _merge_counts(year_counts, _year_counts(chunk["year_r"]))
 
         try:
             if pq_path.exists():
-                cols = ["doi_r", "url_r", "abstract_r", "source"]
+                cols = ["doi_r", "url_r", "abstract_r", "source", "year_r"]
                 pf = pq.ParquetFile(pq_path)
                 existing = pf.schema_arrow.names
                 read_cols = [c for c in cols if c in existing]
@@ -240,7 +290,7 @@ def _compute_large_stage_stats(stage: str) -> "dict[str, Any] | None":
             else:
                 for chunk in pd.read_csv(csv_path, encoding="utf-8-sig", dtype=str,
                                          chunksize=100_000, on_bad_lines="skip",
-                                         usecols=lambda c: c in ("doi_r","url_r","abstract_r","source")):
+                                         usecols=lambda c: c in ("doi_r","url_r","abstract_r","source","year_r")):
                     _process_cand_chunk(chunk)
         except Exception as exc:
             log.warning("dashboard_cache: chunked candidates read failed: %s", exc)
@@ -250,6 +300,7 @@ def _compute_large_stage_stats(stage: str) -> "dict[str, Any] | None":
             "total": total, "no_doi": no_doi,
             "no_doi_or_url": no_doi_or_url, "no_abstract": no_abstract,
             "by_source": src_counts,
+            "by_year": year_counts,
         }
 
     # ── Filtered ────────────────────────────────────────────────────────────
@@ -259,8 +310,15 @@ def _compute_large_stage_stats(stage: str) -> "dict[str, Any] | None":
         method_counts: dict[str, int] = {}
         conf_counts:   dict[str, int] = {}
 
+        exit_counts:   dict[str, int] = {}
+        year_counts:   dict[str, int] = {}
+        # {rule exit → {final filter_status → n}} — lets the flowchart show what the
+        # LLM did with the two needs_review arms it receives.
+        exit_status:   dict[str, dict[str, int]] = {}
+
         # Pass 1: lightweight columns only — get all counts except data quality
-        _light_cols = ("filter_status", "filter_method", "filter_confidence")
+        _light_cols = ("filter_status", "filter_method", "filter_confidence",
+                       "filter_evidence", "year_r")
 
         def _process_filt_chunk(chunk: pd.DataFrame) -> None:
             nonlocal total
@@ -272,6 +330,16 @@ def _compute_large_stage_stats(stage: str) -> "dict[str, Any] | None":
                 method_counts[str(k)] = method_counts.get(str(k), 0) + int(v)
             for k, v in chunk.get("filter_confidence", pd.Series(dtype=str)).value_counts().items():
                 conf_counts[str(k)] = conf_counts.get(str(k), 0) + int(v)
+            if "year_r" in chunk.columns:
+                _merge_counts(year_counts, _year_counts(chunk["year_r"]))
+            if "filter_evidence" in chunk.columns:
+                exits = chunk["filter_evidence"].apply(classify_rule_exit)
+                _merge_counts(exit_counts, exits.value_counts().to_dict())
+                if "filter_status" in chunk.columns:
+                    grouped = chunk.assign(_exit=exits).groupby(["_exit", "filter_status"]).size()
+                    for (ex, st), n in grouped.items():
+                        bucket = exit_status.setdefault(str(ex), {})
+                        bucket[str(st)] = bucket.get(str(st), 0) + int(n)
 
         try:
             if pq_path.exists():
@@ -329,6 +397,9 @@ def _compute_large_stage_stats(stage: str) -> "dict[str, Any] | None":
             "by_filter_status":        status_counts,
             "by_filter_method":        method_counts,
             "by_filter_confidence":    conf_counts,
+            "by_rule_exit":            {k: exit_counts.get(k, 0) for k in _RULE_EXIT_KEYS},
+            "rule_exit_status":        exit_status,
+            "by_year":                 year_counts,
             "rep_repro_total":         rep_repro_total,
             "rep_repro_no_doi":        rr_no_doi,
             "rep_repro_no_doi_or_url": rr_no_doi_or_url,
@@ -338,23 +409,27 @@ def _compute_large_stage_stats(stage: str) -> "dict[str, Any] | None":
     return None  # not a large stage
 
 
-def update_stats(stage: str) -> None:
-    """Recompute counts for stage and merge into stats.json."""
+def compute_stage_stats(stage: str) -> "dict[str, Any] | None":
+    """Compute one stage's stats live from Parquet/CSV. None if there is no data.
+
+    Same shape as the stage's entry in stats.json — the dashboard's slow path
+    calls this instead of re-implementing the aggregations.
+    """
     if stage not in _STAGE_CSV:
         raise ValueError(f"Unknown stage: {stage!r}")
-
     # candidates and filtered are too large to load fully into RAM
     if stage in ("candidates", "filtered"):
-        new_stats = _compute_large_stage_stats(stage)
-        if new_stats is None:
-            log.warning("dashboard_cache: no data to compute stats for %s", stage)
-            return
-    else:
-        df = _read_for_stats(stage)
-        if df is None:
-            log.warning("dashboard_cache: no data to compute stats for %s", stage)
-            return
-        new_stats = _compute_extracted_stats(df)
+        return _compute_large_stage_stats(stage)
+    df = _read_for_stats(stage)
+    return None if df is None else _compute_extracted_stats(df)
+
+
+def update_stats(stage: str) -> None:
+    """Recompute counts for stage and merge into stats.json."""
+    new_stats = compute_stage_stats(stage)
+    if new_stats is None:
+        log.warning("dashboard_cache: no data to compute stats for %s", stage)
+        return
 
     stage_key = stage.replace("-", "_")
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)

@@ -68,7 +68,7 @@ The monitoring app registers these routes (see `validate/app.py`):
 - `/check`          — Check page: filter/inspect extracted rows, download subsets
 - `/batch`          — batch disambiguation for multiple-match papers
 - `/multi-originals`— multi-original paper review
-- `/` (disambiguation) — manual disambiguation UI
+- `/`               — redirects to `/dashboard`
 
 Per-stage tab blueprints (`extract_view`, `search_view`, `filter_view`, `pipeline`,
 `target_pending`, `input`) still exist under `validate/routes/` but are **not
@@ -140,13 +140,12 @@ separate Supabase-backed repo.
 
 | File                           | Purpose                                                             |
 | ------------------------------ | ------------------------------------------------------------------- |
-| `validate/app.py`                  | Flask entry point, `create_app()` factory. Registers **only** the `dashboard`, `check`, `batch`, `multi_originals`, and `disambiguation` blueprints |
+| `validate/app.py`                  | Flask entry point, `create_app()` factory. Registers **only** the `dashboard`, `check`, `batch`, and `multi_originals` blueprints; `/` redirects to `/dashboard` |
 | `validate/state.py`                | Shared in-memory DataFrames (FLoRA sheet, etc.) populated at startup and imported by blueprints |
 | `validate/routes/dashboard.py`     | `GET /dashboard`; CSV pipeline stats (link-method / model-family breakdowns) + Supabase validation KPIs via `shared/supabase_client.py` |
 | `validate/routes/check.py`         | `GET /check`; filter/inspect extracted rows and download subsets |
 | `validate/routes/batch.py`         | `GET /batch`; batch disambiguation for multiple-match papers |
 | `validate/routes/multi_originals.py` | `GET /multi-originals`; multi-original paper review |
-| `validate/routes/disambiguation.py`  | Manual disambiguation UI |
 | `validate/routes/{extract_view,filter_view,search_view,pipeline,target_pending,input}.py` | **Orphaned/legacy** — present under `routes/` but NOT registered in `app.py`; per-stage tab views from an earlier design |
 | `shared/supabase_client.py`        | Read client for the Supabase validation tables; backs the dashboard's Supabase KPIs |
 

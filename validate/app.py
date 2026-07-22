@@ -33,10 +33,8 @@ def create_app(test_config: dict | None = None) -> Flask:
     if not readonly:
         from validate.routes.batch import batch_bp
         from validate.routes.multi_originals import multi_orig_bp
-        from validate.routes.disambiguation import disambiguation_bp
         app.register_blueprint(batch_bp)
         app.register_blueprint(multi_orig_bp)
-        app.register_blueprint(disambiguation_bp)
 
     @app.route("/pdf/<path:filename>")
     def serve_pdf(filename: str):
