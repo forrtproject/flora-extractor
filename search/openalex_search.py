@@ -18,6 +18,7 @@ Public API
 """
 
 import datetime
+import functools
 import json
 import time
 from pathlib import Path
@@ -108,6 +109,68 @@ def _job_key(phrase: str, from_year: Optional[int], to_year: Optional[int]) -> s
 def _cursor_path(phrase: str, from_year: Optional[int], to_year: Optional[int]) -> Path:
     """Return the Path where the cursor checkpoint for this job is stored."""
     return OA_CACHE_DIR / f"{_job_key(phrase, from_year, to_year)}.cursor.json"
+
+
+@functools.lru_cache(maxsize=1)
+def _job_key_index() -> "tuple[list[str], dict[str, str]]":
+    """(labels, {job_key: label}) for every plausible (phrase, year-range) job.
+
+    Cursor filenames are hashes, so attribution is done by hashing every phrase
+    against every year combination the pipeline could have used and matching the
+    result to the files on disk.
+    """
+    import datetime
+
+    years: list = [None, *range(1900, datetime.date.today().year + 3)]
+    labels = [*SEARCH_PHRASES, *(f"concept:{c}" for c in CONCEPT_IDS)]
+    return labels, {
+        _job_key(label, a, b): label
+        for label in labels
+        for a in years for b in years
+        if a is None or b is None or a <= b
+    }
+
+
+def phrase_yield() -> dict:
+    """How many records each search phrase pulled from OpenAlex.
+
+    Reconstructed from the cursor checkpoints in OA_CACHE_DIR, because
+    candidates.csv has no phrase column. Counts are records FETCHED, before
+    deduplication — a paper matching three phrases is counted three times, so
+    they do not sum to the candidate total.
+
+    Returns {"rows": [...], "total_fetched": int, "unattributed_files": int}.
+    Every count is 0 when the cache directory is absent (e.g. on a deployment
+    that ships only the CSVs), which is why the result is persisted to
+    stats.json rather than computed per request.
+    """
+    labels, key_to_label = _job_key_index()
+    totals = {label: 0 for label in labels}
+    jobs   = {label: 0 for label in labels}
+    unattributed = 0
+
+    for path in OA_CACHE_DIR.glob("*.cursor.json"):
+        label = key_to_label.get(path.name.replace(".cursor.json", ""))
+        if label is None:
+            unattributed += 1
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                state = json.load(f)
+        except Exception:
+            continue
+        totals[label] += int(state.get("total_fetched") or 0)
+        jobs[label]   += 1
+
+    rows = [
+        {"phrase": label, "fetched": totals[label], "jobs": jobs[label],
+         "source": "concept" if label.startswith("concept:") else "phrase"}
+        for label in labels
+    ]
+    rows.sort(key=lambda r: -r["fetched"])
+    return {"rows": rows,
+            "total_fetched": sum(totals.values()),
+            "unattributed_files": unattributed}
 
 
 def _load_cursor_state(path: Path) -> dict:

@@ -14,8 +14,6 @@ Routes:
   GET  /api/dashboard/supabase-drilldown → paginated incorrect-DOI table
 """
 import datetime
-import functools
-import json
 import re
 import shutil
 
@@ -165,60 +163,27 @@ def api_csv_stats():
     return jsonify(_stats_json_to_api(sj))
 
 
-@functools.lru_cache(maxsize=1)
-def _phrase_job_keys() -> "tuple[list[str], dict[str, str]]":
-    """(labels, {job_key: label}) for every plausible (phrase, year-range) job."""
-    from search.openalex_search import CONCEPT_IDS, SEARCH_PHRASES, _job_key
-
-    years: list = [None, *range(1900, datetime.date.today().year + 3)]
-    labels = [*SEARCH_PHRASES, *(f"concept:{c}" for c in CONCEPT_IDS)]
-    return labels, {
-        _job_key(label, a, b): label
-        for label in labels
-        for a in years for b in years
-        if a is None or b is None or a <= b
-    }
-
-
 @dashboard_bp.route("/api/dashboard/search-phrases")
 def api_search_phrases():
-    """Per-phrase OpenAlex yield, recovered from the cursor checkpoint files.
+    """Per-phrase OpenAlex yield.
 
-    candidates.csv has no phrase column, so attribution is rebuilt by hashing
-    every (phrase, from_year, to_year) job key and matching it to the cursor
-    filenames in cache/openalex/. Counts are records FETCHED, before dedup — a
-    paper matching three phrases is counted three times, so the column does not
-    sum to candidates_count.
+    Served from stats.json, which pipeline runs refresh and which is committed —
+    the cursor checkpoints it is derived from live in gitignored cache/openalex/
+    and do not exist on a deployed instance. Falls back to a live scan of that
+    cache when stats.json predates this field (e.g. a local checkout that has not
+    re-run the pipeline).
     """
-    from shared.config import OA_CACHE_DIR
+    persisted = (load_stats().get("candidates") or {}).get("by_phrase")
+    if persisted and persisted.get("rows"):
+        return jsonify({**persisted, "_source": "stats_json"})
 
-    labels, key_to_label = _phrase_job_keys()
-    totals: dict[str, int] = {label: 0 for label in labels}
-    jobs:   dict[str, int] = {label: 0 for label in labels}
-    unattributed = 0
-    for path in OA_CACHE_DIR.glob("*.cursor.json"):
-        label = key_to_label.get(path.name.replace(".cursor.json", ""))
-        if label is None:
-            unattributed += 1
-            continue
-        try:
-            state = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        totals[label] += int(state.get("total_fetched") or 0)
-        jobs[label]   += 1
-
-    rows = [
-        {"phrase": label, "fetched": totals[label], "jobs": jobs[label],
-         "source": "concept" if label.startswith("concept:") else "phrase"}
-        for label in labels
-    ]
-    rows.sort(key=lambda r: -r["fetched"])
-    return jsonify({
-        "rows": rows,
-        "total_fetched": sum(totals.values()),
-        "unattributed_files": unattributed,
-    })
+    from search.openalex_search import phrase_yield
+    live = phrase_yield()
+    if not live["total_fetched"]:
+        live["note"] = ("No cursor checkpoints found in cache/openalex/ and none "
+                        "recorded in stats.json — run the Stage 1 pipeline, or "
+                        "regenerate stats.json, to populate per-phrase yield.")
+    return jsonify({**live, "_source": "cursor_cache"})
 
 
 # ── Set-aside CSVs ────────────────────────────────────────────────────────────

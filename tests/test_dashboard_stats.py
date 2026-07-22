@@ -195,6 +195,50 @@ def test_resolution_treats_not_validation_as_excluded(monkeypatch):
     assert res["reviewer_kept_pipeline"] == 0
 
 
+# ── Stage 1 phrase yield ─────────────────────────────────────────────────────
+
+def test_phrase_yield_attributes_cursor_files(tmp_path, monkeypatch):
+    import json as _json
+
+    import search.openalex_search as oas
+
+    monkeypatch.setattr(oas, "OA_CACHE_DIR", tmp_path)
+    phrase = oas.SEARCH_PHRASES[0]
+    for years, n in [((2020, 2020), 7), ((2021, 2021), 5)]:
+        key = oas._job_key(phrase, *years)
+        (tmp_path / f"{key}.cursor.json").write_text(
+            _json.dumps({"total_fetched": n, "completed": True}), encoding="utf-8")
+    (tmp_path / "deadbeef.cursor.json").write_text('{"total_fetched": 99}', encoding="utf-8")
+
+    out = oas.phrase_yield()
+    row = next(r for r in out["rows"] if r["phrase"] == phrase)
+
+    assert row["fetched"] == 12          # summed across both year jobs
+    assert row["jobs"] == 2
+    assert out["total_fetched"] == 12    # the unmatched file is not counted
+    assert out["unattributed_files"] == 1
+
+
+def test_search_phrases_endpoint_survives_a_missing_cache(tmp_path, monkeypatch):
+    """cache/ is gitignored, so a deployed instance has no cursor files — the
+    endpoint must fall back to the phrase yield persisted in stats.json."""
+    import search.openalex_search as oas
+    import validate.routes.dashboard as dash
+
+    monkeypatch.setattr(oas, "OA_CACHE_DIR", tmp_path)   # empty: live scan yields 0
+    monkeypatch.setattr(dash, "load_stats", lambda: {"candidates": {"by_phrase": {
+        "rows": [{"phrase": "replication of", "fetched": 42, "jobs": 1, "source": "phrase"}],
+        "total_fetched": 42, "unattributed_files": 0,
+    }}})
+
+    from validate.app import create_app
+    client = create_app().test_client()
+    data = client.get("/api/dashboard/search-phrases").get_json()
+
+    assert data["_source"] == "stats_json"
+    assert data["total_fetched"] == 42
+
+
 # ── Set-aside CSVs ───────────────────────────────────────────────────────────
 
 def test_set_registry_files_resolve(tmp_path):

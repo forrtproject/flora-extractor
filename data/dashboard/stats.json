@@ -109,9 +109,249 @@
       "1937": 1,
       "1931": 1,
       "1940": 1
+    },
+    "by_phrase": {
+      "rows": [
+        {
+          "phrase": "reproducibility of",
+          "fetched": 377963,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "replication of",
+          "fetched": 325344,
+          "jobs": 22,
+          "source": "phrase"
+        },
+        {
+          "phrase": "replicability of",
+          "fetched": 315317,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "concept:C12590798",
+          "fetched": 171400,
+          "jobs": 37,
+          "source": "concept"
+        },
+        {
+          "phrase": "concept:C9893847",
+          "fetched": 89118,
+          "jobs": 37,
+          "source": "concept"
+        },
+        {
+          "phrase": "replicating the findings",
+          "fetched": 4844,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "replication study",
+          "fetched": 3469,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "could not reproduce",
+          "fetched": 2520,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "we replicated",
+          "fetched": 2080,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "we replicate",
+          "fetched": 2079,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "attempt to replicate",
+          "fetched": 1935,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "attempts to replicate",
+          "fetched": 1934,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "non-replication",
+          "fetched": 1447,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "results replicate the",
+          "fetched": 1310,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "independent replication",
+          "fetched": 1091,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "replication across",
+          "fetched": 1033,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "replication and extension",
+          "fetched": 943,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "failed to replicate",
+          "fetched": 903,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "successfully replicated",
+          "fetched": 807,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "reproducibility study",
+          "fetched": 799,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "did not replicate",
+          "fetched": 669,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "partial replication",
+          "fetched": 515,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "failure to replicate",
+          "fetched": 475,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "close replication",
+          "fetched": 467,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "reproduce the findings",
+          "fetched": 441,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "reproduction study",
+          "fetched": 382,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "systematic replication",
+          "fetched": 242,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "direct replication",
+          "fetched": 213,
+          "jobs": 22,
+          "source": "phrase"
+        },
+        {
+          "phrase": "conceptual replication",
+          "fetched": 202,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "exact replication",
+          "fetched": 186,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "our results replicate",
+          "fetched": 76,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "cross-cultural replication",
+          "fetched": 69,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "confirm and replicate",
+          "fetched": 42,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "our findings replicate",
+          "fetched": 35,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "multi-site replication",
+          "fetched": 7,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "multisite replication",
+          "fetched": 4,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "pre-registered replication",
+          "fetched": 1,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "preregistered replication",
+          "fetched": 1,
+          "jobs": 21,
+          "source": "phrase"
+        },
+        {
+          "phrase": "registered replication report",
+          "fetched": 0,
+          "jobs": 21,
+          "source": "phrase"
+        }
+      ],
+      "total_fetched": 1310363,
+      "unattributed_files": 0
     }
   },
-  "updated_at": "2026-07-22T11:23:35",
+  "updated_at": "2026-07-22T12:56:23",
   "filtered": {
     "total": 2581092,
     "by_filter_status": {

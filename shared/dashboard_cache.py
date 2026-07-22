@@ -296,11 +296,22 @@ def _compute_large_stage_stats(stage: str) -> "dict[str, Any] | None":
             log.warning("dashboard_cache: chunked candidates read failed: %s", exc)
             return None
 
+        # Per-phrase yield lives in cache/openalex/, which is gitignored and so
+        # absent on deployments that ship only data/. Persisting it here means the
+        # dashboard can serve it from stats.json wherever it runs.
+        by_phrase: dict[str, Any] = {}
+        try:
+            from search.openalex_search import phrase_yield
+            by_phrase = phrase_yield()
+        except Exception as exc:
+            log.warning("dashboard_cache: phrase yield unavailable: %s", exc)
+
         return {
             "total": total, "no_doi": no_doi,
             "no_doi_or_url": no_doi_or_url, "no_abstract": no_abstract,
             "by_source": src_counts,
             "by_year": year_counts,
+            "by_phrase": by_phrase,
         }
 
     # ── Filtered ────────────────────────────────────────────────────────────
