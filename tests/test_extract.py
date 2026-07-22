@@ -1065,3 +1065,82 @@ class TestFloraSkipDois:
         import inspect
         sig = inspect.signature(run_extract.run_extract)
         assert sig.parameters["skip_flora_validated"].default is True
+
+
+# ── Reproduction outcome coding (3x3 computation/robustness grid) ────────────
+
+class TestReproductionOutcome:
+    """Reproductions use a different vocabulary from replications; the row's
+    type must select it, or every reproduction verdict is coerced away."""
+
+    def test_grid_has_nine_values(self):
+        from shared.schema import REPRODUCTION_OUTCOME_CATEGORIES as R
+        assert len(R) == 9
+        for comp in ("computationally successful", "computational issues",
+                     "computation not checked"):
+            for rob in ("robust", "robustness challenges", "robustness not checked"):
+                assert f"{comp}, {rob}" in R
+
+    def test_vocabulary_selected_by_type(self):
+        from shared.schema import outcome_categories_for
+        repro = outcome_categories_for("reproduction")
+        repl = outcome_categories_for("replication")
+        assert "computationally successful, robust" in repro
+        assert "computationally successful, robust" not in repl
+        assert "success" in repl and "success" not in repro
+        assert "cannot_be_determined" in repro and "cannot_be_determined" in repl
+
+    def test_repro_outcome_survives_normalisation(self, tmp_path):
+        """A valid grid value must be kept, not coerced to cannot_be_determined."""
+        mock = {"outcome": "computational issues, robustness challenges",
+                "outcome_phrase": "x" * 400, "outcome_confidence": "high",
+                "out_quote_source": "abstract", "outcome_reasoning": "r"}
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")), \
+             patch("extract.code_outcome.time.sleep"):
+            res = extract_outcome("10.1/repro", abstract_r="we re-ran their code",
+                                  record_type="reproduction")
+        assert res["outcome"] == "computational issues, robustness challenges"
+
+    def test_replication_value_rejected_for_reproduction(self, tmp_path):
+        """If the LLM answers with the replication vocabulary for a reproduction,
+        it must NOT be accepted silently."""
+        mock = {"outcome": "success", "outcome_phrase": "q", "outcome_confidence": "high",
+                "out_quote_source": "abstract", "outcome_reasoning": "r"}
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")), \
+             patch("extract.code_outcome.time.sleep"):
+            res = extract_outcome("10.1/repro2", abstract_r="re-analysis",
+                                  record_type="reproduction")
+        assert res["outcome"] == "cannot_be_determined"
+
+    def test_reproduction_skips_replication_keyword_scan(self, tmp_path):
+        """'failed to replicate' in a reproduction abstract must not shortcut to
+        the replication enum — it must reach the reproduction LLM prompt."""
+        mock = {"outcome": "computational issues, robustness not checked",
+                "outcome_phrase": "q", "outcome_confidence": "high",
+                "out_quote_source": "abstract", "outcome_reasoning": "r"}
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")) as mock_llm, \
+             patch("extract.code_outcome.time.sleep"):
+            res = extract_outcome("10.1/repro3",
+                                  abstract_r="We failed to replicate the reported numbers.",
+                                  record_type="reproduction")
+        assert mock_llm.called, "reproduction must not be short-circuited by keyword scan"
+        assert res["outcome"] == "computational issues, robustness not checked"
+        assert "REPRODUCTION" in mock_llm.call_args[0][0]
+        assert "computationally successful, robust" in mock_llm.call_args[0][0]
+
+    def test_replication_still_uses_keyword_scan(self):
+        with patch("extract.code_outcome.call_llm") as mock_llm:
+            res = extract_outcome("10.1/repl", abstract_r="we found no evidence of the effect",
+                                  record_type="replication")
+        mock_llm.assert_not_called()
+        assert res["outcome"] == "failure"
+
+    def test_prompts_ask_for_long_untrimmed_quotes(self):
+        from extract.code_outcome import _abstract_prompt, _repro_abstract_prompt
+        for p in (_abstract_prompt("t", "a", ""), _repro_abstract_prompt("t", "a", "")):
+            assert "COMPLETE sentences" in p
+            assert "1200" in p
+            assert "Never truncate" in p

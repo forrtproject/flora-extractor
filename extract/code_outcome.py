@@ -24,13 +24,13 @@ from shared.config import (
 from shared import token_counter
 from shared.cache import read_dual_cache, write_dual_cache
 from shared.llm_client import call_llm
-from shared.schema import OUTCOME_CATEGORIES
+from shared.schema import OUTCOME_CATEGORIES, outcome_categories_for
 from shared.utils import cache_key
 
 # Bump when the prompt or model wiring changes so the content-keyed cache misses
 # stale entries. read_dual_cache in "latest" mode keys on this; "accumulate" mode
 # still prefers the legacy DOI-keyed entry.
-PROMPT_VERSION = "2026-07-16-abstract-escalation"
+PROMPT_VERSION = "2026-07-22-repro-grid-long-quotes"
 
 # Truncation caps (chars) for the abstract-based and fulltext-escalation prompts.
 _ABSTRACT_CAP = 3000
@@ -46,7 +46,7 @@ _ABBREV_RE = re.compile(
 
 
 def _expand_to_sentences(text: str, match_start: int, match_end: int,
-                          n_context: int = 1) -> str:
+                          n_context: int = 2) -> str:
     """Return the sentence containing the match plus n_context sentences on each side."""
     if not text:
         return ""
@@ -191,7 +191,7 @@ def _abstract_prompt(title_r: str, abstract_snip: str, original_block: str) -> s
         "Respond with ONLY this JSON:\n"
         '{"is_genuine_attempt": <true|false>, '
         '"outcome": "<success|failure|mixed|descriptive|cannot_be_determined>", '
-        '"outcome_phrase": "<verbatim quote of 2-3 sentences from the abstract that specifically describes what replicated and what did not>", '
+        + _QUOTE_INSTRUCTION +
         '"outcome_confidence": "<high|medium|low>", '
         '"out_quote_source": "<abstract|title>", '
         '"outcome_reasoning": "<one sentence explaining the classification choice>"}'
@@ -213,10 +213,88 @@ def _fulltext_prompt(title_r: str, abstract_snip: str, text_snip: str,
         "Respond with ONLY this JSON:\n"
         '{"is_genuine_attempt": <true|false>, '
         '"outcome": "<success|failure|mixed|descriptive|cannot_be_determined>", '
-        '"outcome_phrase": "<verbatim quote of 2-3 sentences from the paper that specifically describes what replicated and what did not>", '
+        + _QUOTE_INSTRUCTION +
         '"outcome_confidence": "<high|medium|low>", '
         '"out_quote_source": "<abstract|title|fulltext>", '
         '"outcome_reasoning": "<one sentence explaining the classification choice>"}'
+    )
+
+
+# Shared by every outcome prompt. The quote is the reviewer's evidence, so it must be a
+# self-contained passage, not a clipped fragment — validators were getting quotes that
+# stopped mid-argument and could not be judged without opening the paper.
+_QUOTE_INSTRUCTION = (
+    '"outcome_phrase": "<the FULL verbatim passage that proves the outcome. Quote 3-6 '
+    'COMPLETE sentences (up to ~1200 characters), including the surrounding sentences '
+    'needed to make the verdict self-evident to someone who has not read the paper. '
+    'Never truncate mid-sentence or mid-argument>", '
+)
+
+# ── Reproduction outcome vocabulary ──────────────────────────────────────────
+# A reproduction re-runs the ORIGINAL data/code, so "did it replicate?" is the wrong
+# question. Two independent axes are coded instead — schema's 3x3 grid.
+_REPRO_OUTCOME_RULES = (
+    "A REPRODUCTION re-analyses the ORIGINAL study's own data/code; it does not collect "
+    "new data. Code the outcome on TWO independent axes and join them with a comma.\n\n"
+    "Axis 1 - did the computation reproduce the original numbers?\n"
+    "- computationally successful: the reported numbers/results were obtained again\n"
+    "- computational issues: the numbers could not be obtained or differed (errors, "
+    "missing data/code, discrepancies)\n"
+    "- computation not checked: the paper did not attempt to re-run the original analysis\n\n"
+    "Axis 2 - does the finding survive alternative reasonable specifications?\n"
+    "- robust: it holds up under the alternative specifications tested\n"
+    "- robustness challenges: alternative specifications weaken, overturn or qualify it\n"
+    "- robustness not checked: no robustness/sensitivity analysis was attempted\n\n"
+    "Valid outcome values are EXACTLY these nine strings:\n"
+    "  computationally successful, robust\n"
+    "  computationally successful, robustness challenges\n"
+    "  computationally successful, robustness not checked\n"
+    "  computational issues, robust\n"
+    "  computational issues, robustness challenges\n"
+    "  computational issues, robustness not checked\n"
+    "  computation not checked, robust\n"
+    "  computation not checked, robustness challenges\n"
+    "  computation not checked, robustness not checked\n\n"
+    "The axes are INDEPENDENT: a reproduction can fail computationally yet still find the "
+    "conclusion robust, and vice versa. Use cannot_be_determined ONLY when the text does "
+    "not let you place BOTH axes.\n\n"
+)
+
+_REPRO_JSON = (
+    '{"is_genuine_attempt": <true|false>, '
+    '"outcome": "<one of the nine strings above, or cannot_be_determined>", '
+    + _QUOTE_INSTRUCTION +
+    '"outcome_confidence": "<high|medium|low>", '
+    '"out_quote_source": "<abstract|title|fulltext>", '
+    '"outcome_reasoning": "<one sentence naming the computation verdict and the robustness verdict>"}'
+)
+
+
+def _repro_abstract_prompt(title_r: str, abstract_snip: str, original_block: str) -> str:
+    return (
+        "You are a research methodology expert. Classify the REPRODUCTION outcome based "
+        "on what the paper's abstract states.\n\n"
+        + original_block
+        + f"TITLE: {title_r}\n"
+        f"ABSTRACT: {abstract_snip or '(not available)'}\n\n"
+        + _REPRO_OUTCOME_RULES
+        + "Respond with ONLY this JSON:\n" + _REPRO_JSON
+    )
+
+
+def _repro_fulltext_prompt(title_r: str, abstract_snip: str, text_snip: str,
+                           original_block: str) -> str:
+    return (
+        "You are a research methodology expert. The abstract alone could not settle the "
+        "REPRODUCTION outcome. Classify it using the paper's full text.\n\n"
+        + original_block
+        + f"TITLE: {title_r}\n"
+        f"ABSTRACT: {abstract_snip or '(not available)'}\n"
+        f"PARSED FULLTEXT: {text_snip or '(not available)'}\n\n"
+        + _REPRO_OUTCOME_RULES
+        + "Judge THIS paper's own reproduction attempt, not results it reports for other "
+          "studies in its background or literature review.\n\n"
+        + "Respond with ONLY this JSON:\n" + _REPRO_JSON
     )
 
 
@@ -241,9 +319,13 @@ def _call_outcome_llm(prompt: str, doi_r: str) -> tuple[Optional[dict], str]:
     return None, ""
 
 
-def _normalise(result: dict, prompt: str, model_used: str) -> dict:
+def _normalise(result: dict, prompt: str, model_used: str,
+               record_type: str = "replication") -> dict:
     outcome = str(result.get("outcome", "cannot_be_determined")).lower()
-    if outcome not in _VALID_OUTCOMES:
+    # Reproductions use the 3x3 computation/robustness grid, replications the
+    # success/failure/... enum. Validating against the wrong one would silently
+    # coerce every reproduction verdict to cannot_be_determined.
+    if outcome not in outcome_categories_for(record_type):
         outcome = "cannot_be_determined"
 
     # is_genuine_attempt defaults to True when absent (e.g. a cached response written
@@ -266,7 +348,7 @@ def _normalise(result: dict, prompt: str, model_used: str) -> dict:
 
 def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
                  original_title: str = "", original_authors: str = "",
-                 original_year: str = "") -> dict:
+                 original_year: str = "", record_type: str = "replication") -> dict:
     """LLM-based outcome extraction.
 
     The primary pass reads the abstract. If it returns cannot_be_determined (or the
@@ -276,7 +358,10 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
     model, prompt version and abstract.
     """
     legacy_key  = f"outcome_{cache_key(doi_r)}"
-    content_key = f"outcome_{cache_key(doi_r + '|' + GEMINI_HEAVY_MODEL + '|' + PROMPT_VERSION + '|' + abstract_r)}"
+    # record_type is folded into the content key: the same paper classified as a
+    # reproduction gets a different prompt and a different vocabulary, so it must
+    # not read back a replication-coded cache entry.
+    content_key = f"outcome_{cache_key(doi_r + '|' + GEMINI_HEAVY_MODEL + '|' + PROMPT_VERSION + '|' + record_type + '|' + abstract_r)}"
     cached = read_dual_cache(LLM_CACHE_DIR, legacy_key, content_key, mode=LLM_CACHE_READ)
     if cached is not None:
         cached.setdefault("outcome_reasoning", "")
@@ -296,23 +381,27 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
                  "outcome_confidence": "low", "out_quote_source": "",
                  "outcome_reasoning": "", "llm_model": ""}
 
-    prompt = _abstract_prompt(title_r, abstract_snip, original_block)
+    is_repro = str(record_type or "").strip().lower() == "reproduction"
+    prompt = (_repro_abstract_prompt(title_r, abstract_snip, original_block) if is_repro
+              else _abstract_prompt(title_r, abstract_snip, original_block))
     result, model_used = _call_outcome_llm(prompt, doi_r)
     if not result:
         log.warning("[%s] outcome LLM failed after all retries — marking cannot_be_determined", doi_r)
         return _fallback
 
-    output = _normalise(result, prompt, model_used)
+    output = _normalise(result, prompt, model_used, record_type)
 
     # Escalation: the abstract could not settle it → read the parsed fulltext.
     if (OUTCOME_FULLTEXT_ESCALATION
             and fulltext
             and (output["outcome"] == "cannot_be_determined" or not abstract_r)):
         text_snip = (fulltext[:_FULLTEXT_CAP] + "…") if len(fulltext) > _FULLTEXT_CAP else fulltext
-        esc_prompt = _fulltext_prompt(title_r, abstract_snip, text_snip, original_block)
+        esc_prompt = (_repro_fulltext_prompt(title_r, abstract_snip, text_snip, original_block)
+                      if is_repro else
+                      _fulltext_prompt(title_r, abstract_snip, text_snip, original_block))
         esc_result, esc_model = _call_outcome_llm(esc_prompt, doi_r)
         if esc_result:
-            output = _normalise(esc_result, esc_prompt, esc_model)
+            output = _normalise(esc_result, esc_prompt, esc_model, record_type)
             if not output["out_quote_source"]:
                 output["out_quote_source"] = "fulltext"
 
@@ -347,13 +436,31 @@ def extract_outcome(doi_r: str,
                     no_llm: bool = False,
                     original_title: str = "",
                     original_authors: str = "",
-                    original_year: str = "") -> dict:
-    """Extract replication outcome from available text.
+                    original_year: str = "",
+                    record_type: str = "replication") -> dict:
+    """Extract the outcome from available text.
+
+    record_type selects the vocabulary: "reproduction" uses the 3x3
+    computation/robustness grid, anything else the replication enum.
 
     Returns a dict with keys: outcome, outcome_phrase, outcome_confidence,
     out_quote_source, outcome_reasoning (empty string for keyword-matched rows).
     """
     _kw_fallback = {"outcome_reasoning": ""}
+
+    # The keyword patterns below are replication-specific ("failed to replicate",
+    # "successfully replicated", ...). Running them on a reproduction would code it
+    # in the wrong vocabulary, so reproductions go straight to the LLM.
+    if str(record_type or "").strip().lower() == "reproduction":
+        if no_llm:
+            return {"outcome": "cannot_be_determined", "outcome_phrase": "",
+                    "outcome_confidence": "low", "out_quote_source": "",
+                    "outcome_reasoning": ""}
+        return _llm_outcome(doi_r, title_r, abstract_r, fulltext,
+                            original_title=original_title,
+                            original_authors=original_authors,
+                            original_year=original_year,
+                            record_type="reproduction")
 
     # Title scan — only act on high-confidence hits (avoid false triggers like "replication of X")
     if title_r:
@@ -381,4 +488,5 @@ def extract_outcome(doi_r: str,
     return _llm_outcome(doi_r, title_r, abstract_r, fulltext,
                         original_title=original_title,
                         original_authors=original_authors,
-                        original_year=original_year)
+                        original_year=original_year,
+                        record_type=record_type)

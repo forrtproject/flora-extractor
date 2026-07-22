@@ -11,7 +11,7 @@
       "backfill_old_pipeline": 70
     }
   },
-  "updated_at": "2026-07-18T13:21:40",
+  "updated_at": "2026-07-22T06:36:57",
   "filtered": {
     "total": 2581092,
     "by_filter_status": {
@@ -35,14 +35,20 @@
     "rep_repro_no_abstract": 3379
   },
   "extracted": {
-    "total": 1872,
+    "total": 1910,
     "target_pending_count": 0,
     "by_match_type": {
-      "single_original": 1870,
+      "single_original": 1908,
       "multiple_match": 2
     },
     "by_link_method": {
-      "author_year_match": 1714,
+      "citation_context_match": 4,
+      "same_author_year_title_overlap": 3,
+      "single_candidate_after_requery": 300,
+      "title_pattern_match": 4,
+      "grobid_ref_match": 0,
+      "author_year_match_legacy": 0,
+      "author_year_match": 1441,
       "llm_abstract": 0,
       "llm_fulltext": 157,
       "no_original_found": 1,
@@ -50,24 +56,24 @@
       "api_error": 0
     },
     "by_model": {
-      "none": 1716,
+      "none": 1754,
       "gemini": 156
     },
     "by_outcome": {
-      "success": 812,
-      "failure": 354,
-      "mixed": 268,
-      "uninformative": 0,
-      "cannot_be_determined": 304,
-      "descriptive": 80,
+      "success": 852,
+      "failure": 368,
+      "mixed": 288,
+      "descriptive": 82,
+      "cannot_be_determined": 262,
       "pending": 0,
       "api_error": 0,
-      "_other": 54
+      "uninformative": 0,
+      "_other": 58
     },
     "by_doi_verification": {
-      "verified": 1764,
+      "verified": 1800,
       "mismatch": 49,
-      "no_doi": 31,
+      "no_doi": 33,
       "no_metadata": 17,
       "not_found": 9,
       "skipped": 1,

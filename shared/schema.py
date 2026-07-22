@@ -134,6 +134,27 @@ OUTCOME_CATEGORIES = {
     "not_a_replication",
 }
 
+# Reproduction outcomes use a completely different vocabulary from replications.
+# A reproduction re-runs the ORIGINAL data/code, so two independent questions apply:
+#   1. did the computation reproduce?  computationally successful | computational
+#      issues | computation not checked
+#   2. does the result survive alternative specifications?  robust |
+#      robustness challenges | robustness not checked
+# The full 3x3 grid below matches the FLoRA entry form's dropdown. Which vocabulary
+# applies is keyed off the row's `type` column — the same way flora.csv stores it
+# (one `outcome` column, disambiguated by `type`).
+REPRODUCTION_OUTCOME_CATEGORIES = {
+    "computationally successful, robust",
+    "computationally successful, robustness challenges",
+    "computationally successful, robustness not checked",
+    "computational issues, robust",
+    "computational issues, robustness challenges",
+    "computational issues, robustness not checked",
+    "computation not checked, robust",
+    "computation not checked, robustness challenges",
+    "computation not checked, robustness not checked",
+}
+
 # Pipeline-state markers. These are NOT outcome categories — they record where a
 # row sits in the pipeline, never a judgment about the replication result.
 #   pending   — row not yet processed by the outcome step
@@ -147,7 +168,20 @@ OUTCOME_LEGACY_VALUES = {"uninformative"}
 # Every value that may legitimately appear in the `outcome` CSV column. Validators of
 # STORED data (e.g. extract/audit_extracted.py) must check against this, not
 # OUTCOME_CATEGORIES — otherwise every legacy row is flagged as non-canonical.
-OUTCOME_VALUES = OUTCOME_CATEGORIES | OUTCOME_STATE_MARKERS | OUTCOME_LEGACY_VALUES
+OUTCOME_VALUES = (OUTCOME_CATEGORIES | REPRODUCTION_OUTCOME_CATEGORIES
+                  | OUTCOME_STATE_MARKERS | OUTCOME_LEGACY_VALUES)
+
+
+def outcome_categories_for(record_type: str) -> set:
+    """The outcome vocabulary valid for a row of this `type`.
+
+    reproduction -> the 3x3 computation/robustness grid; anything else -> the
+    replication categories. cannot_be_determined is valid for both, since either
+    classifier can fail to reach a verdict.
+    """
+    if str(record_type or "").strip().lower() == "reproduction":
+        return REPRODUCTION_OUTCOME_CATEGORIES | {"cannot_be_determined", "not_a_replication"}
+    return OUTCOME_CATEGORIES
 
 TYPE_VALUES = {"replication", "reproduction"}
 

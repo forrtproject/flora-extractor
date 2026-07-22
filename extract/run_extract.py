@@ -678,11 +678,18 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -
             str(link.get("html_text",       "") or ""),
         ]))
 
+    # filter_status decides the outcome vocabulary: a reproduction is coded on the
+    # computation/robustness grid, not success/failure (see shared/schema.py).
+    record_type = ("reproduction"
+                   if str(row.get("filter_status", "")).strip().lower() == "reproduction"
+                   else "replication")
+
     return extract_outcome(
         doi_r, abstract_r, fulltext, title_r, no_llm=no_llm,
         original_title=str(link.get("resolved_title_o",  "") or ""),
         original_authors=str(link.get("resolved_author_o", "") or ""),
         original_year=str(link.get("resolved_year_o",   "") or ""),
+        record_type=record_type,
     )
 
 
@@ -872,6 +879,7 @@ def run_extract(no_llm: bool = False,
                 no_pdf: bool = False,
                 no_multiple_originals: bool = False,
                 no_reproductions: bool = False,
+                only_reproductions: bool = False,
                 skip_flora_validated: bool = True,
                 resume: bool = False,
                 resolved_only: bool = False,
@@ -890,6 +898,8 @@ def run_extract(no_llm: bool = False,
     no_pdf              — skip PDF download; abstract-only LLM resolution only.
     no_multiple_originals — write multiple_original rows as target_pending instead of running LLM.
     no_reproductions    — skip rows with filter_status=reproduction (write as target_pending).
+    only_reproductions  — process ONLY filter_status=reproduction rows; others are
+                          skipped entirely (not written at all).
     skip_flora_validated — skip DOIs already in FLoRA: validated entry-sheet rows
                            (FLORA_VALIDATED_STATUSES) plus every row in flora.csv.
                            ON by default; disable with --no-skip-flora-validated.
@@ -1061,6 +1071,12 @@ def run_extract(no_llm: bool = False,
         # False positives are excluded from Stage 3 — only replications and reproductions proceed.
         if row.get("filter_status") == "false_positive":
             log.debug("[%s] false_positive — skipping", clean_doi(str(row.get("doi_r", ""))))
+            continue
+
+        # --only-reproductions must be applied BEFORE the limit counter, otherwise
+        # --limit N counts scanned replications and the run yields no reproductions.
+        # Also placed ahead of URL->DOI resolution to avoid network calls on skipped rows.
+        if only_reproductions and str(row.get("filter_status", "")).strip().lower() != "reproduction":
             continue
 
         if limit is not None and processed >= limit:
@@ -1321,6 +1337,11 @@ if __name__ == "__main__":
         help="Skip reproduction rows (write as target_pending).",
     )
     parser.add_argument(
+        "--only-reproductions", action="store_true",
+        help="Process ONLY reproduction rows (filter_status=reproduction); skip "
+             "replications entirely without writing them.",
+    )
+    parser.add_argument(
         "--skip-flora-validated", action=argparse.BooleanOptionalAction, default=True,
         help="Skip DOIs already in FLoRA — validated entry-sheet rows "
              "('validated - unchanged' | 'validated - changed' | 'validated - chosen') "
@@ -1408,6 +1429,7 @@ if __name__ == "__main__":
                 no_pdf=args.no_pdf,
                 no_multiple_originals=args.no_multiple_originals,
                 no_reproductions=args.no_reproductions,
+                only_reproductions=args.only_reproductions,
                 skip_flora_validated=args.skip_flora_validated,
                 resume=args.resume,
                 resolved_only=args.resolved_only,
