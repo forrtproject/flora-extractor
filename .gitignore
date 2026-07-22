@@ -75,3 +75,6 @@ data/extracted.csv.bak
 
 # Large local data archives — never commit (GitHub hard-limits blobs >100MB)
 data/*.zip
+
+# Local safety backups — never commit
+data/*.bak
