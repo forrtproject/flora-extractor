@@ -260,3 +260,39 @@ def test_flora_gate_blocks_the_actual_insert(monkeypatch, tmp_path):
     payloads = [str(p) for _, p in fake.call_log]
     assert not any("10.1037/per0000041" in p for p in payloads)
     assert any("10.9/novel" in p for p in payloads)
+
+
+# --------------------------------------------------------------------------- #
+# 6. url_o derivation — never point confidently at the wrong paper             #
+# --------------------------------------------------------------------------- #
+def test_url_o_uses_doi_when_verified():
+    row = {"doi_o": "10.2/orig", "doi_o_verification": "verified", "title_o": "T"}
+    assert csv_to_db._derive_url_o(row) == "https://doi.org/10.2/orig"
+
+
+def test_url_o_not_emitted_for_unverified_doi():
+    """A mismatched DOI must NOT become a confident doi.org link — that sends a
+    validator to the wrong paper, which is worse than giving them a search."""
+    row = {"doi_o": "10.2/wrong", "doi_o_verification": "mismatch",
+           "title_o": "The Original Work"}
+    url = csv_to_db._derive_url_o(row)
+    assert "doi.org/10.2/wrong" not in url
+    assert "openalex.org" in url and "The" in url
+
+
+def test_url_o_falls_back_to_search_when_no_doi():
+    """Preprints / old papers legitimately have no DOI — give a resolvable search
+    link rather than an empty cell."""
+    row = {"doi_o": "", "doi_o_verification": "no_doi", "title_o": "A Titled Work"}
+    url = csv_to_db._derive_url_o(row)
+    assert url.startswith("https://openalex.org/works?search=")
+    assert "Titled" in url
+
+
+def test_url_o_empty_when_nothing_to_point_at():
+    assert csv_to_db._derive_url_o({"doi_o": "", "doi_o_verification": "", "title_o": ""}) == ""
+
+
+def test_url_o_accepts_corrected_doi():
+    row = {"doi_o": "10.2/fixed", "doi_o_verification": "corrected", "title_o": "T"}
+    assert csv_to_db._derive_url_o(row) == "https://doi.org/10.2/fixed"

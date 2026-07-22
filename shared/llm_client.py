@@ -645,6 +645,7 @@ def identify_original_with_llm(doi_r:          str,
 
     # When the original is not in the candidate list, resolve DOI from title+author
     # via CrossRef/OpenAlex rather than trusting any DOI the LLM may have fabricated.
+    doi_from_title_search = False
     if not resolved_doi and resolved_title:
         from shared.doi_verify import resolve_doi_by_metadata
         hit = resolve_doi_by_metadata(
@@ -653,6 +654,10 @@ def identify_original_with_llm(doi_r:          str,
         )
         if hit:
             resolved_doi = hit.get("doi", "")
+            # Provenance matters: this DOI was NOT taken from the reference list, it
+            # was searched for by title. Every doi_o mismatch in the 2026-07 audit came
+            # from here, so downstream must be able to tell these apart.
+            doi_from_title_search = bool(resolved_doi)
 
     resolved = bool(resolved_title)
 
@@ -664,7 +669,10 @@ def identify_original_with_llm(doi_r:          str,
         "resolved"          : resolved,
         # llm_no_target: LLM ran successfully but concluded no identifiable original exists.
         # Distinct from llm_failed (all API calls errored) and llm_fulltext (original found).
-        "resolution_method" : (f"llm_abstract_{llm_source}" if abstract_only else f"llm_{llm_source}") if resolved else "llm_no_target",
+        "resolution_method" : (
+            f"llm_title_search_{llm_source}" if (resolved and doi_from_title_search) else
+            (f"llm_abstract_{llm_source}" if abstract_only else f"llm_{llm_source}")
+        ) if resolved else "llm_no_target",
         "resolved_doi_o"    : resolved_doi,
         "resolved_title_o"  : resolved_title,
         "resolved_year_o"   : resolved_year,

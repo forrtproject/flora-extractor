@@ -186,6 +186,8 @@ _METHOD_MAP = {
     "single_candidate_after_requery": "single_candidate_after_requery",
     "title_pattern_match":            "title_pattern_match",
     "grobid_ref_match":               "grobid_ref_match",
+    "llm_title_search_gemini":        "llm_title_search",
+    "llm_title_search_openai":        "llm_title_search",
     "llm_gemini":                     "llm_fulltext",
     "llm_openai":                     "llm_fulltext",
     "llm_abstract_gemini":            "llm_abstract",
@@ -911,6 +913,14 @@ def _verify_row(row: dict) -> dict:
         row["authors_o"]    = new_authors
         row["bibtex_ref_o"] = new_bibtex
     if v["doi_o_verification"] == "mismatch":
+        # The DOI is registered but demonstrably describes a DIFFERENT paper, and
+        # verify_and_correct found no better candidate. Keeping it sends validators
+        # to the wrong original and yields a confidently wrong url_o, which is worse
+        # than no link at all. Drop the DOI and everything derived from it; the
+        # title/author/year claim is retained so the row can still be reviewed.
+        row["doi_o"] = ""
+        row["bibtex_ref_o"] = ""
+        row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), "")
         row["link_confidence"] = "low"
     if v["evidence_note"]:
         existing = str(row.get("link_evidence", "") or "")

@@ -1205,3 +1205,47 @@ class TestGuardOriginalLink:
              patch("extract.run_extract._search_openalex_by_title", return_value=None):
             out = run_extract._guard_original_link(self._row(doi_o="", title_o="n/a"))
         assert out["link_method"] == "target_pending"
+
+
+# ── Mismatched doi_o must not survive into the row (fix 1) ───────────────────
+
+class TestMismatchClearsDoi:
+    def _row(self):
+        return {"doi_r": "10.1/repl", "title_r": "Repl", "doi_o": "10.2/wrong",
+                "title_o": "The Original Work", "year_o": "2010", "authors_o": "Smith",
+                "link_method": "llm_fulltext", "link_confidence": "high",
+                "pair_id": "p", "ref_o": "old ref", "bibtex_ref_o": "@article{old}"}
+
+    def test_mismatch_clears_doi_but_keeps_title(self):
+        v = {"doi_o_verification": "mismatch", "doi_o": "10.2/wrong",
+             "evidence_note": "DOI mismatch: points to another paper"}
+        with patch("extract.run_extract.verify_and_correct", return_value=v):
+            out = run_extract._verify_row(self._row())
+        assert out["doi_o"] == "", "a known-wrong DOI must not be kept"
+        assert out["bibtex_ref_o"] == "", "bibtex derived from the wrong DOI must go too"
+        assert out["title_o"] == "The Original Work", "the title claim is retained"
+        assert out["doi_o_verification"] == "mismatch"
+        assert out["link_confidence"] == "low"
+
+    def test_verified_doi_untouched(self):
+        v = {"doi_o_verification": "verified", "doi_o": "10.2/wrong", "evidence_note": ""}
+        with patch("extract.run_extract.verify_and_correct", return_value=v):
+            out = run_extract._verify_row(self._row())
+        assert out["doi_o"] == "10.2/wrong"
+        assert out["bibtex_ref_o"] == "@article{old}"
+
+
+# ── Title-search provenance is visible in link_method (fix 2) ────────────────
+
+class TestTitleSearchProvenance:
+    def test_schema_knows_the_method(self):
+        from shared.schema import LINK_METHOD_VALUES, RESOLVED_LINK_METHODS
+        assert "llm_title_search" in LINK_METHOD_VALUES
+        assert "llm_title_search" in RESOLVED_LINK_METHODS
+
+    def test_mapped_from_internal_label(self):
+        assert run_extract._map_method("llm_title_search_gemini") == "llm_title_search"
+        assert run_extract._map_method("llm_title_search_openai") == "llm_title_search"
+
+    def test_candidate_derived_link_is_not_title_search(self):
+        assert run_extract._map_method("llm_gemini") == "llm_fulltext"

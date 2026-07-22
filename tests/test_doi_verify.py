@@ -564,14 +564,19 @@ class TestVerifyRowHook:
         assert "existing evidence" in row["link_evidence"]
         assert "DOI corrected" in row["link_evidence"]
 
-    def test_mismatch_downgrades_confidence(self):
+    def test_mismatch_downgrades_confidence_and_clears_doi(self):
+        """A mismatched DOI is registered but describes a DIFFERENT paper, and
+        verify_and_correct found no better candidate. Keeping it would send a
+        validator to the wrong original and produce a confident-looking but wrong
+        url_o, so the DOI (and its derived bibtex) is dropped; the title claim stays."""
         from extract.run_extract import _verify_row
         v = {"doi_o_verification": "mismatch",
              "doi_o": "10.1016/j.biopsycho.2015.07.014", "evidence_note": "DOI mismatch: ..."}
         with patch("extract.run_extract.verify_and_correct", return_value=v):
             row = _verify_row(self._row())
         assert row["link_confidence"] == "low"
-        assert row["doi_o"] == "10.1016/j.biopsycho.2015.07.014"
+        assert row["doi_o"] == ""
+        assert row["doi_o_verification"] == "mismatch"
 
     def test_passes_doi_r_as_exclusion(self):
         from extract.run_extract import _verify_row

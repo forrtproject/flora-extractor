@@ -107,6 +107,11 @@ RESOLVED_LINK_METHODS = {
     "grobid_ref_match",
     "llm_abstract",
     "llm_fulltext",
+    # DOI came from a CrossRef/OpenAlex title search because the LLM named an
+    # original that was NOT in the candidate/reference list. Kept distinct from
+    # llm_fulltext: every doi_o mismatch found in the 2026-07 audit came from this
+    # path, so it must stay filterable rather than blend into candidate-derived links.
+    "llm_title_search",
 }
 
 LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {

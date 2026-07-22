@@ -54,9 +54,35 @@ _RESOLVED_STATUSES = {"replication", "reproduction"}
 _VALIDATOR_SLOTS = ("human_1", "human_2", "llm")
 
 
-def _derive_url_o(doi_o: str) -> str:
-    doi_o = str(doi_o or "").strip()
-    return f"https://doi.org/{doi_o}" if doi_o else ""
+# doi_o_verification values for which the DOI is trustworthy enough to link directly.
+_TRUSTED_DOI_VERIFICATION = {"verified", "corrected"}
+
+
+def _derive_url_o(row) -> str:
+    """Build the original-study URL a validator will click.
+
+    A doi.org link is only emitted for a DOI whose metadata was actually confirmed.
+    Two failure modes this avoids:
+      * a mismatched DOI resolves to a REAL but WRONG paper — a confident link to
+        the wrong original is worse than no link, because it looks authoritative;
+      * originals with no registered DOI (preprints, old papers, book chapters)
+        previously produced an empty cell, leaving the validator nothing to click.
+    In both cases fall back to an OpenAlex title search, which is resolvable and
+    honest about being a lookup rather than a canonical identifier.
+    """
+    if isinstance(row, str):          # tolerate the old str signature
+        row = {"doi_o": row, "doi_o_verification": "verified"}
+    doi_o = str(row.get("doi_o", "") or "").strip()
+    verification = str(row.get("doi_o_verification", "") or "").strip().lower()
+    title_o = str(row.get("title_o", "") or "").strip()
+
+    if doi_o and verification in _TRUSTED_DOI_VERIFICATION:
+        return f"https://doi.org/{doi_o}"
+    if title_o:
+        from urllib.parse import quote_plus
+        return f"https://openalex.org/works?search={quote_plus(title_o)}"
+    # No trustworthy DOI and no title — nothing honest to point at.
+    return f"https://doi.org/{doi_o}" if (doi_o and verification == "") else ""
 
 
 def _s(val) -> str:
@@ -85,7 +111,7 @@ def _build_unvalidated_row(record_id: str, row: pd.Series) -> dict:
         "doi_o":            _s(row.get("doi_o")),
         "study_o":          _s(row.get("title_o")),
         "year_o":           _s(row.get("year_o")),
-        "url_o":            _derive_url_o(row.get("doi_o")),
+        "url_o":            _derive_url_o(row),
         "ref_o":            _s(row.get("ref_o")),
         "type":             _s(row.get("type")),
         "outcome":          _s(row.get("outcome")),
