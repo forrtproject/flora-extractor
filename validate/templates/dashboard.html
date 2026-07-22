@@ -753,8 +753,10 @@ python -m search.run_search --harvest-only</pre>
             Records fetched from OpenAlex per phrase, rebuilt from the cursor checkpoints in
             <code>cache/openalex/</code>. These are <strong>pre-deduplication</strong> counts — a paper
             matching three phrases is counted three times, so this column does not sum to Total Candidates.
-            <strong>Expected</strong> is OpenAlex's own result count for the same jobs: anything well
-            below 100% is unfetched recall, not a small phrase.
+            <strong>Expected</strong> is OpenAlex's own result count for the same jobs. Everything here is
+            reconstructed from surviving cursor checkpoints in a <em>prunable</em> cache, so a low
+            number can mean a cleared checkpoint rather than unfetched recall — candidates.csv is the
+            authority on what was actually fetched.
             <span id="phrase-total"></span>
           </p>
           <div class="table-scroll">
@@ -2483,8 +2485,10 @@ function drawPhraseTable() {
       flags.push(`<span class="flow-badge badge-orange" title="${r.incomplete} job(s) stopped ` +
                  `mid-pagination">${r.incomplete} cut off</span>`);
     if (r.years_missing && r.years_missing.length)
-      flags.push(`<span class="flow-badge badge-orange" title="Years with no search job at all">` +
-                 `never run: ${yearGapLabel(r.years_missing)}</span>`);
+      flags.push('<span class="flow-badge badge-gray" title="No cursor checkpoint survives for ' +
+                 'these years. cache/ is prunable, so this means missing provenance, not ' +
+                 'necessarily missing data — check candidates.csv for the actual rows.">' +
+                 `no checkpoint: ${yearGapLabel(r.years_missing)}</span>`);
     return `<tr>
       <td><span style="font-family:monospace">${esc(r.phrase)}</span>${
         r.source === 'concept' ? ' <span class="flow-badge badge-purple">concept</span>' : ''}

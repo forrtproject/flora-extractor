@@ -172,9 +172,11 @@ def phrase_yield() -> dict:
     checkpointed before api_total was recorded contribute to ``fetched`` but not to
     ``expected``, which is why ``expected_partial`` flags an incomplete denominator.
 
-    ``years_missing`` lists years in COVERAGE_FROM_YEAR..this year that have no cursor
-    file at all — work never attempted, as distinct from ``incomplete`` jobs that were
-    started and cut off.
+    ``years_missing`` lists years in COVERAGE_FROM_YEAR..this year with no cursor file.
+    Read it as **missing provenance, not missing data**: cache/ is gitignored and
+    prunable, so a cleared checkpoint leaves rows in candidates.csv that this function
+    cannot see. candidates.csv is the authority on what was fetched; these counts only
+    describe what the surviving checkpoints can account for.
 
     Every count is 0 when the cache directory is absent (e.g. on a deployment that ships
     only the CSVs), which is why the result is persisted to stats.json rather than

@@ -65,53 +65,59 @@ previously title-only rows.
 
 ---
 
-## (e) Stage 1 OpenAlex coverage is far from complete (issue #68)
+---
 
-Two independent problems, both measured against the live API on 2026-07-22.
+## (e) Stage 1 cursor checkpoints do not account for what was fetched (issue #68)
 
-**1. The year loop never advanced past 2011.** `run_search`'s job defaults are
-`from_year=2011, to_year=2021`, but the cursor checkpoints on disk only cover
-**1990–2011**, and 2011 itself stopped mid-pagination. For the largest phrase:
+`cache/openalex/` holds **45,866 cached result pages** but only **853 cursor
+checkpoints**. The checkpoints account for 1.31M fetched records; the page files
+hold up to ~9.2M. Sampling the pages shows plenty of 2012–2026 publication years,
+and `candidates.csv` contains **1,077,237 rows for 2011–2021** with a smooth
+year-on-year curve and no truncation cliff.
 
-| Years | OpenAlex reports | Fetched |
-| ----- | ---------------- | ------- |
-| 1990–2010 | 315,057 | 315,344 (complete) |
-| 2011 | 33,914 | 10,000 (cut off) |
-| 2012–2026 | 950,426 | **0 — never run** |
-| **total** | **1,299,397** | **325,344 (25%)** |
+So the searches for 2012–2026 **did run** — their checkpoints are simply gone.
+`cache/` is gitignored and prunable, and a cleared checkpoint leaves the fetched
+rows in `candidates.csv` with nothing left to attribute them.
 
-Post-2011 is where publication volume is highest, so the missing years are the
-majority of the corpus. `_get_page` raises `StopIteration` when OpenAlex returns
-`Retry-After > 600` (daily quota exhausted) and the phrase stops with its cursor
-saved — correct behaviour, but nothing tracked that the run was never resumed.
+**Consequence:** the dashboard's *Yield per Search Phrase* table, and
+`phrase_yield()` behind it, describe **only what the surviving checkpoints can
+account for**. Treat a low coverage % or a `no checkpoint` badge as *missing
+provenance*, not missing data. `candidates.csv` is the authority on what was
+fetched.
 
-**Recovery:** re-run Stage 1 for the missing span. Cursors resume in place, so
-already-fetched pages cost nothing:
+What is still genuinely true from the checkpoints that do survive:
 
-```bash
-python -m search.run_search --auto-advance --from-year 2011 --to-year 2026
-```
+- The `replication of` job for **2011** stopped mid-pagination at 10,000 of 33,914
+  and never resumed — `_get_page` raises `StopIteration` when OpenAlex returns
+  `Retry-After > 600` (quota exhausted), saves the cursor, and nothing resumes it.
+- `data/candidates.csv` was last written **2026-07-12** while cursors ran on
+  **07-14**, so some fetched pages were never merged. `python -m
+  search.run_search --harvest-only` merges cached pages without new API calls.
 
-**Prevention:** cursor checkpoints now record OpenAlex's own `meta.count` as
-`api_total`, and the dashboard's *Yield per Search Phrase* table shows
-fetched-vs-expected coverage, a *cut off* badge for jobs that stopped
-mid-pagination, and a *never run* badge listing years with no job at all. Jobs
-written before this change have no `api_total`, so their expected column stays
-blank until the phrase is re-run — `expected_partial` flags that.
+**Revisit obligation:** completeness for 2012–2021 cannot be established from the
+cache. Re-running the year range is the only way to confirm it, and is cheap where
+the request parameters match a cached page (`_get_page` keys its cache on the exact
+param set, so identical phrase + year granularity replays for free; a different
+year granularity does not hit the cache and re-spends quota).
 
-**2. Three "phrases" are not phrases.** OpenAlex strips stopwords before matching,
-so a quoted phrase whose only content word is a single term collapses to that
-one-word query. Verified by reversing the word order (identical count ⇒ no phrase
-match): `"replication of"` = `"of replication"` = `"replication"` = 1,299,397 works,
-whereas `"direct replication"` (1,809) ≠ reversed (115).
+---
 
-The affected phrases are `replication of`, `reproducibility of`, and
-`replicability of` — which are also the three highest-yield phrases (377k + 325k +
-315k = 78% of everything fetched). They are firehoses standing in for
-high-precision phrases, which inflates Stage 1 volume and pushes the precision
-burden entirely onto Stage 2. The dashboard flags them **not a phrase**.
+## (f) Three Stage-1 "phrases" are not phrases (issue #68)
+
+OpenAlex strips stopwords before matching, so a quoted phrase whose only content
+word is a single term collapses to that one-word query. Verified 2026-07-22 by
+reversing word order — an identical count means no phrase matching:
+
+- `"replication of"` = `"of replication"` = `"replication"` = **1,299,397** works
+- `"direct replication"` = 1,809, reversed = 115 → genuine phrase match
+- `"we replicated"` = 14,023, reversed = 9,168 → genuine phrase match
+
+The degenerate ones are `replication of`, `reproducibility of` and
+`replicability of` — also the three highest-yield phrases. They are firehoses
+standing in for high-precision phrases, which inflates Stage 1 volume and pushes
+the precision burden entirely onto Stage 2.
 
 **Revisit obligation:** decide whether to keep them as deliberate broad recall
-(and say so in the technical report) or replace them with genuine multi-content-word
-phrases. Do not extend the stopword set in `openalex_search._OA_STOPWORDS` on
+(and say so in the technical report) or replace them with genuine
+multi-content-word phrases. Do not extend `openalex_search._OA_STOPWORDS` on
 intuition — `we`, `not`, `did` and `could` were each measured *not* to be dropped.
