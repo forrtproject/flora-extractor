@@ -351,7 +351,7 @@
       "unattributed_files": 0
     }
   },
-  "updated_at": "2026-07-22T12:56:23",
+  "updated_at": "2026-07-23T19:13:02",
   "filtered": {
     "total": 2581092,
     "by_filter_status": {
@@ -507,78 +507,80 @@
     "rep_repro_no_abstract": 3379
   },
   "extracted": {
-    "total": 1568,
+    "total": 1881,
     "target_pending_count": 0,
     "by_match_type": {
-      "single_original": 1566,
+      "single_original": 1879,
       "multiple_match": 2
     },
     "by_link_method": {
       "citation_context_match": 3,
       "same_author_year_title_overlap": 3,
-      "single_candidate_after_requery": 290,
+      "single_candidate_after_requery": 292,
       "title_pattern_match": 4,
       "grobid_ref_match": 0,
       "author_year_match_legacy": 0,
       "author_year_match": 1156,
-      "llm_abstract": 1,
-      "llm_fulltext": 111,
+      "llm_abstract": 253,
+      "llm_fulltext": 108,
       "no_original_found": 0,
       "target_pending": 0,
-      "api_error": 0
+      "api_error": 0,
+      "_other": 62
     },
     "by_model": {
-      "none": 1458,
-      "gemini": 110
+      "none": 1460,
+      "gemini": 420,
+      "gpt": 1
     },
     "by_outcome": {
-      "success": 713,
-      "failure": 293,
-      "mixed": 242,
-      "descriptive": 78,
-      "cannot_be_determined": 233,
+      "success": 770,
+      "failure": 311,
+      "mixed": 270,
+      "descriptive": 104,
+      "cannot_be_determined": 276,
       "pending": 0,
       "api_error": 0,
       "uninformative": 0,
-      "_other": 9
+      "_other": 150
     },
     "by_doi_verification": {
-      "verified": 1514,
-      "no_doi": 23,
+      "verified": 1616,
+      "not_found": 225,
+      "no_doi": 24,
       "no_metadata": 15,
-      "not_found": 15,
-      "corrected": 1
+      "mismatch": 1
     },
     "by_type": {
-      "replication": 1556,
-      "reproduction": 12
+      "replication": 1872,
+      "reproduction": 9
     },
     "by_outcome_replication": {
-      "success": 713,
-      "failure": 293,
-      "mixed": 242,
-      "cannot_be_determined": 230,
-      "descriptive": 78
+      "success": 770,
+      "failure": 311,
+      "cannot_be_determined": 273,
+      "mixed": 270,
+      "not_a_replication": 144,
+      "descriptive": 104
     },
     "by_outcome_reproduction": {
-      "computationally successful, robustness challenges": 4,
       "cannot_be_determined": 3,
+      "computationally successful, robustness challenges": 2,
       "computationally successful, robust": 2,
-      "computation not checked, robustness challenges": 1,
       "computation not checked, robust": 1,
       "computational issues, robustness challenges": 1
     },
     "by_year": {
-      "2020": 119,
+      "2019": 175,
+      "2018": 171,
+      "2021": 156,
+      "2017": 128,
+      "2020": 120,
       "2023": 109,
-      "2021": 107,
-      "2018": 100,
+      "2016": 103,
       "2022": 96,
-      "2019": 89,
       "2024": 87,
       "2025": 68,
-      "2017": 64,
-      "2016": 61,
       "2015": 57,
       "2009": 40,
       "2014": 35,
