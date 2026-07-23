@@ -19,7 +19,9 @@ from typing import Optional
 import requests
 
 from shared.cache import read_cache, write_cache
-from shared.config import CROSSREF_RATE_SEC, DOI_VERIFY_CACHE_DIR, RESEARCHER_EMAIL, log
+from shared.config import (
+    CROSSREF_RATE_SEC, DOI_VERIFY_CACHE_DIR, OPENALEX_API_KEY, RESEARCHER_EMAIL, log,
+)
 from shared.disambiguation import jaccard_similarity
 from shared.openalex_client import author_matches
 from shared.utils import cache_key, clean_doi
@@ -47,11 +49,18 @@ def _get_json(url: str, params: dict) -> "tuple[Optional[dict], bool]":
     (None, True)  → HTTP 404 (a definitive answer, not retried)
     (None, False) → hard failure after all retries
     """
+    # Send the OpenAlex Bearer key to OpenAlex only. Without it these calls hit the
+    # anonymous 1000/day pool and 429 on every row once it is exhausted; sending it to
+    # CrossRef instead would leak the key to an unrelated host (see issue #64).
+    headers = _HEADERS
+    if OPENALEX_API_KEY and "api.openalex.org" in url:
+        headers = {**_HEADERS, "Authorization": f"Bearer {OPENALEX_API_KEY}"}
+
     for delay in _RETRY_DELAYS:
         if delay:
             time.sleep(delay)
         try:
-            r = requests.get(url, params=params, headers=_HEADERS, timeout=20)
+            r = requests.get(url, params=params, headers=headers, timeout=20)
             if r.status_code == 404:
                 return None, True
             # other 4xx (except rate-limit 429) are definitive — retrying won't help

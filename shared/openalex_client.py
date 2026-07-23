@@ -210,7 +210,12 @@ _OA_HEADERS: dict[str, str] = {
     )
 }
 if OPENALEX_API_KEY:
-    _OA_HEADERS["Authorization"] = OPENALEX_API_KEY
+    # OpenAlex only recognises the premium key as a Bearer token; a bare key in the
+    # Authorization header is silently ignored and the request is served from the
+    # anonymous pool (1000/day, shared per-IP) instead of the keyed pool (10000/day).
+    # That mis-auth is why Stage 3 hit "Insufficient budget" 429s while Stage 1
+    # (which already sent Bearer) did not. Verified against the live API 2026-07-23.
+    _OA_HEADERS["Authorization"] = f"Bearer {OPENALEX_API_KEY}"
 _oa_last_call = 0.0
 
 
