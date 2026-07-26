@@ -514,24 +514,26 @@ def run_search(
     # Phase 2: live fetch from each enabled source.
     frames: list[pd.DataFrame] = []
 
-    if is_engine_enabled():
-        if _want("engine"):
-            log.info("Stage 1: fetching engine candidates (FLORA_USE_ENGINE=1)...")
-            frames.append(fetch_engine_candidates(year_from=from_year, year_to=to_year))
-        else:
-            log.info("Stage 1: engine source skipped (not in --source list)")
-    else:
-        if _want("openalex"):
-            log.info("Stage 1: fetching OpenAlex candidates...")
-            frames.append(
-                fetch_openalex_candidates(
-                    from_year=from_year,
-                    to_year=to_year,
-                    max_records_per_phrase=max_records_per_phrase,
-                )
+    # #48: the engine is ADDITIVE, not a replacement. It used to sit in the else-branch
+    # of the OpenAlex fetch, so FLORA_USE_ENGINE=1 silently dropped the entire phrase
+    # search (and, via the engine adapter's has_abstract:true, all abstract-less recall).
+    # It now runs alongside OpenAlex; exclude OpenAlex explicitly with --source if you
+    # really want engine-only.
+    if is_engine_enabled() and _want("engine"):
+        log.info("Stage 1: fetching engine candidates (FLORA_USE_ENGINE=1, additive)...")
+        frames.append(fetch_engine_candidates(year_from=from_year, year_to=to_year))
+
+    if _want("openalex"):
+        log.info("Stage 1: fetching OpenAlex candidates...")
+        frames.append(
+            fetch_openalex_candidates(
+                from_year=from_year,
+                to_year=to_year,
+                max_records_per_phrase=max_records_per_phrase,
             )
-        else:
-            log.info("Stage 1: OpenAlex source skipped (not in --source list)")
+        )
+    else:
+        log.info("Stage 1: OpenAlex source skipped (not in --source list)")
 
     if _want("semantic_scholar"):
         log.info("Stage 1: fetching Semantic Scholar candidates...")
