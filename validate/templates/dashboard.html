@@ -390,10 +390,14 @@ a.leg-row:hover { background:var(--surface-2); }
          overflow:hidden; text-overflow:ellipsis; }
 .cm-c { font-variant-numeric:tabular-nums; }
 .cm-tot { font-variant-numeric:tabular-nums; color:var(--text-muted); font-weight:600; }
-@media (prefers-color-scheme: dark) {
-  .cm-c[style*="dcfce7"] { background:#14532d !important; }
-  .cm-c[style*="fee2e2"] { background:#7f1d1d !important; }
-}
+/* Same light-green/light-red pairing as .pill-green/.pill-red elsewhere in this
+   dashboard, keyed off the page's own [data-theme] toggle (not the OS preference —
+   using @media(prefers-color-scheme) here previously painted dark cells under a
+   light-themed page whenever the OS was in dark mode, which was unreadable). */
+.cm-good { background:#dcfce7; color:#166534; }
+.cm-bad  { background:#fee2e2; color:#991b1b; }
+[data-theme="dark"] .cm-good { background:#14532d; color:#86efac; }
+[data-theme="dark"] .cm-bad  { background:#7f1d1d; color:#fca5a5; }
 
 /* ── Validation agreement cards ─────────────────────────────────────────────── */
 .agree-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:14px; }
@@ -2708,9 +2712,8 @@ function renderConfusion(data) {
       const cells = L.map((cl,j) => {
         const v = mat[i][j];
         const diag = i===j;
-        const bg = v ? (diag ? 'background:var(--good-bg,#dcfce7)'
-                             : 'background:var(--bad-bg,#fee2e2)') : '';
-        return `<td class="cm-c" style="${bg}">${v||''}</td>`;
+        const cls = v ? (diag ? 'cm-good' : 'cm-bad') : '';
+        return `<td class="cm-c ${cls}">${v||''}</td>`;
       }).join('');
       return `<tr><th class="cm-rh" title="${esc(rl)}">${esc(rl)}</th>${cells}
               <td class="cm-tot">${rowTotal}</td></tr>`;
