@@ -222,6 +222,14 @@ SET_FILES: dict[str, dict] = {
                "missing abstract, a paywalled full text, or a genuinely ambiguous result statement.",
         "action": "Recover the full text, then re-run the outcome step.",
     },
+    "fabricated_original_doi": {
+        "title": "Fabricated Original DOI",
+        "file": "fabricated_original_doi.csv",
+        "why": "doi_o looked like a registered DOI (plausible publisher prefix) but resolves "
+               "nowhere — doi.org 404, absent from CrossRef and OpenAlex. Almost always an LLM "
+               "hallucination or AI-generated upload citing a non-existent original.",
+        "action": "Discard, or re-resolve the true original by hand if the replication is genuine.",
+    },
     "unresolved_self_links": {
         "title": "Unresolved Self-Links",
         "file": "unresolved_self_links.csv",
