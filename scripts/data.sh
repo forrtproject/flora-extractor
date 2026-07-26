@@ -19,13 +19,15 @@ cd "$(dirname "$0")/.."
 case "${1:-pull}" in
   pull)
     dvc pull data/candidates.zip.dvc data/filtered.zip.dvc
-    ( cd data && unzip -o candidates.zip && unzip -o filtered.zip )
+    # python's zipfile is used instead of unzip/zip so no external archive tool
+    # is required (Git Bash on Windows ships neither reliably).
+    ( cd data && python -m zipfile -e candidates.zip . && python -m zipfile -e filtered.zip . )
     echo "✓ data/candidates.csv and data/filtered.csv ready"
     ;;
   pack)
     ( cd data && rm -f candidates.zip filtered.zip \
-        && zip -q candidates.zip candidates.csv \
-        && zip -q filtered.zip filtered.csv )
+        && python -m zipfile -c candidates.zip candidates.csv \
+        && python -m zipfile -c filtered.zip filtered.csv )
     dvc add data/candidates.zip data/filtered.zip
     echo "✓ re-zipped and dvc-added. Next:"
     echo "    git add data/candidates.zip.dvc data/filtered.zip.dvc"
