@@ -122,7 +122,15 @@ def _append_to_candidates_index(new_keys: set[str]) -> None:
 
 def build_candidates_index(csv_path: Path) -> set[str]:
     """Build candidates index from CSV in 50k-row chunks. Run once on migration
-    or when index is missing/stale. Writes the index file and returns the set."""
+    or when index is missing/stale. Writes the index file and returns the set.
+
+    Mirrors _row_keys()'s identifier priority (oa > doi > url > title-as-last-resort).
+    Before this fix, a rebuild added a title key for EVERY row unconditionally — a
+    separate code path that never picked up the #53 fix — so a DOI-less row sharing a
+    title with any identifier-bearing row would still collide after "purging" the
+    index. Title keys here are now scoped to identifier-less rows only, exactly like
+    an incremental merge would write them.
+    """
     log.info("Building candidates index from %s (reading in chunks)...", csv_path)
     index: set[str] = set()
     chunks_read = 0
@@ -130,18 +138,23 @@ def build_candidates_index(csv_path: Path) -> set[str]:
         csv_path, encoding="utf-8-sig", chunksize=50_000, dtype=str, low_memory=False
     ):
         chunk = chunk.fillna("")
-        if "openalex_id_r" in chunk.columns:
-            oa = chunk["openalex_id_r"].str.strip()
-            index.update(("oa:" + oa)[oa != ""].tolist())
-        if "doi_r" in chunk.columns:
-            dois = chunk["doi_r"].apply(lambda x: clean_doi(str(x)))
-            index.update(d for d in dois if d)
-        if "url_r" in chunk.columns:
-            urls = chunk["url_r"].str.strip()
-            index.update(("url:" + urls)[urls != ""].tolist())
-        if "title_r" in chunk.columns:
-            titles = chunk["title_r"].str.lower().str.strip()
-            index.update(("title:" + titles)[titles != ""].tolist())
+        n = len(chunk)
+        blank = pd.Series([""] * n, index=chunk.index)
+        oa    = chunk["openalex_id_r"].str.strip() if "openalex_id_r" in chunk.columns else blank
+        dois  = chunk["doi_r"].apply(lambda x: clean_doi(str(x))) if "doi_r" in chunk.columns else blank
+        urls  = chunk["url_r"].str.strip() if "url_r" in chunk.columns else blank
+        titles = chunk["title_r"].str.lower().str.strip() if "title_r" in chunk.columns else blank
+
+        index.update(("oa:" + oa)[oa != ""].tolist())
+        index.update(d for d in dois if d)
+        index.update(("url:" + urls)[urls != ""].tolist())
+
+        # #53: title is a last-resort identifier only — a row with any other
+        # identifier must never contribute a title key to the index.
+        has_other_id = (oa != "") | (dois != "") | (urls != "")
+        title_only = titles[(titles != "") & ~has_other_id]
+        index.update(("title:" + title_only).tolist())
+
         chunks_read += 1
     log.info("Candidates index built: %d keys from %d chunks — saving to disk", len(index), chunks_read)
     _save_candidates_index(index)

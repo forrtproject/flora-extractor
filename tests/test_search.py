@@ -9,7 +9,7 @@ from shared.config import OA_CACHE_DIR
 from search import openalex_search as oa
 from search.semantic_scholar_search import fetch_semantic_scholar_candidates
 from search.external_lists import fetch_i4r
-from search.run_search import _row_keys
+from search.run_search import _row_keys, build_candidates_index
 
 
 # ---------------------------------------------------------------------------
@@ -32,6 +32,39 @@ def test_row_keys_titleless_identifier_rows_dont_collide():
 def test_row_keys_doi_less_row_still_uses_title():
     keys = _row_keys({"title_r": "Only A Title"})
     assert keys == ["title:only a title"]
+
+
+def test_build_candidates_index_matches_row_keys_scoping(tmp_path, monkeypatch):
+    """#53 follow-up: build_candidates_index() (what --rebuild-index calls) had its
+    own unconditional title-key logic, separate from _row_keys() and never updated
+    by the #53 fix — so rebuilding the index reintroduced the exact collision the fix
+    was meant to purge. A DOI-less row sharing a title with a DOI-bearing row must not
+    collide after a rebuild."""
+    import pandas as pd
+    from search import run_search as rs
+    from shared.schema import CANDIDATES_COLS
+
+    # build_candidates_index() saves to the module-level index path unconditionally —
+    # redirect it so this test cannot clobber the real cache/candidates_index.txt.
+    monkeypatch.setattr(rs, "_CANDIDATES_INDEX_PATH", tmp_path / "candidates_index.txt")
+
+    rows = [
+        {**{c: "" for c in CANDIDATES_COLS}, "doi_r": "10.1/aaa",
+         "title_r": "Registered Replication Report", "openalex_id_r": "", "url_r": ""},
+        {**{c: "" for c in CANDIDATES_COLS}, "doi_r": "",
+         "title_r": "Registered Replication Report", "openalex_id_r": "", "url_r": ""},
+    ]
+    csv_path = tmp_path / "candidates.csv"
+    pd.DataFrame(rows, columns=CANDIDATES_COLS).to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+    index = build_candidates_index(csv_path)
+
+    assert "10.1/aaa" in index
+    assert "title:registered replication report" in index, \
+        "the DOI-less row must still get its title as a last-resort key"
+    # The DOI-bearing row must NOT have contributed a title key — otherwise the
+    # DOI-less row's title key would be indistinguishable from a real duplicate.
+    assert sum(1 for k in index if k.startswith("title:")) == 1
 
 
 def test_s2_phrases_match_openalex_and_include_failure_signals():
