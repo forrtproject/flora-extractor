@@ -380,6 +380,21 @@ a.leg-row:hover { background:var(--surface-2); }
 }
 .card-sub { font-size:10px; color:var(--text-faint); margin:-4px 0 10px; line-height:1.5; }
 
+/* ── #72 confusion matrix ───────────────────────────────────────────────────── */
+.cm-table { border-collapse:collapse; font-size:11px; }
+.cm-table th, .cm-table td { border:1px solid var(--border); padding:4px 7px; text-align:center; }
+.cm-corner { font-weight:600; color:var(--text-faint); text-align:left; white-space:nowrap; }
+.cm-h { max-width:90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+        font-weight:600; }
+.cm-rh { text-align:left; font-weight:600; white-space:nowrap; max-width:120px;
+         overflow:hidden; text-overflow:ellipsis; }
+.cm-c { font-variant-numeric:tabular-nums; }
+.cm-tot { font-variant-numeric:tabular-nums; color:var(--text-muted); font-weight:600; }
+@media (prefers-color-scheme: dark) {
+  .cm-c[style*="dcfce7"] { background:#14532d !important; }
+  .cm-c[style*="fee2e2"] { background:#7f1d1d !important; }
+}
+
 /* ── Validation agreement cards ─────────────────────────────────────────────── */
 .agree-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:14px; }
 .agree-card {
@@ -1605,18 +1620,38 @@ SUPABASE_SERVICE_KEY=eyJhbGc...</pre>
             </div>
           </div>
 
+          <!-- #72: pipeline coding vs human-final — the primary assessment view -->
           <div class="section-head">
-            <h2>Did the validators keep the pipeline's answer?</h2>
+            <h2>Where is the pipeline mis-coding? (pre-coding vs final)</h2>
             <p>
-              Among the <strong id="sv-agree-n">—</strong> records where <strong>both</strong> human
-              validators finished. <em>Kept</em> = the validator marked the pipeline value correct;
-              <em>changed</em> = marked it incorrect and supplied a replacement. Where the two humans
-              disagree, the LLM slot's verdict shows which of them it sided with. Each block then
-              reports how the reviewer finally settled it.
+              Each matrix compares the <strong>pipeline's coded value (rows)</strong> against the
+              <strong>human-verified final value (columns)</strong>, over finalised records. The
+              diagonal (highlighted) is agreement; every off-diagonal cell is a correction — read
+              across a row to see what a pipeline category gets changed into. <em>original</em> is a
+              DOI, not a category, so it has no matrix.
             </p>
           </div>
-          <div class="agree-grid" id="sv-agreement">
-            <div class="null-note">Loading…</div>
+          <div id="sv-confusion"><div class="null-note">Loading…</div></div>
+
+          <label style="display:inline-flex;align-items:center;gap:6px;margin:14px 0 4px;
+                        font-size:11px;cursor:pointer;color:var(--text-muted)">
+            <input type="checkbox" id="sv-show-judgement" onchange="toggleJudgement()">
+            Show validator-judgement view (how the humans voted)
+          </label>
+          <div id="sv-judgement-wrap" style="display:none">
+            <div class="section-head">
+              <h2>Did the validators keep the pipeline's answer?</h2>
+              <p>
+                Among the <strong id="sv-agree-n">—</strong> records where <strong>both</strong> human
+                validators finished. <em>Kept</em> = the validator marked the pipeline value correct;
+                <em>changed</em> = marked it incorrect and supplied a replacement. Where the two humans
+                disagree, the LLM slot's verdict shows which of them it sided with. Each block then
+                reports how the reviewer finally settled it.
+              </p>
+            </div>
+            <div class="agree-grid" id="sv-agreement">
+              <div class="null-note">Loading…</div>
+            </div>
           </div>
 
           <div class="stats-two">
@@ -2605,10 +2640,11 @@ let _valLoaded = false;
 async function loadValidation() {
   _valLoaded = true;
   try {
-    const [stats, an, outcomes] = await Promise.all([
+    const [stats, an, outcomes, confusion] = await Promise.all([
       fetch('/api/dashboard/supabase-stats').then(r=>r.json()),
       fetch('/api/dashboard/supabase-analytics').then(r=>r.json()),
       fetch('/api/dashboard/supabase-outcomes').then(r=>r.json()),
+      fetch('/api/dashboard/supabase-confusion').then(r=>r.json()),
     ]);
     if (stats.error === 'supabase_not_configured') {
       $('supa-unconfigured').style.display='';
@@ -2630,6 +2666,8 @@ async function loadValidation() {
       renderValidationAnalytics(an);
     }
 
+    renderConfusion(confusion);
+
     if (!outcomes.error && outcomes.outcomes) {
       const pieData=OUTCOMES.map(k=>({
         key:k,label:PIE_LABELS[k],color:PIE_COLORS[k],value:outcomes.outcomes[k]||0,
@@ -2643,6 +2681,52 @@ async function loadValidation() {
   } catch(e) {
     $('supa-content').innerHTML=`<div class="null-note">Failed to load Supabase data: ${e.message}</div>`;
   }
+}
+
+function toggleJudgement() {
+  const on = $('sv-show-judgement').checked;
+  $('sv-judgement-wrap').style.display = on ? '' : 'none';
+}
+
+// ── #72: pipeline-vs-final confusion matrices ────────────────────────────────
+function renderConfusion(data) {
+  const el = $('sv-confusion');
+  if (!el) return;
+  if (!data || data.error) {
+    el.innerHTML = `<div class="null-note">Confusion matrices unavailable${
+      data && data.error ? ': ' + esc(data.error) : ''}.</div>`;
+    return;
+  }
+  const blocks = [['outcome','Outcome'], ['type','Type']].map(([field,label]) => {
+    const m = data[field];
+    if (!m || !m.n) return `<div class="stat-card"><h3>${label}</h3>
+      <div class="null-note">No finalised records yet.</div></div>`;
+    const L = m.labels, mat = m.matrix;
+    const head = L.map(c => `<th class="cm-h" title="${esc(c)}">${esc(c)}</th>`).join('');
+    const body = L.map((rl,i) => {
+      const rowTotal = mat[i].reduce((a,b)=>a+b,0);
+      const cells = L.map((cl,j) => {
+        const v = mat[i][j];
+        const diag = i===j;
+        const bg = v ? (diag ? 'background:var(--good-bg,#dcfce7)'
+                             : 'background:var(--bad-bg,#fee2e2)') : '';
+        return `<td class="cm-c" style="${bg}">${v||''}</td>`;
+      }).join('');
+      return `<tr><th class="cm-rh" title="${esc(rl)}">${esc(rl)}</th>${cells}
+              <td class="cm-tot">${rowTotal}</td></tr>`;
+    }).join('');
+    return `<div class="stat-card">
+      <h3>${label} <span style="font-weight:400;color:var(--text-faint);font-size:11px">
+        — ${m.accuracy}% match (${fmt(m.correct)}/${fmt(m.n)})</span></h3>
+      <div class="table-scroll"><table class="cm-table">
+        <thead><tr><th class="cm-corner">pipe ＼ final</th>${head}<th class="cm-tot">Σ</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table></div>
+      <p style="font-size:10px;color:var(--text-faint);margin:6px 0 0">
+        Green diagonal = pipeline matched the final value; red off-diagonal = corrected.</p>
+    </div>`;
+  }).join('');
+  el.innerHTML = `<div class="stats-two">${blocks}</div>`;
 }
 
 // ── Validation analytics ─────────────────────────────────────────────────────

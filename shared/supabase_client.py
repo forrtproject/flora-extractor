@@ -347,6 +347,90 @@ def get_validation_analytics() -> dict:
         return {"error": str(e)}
 
 
+# ── Pipeline-vs-final confusion matrices (#72) ────────────────────────────────
+# The categorical fields only. original is a DOI, not a category, so no matrix.
+_CONFUSION_FIELDS: dict[str, tuple[str, str]] = {
+    "outcome": ("outcome", "final_outcome"),
+    "type":    ("type",    "final_type"),
+}
+# Preferred label order so the diagonal reads success→success, etc. Anything seen
+# but not listed (e.g. reproduction-grid outcomes) is appended alphabetically.
+_PREFERRED_LABELS: dict[str, list[str]] = {
+    "outcome": ["success", "failure", "mixed", "descriptive",
+                "cannot_be_determined", "not_a_replication"],
+    "type":    ["replication", "reproduction"],
+}
+
+# The pipeline codes outcomes as success/failure/cannot_be_determined, but the
+# validation DB stores the final in FLoRA's vocabulary (successful/failed/uninformative
+# — see the UPDATEs in flora-validation/db_schema.sql). Canonicalise both sides so
+# success-vs-successful reads as agreement (the diagonal), not a spurious correction —
+# otherwise the matrix hugely overstates the pipeline's error rate.
+_OUTCOME_CANON: dict[str, str] = {
+    "successful": "success",
+    "failed": "failure",
+    "uninformative": "cannot_be_determined",
+}
+
+
+def _canon(field: str, value: Any) -> str:
+    v = _norm(value)
+    return _OUTCOME_CANON.get(v, v) if field == "outcome" else v
+
+
+def build_confusion_matrices(rows: list[dict]) -> dict:
+    """Pipeline-coded vs human-final confusion matrix per categorical field.
+
+    Pure function (no I/O) so it is unit-testable. Each row needs the pipeline column
+    and its final_* column; rows that are rejected, not_validation, or not yet finalised
+    for that field are skipped. Returns, per field: ordered labels, an NxN matrix
+    (rows = pipeline category, cols = final category), n, correct (diagonal), accuracy%.
+    """
+    out: dict[str, dict] = {}
+    for field, (pipe_col, final_col) in _CONFUSION_FIELDS.items():
+        cells: dict[tuple, int] = {}
+        seen: set[str] = set()
+        n = correct = 0
+        for r in rows:
+            if _norm(r.get("validation_status")) == "rejected":
+                continue
+            if _norm(r.get("final_type")) == "not_validation":
+                continue
+            pipe, fin = _canon(field, r.get(pipe_col)), _canon(field, r.get(final_col))
+            if not pipe or not fin:          # not finalised for this field
+                continue
+            cells[(pipe, fin)] = cells.get((pipe, fin), 0) + 1
+            seen.update((pipe, fin))
+            n += 1
+            correct += (pipe == fin)
+        preferred = [x for x in _PREFERRED_LABELS.get(field, []) if x in seen]
+        labels = preferred + sorted(seen - set(preferred))
+        out[field] = {
+            "labels": labels,
+            "matrix": [[cells.get((rl, cl), 0) for cl in labels] for rl in labels],
+            "n": n,
+            "correct": correct,
+            "accuracy": round(correct / n * 100, 1) if n else 0.0,
+        }
+    return out
+
+
+def get_confusion_matrices() -> dict:
+    """Pipeline-vs-final confusion matrices from the unvalidated table (cached 5 min)."""
+    if not SUPABASE_URL:
+        return _NOT_CONFIGURED
+
+    def _fetch():
+        rows = _get("unvalidated", {
+            "select": "validation_status,type,outcome,final_type,final_outcome"})
+        return build_confusion_matrices(rows)
+
+    try:
+        return _cached("confusion_matrices", _fetch)
+    except Exception as e:
+        return {"error": str(e)}
+
+
 _DRILLDOWN_PAGE_SIZE = 25
 
 

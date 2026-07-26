@@ -125,3 +125,79 @@ def test_correction_frequency_shape(monkeypatch):
     assert result["original_incorrect"] == 1
     # record A had outcome incorrect → 1
     assert result["outcome_incorrect"] == 1
+
+
+# ── Pipeline-vs-final confusion matrices (#72) ────────────────────────────────
+
+def test_build_confusion_matrices_basic():
+    import shared.supabase_client as sc
+    rows = [
+        # pipeline outcome vs final outcome
+        {"validation_status": "validated", "type": "replication", "final_type": "replication",
+         "outcome": "success", "final_outcome": "success"},   # correct
+        {"validation_status": "validated", "type": "replication", "final_type": "replication",
+         "outcome": "success", "final_outcome": "failure"},   # pipeline wrong: success->failure
+        {"validation_status": "validated", "type": "replication", "final_type": "reproduction",
+         "outcome": "mixed", "final_outcome": "mixed"},        # type wrong: repl->repro
+        {"validation_status": "rejected", "type": "replication", "final_type": "replication",
+         "outcome": "success", "final_outcome": "success"},    # excluded (rejected)
+        {"validation_status": "validated", "type": "replication", "final_type": "replication",
+         "outcome": "failure", "final_outcome": ""},           # not finalised on outcome
+    ]
+    m = sc.build_confusion_matrices(rows)
+
+    oc = m["outcome"]
+    assert oc["n"] == 3          # 3 finalised, non-excluded outcome rows
+    assert oc["correct"] == 2    # success/success + mixed/mixed
+    assert oc["accuracy"] == round(2 / 3 * 100, 1)
+    i, j = oc["labels"].index("success"), oc["labels"].index("failure")
+    assert oc["matrix"][i][j] == 1   # one success miscoded as failure
+
+    tp = m["type"]
+    assert tp["n"] == 4          # 4 finalised, non-excluded type rows (rejected one excluded)
+    ri, ro = tp["labels"].index("replication"), tp["labels"].index("reproduction")
+    assert tp["matrix"][ri][ro] == 1   # one replication corrected to reproduction
+
+
+def test_build_confusion_matrices_label_order_and_extras():
+    import shared.supabase_client as sc
+    rows = [
+        {"validation_status": "validated", "type": "reproduction", "final_type": "reproduction",
+         "outcome": "computationally successful, robust",
+         "final_outcome": "computationally successful, robust"},
+        {"validation_status": "validated", "type": "replication", "final_type": "replication",
+         "outcome": "failure", "final_outcome": "failure"},
+    ]
+    oc = sc.build_confusion_matrices(rows)["outcome"]
+    # preferred labels come first in their canonical order; unknown repro-grid label appended
+    assert oc["labels"][0] == "failure"
+    assert "computationally successful, robust" in oc["labels"]
+    assert oc["labels"].index("failure") < oc["labels"].index("computationally successful, robust")
+
+
+def test_build_confusion_matrices_canonicalises_outcome_vocab():
+    """Pipeline 'success' vs validation-final 'successful' must read as agreement,
+    not a correction (FLoRA vocab differs from the pipeline's — #72)."""
+    import shared.supabase_client as sc
+    rows = [
+        {"validation_status": "validated", "type": "replication", "final_type": "replication",
+         "outcome": "success", "final_outcome": "successful"},           # same, diff vocab
+        {"validation_status": "validated", "type": "replication", "final_type": "replication",
+         "outcome": "cannot_be_determined", "final_outcome": "uninformative"},  # same
+        {"validation_status": "validated", "type": "replication", "final_type": "replication",
+         "outcome": "success", "final_outcome": "failed"},               # genuine miscode
+    ]
+    oc = sc.build_confusion_matrices(rows)["outcome"]
+    assert oc["n"] == 3
+    assert oc["correct"] == 2, "success/successful and cbd/uninformative are agreement"
+    # canonical labels only — no 'successful'/'failed'/'uninformative' leak through
+    assert set(oc["labels"]) <= {"success", "failure", "cannot_be_determined"}
+    i, j = oc["labels"].index("success"), oc["labels"].index("failure")
+    assert oc["matrix"][i][j] == 1
+
+
+def test_build_confusion_matrices_empty():
+    import shared.supabase_client as sc
+    m = sc.build_confusion_matrices([])
+    assert m["outcome"]["n"] == 0 and m["outcome"]["accuracy"] == 0.0
+    assert m["outcome"]["labels"] == [] and m["outcome"]["matrix"] == []

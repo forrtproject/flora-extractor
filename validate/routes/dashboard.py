@@ -11,6 +11,7 @@ Routes:
                                            final-vs-pipeline changes
   GET  /api/dashboard/supabase-outcomes  → outcome distribution from validated table
   GET  /api/dashboard/supabase-corrections → per-field correction frequency
+  GET  /api/dashboard/supabase-confusion  → pipeline-vs-final confusion matrices (#72)
   GET  /api/dashboard/supabase-drilldown → paginated incorrect-DOI table
 """
 import datetime
@@ -427,6 +428,12 @@ def api_supabase_analytics():
 def api_supabase_corrections():
     """Per-field correction frequency (type / original / outcome)."""
     return jsonify(supa.get_correction_frequency())
+
+
+@dashboard_bp.route("/api/dashboard/supabase-confusion")
+def api_supabase_confusion():
+    """Pipeline-coded vs human-final confusion matrices (outcome, type) — #72."""
+    return jsonify(supa.get_confusion_matrices())
 
 
 @dashboard_bp.route("/api/dashboard/analysis-stats")
