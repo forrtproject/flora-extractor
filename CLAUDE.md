@@ -128,6 +128,7 @@ registered** in `app.py` — treat them as orphaned/legacy.
 | `extract/code_outcome.py`  | Keyword + LLM outcome extraction                                             |
 | `extract/promote_test.py`  | CLI + library: merge rows from extracted-test.csv into extracted.csv; `--all`, `--doi`, `--dry-run`, `--force` |
 | `extract/audit_dois.py`    | CLI: retroactive DOI verification of extracted.csv; dry-run by default, `--apply` writes corrections; `--doi`, `--extracted-test` |
+| `extract/sanity_check.py`  | Post-extraction integrity pass; runs automatically at the end of `run_extract` (completion AND Ctrl-C). Auto-moves `not_a_replication` rows to `not_a_replication.csv`; reports self-links, chronology errors, unverified/hallucinated `doi_o`, duplicate pair_ids, blank `doi_r`. Standalone: `python -m extract.sanity_check [--input …] [--no-move]` |
 | `extract/csv_to_db.py`     | CLI: push resolved extracted.csv rows into the Supabase validation DB (creates 1 `unvalidated` + 1 `record_metadata` + 3 `validation_queue` rows per record; slots `human_1`/`human_2`/`llm`); `--input`, `--dry-run` |
 
 ### `validate/` — Stage 4 (read-only monitoring dashboard)

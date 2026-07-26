@@ -203,6 +203,22 @@ python -m extract.promote_test --all --dry-run
 python -m extract.promote_test --all --force
 ```
 
+### Post-extraction sanity check
+
+Runs automatically at the end of every `run_extract` (on completion and on Ctrl-C).
+Also runnable standalone:
+
+```bash
+# Move not_a_replication rows to not_a_replication.csv + report integrity flags
+python -m extract.sanity_check
+
+# Check the test sandbox instead
+python -m extract.sanity_check --input data/extracted-test.csv
+
+# Report only — move nothing
+python -m extract.sanity_check --no-move
+```
+
 ### DOI verification audit
 
 Retroactively verify `doi_o` values in an existing CSV. Runs automatically during extraction; use this to audit rows that predate the feature.

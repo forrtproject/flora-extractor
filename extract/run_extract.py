@@ -1559,5 +1559,11 @@ if __name__ == "__main__":
             )
     finally:
         token_counter.print_summary()
+        # Sanity pass over whatever was written — runs on normal completion AND on
+        # Ctrl-C. Skipped for the match-type/outcome-only modes (different output file).
+        if not args.match_type_only and not args.outcome_only:
+            from extract.sanity_check import run_sanity_check
+            run_sanity_check(DATA_DIR / ("extracted-test.csv" if args.extracted_test
+                                         else "extracted.csv"))
         from shared.dashboard_cache import refresh as _dc_refresh
         _dc_refresh("extracted-test" if args.extracted_test else "extracted")
