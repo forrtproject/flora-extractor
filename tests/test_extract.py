@@ -123,13 +123,46 @@ class TestKeywordScan:
 # ── extract_outcome unit tests ────────────────────────────────────────────────
 
 class TestExtractOutcome:
-    def test_abstract_keyword_hit_skips_llm(self):
-        """Keyword match in abstract should not call the LLM."""
+    def test_keyword_hit_still_routes_through_llm_when_available(self, tmp_path):
+        """#70: even a clear keyword hit must be seen by the LLM (is_genuine_attempt
+        veto) when the LLM is available — the keyword short-circuit is no_llm-only."""
+        mock = {"outcome": "failure", "outcome_phrase": "no effect", "is_genuine_attempt": True,
+                "outcome_confidence": "high", "out_quote_source": "abstract"}
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")) as mock_llm, \
+             patch("extract.code_outcome.time.sleep"):
+            result = extract_outcome(
+                "10.1234/test",
+                abstract_r="we found no evidence of the original effect",
+                title_r="A Replication Study",
+            )
+        mock_llm.assert_called()  # keyword hit no longer skips the LLM
+        assert result["outcome"] == "failure"
+
+    def test_keyword_hit_vetoed_as_not_a_replication(self, tmp_path):
+        """#70: a 'failed to replicate' abstract that the LLM judges is_genuine_attempt
+        =false becomes not_a_replication instead of a coded failure."""
+        mock = {"outcome": "failure", "outcome_phrase": "background prose",
+                "is_genuine_attempt": False, "outcome_confidence": "high",
+                "out_quote_source": "abstract"}
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")), \
+             patch("extract.code_outcome.time.sleep"):
+            result = extract_outcome(
+                "10.1234/veto",
+                abstract_r="prior work failed to replicate the effect, we do something else",
+                title_r="Not actually a replication",
+            )
+        assert result["outcome"] == "not_a_replication"
+
+    def test_keyword_hit_skips_llm_in_no_llm_mode(self):
+        """The keyword fast-path is preserved when the LLM is off."""
         with patch("extract.code_outcome.call_llm") as mock_llm:
             result = extract_outcome(
                 "10.1234/test",
                 abstract_r="we found no evidence of the original effect",
                 title_r="A Replication Study",
+                no_llm=True,
             )
         mock_llm.assert_not_called()
         assert result["outcome"] == "failure"
@@ -253,9 +286,13 @@ class TestLLMOutcomePrompt:
         assert result["outcome_reasoning"] == "All effects replicated."
 
     def test_outcome_reasoning_empty_on_keyword_hit(self):
+        # #70: keyword short-circuit is no_llm-only now; with the LLM off a keyword hit
+        # still returns a keyword result with empty reasoning.
         result = extract_outcome(
-            "10.1234/kw", abstract_r="we failed to replicate the original finding"
+            "10.1234/kw", abstract_r="we failed to replicate the original finding",
+            no_llm=True,
         )
+        assert result["outcome"] == "failure"
         assert result.get("outcome_reasoning", "") == ""
 
     def test_outcome_reasoning_empty_on_llm_failure(self):
@@ -1131,10 +1168,11 @@ class TestReproductionOutcome:
         assert "REPRODUCTION" in mock_llm.call_args[0][0]
         assert "computationally successful, robust" in mock_llm.call_args[0][0]
 
-    def test_replication_still_uses_keyword_scan(self):
+    def test_replication_uses_keyword_scan_only_in_no_llm(self):
+        # Replications use the keyword scan as the no_llm fallback; reproductions never do.
         with patch("extract.code_outcome.call_llm") as mock_llm:
             res = extract_outcome("10.1/repl", abstract_r="we found no evidence of the effect",
-                                  record_type="replication")
+                                  record_type="replication", no_llm=True)
         mock_llm.assert_not_called()
         assert res["outcome"] == "failure"
 

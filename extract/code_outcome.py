@@ -462,29 +462,31 @@ def extract_outcome(doi_r: str,
                             original_year=original_year,
                             record_type="reproduction")
 
-    # Title scan — only act on high-confidence hits (avoid false triggers like "replication of X")
-    if title_r:
-        hit = _keyword_scan(title_r, "title")
-        if hit and hit["outcome_confidence"] == "high":
-            return {**hit, **_kw_fallback}
-
-    # Abstract scan — accept any hit
-    if abstract_r:
-        hit = _keyword_scan(abstract_r, "abstract")
-        if hit:
-            return {**hit, **_kw_fallback}
-
-    # Fulltext is deliberately NOT keyword-scanned here: an introduction's
-    # background prose about OTHER studies' outcomes ("X failed to replicate in
-    # prior work") misfires the patterns. Fulltext is used only via the LLM
-    # escalation inside _llm_outcome.
-
+    # Keyword fast-path is the NO-LLM fallback only (#70). When the LLM is available
+    # every "is this a genuine replication?" decision must be seen by it: _llm_outcome
+    # judges is_genuine_attempt (vetoing obvious non-replications to not_a_replication)
+    # as well as coding the outcome. A bare keyword hit like "failed to replicate" can
+    # fire on background prose or an AI-generated abstract, so short-circuiting on it
+    # would let obvious non-replications through as coded replications.
     if no_llm:
+        # Title scan — only high-confidence hits (avoid "replication of X" false triggers).
+        if title_r:
+            hit = _keyword_scan(title_r, "title")
+            if hit and hit["outcome_confidence"] == "high":
+                return {**hit, **_kw_fallback}
+        # Abstract scan — accept any hit.
+        if abstract_r:
+            hit = _keyword_scan(abstract_r, "abstract")
+            if hit:
+                return {**hit, **_kw_fallback}
+        # Fulltext is deliberately NOT keyword-scanned: an introduction's background
+        # prose about OTHER studies' outcomes misfires the patterns.
         return {"outcome": "cannot_be_determined", "outcome_phrase": "",
                 "outcome_confidence": "low", "out_quote_source": "",
                 "outcome_reasoning": ""}
 
-    # LLM pass (abstract-based, with fulltext escalation) for anything unresolved.
+    # LLM pass (abstract-based, with fulltext escalation) — codes the outcome AND
+    # applies the is_genuine_attempt veto.
     return _llm_outcome(doi_r, title_r, abstract_r, fulltext,
                         original_title=original_title,
                         original_authors=original_authors,
