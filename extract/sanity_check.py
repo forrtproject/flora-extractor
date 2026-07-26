@@ -42,7 +42,7 @@ import requests
 
 from shared.config import DATA_DIR, RESEARCHER_EMAIL
 from shared.schema import EXTRACTED_COLS
-from shared.utils import bare_work_id, clean_doi, csv_lock
+from shared.utils import bare_work_id, clean_doi, csv_lock, non_article_doi
 
 
 def _norm(df: pd.DataFrame) -> pd.DataFrame:
@@ -110,6 +110,9 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
     # (bucket name, destination file, row mask) — first match wins per row.
     rules = [
         ("not_a_replication", "not_a_replication.csv", df["outcome"] == "not_a_replication"),
+        # figshare data records / peer-review objects: Stage-2 false positives (#17) that
+        # predate the rule_filter DOI exclusion. Routed to the not_a_replication bucket.
+        ("non_article", "not_a_replication.csv", df["doi_r"].map(lambda d: bool(non_article_doi(d)))),
         ("self_link", "unresolved_self_links.csv", (doi_o != "") & (doi_o == doi_r)),
         ("doi_mismatch", "unresolved_doi_mismatch.csv", df["doi_o_verification"] == "mismatch"),
         ("target_pending", "target_pending.csv", df["link_method"] == "target_pending"),
@@ -161,7 +164,8 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
     print("=" * 70)
     print(f"  rows {n_before} -> {len(df)}")
     print("  -- moved to set-aside CSVs --")
-    dest = {"not_a_replication": "not_a_replication.csv", "self_link": "unresolved_self_links.csv",
+    dest = {"not_a_replication": "not_a_replication.csv", "non_article": "not_a_replication.csv",
+            "self_link": "unresolved_self_links.csv",
             "doi_mismatch": "unresolved_doi_mismatch.csv", "target_pending": "target_pending.csv",
             "fabricated_doi_o": "fabricated_original_doi.csv"}
     for name in dest:

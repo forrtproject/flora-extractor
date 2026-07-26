@@ -152,6 +152,36 @@ def test_rule_filter_dna_excluded():
     assert "exclusion:" in out.loc[0, "filter_evidence"]
 
 
+def test_rule_filter_excludes_figshare_data_doi():
+    """#17: figshare DOIs are data records, not articles — reject even if the text
+    reads like a replication with a citation."""
+    row = _row("A direct replication of Smith (2019)",
+               "We report a direct replication of Smith (2019).")
+    row["doi_r"] = "10.6084/m9.figshare.4213113.v1"
+    out = apply_rule_filter(pd.DataFrame([row]))
+    assert out.loc[0, "filter_status"] == "false_positive"
+    assert out.loc[0, "filter_evidence"] == "exclusion:figshare_data_record"
+
+
+def test_rule_filter_excludes_peer_review_object_doi():
+    """#17: a /reviews/ DOI segment marks a peer-review object, never the study."""
+    row = _row("A direct replication of Smith (2019)",
+               "We report a direct replication of Smith (2019).")
+    row["doi_r"] = "10.7287/peerj.10325v0.1/reviews/2"
+    out = apply_rule_filter(pd.DataFrame([row]))
+    assert out.loc[0, "filter_status"] == "false_positive"
+    assert out.loc[0, "filter_evidence"] == "exclusion:peer_review_object"
+
+
+def test_rule_filter_normal_doi_unaffected_by_doi_exclusion():
+    """A real article DOI with a genuine replication+cite still passes."""
+    row = _row("A direct replication of Smith (2019)",
+               "We report a direct replication of Smith (2019).")
+    row["doi_r"] = "10.1037/xge0000123"
+    out = apply_rule_filter(pd.DataFrame([row]))
+    assert out.loc[0, "filter_status"] == "replication"
+
+
 def test_rule_filter_no_phrase_false_positive():
     df = pd.DataFrame([_row(
         "On consumer choice in supermarkets",

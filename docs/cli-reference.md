@@ -305,6 +305,10 @@ python tools/load_doi_list.py path/to/dois.txt
 # Clean up duplicate sources in candidates.csv
 python tools/cleanup_sources.py
 
+# Drop superseded preprint versions (keep highest _v, or the version-less DOI) — issue #17
+python -m tools.dedup_preprint_versions --input data/extracted.csv            # dry-run
+python -m tools.dedup_preprint_versions --input data/extracted.csv --apply
+
 # Backfill oa_work_id_r / oa_work_id_o on rows written before those columns existed.
 # New rows get them automatically from run_extract — this is only for old rows.
 python -m tools.backfill_oa_work_ids                                    # dry-run

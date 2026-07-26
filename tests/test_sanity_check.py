@@ -29,12 +29,17 @@ def test_each_problem_row_moves_to_its_bucket(tmp_path, monkeypatch):
          "doi_o_verification": "mismatch", "openalex_id_r": "W4", "link_method": "llm_abstract"},
         {"doi_r": "10.1/tp", "outcome": "cannot_be_determined",
          "link_method": "target_pending", "openalex_id_r": "W5"},
+        {"doi_r": "10.7287/peerj.2068v0.1/reviews/1", "doi_o": "10.2/o6", "outcome": "success",
+         "doi_o_verification": "verified", "openalex_id_r": "W6", "link_method": "llm_abstract"},
     ])
 
     s = sc.run_sanity_check(ex, move=True, deep=False)
 
-    assert s["moved"] == {"not_a_replication": 1, "self_link": 1,
-                          "doi_mismatch": 1, "target_pending": 1}
+    assert s["moved"]["not_a_replication"] == 1
+    assert s["moved"]["non_article"] == 1
+    assert s["moved"]["self_link"] == 1
+    assert s["moved"]["doi_mismatch"] == 1
+    assert s["moved"]["target_pending"] == 1
     out = pd.read_csv(ex, dtype=str, keep_default_na=False)
     # kept: the clean row + the cannot_be_determined row (2)
     assert set(out["doi_r"]) == {"10.1/keep", "10.1/cbd"}
@@ -42,7 +47,9 @@ def test_each_problem_row_moves_to_its_bucket(tmp_path, monkeypatch):
 
     def rows(name):
         return set(pd.read_csv(tmp_path / name, dtype=str, keep_default_na=False)["doi_r"])
-    assert "10.1/nar" in rows("not_a_replication.csv")
+    nar = rows("not_a_replication.csv")
+    assert "10.1/nar" in nar
+    assert "10.7287/peerj.2068v0.1/reviews/1" in nar  # non-article routed here too
     assert "10.1/self" in rows("unresolved_self_links.csv")
     assert "10.1/mis" in rows("unresolved_doi_mismatch.csv")
     assert "10.1/tp" in rows("target_pending.csv")

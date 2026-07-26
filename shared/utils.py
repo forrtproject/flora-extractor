@@ -62,6 +62,27 @@ def bare_work_id(value: str) -> str:
     return tail.upper() if re.fullmatch(r"[Ww]\d+", tail) else ""
 
 
+_NON_ARTICLE_DOI_RE = re.compile(r"/reviews/|/decisions/", re.IGNORECASE)
+
+
+def non_article_doi(doi: str) -> str:
+    """Reason string if *doi* is a non-article object (not a study), else "".
+
+    figshare (10.6084) DOIs are data records / figures / posters; a "/reviews/" or
+    "/decisions/" segment marks a peer-review or editorial object
+    (e.g. 10.7287/peerj.10325v0.1/reviews/2). Neither is the replication itself, so
+    both are Stage-2 false positives (issue #17).
+    """
+    doi = clean_doi(doi)
+    if not doi:
+        return ""
+    if doi.startswith("10.6084/"):
+        return "figshare_data_record"
+    if _NON_ARTICLE_DOI_RE.search(doi):
+        return "peer_review_object"
+    return ""
+
+
 def cache_key(text: str) -> str:
     """
     Return a stable, filesystem-safe cache key for *text*.

@@ -25,7 +25,7 @@ import pandas as pd
 from shared.config import log
 from shared.openalex_client import extract_author_year_patterns
 from shared.schema import FILTER_ADDED_COLS
-from shared.utils import sentence_spans
+from shared.utils import non_article_doi, sentence_spans
 
 from filter.phrase_detection import (
     find_replication_phrase_span,
@@ -34,11 +34,21 @@ from filter.phrase_detection import (
 )
 
 
-def _classify_row(title: str, abstract: str, year: int | None) -> dict:
+def _classify_row(title: str, abstract: str, year: int | None, doi: str = "") -> dict:
     """Return the four FILTER_ADDED_COLS values for one candidate row."""
     title = title or ""
     abstract = abstract or ""
     text = f"{title}\n{abstract}".strip()
+
+    # Hard-exclude non-article DOIs (figshare data records, peer-review objects) — #17.
+    doi_excl = non_article_doi(doi)
+    if doi_excl:
+        return {
+            "filter_status": "false_positive",
+            "filter_method": "rule_based",
+            "filter_evidence": f"exclusion:{doi_excl}",
+            "filter_confidence": "high",
+        }
 
     # Hard-exclude non-scholarly contexts (DNA replication, code/data, etc.)
     excl = is_non_scholarly_context(text)
@@ -119,7 +129,7 @@ def classify_row(row: dict) -> dict:
         year = int(year_val) if year_val and str(year_val).strip() else None
     except (ValueError, TypeError):
         year = None
-    return _classify_row(title, abstract, year)
+    return _classify_row(title, abstract, year, str(row.get("doi_r") or ""))
 
 
 def apply_rule_filter(df: pd.DataFrame) -> pd.DataFrame:
@@ -139,7 +149,7 @@ def apply_rule_filter(df: pd.DataFrame) -> pd.DataFrame:
             year = int(year_val) if pd.notna(year_val) and str(year_val).strip() else None
         except (ValueError, TypeError):
             year = None
-        out_rows.append(_classify_row(title, abstract, year))
+        out_rows.append(_classify_row(title, abstract, year, str(row.get("doi_r") or "")))
 
     additions = pd.DataFrame(out_rows, index=df.index)
     for col in FILTER_ADDED_COLS:
