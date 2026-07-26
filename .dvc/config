@@ -1,0 +1,6 @@
+[core]
+    remote = r2
+['remote "r2"']
+    url = s3://flora-pipeline/dvcstore
+    endpointurl = https://df705819234a0bcd279c9ab17b6bc796.r2.cloudflarestorage.com
+    region = auto
