@@ -25,8 +25,10 @@ _CACHE: dict[str, dict] = {}
 
 _NOT_CONFIGURED: dict = {"error": "supabase_not_configured"}
 
-# validator_slot values written by extract/csv_to_db.py → flat prefix used in
-# dashboard rows. These MUST match _VALIDATOR_SLOTS in csv_to_db.py.
+# validation_queue.validator_slot values → flat prefix used in dashboard rows.
+# The KEYS are the DB CHECK-constraint values (flora-validation/db_schema.sql:
+# validator_slot IN ('human_1','human_2','llm')) and must match _VALIDATOR_SLOTS in
+# csv_to_db.py. The VALUES are display prefixes only. #50(a): all three now agree.
 _SLOT_PREFIX: dict[str, str] = {
     "human_1": "val1",
     "human_2": "val2",

@@ -50,7 +50,12 @@ from shared.utils import clean_doi
 _RESOLVED_METHODS = _SCHEMA_RESOLVED_METHODS | {"author_year_match_legacy"}
 _RESOLVED_STATUSES = {"replication", "reproduction"}
 
-# Validator slots created per record
+# Validator slots created per record. SOURCE OF TRUTH is the validation DB's CHECK
+# constraint (flora-validation/db_schema.sql): validator_slot IN ('human_1','human_2',
+# 'llm'). These must stay identical to that constraint and to supabase_client._SLOT_PREFIX
+# — #50(a). validator_id is intentionally NOT set here: it is populated by the
+# flora-validation app when a validator claims/acts on a slot (null at import time).
+# Cohen's-kappa / IRR over these judgements is computed in flora-validation, not here.
 _VALIDATOR_SLOTS = ("human_1", "human_2", "llm")
 
 
