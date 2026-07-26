@@ -112,11 +112,17 @@ def has_replication_phrase(text: str) -> bool:
     return any(regex.search(text) for regex in REPLICATION_PHRASES)
 
 
-def find_replication_phrase_span(text: str) -> Optional[tuple[str, int, int]]:
-    """Return (lowercase phrase, start, end) for the first matching replication phrase, or None."""
+def find_replication_phrase_span(text: str,
+                                 ignore_exclusions: bool = False) -> Optional[tuple[str, int, int]]:
+    """Return (lowercase phrase, start, end) for the first matching replication phrase, or None.
+
+    ignore_exclusions=True skips the non-scholarly-context gate — used by the Stage-2
+    targeted-readmission rule (#44), which needs to know a phrase is present *even when*
+    an exclusion pattern fired, to rescue in-scope computational reproductions.
+    """
     if not text:
         return None
-    if is_non_scholarly_context(text):
+    if not ignore_exclusions and is_non_scholarly_context(text):
         return None
     for regex in REPLICATION_PHRASES:
         m = regex.search(text)

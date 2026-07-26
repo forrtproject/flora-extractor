@@ -34,6 +34,13 @@ from filter.phrase_detection import (
 )
 
 
+def _author_year_cites(text: str, year: int | None) -> list:
+    """Author-year citations in *text*. strict_bare drops single_bare false matches
+    (months, "Study 2019", date ranges) that would otherwise auto-accept a row."""
+    return (extract_author_year_patterns(text, max_year=year, strict_bare=True)
+            if year else extract_author_year_patterns(text, strict_bare=True))
+
+
 def _classify_row(title: str, abstract: str, year: int | None, doi: str = "") -> dict:
     """Return the four FILTER_ADDED_COLS values for one candidate row."""
     title = title or ""
@@ -50,9 +57,24 @@ def _classify_row(title: str, abstract: str, year: int | None, doi: str = "") ->
             "filter_confidence": "high",
         }
 
-    # Hard-exclude non-scholarly contexts (DNA replication, code/data, etc.)
+    # Non-scholarly contexts (DNA replication, code/data, robustness, ...).
     excl = is_non_scholarly_context(text)
+    phrase_match = find_replication_phrase_span(text)
+
     if excl:
+        # #44 targeted readmission: exclusion patterns misfire on in-scope computational
+        # reproductions ("replicated the analysis code of Smith (2019)"). The exclusion
+        # gate suppresses phrase detection, so re-check the phrase ignoring exclusions;
+        # when a replication phrase AND a specific author-year cite are BOTH present,
+        # hand it to the LLM (needs_review) instead of hard-rejecting and losing recall.
+        rescue_phrase = find_replication_phrase_span(text, ignore_exclusions=True)
+        if rescue_phrase is not None and _author_year_cites(text, year):
+            return {
+                "filter_status": "needs_review",
+                "filter_method": "rule_based",
+                "filter_evidence": f"exclusion:{excl}; phrase+cite present — LLM review",
+                "filter_confidence": "medium",
+            }
         return {
             "filter_status": "false_positive",
             "filter_method": "rule_based",
@@ -60,7 +82,6 @@ def _classify_row(title: str, abstract: str, year: int | None, doi: str = "") ->
             "filter_confidence": "high",
         }
 
-    phrase_match = find_replication_phrase_span(text)
     if phrase_match is None:
         return {
             "filter_status": "false_positive",
@@ -74,10 +95,7 @@ def _classify_row(title: str, abstract: str, year: int | None, doi: str = "") ->
     base_status = "reproduction" if is_repro else "replication"
 
     # Specific-target gate: at least one author–year citation must be present.
-    # strict_bare=True drops single_bare false matches (months, "Study 2019",
-    # date ranges) that would otherwise auto-accept a row past the LLM review.
-    cited = (extract_author_year_patterns(text, max_year=year, strict_bare=True)
-             if year else extract_author_year_patterns(text, strict_bare=True))
+    cited = _author_year_cites(text, year)
     if not cited:
         return {
             "filter_status": "needs_review",

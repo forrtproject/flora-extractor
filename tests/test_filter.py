@@ -182,6 +182,28 @@ def test_rule_filter_normal_doi_unaffected_by_doi_exclusion():
     assert out.loc[0, "filter_status"] == "replication"
 
 
+def test_rule_filter_exclusion_with_phrase_and_cite_readmitted(tmp_path):
+    """#44: an exclusion pattern that misfires on an in-scope computational
+    reproduction (phrase + author-year cite both present) is readmitted to
+    needs_review for the LLM, not hard-rejected."""
+    row = _row(
+        "Reproducing an analysis",
+        "We replicated the code of Smith (2019) exactly and re-ran their analysis.",
+    )
+    out = apply_rule_filter(pd.DataFrame([row]))
+    assert out.loc[0, "filter_status"] == "needs_review"
+    assert "phrase+cite present" in out.loc[0, "filter_evidence"]
+
+
+def test_rule_filter_exclusion_without_cite_still_rejected(tmp_path):
+    """An exclusion with no rescuing author-year cite stays a hard false_positive."""
+    row = _row("Software replication",
+               "We replicated the code using a public pipeline, no prior study named.")
+    out = apply_rule_filter(pd.DataFrame([row]))
+    assert out.loc[0, "filter_status"] == "false_positive"
+    assert out.loc[0, "filter_evidence"].startswith("exclusion:")
+
+
 def test_rule_filter_no_phrase_false_positive():
     df = pd.DataFrame([_row(
         "On consumer choice in supermarkets",
