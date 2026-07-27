@@ -199,6 +199,9 @@ _METHOD_MAP = {
     # The same screen concluded the paper is not a replication at all, so there is
     # no original to look for and no reason to fetch the PDF.
     "llm_not_a_replication":          "not_a_replication",
+    # The two Q1 classifiers disagreed; the row is set aside for review
+    # rather than escalated (see the Stage 4.5 screen in link_original).
+    "llm_screen_disagreement":        "screen_disagreement",
     # LLM ran successfully but concluded no identifiable original study exists.
     # Distinct from llm_failed (API errors) and llm_fulltext (original found).
     "llm_no_target":                  "no_original_found",
@@ -317,7 +320,7 @@ def _map_method(method: str) -> str:
                   "single_candidate_after_requery", "title_pattern_match",
                   "grobid_ref_match", "author_year_match_legacy",
                   "llm_cited_candidates", "llm_fulltext", "llm_references",
-                  "not_a_replication",
+                  "not_a_replication", "screen_disagreement",
                   "no_original_found", "target_pending", "api_error"}:
         return method
     if method == "llm_no_target":
@@ -854,7 +857,7 @@ def _guard_original_link(row: dict) -> dict:
     # the paper never replicated anything. Asking it for a doi_o would rewrite the
     # row to target_pending and --resolved-only would then discard the finding.
     if row.get("link_method") in {"target_pending", "api_error", "no_original_found",
-                                  "not_a_replication"}:
+                                  "not_a_replication", "screen_disagreement"}:
         return row
 
     doi_r = clean_doi(str(row.get("doi_r", "") or ""))
