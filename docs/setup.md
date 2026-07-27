@@ -81,8 +81,19 @@ Then fetch (or later update) the data:
 
 ```bash
 ./scripts/data.sh pull   # dvc pull the zips from R2, then unzip to CSVs
-./scripts/data.sh pack   # after regenerating the CSVs: re-zip + dvc add (then commit + dvc push)
+./scripts/data.sh pack   # after regenerating the CSVs: re-zip + dvc add (then commit + push)
+./scripts/data.sh push   # dvc push — use this, not a bare `dvc push` (see caveat below)
 ```
+
+**R2 push caveat.** A bare `dvc push` on a recent `botocore`/`aiobotocore` can fail on
+these multi-GB files with `OSError: ... Content-Length HTTP header` /
+`dvc.exceptions.UploadError` — a checksum-mode default that non-AWS S3-compatible
+endpoints like R2 don't handle on multipart uploads. `./scripts/data.sh push` sets the
+required env vars (`AWS_REQUEST_CHECKSUM_CALCULATION` /
+`AWS_RESPONSE_CHECKSUM_VALIDATION=when_required`) for you. If you must run `dvc push`
+directly, export those two first — and always confirm with `dvc status -c` afterward
+("Cache and remote 'r2' are in sync" means it actually landed; don't trust the exit
+code of a piped command like `dvc push | tail`, which can hide a real failure).
 
 **Pruning old versions.** At ~3 GB zipped, R2's 10 GB free tier holds roughly three
 versions. To keep only the last N and delete older blobs from both the local cache and
