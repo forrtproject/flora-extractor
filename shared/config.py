@@ -14,7 +14,19 @@ except ImportError:
 # ── Directory layout ──────────────────────────────────────────────────────────
 BASE_DIR         = Path(__file__).parent.parent
 DATA_DIR         = BASE_DIR / "data"
-CACHE_DIR        = BASE_DIR / "cache"
+# cache/ holds hundreds of thousands of small per-identifier files (abstracts, parse
+# results, DOI verification, ...). Random reads of pre-existing small files scattered
+# across one huge flat directory are a classic bad case for a spinning hard disk —
+# each read costs a real seek, and NTFS lookups get slower as a directory's entry
+# count grows. Measured on this repo's checkout (798k+ files in cache/abstracts/ on a
+# 5400RPM HDD): 0.4ms for a nonexistent-key check (resolves from cached directory
+# metadata, no seek) vs 32.7ms for an existing-file read (~80x) — enough to stall a
+# 500k-row backfill for hours before it writes its first checkpoint. (Not a cloud-sync
+# effect — confirmed no sync agent was running; the fixed disk was just an HDD.)
+# FLORA_CACHE_DIR lets cache/ live on a faster disk (e.g. an SSD) while the repo
+# itself stays wherever it needs to be; unset, behavior is unchanged (cache/ inside
+# the repo, as before).
+CACHE_DIR        = Path(os.getenv("FLORA_CACHE_DIR") or (BASE_DIR / "cache"))
 PDF_CACHE_DIR    = CACHE_DIR / "pdfs"
 GROBID_CACHE_DIR = CACHE_DIR / "grobid"
 LLM_CACHE_DIR    = CACHE_DIR / "llm"
