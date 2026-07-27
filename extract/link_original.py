@@ -30,7 +30,7 @@ from shared.disambiguation import is_umbrella_paper, jaccard_similarity
 from shared import token_counter
 from shared.llm_client import identify_original_with_llm, screen_references_with_llm
 from shared.pdf_parsing import parse_all as _parse_all, best_parse_result as _best_parse_shared
-from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_openalex_by_doi, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
+from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_openalex_by_doi, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
 from shared.pdf_sources import acquire_pdf
 from shared.utils import cache_key, clean_doi
 
@@ -672,6 +672,8 @@ def run_for_doi(doi_r:              str,
         # No references is not a reason to skip: with them the call both screens and
         # resolves, without them it still answers "is this a replication at all".
         refs = fetch_referenced_works_metadata(oa_id_r) if oa_id_r else []
+        if not refs:
+            refs = fetch_opencitations_references(doi_r)
         token_counter.set_stage("extract_refscreen")
         screen = screen_references_with_llm(doi_r, study_r, abstract_r, refs)
 
