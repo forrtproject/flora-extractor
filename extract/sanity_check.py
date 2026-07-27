@@ -13,6 +13,7 @@ Rows that do not belong in the resolved set are moved OUT to a dedicated set-asi
 CSV (the same files the dashboard's "set-aside" tab reads), one bucket per problem:
 
     not_a_replication  → not_a_replication.csv     outcome == not_a_replication
+    screen_disagreement→ screen_disagreement.csv   the two Q1 classifiers disagreed
     self_link          → unresolved_self_links.csv doi_o == doi_r
     doi_mismatch       → unresolved_doi_mismatch.csv doi_o_verification == mismatch
     target_pending     → target_pending.csv        link_method == target_pending
@@ -115,6 +116,8 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
         ("non_article", "not_a_replication.csv", df["doi_r"].map(lambda d: bool(non_article_doi(d)))),
         ("self_link", "unresolved_self_links.csv", (doi_o != "") & (doi_o == doi_r)),
         ("doi_mismatch", "unresolved_doi_mismatch.csv", df["doi_o_verification"] == "mismatch"),
+        ("screen_disagreement", "screen_disagreement.csv",
+         df["link_method"] == "screen_disagreement"),
         ("target_pending", "target_pending.csv", df["link_method"] == "target_pending"),
     ]
 
@@ -166,7 +169,9 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
     print("  -- moved to set-aside CSVs --")
     dest = {"not_a_replication": "not_a_replication.csv", "non_article": "not_a_replication.csv",
             "self_link": "unresolved_self_links.csv",
-            "doi_mismatch": "unresolved_doi_mismatch.csv", "target_pending": "target_pending.csv",
+            "doi_mismatch": "unresolved_doi_mismatch.csv",
+            "screen_disagreement": "screen_disagreement.csv",
+            "target_pending": "target_pending.csv",
             "fabricated_doi_o": "fabricated_original_doi.csv"}
     for name in dest:
         if name in moved:

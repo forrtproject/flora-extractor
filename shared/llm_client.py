@@ -1221,7 +1221,7 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
         "resolved": False, "resolution_method": "llm_refscreen_declined",
         "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
         "resolved_author_o": "", "resolution_score": 0.0,
-        "is_replication": "unclear", "models_agree": False,
+        "is_replication": "unclear", "models_agree": False, "votes": [],
         "llm_confidence": "", "classification_confidence": "",
         "target_description": "",
         "llm_source": "", "llm_model": "", "llm_evidence": "",
@@ -1237,6 +1237,10 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
         out["llm_error"] = "both classifiers failed"
         return out
 
+    # Keep the individual votes: a disagreement row is set aside for human review,
+    # and "the models disagreed" is not reviewable without knowing who said what.
+    out["votes"] = [{k: v[k] for k in ("provider", "is_replication", "confidence", "reasoning")}
+                    for v in votes]
     out["llm_source"] = "+".join(v["provider"] for v in votes)
     out["llm_model"]  = f"{GEMINI_LIGHT_MODEL}+{OPENAI_MODEL}"
     out["llm_evidence"]  = votes[0]["evidence"]

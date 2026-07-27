@@ -698,6 +698,31 @@ def run_for_doi(doi_r:              str,
             return _build_output(doi_r, flora, cands_row, candidates,
                                  screen, {}, {}, screen)
 
+        # Two models reaching different verdicts is a signal in its own right, and
+        # escalating those rows spends the most expensive path on exactly the cases
+        # least likely to reward it. Set them aside for review instead.
+        if not screen.get("models_agree"):
+            verdicts = "; ".join(
+                f"{v['provider']}={v['is_replication']}/{v['confidence']}"
+                for v in screen.get("votes", []))
+            log.info("[%s] Screen disagreement (%s) — set aside, not escalating",
+                     doi_r, verdicts)
+            disagreement = _build_output(doi_r, flora, cands_row, candidates, {
+                "resolved":          False,
+                "resolution_method": "llm_screen_disagreement",
+                "resolved_doi_o":    "",
+                "resolved_title_o":  "",
+                "resolved_year_o":   None,
+                "resolved_author_o": "",
+                "resolution_score":  0.0,
+            }, {}, {}, screen)
+            # The row exists to be reviewed by a human, so record who said what —
+            # "the models disagreed" alone is not something a reviewer can act on.
+            # _merge_row reads the row's link_evidence from llm_evidence, so set that.
+            disagreement["llm_evidence"] = (
+                f"screen disagreement: {verdicts}" if verdicts else "screen disagreement")
+            return disagreement
+
         # ── Stage 4.6: Title search on a named-but-unmatched target ──────────
         # The screen can recognise the target in the abstract yet fail to match it
         # to a reference — OpenAlex reference lists are frequently short or empty
