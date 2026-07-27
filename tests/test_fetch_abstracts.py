@@ -646,6 +646,35 @@ def test_run_respects_cache_key_priority_over_lower_tiers(monkeypatch, tmp_path)
     assert out.loc[0, "abstract_r"] == "OA wins"
 
 
+def test_skip_openalex_makes_no_openalex_call_but_still_tries_crossref(monkeypatch, tmp_path):
+    """--skip-openalex must not touch OpenAlex at all, and must not strand doi_r rows —
+    Phase 2 (CrossRef) has to see them regardless of Phase 1 having run."""
+    import pandas as pd
+    _setup_run(monkeypatch, tmp_path)
+    monkeypatch.setenv("S2_API_KEY", "")
+    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
+
+    df = pd.DataFrame({
+        "abstract_r":    [""],
+        "doi_r":         ["10.1/only-doi"],
+        "openalex_id_r": ["https://openalex.org/W1"],
+    })
+    df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
+
+    def fail_if_called(*a, **k):
+        raise AssertionError("OpenAlex must not be called when --skip-openalex is set")
+    monkeypatch.setattr(fa, "_fetch_openalex_batch", fail_if_called)
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda *a, **k: DummyResponse({"message": {}}))
+
+    fa.run(scopus_limit=0, skip_openalex=True)   # must not raise
+
+    assert f"oa:{'https://openalex.org/W1'}" not in _checkpoint()
+    assert "doi:10.1/only-doi" in _checkpoint(), \
+        "Phase 2 must still process the row even though Phase 1 was skipped"
+
+
 def test_candidates_csv_is_never_read_whole(monkeypatch, tmp_path):
     """Guard against the OOM anti-pattern: every pd.read_csv of candidates.csv must
     pass a chunksize (streamed), never an unchunked full-file read."""

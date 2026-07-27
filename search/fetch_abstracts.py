@@ -594,7 +594,8 @@ def _load_scopus_priority(path: Path) -> dict[str, int]:
 
 def run(dry_run: bool = False, limit: Optional[int] = None,
         scopus_limit: int = SCOPUS_DEFAULT_LIMIT,
-        scopus_priority: Optional[Path] = None) -> None:
+        scopus_priority: Optional[Path] = None,
+        skip_openalex: bool = False) -> None:
 
     if not CANDIDATES_PATH.exists():
         sys.exit(f"ERROR: {CANDIDATES_PATH} not found.")
@@ -636,53 +637,66 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
     # ------------------------------------------------------------------
     # Phase 1: OpenAlex batch (rows with openalex_id_r)
     # ------------------------------------------------------------------
-    oa_ids = [r["oa"] for r in worklist if r["oa"] and f"oa:{r['oa']}" not in done]
-    log.info("Phase 1 — OpenAlex batch: %d rows to try.", len(oa_ids))
+    if skip_openalex:
+        # Rows found here were themselves DISCOVERED via OpenAlex (source =
+        # openalex/openalex_concept), so if OpenAlex never had an abstract at harvest
+        # time it essentially never gains one later — re-asking is asking the same well
+        # twice. Measured 2026-07-27: 0/200 random sample, 0/185,000 in a live run.
+        # --skip-openalex jumps straight to CrossRef/S2/Scopus, independent sources
+        # that can have text OpenAlex lacks. Nothing is stranded by skipping: Phase 2's
+        # target list is every row with a doi_r regardless of Phase 1's outcome (it
+        # checkpoints under a separate oa: namespace) — only oa-only, DOI-less rows
+        # (already near-0% recoverable here) go untried, and a later plain run still
+        # picks up exactly where Phase 1's checkpoint left off.
+        log.info("Phase 1 — OpenAlex batch: skipped (--skip-openalex).")
+    else:
+        oa_ids = [r["oa"] for r in worklist if r["oa"] and f"oa:{r['oa']}" not in done]
+        log.info("Phase 1 — OpenAlex batch: %d rows to try.", len(oa_ids))
 
-    for batch_start in range(0, len(oa_ids), OA_BATCH_SIZE):
-        batch_ids = oa_ids[batch_start : batch_start + OA_BATCH_SIZE]
+        for batch_start in range(0, len(oa_ids), OA_BATCH_SIZE):
+            batch_ids = oa_ids[batch_start : batch_start + OA_BATCH_SIZE]
 
-        # Check cache first — skip call if all cached
-        results: dict[str, Optional[str]] = {}
-        uncached_ids: list[str] = []
-        for oid in batch_ids:
-            cached = _read_abstract_cache(f"oa:{oid}")
-            if cached is not None:
-                results[oid] = cached if cached != "__none__" else None
-            else:
-                uncached_ids.append(oid)
+            # Check cache first — skip call if all cached
+            results: dict[str, Optional[str]] = {}
+            uncached_ids: list[str] = []
+            for oid in batch_ids:
+                cached = _read_abstract_cache(f"oa:{oid}")
+                if cached is not None:
+                    results[oid] = cached if cached != "__none__" else None
+                else:
+                    uncached_ids.append(oid)
 
-        # A whole-batch HTTP failure returns None: no id in the batch is a
-        # definitive miss, so leave the uncached ids un-cached and un-checkpointed
-        # for a later run to retry. A successful batch missing a specific id IS a
-        # definitive miss for that id (cached + checkpointed below).
-        batch_transient = False
-        if uncached_ids:
-            time.sleep(OA_RATE_SEC)
-            fetched = _fetch_openalex_batch(uncached_ids)
-            if fetched is None:
-                batch_transient = True
-                log.warning("Phase 1 — OpenAlex batch failed; %d ids left for retry.",
-                            len(uncached_ids))
-            else:
-                for oid, abstract in fetched.items():
-                    _write_abstract_cache(f"oa:{oid}", abstract if abstract else "__none__")
-                    results[oid] = abstract
+            # A whole-batch HTTP failure returns None: no id in the batch is a
+            # definitive miss, so leave the uncached ids un-cached and un-checkpointed
+            # for a later run to retry. A successful batch missing a specific id IS a
+            # definitive miss for that id (cached + checkpointed below).
+            batch_transient = False
+            if uncached_ids:
+                time.sleep(OA_RATE_SEC)
+                fetched = _fetch_openalex_batch(uncached_ids)
+                if fetched is None:
+                    batch_transient = True
+                    log.warning("Phase 1 — OpenAlex batch failed; %d ids left for retry.",
+                                len(uncached_ids))
+                else:
+                    for oid, abstract in fetched.items():
+                        _write_abstract_cache(f"oa:{oid}", abstract if abstract else "__none__")
+                        results[oid] = abstract
 
-        # Checkpoint each resolved id. On a transient batch, skip the ids that were
-        # not resolved (no cache, no checkpoint) so they retry next run.
-        for oid in batch_ids:
-            if batch_transient and oid in uncached_ids:
-                continue
-            _append_checkpoint(f"oa:{oid}")
-            if results.get(oid):
-                n_found += 1
+            # Checkpoint each resolved id. On a transient batch, skip the ids that were
+            # not resolved (no cache, no checkpoint) so they retry next run.
+            for oid in batch_ids:
+                if batch_transient and oid in uncached_ids:
+                    continue
+                _append_checkpoint(f"oa:{oid}")
+                if results.get(oid):
+                    n_found += 1
 
-        done_so_far = batch_start + len(batch_ids)
-        if done_so_far % 5000 == 0:
-            log.info("  OpenAlex progress: %d / %d  (found: %d)", done_so_far, len(oa_ids), n_found)
+            done_so_far = batch_start + len(batch_ids)
+            if done_so_far % 5000 == 0:
+                log.info("  OpenAlex progress: %d / %d  (found: %d)", done_so_far, len(oa_ids), n_found)
 
-    log.info("Phase 1 complete. Abstracts found: %d", n_found)
+        log.info("Phase 1 complete. Abstracts found: %d", n_found)
 
     # ------------------------------------------------------------------
     # Phase 2: CrossRef by DOI (rows still missing after Phase 1)
@@ -874,6 +888,13 @@ if __name__ == "__main__":
                         help="File of DOIs (one per line, priority order) tried first "
                              "in the Scopus phase, so the weekly quota goes to the rows "
                              "that matter most.")
+    parser.add_argument("--skip-openalex", action="store_true",
+                        help="Skip Phase 1 (OpenAlex batch) and go straight to "
+                             "CrossRef/S2/Scopus. Rows missing an abstract were "
+                             "themselves discovered via OpenAlex, so Phase 1 has near-0%% "
+                             "yield on this corpus (measured) — use this to spend time on "
+                             "the phases that actually find new abstracts. Safe: a later "
+                             "run without this flag resumes Phase 1 from its checkpoint.")
     args = parser.parse_args()
 
     if args.reset:
@@ -887,4 +908,4 @@ if __name__ == "__main__":
         print(f"Dropped {n} OpenAlex miss entries from checkpoint — they will be retried.")
 
     run(dry_run=args.dry_run, limit=args.limit, scopus_limit=args.scopus_limit,
-        scopus_priority=args.scopus_priority)
+        scopus_priority=args.scopus_priority, skip_openalex=args.skip_openalex)
