@@ -709,6 +709,11 @@ class TestRunExtract:
                        "is_false_positive": False, "n_originals": 0,
                        "originals": [], "originals_json": "[]"}), \
              patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
+             patch("extract.run_extract.verify_and_correct",
+                   side_effect=lambda doi, *a, **k: {"doi_o": doi,
+                                                     "doi_o_verification": "skipped",
+                                                     "evidence_note": ""}), \
+             patch("extract.run_extract._oa_by_doi", return_value=None), \
              patch("extract.run_extract.DATA_DIR", tmp.parent), \
              patch("extract.run_extract.BASE_DIR", tmp.parent):
             filtered_path = tmp.parent / "filtered.csv"
@@ -756,6 +761,11 @@ class TestRunExtract:
                    return_value={"is_false_positive": False, "n_originals": 0,
                                  "originals": [], "originals_json": "[]"}), \
              patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
+             patch("extract.run_extract.verify_and_correct",
+                   side_effect=lambda doi, *a, **k: {"doi_o": doi,
+                                                     "doi_o_verification": "skipped",
+                                                     "evidence_note": ""}), \
+             patch("extract.run_extract._oa_by_doi", return_value=None), \
              patch("extract.run_extract.DATA_DIR", tmp.parent), \
              patch("extract.run_extract.BASE_DIR", tmp.parent):
             fp_path = tmp.parent / "filtered.csv"
@@ -834,6 +844,11 @@ class TestRunExtract:
         with patch("extract.run_extract.classify_match_type", mock_classify), \
              patch("extract.run_extract.run_for_doi", return_value=_MOCK_LINK), \
              patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
+             patch("extract.run_extract.verify_and_correct",
+                   side_effect=lambda doi, *a, **k: {"doi_o": doi,
+                                                     "doi_o_verification": "skipped",
+                                                     "evidence_note": ""}), \
+             patch("extract.run_extract._oa_by_doi", return_value=None), \
              patch("extract.run_extract.DATA_DIR", tmp.parent), \
              patch("extract.run_extract.BASE_DIR", tmp.parent):
             fp_path = tmp.parent / "filtered.csv"
@@ -872,6 +887,11 @@ class TestRunExtract:
                    return_value={"is_false_positive": False, "n_originals": 0,
                                  "originals": [], "originals_json": "[]"}), \
              patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
+             patch("extract.run_extract.verify_and_correct",
+                   side_effect=lambda doi, *a, **k: {"doi_o": doi,
+                                                     "doi_o_verification": "skipped",
+                                                     "evidence_note": ""}), \
+             patch("extract.run_extract._oa_by_doi", return_value=None), \
              patch("extract.run_extract.DATA_DIR", tmp.parent), \
              patch("extract.run_extract.BASE_DIR", tmp.parent):
             fp_path = tmp.parent / "filtered.csv"

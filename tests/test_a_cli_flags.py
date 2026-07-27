@@ -134,7 +134,12 @@ class TestExtractedTestFlag:
                                  "original_match_confidence": "low"}), \
              patch("extract.run_extract.run_for_doi", return_value=_EMPTY_LINK), \
              patch("extract.run_extract._get_outcome", return_value=_EMPTY_OUTCOME), \
-             patch("extract.run_extract._save_parse_cache"):
+             patch("extract.run_extract._save_parse_cache"), \
+             patch("extract.run_extract.verify_and_correct",
+                   side_effect=lambda doi, *a, **k: {"doi_o": doi,
+                                                     "doi_o_verification": "skipped",
+                                                     "evidence_note": ""}), \
+             patch("extract.run_extract._oa_by_doi", return_value=None):
             rex.run_extract(no_llm=True, no_pdf=True, out_path=test_out)
         return test_out
 
