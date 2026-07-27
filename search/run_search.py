@@ -883,7 +883,7 @@ if __name__ == "__main__":
         csv_path = DATA_DIR / "candidates.csv"
         if csv_path.exists():
             idx = build_candidates_index(csv_path)
-            print(f"Rebuilt candidates index: {len(idx)} keys → {_CANDIDATES_INDEX_PATH}")
+            print(f"Rebuilt candidates index: {len(idx)} keys -> {_CANDIDATES_INDEX_PATH}")
         else:
             print("candidates.csv not found — nothing to rebuild.")
         raise SystemExit(0)
