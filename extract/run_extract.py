@@ -846,7 +846,11 @@ def _guard_original_link(row: dict) -> dict:
        discard valid links. Marked explicitly so it is never mistaken for verified.
     4. No DOI and no usable title → target_pending; there is nothing to validate.
     """
-    if row.get("link_method") in {"target_pending", "api_error", "no_original_found"}:
+    # not_a_replication has no original by design — the reference screen concluded
+    # the paper never replicated anything. Asking it for a doi_o would rewrite the
+    # row to target_pending and --resolved-only would then discard the finding.
+    if row.get("link_method") in {"target_pending", "api_error", "no_original_found",
+                                  "not_a_replication"}:
         return row
 
     doi_r = clean_doi(str(row.get("doi_r", "") or ""))
