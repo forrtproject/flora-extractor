@@ -109,8 +109,9 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 
 # Per-task model selection — light for classify_match_type & code_outcome,
 # heavy for the full identify_original_with_llm linking step.
-# Default light to gemini-2.0-flash-lite (stable, high rate limits).
-GEMINI_LIGHT_MODEL = os.getenv("GEMINI_LIGHT_MODEL", "gemini-2.5-flash-lite")
+# Default light to gemini-3.5-flash-lite (cheap, high rate limits); it is also one of
+# the two independent voters in the Stage 4.5 replication classifier.
+GEMINI_LIGHT_MODEL = os.getenv("GEMINI_LIGHT_MODEL", "gemini-3.5-flash-lite")
 GEMINI_HEAVY_MODEL = os.getenv("GEMINI_HEAVY_MODEL", GEMINI_MODEL)
 
 # OpenRouter (OpenAI-compatible API at openrouter.ai) — optional alternative LLMs
