@@ -489,8 +489,16 @@ def _build_worklist(dry_run: bool, limit: Optional[int]):
     pq_path = _parquet_path("candidates")
     if pq_path.exists():
         import pyarrow.parquet as pq
-        log.info("Building worklist from Parquet: %s", pq_path)
-        chunks = [pq.read_table(pq_path, columns=needed).to_pandas()]
+        log.info("Building worklist from Parquet (streamed in row-group batches): %s", pq_path)
+        # A single pq.read_table(...).to_pandas() materialises every row at once — on
+        # this repo's 2.5 GB / 2.58M-row mirror that is a multi-hundred-MB-to-GB spike
+        # that OOM'd in practice (ArrowMemoryError), defeating the whole point of this
+        # function per its own docstring. iter_batches() yields one row-group (~50k
+        # rows here) at a time, so peak memory matches the CSV chunked path below.
+        chunks = (
+            batch.to_pandas()
+            for batch in pq.ParquetFile(pq_path).iter_batches(batch_size=50_000, columns=needed)
+        )
     else:
         log.info("Streaming candidates.csv (50k-row chunks) to build worklist...")
         chunks = pd.read_csv(

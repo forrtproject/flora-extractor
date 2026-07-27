@@ -676,6 +676,38 @@ def test_candidates_csv_is_never_read_whole(monkeypatch, tmp_path):
     fa.run(scopus_limit=0)   # must not raise the assertion
 
 
+def test_candidates_parquet_is_never_read_whole(monkeypatch, tmp_path):
+    """Guard against the same OOM anti-pattern on the Parquet fast path: a single
+    pq.read_table(...).to_pandas() materialises the entire mirror at once (2.5 GB /
+    2.58M rows in production — confirmed ArrowMemoryError). _build_worklist must use
+    ParquetFile.iter_batches() instead, so pq.read_table must never be called."""
+    import pandas as pd
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    pq_path = tmp_path / "candidates.parquet"
+    df = pd.DataFrame({
+        "abstract_r":    ["", "has one already", ""],
+        "doi_r":         ["10.1/a", "10.1/b", ""],
+        "openalex_id_r": ["https://openalex.org/W1", "", ""],
+    })
+    pq.write_table(pa.Table.from_pandas(df, preserve_index=False), pq_path)
+
+    monkeypatch.setattr(fa, "_parquet_path", lambda name: pq_path)
+
+    def guarded_read_table(*a, **k):
+        raise AssertionError("pq.read_table must not be called — the Parquet path "
+                             "must stream via ParquetFile.iter_batches()")
+    monkeypatch.setattr(pq, "read_table", guarded_read_table)
+
+    worklist, total_missing, has_oa, has_doi = fa._build_worklist(dry_run=False, limit=None)
+
+    assert total_missing == 2               # rows with blank abstract_r (rows 0 and 2)
+    assert has_oa == 1                      # only row 0 has openalex_id_r
+    assert has_doi == 1                     # only row 0 has doi_r; row 2 has neither
+    assert {w["doi_r"] for w in worklist} == {"10.1/a", ""}
+
+
 def test_dry_run_writes_nothing_but_reports_counts(monkeypatch, tmp_path, caplog):
     """--dry-run makes no API calls, rewrites no file, but still counts missing
     rows by identifier type."""
