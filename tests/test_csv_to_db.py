@@ -143,7 +143,7 @@ def test_skip_accounting_is_disjoint(capsys, monkeypatch, tmp_path):
 def test_skip_buckets_sum_to_total(capsys, monkeypatch, tmp_path):
     """Parse the printed counts and confirm resolved + all skip buckets == len(df)."""
     df = pd.DataFrame([
-        {"filter_status": "replication", "link_method": "llm_abstract",
+        {"filter_status": "replication", "link_method": "llm_cited_candidates",
          "doi_r": "10.1/a", "doi_o": "10.2/a", "pair_id": "pa"},
         {"filter_status": "false_positive", "link_method": "no_original_found",
          "doi_r": "10.1/b", "doi_o": "", "pair_id": "pb"},

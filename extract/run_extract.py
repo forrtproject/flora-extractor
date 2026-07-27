@@ -190,11 +190,12 @@ _METHOD_MAP = {
     "llm_title_search_openai":        "llm_title_search",
     "llm_gemini":                     "llm_fulltext",
     "llm_openai":                     "llm_fulltext",
-    "llm_abstract_gemini":            "llm_abstract",
-    "llm_abstract_openai":            "llm_abstract",
+    "llm_cited_candidates_gemini":            "llm_cited_candidates",
+    "llm_cited_candidates_openai":            "llm_cited_candidates",
     # Resolved from the paper's own OpenAlex reference list, at high confidence
     # only — see the Stage 4.5 screen in link_original.run_for_doi.
     "llm_references":                 "llm_references",
+    "llm_title_search_prepdf":        "llm_title_search",
     # The same screen concluded the paper is not a replication at all, so there is
     # no original to look for and no reason to fetch the PDF.
     "llm_not_a_replication":          "not_a_replication",
@@ -202,6 +203,8 @@ _METHOD_MAP = {
     # Distinct from llm_failed (API errors) and llm_fulltext (original found).
     "llm_no_target":                  "no_original_found",
     "llm_failed":                     "target_pending",
+    "llm_refscreen_declined":         "target_pending",
+    "llm_refscreen_failed":           "target_pending",
     "no_candidates_found":            "target_pending",
     "needs_fulltext":                 "target_pending",
     "none":                           "target_pending",
@@ -312,7 +315,7 @@ def _map_method(method: str) -> str:
     if method in {"citation_context_match", "same_author_year_title_overlap",
                   "single_candidate_after_requery", "title_pattern_match",
                   "grobid_ref_match", "author_year_match_legacy",
-                  "llm_abstract", "llm_fulltext", "llm_references",
+                  "llm_cited_candidates", "llm_fulltext", "llm_references",
                   "not_a_replication",
                   "no_original_found", "target_pending", "api_error"}:
         return method
@@ -577,7 +580,7 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
 def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
                      match_type: str, match_conf: str, n: int,
                      link_llm_model: str = "",
-                     link_method: str = "llm_abstract") -> dict:
+                     link_method: str = "llm_cited_candidates") -> dict:
     row = filter_row.to_dict()
     if not row.get("title_r"):
         row["title_r"] = row.get("study_r", "")
@@ -804,10 +807,10 @@ def _load_extracted_rows(out_path) -> tuple[dict[str, list[dict]], set[str]]:
             continue  # rows with no DOI, no OA ID, and no title — skip; can't dedup
         rows = group.to_dict("records")
         # Stale artifact: LLM method written before the no_original_found fix — these
-        # have link_method=llm_fulltext/llm_abstract but an empty doi_o. Re-process them.
+        # have link_method=llm_fulltext/llm_cited_candidates but an empty doi_o. Re-process them.
         rows = [
             r for r in rows
-            if not (r.get("link_method") in {"llm_fulltext", "llm_abstract"}
+            if not (r.get("link_method") in {"llm_fulltext", "llm_cited_candidates"}
                     and not r.get("doi_o", "").strip())
         ]
         if not rows:
@@ -1039,7 +1042,7 @@ def run_extract(no_llm: bool = False,
     resume              — carry forward already-resolved rows from extracted.csv unchanged;
                            re-run only rows with link_method == "target_pending".
     resolved_only       — only write rows that are fully resolved (any rule-based or
-                           llm_abstract / llm_fulltext link_method with a non-empty doi_o).
+                           llm_cited_candidates / llm_fulltext link_method with a non-empty doi_o).
                            target_pending / api_error / no_original_found rows are silently skipped.
                            Use with --no-llm --no-pdf for a fast rule-based-only pass, then
                            follow up with --resume for the LLM pass on remaining rows.
@@ -1292,13 +1295,13 @@ def run_extract(no_llm: bool = False,
                     multi_llm_model = str(result.get("llm_model", "") or "")
                     # Label truthfully: the multi pipeline feeds parsed full text /
                     # GROBID references into the prompt whenever a PDF was obtained,
-                    # so those rows are llm_fulltext, not llm_abstract.
+                    # so those rows are llm_fulltext, not llm_cited_candidates.
                     multi_used_fulltext = (
                         bool(result.get("pdf_ok"))
                         or int(result.get("n_grobid_refs") or 0) > 0
                     )
                     multi_link_method = (
-                        "llm_fulltext" if multi_used_fulltext else "llm_abstract"
+                        "llm_fulltext" if multi_used_fulltext else "llm_cited_candidates"
                     )
                     for orig in originals:
                         raw_out = str(orig.get("outcome", "cannot_be_determined") or "cannot_be_determined").lower()
@@ -1496,7 +1499,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--resolved-only", action="store_true",
-        help="Only write rows that are fully resolved (any rule-based method or llm_abstract / llm_fulltext). "
+        help="Only write rows that are fully resolved (any rule-based method or llm_cited_candidates / llm_fulltext). "
              "target_pending / api_error / no_original_found rows are silently skipped. "
              "Combine with --no-llm --no-pdf for a fast rule-based pass, then use --resume "
              "for the LLM pass on the remaining rows.",

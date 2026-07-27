@@ -80,7 +80,9 @@ value. They are now emitted distinctly because their reliability differs sharply
 | `single_candidate_after_requery` | Rule-based: exactly one OpenAlex candidate remained after re-query, auto-accepted at score 1.0 with **no semantic check** (weakest of the rule-based methods) |
 | `title_pattern_match` | Rule-based: the replication title (e.g. "A Replication of X") named the original, matched to a candidate by title Jaccard |
 | `grobid_ref_match` | Rule-based: a GROBID-parsed reference matched a candidate by DOI or author+year |
-| `llm_abstract` | LLM resolved the original from abstract text |
+| `llm_cited_candidates` | LLM chose the original from candidates found by matching an author-year citation in the abstract against the paper's references |
+| `llm_references` | LLM picked the original from the paper's full OpenAlex reference list, accepted only at high confidence (Stage 4.5 screen) |
+| `not_a_replication` | The Stage 4.5 screen concluded at high confidence that the paper does not replicate or reproduce anything; no original exists to link and no PDF was fetched |
 | `llm_fulltext` | LLM resolved the original from full PDF text (also multi-original rows when a PDF/GROBID fed the prompt) |
 | `author_year_match_legacy` | Legacy row written before the split; the specific rule-based method cannot be recovered retroactively (see `tools/migrate_link_methods.py`) |
 | `no_original_found` | Pipeline could not identify an original study |

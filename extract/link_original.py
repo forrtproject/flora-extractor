@@ -30,7 +30,7 @@ from shared.disambiguation import is_umbrella_paper, jaccard_similarity
 from shared import token_counter
 from shared.llm_client import identify_original_with_llm, screen_references_with_llm
 from shared.pdf_parsing import parse_all as _parse_all, best_parse_result as _best_parse_shared
-from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_openalex_by_doi, fetch_referenced_works_metadata
+from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_openalex_by_doi, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
 from shared.pdf_sources import acquire_pdf
 from shared.utils import cache_key, clean_doi
 
@@ -499,6 +499,45 @@ def _best_parse_result(parse_results: dict[str, dict]) -> dict:
     return parse_results.get("grobid", next(iter(parse_results.values())))
 
 
+def _first_author(authors) -> str:
+    if isinstance(authors, list):
+        return str(authors[0]).strip() if authors else ""
+    return str(authors or "").split(",")[0].strip()
+
+
+def _search_title_for_original(doi_r: str, target_desc: str,
+                               study_r: str) -> "dict | None":
+    """Resolve a target the screen named but could not match to a reference.
+
+    target_desc is however the abstract referred to the replicated study, so it may
+    carry authors and a year around the title. Both searches confirm the hit by
+    title Jaccard, so the surrounding words cost recall rather than precision.
+    Returns a resolver dict, or None when neither source gives a confident hit.
+    """
+    for search in (_search_crossref_by_title, _search_openalex_by_title):
+        hit = search(target_desc)
+        if not hit:
+            continue
+        doi_o = clean_doi(hit.get("doi", "") or "")
+        # A replication whose title echoes the original's makes the original's own
+        # record and the replication easy to confuse; never link a paper to itself.
+        if not doi_o or doi_o == clean_doi(doi_r):
+            continue
+        if jaccard_similarity(hit.get("title", ""), study_r) > 0.9:
+            continue
+        return {
+            "resolved":          True,
+            "resolution_method": "llm_title_search_prepdf",
+            "resolved_doi_o":    doi_o,
+            "resolved_title_o":  hit.get("title", ""),
+            "resolved_year_o":   hit.get("year"),
+            # CrossRef returns authors as a string, OpenAlex as a list.
+            "resolved_author_o": _first_author(hit.get("authors")),
+            "resolution_score":  1.0,
+        }
+    return None
+
+
 def run_for_doi(doi_r:              str,
                 flora_df:           Optional[pd.DataFrame] = None,
                 cands_df:           Optional[pd.DataFrame] = None,
@@ -629,27 +668,45 @@ def run_for_doi(doi_r:              str,
     # route. The referenced works are still available, so ask the LLM whether this is
     # a replication at all and, if so, which reference is the target — a clear "no"
     # means there is nothing to chase in the full text.
-    if not no_llm and oa_id_r:
-        refs = fetch_referenced_works_metadata(oa_id_r)
-        if refs:
-            token_counter.set_stage("extract_refscreen")
-            screen = screen_references_with_llm(doi_r, study_r, abstract_r, refs)
-            if screen["is_replication"] == "no" and screen["llm_confidence"] == "high":
-                log.info("[%s] Reference screen: not a replication — skipping PDF", doi_r)
-                return _build_output(doi_r, flora, cands_row, candidates, {
-                    "resolved":          False,
-                    "resolution_method": "llm_not_a_replication",
-                    "resolved_doi_o":    "",
-                    "resolved_title_o":  "",
-                    "resolved_year_o":   None,
-                    "resolved_author_o": "",
-                    "resolution_score":  0.0,
-                }, {}, {}, screen)
-            if screen["resolved"]:
-                log.info("[%s] Resolved from reference list: %s", doi_r,
-                         screen["resolved_title_o"])
+    if not no_llm and (abstract_r or study_r):
+        # No references is not a reason to skip: with them the call both screens and
+        # resolves, without them it still answers "is this a replication at all".
+        refs = fetch_referenced_works_metadata(oa_id_r) if oa_id_r else []
+        token_counter.set_stage("extract_refscreen")
+        screen = screen_references_with_llm(doi_r, study_r, abstract_r, refs)
+
+        if screen["is_replication"] == "no" and screen["llm_confidence"] == "high":
+            log.info("[%s] Reference screen: not a replication — skipping PDF", doi_r)
+            return _build_output(doi_r, flora, cands_row, candidates, {
+                "resolved":          False,
+                "resolution_method": "llm_not_a_replication",
+                "resolved_doi_o":    "",
+                "resolved_title_o":  "",
+                "resolved_year_o":   None,
+                "resolved_author_o": "",
+                "resolution_score":  0.0,
+            }, {}, {}, screen)
+
+        if screen["resolved"]:
+            log.info("[%s] Resolved from reference list: %s", doi_r,
+                     screen["resolved_title_o"])
+            return _build_output(doi_r, flora, cands_row, candidates,
+                                 screen, {}, {}, screen)
+
+        # ── Stage 4.6: Title search on a named-but-unmatched target ──────────
+        # The screen can recognise the target in the abstract yet fail to match it
+        # to a reference — OpenAlex reference lists are frequently short or empty
+        # (one sampled paper names its target and has a single reference). Searching
+        # the named title is far cheaper than acquiring and parsing the PDF, and the
+        # same search already runs after the PDF stage as llm_title_search.
+        target_desc = screen.get("target_description", "")
+        if screen["is_replication"] == "yes" and target_desc:
+            hit = _search_title_for_original(doi_r, target_desc, study_r)
+            if hit:
+                log.info("[%s] Resolved by pre-PDF title search: %s", doi_r,
+                         hit["resolved_title_o"])
                 return _build_output(doi_r, flora, cands_row, candidates,
-                                     screen, {}, {}, screen)
+                                     hit, {}, {}, screen)
 
     # ── Stage 5: PDF acquisition ─────────────────────────────────────────────
     if no_pdf:

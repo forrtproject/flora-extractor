@@ -38,7 +38,7 @@ _OUTCOME_KEYS = ("success", "failure", "mixed", "uninformative",
 _RULE_METHOD_KEYS = ("citation_context_match", "same_author_year_title_overlap",
                      "single_candidate_after_requery", "title_pattern_match",
                      "grobid_ref_match", "author_year_match_legacy", "author_year_match")
-_METHOD_KEYS  = _RULE_METHOD_KEYS + ("llm_abstract", "llm_fulltext",
+_METHOD_KEYS  = _RULE_METHOD_KEYS + ("llm_cited_candidates", "llm_fulltext",
                  "no_original_found", "target_pending", "api_error")
 
 
@@ -99,7 +99,7 @@ def _stats_json_to_api(sj: dict, source: str = "stats_json") -> dict:
         "match_multiple_match":      by_mt.get("multiple_match",    0),
         "match_multiple_original":   by_mt.get("multiple_original", 0),
         "method_author_year_match":  sum(by_method.get(k, 0) for k in _RULE_METHOD_KEYS),
-        "method_llm_abstract":       by_method.get("llm_abstract",       0),
+        "method_llm_cited_candidates":       by_method.get("llm_cited_candidates",       0),
         "method_llm_fulltext":       by_method.get("llm_fulltext",       0),
         "method_no_original_found":  by_method.get("no_original_found",  0),
         "method_target_pending":     by_method.get("target_pending",     0),
@@ -121,7 +121,7 @@ def _stats_json_to_api(sj: dict, source: str = "stats_json") -> dict:
         "test_match_multiple_match":     tmt.get("multiple_match",    0),
         "test_match_multiple_original":  tmt.get("multiple_original", 0),
         "test_method_author_year_match": sum(tbm.get(k, 0) for k in _RULE_METHOD_KEYS),
-        "test_method_llm_abstract":      tbm.get("llm_abstract",       0),
+        "test_method_llm_cited_candidates":      tbm.get("llm_cited_candidates",       0),
         "test_method_llm_fulltext":      tbm.get("llm_fulltext",       0),
         "test_method_no_original_found": tbm.get("no_original_found",  0),
         "test_method_target_pending":    tbm.get("target_pending",     0),

@@ -208,7 +208,7 @@ last resort rather than the normal path.
 | 2 | OpenAlex candidate re-query | always — builds the candidate pool from the paper's `referenced_works` | (not a resolver) |
 | 2.5 | Title-pattern resolver | the title matches "A Replication of X" and one candidate matches it | `title_pattern_match` |
 | 3 | Rule-based resolver | the abstract carries an author-year citation matching a candidate | `citation_context_match`, `same_author_year_title_overlap`, `single_candidate_after_requery` |
-| 4 | Abstract LLM | the abstract carries author-year patterns, with candidates to choose from | `llm_abstract` |
+| 4 | Abstract LLM | the abstract carries author-year patterns, with candidates to choose from | `llm_cited_candidates` |
 | 4.5 | **Reference-list screen** | there are referenced works (regardless of citation patterns) | `llm_references`, or `not_a_replication` |
 | 5 | PDF acquisition + full-text LLM | everything above declined | `llm_fulltext`, `llm_title_search` |
 
