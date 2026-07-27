@@ -701,7 +701,7 @@ def run_for_doi(doi_r:              str,
         # Two models reaching different verdicts is a signal in its own right, and
         # escalating those rows spends the most expensive path on exactly the cases
         # least likely to reward it. Set them aside for review instead.
-        if not screen.get("models_agree"):
+        if not screen.get("models_agree") and len(screen.get("votes", [])) == 2:
             verdicts = "; ".join(
                 f"{v['provider']}={v['is_replication']}/{v['confidence']}"
                 for v in screen.get("votes", []))

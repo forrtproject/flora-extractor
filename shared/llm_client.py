@@ -1232,9 +1232,17 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
     out["llm_prompt"] = cls_prompt
     votes = [v for v in (_classify_once(cls_prompt, "gemini"),
                          _classify_once(cls_prompt, "openai")) if v]
-    if not votes:
+    # A missing vote is an API failure, not a verdict. Returning it as a normal
+    # result would file the row as a two-model disagreement and corrupt the
+    # agreement rate; caching it would freeze one transient 500 into a permanent
+    # one. Bail out uncached so the row escalates and a re-run can screen it.
+    if len(votes) < 2:
+        answered = {v["provider"] for v in votes}
         out["resolution_method"] = "llm_refscreen_failed"
-        out["llm_error"] = "both classifiers failed"
+        out["llm_error"] = "classifier failed: " + ", ".join(
+            p for p in ("gemini", "openai") if p not in answered)
+        out["votes"] = [{k: v[k] for k in ("provider", "is_replication", "confidence", "reasoning")}
+                        for v in votes]
         return out
 
     # Keep the individual votes: a disagreement row is set aside for human review,
