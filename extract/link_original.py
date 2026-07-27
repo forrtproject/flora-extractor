@@ -727,9 +727,28 @@ def run_for_doi(doi_r:              str,
     pdf = acquire_pdf(doi_r, study_r, openalex_id=oa_id_r)
     log.info("[%s] PDF: %s (%s)", doi_r, pdf["pdf_source"], pdf["pdf_url"])
 
-    # ── Stage 6: Parse all — pick richest result to send to LLM ─────────────
     pdf_path       = Path(pdf["pdf_path"]) if pdf.get("pdf_path") else None
     oa_xml_content = pdf.get("openalex_xml")
+
+    # Acquisition fails outright for most rows that get this far (16 of 26 attempts
+    # in a sampled run returned pdf_source="none"). With neither a PDF nor OpenAlex
+    # XML there is no full text to parse, so running the six-parser stack yields
+    # empty sections and the LLM is asked to name an original from nothing — which
+    # is exactly how a confident, fabricated doi_o gets produced. Stop here instead.
+    if pdf_path is None and not oa_xml_content:
+        log.info("[%s] no document acquired (%s) — writing target_pending",
+                 doi_r, pdf.get("pdf_source", "none"))
+        return _build_output(doi_r, flora, cands_row, candidates, {
+            "resolved":          False,
+            "resolution_method": "no_fulltext_available",
+            "resolved_doi_o":    "",
+            "resolved_title_o":  "",
+            "resolved_year_o":   None,
+            "resolved_author_o": "",
+            "resolution_score":  0.0,
+        }, pdf, {}, {})
+
+    # ── Stage 6: Parse all — pick richest result to send to LLM ─────────────
     parse_results  = _parse_all(doi_r, pdf_path, oa_xml=oa_xml_content, no_llm=no_llm)
     _write_parse_cache(doi_r, parse_results)
 
