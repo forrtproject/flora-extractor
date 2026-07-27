@@ -28,9 +28,9 @@ import requests
 from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_CACHE_DIR, RESEARCHER_EMAIL, log
 from shared.disambiguation import is_umbrella_paper, jaccard_similarity
 from shared import token_counter
-from shared.llm_client import identify_original_with_llm
+from shared.llm_client import identify_original_with_llm, screen_references_with_llm
 from shared.pdf_parsing import parse_all as _parse_all, best_parse_result as _best_parse_shared
-from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_openalex_by_doi
+from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_openalex_by_doi, fetch_referenced_works_metadata
 from shared.pdf_sources import acquire_pdf
 from shared.utils import cache_key, clean_doi
 
@@ -622,6 +622,34 @@ def run_for_doi(doi_r:              str,
                          llm4["resolved_title_o"])
                 return _build_output(doi_r, flora, cands_row, candidates,
                                      llm4, {}, {}, {})
+
+    # ── Stage 4.5: Reference-list screen ─────────────────────────────────────
+    # Stage 3/4 can only fire when the abstract carries a parseable "(Author, Year)"
+    # citation; without one, candidates is empty and every row would drop to the PDF
+    # route. The referenced works are still available, so ask the LLM whether this is
+    # a replication at all and, if so, which reference is the target — a clear "no"
+    # means there is nothing to chase in the full text.
+    if not no_llm and oa_id_r:
+        refs = fetch_referenced_works_metadata(oa_id_r)
+        if refs:
+            token_counter.set_stage("extract_refscreen")
+            screen = screen_references_with_llm(doi_r, study_r, abstract_r, refs)
+            if screen["is_replication"] == "no" and screen["llm_confidence"] == "high":
+                log.info("[%s] Reference screen: not a replication — skipping PDF", doi_r)
+                return _build_output(doi_r, flora, cands_row, candidates, {
+                    "resolved":          False,
+                    "resolution_method": "llm_not_a_replication",
+                    "resolved_doi_o":    "",
+                    "resolved_title_o":  "",
+                    "resolved_year_o":   None,
+                    "resolved_author_o": "",
+                    "resolution_score":  0.0,
+                }, {}, {}, screen)
+            if screen["resolved"]:
+                log.info("[%s] Resolved from reference list: %s", doi_r,
+                         screen["resolved_title_o"])
+                return _build_output(doi_r, flora, cands_row, candidates,
+                                     screen, {}, {}, screen)
 
     # ── Stage 5: PDF acquisition ─────────────────────────────────────────────
     if no_pdf:

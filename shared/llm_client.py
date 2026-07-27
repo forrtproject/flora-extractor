@@ -29,7 +29,7 @@ from .config import (
 )
 from . import token_counter
 from .schema import OUTCOME_CATEGORIES
-from .utils import cache_key
+from .utils import cache_key, clean_doi
 
 # ── OpenAI session-level token guardrail ─────────────────────────────────────
 # Tracks tokens consumed via call_openai() within the current process.
@@ -1090,3 +1090,132 @@ def identify_all_originals_with_llm(doi_r:        str,
             json.dump(output, fh, ensure_ascii=False, indent=2)
 
     return output
+
+
+# ── Reference-list screening (no author-year citation in the abstract) ─────────
+# Reached when the abstract carries no parseable "(Author, Year)" citation, so
+# find_all_candidates() has nothing to match and returns []. The paper's
+# referenced works are still available from OpenAlex, so instead of dropping
+# straight to PDF acquisition we show the LLM the abstract plus the reference
+# list and ask two questions at once: is this even a replication, and if so which
+# reference is the target. Most abstracts will not name a target — the prompt says
+# so explicitly, because a model pushed to choose will pick a plausible-looking
+# reference and manufacture a link that looks confident and is wrong.
+
+_REF_SCREEN_PROMPT = """You are a research methodology expert.
+
+Below are a paper's TITLE, ABSTRACT, and the list of works it CITES.
+
+Answer two separate questions.
+
+QUESTION 1 — Is this paper a replication or a reproduction of a specific earlier study?
+  yes     — it collects new data to re-test an earlier study's claim (replication),
+            or re-analyses an earlier study's data to check its results (reproduction).
+  no      — it is an ordinary empirical paper, a review, a meta-analysis, a methods
+            paper, or it merely mentions replication in passing. Answering "no" is
+            genuinely useful — say so plainly when it is the honest answer.
+  unclear — the abstract does not give you enough to decide.
+
+QUESTION 2 — If (and only if) the answer to Q1 is "yes": which numbered reference
+is the study being replicated?
+
+IMPORTANT: In most cases you will NOT be able to identify the target from the
+abstract alone. Abstracts frequently describe a replication without naming the
+original study, and the target is often not in the reference list at all. That is
+the expected outcome, not a failure. Return target_number: null and
+confidence: "low" whenever you are not sure. Do NOT pick the reference that merely
+looks most topically similar — a wrong target is far worse than no target, because
+it is passed downstream as a confident link.
+
+Use confidence "high" ONLY when the abstract identifies the target unambiguously
+(e.g. it names the authors and the finding, and exactly one reference matches).
+
+TITLE: {title}
+
+ABSTRACT: {abstract}
+
+REFERENCES:
+{references}
+
+Respond with ONLY a JSON object:
+{{"is_replication": "<yes|no|unclear>", "target_number": <number or null>, "confidence": "<high|medium|low>", "evidence_quote": "<short quote from the abstract supporting your answer>", "reasoning": "<one or two sentences>"}}"""
+
+
+def build_reference_screen_prompt(study_r: str, abstract_r: str,
+                                  refs: list[dict]) -> str:
+    lines = []
+    for i, r in enumerate(refs, 1):
+        authors = r.get("first_author") or ""
+        year    = r.get("publication_year") or r.get("year") or ""
+        lines.append(f"{i}. {authors} ({year}). {r.get('title', '')}".strip())
+    return _REF_SCREEN_PROMPT.format(
+        title=study_r or "(not available)",
+        abstract=(abstract_r or "(not available)")[:4000],
+        references="\n".join(lines) or "(none)",
+    )
+
+
+def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
+                               refs: list[dict]) -> dict:
+    """Screen a paper against its own reference list. See the module comment above.
+
+    Returns the standard resolver dict plus is_replication / llm_confidence, so
+    callers can both gate on 'not a replication' and use a resolved target.
+    """
+    cache_file = LLM_CACHE_DIR / f"refscreen_{cache_key(doi_r)}.json"
+    if cache_file.exists():
+        with cache_file.open(encoding="utf-8") as fh:
+            return json.load(fh)
+
+    prompt = build_reference_screen_prompt(study_r, abstract_r, refs)
+
+    result, gemini_err = call_gemini(prompt, model=GEMINI_HEAVY_MODEL)
+    llm_source, llm_model = ("gemini", GEMINI_HEAVY_MODEL) if result else ("none", "")
+    if result:
+        time.sleep(LLM_RATE_SEC)
+    else:
+        result, openai_err = call_openai(prompt)
+        if result:
+            llm_source, llm_model = "openai", OPENAI_MODEL
+            time.sleep(LLM_RATE_SEC)
+
+    out = {
+        "resolved": False, "resolution_method": "llm_refscreen_failed",
+        "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
+        "resolved_author_o": "", "resolution_score": 0.0,
+        "is_replication": "unclear", "llm_confidence": "",
+        "llm_source": llm_source, "llm_model": llm_model,
+        "llm_evidence": "", "llm_reasoning": "", "llm_prompt": prompt,
+        "llm_error": "" if result else f"Gemini: {gemini_err}",
+    }
+    if not result:
+        return out
+
+    out["is_replication"] = str(result.get("is_replication", "unclear")).strip().lower()
+    out["llm_confidence"] = str(result.get("confidence", "")).strip().lower()
+    out["llm_evidence"]   = str(result.get("evidence_quote", "") or "")
+    out["llm_reasoning"]  = str(result.get("reasoning", "") or "")
+
+    num = result.get("target_number")
+    if num is not None and out["is_replication"] == "yes":
+        try:
+            ref = refs[int(num) - 1]
+        except (ValueError, TypeError, IndexError):
+            ref = None
+        # Only a high-confidence pick is allowed to resolve: at medium or low the
+        # caller still escalates to full text, which is the reliable path.
+        if ref is not None and out["llm_confidence"] == "high":
+            out.update({
+                "resolved":          True,
+                "resolution_method": "llm_references",
+                "resolved_doi_o":    clean_doi(ref.get("doi", "") or ""),
+                "resolved_title_o":  ref.get("title", "") or "",
+                "resolved_year_o":   ref.get("publication_year") or ref.get("year"),
+                "resolved_author_o": ref.get("first_author", "") or "",
+                "resolution_score":  1.0,
+            })
+
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    with cache_file.open("w", encoding="utf-8") as fh:
+        json.dump(out, fh, ensure_ascii=False, indent=2)
+    return out
