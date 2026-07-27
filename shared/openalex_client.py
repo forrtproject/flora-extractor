@@ -386,6 +386,72 @@ def fetch_referenced_works_metadata(openalex_id: str,
     return results
 
 
+# ── OpenCitations reference fallback ─────────────────────────────────────────
+# OpenAlex returns no referenced_works for a sizeable minority of papers, which
+# leaves the Stage 4.5 screen with nothing to resolve against. OpenCitations
+# (COCI) is built from a different ingest of Crossref open references and covers
+# some of those gaps: on five sampled papers with zero OpenAlex references it had
+# 1, 9 and 40 references for three of them. It is a supplement, not a
+# replacement — where OpenAlex had 46 references OpenCitations had 36 — so it is
+# consulted only when OpenAlex comes back empty.
+#
+# COCI returns bare cited DOIs with no titles, so the DOIs are resolved back
+# through OpenAlex in batches of 50 (1 credit per batch) to reach the same shape
+# fetch_referenced_works_metadata() returns.
+
+_OPENCITATIONS_URL = "https://opencitations.net/index/api/v1/references/{doi}"
+
+
+def fetch_opencitations_references(doi_r: str) -> list[dict]:
+    """Return referenced-work metadata for *doi_r* via OpenCitations. See above."""
+    doi_r = clean_doi(doi_r)
+    if not doi_r:
+        return []
+
+    cache_file = OA_CACHE_DIR / f"ocrefs_{cache_key(doi_r)}.json"
+    if cache_file.exists():
+        with cache_file.open(encoding="utf-8") as fh:
+            return json.load(fh)
+
+    try:
+        time.sleep(CROSSREF_RATE_SEC)
+        r = requests.get(_OPENCITATIONS_URL.format(doi=doi_r),
+                         headers={"User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})"},
+                         timeout=45)
+        r.raise_for_status()
+        cited = [c.get("cited", "").strip() for c in r.json()]
+    except Exception as exc:
+        log.debug("OpenCitations lookup failed for %s: %s", doi_r, exc)
+        return []
+
+    dois = [clean_doi(c) for c in cited if c]
+    if not dois:
+        return []
+
+    results: list[dict] = []
+    batch_size = 50
+    for i in range(0, len(dois), batch_size):
+        batch = dois[i : i + batch_size]
+        data = _oa_get(
+            "https://api.openalex.org/works",
+            {
+                "filter"  : f"doi:{'|'.join(batch)}",
+                "per-page": str(batch_size),
+                "select"  : "id,doi,title,publication_year,authorships",
+                "mailto"  : RESEARCHER_EMAIL,
+            },
+        )
+        if data and "results" in data:
+            results.extend(data["results"])
+
+    log.info("[%s] OpenCitations: %d cited DOIs → %d with metadata",
+             doi_r, len(dois), len(results))
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    with cache_file.open("w", encoding="utf-8") as fh:
+        json.dump(results, fh, ensure_ascii=False, indent=2)
+    return results
+
+
 # ── Author matching ───────────────────────────────────────────────────────────
 
 def _first_author_surnames(work: dict) -> list[str]:
