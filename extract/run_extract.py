@@ -207,6 +207,7 @@ _METHOD_MAP = {
     "llm_refscreen_failed":           "target_pending",
     "no_candidates_found":            "target_pending",
     "needs_fulltext":                 "target_pending",
+    "no_fulltext_available":          "target_pending",
     "none":                           "target_pending",
     "llm_none":                       "target_pending",
 }
