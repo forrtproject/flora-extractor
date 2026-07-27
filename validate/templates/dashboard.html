@@ -1150,7 +1150,7 @@ python -m extract.audit_dois --apply  # write corrections</pre>
             <thead><tr><th>Step</th><th>Method</th><th>When used</th></tr></thead>
             <tbody>
               <tr><td>1</td><td><code>author_year_match</code></td><td>Citation pattern (Author, YYYY) found in abstract</td></tr>
-              <tr><td>2</td><td><code>llm_abstract</code></td><td>No pattern; abstract fed to LLM</td></tr>
+              <tr><td>2</td><td><code>llm_cited_candidates</code></td><td>No pattern; abstract fed to LLM</td></tr>
               <tr><td>3</td><td><code>llm_fulltext</code></td><td>Abstract inconclusive; PDF parsed and fed to LLM</td></tr>
               <tr><td>—</td><td><code>target_pending</code></td><td>All methods failed; needs manual review</td></tr>
             </tbody>
@@ -1193,7 +1193,7 @@ python -m extract.audit_dois --apply  # write corrections</pre>
               <tr><td class="col-name">authors_o</td><td class="col-desc">Semicolon-separated author surnames</td></tr>
               <tr><td class="col-name">ref_o</td><td class="col-desc">APA-style reference string</td></tr>
               <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Link method — Stage 3</td></tr>
-              <tr><td class="col-name">link_method</td><td class="col-desc">author_year_match | llm_abstract | llm_fulltext | target_pending | api_error</td></tr>
+              <tr><td class="col-name">link_method</td><td class="col-desc">author_year_match | llm_cited_candidates | llm_fulltext | target_pending | api_error</td></tr>
               <tr><td class="col-name">link_evidence</td><td class="col-desc">Phrase / LLM output that identified the original</td></tr>
               <tr><td class="col-name">link_confidence</td><td class="col-desc">high | medium | low (downgraded on DOI mismatch)</td></tr>
               <tr><td class="col-name">link_llm_model</td><td class="col-desc">Model used (blank for rule-based)</td></tr>
@@ -1290,7 +1290,7 @@ python -m extract.audit_dois --apply  # write corrections</pre>
             <span>LLM fulltext <span class="dl-hint">↓</span></span>
             <span><strong id="lm-fulltext" style="color:#1d4ed8">—</strong>
               <span class="stat-pct" id="lm-fulltext-pct"></span></span></a>
-          <a class="stat-row" href="/api/check/download?stage=extracted&link_method=llm_abstract">
+          <a class="stat-row" href="/api/check/download?stage=extracted&link_method=llm_cited_candidates">
             <span>LLM abstract <span class="dl-hint">↓</span></span>
             <span><strong id="lm-abstract" style="color:#0284c7">—</strong>
               <span class="stat-pct" id="lm-abstract-pct"></span></span></a>
@@ -2405,7 +2405,7 @@ const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replac
 function fillLinkMethod(pfx, csv, p) {
   const total = csv[`${p}extracted_count`]||0;
   [['author',`${p}method_author_year_match`],['fulltext',`${p}method_llm_fulltext`],
-   ['abstract',`${p}method_llm_abstract`],['nof',`${p}method_no_original_found`],
+   ['abstract',`${p}method_llm_cited_candidates`],['nof',`${p}method_no_original_found`],
    ['pending',`${p}method_target_pending`],['err',`${p}method_api_error`]
   ].forEach(([s,key])=>{
     const v=csv[key]||0;

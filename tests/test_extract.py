@@ -193,7 +193,7 @@ class TestExtractOutcome:
         ) == "high"
         # an explicit LLM confidence still flows through for non-capped methods
         assert _link_confidence(
-            {"resolution_method": "llm_abstract", "llm_confidence": "high"}
+            {"resolution_method": "llm_cited_candidates", "llm_confidence": "high"}
         ) == "high"
 
     def test_llm_failure_returns_cannot_be_determined(self, tmp_path):
@@ -1009,8 +1009,8 @@ class TestMergeMultiRow:
     def test_link_method_label_is_passed_through(self):
         r = self._merge({"rank": 1, "doi": "10.1/x", "title": "X",
                          "first_author": "A", "year": 2001, "confidence": "high"},
-                        link_method="llm_abstract")
-        assert r["link_method"] == "llm_abstract"
+                        link_method="llm_cited_candidates")
+        assert r["link_method"] == "llm_cited_candidates"
 
 
 # ── Multi-original count regex bound ──────────────────────────────────────────

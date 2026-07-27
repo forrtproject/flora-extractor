@@ -51,7 +51,7 @@ _METHOD_KEYS = (
     "single_candidate_after_requery", "title_pattern_match", "grobid_ref_match",
     # Legacy + un-migrated author_year_match rows.
     "author_year_match_legacy", "author_year_match",
-    "llm_abstract", "llm_fulltext",
+    "llm_cited_candidates", "llm_fulltext",
     "no_original_found", "target_pending", "api_error",
 )
 

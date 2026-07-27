@@ -19,18 +19,18 @@ def test_each_problem_row_moves_to_its_bucket(tmp_path, monkeypatch):
     _write(ex, [
         {"doi_r": "10.1/keep", "doi_o": "10.2/o", "year_r": "2020", "year_o": "2015",
          "outcome": "failure", "doi_o_verification": "verified", "openalex_id_r": "W0",
-         "link_method": "llm_abstract", "pair_id": "p0"},
+         "link_method": "llm_cited_candidates", "pair_id": "p0"},
         {"doi_r": "10.1/cbd", "doi_o": "10.2/o2", "outcome": "cannot_be_determined",
-         "doi_o_verification": "verified", "openalex_id_r": "W1", "link_method": "llm_abstract"},
+         "doi_o_verification": "verified", "openalex_id_r": "W1", "link_method": "llm_cited_candidates"},
         {"doi_r": "10.1/nar", "outcome": "not_a_replication", "openalex_id_r": "W2"},
         {"doi_r": "10.1/self", "doi_o": "10.1/self", "outcome": "success",
-         "doi_o_verification": "verified", "openalex_id_r": "W3", "link_method": "llm_abstract"},
+         "doi_o_verification": "verified", "openalex_id_r": "W3", "link_method": "llm_cited_candidates"},
         {"doi_r": "10.1/mis", "doi_o": "", "outcome": "success",
-         "doi_o_verification": "mismatch", "openalex_id_r": "W4", "link_method": "llm_abstract"},
+         "doi_o_verification": "mismatch", "openalex_id_r": "W4", "link_method": "llm_cited_candidates"},
         {"doi_r": "10.1/tp", "outcome": "cannot_be_determined",
          "link_method": "target_pending", "openalex_id_r": "W5"},
         {"doi_r": "10.7287/peerj.2068v0.1/reviews/1", "doi_o": "10.2/o6", "outcome": "success",
-         "doi_o_verification": "verified", "openalex_id_r": "W6", "link_method": "llm_abstract"},
+         "doi_o_verification": "verified", "openalex_id_r": "W6", "link_method": "llm_cited_candidates"},
     ])
 
     s = sc.run_sanity_check(ex, move=True, deep=False)

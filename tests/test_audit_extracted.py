@@ -23,7 +23,7 @@ def _clean_row(**overrides) -> dict:
         "doi_o": "10.2/orig",
         "title_o": "The Original Study",
         "year_o": "2010",
-        "link_method": "llm_abstract",
+        "link_method": "llm_cited_candidates",
         "link_confidence": "high",
         "doi_o_verification": "verified",
         "outcome": "success",

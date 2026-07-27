@@ -671,7 +671,7 @@ def identify_original_with_llm(doi_r:          str,
         # Distinct from llm_failed (all API calls errored) and llm_fulltext (original found).
         "resolution_method" : (
             f"llm_title_search_{llm_source}" if (resolved and doi_from_title_search) else
-            (f"llm_abstract_{llm_source}" if abstract_only else f"llm_{llm_source}")
+            (f"llm_cited_candidates_{llm_source}" if abstract_only else f"llm_{llm_source}")
         ) if resolved else "llm_no_target",
         "resolved_doi_o"    : resolved_doi,
         "resolved_title_o"  : resolved_title,
@@ -1094,13 +1094,21 @@ def identify_all_originals_with_llm(doi_r:        str,
 
 # ── Reference-list screening (no author-year citation in the abstract) ─────────
 # Reached when the abstract carries no parseable "(Author, Year)" citation, so
-# find_all_candidates() has nothing to match and returns []. The paper's
-# referenced works are still available from OpenAlex, so instead of dropping
-# straight to PDF acquisition we show the LLM the abstract plus the reference
-# list and ask two questions at once: is this even a replication, and if so which
-# reference is the target. Most abstracts will not name a target — the prompt says
-# so explicitly, because a model pushed to choose will pick a plausible-looking
-# reference and manufacture a link that looks confident and is wrong.
+# find_all_candidates() has nothing to match and returns []. Instead of dropping
+# straight to PDF acquisition we ask the LLM two things: is this even a
+# replication, and if so which of the paper's references is the target. Most
+# abstracts will not name a target — the prompt says so explicitly, because a
+# model pushed to choose will pick a plausible-looking reference and manufacture a
+# link that looks confident and is wrong.
+#
+# The two questions have different data requirements: identifying the target needs
+# the reference list, but deciding whether the paper is a replication at all needs
+# only the abstract. OpenAlex returns no referenced works for a sizeable minority
+# of papers, and gating both questions on the reference list sent those rows to the
+# PDF without anyone ever asking the cheap question. So: one combined call when
+# references are available, and a screen-only call when they are not.
+
+REF_SCREEN_PROMPT_VERSION = "2026-07-27-screen-or-resolve-v2"
 
 _REF_SCREEN_PROMPT = """You are a research methodology expert.
 
@@ -1130,6 +1138,12 @@ it is passed downstream as a confident link.
 Use confidence "high" ONLY when the abstract identifies the target unambiguously
 (e.g. it names the authors and the finding, and exactly one reference matches).
 
+Separately from the reference list: if the abstract names the replicated study at
+all — authors, year, title or the specific finding — report that wording in
+target_description, even when you cannot match it to any numbered reference.
+Reference lists are often incomplete, and the named study can still be looked up.
+Leave it empty if the abstract does not name a target.
+
 TITLE: {title}
 
 ABSTRACT: {abstract}
@@ -1138,20 +1152,50 @@ REFERENCES:
 {references}
 
 Respond with ONLY a JSON object:
-{{"is_replication": "<yes|no|unclear>", "target_number": <number or null>, "confidence": "<high|medium|low>", "evidence_quote": "<short quote from the abstract supporting your answer>", "reasoning": "<one or two sentences>"}}"""
+{{"is_replication": "<yes|no|unclear>", "target_number": <number or null>, "confidence": "<high|medium|low>", "target_description": "<how the abstract names the replicated study, or empty>", "evidence_quote": "<short quote from the abstract supporting your answer>", "reasoning": "<one or two sentences>"}}"""
+
+
+_SCREEN_ONLY_PROMPT = """You are a research methodology expert.
+
+Below are a paper's TITLE and ABSTRACT. No reference list is available for it.
+
+Is this paper a replication or a reproduction of a specific earlier study?
+  yes     — it collects new data to re-test an earlier study's claim (replication),
+            or re-analyses an earlier study's data to check its results (reproduction).
+  no      — it is an ordinary empirical paper, a review, a meta-analysis, a methods
+            paper, or it merely mentions replication in passing. Answering "no" is
+            genuinely useful — say so plainly when it is the honest answer.
+  unclear — the abstract does not give you enough to decide.
+
+Use confidence "high" only when the abstract makes this unambiguous. If the paper
+IS a replication, also report the target study exactly as the abstract names it
+(authors, year, title or finding) in target_description — leave it empty if the
+abstract does not name one. Do not guess a target.
+
+TITLE: {title}
+
+ABSTRACT: {abstract}
+
+Respond with ONLY a JSON object:
+{{"is_replication": "<yes|no|unclear>", "confidence": "<high|medium|low>", "target_description": "<how the abstract names the replicated study, or empty>", "evidence_quote": "<short quote from the abstract>", "reasoning": "<one or two sentences>"}}"""
 
 
 def build_reference_screen_prompt(study_r: str, abstract_r: str,
                                   refs: list[dict]) -> str:
+    """Combined screen+resolve prompt, or screen-only when there are no references."""
+    title    = study_r or "(not available)"
+    abstract = (abstract_r or "(not available)")[:4000]
+    if not refs:
+        return _SCREEN_ONLY_PROMPT.format(title=title, abstract=abstract)
     lines = []
     for i, r in enumerate(refs, 1):
         authors = r.get("first_author") or ""
         year    = r.get("publication_year") or r.get("year") or ""
         lines.append(f"{i}. {authors} ({year}). {r.get('title', '')}".strip())
     return _REF_SCREEN_PROMPT.format(
-        title=study_r or "(not available)",
-        abstract=(abstract_r or "(not available)")[:4000],
-        references="\n".join(lines) or "(none)",
+        title=title,
+        abstract=abstract,
+        references="\n".join(lines),
     )
 
 
@@ -1162,7 +1206,10 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
     Returns the standard resolver dict plus is_replication / llm_confidence, so
     callers can both gate on 'not a replication' and use a resolved target.
     """
-    cache_file = LLM_CACHE_DIR / f"refscreen_{cache_key(doi_r)}.json"
+    # Prompt version is part of the key: a changed prompt yields different fields
+    # (target_description arrived with the screen-only variant), so old entries must
+    # not be read back as if they came from the current prompt.
+    cache_file = LLM_CACHE_DIR / f"refscreen_{cache_key(doi_r + REF_SCREEN_PROMPT_VERSION + str(bool(refs)))}.json"
     if cache_file.exists():
         with cache_file.open(encoding="utf-8") as fh:
             return json.load(fh)
@@ -1180,21 +1227,27 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
             time.sleep(LLM_RATE_SEC)
 
     out = {
+        # "declined" (screen ran, resolved nothing) must stay distinct from
+        # "failed" (no usable LLM response) — conflating them makes every
+        # successful screen look like an API error in the logs.
         "resolved": False, "resolution_method": "llm_refscreen_failed",
         "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
         "resolved_author_o": "", "resolution_score": 0.0,
         "is_replication": "unclear", "llm_confidence": "",
+        "target_description": "",
         "llm_source": llm_source, "llm_model": llm_model,
         "llm_evidence": "", "llm_reasoning": "", "llm_prompt": prompt,
         "llm_error": "" if result else f"Gemini: {gemini_err}",
     }
     if not result:
         return out
+    out["resolution_method"] = "llm_refscreen_declined"
 
     out["is_replication"] = str(result.get("is_replication", "unclear")).strip().lower()
     out["llm_confidence"] = str(result.get("confidence", "")).strip().lower()
     out["llm_evidence"]   = str(result.get("evidence_quote", "") or "")
     out["llm_reasoning"]  = str(result.get("reasoning", "") or "")
+    out["target_description"] = str(result.get("target_description", "") or "").strip()
 
     num = result.get("target_number")
     if num is not None and out["is_replication"] == "yes":
