@@ -677,7 +677,10 @@ def run_for_doi(doi_r:              str,
         token_counter.set_stage("extract_refscreen")
         screen = screen_references_with_llm(doi_r, study_r, abstract_r, refs)
 
-        if screen["is_replication"] == "no" and screen["llm_confidence"] == "high":
+        # Discarding needs both models to agree, and to agree confidently.
+        if (screen["is_replication"] == "no"
+                and screen.get("models_agree")
+                and screen.get("classification_confidence") == "high"):
             log.info("[%s] Reference screen: not a replication — skipping PDF", doi_r)
             return _build_output(doi_r, flora, cands_row, candidates, {
                 "resolved":          False,

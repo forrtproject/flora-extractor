@@ -1092,57 +1092,66 @@ def identify_all_originals_with_llm(doi_r:        str,
     return output
 
 
-# ── Reference-list screening (no author-year citation in the abstract) ─────────
+
+# ── Replication screening ────────────────────────────────────────────────────
 # Reached when the abstract carries no parseable "(Author, Year)" citation, so
-# find_all_candidates() has nothing to match and returns []. Instead of dropping
-# straight to PDF acquisition we ask the LLM two things: is this even a
-# replication, and if so which of the paper's references is the target. Most
-# abstracts will not name a target — the prompt says so explicitly, because a
-# model pushed to choose will pick a plausible-looking reference and manufacture a
-# link that looks confident and is wrong.
+# find_all_candidates() has nothing to match and the row would otherwise drop
+# straight to PDF acquisition.
 #
-# The two questions have different data requirements: identifying the target needs
-# the reference list, but deciding whether the paper is a replication at all needs
-# only the abstract. OpenAlex returns no referenced works for a sizeable minority
-# of papers, and gating both questions on the reference list sent those rows to the
-# PDF without anyone ever asking the cheap question. So: one combined call when
-# references are available, and a screen-only call when they are not.
+# Two questions, deliberately two calls (see below), because they carry very
+# different risk: a confident "not a replication" DISCARDS the row, while a
+# confident target WRITES a database record. Sharing one confidence field between
+# them, as an earlier version did, made a high-confidence negative almost
+# inexpressible while the discard path required exactly that.
+#
+# Q1 also runs on two different models and acts only when they agree. Half the
+# rows arriving here are lexical false positives, so the classifier does most of
+# the pipeline's filtering work; a single model's high-confidence miss silently
+# loses a genuine replication. Disagreement is not an error — it routes the row to
+# full text, which is what we would have done anyway.
 
-REF_SCREEN_PROMPT_VERSION = "2026-07-27-screen-or-resolve-v2"
+REF_SCREEN_PROMPT_VERSION = "2026-07-28-split-calls-v4"
 
-_REF_SCREEN_PROMPT = """You are a research methodology expert.
+_CLASSIFY_PROMPT = """You are classifying papers for a replication database.
 
-Below are a paper's TITLE, ABSTRACT, and the list of works it CITES.
+A paper is a REPLICATION if it collects new data to re-test a finding reported in a
+previously published study, and a REPRODUCTION if it re-analyses that study's data to
+check the reported result. Re-testing in a different population, country or sample
+still counts.
 
-Answer two separate questions.
+Using the words "replicate" or "reproduce" does not make a paper either one. It must
+re-test a published finding. Evaluating, adapting or comparing a measurement
+instrument, method or procedure does not count, and neither do the ordinary-language
+and biological senses of the words.
 
-QUESTION 1 — Is this paper a replication or a reproduction of a specific earlier study?
-  yes     — it collects new data to re-test an earlier study's claim (replication),
-            or re-analyses an earlier study's data to check its results (reproduction).
-  no      — it is an ordinary empirical paper, a review, a meta-analysis, a methods
-            paper, or it merely mentions replication in passing. Answering "no" is
-            genuinely useful — say so plainly when it is the honest answer.
-  unclear — the abstract does not give you enough to decide.
+Answer:
+  yes     — the abstract shows it re-tests a published finding or re-analyses an
+            earlier study's data
+  no      — the abstract shows it does not
+  unclear — the abstract does not settle it either way
 
-QUESTION 2 — If (and only if) the answer to Q1 is "yes": which numbered reference
-is the study being replicated?
+A high-confidence "no" discards the paper, so use high confidence only when the
+abstract clearly describes a purpose that does not qualify. Not naming an original
+study is not by itself grounds for a high-confidence "no".
 
-IMPORTANT: In most cases you will NOT be able to identify the target from the
-abstract alone. Abstracts frequently describe a replication without naming the
-original study, and the target is often not in the reference list at all. That is
-the expected outcome, not a failure. Return target_number: null and
-confidence: "low" whenever you are not sure. Do NOT pick the reference that merely
-looks most topically similar — a wrong target is far worse than no target, because
-it is passed downstream as a confident link.
+TITLE: {title}
 
-Use confidence "high" ONLY when the abstract identifies the target unambiguously
-(e.g. it names the authors and the finding, and exactly one reference matches).
+ABSTRACT: {abstract}
 
-Separately from the reference list: if the abstract names the replicated study at
-all — authors, year, title or the specific finding — report that wording in
-target_description, even when you cannot match it to any numbered reference.
-Reference lists are often incomplete, and the named study can still be looked up.
-Leave it empty if the abstract does not name a target.
+Respond with ONLY a JSON object:
+{{"is_replication": "<yes|no|unclear>", "classification_confidence": "<high|medium|low>", "evidence_quote": "<exact short quote from the abstract, or empty>", "reasoning": "<one sentence>"}}"""
+
+
+_TARGET_PROMPT = """This paper has been classified as a replication or reproduction.
+Identify the previously published study whose finding it re-tests.
+
+Pick a numbered reference only when the abstract explicitly connects that study to the
+re-test. Do not pick one merely because it is topically similar. Use high confidence
+only when the abstract's identifying information matches exactly one reference;
+otherwise return null.
+
+If the abstract identifies the target but no reference matches it safely, copy the
+identifying wording into target_description — the study can still be looked up.
 
 TITLE: {title}
 
@@ -1152,121 +1161,124 @@ REFERENCES:
 {references}
 
 Respond with ONLY a JSON object:
-{{"is_replication": "<yes|no|unclear>", "target_number": <number or null>, "confidence": "<high|medium|low>", "target_description": "<how the abstract names the replicated study, or empty>", "evidence_quote": "<short quote from the abstract supporting your answer>", "reasoning": "<one or two sentences>"}}"""
+{{"target_number": <number or null>, "target_confidence": "<high|medium|low>", "target_description": "<authors, year, title or finding as the abstract states it, or empty>", "evidence_quote": "<exact short quote linking the paper to the target, or empty>", "reasoning": "<one sentence>"}}"""
 
 
-_SCREEN_ONLY_PROMPT = """You are a research methodology expert.
-
-Below are a paper's TITLE and ABSTRACT. No reference list is available for it.
-
-Is this paper a replication or a reproduction of a specific earlier study?
-  yes     — it collects new data to re-test an earlier study's claim (replication),
-            or re-analyses an earlier study's data to check its results (reproduction).
-  no      — it is an ordinary empirical paper, a review, a meta-analysis, a methods
-            paper, or it merely mentions replication in passing. Answering "no" is
-            genuinely useful — say so plainly when it is the honest answer.
-  unclear — the abstract does not give you enough to decide.
-
-Use confidence "high" only when the abstract makes this unambiguous. If the paper
-IS a replication, also report the target study exactly as the abstract names it
-(authors, year, title or finding) in target_description — leave it empty if the
-abstract does not name one. Do not guess a target.
-
-TITLE: {title}
-
-ABSTRACT: {abstract}
-
-Respond with ONLY a JSON object:
-{{"is_replication": "<yes|no|unclear>", "confidence": "<high|medium|low>", "target_description": "<how the abstract names the replicated study, or empty>", "evidence_quote": "<short quote from the abstract>", "reasoning": "<one or two sentences>"}}"""
+def build_classify_prompt(study_r: str, abstract_r: str) -> str:
+    return _CLASSIFY_PROMPT.format(
+        title=study_r or "(not available)",
+        abstract=(abstract_r or "(not available)")[:4000],
+    )
 
 
-def build_reference_screen_prompt(study_r: str, abstract_r: str,
-                                  refs: list[dict]) -> str:
-    """Combined screen+resolve prompt, or screen-only when there are no references."""
-    title    = study_r or "(not available)"
-    abstract = (abstract_r or "(not available)")[:4000]
-    if not refs:
-        return _SCREEN_ONLY_PROMPT.format(title=title, abstract=abstract)
+def build_target_prompt(study_r: str, abstract_r: str, refs: list[dict]) -> str:
     lines = []
     for i, r in enumerate(refs, 1):
         authors = r.get("first_author") or ""
         year    = r.get("publication_year") or r.get("year") or ""
         lines.append(f"{i}. {authors} ({year}). {r.get('title', '')}".strip())
-    return _REF_SCREEN_PROMPT.format(
-        title=title,
-        abstract=abstract,
-        references="\n".join(lines),
+    return _TARGET_PROMPT.format(
+        title=study_r or "(not available)",
+        abstract=(abstract_r or "(not available)")[:4000],
+        references="\n".join(lines) or "(none available)",
     )
+
+
+def _classify_once(prompt: str, provider: str) -> "dict | None":
+    """One classification vote. provider is 'gemini' or 'openai'."""
+    if provider == "gemini":
+        result, _ = call_gemini(prompt, model=GEMINI_LIGHT_MODEL)
+    else:
+        result, _ = call_openai(prompt, model=OPENAI_MODEL)
+    if not result:
+        return None
+    time.sleep(LLM_RATE_SEC)
+    return {
+        "is_replication": str(result.get("is_replication", "unclear")).strip().lower(),
+        "confidence":     str(result.get("classification_confidence", "")).strip().lower(),
+        "evidence":       str(result.get("evidence_quote", "") or ""),
+        "reasoning":      str(result.get("reasoning", "") or ""),
+        "provider":       provider,
+    }
 
 
 def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
                                refs: list[dict]) -> dict:
-    """Screen a paper against its own reference list. See the module comment above.
+    """Classify the paper on two models, then identify its target if they agree it is one.
 
-    Returns the standard resolver dict plus is_replication / llm_confidence, so
-    callers can both gate on 'not a replication' and use a resolved target.
+    Returns the standard resolver dict plus:
+      is_replication      — the agreed label, or "unclear" when the models disagree
+      models_agree        — whether both votes matched
+      llm_confidence      — target confidence (empty when no target call was made)
+      classification_confidence — the weaker of the two votes' confidences
     """
-    # Prompt version is part of the key: a changed prompt yields different fields
-    # (target_description arrived with the screen-only variant), so old entries must
-    # not be read back as if they came from the current prompt.
     cache_file = LLM_CACHE_DIR / f"refscreen_{cache_key(doi_r + REF_SCREEN_PROMPT_VERSION + str(bool(refs)))}.json"
     if cache_file.exists():
         with cache_file.open(encoding="utf-8") as fh:
             return json.load(fh)
 
-    prompt = build_reference_screen_prompt(study_r, abstract_r, refs)
-
-    result, gemini_err = call_gemini(prompt, model=GEMINI_HEAVY_MODEL)
-    llm_source, llm_model = ("gemini", GEMINI_HEAVY_MODEL) if result else ("none", "")
-    if result:
-        time.sleep(LLM_RATE_SEC)
-    else:
-        result, openai_err = call_openai(prompt)
-        if result:
-            llm_source, llm_model = "openai", OPENAI_MODEL
-            time.sleep(LLM_RATE_SEC)
-
     out = {
-        # "declined" (screen ran, resolved nothing) must stay distinct from
-        # "failed" (no usable LLM response) — conflating them makes every
-        # successful screen look like an API error in the logs.
-        "resolved": False, "resolution_method": "llm_refscreen_failed",
+        "resolved": False, "resolution_method": "llm_refscreen_declined",
         "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
         "resolved_author_o": "", "resolution_score": 0.0,
-        "is_replication": "unclear", "llm_confidence": "",
+        "is_replication": "unclear", "models_agree": False,
+        "llm_confidence": "", "classification_confidence": "",
         "target_description": "",
-        "llm_source": llm_source, "llm_model": llm_model,
-        "llm_evidence": "", "llm_reasoning": "", "llm_prompt": prompt,
-        "llm_error": "" if result else f"Gemini: {gemini_err}",
+        "llm_source": "", "llm_model": "", "llm_evidence": "",
+        "llm_reasoning": "", "llm_prompt": "", "llm_error": "",
     }
-    if not result:
+
+    cls_prompt = build_classify_prompt(study_r, abstract_r)
+    out["llm_prompt"] = cls_prompt
+    votes = [v for v in (_classify_once(cls_prompt, "gemini"),
+                         _classify_once(cls_prompt, "openai")) if v]
+    if not votes:
+        out["resolution_method"] = "llm_refscreen_failed"
+        out["llm_error"] = "both classifiers failed"
         return out
-    out["resolution_method"] = "llm_refscreen_declined"
 
-    out["is_replication"] = str(result.get("is_replication", "unclear")).strip().lower()
-    out["llm_confidence"] = str(result.get("confidence", "")).strip().lower()
-    out["llm_evidence"]   = str(result.get("evidence_quote", "") or "")
-    out["llm_reasoning"]  = str(result.get("reasoning", "") or "")
-    out["target_description"] = str(result.get("target_description", "") or "").strip()
+    out["llm_source"] = "+".join(v["provider"] for v in votes)
+    out["llm_model"]  = f"{GEMINI_LIGHT_MODEL}+{OPENAI_MODEL}"
+    out["llm_evidence"]  = votes[0]["evidence"]
+    out["llm_reasoning"] = " | ".join(f"{v['provider']}: {v['reasoning']}" for v in votes)
 
-    num = result.get("target_number")
-    if num is not None and out["is_replication"] == "yes":
-        try:
-            ref = refs[int(num) - 1]
-        except (ValueError, TypeError, IndexError):
-            ref = None
-        # Only a high-confidence pick is allowed to resolve: at medium or low the
-        # caller still escalates to full text, which is the reliable path.
-        if ref is not None and out["llm_confidence"] == "high":
-            out.update({
-                "resolved":          True,
-                "resolution_method": "llm_references",
-                "resolved_doi_o":    clean_doi(ref.get("doi", "") or ""),
-                "resolved_title_o":  ref.get("title", "") or "",
-                "resolved_year_o":   ref.get("publication_year") or ref.get("year"),
-                "resolved_author_o": ref.get("first_author", "") or "",
-                "resolution_score":  1.0,
-            })
+    labels = {v["is_replication"] for v in votes}
+    out["models_agree"] = len(votes) == 2 and len(labels) == 1
+    if out["models_agree"]:
+        out["is_replication"] = votes[0]["is_replication"]
+        # The weaker vote governs: acting on a discard needs both models sure.
+        order = {"high": 2, "medium": 1, "low": 0, "": 0}
+        out["classification_confidence"] = min(
+            (v["confidence"] for v in votes), key=lambda c: order.get(c, 0))
+    else:
+        # Disagreement is informative, not an error — the row escalates to full text.
+        out["is_replication"] = "unclear"
+
+    if out["is_replication"] == "yes" and refs:
+        tgt_prompt = build_target_prompt(study_r, abstract_r, refs)
+        result, _ = call_gemini(tgt_prompt, model=GEMINI_HEAVY_MODEL)
+        if not result:
+            result, _ = call_openai(tgt_prompt)
+        if result:
+            time.sleep(LLM_RATE_SEC)
+            out["llm_confidence"]     = str(result.get("target_confidence", "")).strip().lower()
+            out["target_description"] = str(result.get("target_description", "") or "").strip()
+            num = result.get("target_number")
+            if num is not None and out["llm_confidence"] == "high":
+                try:
+                    ref = refs[int(num) - 1]
+                except (ValueError, TypeError, IndexError):
+                    ref = None
+                if ref is not None:
+                    out.update({
+                        "resolved":          True,
+                        "resolution_method": "llm_references",
+                        "resolved_doi_o":    clean_doi(ref.get("doi", "") or ""),
+                        "resolved_title_o":  ref.get("title", "") or "",
+                        "resolved_year_o":   ref.get("publication_year") or ref.get("year"),
+                        "resolved_author_o": ref.get("first_author", "") or "",
+                        "resolution_score":  1.0,
+                    })
 
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     with cache_file.open("w", encoding="utf-8") as fh:
