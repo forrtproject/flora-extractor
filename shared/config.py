@@ -59,6 +59,21 @@ MULTI_ORIG_RESOLVED_PATH = DATA_DIR / "multi_original_resolved.csv"
 OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY",    "")
 OPENALEX_API_KEY  = os.getenv("OPENALEX_API_KEY",  "")  # optional: Bearer token for content.openalex.org + polite-pool upgrade
 
+# OpenAlex keys in rotation order. OpenAlex bills per request against a per-key
+# daily budget that resets at midnight UTC, so a long Stage 3 run can drain one
+# key mid-run; the client rotates to the next on a budget refusal.
+# Set OPENALEX_API_KEYS to a comma-separated list, or OPENALEX_API_KEY_N for N >= 2.
+OPENALEX_API_KEYS: list[str] = [
+    k for k in (
+        [OPENALEX_API_KEY]
+        + [k.strip() for k in os.getenv("OPENALEX_API_KEYS", "").split(",")]
+        + [os.getenv(f"OPENALEX_API_KEY_{n}", "") for n in range(2, 10)]
+    ) if k
+]
+# dict.fromkeys preserves order while dropping the duplicate that OPENALEX_API_KEY
+# and the first entry of OPENALEX_API_KEYS usually are.
+OPENALEX_API_KEYS = list(dict.fromkeys(OPENALEX_API_KEYS))
+
 # SerpAPI keys in rotation order — add SERPAPI_KEY_2 to .env for failover
 SERPAPI_KEYS: list[str] = [
     k for k in [

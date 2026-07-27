@@ -17,7 +17,7 @@ from typing import Optional
 import requests
 
 from .config import (
-    OA_CACHE_DIR, OPENALEX_API_KEY, OPENALEX_RATE_SEC, CROSSREF_RATE_SEC,
+    OA_CACHE_DIR, OPENALEX_API_KEY, OPENALEX_API_KEYS, OPENALEX_RATE_SEC, CROSSREF_RATE_SEC,
     RESEARCHER_EMAIL, log,
 )
 from .utils import clean_doi, cache_key
@@ -209,18 +209,82 @@ _OA_HEADERS: dict[str, str] = {
         f"FLoRA-DisambiguationPipeline/1.0 (mailto:{RESEARCHER_EMAIL})"
     )
 }
-if OPENALEX_API_KEY:
-    # OpenAlex only recognises the premium key as a Bearer token; a bare key in the
-    # Authorization header is silently ignored and the request is served from the
-    # anonymous pool (1000/day, shared per-IP) instead of the keyed pool (10000/day).
-    # That mis-auth is why Stage 3 hit "Insufficient budget" 429s while Stage 1
-    # (which already sent Bearer) did not. Verified against the live API 2026-07-23.
-    _OA_HEADERS["Authorization"] = f"Bearer {OPENALEX_API_KEY}"
 _oa_last_call = 0.0
+
+# Index into OPENALEX_API_KEYS of the key currently in use. Advanced only by
+# _rotate_key(), on a budget refusal.
+_oa_key_idx = 0
+
+
+def _oa_headers() -> dict[str, str]:
+    """Headers for the current key.
+
+    OpenAlex only recognises the key as a Bearer token; a bare key in the
+    Authorization header is silently ignored and the request is served from the
+    anonymous pool (1000/day, shared per-IP) instead of the keyed pool. That
+    mis-auth is why Stage 3 hit "Insufficient budget" 429s while Stage 1 (which
+    already sent Bearer) did not. Verified against the live API 2026-07-23.
+    """
+    if _oa_key_idx < len(OPENALEX_API_KEYS):
+        return {**_OA_HEADERS, "Authorization": f"Bearer {OPENALEX_API_KEYS[_oa_key_idx]}"}
+    return _OA_HEADERS
+
+
+def _rotate_key() -> bool:
+    """Advance to the next key. False when none is left."""
+    global _oa_key_idx
+    if _oa_key_idx + 1 >= len(OPENALEX_API_KEYS):
+        return False
+    _oa_key_idx += 1
+    log.warning("OpenAlex key %d/%d out of budget — rotating to key %d",
+                _oa_key_idx, len(OPENALEX_API_KEYS), _oa_key_idx + 1)
+    return True
+
+
+def _is_budget_refusal(r) -> bool:
+    """True when a 429 means 'you cannot afford this', not 'you are too fast'."""
+    try:
+        body = r.json()
+    except ValueError:
+        return False
+    if str(body.get("message", "")).lower().startswith("insufficient budget"):
+        return True
+    return body.get("dailyRemainingUsd") == 0 and body.get("prepaidRemainingUsd") == 0
+
+
+def _quota_message(r) -> str:
+    try:
+        body = r.json()
+    except ValueError:
+        body = {}
+    return (
+        f"OpenAlex quota exhausted: {body.get('message', 'insufficient budget')} "
+        f"(daily remaining ${body.get('dailyRemainingUsd', '?')}, "
+        f"prepaid remaining ${body.get('prepaidRemainingUsd', '?')}). "
+        "Stopping: continuing without candidates would silently degrade every link. "
+        "Add funds at https://openalex.org/pricing or wait for the midnight-UTC reset."
+    )
+
+
+class OpenAlexQuotaExhausted(RuntimeError):
+    """OpenAlex refused the request for lack of budget, not for lack of data.
+
+    Raised instead of returning None so callers cannot mistake an unaffordable
+    request for a genuine empty result. A swallowed quota 429 degrades every
+    downstream resolver at once: find_all_candidates() returns [], the rule-based
+    and title-pattern resolvers have nothing to match, and each row falls through
+    to PDF acquisition where the LLM is asked to resolve with no candidate list.
+    That produces slow, low-confidence, potentially fabricated links. Stopping the
+    run and topping up the quota is always the cheaper outcome.
+    """
 
 
 def _oa_get(url: str, params: dict | None = None) -> Optional[dict]:
-    """GET from OpenAlex with rate limiting, 429 retry, and error handling."""
+    """GET from OpenAlex with rate limiting, 429 retry, and error handling.
+
+    Raises OpenAlexQuotaExhausted when the 429 is a budget refusal — see that
+    class. Transient 429s are still retried on the schedule below.
+    """
     global _oa_last_call
     wait = OPENALEX_RATE_SEC - (time.time() - _oa_last_call)
     if wait > 0:
@@ -228,11 +292,21 @@ def _oa_get(url: str, params: dict | None = None) -> Optional[dict]:
     _oa_last_call = time.time()
 
     _RETRY_DELAYS = [5, 15, 30]  # seconds to wait after 1st, 2nd, 3rd 429
-    for attempt in range(len(_RETRY_DELAYS) + 1):
+    attempt = 0
+    # Not a for-loop over attempts: rotating to a fresh key is not a retry of a
+    # throttled request, so it must not consume the backoff budget — otherwise a
+    # run with more keys than retry slots would give up with keys still unused.
+    while attempt <= len(_RETRY_DELAYS):
         try:
-            r = requests.get(url, headers=_OA_HEADERS, params=params or {},
+            r = requests.get(url, headers=_oa_headers(), params=params or {},
                              timeout=30)
             if r.status_code == 429:
+                if _is_budget_refusal(r):
+                    # Try the next key before giving up; only when every key is
+                    # drained does this become a hard stop.
+                    if _rotate_key():
+                        continue
+                    raise OpenAlexQuotaExhausted(_quota_message(r))
                 if attempt >= len(_RETRY_DELAYS):
                     break
                 # Use our own schedule — OpenAlex sometimes sends absurdly large
@@ -242,9 +316,12 @@ def _oa_get(url: str, params: dict | None = None) -> Optional[dict]:
                             delay, attempt + 1, len(_RETRY_DELAYS))
                 time.sleep(delay)
                 _oa_last_call = time.time()
+                attempt += 1
                 continue
             r.raise_for_status()
             return r.json()
+        except OpenAlexQuotaExhausted:
+            raise
         except requests.exceptions.HTTPError:
             break
         except Exception as e:

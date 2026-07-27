@@ -24,7 +24,7 @@ from shared.config import (
 )
 from shared import token_counter
 from shared.llm_client import call_llm
-from shared.openalex_client import extract_author_year_patterns, find_all_candidates
+from shared.openalex_client import OpenAlexQuotaExhausted, extract_author_year_patterns, find_all_candidates
 from shared.openalex_client import fetch_openalex_by_doi as _oa_by_doi
 from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
 from shared.openalex_client import _search_crossref_by_title, _search_openalex_by_title
@@ -394,6 +394,8 @@ def classify_match_type(row: dict, no_llm: bool = False) -> dict:
     # Step 2: fetch OpenAlex referenced works and match against patterns
     try:
         candidates = find_all_candidates(doi_r, oa_id_r, title_r, abstract_r, year_r, "")
+    except OpenAlexQuotaExhausted:
+        raise
     except Exception as e:
         log.warning("[%s] classify_match_type: OpenAlex failed: %s — defaulting to single_original",
                     doi_r, e)
@@ -1303,6 +1305,8 @@ def run_extract(no_llm: bool = False,
                     _merge_row(row, link, outcome, match_type, match_conf, 1, 1)
                 )
 
+        except OpenAlexQuotaExhausted:
+            raise
         except Exception as e:
             log.error("[%s] extraction failed: %s", doi_r, e)
             result_rows.append(_empty_row(row, match_type, match_conf))
@@ -1557,6 +1561,9 @@ if __name__ == "__main__":
                 doi_r_filter=doi_r_list,
                 recalibrate_outcomes=args.recalibrate_outcomes,
             )
+    except OpenAlexQuotaExhausted as exc:
+        log.error("%s", exc)
+        log.error("Rows written before the stop are intact; re-run with --resume to continue.")
     finally:
         token_counter.print_summary()
         # Sanity pass over whatever was written — runs on normal completion AND on
