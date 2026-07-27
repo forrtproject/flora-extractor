@@ -90,7 +90,7 @@ registered** in `app.py` — treat them as orphaned/legacy.
 | File                           | Purpose                                                                     |
 | ------------------------------ | --------------------------------------------------------------------------- |
 | `shared/openalex_client.py`    | OpenAlex API wrapper + `find_all_candidates()` (Stage 3 logic)              |
-| `shared/llm_client.py`         | Gemini + OpenAI calls with key rotation, prompt builders, JSON parsing      |
+| `shared/llm_client.py`         | Gemini + OpenAI calls with key rotation, prompt builders, JSON parsing; `screen_references_with_llm()` is the Stage 4.5 reference-list screen |
 | `shared/pdf_sources.py`        | Multi-tier PDF acquisition waterfall (arXiv → OSF → Unpaywall → CORE → …)   |
 | `shared/pdf_parsing.py`        | Six PDF parse methods (openalex_xml, pdfminer, GROBID, docpluck, opendataloader, markitdown); `parse_all()` orchestrator; `score_parse_result()`, `best_parse_result()`, `best_parse_method_name()` scoring API |
 | `shared/grobid.py`             | GROBID reference extraction from PDFs                                       |
@@ -123,7 +123,7 @@ registered** in `app.py` — treat them as orphaned/legacy.
 | File                       | Purpose                                                                      |
 | -------------------------- | ---------------------------------------------------------------------------- |
 | `extract/run_extract.py`   | Orchestrator: classifies match type, routes to single or multi-original; supports `--extracted-test` flag; `_best_fulltext_from_cache()` feeds the best-scoring parse result to the outcome LLM; `_fill_work_ids()` stamps `oa_work_id_r`/`oa_work_id_o` on every row after DOI verification |
-| `extract/link_original.py` | Single-original pipeline; runs `parse_all()` on the PDF, scores all methods, uses the winner's text for the DOI-resolution LLM; uses shared `best_parse_result()` scoring |
+| `extract/link_original.py` | Single-original pipeline. `run_for_doi()` escalates through the resolution ladder below and only reaches the PDF when every cheaper stage declines; runs `parse_all()` on the PDF, scores all methods, uses the winner's text for the DOI-resolution LLM via shared `best_parse_result()` |
 | `extract/multi_original.py`| Multi-original pipeline — finds all target studies (needs improvement)       |
 | `extract/code_outcome.py`  | Keyword + LLM outcome extraction                                             |
 | `extract/promote_test.py`  | CLI + library: merge rows from extracted-test.csv into extracted.csv; `--all`, `--doi`, `--dry-run`, `--force` |
@@ -195,6 +195,41 @@ else:
     result = run_single(doi_r, ...)
     # → 1 row in extracted.csv
 ```
+
+### Original-study resolution ladder
+
+`run_for_doi()` in `extract/link_original.py` works from cheapest to most
+expensive and returns at the first stage that resolves. Every stage before the
+PDF runs on metadata the pipeline already holds, so full-text acquisition is a
+last resort rather than the normal path.
+
+| # | Stage | Fires when | `link_method` on success |
+| - | ----- | ---------- | ------------------------ |
+| 2 | OpenAlex candidate re-query | always — builds the candidate pool from the paper's `referenced_works` | (not a resolver) |
+| 2.5 | Title-pattern resolver | the title matches "A Replication of X" and one candidate matches it | `title_pattern_match` |
+| 3 | Rule-based resolver | the abstract carries an author-year citation matching a candidate | `citation_context_match`, `same_author_year_title_overlap`, `single_candidate_after_requery` |
+| 4 | Abstract LLM | the abstract carries author-year patterns, with candidates to choose from | `llm_abstract` |
+| 4.5 | **Reference-list screen** | there are referenced works (regardless of citation patterns) | `llm_references`, or `not_a_replication` |
+| 5 | PDF acquisition + full-text LLM | everything above declined | `llm_fulltext`, `llm_title_search` |
+
+Stages 2.5–4 all depend on `find_all_candidates()`, which returns `[]` unless the
+title or abstract contains a parseable `(Author, Year)` citation. Many abstracts —
+clinical and life-sciences ones especially — carry no such citation, so those
+stages cannot fire at all for them.
+
+**Stage 4.5** covers that gap. It shows the LLM the abstract plus the paper's
+OpenAlex reference list and asks two questions in one call:
+
+1. *Is this a replication or reproduction at all?* A confident **no** ends the row:
+   `outcome = not_a_replication`, no PDF is fetched and no outcome LLM runs, and
+   `sanity_check` routes the row to `data/not_a_replication.csv`.
+2. *If yes, which reference is the target?* A target is accepted **only at
+   `confidence == "high"`**. At medium or low the row still escalates to full
+   text — a wrong original is worse than a slow one, and the prompt states
+   explicitly that most abstracts do not name their target and that declining is
+   the expected answer.
+
+Results are cached at `cache/llm/refscreen_{key}.json`.
 
 ---
 

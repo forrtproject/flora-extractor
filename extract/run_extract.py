@@ -192,6 +192,12 @@ _METHOD_MAP = {
     "llm_openai":                     "llm_fulltext",
     "llm_abstract_gemini":            "llm_abstract",
     "llm_abstract_openai":            "llm_abstract",
+    # Resolved from the paper's own OpenAlex reference list, at high confidence
+    # only — see the Stage 4.5 screen in link_original.run_for_doi.
+    "llm_references":                 "llm_references",
+    # The same screen concluded the paper is not a replication at all, so there is
+    # no original to look for and no reason to fetch the PDF.
+    "llm_not_a_replication":          "not_a_replication",
     # LLM ran successfully but concluded no identifiable original study exists.
     # Distinct from llm_failed (API errors) and llm_fulltext (original found).
     "llm_no_target":                  "no_original_found",
@@ -306,7 +312,8 @@ def _map_method(method: str) -> str:
     if method in {"citation_context_match", "same_author_year_title_overlap",
                   "single_candidate_after_requery", "title_pattern_match",
                   "grobid_ref_match", "author_year_match_legacy",
-                  "llm_abstract", "llm_fulltext",
+                  "llm_abstract", "llm_fulltext", "llm_references",
+                  "not_a_replication",
                   "no_original_found", "target_pending", "api_error"}:
         return method
     if method == "llm_no_target":
@@ -669,6 +676,16 @@ def _save_parse_cache(doi_r: str) -> None:
 def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -> dict:
     abstract_r = str(row.get("abstract_r", ""))
     title_r    = str(row.get("title_r",    ""))
+
+    # The reference screen already read the abstract and concluded this is not a
+    # replication; coding an outcome for it would just be a second opinion on a
+    # question that has been settled, at the cost of another LLM call.
+    if _map_method(str(link.get("resolution_method", ""))) == "not_a_replication":
+        return {"outcome": "not_a_replication", "outcome_phrase": "",
+                "outcome_confidence": "high",
+                "out_quote_source": "abstract",
+                "outcome_reasoning": str(link.get("llm_reasoning", "") or ""),
+                "llm_model": str(link.get("llm_model", "") or "")}
 
     # Prefer the best-scoring parse method from the parse cache so the outcome LLM
     # receives whichever parser extracted the richest text, not always GROBID.
