@@ -21,9 +21,11 @@ playwright>=1.40.0
 rapidfuzz>=3.0.0
 pyyaml>=6.0
 filelock>=3.12.0
+# TEI parsing for GROBID + OpenAlex XML references (imported lazily in
+# shared/grobid.py and shared/pdf_sources.py — absence only logs a warning).
+lxml>=5.0.0
 
 # ── Dev / testing ─────────────────────────────────────────────────────────────
 pytest>=7.0.0
 pytest-mock>=3.0.0
 ruff>=0.15.0
-lxml
