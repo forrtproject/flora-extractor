@@ -2031,71 +2031,71 @@
       "unattributed_files": 0
     }
   },
-  "updated_at": "2026-07-28T11:12:01",
+  "updated_at": "2026-07-28T18:18:50",
   "filtered": {
-    "total": 2581092,
+    "total": 2582749,
     "by_filter_status": {
-      "false_positive": 2532538,
-      "replication": 38123,
-      "reproduction": 10414,
+      "false_positive": 2534150,
+      "replication": 38165,
+      "reproduction": 10417,
       "needs_review": 17
     },
     "by_filter_method": {
-      "rule_based": 2437147,
-      "both": 143945
+      "rule_based": 2438725,
+      "both": 144024
     },
     "by_filter_confidence": {
-      "high": 2578852,
-      "medium": 2153,
-      "low": 87
+      "high": 2580498,
+      "medium": 2162,
+      "low": 89
     },
     "by_rule_exit": {
-      "r1_exclusion": 136793,
-      "r2_no_phrase": 2281883,
-      "r3_no_cite": 141944,
-      "r4_no_same_sentence": 2018,
-      "r5_pass": 18454,
+      "r1_exclusion": 136827,
+      "r2_no_phrase": 2283420,
+      "r3_no_cite": 142021,
+      "r4_no_same_sentence": 2020,
+      "r5_pass": 18461,
       "unknown": 0
     },
     "rule_exit_status": {
       "r1_exclusion": {
-        "false_positive": 136793
+        "false_positive": 136827
       },
       "r2_no_phrase": {
-        "false_positive": 2281883
+        "false_positive": 2283420
       },
       "r3_no_cite": {
-        "false_positive": 112870,
+        "false_positive": 112911,
         "needs_review": 16,
-        "replication": 24785,
-        "reproduction": 4273
+        "replication": 24818,
+        "reproduction": 4276
       },
       "r5_pass": {
-        "replication": 12335,
+        "replication": 12342,
         "reproduction": 6119
       },
       "r4_no_same_sentence": {
         "false_positive": 992,
-        "replication": 1003,
+        "replication": 1005,
         "reproduction": 22,
         "needs_review": 1
       }
     },
     "by_year": {
-      "2020": 133270,
+      "2020": 133445,
       "2025": 203152,
       "2026": 234491,
       "2024": 122948,
-      "2015": 90985,
-      "2014": 86594,
-      "2013": 80690,
-      "2012": 76019,
-      "2011": 70574,
-      "2018": 107451,
-      "2021": 119412,
-      "2019": 114037,
-      "2016": 97885,
-      "2017": 101262,
+      "2015": 91125,
+      "2014": 86710,
+      "2013": 80830,
+      "2012": 76133,
+      "2011": 70701,
+      "2018": 107645,
+      "2021": 119572,
+      "2019": 114215,
+      "2016": 98038,
+      "2017": 101422,
       "2022": 112198,
       "2023": 121101,
       "2010": 64774,
@@ -2181,10 +2181,10 @@
       "1931": 1,
       "1940": 1
     },
-    "rep_repro_total": 48537,
-    "rep_repro_no_doi": 8201,
-    "rep_repro_no_doi_or_url": 1681,
-    "rep_repro_no_abstract": 3379
+    "rep_repro_total": 48582,
+    "rep_repro_no_doi": 8231,
+    "rep_repro_no_doi_or_url": 1711,
+    "rep_repro_no_abstract": 3408
   },
   "extracted": {
     "total": 1881,
