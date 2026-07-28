@@ -572,6 +572,7 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
         "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
         "out_quote_source":    outcome.get("out_quote_source",    ""),
         "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
+        "outcome_llm_model":   str(outcome.get("llm_model", "") or ""),
         "type":          "reproduction"
                          if str(filter_row.get("filter_status", "")) == "reproduction"
                          else "replication",
@@ -623,6 +624,7 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
         "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
         "out_quote_source":    outcome.get("out_quote_source",    ""),
         "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
+        "outcome_llm_model":   str(outcome.get("llm_model", "") or ""),
         "type":          "replication",
         "original_rank": orig.get("rank", 1),
         "n_originals":   n,
@@ -645,6 +647,7 @@ def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
         "link_llm_model": "",
         "outcome": outcome, "outcome_phrase": "",
         "outcome_confidence": "low", "out_quote_source": "", "outcome_reasoning": "",
+        "outcome_llm_model": "",
         "type": "", "original_rank": 1, "n_originals": 1,
     })
     return row
