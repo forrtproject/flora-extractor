@@ -29,7 +29,7 @@ from .config import (
 )
 from . import token_counter
 from .schema import OUTCOME_CATEGORIES
-from .utils import cache_key, clean_doi
+from .utils import cache_key, clean_doi, row_cache_id
 
 # ── OpenAI session-level token guardrail ─────────────────────────────────────
 # Tracks tokens consumed via call_openai() within the current process.
@@ -544,7 +544,8 @@ def identify_original_with_llm(doi_r:          str,
                                  pdf_url:        str = "",
                                  html_text:      str = "",
                                  validator_note: str = "",
-                                 abstract_only:  bool = False) -> dict:
+                                 abstract_only:  bool = False,
+                                 openalex_id_r:  str = "") -> dict:
     """
     Identify the original study via LLM.
 
@@ -554,8 +555,9 @@ def identify_original_with_llm(doi_r:          str,
     Order: OpenRouter/Qwen (primary when OPENROUTER_API_KEY set) → Gemini → OpenAI.
     Successful results are cached in LLM_CACHE_DIR.
     """
-    cache_file = LLM_CACHE_DIR / f"llm_{cache_key(doi_r)}.json"
-    if cache_file.exists():
+    cid = row_cache_id(doi_r, openalex_id_r, study_r)
+    cache_file = LLM_CACHE_DIR / f"llm_{cache_key(cid)}.json" if cid else None
+    if cache_file is not None and cache_file.exists():
         with cache_file.open(encoding="utf-8") as fh:
             cached = json.load(fh)
         cached.setdefault("llm_source", "cache")
@@ -688,7 +690,7 @@ def identify_original_with_llm(doi_r:          str,
         "llm_error"         : "",
     }
 
-    if resolved:
+    if resolved and cache_file is not None:
         with cache_file.open("w", encoding="utf-8") as fh:
             json.dump(output, fh, ensure_ascii=False, indent=2)
 
@@ -1203,7 +1205,7 @@ def _classify_once(prompt: str, provider: str) -> "dict | None":
 
 
 def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
-                               refs: list[dict]) -> dict:
+                               refs: list[dict], openalex_id_r: str = "") -> dict:
     """Classify the paper on two models, then identify its target if they agree it is one.
 
     Returns the standard resolver dict plus:
@@ -1212,8 +1214,10 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
       llm_confidence      — target confidence (empty when no target call was made)
       classification_confidence — the weaker of the two votes' confidences
     """
-    cache_file = LLM_CACHE_DIR / f"refscreen_{cache_key(doi_r + REF_SCREEN_PROMPT_VERSION + str(bool(refs)))}.json"
-    if cache_file.exists():
+    cid = row_cache_id(doi_r, openalex_id_r, study_r)
+    cache_file = (LLM_CACHE_DIR / f"refscreen_{cache_key(cid + REF_SCREEN_PROMPT_VERSION + str(bool(refs)))}.json"
+                  if cid else None)
+    if cache_file is not None and cache_file.exists():
         with cache_file.open(encoding="utf-8") as fh:
             return json.load(fh)
 
@@ -1284,7 +1288,8 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
                         "resolution_score":  1.0,
                     })
 
-    cache_file.parent.mkdir(parents=True, exist_ok=True)
-    with cache_file.open("w", encoding="utf-8") as fh:
-        json.dump(out, fh, ensure_ascii=False, indent=2)
+    if cache_file is not None:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        with cache_file.open("w", encoding="utf-8") as fh:
+            json.dump(out, fh, ensure_ascii=False, indent=2)
     return out

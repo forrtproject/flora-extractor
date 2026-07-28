@@ -56,3 +56,18 @@ class TestSentenceSpans:
 
     def test_empty_text_returns_empty_list(self):
         assert sentence_spans("") == []
+
+
+def test_row_cache_id_distinguishes_rows_without_a_doi():
+    """md5("") is one shared key: DOI-less rows must not collide on it."""
+    from shared.utils import row_cache_id
+
+    a = row_cache_id("", "W123", "A study")
+    b = row_cache_id("", "W456", "Another study")
+    assert a != b
+    # title carries the identity when even the OpenAlex id is missing
+    assert row_cache_id("", "", "A study") != row_cache_id("", "", "Another study")
+    # a real DOI still keys on the DOI, so existing caches stay valid
+    assert row_cache_id("10.1/x", "W123", "A study") == "10.1/x"
+    # nothing to key on at all -> empty, and callers skip the cache
+    assert row_cache_id("", "", "") == ""

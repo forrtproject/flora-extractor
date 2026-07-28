@@ -92,6 +92,27 @@ def cache_key(text: str) -> str:
     return hashlib.md5(str(text).encode("utf-8")).hexdigest()
 
 
+def row_cache_id(doi_r: str, openalex_id_r: str = "", study_r: str = "") -> str:
+    """Stable per-row cache identity, falling back when the row has no DOI.
+
+    Not every filtered.csv row carries a DOI (theses, repository URLs, conference
+    abstracts). Keying their caches on doi_r alone gives every one of them
+    md5("") — a single shared key, so they read back each other's candidates,
+    LLM answers, parses and outcomes. Falls back through the same identifier
+    priority the dedup indexes use (see CLAUDE.md).
+    """
+    doi_r = (doi_r or "").strip()
+    if doi_r:
+        return doi_r
+    oa = (openalex_id_r or "").strip()
+    if oa:
+        return f"oa:{oa}"
+    title = (study_r or "").strip().lower()
+    if title:
+        return f"title:{title}"
+    return ""   # no identifier at all — callers must skip the cache rather than share one
+
+
 def pdf_serve_url(doi_r: str, result: dict) -> str:
     """URL path to serve the cached PDF for *doi_r*, or "" if none is cached."""
     from shared.config import PDF_CACHE_DIR

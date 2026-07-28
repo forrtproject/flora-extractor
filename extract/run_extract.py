@@ -31,7 +31,7 @@ from shared.openalex_client import _search_crossref_by_title, _search_openalex_b
 from shared.pdf_parsing import parse_all as _parse_all
 from shared.doi_verify import verify_and_correct
 from shared.schema import EXTRACTED_COLS, OUTCOME_CATEGORIES, make_pair_id
-from shared.utils import bare_work_id, cache_key, clean_doi, csv_lock
+from shared.utils import bare_work_id, cache_key, clean_doi, csv_lock, row_cache_id
 # Shared with csv_to_db so extraction and validation skip the same set (see shared/flora_skip.py)
 from shared.flora_skip import (
     FLORA_VALIDATED_STATUSES,
@@ -652,9 +652,19 @@ def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _save_parse_cache(doi_r: str) -> None:
+def _row_cid(row: pd.Series) -> str:
+    """Cache identity for a filtered.csv row — see shared.utils.row_cache_id."""
+    return row_cache_id(str(row.get("doi_r", "") or ""),
+                        str(row.get("openalex_id_r", "") or ""),
+                        str(row.get("title_r", "") or ""))
+
+
+def _save_parse_cache(doi_r: str, cache_id: str = "") -> None:
     """Run all PDF parsers for doi_r and cache results to PARSE_CACHE_DIR."""
-    key      = cache_key(doi_r)
+    cid = cache_id or doi_r
+    if not cid:
+        return
+    key      = cache_key(cid)
     out_file = PARSE_CACHE_DIR / f"parse_{key}.json"
     if out_file.exists():
         return
@@ -696,7 +706,7 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -
 
     # Prefer the best-scoring parse method from the parse cache so the outcome LLM
     # receives whichever parser extracted the richest text, not always GROBID.
-    fulltext = _best_fulltext_from_cache(doi_r)
+    fulltext = _best_fulltext_from_cache(doi_r, _row_cid(row))
     if not fulltext:
         # Fallback: GROBID sections that run_for_doi already extracted
         fulltext = " ".join(filter(None, [
@@ -721,14 +731,17 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -
     )
 
 
-def _best_fulltext_from_cache(doi_r: str) -> str:
+def _best_fulltext_from_cache(doi_r: str, cache_id: str = "") -> str:
     """
     Read the parse cache for doi_r, score each method, and return the fulltext
     of the highest-scoring method.  Prefers raw_text (full paper including
     results/discussion/conclusion); falls back to abstract + intro when raw_text
     is empty.  Returns '' on any failure.
     """
-    cache_file = PARSE_CACHE_DIR / f"parse_{cache_key(doi_r)}.json"
+    cid = cache_id or doi_r
+    if not cid:
+        return ""
+    cache_file = PARSE_CACHE_DIR / f"parse_{cache_key(cid)}.json"
     if not cache_file.exists():
         return ""
     try:
@@ -1289,7 +1302,7 @@ def run_extract(no_llm: bool = False,
                         link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                                               no_llm=no_llm, no_pdf=no_pdf)
                         if not no_pdf or recalibrate_outcomes:
-                            _save_parse_cache(doi_r)
+                            _save_parse_cache(doi_r, _row_cid(row))
                         outcome = _get_outcome(doi_r, row, link,
                                                no_llm=no_llm and not recalibrate_outcomes)
                         result_rows.append(
@@ -1326,7 +1339,7 @@ def run_extract(no_llm: bool = False,
                 link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                                       no_llm=no_llm, no_pdf=no_pdf)
                 if not no_pdf or recalibrate_outcomes:
-                    _save_parse_cache(doi_r)
+                    _save_parse_cache(doi_r, _row_cid(row))
                 outcome = _get_outcome(doi_r, row, link,
                                        no_llm=no_llm and not recalibrate_outcomes)
                 result_rows.append(

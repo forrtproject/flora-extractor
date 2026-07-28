@@ -20,7 +20,7 @@ from .config import (
     OA_CACHE_DIR, OPENALEX_API_KEY, OPENALEX_API_KEYS, OPENALEX_RATE_SEC, CROSSREF_RATE_SEC,
     RESEARCHER_EMAIL, log,
 )
-from .utils import clean_doi, cache_key
+from .utils import clean_doi, cache_key, row_cache_id
 
 # ── Unicode ranges (chr() avoids \u in compiled regexes for Python < 3.12) ────
 _UNI_RANGE  = chr(0x00C0) + "-" + chr(0x024F) + chr(0x1E00) + "-" + chr(0x1EFF)
@@ -519,8 +519,9 @@ def find_all_candidates(doi_r: str,
         match_year_exact, cited_pattern
     """
 
-    cache_file = OA_CACHE_DIR / f"candidates_{cache_key(doi_r)}.json"
-    if cache_file.exists():
+    cid = row_cache_id(doi_r, openalex_id_r, study_r)
+    cache_file = OA_CACHE_DIR / f"candidates_{cache_key(cid)}.json" if cid else None
+    if cache_file is not None and cache_file.exists():
         with cache_file.open(encoding="utf-8") as fh:
             return json.load(fh)
 
@@ -575,9 +576,10 @@ def find_all_candidates(doi_r: str,
                             "cited_pattern"   : pat["raw"],
                         })
 
-    cache_file.parent.mkdir(parents=True, exist_ok=True)
-    with cache_file.open("w", encoding="utf-8") as fh:
-        json.dump(candidates, fh, ensure_ascii=False, indent=2)
+    if cache_file is not None:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        with cache_file.open("w", encoding="utf-8") as fh:
+            json.dump(candidates, fh, ensure_ascii=False, indent=2)
 
     return candidates
 

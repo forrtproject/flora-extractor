@@ -32,7 +32,7 @@ from shared.llm_client import identify_original_with_llm, screen_references_with
 from shared.pdf_parsing import parse_all as _parse_all, best_parse_result as _best_parse_shared
 from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_openalex_by_doi, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
 from shared.pdf_sources import acquire_pdf
-from shared.utils import cache_key, clean_doi
+from shared.utils import cache_key, clean_doi, row_cache_id
 
 # ── Unified rule-based resolver (runs before any LLM call) ───────────────────
 # Combines citation-context scoring (journal-qualified) with same-author/year
@@ -445,9 +445,12 @@ def clear_pipeline_caches(doi_r: str) -> list[str]:
     return deleted
 
 
-def _write_parse_cache(doi_r: str, parse_results: dict) -> None:
+def _write_parse_cache(doi_r: str, parse_results: dict, cache_id: str = "") -> None:
     """Persist parse_all results to PARSE_CACHE_DIR so run_extract._save_parse_cache() skips re-parsing."""
-    out_file = PARSE_CACHE_DIR / f"parse_{cache_key(doi_r)}.json"
+    cid = cache_id or doi_r
+    if not cid:
+        return
+    out_file = PARSE_CACHE_DIR / f"parse_{cache_key(cid)}.json"
     if out_file.exists():
         return
     try:
@@ -653,6 +656,7 @@ def run_for_doi(doi_r:              str,
             llm4 = identify_original_with_llm(
                 doi_r + "_abstract",
                 study_r, abstract_r, pattern_r, candidates, {},
+                openalex_id_r=(oa_id_r + "_abstract") if oa_id_r else "",
                 validator_note=effective_note,
                 abstract_only=True,
             )
@@ -675,7 +679,7 @@ def run_for_doi(doi_r:              str,
         if not refs:
             refs = fetch_opencitations_references(doi_r)
         token_counter.set_stage("extract_refscreen")
-        screen = screen_references_with_llm(doi_r, study_r, abstract_r, refs)
+        screen = screen_references_with_llm(doi_r, study_r, abstract_r, refs, oa_id_r)
 
         # Discarding needs both models to agree, and to agree confidently.
         if (screen["is_replication"] == "no"
@@ -778,7 +782,7 @@ def run_for_doi(doi_r:              str,
 
     # ── Stage 6: Parse all — pick richest result to send to LLM ─────────────
     parse_results  = _parse_all(doi_r, pdf_path, oa_xml=oa_xml_content, no_llm=no_llm)
-    _write_parse_cache(doi_r, parse_results)
+    _write_parse_cache(doi_r, parse_results, row_cache_id(doi_r, oa_id_r, study_r))
 
     for method, r in parse_results.items():
         log.debug("[%s]   parse:%s refs=%d abstract=%d intro=%d error=%s",
@@ -842,6 +846,7 @@ def run_for_doi(doi_r:              str,
     token_counter.set_stage("extract_fulltext")
     llm = identify_original_with_llm(
         doi_r, study_r, abstract_r, pattern_r, candidates, sections,
+        openalex_id_r  = oa_id_r,
         pdf_url        = pdf.get("pdf_url", "")   if not pdf.get("pdf_ok") else "",
         html_text      = pdf.get("html_text", ""),
         validator_note = effective_note,
