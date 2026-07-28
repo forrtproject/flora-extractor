@@ -75,6 +75,7 @@ def test_drop_openalex_misses(monkeypatch, tmp_path):
     monkeypatch.setattr(fa, "ABSTRACT_CACHE_DIR", tmp_path / "abstracts")
     fa.ABSTRACT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(fa, "CHECKPOINT_PATH", tmp_path / "done.txt")
+    monkeypatch.setattr(fa, "FOUND_INDEX_PATH", tmp_path / "found.txt")
 
     hit = "oa:https://openalex.org/W1"     # real abstract cached — keep
     miss = "oa:https://openalex.org/W2"    # poisoned '__none__' — drop
@@ -174,6 +175,7 @@ def test_phase4_stops_on_quota_and_leaves_rows_retryable(monkeypatch, tmp_path):
     monkeypatch.setattr(fa, "ABSTRACT_CACHE_DIR", tmp_path / "abstracts")
     fa.ABSTRACT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(fa, "CHECKPOINT_PATH", tmp_path / "done.txt")
+    monkeypatch.setattr(fa, "FOUND_INDEX_PATH", tmp_path / "found.txt")
     monkeypatch.setattr(fa, "CANDIDATES_PATH", tmp_path / "candidates.csv")
     monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
     monkeypatch.setattr(fa, "_parquet_path", lambda name: tmp_path / "missing.parquet")
@@ -237,6 +239,7 @@ def test_phase4_priority_file_reorders_quota(monkeypatch, tmp_path):
     monkeypatch.setattr(fa, "ABSTRACT_CACHE_DIR", tmp_path / "abstracts")
     fa.ABSTRACT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(fa, "CHECKPOINT_PATH", tmp_path / "done.txt")
+    monkeypatch.setattr(fa, "FOUND_INDEX_PATH", tmp_path / "found.txt")
     monkeypatch.setattr(fa, "CANDIDATES_PATH", tmp_path / "candidates.csv")
     monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
     monkeypatch.setattr(fa, "_parquet_path", lambda name: tmp_path / "missing.parquet")
@@ -312,6 +315,7 @@ def _setup_run(monkeypatch, tmp_path):
     monkeypatch.setattr(fa, "ABSTRACT_CACHE_DIR", tmp_path / "abstracts")
     fa.ABSTRACT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(fa, "CHECKPOINT_PATH", tmp_path / "done.txt")
+    monkeypatch.setattr(fa, "FOUND_INDEX_PATH", tmp_path / "found.txt")
     monkeypatch.setattr(fa, "CANDIDATES_PATH", tmp_path / "candidates.csv")
     monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
     monkeypatch.setattr(fa, "_parquet_path", lambda name: tmp_path / "missing.parquet")

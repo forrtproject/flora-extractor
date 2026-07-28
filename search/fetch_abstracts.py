@@ -8,10 +8,13 @@ Strategy (waterfall by identifier type):
                         OpenAlex (measured 2026-07-27: 0/200 random sample) — see
                         --skip-openalex.
   2. Semantic Scholar batch — rows with doi_r, up to 500 DOIs/call (requires
-                        S2_API_KEY in .env). Ordered ahead of CrossRef: measured on
-                        a real ~9,900-row production-scale run, ~41 DOIs/sec
-                        sustained at a ~31% hit rate on this corpus, vs CrossRef's
-                        ~3/sec at ~0.2% on the same rows.
+                        S2_API_KEY in .env). Ordered ahead of CrossRef: measured on a
+                        full production run over this corpus's entire 494,406-row S2
+                        target list (2026-07-27/28), ~49.8 DOIs/sec sustained at a
+                        14.5% hit rate (71,900 found), vs CrossRef's ~3/sec at ~0.6%
+                        on the rows it was tried on (an earlier ~9,900-row sample had
+                        suggested ~31%, which the full run showed was not
+                        representative — hit rate varies a lot across the corpus).
   3. CrossRef by DOI  — fallback for rows Phase 2 didn't resolve (one DOI/call;
                         CrossRef has no equivalent batch-by-DOI-list endpoint)
   4. Scopus by DOI    — Elsevier Abstract Retrieval API fallback (requires
@@ -79,6 +82,13 @@ from shared.dashboard_cache import _parquet_path, refresh as _dc_refresh
 CANDIDATES_PATH    = DATA_DIR / "candidates.csv"
 ABSTRACT_CACHE_DIR = CACHE_DIR / "abstracts"
 CHECKPOINT_PATH    = CACHE_DIR / "fetch_abstracts_done.txt"
+# Sidecar index of identifiers that resolved to a real abstract (mirrors the
+# candidates_index.txt / filtered_index.txt pattern). Building a phase's target list
+# means checking every row in the worklist (500k+) against results from earlier
+# phases; once abstracts/ passed ~500k files, doing that via a handful of per-row
+# file stats/reads (_lookup_cached_abstract) took ~2 hours — NTFS lookup cost in one
+# huge flat directory, not disk speed. This index lets that check happen in memory.
+FOUND_INDEX_PATH   = CACHE_DIR / "fetch_abstracts_found.txt"
 ABSTRACT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 OA_BATCH_SIZE      = 50    # OpenAlex filter= supports up to 50 pipe-separated IDs
@@ -86,19 +96,21 @@ OA_RATE_SEC        = 0.1
 CROSSREF_RATE_SEC  = 0.15
 S2_RATE_SEC        = 0.5
 # S2's /graph/v1/paper/batch endpoint accepts up to 500 ids per call — a single
-# request measurably outperforms the single-item endpoint on both fronts (verified
-# live 2026-07-27 on this repo's actual missing-abstract rows across a real
-# ~9,900-row production-scale run, not just a short isolated test): ~41 DOIs/sec
-# sustained vs ~3/sec for CrossRef one-at-a-time, AND a ~31% hit rate vs CrossRef's
-# ~0.2% on the same rows (Semantic Scholar's corpus covers far more of this dataset
-# than CrossRef's bibliographic-metadata-only abstract field does).
-# Rate: at 3.0s between batches, ~20% of batches (4/20) hit repeated 429s and failed
-# outright (all 3 retries exhausted) in that run — a short isolated test at the same
-# cadence looked clean, so don't trust a handful of calls; the failure rate only
-# showed up at sustained volume. 5.0s trades some of the enormous speed margin over
-# CrossRef for fewer wasted whole-batch retries. Do not re-tune this by hammering
-# the live API in quick isolated bursts — cumulative load on the key from repeated
-# testing appears to matter, not just the gap between the two calls in front of you.
+# request measurably outperforms the single-item endpoint on both fronts. Verified
+# 2026-07-27/28 on a full production run over this corpus's entire 494,406-row S2
+# target list (not a short isolated test): ~49.8 DOIs/sec sustained vs ~3/sec for
+# CrossRef one-at-a-time, and a 14.5% hit rate (71,900 found) vs CrossRef's ~0.6% on
+# the rows it was tried on (Semantic Scholar's corpus covers far more of this
+# dataset than CrossRef's bibliographic-metadata-only abstract field does). An
+# earlier ~9,900-row sample had suggested ~41/sec at ~31% hit rate — the full run
+# confirmed the throughput but showed the hit rate isn't uniform across the corpus
+# (it ranged batch-to-batch from ~10% to ~50%), so don't trust a small sample there.
+# Rate: at 5.0s between batches, whole-batch failures (all 3 retries exhausted) were
+# clustered in the first ~10 minutes (5 failures) then dropped to near-zero for the
+# rest of the ~2h45m run (~2.4% of ~550 batches overall) — a real improvement over
+# 3.0s's ~20% failure rate. Do not re-tune this by hammering the live API in quick
+# isolated bursts — cumulative load on the key from repeated testing appears to
+# matter, not just the gap between the two calls in front of you.
 S2_BATCH_SIZE      = 500
 S2_BATCH_RATE_SEC  = 5.0
 SCOPUS_RATE_SEC    = 1.0   # Elsevier Scopus: ~1 req/sec
@@ -145,6 +157,8 @@ def _write_abstract_cache(ident: str, abstract: Optional[str]) -> None:
         json.dumps({"ident": ident, "abstract": abstract}),
         encoding="utf-8",
     )
+    if abstract and abstract != "__none__":
+        _append_found_index(ident)
 
 
 def _lookup_cached_abstract(oa_id: str, doi_r: str) -> Optional[str]:
@@ -168,6 +182,55 @@ def _lookup_cached_abstract(oa_id: str, doi_r: str) -> Optional[str]:
         if val is not None and val != "__none__":
             return val
     return None
+
+
+def _append_found_index(ident: str) -> None:
+    with open(FOUND_INDEX_PATH, "a", encoding="utf-8") as f:
+        f.write(ident + "\n")
+
+
+def _build_found_index() -> set[str]:
+    """One-time migration: scan every cached-abstract file once and record which
+    identifiers hold a real (non-`__none__`) abstract, writing FOUND_INDEX_PATH as
+    we go. Every later run loads that small file instead of repeating this scan.
+    """
+    found: set[str] = set()
+    if not ABSTRACT_CACHE_DIR.exists():
+        return found
+    n = 0
+    with open(FOUND_INDEX_PATH, "w", encoding="utf-8") as f:
+        for p in ABSTRACT_CACHE_DIR.glob("*.json"):
+            n += 1
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            abstract = data.get("abstract")
+            if abstract and abstract != "__none__":
+                ident = data.get("ident", "")
+                if ident:
+                    found.add(ident)
+                    f.write(ident + "\n")
+            if n % 50000 == 0:
+                log.info("  Building found-index: %d cache files scanned, %d hits.", n, len(found))
+    log.info("Found-index built: %d hits from %d cache files.", len(found), n)
+    return found
+
+
+def _load_found_index() -> set[str]:
+    if FOUND_INDEX_PATH.exists():
+        return {l.strip() for l in FOUND_INDEX_PATH.read_text(encoding="utf-8").splitlines() if l.strip()}
+    return _build_found_index()
+
+
+def _already_resolved(oa_id: str, doi_r: str, found_index: set[str]) -> bool:
+    """In-memory equivalent of `_lookup_cached_abstract(...) is not None`, backed by
+    the found-index sidecar instead of per-row cache-file reads (see FOUND_INDEX_PATH).
+    """
+    doi = clean_doi(str(doi_r or ""))
+    if oa_id and f"oa:{oa_id}" in found_index:
+        return True
+    return bool(doi) and any(f"{p}:{doi}" in found_index for p in ("doi", "s2", "scopus"))
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +353,16 @@ def _fetch_crossref_abstract(doi: str) -> tuple[Optional[str], str]:
             continue
         if resp.status_code >= 400:
             return None, "empty"
-        raw = resp.json().get("message", {}).get("abstract", "")
+        try:
+            raw = resp.json().get("message", {}).get("abstract", "")
+        except ValueError:
+            # A 2xx with a non-JSON body (seen live: an empty body after ~12k
+            # successful calls) is a transient CrossRef/CDN anomaly, not a
+            # real miss — retry rather than crash the whole run on it.
+            log.warning("CrossRef bad JSON for %s (attempt %d/3) — backing off.",
+                        doi, attempt + 1)
+            time.sleep(2 ** attempt)
+            continue
         cleaned = _JATS_RE.sub("", raw).strip() if raw else ""
         return (cleaned, "ok") if cleaned else (None, "empty")
     return None, "transient"
@@ -327,7 +399,13 @@ def _fetch_s2_abstract(doi: str, s2_key: str) -> tuple[Optional[str], str]:
             continue
         if resp.status_code >= 400:
             return None, "empty"
-        abstract = resp.json().get("abstract") or None
+        try:
+            abstract = resp.json().get("abstract") or None
+        except ValueError:
+            log.warning("S2 bad JSON for %s (attempt %d/3) — backing off.",
+                        doi, attempt + 1)
+            time.sleep(2 ** attempt)
+            continue
         return (abstract, "ok") if abstract else (None, "empty")
     return None, "transient"
 
@@ -444,7 +522,13 @@ def _fetch_scopus_abstract(doi: str, api_key: str) -> tuple[Optional[str], bool]
         if resp.status_code >= 400:
             time.sleep(2 ** attempt)
             continue
-        return _parse_scopus_abstract(resp.json()), False
+        try:
+            return _parse_scopus_abstract(resp.json()), False
+        except ValueError:
+            log.warning("Scopus bad JSON for %s (attempt %d/3) — backing off.",
+                        doi, attempt + 1)
+            time.sleep(2 ** attempt)
+            continue
     # Exhausted retries still hitting errors/429 — assume the quota is gone.
     return None, True
 
@@ -697,6 +781,7 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
     done = _load_checkpoint()
     if done:
         log.info("Checkpoint: %d identifiers already tried — skipping.", len(done))
+    found_index = _load_found_index()
     if limit:
         log.info("--limit %d: processing first %d missing rows.", limit, len(worklist))
 
@@ -762,6 +847,7 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
                 _append_checkpoint(f"oa:{oid}")
                 if results.get(oid):
                     n_found += 1
+                    found_index.add(f"oa:{oid}")
 
             done_so_far = batch_start + len(batch_ids)
             if done_so_far % 5000 == 0:
@@ -772,11 +858,11 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
     # ------------------------------------------------------------------
     # Phase 2: Semantic Scholar, BATCHED (rows still missing after Phase 1)
     # ------------------------------------------------------------------
-    # Ordered ahead of CrossRef: measured live on this dataset (2026-07-27) across a
-    # real ~9,900-row run, S2's batch endpoint sustains ~41 DOIs/sec at a ~31% hit
-    # rate, vs CrossRef's one-DOI-at-a-time ~3/sec at a ~0.2% hit rate on the same
-    # rows. Running S2 first clears most of the corpus in a fraction of the time,
-    # leaving CrossRef (Phase 3) a much smaller residual to pick over.
+    # Ordered ahead of CrossRef: a full production run (2026-07-27/28, 494,406 rows)
+    # measured S2's batch endpoint at ~49.8 DOIs/sec sustained, 14.5% hit rate, vs
+    # CrossRef's one-DOI-at-a-time ~3/sec at ~0.6% on the same corpus. Running S2
+    # first clears most of the corpus in a fraction of the time, leaving CrossRef
+    # (Phase 3) a much smaller residual to pick over.
     if not s2_key:
         log.info("Phase 2 — S2: skipped (S2_API_KEY not set in .env).")
     else:
@@ -784,7 +870,7 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
             clean_doi(str(r["doi_r"] or "")) for r in worklist
             if clean_doi(str(r["doi_r"] or ""))
             and f"s2:{clean_doi(r['doi_r'])}" not in done
-            and _lookup_cached_abstract(r["oa"], r["doi_r"]) is None
+            and not _already_resolved(r["oa"], r["doi_r"], found_index)
         ]
         log.info("Phase 2 — Semantic Scholar batch: %d rows to try.", len(s2_dois))
 
@@ -832,6 +918,7 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
                 if results.get(doi):
                     phase2_found += 1
                     n_found += 1
+                    found_index.add(f"s2:{doi}")
 
             done_so_far = batch_start + len(batch_dois)
             if done_so_far % 5000 < S2_BATCH_SIZE:
@@ -847,7 +934,7 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
         r["doi_r"] for r in worklist
         if clean_doi(str(r["doi_r"] or ""))
         and f"doi:{clean_doi(r['doi_r'])}" not in done
-        and _lookup_cached_abstract(r["oa"], r["doi_r"]) is None
+        and not _already_resolved(r["oa"], r["doi_r"], found_index)
     ]
     log.info("Phase 3 — CrossRef: %d rows to try.", len(crossref_targets))
 
@@ -881,6 +968,7 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
         if abstract:
             phase3_found += 1
             n_found += 1
+            found_index.add(f"doi:{doi}")
 
         if i % 2000 == 0:
             log.info("  CrossRef progress: %d / %d  (found: %d)", i, len(crossref_targets), phase3_found)
@@ -897,7 +985,7 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
             r["doi_r"] for r in worklist
             if clean_doi(str(r["doi_r"] or ""))
             and f"scopus:{clean_doi(r['doi_r'])}" not in done
-            and _lookup_cached_abstract(r["oa"], r["doi_r"]) is None
+            and not _already_resolved(r["oa"], r["doi_r"], found_index)
         ]
         if scopus_priority is not None:
             # The weekly quota (~10k) is far smaller than the missing-abstract pool,
