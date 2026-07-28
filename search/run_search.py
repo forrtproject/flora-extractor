@@ -492,7 +492,9 @@ def run_search(
     Returns
     -------
     pd.DataFrame
-        The full deduplicated candidate set after the merge.
+        The new, deduplicated candidates merged into candidates.csv by this call
+        (not the full file — reading that back would mean re-loading a
+        multi-million-row CSV just to report a count).
     """
     if sources is not None:
         sources = {s.lower().strip() for s in sources}
@@ -582,10 +584,10 @@ def run_search(
     log.info("New batch (deduped): %d candidates", len(new_batch))
 
     out_path = DATA_DIR / "candidates.csv"
-    result = _merge_into_candidates_csv(new_batch, out_path)
+    _merge_into_candidates_csv(new_batch, out_path)
 
-    log.info("Stage 1 complete: %d total candidates in %s", len(result), out_path)
-    return result
+    log.info("Stage 1 complete: %d new candidates merged into %s", len(new_batch), out_path)
+    return new_batch
 
 
 def run_search_auto_advance(

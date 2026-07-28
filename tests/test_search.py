@@ -4,12 +4,15 @@ Tests for search functions
 import json
 import os
 import pytest
+import pandas as pd
 
 from shared.config import OA_CACHE_DIR
+from shared.schema import CANDIDATES_COLS
 from search import openalex_search as oa
+from search import run_search as rs
 from search.semantic_scholar_search import fetch_semantic_scholar_candidates
 from search.external_lists import fetch_i4r
-from search.run_search import _row_keys, build_candidates_index
+from search.run_search import _row_keys, build_candidates_index, run_search
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +401,34 @@ class TestI4RDateRange:
         df_all   = fetch_i4r()
         df_range = fetch_i4r(from_year=2024, to_year=2025)
         assert len(df_range) < len(df_all)
+
+
+# ---------------------------------------------------------------------------
+# run_search() orchestrator: regression for a crash-after-success bug (2026-07-28).
+# _merge_into_candidates_csv is void (-> None; 3 of its 4 call sites already treat
+# it that way), but run_search() assigned its return to `result` and called
+# len(result) on it -- a guaranteed TypeError on every non-auto-advance run that
+# reached the end, including a full production Semantic Scholar search that had
+# already merged its results into candidates.csv before crashing on this line.
+# ---------------------------------------------------------------------------
+
+def test_run_search_final_log_does_not_crash_on_void_merge(monkeypatch):
+    fake_batch = pd.DataFrame([
+        {**{c: "" for c in CANDIDATES_COLS}, "doi_r": "10.1/a", "title_r": "A"},
+        {**{c: "" for c in CANDIDATES_COLS}, "doi_r": "10.1/b", "title_r": "B"},
+    ])
+
+    monkeypatch.setattr(rs, "_harvest_oa_cache", lambda: pd.DataFrame(columns=CANDIDATES_COLS))
+    monkeypatch.setattr(rs, "_harvest_s2_cache", lambda: pd.DataFrame(columns=CANDIDATES_COLS))
+    monkeypatch.setattr(rs, "fetch_semantic_scholar_candidates", lambda **kw: fake_batch)
+    monkeypatch.setattr(rs, "deduplicate_candidates", lambda df: df)
+    monkeypatch.setattr(rs, "_merge_into_candidates_csv", lambda df, path: None)
+    monkeypatch.setattr(rs, "is_engine_enabled", lambda: False)
+
+    result = run_search(from_year=2011, to_year=2021, sources={"semantic_scholar"})
+
+    assert result is not None
+    assert len(result) == 2
 
     def test_known_title_present_2024(self):
         df = fetch_i4r(from_year=2024, to_year=2024)
