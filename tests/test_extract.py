@@ -127,7 +127,7 @@ class TestExtractOutcome:
         """#70: even a clear keyword hit must be seen by the LLM (is_genuine_attempt
         veto) when the LLM is available — the keyword short-circuit is no_llm-only."""
         mock = {"outcome": "failure", "outcome_phrase": "no effect", "is_genuine_attempt": True,
-                "outcome_confidence": "high", "out_quote_source": "abstract"}
+                "confidence": "high", "out_quote_source": "abstract"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")) as mock_llm, \
              patch("extract.code_outcome.time.sleep"):
@@ -143,7 +143,7 @@ class TestExtractOutcome:
         """#70: a 'failed to replicate' abstract that the LLM judges is_genuine_attempt
         =false becomes not_a_replication instead of a coded failure."""
         mock = {"outcome": "failure", "outcome_phrase": "background prose",
-                "is_genuine_attempt": False, "outcome_confidence": "high",
+                "is_genuine_attempt": False, "confidence": "high",
                 "out_quote_source": "abstract"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")), \
@@ -171,7 +171,7 @@ class TestExtractOutcome:
     def test_uninformative_triggers_llm(self):
         """No keyword match should fall through to LLM."""
         mock_llm_result = {"outcome": "mixed", "outcome_phrase": "partial support",
-                           "outcome_confidence": "medium", "out_quote_source": "abstract"}
+                           "confidence": "medium", "out_quote_source": "abstract"}
         with patch("extract.code_outcome.call_llm", return_value=(mock_llm_result, "gemini-model", "")), \
              patch("extract.code_outcome.time.sleep"):
             result = extract_outcome(
@@ -207,7 +207,7 @@ class TestExtractOutcome:
     def test_llm_result_cached(self, tmp_path):
         """LLM result should be written to cache and reused."""
         mock_result = {"outcome": "success", "outcome_phrase": "replicated",
-                       "outcome_confidence": "high", "out_quote_source": "abstract"}
+                       "confidence": "high", "out_quote_source": "abstract"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_llm", return_value=(mock_result, "gemini-model", "")), \
              patch("extract.code_outcome.time.sleep"):
@@ -220,7 +220,7 @@ class TestExtractOutcome:
     def test_invalid_llm_outcome_normalised(self, tmp_path):
         """LLM returning an unexpected outcome value should become cannot_be_determined."""
         mock_result = {"outcome": "uncertain", "outcome_phrase": "",
-                       "outcome_confidence": "low", "out_quote_source": ""}
+                       "confidence": "low", "out_quote_source": ""}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_llm", return_value=(mock_result, "gemini-model", "")), \
              patch("extract.code_outcome.time.sleep"):
@@ -238,7 +238,7 @@ class TestLLMOutcomePrompt:
                  llm_return=None):
         if llm_return is None:
             llm_return = {"outcome": "success", "outcome_phrase": "We confirmed the effect.",
-                          "outcome_confidence": "high", "out_quote_source": "abstract",
+                          "confidence": "high", "out_quote_source": "abstract",
                           "outcome_reasoning": "All effects replicated."}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_llm", return_value=(llm_return, "gemini-model", "")) as mock_llm, \
@@ -470,7 +470,7 @@ class TestFulltextEscalation:
 
 class TestOutcomePromptContent:
     def _prompt(self, tmp_path, **kw):
-        ret = {"outcome": "success", "outcome_phrase": "x", "outcome_confidence": "high",
+        ret = {"outcome": "success", "outcome_phrase": "x", "confidence": "high",
                "out_quote_source": "abstract", "outcome_reasoning": ""}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_llm", return_value=(ret, "m", "")) as mock_llm, \
@@ -493,7 +493,7 @@ class TestOutcomePromptContent:
 
     def test_abstract_truncated_at_3000(self, tmp_path):
         long_abstract = ("A" * 2999) + "MARKER_INSIDE" + ("B" * 3000) + "MARKER_OUTSIDE"
-        ret = {"outcome": "success", "outcome_phrase": "x", "outcome_confidence": "high",
+        ret = {"outcome": "success", "outcome_phrase": "x", "confidence": "high",
                "out_quote_source": "abstract", "outcome_reasoning": ""}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_llm", return_value=(ret, "m", "")) as mock_llm, \
@@ -531,7 +531,7 @@ class TestDualCache:
         assert got["outcome"] == "NEW"
 
     def test_llm_outcome_dual_writes(self, tmp_path):
-        ret = {"outcome": "success", "outcome_phrase": "x", "outcome_confidence": "high",
+        ret = {"outcome": "success", "outcome_phrase": "x", "confidence": "high",
                "out_quote_source": "abstract", "outcome_reasoning": ""}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_llm", return_value=(ret, "m", "")), \
@@ -584,21 +584,21 @@ class TestClassifyMatchType:
 
     def test_returns_single_original(self, tmp_path):
         llm = {"original_match_type": "single_original",
-               "original_match_confidence": "high", "reasoning": "one clear target"}
+               "confidence": "high", "reasoning": "one clear target"}
         result = self._classify(tmp_path, _CAND_SINGLE, llm)
         assert result["original_match_type"] == "single_original"
         assert result["original_match_confidence"] == "high"
 
     def test_returns_multiple_match(self, tmp_path):
         llm = {"original_match_type": "multiple_match",
-               "original_match_confidence": "high", "reasoning": "same author/year"}
+               "confidence": "high", "reasoning": "same author/year"}
         result = self._classify(tmp_path, _CAND_MULTI, llm)
         assert result["original_match_type"] == "multiple_match"
 
     def test_returns_multiple_original(self, tmp_path):
         row = dict(_ROW, abstract_r="We replicated Smith (2010) and Jones (2012).")
         llm = {"original_match_type": "multiple_original",
-               "original_match_confidence": "medium", "reasoning": "two independent targets"}
+               "confidence": "medium", "reasoning": "two independent targets"}
         result = self._classify(tmp_path, _CAND_MULTI, llm, row=row)
         assert result["original_match_type"] == "multiple_original"
         assert result["original_match_confidence"] == "medium"
@@ -624,7 +624,7 @@ class TestClassifyMatchType:
     def test_result_cached_on_second_call(self, tmp_path):
         """Second call with same doi_r must use cache — OpenAlex + LLM not called again."""
         llm = {"original_match_type": "single_original",
-               "original_match_confidence": "high", "reasoning": "cached"}
+               "confidence": "high", "reasoning": "cached"}
         with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
              patch("extract.run_extract.find_all_candidates",
                    return_value=_CAND_SINGLE) as mock_oa, \
@@ -637,7 +637,7 @@ class TestClassifyMatchType:
 
     def test_invalid_llm_match_type_normalised(self, tmp_path):
         """LLM returning an unknown match_type value should become single_original."""
-        llm = {"original_match_type": "unknown_value", "original_match_confidence": "high"}
+        llm = {"original_match_type": "unknown_value", "confidence": "high"}
         result = self._classify(tmp_path, _CAND_SINGLE, llm)
         assert result["original_match_type"] == "single_original"
 
@@ -647,7 +647,7 @@ class TestClassifyMatchType:
         def fake_llm(prompt, gemini_model=""):
             captured_prompt.append(prompt)
             return ({"original_match_type": "single_original",
-                     "original_match_confidence": "high"}, "gemini-model", "")
+                     "confidence": "high"}, "gemini-model", "")
 
         with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
              patch("extract.run_extract.find_all_candidates", return_value=_CAND_SINGLE), \
@@ -1150,7 +1150,7 @@ class TestReproductionOutcome:
     def test_repro_outcome_survives_normalisation(self, tmp_path):
         """A valid grid value must be kept, not coerced to cannot_be_determined."""
         mock = {"outcome": "computational issues, robustness challenges",
-                "outcome_phrase": "x" * 400, "outcome_confidence": "high",
+                "outcome_phrase": "x" * 400, "confidence": "high",
                 "out_quote_source": "abstract", "outcome_reasoning": "r"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")), \
@@ -1162,7 +1162,7 @@ class TestReproductionOutcome:
     def test_replication_value_rejected_for_reproduction(self, tmp_path):
         """If the LLM answers with the replication vocabulary for a reproduction,
         it must NOT be accepted silently."""
-        mock = {"outcome": "success", "outcome_phrase": "q", "outcome_confidence": "high",
+        mock = {"outcome": "success", "outcome_phrase": "q", "confidence": "high",
                 "out_quote_source": "abstract", "outcome_reasoning": "r"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")), \
@@ -1175,7 +1175,7 @@ class TestReproductionOutcome:
         """'failed to replicate' in a reproduction abstract must not shortcut to
         the replication enum — it must reach the reproduction LLM prompt."""
         mock = {"outcome": "computational issues, robustness not checked",
-                "outcome_phrase": "q", "outcome_confidence": "high",
+                "outcome_phrase": "q", "confidence": "high",
                 "out_quote_source": "abstract", "outcome_reasoning": "r"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")) as mock_llm, \

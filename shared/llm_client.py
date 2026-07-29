@@ -842,7 +842,7 @@ def identify_all_originals_with_llm(doi_r:        str,
 # loses a genuine replication. Disagreement is not an error — it routes the row to
 # full text, which is what we would have done anyway.
 
-REF_SCREEN_PROMPT_VERSION = "2026-07-28-split-calls-v4"
+REF_SCREEN_PROMPT_VERSION = "2026-07-29-split-calls-v5"
 
 
 def _classify_once(prompt: str, provider: str) -> "dict | None":
@@ -856,7 +856,7 @@ def _classify_once(prompt: str, provider: str) -> "dict | None":
     time.sleep(LLM_RATE_SEC)
     return {
         "is_replication": str(result.get("is_replication", "unclear")).strip().lower(),
-        "confidence":     str(result.get("classification_confidence", "")).strip().lower(),
+        "confidence":     str(result.get("confidence", "")).strip().lower(),
         "evidence":       str(result.get("evidence_quote", "") or ""),
         "reasoning":      str(result.get("reasoning", "") or ""),
         "provider":       provider,
@@ -926,7 +926,7 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
             result, _ = call_openai(tgt_prompt)
         if result:
             time.sleep(LLM_RATE_SEC)
-            out["llm_confidence"]     = str(result.get("target_confidence", "")).strip().lower()
+            out["llm_confidence"]     = str(result.get("confidence", "")).strip().lower()
             out["target_description"] = str(result.get("target_description", "") or "").strip()
             num = result.get("target_number")
             if num is not None and out["llm_confidence"] == "high":

@@ -226,34 +226,48 @@ _VALID_OUTCOMES    = OUTCOME_CATEGORIES
 # a stale cached single_original result.
 
 # Known multi-target project names — always fire regardless of any number.
+# Registered Replication Reports are deliberately NOT here: an RRR is many labs
+# replicating ONE original, so firing multiple_original on the title routed
+# single-target papers into the multi pipeline and expanded them into N rows.
 _MULTI_TITLE_RE = re.compile(
     r"\bmany\s+labs\b"
-    r"|\bregistered\s+replication\s+report\b"
     r"|\bmany\s+analysts\b",
     re.IGNORECASE,
 )
 
-# "replication of N" in a title — N is captured so the numeric bound below can
-# reject years ("Replication of 2019 findings") that are not study counts.
+# The counted noun must be a STUDY-like unit. "experiments" is excluded on
+# purpose: "replications of 5 experiments from Smith (2009)" is five experiments
+# of ONE original, which the count patterns used to read as five originals.
+_MULTI_COUNT_ADJ = (
+    r"(?:\s+(?:original|independent|published|classic|contemporary|distinct|previous|key|prior)"
+    r"(?:\s+and\s+\w+)?)*"
+)
+_MULTI_COUNT_NOUN = r"(?:studi(?:es)?|findings?|papers?)"
+
+# "replication of N studies" in a title — N is captured so the numeric bound below
+# can reject years ("Replication of 2019 findings") that are not study counts.
 _MULTI_TITLE_COUNT_RE = re.compile(
-    r"\breplicat(?:ion|ions?)\s+of\s+(\d+)\b", re.IGNORECASE,
+    rf"\breplicat(?:ion|ions?)\s+of\s+(\d+){_MULTI_COUNT_ADJ}\s+{_MULTI_COUNT_NOUN}\b",
+    re.IGNORECASE,
 )
 
 # Each pattern must capture the count of studies in group 1.
 _MULTI_ABSTRACT_RES: list[re.Pattern] = [
-    # "replications of 28"  /  "replication of 10 studies"
-    re.compile(r"\breplicat(?:ion|ions?)\s+of\s+(\d+)\b", re.IGNORECASE),
+    # "replications of 28 classic studies"  /  "replication of 10 studies"
+    re.compile(
+        rf"\breplicat(?:ion|ions?)\s+of\s+(\d+){_MULTI_COUNT_ADJ}\s+{_MULTI_COUNT_NOUN}\b",
+        re.IGNORECASE,
+    ),
     # "replicated 28 original findings"  /  "replicating 10 classic studies"
     re.compile(
-        r"\b(?:replicated?|replicating)\s+(?:a\s+total\s+of\s+)?(\d+)\s*"
-        r"(?:original|independent|published|classic|contemporary|distinct|previous)?"
-        r"\s*(?:studi(?:es)?|findings?|experiments?|effects?|papers?)\b",
+        rf"\b(?:replicated?|replicating)\s+(?:a\s+total\s+of\s+)?(\d+){_MULTI_COUNT_ADJ}"
+        rf"\s+{_MULTI_COUNT_NOUN}\b",
         re.IGNORECASE,
     ),
     # "28 classic and contemporary findings"  /  "27 independent studies"
     re.compile(
-        r"\b(\d+)\s+(?:original|independent|published|classic|contemporary|distinct)"
-        r"(?:\s+and\s+\w+(?:\s+\w+)?)?\s+(?:studi(?:es)?|findings?|experiments?|effects?)\b",
+        rf"\b(\d+)\s+(?:original|independent|published|classic|contemporary|distinct)"
+        rf"(?:\s+and\s+\w+(?:\s+\w+)?)?\s+{_MULTI_COUNT_NOUN}\b",
         re.IGNORECASE,
     ),
 ]
@@ -438,7 +452,7 @@ def _llm_classify_match_type(doi_r: str,
     if result:
         time.sleep(LLM_RATE_SEC)
         mtype = result.get("original_match_type", "single_original")
-        conf  = result.get("original_match_confidence", "low")
+        conf  = result.get("confidence", "low")
         if mtype not in _VALID_MATCH_TYPES:
             mtype = "single_original"
         if conf not in {"high", "medium", "low"}:

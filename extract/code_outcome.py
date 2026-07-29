@@ -34,7 +34,7 @@ from shared.utils import cache_key
 # Bump when the prompt or model wiring changes so the content-keyed cache misses
 # stale entries. read_dual_cache in "latest" mode keys on this; "accumulate" mode
 # still prefers the legacy DOI-keyed entry.
-PROMPT_VERSION = "2026-07-29-audit-prompt-revisions"
+PROMPT_VERSION = "2026-07-29-fable-review"
 
 # Truncation caps (chars) for the abstract-based and fulltext-escalation prompts.
 _ABSTRACT_CAP = 3000
@@ -197,7 +197,7 @@ def _normalise(result: dict, prompt: str, model_used: str,
     return {
         "outcome":            outcome,
         "outcome_phrase":     str(result.get("outcome_phrase",    "") or ""),
-        "outcome_confidence": str(result.get("outcome_confidence", "low") or "low"),
+        "outcome_confidence": str(result.get("confidence", "low") or "low"),
         "out_quote_source":   str(result.get("out_quote_source",  "") or ""),
         "outcome_reasoning":  str(result.get("outcome_reasoning", "") or ""),
         "llm_model":          model_used,

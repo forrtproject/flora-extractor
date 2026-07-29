@@ -31,7 +31,7 @@ from shared import token_counter
 from shared.llm_client import identify_original_with_llm, screen_references_with_llm
 from shared.pdf_parsing import parse_all as _parse_all, best_parse_result as _best_parse_shared
 from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_openalex_by_doi, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
-from shared.prompts import build_flora_anchor_note, build_title_pattern_hint
+from shared.prompts import build_flora_anchor_note
 from shared.pdf_sources import acquire_pdf
 from shared.utils import cache_key, clean_doi
 
@@ -117,7 +117,7 @@ def _resolve_by_title_pattern(
 
     Returns:
       - dict with resolved=True when a single confident match exists
-      - dict with resolved=False + title_pattern_hint when multiple plausible matches
+      - dict with resolved=False when the match is not confident enough
       - None when no pattern matches or no candidates score above minimum threshold
     """
     target = _extract_title_target(study_r)
@@ -145,7 +145,6 @@ def _resolve_by_title_pattern(
         "resolved_year_o":      None,
         "resolved_author_o":    "",
         "resolution_score":     0.0,
-        "title_pattern_target": target,
     }
 
     if best_score >= 0.4 and best_score >= sec_score * 1.5:
@@ -162,11 +161,7 @@ def _resolve_by_title_pattern(
             "resolution_score":  round(best_score, 4),
         }
 
-    hint_titles = [
-        c.get("title", "") for c in scored[:3]
-        if jaccard_similarity(c.get("title", ""), target) >= 0.3
-    ]
-    return {**base, "title_pattern_hint": hint_titles}
+    return base
 
 
 def _extract_cit_contexts(text: str) -> list[dict]:
@@ -621,11 +616,6 @@ def run_for_doi(doi_r:              str,
     if title_pat and title_pat.get("resolved"):
         return _build_output(doi_r, flora, cands_row, candidates,
                              title_pat, {}, {}, {})
-    if title_pat and title_pat.get("title_pattern_hint"):
-        hint_note = build_title_pattern_hint(
-            title_pat["title_pattern_target"], title_pat["title_pattern_hint"])
-        effective_note = "\n\n".join(filter(None, [effective_note, hint_note]))
-
     # ── Stage 3: Rule-based resolver (citation-context + same-author/year) ──────
     stage3 = _resolve_rule_based(doi_r, abstract_r, candidates, year_r, study_r)
     if stage3["resolved"]:
