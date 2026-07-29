@@ -248,9 +248,14 @@ def build_identification_prompt(study_r:        str,
       the target cannot be identified from the material shown here, set
       selected_candidate_number to null AND selected_title to "" — do NOT pick the
       closest or most-cited reference. Returning no target is a correct answer.
-    - confidence: high = the paper explicitly names this study as the one it replicates
-      or reproduces; medium = strong but indirect evidence (e.g. the only plausible
-      target given the design); low = a plausible inference only.
+    - Do NOT select a target merely because it is the only plausible candidate, the
+      only one OpenAlex returned, topically similar, prominent or frequently cited.
+      If the evidence does not identify ONE target unambiguously, return no target.
+    - confidence: high = an explicit, unambiguous connection between this paper's
+      replication/reproduction attempt and exactly one candidate or reference;
+      medium = an explicit connection exists but bibliographic ambiguity remains;
+      low = no target should be returned — set selected_candidate_number to null
+      and selected_title to "".
     - NEVER invent or guess a DOI. DOIs will be resolved from title and author automatically.
       An invented DOI is worse than no DOI — it silently corrupts the database.
 
