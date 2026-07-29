@@ -35,6 +35,21 @@ from .prompts import (
 from .schema import OUTCOME_CATEGORIES
 from .utils import cache_key, clean_doi
 
+# Output cap for the JSON-returning chat calls. It was 1024, which on a reasoning
+# model (gpt-5-mini) also has to cover hidden reasoning tokens — while the outcome
+# prompts ask for a quote of up to ~1200 characters, ~300 tokens of visible output
+# before any other field. A truncated response is not valid JSON, so it was
+# indistinguishable from a parse failure and got retried rather than reported;
+# both call sites now log it explicitly.
+JSON_MAX_OUTPUT_TOKENS = 4096
+
+# Sampling temperature is deliberately not set on any provider. gpt-5-mini accepts
+# only the default ("Unsupported value: 'temperature' does not support 0.0 with this
+# model"), so pinning 0.0 on Gemini and OpenRouter — as this module used to — meant a
+# row coded by the OpenAI leg was not comparable to one coded by Gemini. Note the
+# consequence: Gemini and OpenRouter now sample at their defaults rather than
+# greedily, so repeat runs are less deterministic than before.
+
 # ── OpenAI session-level token guardrail ─────────────────────────────────────
 # Tracks tokens consumed via call_openai() within the current process.
 # When usage crosses OPENAI_WARN_TOKENS, the pipeline pauses and asks the user
@@ -166,7 +181,10 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature"     : 0.0,
+            # temperature is deliberately NOT set — see the note by
+            # JSON_MAX_OUTPUT_TOKENS. gpt-5-mini rejects any explicit value, so
+            # pinning it here would make Gemini-coded and OpenAI-coded rows differ
+            # by sampling policy as well as by model.
             "responseMimeType": "application/json",
             "maxOutputTokens" : 8192,
             # Note: thinkingConfig is intentionally omitted.
@@ -239,6 +257,13 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
                     print(f"  [Gemini] {key_label} no candidates — blockReason={blocked}")
                     return None, last_error
 
+                if body["candidates"][0].get("finishReason") == "MAX_TOKENS":
+                    last_error = "response truncated at maxOutputTokens"
+                    log.warning("Gemini response hit maxOutputTokens and was cut off — "
+                                "the truncated JSON will fail to parse (model=%s, %s)",
+                                model, key_label)
+                    return None, last_error
+
                 text   = body["candidates"][0]["content"]["parts"][0]["text"]
                 result = _parse_llm_json(text)
                 if result is not None:
@@ -295,13 +320,18 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict],
                     {"role": "user", "content": prompt},
                 ],
                 response_format={"type": "json_object"},
-                max_completion_tokens=1024,
+                max_completion_tokens=JSON_MAX_OUTPUT_TOKENS,
             )
             if response.usage:
                 _track_openai_tokens(response.usage.total_tokens)
                 token_counter.record("openai", response.usage.total_tokens)
                 log.debug("OpenAI usage: +%d tokens (session total: %d)",
                           response.usage.total_tokens, _openai_tokens_session)
+            if response.choices[0].finish_reason == "length":
+                log.warning("OpenAI response hit the %d-token cap and was cut off — "
+                            "the truncated JSON will fail to parse (model=%s)",
+                            JSON_MAX_OUTPUT_TOKENS, model)
+                return None, "response truncated at max_completion_tokens"
             result = _parse_llm_json(response.choices[0].message.content)
             return result, ("" if result else "response was not valid JSON")
         except Exception as e:
@@ -341,9 +371,13 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
                 {"role": "user", "content": prompt},
             ],
             response_format={"type": "json_object"},
-            max_tokens=1024,
-            temperature=0.0,
+            max_tokens=JSON_MAX_OUTPUT_TOKENS,
         )
+        if response.choices[0].finish_reason == "length":
+            log.warning("OpenRouter response hit the %d-token cap and was cut off — "
+                        "the truncated JSON will fail to parse (model=%s)",
+                        JSON_MAX_OUTPUT_TOKENS, use_model)
+            return None, "response truncated at max_tokens"
         result = _parse_llm_json(response.choices[0].message.content)
         if result and response.usage:
             token_counter.record("openrouter", response.usage.total_tokens)
@@ -584,7 +618,6 @@ def call_gemini_with_images(prompt: str,
     payload = {
         "contents"       : [{"parts": parts}],
         "generationConfig": {
-            "temperature"     : 0.0,
             "responseMimeType": "application/json",
             "maxOutputTokens" : 4096,
         },
@@ -638,7 +671,6 @@ def call_gemini_with_pdf(prompt: str,
             ],
         }],
         "generationConfig": {
-            "temperature"     : 0.0,
             "responseMimeType": "application/json",
             "maxOutputTokens" : 4096,
             "mediaResolution" : "MEDIA_RESOLUTION_LOW",
