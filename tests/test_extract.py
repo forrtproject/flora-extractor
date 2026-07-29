@@ -84,7 +84,6 @@ class TestKeywordScan:
         ("effect was robustly replicated across three samples", "success"),
         ("IAT demonstrated strong psychometric properties consistent with original reports", "success"),
         ("partially replicated with some but not all findings held", "mixed"),
-        ("significant but smaller effect than the original study reported", "mixed"),
         ("No evidence was found for precognition in any experiment", "failure"),
         ("adapted the procedure in a different cultural population", "descriptive"),
     ])
@@ -94,6 +93,20 @@ class TestKeywordScan:
         assert hit["outcome"] == expected, (
             f"Expected {expected}, got {hit['outcome']} for: {text!r}"
         )
+
+    @pytest.mark.parametrize("text", [
+        "significant but smaller effect than the original study reported",
+        "the replication produced a reduced effect magnitude",
+    ])
+    def test_reduced_effect_size_alone_is_not_a_keyword_hit(self, text):
+        """Effect size alone must not decide the outcome.
+
+        `mixed` requires the authors to present their own evidence as partly
+        supporting and partly not; a supported-but-smaller effect is a success.
+        Neither is decidable from these phrases, so the keyword pass declines and
+        the row goes to the LLM rather than being coded on magnitude alone.
+        """
+        assert _keyword_scan(text, "abstract") is None
 
     def test_no_match_returns_none(self):
         hit = _keyword_scan("we attempted this study across multiple sites", "abstract")

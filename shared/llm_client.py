@@ -874,7 +874,7 @@ def identify_all_originals_with_llm(doi_r:        str,
 # loses a genuine replication. Disagreement is not an error — it routes the row to
 # full text, which is what we would have done anyway.
 
-REF_SCREEN_PROMPT_VERSION = "2026-07-29-split-calls-v5"
+REF_SCREEN_PROMPT_VERSION = "2026-07-29-split-calls-v6"
 
 
 def _classify_once(prompt: str, provider: str) -> "dict | None":

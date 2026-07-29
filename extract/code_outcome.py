@@ -34,7 +34,7 @@ from shared.utils import cache_key
 # Bump when the prompt or model wiring changes so the content-keyed cache misses
 # stale entries. read_dual_cache in "latest" mode keys on this; "accumulate" mode
 # still prefers the legacy DOI-keyed entry.
-PROMPT_VERSION = "2026-07-29-fable-review"
+PROMPT_VERSION = "2026-07-29-codex-review"
 
 # Truncation caps (chars) for the abstract-based and fulltext-escalation prompts.
 _ABSTRACT_CAP = 3000
@@ -104,12 +104,16 @@ _SUCCESS = re.compile(
     re.IGNORECASE,
 )
 
+# Mixed requires the AUTHORS to frame their own evidence as partly supporting and
+# partly not — matching the LLM rules in shared/prompts.py. Reduced effect size is
+# deliberately not a trigger: a smaller but supported effect is a success, and the
+# old "smaller effect"/"reduced magnitude" alternatives coded those as mixed while
+# the LLM path called them success.
 _MIXED = re.compile(
     r"\b("
     r"partially replicated|mixed results?|partial replication"
     r"|some but not all|some (?:but not all|support)"
     r"|nuanced|qualified support"
-    r"|smaller (?:effect|than original)|reduced (?:effect|magnitude)"
     r")\b",
     re.IGNORECASE,
 )
