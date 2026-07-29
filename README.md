@@ -90,6 +90,7 @@ Optional: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERV
 | [I4R](https://i4replication.org/reports/) | Institute for Replication reports |
 
 Full-text: Unpaywall, CORE, arXiv, OSF. DOI resolution: Crossref.
+Abstract backfill: Europe PMC, Semantic Scholar, Crossref, Scopus.
 
 ---
 

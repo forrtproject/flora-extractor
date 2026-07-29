@@ -653,7 +653,18 @@ def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _save_parse_cache(doi_r: str) -> None:
-    """Run all PDF parsers for doi_r and cache results to PARSE_CACHE_DIR."""
+    """Run all PDF parsers for doi_r and cache results to PARSE_CACHE_DIR.
+
+    No-ops when there is neither a PDF nor OpenAlex XML to parse. This runs for
+    EVERY extracted row, but most rows resolve at an earlier ladder stage and never
+    acquire a document — measured on the production cache, 8,320 of 8,419 entries
+    were all six methods reporting "no pdf_path". Two costs, not one: the parser
+    stack (including subprocess spawns) ran on nothing thousands of times, AND the
+    empty result was written to a cache both writers guard with
+    `if out_file.exists(): return` — so a row that later acquired a PDF would read
+    the empty result forever. link_original.run_for_doi applies the same guard
+    before its own parse.
+    """
     key      = cache_key(doi_r)
     out_file = PARSE_CACHE_DIR / f"parse_{key}.json"
     if out_file.exists():
@@ -671,6 +682,9 @@ def _save_parse_cache(doi_r: str) -> None:
                 oa_xml = json.load(fh)
         except Exception:
             pass
+
+    if pdf_path is None and not oa_xml:
+        return
 
     results = _parse_all(doi_r, pdf_path, oa_xml=oa_xml)
     try:

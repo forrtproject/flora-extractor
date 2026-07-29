@@ -1398,3 +1398,74 @@ class TestOutcomeVocabularyNeverCrosses:
         from shared.schema import outcome_categories_for
         assert "success" not in outcome_categories_for("reproduction")
         assert "computationally successful, robust" not in outcome_categories_for("replication")
+
+
+# ---------------------------------------------------------------------------
+# _save_parse_cache — must not parse, or cache, when there is no document
+# ---------------------------------------------------------------------------
+
+def test_save_parse_cache_noop_without_pdf_or_xml(tmp_path):
+    """Most rows resolve before the PDF stage and never acquire a document. Running
+    the six-parser stack on nothing is pure waste, and — worse — writing its empty
+    result to a cache that both writers guard with `if out_file.exists(): return`
+    means a row that later acquires a PDF would read the empty result forever.
+    Measured on the production cache: 8,320 of 8,419 entries were exactly this."""
+    with patch.object(run_extract, "PARSE_CACHE_DIR", tmp_path / "parse"), \
+         patch.object(run_extract, "PDF_CACHE_DIR", tmp_path / "pdfs"), \
+         patch.object(run_extract, "OA_XML_CACHE_DIR", tmp_path / "xml"), \
+         patch.object(run_extract, "_parse_all") as mock_parse:
+        (tmp_path / "parse").mkdir()
+        (tmp_path / "pdfs").mkdir()
+        (tmp_path / "xml").mkdir()
+
+        run_extract._save_parse_cache("10.1/no-doc")
+
+        mock_parse.assert_not_called()
+    assert list((tmp_path / "parse").iterdir()) == []
+
+
+def test_save_parse_cache_runs_when_a_pdf_exists(tmp_path):
+    """The guard must not suppress the case it exists to protect: a real PDF is
+    still parsed and cached."""
+    from shared.utils import cache_key
+
+    key = cache_key("10.1/has-pdf")
+    with patch.object(run_extract, "PARSE_CACHE_DIR", tmp_path / "parse"), \
+         patch.object(run_extract, "PDF_CACHE_DIR", tmp_path / "pdfs"), \
+         patch.object(run_extract, "OA_XML_CACHE_DIR", tmp_path / "xml"), \
+         patch.object(run_extract, "_parse_all",
+                      return_value={"pdfminer": {"abstract": "real text"}}) as mock_parse:
+        (tmp_path / "parse").mkdir()
+        (tmp_path / "pdfs").mkdir()
+        (tmp_path / "xml").mkdir()
+        (tmp_path / "pdfs" / f"{key}.pdf").write_bytes(b"%PDF-1.4 ...")
+
+        run_extract._save_parse_cache("10.1/has-pdf")
+
+        mock_parse.assert_called_once()
+    out = tmp_path / "parse" / f"parse_{key}.json"
+    assert out.exists()
+    assert json.loads(out.read_text(encoding="utf-8"))["pdfminer"]["abstract"] == "real text"
+
+
+def test_save_parse_cache_runs_on_openalex_xml_without_pdf(tmp_path):
+    """OpenAlex GROBID XML is a document in its own right — no PDF needed."""
+    from shared.utils import cache_key
+
+    key = cache_key("10.1/xml-only")
+    with patch.object(run_extract, "PARSE_CACHE_DIR", tmp_path / "parse"), \
+         patch.object(run_extract, "PDF_CACHE_DIR", tmp_path / "pdfs"), \
+         patch.object(run_extract, "OA_XML_CACHE_DIR", tmp_path / "xml"), \
+         patch.object(run_extract, "_parse_all",
+                      return_value={"openalex_xml": {"abstract": "from xml"}}) as mock_parse:
+        (tmp_path / "parse").mkdir()
+        (tmp_path / "pdfs").mkdir()
+        (tmp_path / "xml").mkdir()
+        (tmp_path / "xml" / f"oa_xml_{key}.json").write_text(
+            json.dumps({"source": "openalex_xml", "sections": {"abstract": "a"}}),
+            encoding="utf-8")
+
+        run_extract._save_parse_cache("10.1/xml-only")
+
+        mock_parse.assert_called_once()
+    assert (tmp_path / "parse" / f"parse_{key}.json").exists()

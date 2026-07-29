@@ -27,6 +27,45 @@ python -m search.run_search --rebuild-index
 python -m search.run_search --reset-cursors
 ```
 
+### Backfilling missing abstracts
+
+```bash
+# Full run — resumable; already-tried identifiers are skipped
+python -m search.fetch_abstracts
+
+# Count what is missing, by identifier type, without calling any API
+python -m search.fetch_abstracts --dry-run
+
+# Skip the near-zero-yield OpenAlex phase and go straight to the DOI phases
+python -m search.fetch_abstracts --skip-openalex
+
+# Cap the Scopus phase (weekly quota ~10k) and spend it on chosen DOIs first
+python -m search.fetch_abstracts --scopus-limit 9000 --scopus-priority dois.txt
+```
+
+Phases run cheapest-and-highest-yield first, each with its own checkpoint
+namespace so adding or reordering one never invalidates another's progress:
+
+| # | Phase | Key needed | Measured hit rate |
+| - | ----- | ---------- | ----------------- |
+| 1 | OpenAlex batch | — | ~0% (this corpus was discovered via OpenAlex) |
+| 2 | **Europe PMC batch** | — | **47.7%** |
+| 3 | Semantic Scholar batch | `S2_API_KEY` | 8.5% here, 14.5% corpus-wide |
+| 4 | CrossRef by DOI | — | 0.3–0.6% |
+| 5 | Scopus by DOI | `ELSEVIER_API_KEY` | quota-capped fallback |
+
+Rates for phases 2–4 come from one 960-DOI sample (2026-07-29) of never-tried
+rows drawn across the corpus's dominant prefixes. Europe PMC leads because 69% of
+this corpus's missing abstracts are Elsevier (10.1016) and Springer (10.1007),
+neither of which deposits abstracts to CrossRef — and OpenAlex's abstract index
+derives from that same deposit stream. Semantic Scholar still runs after it: the
+two overlap only partly, and S2 is the only source that sees SSRN (10.2139).
+
+Dataset DOIs (`10.7910` Harvard Dataverse, `10.5281` Zenodo) are excluded from
+every phase — they register data, not articles, so no abstract exists to find.
+They are still counted in the "rows missing abstract" total, and reported
+separately.
+
 ### Filtering by source
 
 The `--source` flag restricts which discovery tracks run. It can be repeated.
