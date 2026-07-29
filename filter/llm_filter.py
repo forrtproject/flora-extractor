@@ -69,7 +69,7 @@ def classify_with_llm(title: str, abstract: str) -> Optional[dict]:
 
     # filter_evidence takes the verbatim quote if present; falls back to the one-sentence rationale
     evidence = str(
-        result.get("filter_evidence") or result.get("filter_sort") or ""
+        result.get("filter_evidence") or result.get("filter_reasoning") or ""
     ).strip()[:240]
 
     out = {

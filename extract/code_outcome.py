@@ -34,7 +34,7 @@ from shared.utils import cache_key
 # Bump when the prompt or model wiring changes so the content-keyed cache misses
 # stale entries. read_dual_cache in "latest" mode keys on this; "accumulate" mode
 # still prefers the legacy DOI-keyed entry.
-PROMPT_VERSION = "2026-07-22-repro-grid-long-quotes"
+PROMPT_VERSION = "2026-07-29-audit-prompt-revisions"
 
 # Truncation caps (chars) for the abstract-based and fulltext-escalation prompts.
 _ABSTRACT_CAP = 3000

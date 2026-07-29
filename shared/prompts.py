@@ -32,27 +32,30 @@ JSON_SYSTEM_MESSAGE = ("You are a research methodology expert that identifies "
 def build_filter_prompt(title: str, abstract: str) -> str:
     return (
         "You are an expert in scientific replication and reproducibility.\n\n"
-        "Classify the paper into EXACTLY ONE label:\n\n"
-        "replication\n"
+        "Classify the paper into EXACTLY ONE of these types:\n\n"
+        "1) replication\n"
         "- Uses NEW data/samples/populations to test whether a prior study's findings hold.\n"
-        "- Must intentionally replicate a specific prior study or experiment.\n"
+        "- Must intend to replicate a specific prior study or experiment; it is not enough "
+        "to report that findings replicate earlier work.\n"
         "- Can be direct/close or conceptual.\n"
-        "- Replication must be an explicit study aim, not merely a discussion point or side result.\n"
         "- Includes secondary-data replications using different data.\n"
         "- Key criterion: different data from the original study.\n\n"
-        "reproduction\n"
+        "2) reproduction\n"
         "- Reanalyzes the SAME original data/results from a prior study.\n"
         "- Focuses on computational reproducibility or robustness of reported findings.\n"
-        "- Key criterion: same original dataset/data source.\n\n"
-        "false_positive\n"
+        "- Key criterion: same dataset/data source.\n\n"
+        "3) false_positive\n"
         "- NOT actually a replication or reproduction despite similar language.\n"
         "- Includes:\n"
         "  - meta-analyses or systematic reviews\n"
         "  - papers about the replication crisis/research methodology\n"
-        "  - data/code release papers\n"
+        "  - data/code papers\n"
         "  - biological replication (cells, DNA, organisms, viruses)\n"
-        "  - robustness/sensitivity checks within the original paper\n"
-        "  - papers mentioning 'replication' casually without conducting one\n\n"
+        "  - robustness/sensitivity checks within the paper\n"
+        "  - papers mentioning the need for 'replication' or otherwise discussing rather "
+        "than doing it\n"
+        "  - papers that report only an internal replication (e.g. 'In Study 2, we "
+        "replicate our findings from Study 1')\n\n"
         "Decision rules:\n"
         "1. If authors explicitly describe the study as a replication, classify as replication "
         "unless clearly false_positive.\n"
@@ -70,7 +73,7 @@ def build_filter_prompt(title: str, abstract: str) -> str:
         '  "filter_status": "replication" | "reproduction" | "false_positive",\n'
         '  "filter_confidence": "high" | "medium" | "low",\n'
         '  "filter_evidence": "<short verbatim supporting phrase ≤120 chars>",\n'
-        '  "filter_sort": "<one-sentence explanation>"\n'
+        '  "filter_reasoning": "<one-sentence explanation>"\n'
         "}"
     )
 
@@ -103,14 +106,13 @@ def build_match_type_prompt(title_r: str,
         "- multiple_match: 2–5 candidates share the SAME author/year; paper targets ONE"
         " original but disambiguation is needed (e.g. two papers by Smith 2005)\n"
         "- multiple_original: paper explicitly replicates SEVERAL INDEPENDENT original"
-        " studies as its stated goal (will produce N output rows, one per original)\n\n"
+        " studies\n\n"
         "Key rules:\n"
         "1. Merely citing many background studies is NOT multiple_original.\n"
         "2. A large candidate list from OpenAlex does NOT mean multiple_original —"
         " it may just reflect many citations.\n"
         "3. STRONG signals for multiple_original: explicit count in abstract"
-        " (e.g. 'replications of 28 studies'), project names like Many Labs or"
-        " Registered Replication Report, a table of target studies each with its own protocol.\n"
+        " (e.g. 'replications of 28 studies'), project names like Many Labs.\n"
         "4. multiple_match applies when ONE study is targeted but there are 2–5 candidates"
         " with the identical author/year — not when there are many different author/year pairs.\n\n"
         'Respond with ONLY this JSON:\n'
@@ -163,9 +165,10 @@ def build_identification_prompt(study_r:        str,
             "excerpts to find the original study. Set selected_candidate_number to null."
         )
 
-    # Reference list — 30 entries is enough to find the original; keeps tokens low
+    # Sent in full: the whole point of this prompt is to find the original in the
+    # reference list, and a truncated list can simply not contain it.
     ref_lines = []
-    for ref in sections.get("references", [])[:30]:
+    for ref in sections.get("references", []):
         authors = "; ".join(ref["authors"][:2])
         if len(ref["authors"]) > 2:
             authors += " et al."
@@ -211,7 +214,7 @@ def build_identification_prompt(study_r:        str,
             )
 
     prompt = textwrap.dedent(f"""
-    {validator_block}Identify the ORIGINAL STUDY that the replication paper below directly replicates.
+    {validator_block}Identify the ORIGINAL STUDY that the replication paper below replicates or reproduces.
 
     TITLE: {study_r}
     ABSTRACT: {abstract_snip or "(not available)"}
@@ -220,10 +223,10 @@ def build_identification_prompt(study_r:        str,
     CANDIDATES:
     {cand_text}
 
-    INTRODUCTION (from PDF):
+    INTRODUCTION (from full text):
     {intro_snip or html_snip or "(not available)"}
     {f"METHODS:{chr(10)}{methods_snip}" if methods_snip else ""}
-    REFERENCE LIST (up to 50 entries):
+    REFERENCE LIST:
     {ref_text}
     {pdf_url_block}
     TASK: {cand_instruction}
@@ -231,8 +234,6 @@ def build_identification_prompt(study_r:        str,
     KEY RULES:
     - Find the study named with phrases like "we replicated", "direct replication of",
       "we aimed to replicate" — NOT background citations.
-    - Umbrella project papers (#EEGManyLabs, ManyLabs, PSA, StudySwap) are NEVER the
-      original — find the specific experiment they ran.
     - When selecting a candidate number, leave selected_doi EMPTY — the candidate's
       verified DOI will be used.
     - NEVER invent or guess a DOI. DOIs will be resolved from title and author automatically.
@@ -307,8 +308,8 @@ def build_multi_original_prompt(study_r:     str,
     if force_multi:
         force_multi_directive = textwrap.dedent("""
     ⚠ CONFIRMED MULTI-TARGET: Automated rules have definitively identified this paper
-    as a large-scale multi-target replication (e.g., Many Labs, Registered Replication
-    Report). You MUST set is_false_positive to false. Every study listed in the reference
+    as a large-scale multi-target replication (e.g., Many Labs). You MUST set
+    is_false_positive to false. Every study listed in the reference
     list that the paper explicitly replicates is an original — list ALL of them. If the
     abstract says "replications of N studies", aim to find N originals.
     """).strip()
@@ -467,19 +468,10 @@ def build_target_prompt(study_r: str, abstract_r: str, refs: list[dict]) -> str:
 
 # ── L8–L11 — outcome coding ──────────────────────────────────────────────────
 
-OUTCOME_RULES = (
-    "Outcome classification rules:\n"
-    "- success: authors explicitly state the original finding was confirmed, replicated, or supported\n"
-    "- failure: authors explicitly state the original finding was NOT found, contradicted, or failed to replicate\n"
-    "- mixed: authors state that SOME but not all aspects of the original finding were confirmed\n"
-    "- descriptive: authors adapted or extended methods in a different context/population WITHOUT directly testing the original claim\n"
-    "- cannot_be_determined: the text lacks sufficient detail to classify the outcome (not when authors say it's unclear, but when WE cannot tell)\n\n"
-    "Few-shot examples:\n"
-    "1. DESCRIPTIVE (methods reused, original claim not tested): 'This conceptual replication extends the theory but does not directly test the original hypothesis.'\n"
-    "2. CANNOT_BE_DETERMINED (insufficient detail): 'We conducted a replication study in a different population.' (no mention of success or failure)\n"
-    "3. MIXED (partial success): 'We replicated the main effect but not the interaction.'\n"
-    "4. SUCCESS (confirmation): 'Our findings confirm Smith et al. (2015)'\n\n"
-    "CRITICAL: Only output 'cannot_be_determined' when the text genuinely lacks detail.\n\n"
+# Defines is_genuine_attempt, which every outcome prompt's JSON block asks for. It is
+# deliberately vocabulary-neutral: the same judgment gates replication and reproduction
+# coding, so both rule blocks below end with it.
+GENUINE_ATTEMPT_RULE = (
     "Before classifying the outcome, first judge: does this text describe a genuine "
     "attempt to replicate OR reproduce the specific original study named above (or "
     "discussed in the abstract)? Both replications (new data/sample testing whether "
@@ -491,6 +483,22 @@ OUTCOME_RULES = (
     "(DNA replication, code reproduction), or metaphorically/colloquially (e.g. "
     "'a replication of prior interests and positions'), or the text is simply "
     "unrelated to the named original study.\n\n"
+)
+
+OUTCOME_RULES = (
+    "Outcome classification rules:\n"
+    "- success: authors explicitly state the original finding was confirmed, replicated, or supported\n"
+    "- failure: authors explicitly state the original finding was NOT found, contradicted, or failed to replicate\n"
+    "- mixed: authors state that SOME but not all aspects of the original finding were confirmed\n"
+    "- descriptive: authors adopted methods in a different context/population WITHOUT directly testing the original claim, describing their intent explicitly as a replication (otherwise, this would be excluded)\n"
+    "- cannot_be_determined: the text lacks sufficient detail to classify the outcome (not when authors say it's unclear, but when WE cannot tell)\n\n"
+    "Few-shot examples:\n"
+    "1. DESCRIPTIVE (methods reused, original claim not tested): 'Study x used method A to study reasons for 991 calls in city 1. Here, we replicate this method to understand 991 calls in city 2.'\n"
+    "2. CANNOT_BE_DETERMINED (insufficient detail): 'We conducted a replication study in a different population.' (no mention of success or failure)\n"
+    "3. MIXED (partial success): 'We replicated the main effect but not the interaction.'\n"
+    "4. SUCCESS (confirmation): 'Our findings confirm Smith et al. (2015)'\n\n"
+    "CRITICAL: Only output 'cannot_be_determined' when the text genuinely lacks detail.\n\n"
+    + GENUINE_ATTEMPT_RULE
 )
 
 # Shared by every outcome prompt. The quote is the reviewer's evidence, so it must be a
@@ -531,6 +539,7 @@ REPRO_OUTCOME_RULES = (
     "The axes are INDEPENDENT: a reproduction can fail computationally yet still find the "
     "conclusion robust, and vice versa. Use cannot_be_determined ONLY when the text does "
     "not let you place BOTH axes.\n\n"
+    + GENUINE_ATTEMPT_RULE
 )
 
 REPRO_JSON = (
@@ -635,8 +644,8 @@ PDF_REFERENCES_PROMPT = textwrap.dedent("""
 
 
 PDF_IMAGE_REFERENCES_PROMPT = textwrap.dedent("""
-    The attached images show page(s) from an academic paper — likely the
-    References / Bibliography section.
+    The attached images show the final page(s) from an academic paper — likely
+    including the References / Bibliography section.
 
     Extract EVERY reference entry you can clearly read.
 
@@ -646,7 +655,7 @@ PDF_IMAGE_REFERENCES_PROMPT = textwrap.dedent("""
     - "title": full title of the referenced work (empty string if unreadable)
 
     Include only entries where you can read at least a year OR a title.
-    Return ONLY this JSON — no prose outside the braces:
+    Return ONLY this JSON:
     {
       "references": [
         {"authors": ["Surname, I."], "year": 2020, "title": "Paper title"},
