@@ -163,13 +163,10 @@ def build_identification_prompt(study_r:        str,
                                  pattern:        str,
                                  candidates:     list[dict],
                                  sections:       dict,
-                                 pdf_url:        str = "",
                                  html_text:      str = "",
                                  validator_note: str = "") -> str:
     """Build the LLM identification prompt.
 
-    pdf_url   — passed when PDF download failed but a URL was found; LLM may
-                be able to retrieve it (Gemini supports URL grounding).
     html_text — extracted landing-page text used as a full-text substitute.
     """
     # Candidate block (unchanged)
@@ -222,18 +219,6 @@ def build_identification_prompt(study_r:        str,
     if html_text and not intro_snip:
         html_snip = (html_text[:1000] + "…") if len(html_text) > 1000 else html_text
 
-    # PDF URL block — only included when download failed but URL is known
-    if pdf_url:
-        pdf_url_block = (
-            "\n    ---\n\n"
-            "    ## Paper URL\n"
-            "    The full text could not be downloaded, but the paper may be available at:\n"
-            f"    {pdf_url}\n"
-            "    If you can access this URL, use it to help identify the original study.\n"
-        )
-    else:
-        pdf_url_block = ""
-
     validator_block = ""
     if validator_note and validator_note.strip():
         text = validator_note.strip()
@@ -261,7 +246,6 @@ def build_identification_prompt(study_r:        str,
     {f"METHODS:{chr(10)}{methods_snip}" if methods_snip else ""}
     REFERENCE LIST:
     {ref_text}
-    {pdf_url_block}
     TASK: {cand_instruction}
 
     KEY RULES:
@@ -303,7 +287,6 @@ def build_multi_original_prompt(study_r:     str,
                                   abstract_r:  str,
                                   candidates:  list[dict],
                                   sections:    dict,
-                                  pdf_url:     str = "",
                                   html_text:   str = "",
                                   force_multi: bool = False) -> str:
     """
@@ -338,14 +321,6 @@ def build_multi_original_prompt(study_r:     str,
     html_snip     = ""
     if html_text and not intro_snip:
         html_snip = (html_text[:2000] + "…") if len(html_text) > 2000 else html_text
-
-    pdf_url_block = ""
-    if pdf_url:
-        pdf_url_block = (
-            f"\n    ## Paper URL\n"
-            f"    Full text may be available at: {pdf_url}\n"
-            f"    Use it if you can access it to identify all replicated originals.\n"
-        )
 
     force_multi_directive = ""
     if force_multi:
@@ -393,7 +368,6 @@ def build_multi_original_prompt(study_r:     str,
 
     **Reference list (up to 100 entries):**
     {ref_text}
-    {pdf_url_block}
     ---
 
     ## Task

@@ -824,7 +824,6 @@ def run_for_doi(doi_r:              str,
     token_counter.set_stage("extract_fulltext")
     llm = identify_original_with_llm(
         doi_r, study_r, abstract_r, pattern_r, candidates, sections,
-        pdf_url        = pdf.get("pdf_url", "")   if not pdf.get("pdf_ok") else "",
         html_text      = pdf.get("html_text", ""),
         validator_note = effective_note,
     )

@@ -442,14 +442,12 @@ def identify_original_with_llm(doi_r:          str,
                                  pattern:        str,
                                  candidates:     list[dict],
                                  sections:       dict,
-                                 pdf_url:        str = "",
                                  html_text:      str = "",
                                  validator_note: str = "",
                                  abstract_only:  bool = False) -> dict:
     """
     Identify the original study via LLM.
 
-    pdf_url   — URL to include in prompt when PDF download failed.
     html_text — extracted landing-page text as full-text substitute.
 
     Order: OpenRouter/Qwen (primary when OPENROUTER_API_KEY set) → Gemini → OpenAI.
@@ -466,7 +464,6 @@ def identify_original_with_llm(doi_r:          str,
 
     prompt     = build_identification_prompt(study_r, abstract_r, pattern,
                                              candidates, sections,
-                                             pdf_url=pdf_url,
                                              html_text=html_text,
                                              validator_note=validator_note)
     result     = None
@@ -715,7 +712,6 @@ def identify_all_originals_with_llm(doi_r:        str,
                                       abstract_r:   str,
                                       candidates:   list[dict],
                                       sections:     dict,
-                                      pdf_url:      str = "",
                                       html_text:    str = "",
                                       force_multi:  bool = False) -> dict:
     """
@@ -750,7 +746,7 @@ def identify_all_originals_with_llm(doi_r:        str,
     }
 
     prompt = build_multi_original_prompt(study_r, abstract_r, candidates,
-                                          sections, pdf_url=pdf_url,
+                                          sections,
                                           html_text=html_text,
                                           force_multi=force_multi)
     result     = None
