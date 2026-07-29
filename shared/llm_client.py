@@ -12,7 +12,6 @@ import base64
 import json
 import os
 import re
-import textwrap
 import time
 from pathlib import Path
 from typing import Optional
@@ -28,6 +27,11 @@ from .config import (
     log,
 )
 from . import token_counter
+from .prompts import (
+    JSON_SYSTEM_MESSAGE,
+    build_classify_prompt, build_identification_prompt,
+    build_multi_original_prompt, build_target_prompt,
+)
 from .schema import OUTCOME_CATEGORIES
 from .utils import cache_key, clean_doi
 
@@ -287,10 +291,7 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict],
             response = client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system",
-                     "content": ("You are a research methodology expert that identifies "
-                                  "original studies from replication papers. "
-                                  "Always respond with valid JSON only.")},
+                    {"role": "system", "content": JSON_SYSTEM_MESSAGE},
                     {"role": "user", "content": prompt},
                 ],
                 response_format={"type": "json_object"},
@@ -336,10 +337,7 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
         response = client.chat.completions.create(
             model=use_model,
             messages=[
-                {"role": "system",
-                 "content": ("You are a research methodology expert that identifies "
-                              "original studies from replication papers. "
-                              "Always respond with valid JSON only.")},
+                {"role": "system", "content": JSON_SYSTEM_MESSAGE},
                 {"role": "user", "content": prompt},
             ],
             response_format={"type": "json_object"},
@@ -400,137 +398,6 @@ def call_llm(prompt: str, gemini_model: str = "",
         return None, "", f"Gemini: {gemini_err} | OpenAI: {openai_err} | OpenRouter: {or_err}"
 
     return None, "", f"Gemini: {gemini_err} | OpenAI: {openai_err}"
-
-
-# ── Prompt builder ────────────────────────────────────────────────────────────
-
-def build_identification_prompt(study_r:        str,
-                                 abstract_r:     str,
-                                 pattern:        str,
-                                 candidates:     list[dict],
-                                 sections:       dict,
-                                 pdf_url:        str = "",
-                                 html_text:      str = "",
-                                 validator_note: str = "") -> str:
-    """Build the LLM identification prompt.
-
-    pdf_url   — passed when PDF download failed but a URL was found; LLM may
-                be able to retrieve it (Gemini supports URL grounding).
-    html_text — extracted landing-page text used as a full-text substitute.
-    """
-    # Candidate block (unchanged)
-    if candidates:
-        def _authors_str(c: dict) -> str:
-            authors = c.get("all_authors") or ([c["first_author"]] if c.get("first_author") else [])
-            return ", ".join(authors) if authors else "unknown"
-
-        cand_lines = [
-            f"{i}. \"{c['title']}\" ({c['year']}, authors: {_authors_str(c)})\n"
-            f"   DOI: {c['doi'] or 'unknown'}  |  OpenAlex: {c['openalex_id']}"
-            for i, c in enumerate(candidates, 1)
-        ]
-        cand_text = "\n".join(cand_lines)
-        cand_instruction = (
-            f"Select the candidate number (1–{len(candidates)}) that is the "
-            f"ORIGINAL STUDY being replicated.\n"
-            f"If none is correct, set selected_candidate_number to null and fill "
-            f"selected_doi/selected_title from the reference list below."
-        )
-    else:
-        cand_text        = "(No candidates pre-identified — use reference list below.)"
-        cand_instruction = (
-            "No candidates were pre-identified. Use the reference list and full-text "
-            "excerpts to find the original study. Set selected_candidate_number to null."
-        )
-
-    # Reference list — 30 entries is enough to find the original; keeps tokens low
-    ref_lines = []
-    for ref in sections.get("references", [])[:30]:
-        authors = "; ".join(ref["authors"][:2])
-        if len(ref["authors"]) > 2:
-            authors += " et al."
-        ref_lines.append(f"- {authors} ({ref['year'] or '?'}). {ref['title']}")
-    ref_text = "\n".join(ref_lines) if ref_lines else "(no references extracted)"
-
-    # Truncated snippets — prefer GROBID intro over abstract (less overlap with OpenAlex)
-    abstract_snip = (abstract_r[:700] + "…") if len(abstract_r) > 700 else abstract_r
-    intro_snip    = (sections.get("intro",   "") or "")[:600]
-
-    # Include methods only when intro is short (avoid redundancy)
-    methods_snip = ""
-    if len(intro_snip) < 300:
-        methods_snip = (sections.get("methods", "") or "")[:400]
-
-    # HTML text fallback: use first 1000 chars as a substitute intro/body
-    html_snip = ""
-    if html_text and not intro_snip:
-        html_snip = (html_text[:1000] + "…") if len(html_text) > 1000 else html_text
-
-    # PDF URL block — only included when download failed but URL is known
-    if pdf_url:
-        pdf_url_block = (
-            "\n    ---\n\n"
-            "    ## Paper URL\n"
-            "    The full text could not be downloaded, but the paper may be available at:\n"
-            f"    {pdf_url}\n"
-            "    If you can access this URL, use it to help identify the original study.\n"
-        )
-    else:
-        pdf_url_block = ""
-
-    validator_block = ""
-    if validator_note and validator_note.strip():
-        text = validator_note.strip()
-        if text.startswith("⚠ FLoRA ANCHOR"):
-            validator_block = text + "\n\n---\n\n"
-        else:
-            validator_block = (
-                "⚠️ VALIDATOR FEEDBACK — A human reviewer marked the previous answer as INCORRECT:\n"
-                + text
-                + "\nUse this feedback to correct your selection. The previous candidate was wrong.\n\n---\n\n"
-            )
-
-    prompt = textwrap.dedent(f"""
-    {validator_block}Identify the ORIGINAL STUDY that the replication paper below directly replicates.
-
-    TITLE: {study_r}
-    ABSTRACT: {abstract_snip or "(not available)"}
-    CITED PATTERN: {pattern or "(not available)"}
-
-    CANDIDATES:
-    {cand_text}
-
-    INTRODUCTION (from PDF):
-    {intro_snip or html_snip or "(not available)"}
-    {f"METHODS:{chr(10)}{methods_snip}" if methods_snip else ""}
-    REFERENCE LIST (up to 50 entries):
-    {ref_text}
-    {pdf_url_block}
-    TASK: {cand_instruction}
-
-    KEY RULES:
-    - Find the study named with phrases like "we replicated", "direct replication of",
-      "we aimed to replicate" — NOT background citations.
-    - Umbrella project papers (#EEGManyLabs, ManyLabs, PSA, StudySwap) are NEVER the
-      original — find the specific experiment they ran.
-    - When selecting a candidate number, leave selected_doi EMPTY — the candidate's
-      verified DOI will be used.
-    - NEVER invent or guess a DOI. DOIs will be resolved from title and author automatically.
-      An invented DOI is worse than no DOI — it silently corrupts the database.
-
-    Respond with ONLY this JSON:
-    {{
-      "selected_candidate_number": <integer or null>,
-      "selected_title": "<exact published title — copy from reference list if available>",
-      "selected_year": <year or null>,
-      "selected_first_author": "<surname>",
-      "confidence": "<high|medium|low>",
-      "evidence": "<1-2 sentence quote from the paper>",
-      "reasoning": "<why other candidates were ruled out>"
-    }}
-    """).strip()
-
-    return prompt
 
 
 # ── Main dispatcher ───────────────────────────────────────────────────────────
@@ -809,142 +676,7 @@ def call_gemini_with_pdf(prompt: str,
     return None
 
 
-# ── Multi-original prompt & dispatcher ────────────────────────────────────────
-
-def build_multi_original_prompt(study_r:     str,
-                                  abstract_r:  str,
-                                  candidates:  list[dict],
-                                  sections:    dict,
-                                  pdf_url:     str = "",
-                                  html_text:   str = "",
-                                  force_multi: bool = False) -> str:
-    """
-    Build the LLM prompt for identifying ALL original studies in a multi-target
-    replication paper.
-    """
-    if candidates:
-        def _authors_str_m(c: dict) -> str:
-            authors = c.get("all_authors") or ([c["first_author"]] if c.get("first_author") else [])
-            return ", ".join(authors) if authors else "unknown"
-
-        cand_lines = [
-            f"{i}. \"{c['title']}\" ({c['year']}, authors: {_authors_str_m(c)})\n"
-            f"   DOI: {c['doi'] or 'unknown'}  |  OpenAlex: {c['openalex_id']}"
-            for i, c in enumerate(candidates, 1)
-        ]
-        cand_text = "\n".join(cand_lines)
-    else:
-        cand_text = "(No candidates pre-identified — use reference list and full text below.)"
-
-    ref_lines = []
-    for ref in sections.get("references", [])[:100]:
-        authors = "; ".join(ref["authors"][:3])
-        if len(ref["authors"]) > 3:
-            authors += " et al."
-        ref_lines.append(f"- {authors} ({ref['year'] or '?'}). {ref['title']}")
-    ref_text = "\n".join(ref_lines) if ref_lines else "(no references extracted)"
-
-    abstract_snip = (abstract_r[:2000] + "…") if len(abstract_r) > 2000 else abstract_r
-    intro_snip    = (sections.get("intro",   "") or "")[:1200]
-    methods_snip  = (sections.get("methods", "") or "")[:800]
-    html_snip     = ""
-    if html_text and not intro_snip:
-        html_snip = (html_text[:2000] + "…") if len(html_text) > 2000 else html_text
-
-    pdf_url_block = ""
-    if pdf_url:
-        pdf_url_block = (
-            f"\n    ## Paper URL\n"
-            f"    Full text may be available at: {pdf_url}\n"
-            f"    Use it if you can access it to identify all replicated originals.\n"
-        )
-
-    force_multi_directive = ""
-    if force_multi:
-        force_multi_directive = textwrap.dedent("""
-    ⚠ CONFIRMED MULTI-TARGET: Automated rules have definitively identified this paper
-    as a large-scale multi-target replication (e.g., Many Labs, Registered Replication
-    Report). You MUST set is_false_positive to false. Every study listed in the reference
-    list that the paper explicitly replicates is an original — list ALL of them. If the
-    abstract says "replications of N studies", aim to find N originals.
-    """).strip()
-
-    prompt = textwrap.dedent(f"""
-    You are an expert in research methodology identifying ALL original studies
-    that are replicated or reproduced in a scientific paper.
-
-    This paper has been classified as potentially targeting MULTIPLE original studies.
-    Your task: determine if this classification is correct (true multi-target) or a
-    false positive (only 1 original), and list ALL originals found.
-    {force_multi_directive}
-
-    ## Replication paper
-    **Title:** {study_r}
-
-    **Abstract:**
-    {abstract_snip or "(not available)"}
-
-    ---
-
-    ## Pre-identified candidate original studies (from OpenAlex)
-    {cand_text}
-
-    ---
-
-    ## Full-text excerpts
-
-    **Abstract (from PDF):**
-    {(sections.get("abstract","") or "")[:700] or "(not available)"}
-
-    **Introduction:**
-    {intro_snip or html_snip or "(not available)"}
-
-    **Methods:**
-    {methods_snip or "(not available)"}
-
-    **Reference list (up to 100 entries):**
-    {ref_text}
-    {pdf_url_block}
-    ---
-
-    ## Task
-
-    Identify ALL distinct original studies that this paper directly replicates or reproduces,
-    and for each one determine the replication outcome.
-
-    Rules:
-    - A study is being replicated if the paper explicitly runs the same procedure again
-    - Do NOT include studies that are merely cited for context or background
-    - If you find only 1 original, set is_false_positive to true
-    - For each candidate number used, reference it in candidate_number (or null if not in list)
-    - For outcome: look for the result for THAT SPECIFIC study (e.g. in a results table or
-      per-study section), NOT the overall aggregate across all studies
-    - outcome values: success (effect confirmed), failure (effect not found), mixed
-      (partial), descriptive (methods reused in a new context without testing the
-      original claim), cannot_be_determined (the text does not state an outcome)
-
-    Respond with **only** this JSON (no prose outside the braces):
-    {{
-      "is_false_positive": <true if only 1 original found>,
-      "reasoning": "<brief explanation of why this is/is not multi-target>",
-      "originals": [
-        {{
-          "rank": 1,
-          "candidate_number": <integer from candidate list or null>,
-          "title": "<full title of the original study>",
-          "first_author_surname": "<surname of first author>",
-          "year": <4-digit year or null>,
-          "evidence": "<1-2 sentence quote from the paper showing this study is replicated>",
-          "confidence": "<high|medium|low>",
-          "outcome": "<success|failure|mixed|descriptive|cannot_be_determined>",
-          "outcome_evidence": "<1-2 sentence quote showing the outcome for THIS specific study, or empty if not found>"
-        }}
-      ]
-    }}
-    """).strip()
-
-    return prompt
-
+# ── Multi-original dispatcher ─────────────────────────────────────────────────
 
 def identify_all_originals_with_llm(doi_r:        str,
                                       study_r:      str,
@@ -1111,77 +843,6 @@ def identify_all_originals_with_llm(doi_r:        str,
 # full text, which is what we would have done anyway.
 
 REF_SCREEN_PROMPT_VERSION = "2026-07-28-split-calls-v4"
-
-_CLASSIFY_PROMPT = """You are classifying papers for a replication database.
-
-A paper is a REPLICATION if it collects new data to re-test a finding reported in a
-previously published study, and a REPRODUCTION if it re-analyses that study's data to
-check the reported result. Re-testing in a different population, country or sample
-still counts.
-
-Using the words "replicate" or "reproduce" does not make a paper either one. It must
-re-test a published finding. Evaluating, adapting or comparing a measurement
-instrument, method or procedure does not count, and neither do the ordinary-language
-and biological senses of the words.
-
-Answer:
-  yes     — the abstract shows it re-tests a published finding or re-analyses an
-            earlier study's data
-  no      — the abstract shows it does not
-  unclear — the abstract does not settle it either way
-
-A high-confidence "no" discards the paper, so use high confidence only when the
-abstract clearly describes a purpose that does not qualify. Not naming an original
-study is not by itself grounds for a high-confidence "no".
-
-TITLE: {title}
-
-ABSTRACT: {abstract}
-
-Respond with ONLY a JSON object:
-{{"is_replication": "<yes|no|unclear>", "classification_confidence": "<high|medium|low>", "evidence_quote": "<exact short quote from the abstract, or empty>", "reasoning": "<one sentence>"}}"""
-
-
-_TARGET_PROMPT = """This paper has been classified as a replication or reproduction.
-Identify the previously published study whose finding it re-tests.
-
-Pick a numbered reference only when the abstract explicitly connects that study to the
-re-test. Do not pick one merely because it is topically similar. Use high confidence
-only when the abstract's identifying information matches exactly one reference;
-otherwise return null.
-
-If the abstract identifies the target but no reference matches it safely, copy the
-identifying wording into target_description — the study can still be looked up.
-
-TITLE: {title}
-
-ABSTRACT: {abstract}
-
-REFERENCES:
-{references}
-
-Respond with ONLY a JSON object:
-{{"target_number": <number or null>, "target_confidence": "<high|medium|low>", "target_description": "<authors, year, title or finding as the abstract states it, or empty>", "evidence_quote": "<exact short quote linking the paper to the target, or empty>", "reasoning": "<one sentence>"}}"""
-
-
-def build_classify_prompt(study_r: str, abstract_r: str) -> str:
-    return _CLASSIFY_PROMPT.format(
-        title=study_r or "(not available)",
-        abstract=(abstract_r or "(not available)")[:4000],
-    )
-
-
-def build_target_prompt(study_r: str, abstract_r: str, refs: list[dict]) -> str:
-    lines = []
-    for i, r in enumerate(refs, 1):
-        authors = r.get("first_author") or ""
-        year    = r.get("publication_year") or r.get("year") or ""
-        lines.append(f"{i}. {authors} ({year}). {r.get('title', '')}".strip())
-    return _TARGET_PROMPT.format(
-        title=study_r or "(not available)",
-        abstract=(abstract_r or "(not available)")[:4000],
-        references="\n".join(lines) or "(none available)",
-    )
 
 
 def _classify_once(prompt: str, provider: str) -> "dict | None":

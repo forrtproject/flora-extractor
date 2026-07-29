@@ -1197,8 +1197,10 @@ class TestReproductionOutcome:
         assert res["outcome"] == "failure"
 
     def test_prompts_ask_for_long_untrimmed_quotes(self):
-        from extract.code_outcome import _abstract_prompt, _repro_abstract_prompt
-        for p in (_abstract_prompt("t", "a", ""), _repro_abstract_prompt("t", "a", "")):
+        from shared.prompts import (build_outcome_abstract_prompt,
+                                    build_repro_abstract_prompt)
+        for p in (build_outcome_abstract_prompt("t", "a", ""),
+                  build_repro_abstract_prompt("t", "a", "")):
             assert "COMPLETE sentences" in p
             assert "1200" in p
             assert "Never truncate" in p

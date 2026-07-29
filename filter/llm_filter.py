@@ -21,56 +21,11 @@ from shared.config import (
 )
 from shared import token_counter
 from shared.llm_client import call_gemini, call_openai
+from shared.prompts import build_filter_prompt
 from shared.utils import cache_key
 
 VALID_STATUSES   = {"replication", "reproduction", "false_positive", "needs_review"}
 VALID_CONFIDENCE = {"high", "medium", "low"}
-
-
-def _build_prompt(title: str, abstract: str) -> str:
-    return (
-        "You are an expert in scientific replication and reproducibility.\n\n"
-        "Classify the paper into EXACTLY ONE label:\n\n"
-        "replication\n"
-        "- Uses NEW data/samples/populations to test whether a prior study's findings hold.\n"
-        "- Must intentionally replicate a specific prior study or experiment.\n"
-        "- Can be direct/close or conceptual.\n"
-        "- Replication must be an explicit study aim, not merely a discussion point or side result.\n"
-        "- Includes secondary-data replications using different data.\n"
-        "- Key criterion: different data from the original study.\n\n"
-        "reproduction\n"
-        "- Reanalyzes the SAME original data/results from a prior study.\n"
-        "- Focuses on computational reproducibility or robustness of reported findings.\n"
-        "- Key criterion: same original dataset/data source.\n\n"
-        "false_positive\n"
-        "- NOT actually a replication or reproduction despite similar language.\n"
-        "- Includes:\n"
-        "  - meta-analyses or systematic reviews\n"
-        "  - papers about the replication crisis/research methodology\n"
-        "  - data/code release papers\n"
-        "  - biological replication (cells, DNA, organisms, viruses)\n"
-        "  - robustness/sensitivity checks within the original paper\n"
-        "  - papers mentioning 'replication' casually without conducting one\n\n"
-        "Decision rules:\n"
-        "1. If authors explicitly describe the study as a replication, classify as replication "
-        "unless clearly false_positive.\n"
-        "2. If authors explicitly describe using the original data for reproducibility, classify "
-        "as reproduction unless clearly false_positive.\n"
-        "3. New data → replication.\n"
-        "4. Same original data → reproduction.\n"
-        "5. false_positive overrides whenever the paper only superficially resembles "
-        "replication/reproduction.\n\n"
-        "PAPER TO CLASSIFY\n\n"
-        f"Title:\n{title!r}\n\n"
-        f"Abstract:\n{abstract!r}\n\n"
-        "Return ONLY valid JSON:\n\n"
-        "{\n"
-        '  "filter_status": "replication" | "reproduction" | "false_positive",\n'
-        '  "filter_confidence": "high" | "medium" | "low",\n'
-        '  "filter_evidence": "<short verbatim supporting phrase ≤120 chars>",\n'
-        '  "filter_sort": "<one-sentence explanation>"\n'
-        "}"
-    )
 
 
 def classify_with_llm(title: str, abstract: str) -> Optional[dict]:
@@ -84,7 +39,7 @@ def classify_with_llm(title: str, abstract: str) -> Optional[dict]:
     if cached is not None:
         return cached
 
-    prompt = _build_prompt(title, abstract)
+    prompt = build_filter_prompt(title, abstract)
     result = None
     err    = "no API keys configured"
     token_counter.set_stage("filter")
