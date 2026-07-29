@@ -31,6 +31,7 @@ from shared import token_counter
 from shared.llm_client import identify_original_with_llm, screen_references_with_llm
 from shared.pdf_parsing import parse_all as _parse_all, best_parse_result as _best_parse_shared
 from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_openalex_by_doi, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
+from shared.prompts import build_flora_anchor_note, build_title_pattern_hint
 from shared.pdf_sources import acquire_pdf
 from shared.utils import cache_key, clean_doi
 
@@ -608,13 +609,8 @@ def run_for_doi(doi_r:              str,
             if anchor_cand:
                 candidates = [anchor_cand] + candidates
                 log.info("[%s] FLoRA anchor injected: %s", doi_r, flora_doi_o)
-        anchor_note = (
-            f"⚠ FLoRA ANCHOR: The FLoRA database has manually verified the original "
-            f"study for this replication as DOI: {flora_doi_o} "
-            f"(\"{flora.get('flora_study_o', '')}\"). "
-            f"Evaluate this against the evidence — confirm it if supported, "
-            f"override only if you find strong contradicting evidence."
-        )
+        anchor_note = build_flora_anchor_note(
+            flora_doi_o, flora.get("flora_study_o", ""))
 
     # Combine anchor note with any user-supplied validation comment
     effective_note = "\n\n".join(filter(None, [anchor_note, validation_comment]))
@@ -626,12 +622,8 @@ def run_for_doi(doi_r:              str,
         return _build_output(doi_r, flora, cands_row, candidates,
                              title_pat, {}, {}, {})
     if title_pat and title_pat.get("title_pattern_hint"):
-        hint_note = (
-            f"TITLE PATTERN HINT: The replication paper's title contains a pattern "
-            f"suggesting the original is \"{title_pat['title_pattern_target']}\". "
-            f"Top candidate matches by title: "
-            + ", ".join(f"\"{t}\"" for t in title_pat["title_pattern_hint"])
-        )
+        hint_note = build_title_pattern_hint(
+            title_pat["title_pattern_target"], title_pat["title_pattern_hint"])
         effective_note = "\n\n".join(filter(None, [effective_note, hint_note]))
 
     # ── Stage 3: Rule-based resolver (citation-context + same-author/year) ──────

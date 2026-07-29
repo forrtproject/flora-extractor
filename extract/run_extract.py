@@ -29,6 +29,7 @@ from shared.openalex_client import fetch_openalex_by_doi as _oa_by_doi
 from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
 from shared.openalex_client import _search_crossref_by_title, _search_openalex_by_title
 from shared.pdf_parsing import parse_all as _parse_all
+from shared.prompts import build_match_type_prompt
 from shared.doi_verify import verify_and_correct
 from shared.schema import EXTRACTED_COLS, OUTCOME_CATEGORIES, make_pair_id
 from shared.utils import bare_work_id, cache_key, clean_doi, csv_lock
@@ -430,42 +431,7 @@ def _llm_classify_match_type(doi_r: str,
                               distinct_pairs: set,
                               candidates: list) -> dict:
     """LLM call to classify original_match_type. Returns a dict with both fields."""
-    abstract_snip = (abstract_r[:800] + "…") if len(abstract_r) > 800 else abstract_r
-    pattern_lines = "\n".join(
-        f"- {s} ({y})" for s, y in sorted(distinct_pairs)
-    ) or "(none found)"
-    cand_lines = "\n".join(
-        f"{i+1}. \"{c.get('title','?')}\" ({c.get('year','?')}) — {c.get('first_author','?')}"
-        for i, c in enumerate(candidates[:15])
-    ) or "(none found)"
-
-    prompt = (
-        "Classify how many original studies this replication paper targets.\n\n"
-        f"TITLE: {title_r}\n"
-        f"ABSTRACT: {abstract_snip or '(not available)'}\n\n"
-        f"CITED AUTHOR-YEAR PATTERNS IN ABSTRACT ({len(distinct_pairs)} distinct):\n"
-        f"{pattern_lines}\n\n"
-        f"CANDIDATE ORIGINALS FROM OPENALEX ({len(candidates)} found):\n"
-        f"{cand_lines}\n\n"
-        "Classify as ONE of:\n"
-        "- single_original: paper targets one specific original study\n"
-        "- multiple_match: 2–5 candidates share the SAME author/year; paper targets ONE"
-        " original but disambiguation is needed (e.g. two papers by Smith 2005)\n"
-        "- multiple_original: paper explicitly replicates SEVERAL INDEPENDENT original"
-        " studies as its stated goal (will produce N output rows, one per original)\n\n"
-        "Key rules:\n"
-        "1. Merely citing many background studies is NOT multiple_original.\n"
-        "2. A large candidate list from OpenAlex does NOT mean multiple_original —"
-        " it may just reflect many citations.\n"
-        "3. STRONG signals for multiple_original: explicit count in abstract"
-        " (e.g. 'replications of 28 studies'), project names like Many Labs or"
-        " Registered Replication Report, a table of target studies each with its own protocol.\n"
-        "4. multiple_match applies when ONE study is targeted but there are 2–5 candidates"
-        " with the identical author/year — not when there are many different author/year pairs.\n\n"
-        'Respond with ONLY this JSON:\n'
-        '{"original_match_type": "<single_original|multiple_match|multiple_original>", '
-        '"original_match_confidence": "<high|medium|low>", "reasoning": "<brief>"}'
-    )
+    prompt = build_match_type_prompt(title_r, abstract_r, distinct_pairs, candidates)
 
     token_counter.set_stage("extract_classify")
     result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_HEAVY_MODEL)

@@ -19,7 +19,6 @@ Public API:
 """
 import base64
 import re
-import textwrap
 import time
 from pathlib import Path
 from typing import Optional
@@ -27,6 +26,7 @@ from typing import Optional
 import requests
 
 from .config import GROBID_CACHE_DIR, GROBID_RATE_SEC, GROBID_SERVER, log
+from .prompts import PDF_IMAGE_REFERENCES_PROMPT, PDF_REFERENCES_PROMPT
 
 # ── pdfminer import (installed lazily) ───────────────────────────────────────
 
@@ -284,27 +284,8 @@ def _extract_refs_via_pdf_direct(doi_r: str, pdf_path: Path) -> list[dict]:
         log.warning("[%s] Could not read PDF: %s", doi_r, e)
         return []
 
-    prompt = textwrap.dedent("""
-        The attached PDF is an academic paper. Extract every entry from its
-        References / Bibliography section.
-
-        For each reference return:
-        - "authors": list of author strings, e.g. ["Smith, J.", "Jones, A."]
-        - "year": publication year as an integer, or null if not found
-        - "title": full title of the referenced work (empty string if unreadable)
-
-        Include only entries where you can determine at least a year OR a title.
-        Return ONLY this JSON — no prose outside the braces:
-        {
-          "references": [
-            {"authors": ["Surname, I."], "year": 2020, "title": "Paper title"},
-            ...
-          ]
-        }
-    """).strip()
-
     from .llm_client import call_gemini_with_pdf
-    result = call_gemini_with_pdf(prompt, pdf_bytes)
+    result = call_gemini_with_pdf(PDF_REFERENCES_PROMPT, pdf_bytes)
 
     if not result or not isinstance(result.get("references"), list):
         log.info("[%s] Direct-PDF Gemini returned no references", doi_r)
@@ -388,30 +369,9 @@ def _extract_refs_via_pdf_images(doi_r: str, pdf_path: Path) -> list[dict]:
     if not images:
         return []
 
-    prompt = textwrap.dedent("""
-        The attached images show page(s) from an academic paper — likely the
-        References / Bibliography section.
-
-        Extract EVERY reference entry you can clearly read.
-
-        For each reference return:
-        - "authors": list of author strings, e.g. ["Smith, J.", "Jones, A."]
-        - "year": publication year as an integer, or null if not visible
-        - "title": full title of the referenced work (empty string if unreadable)
-
-        Include only entries where you can read at least a year OR a title.
-        Return ONLY this JSON — no prose outside the braces:
-        {
-          "references": [
-            {"authors": ["Surname, I."], "year": 2020, "title": "Paper title"},
-            ...
-          ]
-        }
-    """).strip()
-
     # Lazy import to avoid circular dependency at module load time
     from .llm_client import call_gemini_with_images
-    result = call_gemini_with_images(prompt, images)
+    result = call_gemini_with_images(PDF_IMAGE_REFERENCES_PROMPT, images)
 
     if not result or not isinstance(result.get("references"), list):
         log.info("[%s] Image-based ref extraction returned nothing", doi_r)

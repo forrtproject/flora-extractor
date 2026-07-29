@@ -24,6 +24,10 @@ from shared.config import (
 from shared import token_counter
 from shared.cache import read_dual_cache, write_dual_cache
 from shared.llm_client import call_llm
+from shared.prompts import (
+    build_outcome_abstract_prompt, build_outcome_fulltext_prompt,
+    build_repro_abstract_prompt, build_repro_fulltext_prompt,
+)
 from shared.schema import OUTCOME_CATEGORIES, outcome_categories_for
 from shared.utils import cache_key
 
@@ -154,150 +158,6 @@ def _keyword_scan(text: str, source: str) -> Optional[dict]:
     return None
 
 
-_OUTCOME_RULES = (
-    "Outcome classification rules:\n"
-    "- success: authors explicitly state the original finding was confirmed, replicated, or supported\n"
-    "- failure: authors explicitly state the original finding was NOT found, contradicted, or failed to replicate\n"
-    "- mixed: authors state that SOME but not all aspects of the original finding were confirmed\n"
-    "- descriptive: authors adapted or extended methods in a different context/population WITHOUT directly testing the original claim\n"
-    "- cannot_be_determined: the text lacks sufficient detail to classify the outcome (not when authors say it's unclear, but when WE cannot tell)\n\n"
-    "Few-shot examples:\n"
-    "1. DESCRIPTIVE (methods reused, original claim not tested): 'This conceptual replication extends the theory but does not directly test the original hypothesis.'\n"
-    "2. CANNOT_BE_DETERMINED (insufficient detail): 'We conducted a replication study in a different population.' (no mention of success or failure)\n"
-    "3. MIXED (partial success): 'We replicated the main effect but not the interaction.'\n"
-    "4. SUCCESS (confirmation): 'Our findings confirm Smith et al. (2015)'\n\n"
-    "CRITICAL: Only output 'cannot_be_determined' when the text genuinely lacks detail.\n\n"
-    "Before classifying the outcome, first judge: does this text describe a genuine "
-    "attempt to replicate OR reproduce the specific original study named above (or "
-    "discussed in the abstract)? Both replications (new data/sample testing whether "
-    "the finding holds) and reproductions (re-analysis of the same original data) "
-    "count as genuine attempts — this judgment does not distinguish between them, "
-    "that classification happens elsewhere in the pipeline. Answer false only when "
-    "the text does not engage with verifying that specific original at all — e.g. "
-    "'replicate'/'reproduce' is used in an unrelated biological or technical sense "
-    "(DNA replication, code reproduction), or metaphorically/colloquially (e.g. "
-    "'a replication of prior interests and positions'), or the text is simply "
-    "unrelated to the named original study.\n\n"
-)
-
-
-def _abstract_prompt(title_r: str, abstract_snip: str, original_block: str) -> str:
-    return (
-        "You are a research methodology expert. Classify the replication outcome based on what the paper's abstract states.\n\n"
-        + original_block
-        + f"TITLE: {title_r}\n"
-        f"ABSTRACT: {abstract_snip or '(not available)'}\n\n"
-        + _OUTCOME_RULES +
-        "Respond with ONLY this JSON:\n"
-        '{"is_genuine_attempt": <true|false>, '
-        '"outcome": "<success|failure|mixed|descriptive|cannot_be_determined>", '
-        + _QUOTE_INSTRUCTION +
-        '"outcome_confidence": "<high|medium|low>", '
-        '"out_quote_source": "<abstract|title>", '
-        '"outcome_reasoning": "<one sentence explaining the classification choice>"}'
-    )
-
-
-def _fulltext_prompt(title_r: str, abstract_snip: str, text_snip: str,
-                     original_block: str) -> str:
-    return (
-        "You are a research methodology expert. The abstract alone could not settle "
-        "the replication outcome. Classify it using the paper's full text.\n\n"
-        + original_block
-        + f"TITLE: {title_r}\n"
-        f"ABSTRACT: {abstract_snip or '(not available)'}\n"
-        f"PARSED FULLTEXT: {text_snip or '(not available)'}\n\n"
-        + _OUTCOME_RULES +
-        "Judge the outcome of THIS paper's own replication, not outcomes it reports "
-        "for other studies in its background or literature review.\n\n"
-        "Respond with ONLY this JSON:\n"
-        '{"is_genuine_attempt": <true|false>, '
-        '"outcome": "<success|failure|mixed|descriptive|cannot_be_determined>", '
-        + _QUOTE_INSTRUCTION +
-        '"outcome_confidence": "<high|medium|low>", '
-        '"out_quote_source": "<abstract|title|fulltext>", '
-        '"outcome_reasoning": "<one sentence explaining the classification choice>"}'
-    )
-
-
-# Shared by every outcome prompt. The quote is the reviewer's evidence, so it must be a
-# self-contained passage, not a clipped fragment — validators were getting quotes that
-# stopped mid-argument and could not be judged without opening the paper.
-_QUOTE_INSTRUCTION = (
-    '"outcome_phrase": "<the FULL verbatim passage that proves the outcome. Quote 3-6 '
-    'COMPLETE sentences (up to ~1200 characters), including the surrounding sentences '
-    'needed to make the verdict self-evident to someone who has not read the paper. '
-    'Never truncate mid-sentence or mid-argument>", '
-)
-
-# ── Reproduction outcome vocabulary ──────────────────────────────────────────
-# A reproduction re-runs the ORIGINAL data/code, so "did it replicate?" is the wrong
-# question. Two independent axes are coded instead — schema's 3x3 grid.
-_REPRO_OUTCOME_RULES = (
-    "A REPRODUCTION re-analyses the ORIGINAL study's own data/code; it does not collect "
-    "new data. Code the outcome on TWO independent axes and join them with a comma.\n\n"
-    "Axis 1 - did the computation reproduce the original numbers?\n"
-    "- computationally successful: the reported numbers/results were obtained again\n"
-    "- computational issues: the numbers could not be obtained or differed (errors, "
-    "missing data/code, discrepancies)\n"
-    "- computation not checked: the paper did not attempt to re-run the original analysis\n\n"
-    "Axis 2 - does the finding survive alternative reasonable specifications?\n"
-    "- robust: it holds up under the alternative specifications tested\n"
-    "- robustness challenges: alternative specifications weaken, overturn or qualify it\n"
-    "- robustness not checked: no robustness/sensitivity analysis was attempted\n\n"
-    "Valid outcome values are EXACTLY these nine strings:\n"
-    "  computationally successful, robust\n"
-    "  computationally successful, robustness challenges\n"
-    "  computationally successful, robustness not checked\n"
-    "  computational issues, robust\n"
-    "  computational issues, robustness challenges\n"
-    "  computational issues, robustness not checked\n"
-    "  computation not checked, robust\n"
-    "  computation not checked, robustness challenges\n"
-    "  computation not checked, robustness not checked\n\n"
-    "The axes are INDEPENDENT: a reproduction can fail computationally yet still find the "
-    "conclusion robust, and vice versa. Use cannot_be_determined ONLY when the text does "
-    "not let you place BOTH axes.\n\n"
-)
-
-_REPRO_JSON = (
-    '{"is_genuine_attempt": <true|false>, '
-    '"outcome": "<one of the nine strings above, or cannot_be_determined>", '
-    + _QUOTE_INSTRUCTION +
-    '"outcome_confidence": "<high|medium|low>", '
-    '"out_quote_source": "<abstract|title|fulltext>", '
-    '"outcome_reasoning": "<one sentence naming the computation verdict and the robustness verdict>"}'
-)
-
-
-def _repro_abstract_prompt(title_r: str, abstract_snip: str, original_block: str) -> str:
-    return (
-        "You are a research methodology expert. Classify the REPRODUCTION outcome based "
-        "on what the paper's abstract states.\n\n"
-        + original_block
-        + f"TITLE: {title_r}\n"
-        f"ABSTRACT: {abstract_snip or '(not available)'}\n\n"
-        + _REPRO_OUTCOME_RULES
-        + "Respond with ONLY this JSON:\n" + _REPRO_JSON
-    )
-
-
-def _repro_fulltext_prompt(title_r: str, abstract_snip: str, text_snip: str,
-                           original_block: str) -> str:
-    return (
-        "You are a research methodology expert. The abstract alone could not settle the "
-        "REPRODUCTION outcome. Classify it using the paper's full text.\n\n"
-        + original_block
-        + f"TITLE: {title_r}\n"
-        f"ABSTRACT: {abstract_snip or '(not available)'}\n"
-        f"PARSED FULLTEXT: {text_snip or '(not available)'}\n\n"
-        + _REPRO_OUTCOME_RULES
-        + "Judge THIS paper's own reproduction attempt, not results it reports for other "
-          "studies in its background or literature review.\n\n"
-        + "Respond with ONLY this JSON:\n" + _REPRO_JSON
-    )
-
-
 def _call_outcome_llm(prompt: str, doi_r: str) -> tuple[Optional[dict], str]:
     """Call the outcome LLM with up to 3 retries and exponential backoff."""
     max_retries = 3
@@ -382,8 +242,8 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
                  "outcome_reasoning": "", "llm_model": ""}
 
     is_repro = str(record_type or "").strip().lower() == "reproduction"
-    prompt = (_repro_abstract_prompt(title_r, abstract_snip, original_block) if is_repro
-              else _abstract_prompt(title_r, abstract_snip, original_block))
+    prompt = (build_repro_abstract_prompt(title_r, abstract_snip, original_block) if is_repro
+              else build_outcome_abstract_prompt(title_r, abstract_snip, original_block))
     result, model_used = _call_outcome_llm(prompt, doi_r)
     if not result:
         log.warning("[%s] outcome LLM failed after all retries — marking cannot_be_determined", doi_r)
@@ -396,9 +256,9 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
             and fulltext
             and (output["outcome"] == "cannot_be_determined" or not abstract_r)):
         text_snip = (fulltext[:_FULLTEXT_CAP] + "…") if len(fulltext) > _FULLTEXT_CAP else fulltext
-        esc_prompt = (_repro_fulltext_prompt(title_r, abstract_snip, text_snip, original_block)
+        esc_prompt = (build_repro_fulltext_prompt(title_r, abstract_snip, text_snip, original_block)
                       if is_repro else
-                      _fulltext_prompt(title_r, abstract_snip, text_snip, original_block))
+                      build_outcome_fulltext_prompt(title_r, abstract_snip, text_snip, original_block))
         esc_result, esc_model = _call_outcome_llm(esc_prompt, doi_r)
         if esc_result:
             output = _normalise(esc_result, esc_prompt, esc_model, record_type)
