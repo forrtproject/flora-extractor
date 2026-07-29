@@ -158,6 +158,57 @@ def build_match_type_prompt(title_r: str,
 # with parsed fulltext sections. F3 (the validator-feedback wrapper) is the
 # validator_block below.
 
+# Dedented once, at import — dedent applied AFTER interpolation is defeated by any
+# multi-line value (candidate list, reference list, section snippets), which left
+# every line of this prompt indented by four spaces.
+_IDENT_TEMPLATE = textwrap.dedent("""
+    {validator_block}{policy}Identify the ORIGINAL STUDY that the replication paper below replicates or reproduces.
+
+    TITLE: {study_r}
+    ABSTRACT: {abstract_snip}
+    CITED PATTERN: {pattern}
+
+    CANDIDATES:
+    {cand_text}
+
+    INTRODUCTION (from full text):
+    {intro_block}
+    {methods_block}
+    REFERENCE LIST:
+    {ref_text}
+    TASK: {cand_instruction}
+
+    KEY RULES:
+    - Find the study named with phrases like "we replicated", "direct replication of",
+      "we aimed to replicate" — NOT background citations.
+    - If the paper does not actually replicate or reproduce a specific prior study, or
+      the target cannot be identified from the material shown here, set
+      selected_candidate_number to null AND selected_title to "" — do NOT pick the
+      closest or most-cited reference. Returning no target is a correct answer.
+    - Do NOT select a target merely because it is the only plausible candidate, the
+      only one OpenAlex returned, topically similar, prominent or frequently cited.
+      If the evidence does not identify ONE target unambiguously, return no target.
+    - confidence: high = an explicit, unambiguous connection between this paper's
+      replication/reproduction attempt and exactly one candidate or reference;
+      medium = an explicit connection exists but bibliographic ambiguity remains;
+      low = no target should be returned — set selected_candidate_number to null
+      and selected_title to "".
+    - NEVER invent or guess a DOI. DOIs will be resolved from title and author automatically.
+      An invented DOI is worse than no DOI — it silently corrupts the database.
+
+    Respond with ONLY this JSON — no prose outside the braces:
+    {{
+      "selected_candidate_number": <integer or null>,
+      "selected_title": "<exact published title — copy from reference list if available>",
+      "selected_year": <year or null>,
+      "selected_first_author": "<surname>",
+      "confidence": "<high|medium|low>",
+      "evidence": "<1-2 sentence quote from the paper>",
+      "reasoning": "<why other candidates were ruled out>"
+    }}
+    """)
+
+
 def build_identification_prompt(study_r:        str,
                                  abstract_r:     str,
                                  pattern:        str,
@@ -231,57 +282,99 @@ def build_identification_prompt(study_r:        str,
                 + "\nUse this feedback to correct your selection. The previous candidate was wrong.\n\n---\n\n"
             )
 
-    prompt = textwrap.dedent(f"""
-    {validator_block}{EVIDENCE_POLICY}Identify the ORIGINAL STUDY that the replication paper below replicates or reproduces.
-
-    TITLE: {study_r}
-    ABSTRACT: {abstract_snip or "(not available)"}
-    CITED PATTERN: {pattern or "(not available)"}
-
-    CANDIDATES:
-    {cand_text}
-
-    INTRODUCTION (from full text):
-    {intro_snip or html_snip or "(not available)"}
-    {f"METHODS:{chr(10)}{methods_snip}" if methods_snip else ""}
-    REFERENCE LIST:
-    {ref_text}
-    TASK: {cand_instruction}
-
-    KEY RULES:
-    - Find the study named with phrases like "we replicated", "direct replication of",
-      "we aimed to replicate" — NOT background citations.
-    - If the paper does not actually replicate or reproduce a specific prior study, or
-      the target cannot be identified from the material shown here, set
-      selected_candidate_number to null AND selected_title to "" — do NOT pick the
-      closest or most-cited reference. Returning no target is a correct answer.
-    - Do NOT select a target merely because it is the only plausible candidate, the
-      only one OpenAlex returned, topically similar, prominent or frequently cited.
-      If the evidence does not identify ONE target unambiguously, return no target.
-    - confidence: high = an explicit, unambiguous connection between this paper's
-      replication/reproduction attempt and exactly one candidate or reference;
-      medium = an explicit connection exists but bibliographic ambiguity remains;
-      low = no target should be returned — set selected_candidate_number to null
-      and selected_title to "".
-    - NEVER invent or guess a DOI. DOIs will be resolved from title and author automatically.
-      An invented DOI is worse than no DOI — it silently corrupts the database.
-
-    Respond with ONLY this JSON — no prose outside the braces:
-    {{
-      "selected_candidate_number": <integer or null>,
-      "selected_title": "<exact published title — copy from reference list if available>",
-      "selected_year": <year or null>,
-      "selected_first_author": "<surname>",
-      "confidence": "<high|medium|low>",
-      "evidence": "<1-2 sentence quote from the paper>",
-      "reasoning": "<why other candidates were ruled out>"
-    }}
-    """).strip()
-
-    return prompt
+    return _IDENT_TEMPLATE.format(
+        validator_block=validator_block,
+        policy=EVIDENCE_POLICY,
+        study_r=study_r,
+        abstract_snip=abstract_snip or "(not available)",
+        pattern=pattern or "(not available)",
+        cand_text=cand_text,
+        intro_block=intro_snip or html_snip or "(not available)",
+        methods_block=f"METHODS:\n{methods_snip}" if methods_snip else "",
+        ref_text=ref_text,
+        cand_instruction=cand_instruction,
+    ).strip()
 
 
 # ── L7 — multi-original identification ───────────────────────────────────────
+
+# Dedented once at import — see the note on _IDENT_TEMPLATE.
+_MULTI_TEMPLATE = textwrap.dedent("""
+    {policy}Identify ALL original studies that are replicated or reproduced
+    in this scientific paper.
+
+    This paper has been classified as potentially targeting MULTIPLE original studies.
+    Your task: determine if this classification is correct (true multi-target) or a
+    false positive (only 1 original), and list ALL originals found.
+    {force_multi_directive}
+
+    ## Replication paper
+    **Title:** {study_r}
+
+    **Abstract:**
+    {abstract_snip}
+
+    ---
+
+    ## Pre-identified candidate original studies (from OpenAlex)
+    {cand_text}
+
+    ---
+
+    ## Full-text excerpts
+
+    **Abstract (from PDF):**
+    {pdf_abstract}
+
+    **Introduction:**
+    {intro_block}
+
+    **Methods:**
+    {methods_block}
+
+    **Reference list (up to 100 entries):**
+    {ref_text}
+    ---
+
+    ## Task
+
+    Identify ALL distinct original studies that this paper directly replicates or reproduces,
+    and for each one determine the replication outcome.
+
+    Rules:
+    - A study is being replicated if the paper explicitly runs the same procedure again
+    - Do NOT include studies that are merely cited for context or background
+    - If you find only 1 original, set is_false_positive to true and still list that one original
+    - If the paper does not replicate or reproduce ANY specific prior study, set
+      is_false_positive to true and return an empty originals list
+    - When an original matches an entry in the candidate list above, put its number in
+      candidate_number; otherwise set candidate_number to null
+    - For outcome: look for the result for THAT SPECIFIC study (e.g. in a results table or
+      per-study section), NOT the overall aggregate across all studies
+    - outcome values: success (effect confirmed), failure (effect not found), mixed
+      (partial), descriptive (methods reused in a new context without testing the
+      original claim), cannot_be_determined (the text does not state an outcome)
+
+    Respond with ONLY this JSON — no prose outside the braces:
+    {{
+      "is_false_positive": <true if only 1 original found>,
+      "reasoning": "<brief explanation of why this is/is not multi-target>",
+      "originals": [
+        {{
+          "rank": 1,
+          "candidate_number": <integer from candidate list or null>,
+          "title": "<full title of the original study>",
+          "first_author_surname": "<surname of first author>",
+          "year": <4-digit year or null>,
+          "evidence": "<1-2 sentence quote from the paper showing this study is replicated>",
+          "confidence": "<high|medium|low>",
+          "outcome": "<success|failure|mixed|descriptive|cannot_be_determined>",
+          "outcome_evidence": "<1-2 sentence quote showing the outcome for THIS specific study, or empty if not found>"
+        }}
+      ]
+    }}
+    """)
+
 
 def build_multi_original_prompt(study_r:     str,
                                   abstract_r:  str,
@@ -333,83 +426,17 @@ def build_multi_original_prompt(study_r:     str,
     paper, where many teams analyse one dataset) — in that case list just that one.
     """).strip()
 
-    prompt = textwrap.dedent(f"""
-    {EVIDENCE_POLICY}Identify ALL original studies that are replicated or reproduced
-    in this scientific paper.
-
-    This paper has been classified as potentially targeting MULTIPLE original studies.
-    Your task: determine if this classification is correct (true multi-target) or a
-    false positive (only 1 original), and list ALL originals found.
-    {force_multi_directive}
-
-    ## Replication paper
-    **Title:** {study_r}
-
-    **Abstract:**
-    {abstract_snip or "(not available)"}
-
-    ---
-
-    ## Pre-identified candidate original studies (from OpenAlex)
-    {cand_text}
-
-    ---
-
-    ## Full-text excerpts
-
-    **Abstract (from PDF):**
-    {(sections.get("abstract","") or "")[:700] or "(not available)"}
-
-    **Introduction:**
-    {intro_snip or html_snip or "(not available)"}
-
-    **Methods:**
-    {methods_snip or "(not available)"}
-
-    **Reference list (up to 100 entries):**
-    {ref_text}
-    ---
-
-    ## Task
-
-    Identify ALL distinct original studies that this paper directly replicates or reproduces,
-    and for each one determine the replication outcome.
-
-    Rules:
-    - A study is being replicated if the paper explicitly runs the same procedure again
-    - Do NOT include studies that are merely cited for context or background
-    - If you find only 1 original, set is_false_positive to true and still list that one original
-    - If the paper does not replicate or reproduce ANY specific prior study, set
-      is_false_positive to true and return an empty originals list
-    - When an original matches an entry in the candidate list above, put its number in
-      candidate_number; otherwise set candidate_number to null
-    - For outcome: look for the result for THAT SPECIFIC study (e.g. in a results table or
-      per-study section), NOT the overall aggregate across all studies
-    - outcome values: success (effect confirmed), failure (effect not found), mixed
-      (partial), descriptive (methods reused in a new context without testing the
-      original claim), cannot_be_determined (the text does not state an outcome)
-
-    Respond with ONLY this JSON — no prose outside the braces:
-    {{
-      "is_false_positive": <true if only 1 original found>,
-      "reasoning": "<brief explanation of why this is/is not multi-target>",
-      "originals": [
-        {{
-          "rank": 1,
-          "candidate_number": <integer from candidate list or null>,
-          "title": "<full title of the original study>",
-          "first_author_surname": "<surname of first author>",
-          "year": <4-digit year or null>,
-          "evidence": "<1-2 sentence quote from the paper showing this study is replicated>",
-          "confidence": "<high|medium|low>",
-          "outcome": "<success|failure|mixed|descriptive|cannot_be_determined>",
-          "outcome_evidence": "<1-2 sentence quote showing the outcome for THIS specific study, or empty if not found>"
-        }}
-      ]
-    }}
-    """).strip()
-
-    return prompt
+    return _MULTI_TEMPLATE.format(
+        policy=EVIDENCE_POLICY,
+        force_multi_directive=force_multi_directive,
+        study_r=study_r,
+        abstract_snip=abstract_snip or "(not available)",
+        cand_text=cand_text,
+        pdf_abstract=(sections.get("abstract", "") or "")[:700] or "(not available)",
+        intro_block=intro_snip or html_snip or "(not available)",
+        methods_block=methods_snip or "(not available)",
+        ref_text=ref_text,
+    ).strip()
 
 
 # ── L4 / L5 — Stage 4.5 reference-list screen ────────────────────────────────
