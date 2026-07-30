@@ -128,12 +128,18 @@ SCREEN_VOTER2_MODEL = os.getenv("SCREEN_VOTER2_MODEL", "mistralai/ministral-14b-
 GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")
 
 # ── Gemini flex inference ─────────────────────────────────────────────────────
-# When True, adds service_tier=flex to requests on the first (paid) key only.
-# Flex inference costs 50% less but may take up to 15 minutes per call.
-# Only enable this if GEMINI_API_KEY (key 1) is a paid-tier key.
+# Flex inference costs 50% less than standard — the same discount as Batch, but
+# without any job-submission plumbing — at the price of queueing for up to 15
+# minutes per call. It is only available on paid-tier (billing-enabled) keys.
 GEMINI_USE_FLEX     = os.getenv("GEMINI_USE_FLEX", "").lower() in ("1", "true", "yes")
 # Timeout in seconds for flex calls — must cover the 15-minute worst case.
 GEMINI_FLEX_TIMEOUT = int(os.getenv("GEMINI_FLEX_TIMEOUT", "900"))
+# Which keys are paid, by 1-based slot number (GEMINI_API_KEY = 1, GEMINI_API_KEY_2 = 2, …).
+# Flex follows the key rather than its position in the rotation, so a disabled or
+# reordered key does not silently drop every call back to standard pricing.
+GEMINI_PAID_KEYS: set[int] = {
+    int(n) for n in os.getenv("GEMINI_PAID_KEYS", "1").replace(",", " ").split() if n.isdigit()
+}
 
 # ── Outcome extraction ────────────────────────────────────────────────────────
 # When the abstract-based outcome LLM returns cannot_be_determined (or the

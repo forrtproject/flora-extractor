@@ -430,7 +430,7 @@ Key variables:
 ```bash
 RESEARCHER_EMAIL=you@example.com      # required for OpenAlex/Crossref politeness headers
 GEMINI_API_KEY=...                    # required for LLM calls
-GEMINI_API_KEY_2=...                  # optional: key rotation for higher quota
+GEMINI_API_KEY_2=...                  # optional: failover key (does NOT raise quota — see below)
 OPENAI_API_KEY=...                    # optional fallback LLM
 OPENROUTER_API_KEY=...                # required for Stage 3 (screen voter 2)
 S2_API_KEY=...                        # optional: Semantic Scholar API key (Stage 1)
@@ -440,8 +440,35 @@ GEMINI_HEAVY_MODEL=gemini-3-flash-preview  # used for DOI resolution (defaults t
 OPENAI_MODEL=gpt-5-mini               # OpenAI fallback
 SCREEN_VOTER2_MODEL=mistralai/ministral-14b-2512  # Stage 4.5 screen, voter 2 (OpenRouter)
 FILTER_OPENAI_MODEL=gpt-5-mini        # Stage 2 filter primary model
-GEMINI_USE_FLEX=true                  # 50% cost reduction; requires paid GEMINI_API_KEY
+GEMINI_USE_FLEX=true                  # 50% cost reduction; paid keys only
+GEMINI_PAID_KEYS=1                    # 1-based key slots that are paid; flex applies to these
 ```
+
+### Gemini quota: billing, not key rotation
+
+Gemini rate limits are applied **per project, not per API key**. Extra
+`GEMINI_API_KEY_N` slots from the same project therefore share one bucket — they
+buy failover against a revoked or misconfigured key, not throughput. Sharding a
+workload across projects to multiply free quota is both against Google's terms
+and arithmetically hopeless here.
+
+The binding constraint is the heavy model's free-tier ceiling of **20 requests per
+day**. A single row costs 1–4 heavy calls as it escalates the resolution ladder,
+so the free tier sustains roughly 5–20 rows/day: a 2,000-row run is not runnable.
+Enabling billing (**Tier 1**) raises that ceiling to **10,000 RPD**.
+
+Billing is not a layer on top of the free tier — it replaces it, so usage is
+billed from the first token, and a project past its spend cap returns
+`429 RESOURCE_EXHAUSTED` rather than falling back to free quota. Paid-tier
+prompts and responses are also excluded from Google's product-improvement use,
+which matters for unpublished abstracts.
+
+**Intended configuration: one paid project with `GEMINI_USE_FLEX=true`.** Flex
+carries the same 50% discount as Batch with no job-submission plumbing, and the
+pipeline applies it to every Gemini call — including the PDF and image calls,
+which carry the largest payloads. Flex requests can queue, so they use
+`GEMINI_FLEX_TIMEOUT` (default 900s) instead of the standard per-call timeout; if
+the API rejects the flex tier, the call is retried once at standard tier.
 
 GROBID is optional. If `GROBID_URL` points to a server that is not running, the PDF extraction step logs a warning and falls back to abstract-only processing. It does not crash.
 

@@ -159,3 +159,127 @@ def test_screen_keeps_classifier_attribution_when_no_target_is_picked(monkeypatc
     assert out["llm_model"] == f"{llm.GEMINI_LIGHT_MODEL}+{llm.SCREEN_VOTER2_MODEL}"
     assert out["llm_evidence"] == "q"
     assert "gemini: r" in out["llm_reasoning"] and "openrouter: r" in out["llm_reasoning"]
+
+
+# ── Gemini flex tier (audit Q4) ──────────────────────────────────────────────
+# Flex is a 50% discount and must be applied to every Gemini call — including the
+# PDF and image calls, which carry the largest payloads — but only on paid keys.
+
+def _gemini_ok(text: str = '{"ok": true}'):
+    r = MagicMock()
+    r.status_code = 200
+    r.text = text
+    r.json.return_value = {
+        "candidates": [{"content": {"parts": [{"text": text}]}, "finishReason": "STOP"}],
+        "usageMetadata": {"totalTokenCount": 10},
+    }
+    return r
+
+
+def _flex_env(monkeypatch, *, use_flex=True, paid=(1,), keys=("k1", "k2")):
+    monkeypatch.setattr(llm, "GEMINI_USE_FLEX", use_flex)
+    monkeypatch.setattr(llm, "GEMINI_PAID_KEYS", set(paid))
+    monkeypatch.setattr(llm, "GEMINI_FLEX_TIMEOUT", 900)
+    monkeypatch.setattr(llm, "GEMINI_API_KEYS", list(keys))
+
+
+def test_flex_is_sent_on_pdf_calls_when_the_key_is_paid(monkeypatch):
+    _flex_env(monkeypatch)
+    posts: list = []
+
+    def post(url, json=None, timeout=None):
+        posts.append((dict(json), timeout))
+        return _gemini_ok()
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    assert llm.call_gemini_with_pdf("prompt", b"%PDF-1.4") == {"ok": True}
+    assert posts[0][0]["service_tier"] == "flex"
+    assert posts[0][1] == 900   # flex calls can queue — not the 45s standard timeout
+
+
+def test_flex_is_sent_on_image_calls_when_the_key_is_paid(monkeypatch):
+    _flex_env(monkeypatch)
+    posts: list = []
+
+    def post(url, json=None, timeout=None):
+        posts.append((dict(json), timeout))
+        return _gemini_ok()
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    imgs = [{"mime_type": "image/png", "data": "aGk="}]
+    assert llm.call_gemini_with_images("prompt", imgs) == {"ok": True}
+    assert posts[0][0]["service_tier"] == "flex"
+    assert posts[0][1] == 900
+
+
+def test_flex_is_not_sent_on_an_unpaid_key(monkeypatch):
+    # Key 2 is free-tier: it must bill at standard rate and keep the short timeout.
+    _flex_env(monkeypatch, paid=(1,))
+    posts: list = []
+
+    def post(url, json=None, timeout=None):
+        posts.append((dict(json), timeout))
+        r = _gemini_ok()
+        if "k1" in url:
+            r.status_code = 429
+        return r
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    assert llm.call_gemini_with_pdf("prompt", b"%PDF-1.4") == {"ok": True}
+    assert posts[0][0]["service_tier"] == "flex"       # key 1, paid
+    assert "service_tier" not in posts[-1][0]          # key 2, free
+    assert posts[-1][1] == 45
+
+
+def test_flex_follows_the_paid_key_not_its_position(monkeypatch):
+    # Paid key sits in slot 2 — the old key_idx == 0 heuristic would have missed it.
+    _flex_env(monkeypatch, paid=(2,))
+    posts: list = []
+
+    def post(url, json=None, timeout=None):
+        posts.append((url, dict(json)))
+        r = _gemini_ok()
+        if "k1" in url:
+            r.status_code = 429
+        return r
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    assert llm.call_gemini("prompt") == ({"ok": True}, "")
+    assert "service_tier" not in posts[0][1]
+    assert posts[-1][1]["service_tier"] == "flex"
+
+
+def test_flex_rejection_falls_back_to_standard_tier(monkeypatch):
+    _flex_env(monkeypatch, keys=("k1",))
+    posts: list = []
+
+    def post(url, json=None, timeout=None):
+        posts.append((dict(json), timeout))
+        if "service_tier" in json:
+            r = MagicMock()
+            r.status_code = 400
+            r.text = '{"error": {"message": "service_tier flex is not supported"}}'
+            return r
+        return _gemini_ok()
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    assert llm.call_gemini_with_pdf("prompt", b"%PDF-1.4") == {"ok": True}
+    assert len(posts) == 2
+    assert "service_tier" not in posts[1][0]
+    assert posts[1][1] == 45
+
+
+def test_flex_is_off_entirely_when_disabled(monkeypatch):
+    _flex_env(monkeypatch, use_flex=False, keys=("k1",))
+    posts: list = []
+
+    def post(url, json=None, timeout=None):
+        posts.append(dict(json))
+        return _gemini_ok()
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    llm.call_gemini_with_pdf("prompt", b"%PDF-1.4")
+    llm.call_gemini_with_images("prompt", [{"mime_type": "image/png", "data": "aGk="}])
+    assert all("service_tier" not in p for p in posts)

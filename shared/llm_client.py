@@ -20,7 +20,7 @@ import requests
 
 from .config import (
     GEMINI_API_KEYS, GEMINI_MODEL, GEMINI_LIGHT_MODEL, GEMINI_HEAVY_MODEL,
-    GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT,
+    GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT, GEMINI_PAID_KEYS,
     LLM_CACHE_DIR, LLM_RATE_SEC,
     OPENAI_API_KEY, OPENAI_MODEL,
     OPENROUTER_API_KEY, OPENROUTER_HEAVY_MODEL,
@@ -163,6 +163,40 @@ def _parse_llm_json(text: str) -> Optional[dict]:
     return None
 
 
+# ── Gemini flex inference ─────────────────────────────────────────────────────
+# Flex costs 50% less (identical to Batch pricing) but is only offered on paid
+# keys, so the decision follows which key is in use — GEMINI_PAID_KEYS — rather
+# than the key's position in the rotation.
+
+def _gemini_use_flex(key_idx: int) -> bool:
+    return GEMINI_USE_FLEX and (key_idx + 1) in GEMINI_PAID_KEYS
+
+
+def _gemini_post(url: str, payload: dict, key_idx: int, base_timeout: int):
+    """
+    POST to Gemini, adding service_tier=flex when the key in use is paid.
+
+    Flex requests can queue for up to 15 minutes, so they get GEMINI_FLEX_TIMEOUT
+    instead of the call site's standard timeout. If the API rejects the flex tier
+    (a model or key that does not offer it), the same request is retried once at
+    standard tier rather than losing the row.
+    """
+    use_flex = _gemini_use_flex(key_idx)
+    if use_flex:
+        payload["service_tier"] = "flex"
+    else:
+        payload.pop("service_tier", None)
+
+    r = requests.post(url, json=payload,
+                      timeout=GEMINI_FLEX_TIMEOUT if use_flex else base_timeout)
+    if use_flex and r.status_code == 400 and "service_tier" in r.text.replace("serviceTier", "service_tier"):
+        log.warning("Gemini rejected service_tier=flex on key %d — retrying at standard tier",
+                    key_idx + 1)
+        payload.pop("service_tier", None)
+        r = requests.post(url, json=payload, timeout=base_timeout)
+    return r
+
+
 # ── Gemini (primary) ──────────────────────────────────────────────────────────
 
 def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict], str]:
@@ -197,28 +231,21 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
     }
 
     if GEMINI_USE_FLEX:
-        log.debug("Gemini flex inference enabled — key 0 uses service_tier=flex (timeout=%ds)", GEMINI_FLEX_TIMEOUT)
+        log.debug("Gemini flex inference enabled on paid keys %s (timeout=%ds)",
+                  sorted(GEMINI_PAID_KEYS), GEMINI_FLEX_TIMEOUT)
 
     last_error = "all keys exhausted"
     for key_idx, api_key in enumerate(GEMINI_API_KEYS):
         if key_idx == 0 and _gemini_key0_disabled:
             log.debug("Gemini key-0 disabled by guardrail — skipping to free-tier keys")
             continue
-        # Flex inference: apply only on key 0 (the paid key).
-        # Keys 1+ are assumed free-tier and use standard inference.
-        use_flex = GEMINI_USE_FLEX and key_idx == 0
-        if use_flex:
-            payload["service_tier"] = "flex"
-        elif "service_tier" in payload:
-            del payload["service_tier"]
-        call_timeout = GEMINI_FLEX_TIMEOUT if use_flex else 90
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
                f":generateContent?key={api_key}")
         key_label = f"key {key_idx + 1}/{len(GEMINI_API_KEYS)}"
 
         for attempt in range(2):
             try:
-                r = requests.post(url, json=payload, timeout=call_timeout)
+                r = _gemini_post(url, payload, key_idx, 90)
 
                 if r.status_code == 429:
                     last_error = f"quota exhausted on {key_label} (429)"
@@ -625,7 +652,7 @@ def call_gemini_with_images(prompt: str,
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
                f":generateContent?key={api_key}")
         try:
-            r = requests.post(url, json=payload, timeout=120)
+            r = _gemini_post(url, payload, key_idx, 120)
             if r.status_code == 429:
                 continue
             if r.status_code != 200:
@@ -680,7 +707,7 @@ def call_gemini_with_pdf(prompt: str,
                f":generateContent?key={api_key}")
         for attempt in range(2):
             try:
-                r = requests.post(url, json=payload, timeout=45)
+                r = _gemini_post(url, payload, key_idx, 45)
                 if r.status_code == 429:
                     break
                 if r.status_code in (500, 503) and attempt == 0:
