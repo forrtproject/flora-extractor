@@ -712,7 +712,7 @@ class TestRunExtract:
         """run_extract refuses to start unless both Q1 screen providers are configured.
         These tests mock every LLM call, so satisfy the check rather than bypass it."""
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["test-key"])
-        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "test-key")
+        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "test-key")
 
     def _run(self, filtered_csv: str, mock_multi=None, mock_match=None):
         """Helper: write a temp CSV, run extract with mocked APIs, return result DataFrame."""
@@ -1519,28 +1519,113 @@ class TestClassifyModelAttribution:
         assert "classify_llm_model" in EXTRACTED_COLS
 
 
+class TestMultiRowRecordType:
+    """A reproduction is coded in a different outcome vocabulary than a replication,
+    so a multi-original reproduction labelled 'replication' is validated against the
+    wrong categories."""
+
+    _ORIG = {"rank": 1, "doi": "10.1/o", "title": "O", "first_author": "A",
+             "year": 2001, "confidence": "high"}
+
+    def _row(self, filter_status: str) -> dict:
+        with patch("extract.run_extract._build_ref_o", return_value=("", "", "")):
+            return _merge_multi_row(
+                pd.Series({"doi_r": "10.1/rep", "title_r": "Rep",
+                           "filter_status": filter_status}),
+                self._ORIG, _MOCK_OUTCOME, "multiple_original", "high", 2)
+
+    def test_reproduction_keeps_its_type(self):
+        assert self._row("reproduction")["type"] == "reproduction"
+
+    def test_replication_is_unchanged(self):
+        assert self._row("replication")["type"] == "replication"
+
+    def test_matches_the_single_original_path(self):
+        """_merge_row already honours filter_status; the multi path must not disagree."""
+        link = {"resolution_method": "llm_fulltext", "resolved_doi_o": "10.1/orig",
+                "resolved_title_o": "Original", "resolved_year_o": 2000,
+                "resolved_author_o": "Smith", "resolution_score": 1.0,
+                "llm_confidence": "high"}
+        with patch("extract.run_extract._build_ref_o", return_value=("r", "a", "b")):
+            single = _merge_row(pd.Series({"doi_r": "10.1/rep", "title_r": "Rep",
+                                           "filter_status": "reproduction"}),
+                                link, _MOCK_OUTCOME, "single_original", "high", 1, 1)
+        assert single["type"] == self._row("reproduction")["type"]
+
+
+class TestRescreenReopensSetAsides:
+    """--resume carries every resolved row forward, which freezes the Stage 4.5
+    screen's own verdicts under whichever voter pair produced them."""
+
+    @staticmethod
+    def _csv(tmp_path, rows: list[dict]) -> Path:
+        df = pd.DataFrame(rows)
+        for c in EXTRACTED_COLS:
+            if c not in df.columns:
+                df[c] = ""
+        path = tmp_path / "extracted.csv"
+        df[EXTRACTED_COLS].to_csv(path, index=False, encoding="utf-8-sig")
+        return path
+
+    _ROWS = [
+        {"doi_r": "10.1/keep", "filter_status": "replication",
+         "link_method": "llm_references", "doi_o": "10.1/o", "outcome": "success"},
+        {"doi_r": "10.1/nar", "filter_status": "replication",
+         "link_method": "not_a_replication", "outcome": "not_a_replication"},
+        {"doi_r": "10.1/dis", "filter_status": "replication",
+         "link_method": "screen_disagreement", "outcome": "pending"},
+    ]
+
+    def test_without_the_flag_set_asides_are_carried_forward(self, tmp_path):
+        resolved, pending = run_extract._load_extracted_rows(self._csv(tmp_path, self._ROWS))
+        assert set(resolved) == {"10.1/keep", "10.1/nar", "10.1/dis"}
+        assert pending == set()
+
+    def test_rescreen_reopens_only_the_set_asides(self, tmp_path):
+        resolved, pending = run_extract._load_extracted_rows(
+            self._csv(tmp_path, self._ROWS), rescreen=True)
+        assert set(resolved) == {"10.1/keep"}
+        assert pending == set()   # reopened rows are re-processed, not carried as pending
+
+    def test_rescreen_reopens_the_whole_multi_original_paper(self, tmp_path):
+        rows = [
+            {"doi_r": "10.1/multi", "filter_status": "replication", "original_rank": "1",
+             "link_method": "llm_references", "doi_o": "10.1/o1", "outcome": "success"},
+            {"doi_r": "10.1/multi", "filter_status": "replication", "original_rank": "2",
+             "link_method": "screen_disagreement", "outcome": "pending"},
+        ]
+        resolved, _ = run_extract._load_extracted_rows(self._csv(tmp_path, rows),
+                                                      rescreen=True)
+        assert resolved == {}
+
+    def test_flag_reaches_run_extract(self):
+        import inspect
+        assert "rescreen" in inspect.signature(run_extract.run_extract).parameters
+
+
 class TestScreenProviderPrecheck:
     """The Stage 4.5 screen needs two providers to have anything to agree about,
     so a run configured with one must fail at startup, not 2,000 rows in."""
 
-    def test_missing_openai_key_raises(self, monkeypatch):
+    def test_missing_openrouter_key_raises(self, monkeypatch):
+        """Voter 2 runs on OpenRouter, so an OpenAI key no longer satisfies the screen."""
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["k"])
-        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "")
-        with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
+        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "")
+        with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
             run_extract._check_screen_providers(no_llm=False)
 
     def test_missing_gemini_key_raises(self, monkeypatch):
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", [])
-        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "k")
+        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "k")
         with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
             run_extract._check_screen_providers(no_llm=False)
 
     def test_both_keys_present_passes(self, monkeypatch):
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["k"])
-        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "k")
+        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "k")
         run_extract._check_screen_providers(no_llm=False)
 
     def test_no_llm_skips_the_check(self, monkeypatch):
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", [])
-        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "")
+        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "")
         run_extract._check_screen_providers(no_llm=True)

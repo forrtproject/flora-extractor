@@ -57,9 +57,10 @@ See [docs/setup.md](docs/setup.md) for full setup instructions.
 ```
 RESEARCHER_EMAIL=you@example.com   # for OpenAlex/Crossref API politeness
 GEMINI_API_KEY=...                 # primary LLM (free at aistudio.google.com)
+OPENROUTER_API_KEY=...             # second voter of the Stage 4.5 screen (Stage 3 only)
 ```
 
-Optional: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `GROBID_URL`. See `.env.example`.
+Optional: `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `GROBID_URL`. See `.env.example`.
 
 ---
 

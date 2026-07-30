@@ -143,6 +143,9 @@ python -m extract.run_extract --extracted-test
 # Resume from last processed row
 python -m extract.run_extract --resume
 
+# Resume, and also re-decide rows a previous run set aside on the Stage 4.5 screen
+python -m extract.run_extract --resume --rescreen
+
 # Skip LLM calls (rule-based only)
 python -m extract.run_extract --no-llm
 
@@ -158,6 +161,23 @@ python -m extract.run_extract --no-skip-flora-validated
 
 **Input:** `data/filtered.csv`  
 **Output:** `data/extracted.csv` (or `data/extracted-test.csv` with `--extracted-test`)
+
+### Re-screening set-aside rows
+
+`--resume` carries every already-resolved row forward untouched, including the rows
+the Stage 4.5 screen decided on its own (`link_method`/`outcome` of
+`not_a_replication` or `screen_disagreement`). That is right for a resumed run and
+wrong after the screen changes: an old voter pair's verdicts would survive
+indefinitely. `--rescreen` reopens exactly those rows — the whole paper, so a
+multi-original paper is re-screened as a unit — and leaves every other resolved row
+carried forward.
+
+Rows `sanity_check` has already moved out to `data/not_a_replication.csv` or
+`data/screen_disagreement.csv` are no longer in `extracted.csv` and are therefore
+re-processed by any run, with or without the flag. Their verdicts are still pinned by
+the screen cache, which is keyed on `REF_SCREEN_PROMPT_VERSION` — bumping that
+constant (done whenever a voter or the prompt changes) is what makes a re-screen
+actually re-vote.
 
 ### Skipping papers already in FLoRA
 

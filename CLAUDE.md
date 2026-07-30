@@ -231,10 +231,16 @@ OpenAlex reference list and asks two questions in one call:
 
 Results are cached at `cache/llm/refscreen_{key}.json`.
 
-**Two providers are required.** Question 1 is voted on by Gemini *and* OpenAI, and the
-screen acts only when both answer and agree, so `GEMINI_API_KEY` and `OPENAI_API_KEY`
+**Two providers are required.** Question 1 is voted on by Gemini (`GEMINI_LIGHT_MODEL`)
+*and* OpenRouter (`SCREEN_VOTER2_MODEL`, default `mistralai/ministral-14b-2512`), and the
+screen acts only when both answer and agree, so `GEMINI_API_KEY` and `OPENROUTER_API_KEY`
 must both be set — `extract.run_extract` refuses to start otherwise (unless `--no-llm`).
-An incomplete screen is reported as such rather than as a verdict, and is never cached:
+Voter 2 is deliberately outside the Google lineage: on adjudicated hard cases this pair
+correctly discards 89% of true negatives (gpt-5-mini's pair managed 25%) while still
+losing no genuine replication. Changing either voter requires bumping
+`REF_SCREEN_PROMPT_VERSION`, since the cache key must not replay one pair's verdicts as
+another's. An incomplete screen is reported as such rather than as a verdict, and is
+never cached:
 
 | Votes | `resolution_method` | `link_method` |
 | ----- | ------------------- | ------------- |
@@ -426,11 +432,13 @@ RESEARCHER_EMAIL=you@example.com      # required for OpenAlex/Crossref politenes
 GEMINI_API_KEY=...                    # required for LLM calls
 GEMINI_API_KEY_2=...                  # optional: key rotation for higher quota
 OPENAI_API_KEY=...                    # optional fallback LLM
+OPENROUTER_API_KEY=...                # required for Stage 3 (screen voter 2)
 S2_API_KEY=...                        # optional: Semantic Scholar API key (Stage 1)
 GROBID_URL=http://localhost:8070      # default; override if GROBID runs elsewhere
 GEMINI_MODEL=gemini-3-flash-preview   # primary Gemini model
 GEMINI_HEAVY_MODEL=gemini-3-flash-preview  # used for DOI resolution (defaults to GEMINI_MODEL)
 OPENAI_MODEL=gpt-5-mini               # OpenAI fallback
+SCREEN_VOTER2_MODEL=mistralai/ministral-14b-2512  # Stage 4.5 screen, voter 2 (OpenRouter)
 FILTER_OPENAI_MODEL=gpt-5-mini        # Stage 2 filter primary model
 GEMINI_USE_FLEX=true                  # 50% cost reduction; requires paid GEMINI_API_KEY
 ```

@@ -64,8 +64,8 @@ _VOTE = {"is_replication": "yes", "classification_confidence": "high",
          "confidence": "high", "evidence_quote": "q", "reasoning": "r"}
 
 
-def _screen(monkeypatch, tmp_path, gemini_ok: bool, openai_ok: bool,
-            refs=None, target=None, vote_label: str = "yes"):
+def _screen(monkeypatch, tmp_path, gemini_ok: bool, voter2_ok: bool,
+            refs=None, target=None, vote_label: str = "yes", calls=None):
     """Run screen_references_with_llm with each classifier either answering or failing."""
     monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
@@ -76,16 +76,22 @@ def _screen(monkeypatch, tmp_path, gemini_ok: bool, openai_ok: bool,
             return dict(target), None
         return (dict(vote), None) if gemini_ok else (None, "boom")
 
+    def openrouter(prompt, model=""):
+        if calls is not None:
+            calls.append(model)
+        return (dict(vote), None) if voter2_ok else (None, "boom")
+
     def openai(prompt, model=None):
-        return (dict(vote), None) if openai_ok else (None, "boom")
+        raise AssertionError("the screen must not call OpenAI for its second vote")
 
     monkeypatch.setattr(llm, "call_gemini", gemini)
+    monkeypatch.setattr(llm, "call_openrouter", openrouter)
     monkeypatch.setattr(llm, "call_openai", openai)
     return llm.screen_references_with_llm("10.1/x", "Title", "Abstract", refs or [])
 
 
 def test_screen_both_votes_is_a_complete_screen(monkeypatch, tmp_path):
-    out = _screen(monkeypatch, tmp_path, gemini_ok=True, openai_ok=True)
+    out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=True)
 
     assert out["models_agree"] is True
     assert len(out["votes"]) == 2
@@ -93,21 +99,35 @@ def test_screen_both_votes_is_a_complete_screen(monkeypatch, tmp_path):
     assert list(tmp_path.glob("refscreen_*.json"))  # a real verdict is cached
 
 
+def test_screen_second_vote_runs_the_configured_openrouter_model(monkeypatch, tmp_path):
+    """Voter 2 is Ministral on OpenRouter, not an OpenAI model — the helper asserts
+    OpenAI is never called, and the vote must be attributed to the configured model."""
+    calls: list[str] = []
+    out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=True, calls=calls)
+
+    assert calls == [llm.SCREEN_VOTER2_MODEL]
+    assert llm.SCREEN_VOTER2_MODEL == "mistralai/ministral-14b-2512"
+    assert llm.SCREEN_PROVIDERS == ("gemini", "openrouter")
+    assert [v["provider"] for v in out["votes"]] == ["gemini", "openrouter"]
+    assert out["llm_source"] == "gemini+openrouter"
+    assert out["llm_model"] == f"{llm.GEMINI_LIGHT_MODEL}+{llm.SCREEN_VOTER2_MODEL}"
+
+
 def test_screen_one_vote_is_partial_not_a_disagreement(monkeypatch, tmp_path):
-    out = _screen(monkeypatch, tmp_path, gemini_ok=True, openai_ok=False)
+    out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=False)
 
     assert out["resolution_method"] == "llm_refscreen_partial"
-    assert "openai" in out["llm_error"]
+    assert "openrouter" in out["llm_error"]
     assert len(out["votes"]) == 1
     assert out["llm_model"] == llm.GEMINI_LIGHT_MODEL   # the model that did answer
     assert not list(tmp_path.glob("refscreen_*.json"))  # uncached: a retry must succeed
 
 
 def test_screen_no_votes_is_a_failure(monkeypatch, tmp_path):
-    out = _screen(monkeypatch, tmp_path, gemini_ok=False, openai_ok=False)
+    out = _screen(monkeypatch, tmp_path, gemini_ok=False, voter2_ok=False)
 
     assert out["resolution_method"] == "llm_refscreen_failed"
-    assert "gemini" in out["llm_error"] and "openai" in out["llm_error"]
+    assert "gemini" in out["llm_error"] and "openrouter" in out["llm_error"]
     assert out["votes"] == []
     assert not list(tmp_path.glob("refscreen_*.json"))
 
@@ -117,7 +137,7 @@ def test_screen_attributes_a_resolved_link_to_the_target_picker(monkeypatch, tmp
     quote its evidence — not the Q1 classifier pair that only said "yes, a replication"."""
     refs = [{"doi": "10.1/orig", "title": "Original", "publication_year": 2015,
              "first_author": "Smith"}]
-    out = _screen(monkeypatch, tmp_path, gemini_ok=True, openai_ok=True, refs=refs,
+    out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=True, refs=refs,
                   target={"target_number": 1, "confidence": "high",
                           "target_description": "Smith 2015",
                           "evidence_quote": "we re-test Smith (2015)",
@@ -133,9 +153,9 @@ def test_screen_attributes_a_resolved_link_to_the_target_picker(monkeypatch, tmp
 def test_screen_keeps_classifier_attribution_when_no_target_is_picked(monkeypatch, tmp_path):
     """A 'no' verdict is the classifiers' decision, so the discard path keeps their
     models, evidence and per-model reasoning — the row is set aside for review."""
-    out = _screen(monkeypatch, tmp_path, gemini_ok=True, openai_ok=True, vote_label="no")
+    out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=True, vote_label="no")
 
     assert out["is_replication"] == "no"
-    assert out["llm_model"] == f"{llm.GEMINI_LIGHT_MODEL}+{llm.OPENAI_MODEL}"
+    assert out["llm_model"] == f"{llm.GEMINI_LIGHT_MODEL}+{llm.SCREEN_VOTER2_MODEL}"
     assert out["llm_evidence"] == "q"
-    assert "gemini: r" in out["llm_reasoning"] and "openai: r" in out["llm_reasoning"]
+    assert "gemini: r" in out["llm_reasoning"] and "openrouter: r" in out["llm_reasoning"]

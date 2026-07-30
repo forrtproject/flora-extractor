@@ -157,6 +157,7 @@ def _model_family(s: str) -> str:
     if m.startswith("gemini"): return "gemini"
     if m.startswith(("gpt-", "o1", "o3", "o4")): return "gpt"
     if "qwen" in m:         return "qwen"
+    if "mistral" in m:      return "mistral"
     return "other"
 
 

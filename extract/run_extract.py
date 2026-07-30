@@ -20,7 +20,7 @@ import pandas as pd
 
 from shared.config import (
     BASE_DIR, DATA_DIR, GEMINI_API_KEYS, GEMINI_HEAVY_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC,
-    OA_XML_CACHE_DIR, OPENAI_API_KEY, PARSE_CACHE_DIR, PDF_CACHE_DIR, log,
+    OA_XML_CACHE_DIR, OPENROUTER_API_KEY, PARSE_CACHE_DIR, PDF_CACHE_DIR, log,
 )
 from shared import token_counter
 from shared.llm_client import call_llm
@@ -610,7 +610,9 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
         "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
         "out_quote_source":    outcome.get("out_quote_source",    ""),
         "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
-        "type":          "replication",
+        "type":          "reproduction"
+                         if str(filter_row.get("filter_status", "")) == "reproduction"
+                         else "replication",
         "original_rank": orig.get("rank", 1),
         "n_originals":   n,
     })
@@ -777,11 +779,22 @@ def _extract_row_key(row: "dict | pd.Series") -> str:
     return f"title:{title}" if title else ""
 
 
-def _load_extracted_rows(out_path) -> tuple[dict[str, list[dict]], set[str]]:
+# Verdicts the Stage 4.5 screen reaches on its own, without ever seeing full text.
+# They are the rows a changed voter pair or prompt would decide differently, so
+# --rescreen reopens exactly these and nothing else.
+SCREEN_SET_ASIDE_METHODS = {"not_a_replication", "screen_disagreement"}
+
+
+def _load_extracted_rows(out_path, rescreen: bool = False) -> tuple[dict[str, list[dict]], set[str]]:
     """Partition extracted.csv rows by resolution status for --resume mode.
 
     False_positive rows in the existing file are dropped — they should never have
     been written to extracted.csv and will not be re-written on resume.
+
+    rescreen — treat the screen's own set-aside verdicts (not_a_replication,
+        screen_disagreement) as unresolved so the current voter pair decides them
+        again. Off by default: a resumed run should reproduce its predecessor's
+        decisions, not silently revisit them.
 
     Returns:
         resolved — row_key → list of rows that are fully resolved (link_method != target_pending)
@@ -792,6 +805,13 @@ def _load_extracted_rows(out_path) -> tuple[dict[str, list[dict]], set[str]]:
     df = pd.read_csv(out_path, dtype=str, encoding="utf-8-sig").fillna("")
     # Drop false_positive rows that were incorrectly written in a prior run.
     df = df[df["filter_status"] != "false_positive"]
+    if rescreen and not df.empty:
+        # Drop the paper, not just the row: the screen decides a whole paper, so a
+        # multi-original paper with one set-aside row is re-screened as a unit.
+        set_aside = (df["link_method"].isin(SCREEN_SET_ASIDE_METHODS)
+                     | df["outcome"].isin(SCREEN_SET_ASIDE_METHODS))
+        keys = df.apply(_extract_row_key, axis=1)
+        df = df[~keys.isin(set(keys[set_aside]))]
     resolved: dict[str, list[dict]] = {}
     pending: set[str] = set()
     for row_key, group in df.groupby(df.apply(_extract_row_key, axis=1), sort=False):
@@ -1014,7 +1034,7 @@ def _check_screen_providers(no_llm: bool) -> None:
     if no_llm:
         return
     missing = [name for name, key in (("GEMINI_API_KEY", GEMINI_API_KEYS[0] if GEMINI_API_KEYS else ""),
-                                      ("OPENAI_API_KEY", OPENAI_API_KEY)) if not key]
+                                      ("OPENROUTER_API_KEY", OPENROUTER_API_KEY)) if not key]
     if missing:
         raise RuntimeError(
             f"Stage 3 needs both reference-screen providers; missing: {', '.join(missing)}. "
@@ -1037,7 +1057,8 @@ def run_extract(no_llm: bool = False,
                 out_path: "Path | None" = None,
                 source: "str | None" = None,
                 doi_r_filter: "list[str] | None" = None,
-                recalibrate_outcomes: bool = False) -> pd.DataFrame:
+                recalibrate_outcomes: bool = False,
+                rescreen: bool = False) -> pd.DataFrame:
     """
     Run Stage 3 and stream results to data/extracted.csv.
 
@@ -1058,6 +1079,10 @@ def run_extract(no_llm: bool = False,
                            target_pending / api_error / no_original_found rows are silently skipped.
                            Use with --no-llm --no-pdf for a fast rule-based-only pass, then
                            follow up with --resume for the LLM pass on remaining rows.
+    rescreen            — reopen the rows a previous run set aside on the Stage 4.5 screen's
+                           own verdict (not_a_replication, screen_disagreement) so the current
+                           voter pair decides them again. Without it those rows are carried
+                           forward untouched, which freezes an old pair's verdicts in place.
     recalibrate_outcomes — run the full outcome pipeline (PDF download + LLM) even when --no-pdf
                            or --no-llm are set. Only the outcome step is affected; link resolution
                            still respects those flags. Useful for a fast --no-llm --no-pdf pass
@@ -1152,7 +1177,7 @@ def run_extract(no_llm: bool = False,
     #  to extracted-test.csv, even without --resume).
     resolved_main: dict[str, list[dict]] = {}
     if test_mode:
-        resolved_main, _ = _load_extracted_rows(prod_path)
+        resolved_main, _ = _load_extracted_rows(prod_path, rescreen=rescreen)
         log.info(
             "--extracted-test: %d DOIs already resolved in extracted.csv will be skipped",
             len(resolved_main),
@@ -1161,7 +1186,7 @@ def run_extract(no_llm: bool = False,
     resolved_rows: dict[str, list[dict]] = {}
     pending_dois: set[str] = set()
     if resume:
-        resolved_rows, pending_dois = _load_extracted_rows(out_path)
+        resolved_rows, pending_dois = _load_extracted_rows(out_path, rescreen=rescreen)
         n_resolved_rows = sum(len(v) for v in resolved_rows.values())
         log.info(
             "--resume: %d DOIs already resolved (%d rows), %d pending re-processing",
@@ -1519,6 +1544,15 @@ if __name__ == "__main__":
              "re-run only rows with link_method == 'target_pending'.",
     )
     parser.add_argument(
+        "--rescreen", action="store_true",
+        help="With --resume (or --extracted-test): also re-process rows a previous run "
+             "set aside on the Stage 4.5 screen's verdict (not_a_replication, "
+             "screen_disagreement), so a changed voter pair or prompt decides them again. "
+             "Rows already moved into data/not_a_replication.csv or "
+             "data/screen_disagreement.csv by sanity_check are re-processed anyway, since "
+             "they are no longer in extracted.csv.",
+    )
+    parser.add_argument(
         "--resolved-only", action="store_true",
         help="Only write rows that are fully resolved (any rule-based method or llm_cited_candidates / llm_fulltext). "
              "target_pending / api_error / no_original_found rows are silently skipped. "
@@ -1605,6 +1639,7 @@ if __name__ == "__main__":
                 source=args.source,
                 doi_r_filter=doi_r_list,
                 recalibrate_outcomes=args.recalibrate_outcomes,
+                rescreen=args.rescreen,
             )
     except OpenAlexQuotaExhausted as exc:
         log.error("%s", exc)

@@ -119,7 +119,8 @@ See `.env.example` for the full list with descriptions. Key variables:
 | `GEMINI_API_KEY` | Yes | Primary LLM |
 | `GEMINI_API_KEY_2..N` | No | Key rotation for higher quota |
 | `OPENAI_API_KEY` | No | Fallback LLM |
-| `OPENROUTER_API_KEY` | No | Qwen via OpenRouter (primary for linking) |
+| `OPENROUTER_API_KEY` | Stage 3 | Second voter of the Stage 4.5 screen; also makes Qwen primary for linking |
+| `SCREEN_VOTER2_MODEL` | No | Screen voter 2 (default `mistralai/ministral-14b-2512`) |
 | `SUPABASE_URL` | No | Validation monitoring tab |
 | `SUPABASE_SERVICE_KEY` | No | Validation monitoring tab |
 | `GROBID_URL` | No | PDF reference extraction (default: localhost:8070) |

@@ -24,6 +24,7 @@ from .config import (
     LLM_CACHE_DIR, LLM_RATE_SEC,
     OPENAI_API_KEY, OPENAI_MODEL,
     OPENROUTER_API_KEY, OPENROUTER_HEAVY_MODEL,
+    SCREEN_VOTER2_MODEL,
     log,
 )
 from . import token_counter
@@ -870,23 +871,30 @@ def identify_all_originals_with_llm(doi_r:        str,
 # loses a genuine replication. Disagreement is not an error — it routes the row to
 # full text, which is what we would have done anyway.
 
-REF_SCREEN_PROMPT_VERSION = "2026-07-29-split-calls-v6"
+# The voter pair is part of the verdict, so this version string changes whenever
+# either voter does — cached verdicts from a previous pair must not be replayed as
+# the current pair's.
+REF_SCREEN_PROMPT_VERSION = "2026-07-30-split-calls-v6-ministral"
 
 # Q1's two voters, in call order. Both are required: with one provider the screen
 # cannot tell agreement from a lone opinion, so run_extract refuses to start.
-SCREEN_PROVIDERS = ("gemini", "openai")
+# Voter 2 runs on OpenRouter (Ministral 14B by default) rather than OpenAI: on
+# adjudicated hard cases the pair discards 89% of true negatives against gpt-5-mini's
+# 25%, losing no genuine replication, because a non-Google lineage errs elsewhere
+# than the Gemini first voter does.
+SCREEN_PROVIDERS = ("gemini", "openrouter")
 
 
 def _screen_model(provider: str) -> str:
-    return GEMINI_LIGHT_MODEL if provider == "gemini" else OPENAI_MODEL
+    return GEMINI_LIGHT_MODEL if provider == "gemini" else SCREEN_VOTER2_MODEL
 
 
 def _classify_once(prompt: str, provider: str) -> "dict | None":
-    """One classification vote. provider is 'gemini' or 'openai'."""
+    """One classification vote. provider is 'gemini' or 'openrouter'."""
     if provider == "gemini":
         result, _ = call_gemini(prompt, model=GEMINI_LIGHT_MODEL)
     else:
-        result, _ = call_openai(prompt, model=OPENAI_MODEL)
+        result, _ = call_openrouter(prompt, model=SCREEN_VOTER2_MODEL)
     if not result:
         return None
     time.sleep(LLM_RATE_SEC)
@@ -931,8 +939,7 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
 
     cls_prompt = build_classify_prompt(study_r, abstract_r)
     out["llm_prompt"] = cls_prompt
-    votes = [v for v in (_classify_once(cls_prompt, "gemini"),
-                         _classify_once(cls_prompt, "openai")) if v]
+    votes = [v for v in (_classify_once(cls_prompt, p) for p in SCREEN_PROVIDERS) if v]
 
     # Keep the individual votes: a disagreement row is set aside for human review,
     # and "the models disagreed" is not reviewable without knowing who said what.
