@@ -872,6 +872,14 @@ def identify_all_originals_with_llm(doi_r:        str,
 
 REF_SCREEN_PROMPT_VERSION = "2026-07-29-split-calls-v6"
 
+# Q1's two voters, in call order. Both are required: with one provider the screen
+# cannot tell agreement from a lone opinion, so run_extract refuses to start.
+SCREEN_PROVIDERS = ("gemini", "openai")
+
+
+def _screen_model(provider: str) -> str:
+    return GEMINI_LIGHT_MODEL if provider == "gemini" else OPENAI_MODEL
+
 
 def _classify_once(prompt: str, provider: str) -> "dict | None":
     """One classification vote. provider is 'gemini' or 'openai'."""
@@ -900,6 +908,10 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
       models_agree        — whether both votes matched
       llm_confidence      — target confidence (empty when no target call was made)
       classification_confidence — the weaker of the two votes' confidences
+
+    An incomplete screen is reported as such rather than as a verdict:
+    resolution_method is llm_refscreen_partial with one vote and
+    llm_refscreen_failed with none, and neither is cached.
     """
     cache_file = LLM_CACHE_DIR / f"refscreen_{cache_key(doi_r + REF_SCREEN_PROMPT_VERSION + str(bool(refs)))}.json"
     if cache_file.exists():
@@ -921,19 +933,27 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
     out["llm_prompt"] = cls_prompt
     votes = [v for v in (_classify_once(cls_prompt, "gemini"),
                          _classify_once(cls_prompt, "openai")) if v]
-    if not votes:
-        out["resolution_method"] = "llm_refscreen_failed"
-        out["llm_error"] = "both classifiers failed"
-        return out
 
     # Keep the individual votes: a disagreement row is set aside for human review,
     # and "the models disagreed" is not reviewable without knowing who said what.
     out["votes"] = [{k: v[k] for k in ("provider", "is_replication", "confidence", "reasoning")}
                     for v in votes]
     out["llm_source"] = "+".join(v["provider"] for v in votes)
-    out["llm_model"]  = f"{GEMINI_LIGHT_MODEL}+{OPENAI_MODEL}"
-    out["llm_evidence"]  = votes[0]["evidence"]
+    out["llm_model"]  = "+".join(_screen_model(v["provider"]) for v in votes)
+    out["llm_evidence"]  = votes[0]["evidence"] if votes else ""
     out["llm_reasoning"] = " | ".join(f"{v['provider']}: {v['reasoning']}" for v in votes)
+
+    # A missing vote is an API failure, not a verdict. Reporting it as a normal
+    # result would file the row as a two-model disagreement and corrupt the
+    # agreement rate, and caching it would freeze one transient failure into a
+    # permanent one. Return uncached so a re-run can screen the row properly.
+    if len(votes) < 2:
+        answered = {v["provider"] for v in votes}
+        out["resolution_method"] = ("llm_refscreen_partial" if votes
+                                    else "llm_refscreen_failed")
+        out["llm_error"] = "classifier failed: " + ", ".join(
+            p for p in SCREEN_PROVIDERS if p not in answered)
+        return out
 
     labels = {v["is_replication"] for v in votes}
     out["models_agree"] = len(votes) == 2 and len(labels) == 1
@@ -949,8 +969,10 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
 
     if out["is_replication"] == "yes" and refs:
         tgt_prompt = build_target_prompt(study_r, abstract_r, refs)
+        tgt_source, tgt_model = "gemini", GEMINI_HEAVY_MODEL
         result, _ = call_gemini(tgt_prompt, model=GEMINI_HEAVY_MODEL)
         if not result:
+            tgt_source, tgt_model = "openai", OPENAI_MODEL
             result, _ = call_openai(tgt_prompt)
         if result:
             time.sleep(LLM_RATE_SEC)
@@ -963,6 +985,9 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
                 except (ValueError, TypeError, IndexError):
                     ref = None
                 if ref is not None:
+                    # The link is this call's decision, not Q1's, so the row is
+                    # attributed to the model that picked the reference and
+                    # carries the quote that justifies the pick.
                     out.update({
                         "resolved":          True,
                         "resolution_method": "llm_references",
@@ -971,6 +996,14 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
                         "resolved_year_o":   ref.get("publication_year") or ref.get("year"),
                         "resolved_author_o": ref.get("first_author", "") or "",
                         "resolution_score":  1.0,
+                        "llm_source":        tgt_source,
+                        "llm_model":         tgt_model,
+                        "llm_evidence":      (str(result.get("evidence_quote", "") or "").strip()
+                                              or out["llm_evidence"]),
+                        "llm_reasoning":     " | ".join(filter(None, [
+                            out["llm_reasoning"],
+                            f"target ({tgt_source}): {result.get('reasoning', '') or ''}".strip(),
+                        ])),
                     })
 
     cache_file.parent.mkdir(parents=True, exist_ok=True)

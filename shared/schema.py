@@ -38,6 +38,7 @@ EXTRACT_ADDED_COLS = [
     # Original-match type — determined by Stage 3 as its first routing step
     "original_match_type",       # str   — single_original | multiple_match | multiple_original
     "original_match_confidence", # str   — high | medium | low
+    "classify_llm_model",  # str   — exact model that classified original_match_type (blank when a rule fired or the LLM failed)
 
     # OpenAlex work IDs — bare form (e.g. W2884670852), not the https://openalex.org/ URL.
     # openalex_id_r above carries the URL form inherited from Stage 1; these two are the

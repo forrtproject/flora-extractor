@@ -231,6 +231,23 @@ OpenAlex reference list and asks two questions in one call:
 
 Results are cached at `cache/llm/refscreen_{key}.json`.
 
+**Two providers are required.** Question 1 is voted on by Gemini *and* OpenAI, and the
+screen acts only when both answer and agree, so `GEMINI_API_KEY` and `OPENAI_API_KEY`
+must both be set — `extract.run_extract` refuses to start otherwise (unless `--no-llm`).
+An incomplete screen is reported as such rather than as a verdict, and is never cached:
+
+| Votes | `resolution_method` | `link_method` |
+| ----- | ------------------- | ------------- |
+| 2 | agreement/disagreement as above | resolved, `not_a_replication`, or `screen_disagreement` |
+| 1 | `llm_refscreen_partial` | `target_pending` — one vote is not a disagreement; the row waits for a re-run |
+| 0 | `llm_refscreen_failed` | `api_error` |
+
+Rows the screen sets aside (`not_a_replication`, `screen_disagreement`) carry the
+screen's models in `link_llm_model` and its verdicts/evidence in `link_evidence`, so a
+reviewer can see what decided them. On a resolved `llm_references` row those fields
+instead name the model that picked the reference — that call, not the Q1 vote, made the
+link.
+
 ---
 
 ## LLM Models

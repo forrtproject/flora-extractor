@@ -19,8 +19,8 @@ from pathlib import Path
 import pandas as pd
 
 from shared.config import (
-    BASE_DIR, DATA_DIR, GEMINI_HEAVY_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC,
-    OA_XML_CACHE_DIR, PARSE_CACHE_DIR, PDF_CACHE_DIR, log,
+    BASE_DIR, DATA_DIR, GEMINI_API_KEYS, GEMINI_HEAVY_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC,
+    OA_XML_CACHE_DIR, OPENAI_API_KEY, PARSE_CACHE_DIR, PDF_CACHE_DIR, log,
 )
 from shared import token_counter
 from shared.llm_client import call_llm
@@ -213,7 +213,11 @@ _METHOD_MAP = {
     "llm_no_target":                  "no_original_found",
     "llm_failed":                     "target_pending",
     "llm_refscreen_declined":         "target_pending",
-    "llm_refscreen_failed":           "target_pending",
+    # Only one of the two Q1 classifiers answered — no agreement can be read from a
+    # single vote, so the row waits for a re-run rather than being escalated or
+    # filed as a disagreement. Both classifiers failing is a plain API failure.
+    "llm_refscreen_partial":          "target_pending",
+    "llm_refscreen_failed":           "api_error",
     "no_candidates_found":            "target_pending",
     "needs_fulltext":                 "target_pending",
     "no_fulltext_available":          "target_pending",
@@ -522,7 +526,7 @@ def _build_bibtex_r(row: "pd.Series | dict") -> str:
 
 def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
                match_type: str, match_conf: str,
-               rank: int, n: int) -> dict:
+               rank: int, n: int, classify_model: str = "") -> dict:
     row = filter_row.to_dict()
     # propagate study_r → title_r if title_r is absent (old seeded data uses study_r)
     if not row.get("title_r"):
@@ -533,6 +537,7 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
         "pair_id":           make_pair_id(doi_r_clean, doi_o_clean),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
+        "classify_llm_model":        classify_model,
         "doi_o":           doi_o_clean,
         "title_o":         str(link.get("resolved_title_o", "") or ""),
         "year_o":          str(link.get("resolved_year_o",  "") or ""),
@@ -564,7 +569,8 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
 def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
                      match_type: str, match_conf: str, n: int,
                      link_llm_model: str = "",
-                     link_method: str = "llm_cited_candidates") -> dict:
+                     link_method: str = "llm_cited_candidates",
+                     classify_model: str = "") -> dict:
     row = filter_row.to_dict()
     if not row.get("title_r"):
         row["title_r"] = row.get("study_r", "")
@@ -584,6 +590,7 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
         "pair_id":           make_pair_id(doi_r_clean, pair_seed),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
+        "classify_llm_model":        classify_model,
         "doi_o":           doi_o_clean,
         "title_o":         title_o,
         "year_o":          str(orig.get("year",         "") or ""),
@@ -611,7 +618,7 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
 
 
 def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
-               link_method: str = "api_error") -> dict:
+               link_method: str = "api_error", classify_model: str = "") -> dict:
     row = filter_row.to_dict()
     doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
     outcome = "api_error" if link_method == "api_error" else "pending"
@@ -619,6 +626,7 @@ def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
         "pair_id": make_pair_id(doi_r_clean, ""),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
+        "classify_llm_model":        classify_model,
         "doi_o": "", "title_o": "", "year_o": "", "authors_o": "", "ref_o": "",
         "bibtex_ref_o": "", "bibtex_ref_r": _build_bibtex_r(filter_row),
         "link_method": link_method, "link_evidence": "", "link_confidence": "low",
@@ -994,6 +1002,26 @@ def _append_row(out_path, result_row: dict, first: bool) -> None:
         raise
 
 
+def _check_screen_providers(no_llm: bool) -> None:
+    """Refuse to start when the Stage 4.5 screen cannot get its second vote.
+
+    The screen decides whether a paper is a replication at all by voting two
+    providers against each other and acting only when they agree. With one
+    provider configured every screened row returns a single vote, which the
+    pipeline can only treat as an incomplete screen — the whole run would produce
+    target_pending rows and discard nothing.
+    """
+    if no_llm:
+        return
+    missing = [name for name, key in (("GEMINI_API_KEY", GEMINI_API_KEYS[0] if GEMINI_API_KEYS else ""),
+                                      ("OPENAI_API_KEY", OPENAI_API_KEY)) if not key]
+    if missing:
+        raise RuntimeError(
+            f"Stage 3 needs both reference-screen providers; missing: {', '.join(missing)}. "
+            "Set them in .env, or run with --no-llm to skip every LLM stage."
+        )
+
+
 def run_extract(no_llm: bool = False,
                 limit: "int | None" = None,
                 no_pdf: bool = False,
@@ -1035,6 +1063,8 @@ def run_extract(no_llm: bool = False,
                            still respects those flags. Useful for a fast --no-llm --no-pdf pass
                            that still gets proper outcomes.
     """
+    _check_screen_providers(no_llm)
+
     filtered_path = DATA_DIR / "filtered.csv"
     if not filtered_path.exists():
         sample_path = BASE_DIR / "misc" / "sample_filtered.csv"
@@ -1236,6 +1266,7 @@ def run_extract(no_llm: bool = False,
         match = classify_match_type(row.to_dict(), no_llm=no_llm)
         match_type = match["original_match_type"]
         match_conf = match["original_match_confidence"]
+        classify_model = str(match.get("classify_llm_model", "") or "")
         log.info("[%s] match_type=%s conf=%s", doi_r, match_type, match_conf)
 
         # --no-multiple-originals: write multiple_original rows as target_pending
@@ -1243,7 +1274,8 @@ def run_extract(no_llm: bool = False,
             if not resolved_only:
                 log.info("[%s] --no-multiple-originals: writing target_pending", doi_r)
                 result_rows.append(_empty_row(row, "multiple_original", match_conf,
-                                              link_method="target_pending"))
+                                              link_method="target_pending",
+                                              classify_model=classify_model))
                 for result_row in result_rows:
                     _append_row(out_path, result_row, first=first_write)
                     first_write = False
@@ -1264,7 +1296,8 @@ def run_extract(no_llm: bool = False,
                             "writing target_pending (NOT single_original)", doi_r
                         )
                         result_rows.append(_empty_row(row, "multiple_original", match_conf,
-                                                      link_method="target_pending"))
+                                                      link_method="target_pending",
+                                                      classify_model=classify_model))
                     else:
                         link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                                               no_llm=no_llm, no_pdf=no_pdf)
@@ -1273,7 +1306,8 @@ def run_extract(no_llm: bool = False,
                         outcome = _get_outcome(doi_r, row, link,
                                                no_llm=no_llm and not recalibrate_outcomes)
                         result_rows.append(
-                            _merge_row(row, link, outcome, "single_original", match_conf, 1, 1)
+                            _merge_row(row, link, outcome, "single_original", match_conf,
+                                       1, 1, classify_model)
                         )
                 else:
                     multi_llm_model = str(result.get("llm_model", "") or "")
@@ -1300,7 +1334,8 @@ def run_extract(no_llm: bool = False,
                         result_rows.append(
                             _merge_multi_row(row, orig, outcome, match_type, match_conf,
                                              len(originals), multi_llm_model,
-                                             link_method=multi_link_method)
+                                             link_method=multi_link_method,
+                                             classify_model=classify_model)
                         )
             else:
                 link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
@@ -1310,14 +1345,16 @@ def run_extract(no_llm: bool = False,
                 outcome = _get_outcome(doi_r, row, link,
                                        no_llm=no_llm and not recalibrate_outcomes)
                 result_rows.append(
-                    _merge_row(row, link, outcome, match_type, match_conf, 1, 1)
+                    _merge_row(row, link, outcome, match_type, match_conf, 1, 1,
+                               classify_model)
                 )
 
         except OpenAlexQuotaExhausted:
             raise
         except Exception as e:
             log.error("[%s] extraction failed: %s", doi_r, e)
-            result_rows.append(_empty_row(row, match_type, match_conf))
+            result_rows.append(_empty_row(row, match_type, match_conf,
+                                          classify_model=classify_model))
 
         for result_row in result_rows:
             # Reject self-links / recover missing doi_o BEFORE the resolved_only gate,

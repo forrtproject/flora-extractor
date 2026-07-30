@@ -1,5 +1,12 @@
-"""Tests for citation-context extraction in extract/link_original.py."""
-from extract.link_original import _extract_cit_contexts
+"""Tests for citation-context extraction and Stage 4.5 screen routing in
+extract/link_original.py."""
+from unittest.mock import patch
+
+import pandas as pd
+
+import extract.link_original as link_original
+from extract.link_original import _extract_cit_contexts, run_for_doi
+from extract.run_extract import _map_method
 
 
 class TestExtractCitContexts:
@@ -50,3 +57,100 @@ class TestExtractCitContexts:
 
     def test_no_citation_returns_empty(self):
         assert _extract_cit_contexts("No citations appear in this sentence at all.") == []
+
+
+# ── Stage 4.5 screen routing ─────────────────────────────────────────────────
+
+def _screen_result(**over) -> dict:
+    base = {
+        "resolved": False, "resolution_method": "llm_refscreen_declined",
+        "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
+        "resolved_author_o": "", "resolution_score": 0.0,
+        "is_replication": "unclear", "models_agree": False, "votes": [],
+        "llm_confidence": "", "classification_confidence": "",
+        "target_description": "",
+        "llm_source": "", "llm_model": "", "llm_evidence": "",
+        "llm_reasoning": "", "llm_prompt": "", "llm_error": "",
+    }
+    base.update(over)
+    return base
+
+
+def _run_to_screen(screen: dict) -> dict:
+    """Drive run_for_doi to the Stage 4.5 screen and return its output row.
+
+    The abstract carries no author-year citation, so stages 2.5-4 all decline and
+    the screen is the first thing that can fire.
+    """
+    cands_df = pd.DataFrame([{
+        "doi_r": "10.1/rep", "study_r": "A study", "abstract_r": "No citations here.",
+        "year_r": "2020", "openalex_id_r": "W1", "url_r": "",
+        "author_year_pattern_r": "",
+    }])
+    with patch.object(link_original, "find_all_candidates", return_value=[]), \
+         patch.object(link_original, "fetch_referenced_works_metadata", return_value=[]), \
+         patch.object(link_original, "fetch_opencitations_references", return_value=[]), \
+         patch.object(link_original, "screen_references_with_llm", return_value=screen), \
+         patch.object(link_original, "acquire_pdf",
+                      side_effect=AssertionError("must not reach the PDF stage")):
+        return run_for_doi("10.1/rep", cands_df=cands_df)
+
+
+class TestScreenRouting:
+    def test_one_vote_is_target_pending_not_a_disagreement(self):
+        """A single surviving vote is a provider outage. Filing it as a two-model
+        disagreement both misroutes the row and inflates the disagreement rate."""
+        row = _run_to_screen(_screen_result(
+            resolution_method="llm_refscreen_partial",
+            llm_error="classifier failed: openai",
+            llm_model="gemini-light",
+            votes=[{"provider": "gemini", "is_replication": "no",
+                    "confidence": "high", "reasoning": "r"}]))
+
+        assert row["resolution_method"] == "llm_refscreen_partial"
+        assert _map_method(row["resolution_method"]) == "target_pending"
+        assert row["llm_model"] == "gemini-light"
+        assert "openai" in row["llm_error"]
+
+    def test_no_votes_is_an_api_error(self):
+        row = _run_to_screen(_screen_result(
+            resolution_method="llm_refscreen_failed",
+            llm_error="classifier failed: gemini, openai"))
+
+        assert row["resolution_method"] == "llm_refscreen_failed"
+        assert _map_method(row["resolution_method"]) == "api_error"
+
+    def test_discarded_row_carries_the_screen_attribution(self):
+        """not_a_replication rows are quarantined for review, so they must record
+        which models decided it, on what evidence, with what reasoning."""
+        row = _run_to_screen(_screen_result(
+            is_replication="no", models_agree=True, classification_confidence="high",
+            llm_model="gemini-light+gpt-mini", llm_source="gemini+openai",
+            llm_evidence="not a replication of anything",
+            llm_reasoning="gemini: unrelated | openai: unrelated",
+            votes=[{"provider": "gemini", "is_replication": "no",
+                    "confidence": "high", "reasoning": "unrelated"},
+                   {"provider": "openai", "is_replication": "no",
+                    "confidence": "high", "reasoning": "unrelated"}]))
+
+        assert _map_method(row["resolution_method"]) == "not_a_replication"
+        assert row["llm_model"] == "gemini-light+gpt-mini"
+        assert row["llm_evidence"] == "not a replication of anything"
+        assert "gemini: unrelated" in row["llm_reasoning"]
+
+    def test_disagreement_row_carries_the_screen_attribution(self):
+        row = _run_to_screen(_screen_result(
+            is_replication="unclear", models_agree=False,
+            llm_model="gemini-light+gpt-mini", llm_source="gemini+openai",
+            llm_evidence="the abstract says replication",
+            llm_reasoning="gemini: yes | openai: no",
+            votes=[{"provider": "gemini", "is_replication": "yes",
+                    "confidence": "high", "reasoning": "yes"},
+                   {"provider": "openai", "is_replication": "no",
+                    "confidence": "high", "reasoning": "no"}]))
+
+        assert _map_method(row["resolution_method"]) == "screen_disagreement"
+        assert row["llm_model"] == "gemini-light+gpt-mini"
+        assert "gemini=yes/high" in row["llm_evidence"]
+        assert "openai=no/high" in row["llm_evidence"]
+        assert "the abstract says replication" in row["llm_evidence"]

@@ -707,6 +707,13 @@ _MOCK_MATCH = {"original_match_type": "single_original", "original_match_confide
 
 
 class TestRunExtract:
+    @pytest.fixture(autouse=True)
+    def _screen_providers_configured(self, monkeypatch):
+        """run_extract refuses to start unless both Q1 screen providers are configured.
+        These tests mock every LLM call, so satisfy the check rather than bypass it."""
+        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["test-key"])
+        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "test-key")
+
     def _run(self, filtered_csv: str, mock_multi=None, mock_match=None):
         """Helper: write a temp CSV, run extract with mocked APIs, return result DataFrame."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv",
@@ -1471,3 +1478,69 @@ class TestOutcomeVocabularyNeverCrosses:
         from shared.schema import outcome_categories_for
         assert "success" not in outcome_categories_for("reproduction")
         assert "computationally successful, robust" not in outcome_categories_for("replication")
+
+
+# ── Decision-model attribution and the two-provider requirement ──────────────
+
+class TestClassifyModelAttribution:
+    """Routing is the one decision with no attribution otherwise: the match-type
+    classifier's model was computed and thrown away."""
+
+    _FILTER_ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "Rep",
+                             "filter_status": "replication"})
+
+    def test_merge_row_persists_the_classifier_model(self):
+        link = {"resolution_method": "llm_fulltext", "resolved_doi_o": "10.1/orig",
+                "resolved_title_o": "Original", "resolved_year_o": 2000,
+                "resolved_author_o": "Smith", "resolution_score": 1.0,
+                "llm_confidence": "high"}
+        with patch("extract.run_extract._build_ref_o", return_value=("ref", "auth", "bib")):
+            row = _merge_row(self._FILTER_ROW, link, _MOCK_OUTCOME,
+                             "single_original", "high", 1, 1, "gemini-heavy")
+        assert row["classify_llm_model"] == "gemini-heavy"
+
+    def test_merge_multi_row_persists_the_classifier_model(self):
+        with patch("extract.run_extract._build_ref_o", return_value=("", "", "")):
+            row = _merge_multi_row(self._FILTER_ROW,
+                                   {"rank": 1, "doi": "10.1/o", "title": "O",
+                                    "first_author": "A", "year": 2001,
+                                    "confidence": "high"},
+                                   _MOCK_OUTCOME, "multiple_original", "high", 2,
+                                   classify_model="gemini-heavy")
+        assert row["classify_llm_model"] == "gemini-heavy"
+
+    def test_empty_row_persists_the_classifier_model(self):
+        row = run_extract._empty_row(self._FILTER_ROW, "single_original", "low",
+                                     link_method="target_pending",
+                                     classify_model="gemini-heavy")
+        assert row["classify_llm_model"] == "gemini-heavy"
+
+    def test_classify_llm_model_is_in_the_schema(self):
+        assert "classify_llm_model" in EXTRACTED_COLS
+
+
+class TestScreenProviderPrecheck:
+    """The Stage 4.5 screen needs two providers to have anything to agree about,
+    so a run configured with one must fail at startup, not 2,000 rows in."""
+
+    def test_missing_openai_key_raises(self, monkeypatch):
+        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["k"])
+        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "")
+        with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
+            run_extract._check_screen_providers(no_llm=False)
+
+    def test_missing_gemini_key_raises(self, monkeypatch):
+        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", [])
+        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "k")
+        with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
+            run_extract._check_screen_providers(no_llm=False)
+
+    def test_both_keys_present_passes(self, monkeypatch):
+        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["k"])
+        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "k")
+        run_extract._check_screen_providers(no_llm=False)
+
+    def test_no_llm_skips_the_check(self, monkeypatch):
+        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", [])
+        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "")
+        run_extract._check_screen_providers(no_llm=True)

@@ -659,20 +659,27 @@ def run_for_doi(doi_r:              str,
         token_counter.set_stage("extract_refscreen")
         screen = screen_references_with_llm(doi_r, study_r, abstract_r, refs)
 
-        # Discarding needs both models to agree, and to agree confidently.
+        # A screen that did not get both votes is an API failure, not a verdict, and
+        # must be caught before the disagreement branch below — a lone surviving vote
+        # is not two models disagreeing. One vote → target_pending, so a re-run can
+        # screen the row once the provider is back; no votes → api_error.
+        if screen["resolution_method"] in {"llm_refscreen_partial", "llm_refscreen_failed"}:
+            log.warning("[%s] Reference screen incomplete (%s): %s", doi_r,
+                        screen["resolution_method"], screen.get("llm_error", ""))
+            return _build_output(doi_r, flora, cands_row, candidates,
+                                 screen, {}, {}, screen)
+
+        # Discarding needs both models to agree, and to agree confidently. The full
+        # screen dict is the resolution so the discarded row still carries the models
+        # that voted, their evidence and their reasoning — it is set aside for review,
+        # and a row with no attribution is not reviewable.
         if (screen["is_replication"] == "no"
                 and screen.get("models_agree")
                 and screen.get("classification_confidence") == "high"):
             log.info("[%s] Reference screen: not a replication — skipping PDF", doi_r)
-            return _build_output(doi_r, flora, cands_row, candidates, {
-                "resolved":          False,
-                "resolution_method": "llm_not_a_replication",
-                "resolved_doi_o":    "",
-                "resolved_title_o":  "",
-                "resolved_year_o":   None,
-                "resolved_author_o": "",
-                "resolution_score":  0.0,
-            }, {}, {}, screen)
+            return _build_output(doi_r, flora, cands_row, candidates,
+                                 {**screen, "resolution_method": "llm_not_a_replication"},
+                                 {}, {}, screen)
 
         if screen["resolved"]:
             log.info("[%s] Resolved from reference list: %s", doi_r,
@@ -689,20 +696,17 @@ def run_for_doi(doi_r:              str,
                 for v in screen.get("votes", []))
             log.info("[%s] Screen disagreement (%s) — set aside, not escalating",
                      doi_r, verdicts)
-            disagreement = _build_output(doi_r, flora, cands_row, candidates, {
-                "resolved":          False,
-                "resolution_method": "llm_screen_disagreement",
-                "resolved_doi_o":    "",
-                "resolved_title_o":  "",
-                "resolved_year_o":   None,
-                "resolved_author_o": "",
-                "resolution_score":  0.0,
-            }, {}, {}, screen)
+            disagreement = _build_output(
+                doi_r, flora, cands_row, candidates,
+                {**screen, "resolution_method": "llm_screen_disagreement"},
+                {}, {}, screen)
             # The row exists to be reviewed by a human, so record who said what —
             # "the models disagreed" alone is not something a reviewer can act on.
             # _merge_row reads the row's link_evidence from llm_evidence, so set that.
-            disagreement["llm_evidence"] = (
-                f"screen disagreement: {verdicts}" if verdicts else "screen disagreement")
+            disagreement["llm_evidence"] = "; ".join(filter(None, [
+                f"screen disagreement: {verdicts}" if verdicts else "screen disagreement",
+                screen.get("llm_evidence", ""),
+            ]))
             return disagreement
 
         # ── Stage 4.6: Title search on a named-but-unmatched target ──────────

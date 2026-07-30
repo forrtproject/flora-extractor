@@ -47,6 +47,7 @@ All `filtered.csv` columns, plus:
 | `pair_id` | string | Hash of `(doi_r, doi_o)` — unique row key; recomputed if `doi_o` is corrected |
 | `original_match_type` | string | `single_original` \| `multiple_match` \| `multiple_original` |
 | `original_match_confidence` | string | `high` \| `medium` \| `low` |
+| `classify_llm_model` | string | Model that classified `original_match_type`; blank when a rule fired, when `--no-llm` was set, or when the classifier LLM failed |
 | `oa_work_id_r` | string | OpenAlex work ID of the replication paper, **bare** form (`W2884670852`). Derived from `openalex_id_r`, which stores the URL form; falls back to a DOI lookup |
 | `oa_work_id_o` | string | OpenAlex work ID of the original study, bare form. Resolved from `doi_o` *after* DOI verification, so it always describes the DOI actually written. Blank when `doi_o` is blank or unindexed in OpenAlex |
 | `doi_o` | string | DOI of the original (target) study |
@@ -57,7 +58,7 @@ All `filtered.csv` columns, plus:
 | `link_method` | string | How the original was found — see below |
 | `link_evidence` | string | Quote or description supporting the link |
 | `link_confidence` | string | `high` \| `medium` \| `low`; downgraded to `low` on DOI mismatch |
-| `link_llm_model` | string | Model name used for LLM linking; blank for rule-based rows |
+| `link_llm_model` | string | Model that decided the link; blank for rule-based rows. On `llm_references` rows this is the model that picked the reference, not the two classifiers that screened the paper. On `not_a_replication` and `screen_disagreement` rows it is the pair of Q1 classifiers (`gemini-model+openai-model`) |
 | `doi_o_verification` | string | DOI verification status — see below |
 | `outcome` | string | Replication outcome — see below |
 | `outcome_phrase` | string | Verbatim phrase from paper describing outcome |
@@ -88,8 +89,8 @@ value. They are now emitted distinctly because their reliability differs sharply
 | `screen_disagreement` | The two Stage 4.5 "is this a replication?" classifiers disagreed; the row is set aside for review rather than escalated, and `sanity_check` quarantines it to `data/screen_disagreement.csv` |
 | `author_year_match_legacy` | Legacy row written before the split; the specific rule-based method cannot be recovered retroactively (see `tools/migrate_link_methods.py`) |
 | `no_original_found` | Pipeline could not identify an original study |
-| `target_pending` | Original DOI must be supplied manually |
-| `api_error` | Extraction failed after retries |
+| `target_pending` | Original DOI must be supplied manually. Also written when only one of the two Stage 4.5 classifiers answered — a single vote carries no agreement signal, so the row waits for a re-run instead of being filed as a disagreement |
+| `api_error` | Extraction failed after retries, including a Stage 4.5 screen where **both** classifiers failed |
 
 The enum lives in `shared/schema.py` as `LINK_METHOD_VALUES`. The subset that counts
 as a resolved link — the rows `extract/csv_to_db.py` imports into the validation DB —
