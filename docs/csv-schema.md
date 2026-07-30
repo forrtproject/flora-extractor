@@ -84,10 +84,21 @@ value. They are now emitted distinctly because their reliability differs sharply
 | `llm_references` | LLM picked the original from the paper's full OpenAlex reference list, accepted only at high confidence (Stage 4.5 screen) |
 | `not_a_replication` | The Stage 4.5 screen concluded at high confidence that the paper does not replicate or reproduce anything; no original exists to link and no PDF was fetched |
 | `llm_fulltext` | LLM resolved the original from full PDF text (also multi-original rows when a PDF/GROBID fed the prompt) |
+| `llm_title_search` | The LLM named an original that was **not** in the candidate/reference list, so the DOI came from a CrossRef/OpenAlex title search — kept distinct because every `doi_o` mismatch found in the 2026-07 audit came from this path |
+| `screen_disagreement` | The two Stage 4.5 "is this a replication?" classifiers disagreed; the row is set aside for review rather than escalated, and `sanity_check` quarantines it to `data/screen_disagreement.csv` |
 | `author_year_match_legacy` | Legacy row written before the split; the specific rule-based method cannot be recovered retroactively (see `tools/migrate_link_methods.py`) |
 | `no_original_found` | Pipeline could not identify an original study |
 | `target_pending` | Original DOI must be supplied manually |
 | `api_error` | Extraction failed after retries |
+
+The enum lives in `shared/schema.py` as `LINK_METHOD_VALUES`. The subset that counts
+as a resolved link — the rows `extract/csv_to_db.py` imports into the validation DB —
+is `RESOLVED_LINK_METHODS`: the five rule-based methods plus `llm_cited_candidates`,
+`llm_references`, `llm_fulltext` and `llm_title_search`. Every other value above marks
+a row that is unresolved, quarantined, or a pipeline-state marker, and is never
+imported. `tests/test_extract.py::test_map_method_outputs_are_in_link_method_enum`
+asserts that every value `_map_method` can emit is in `LINK_METHOD_VALUES`, so a new
+resolution method cannot silently fall outside the enum.
 
 ### `doi_o_verification` values
 

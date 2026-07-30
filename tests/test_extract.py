@@ -1381,6 +1381,64 @@ class TestTitleSearchProvenance:
         assert run_extract._map_method("llm_gemini") == "llm_fulltext"
 
 
+# ── link_method enum covers everything the pipeline can emit (audit B1) ──────
+
+class TestLinkMethodEnumCoverage:
+    """Every link_method the pipeline writes must be in LINK_METHOD_VALUES, and every
+    method that identifies an original must be in RESOLVED_LINK_METHODS — csv_to_db
+    filters DB imports on that set, so an omission silently drops resolved rows
+    (llm_references, 25% of extracted-test.csv, was dropped this way)."""
+
+    def _emitted(self) -> set:
+        import inspect
+        # _map_method is the single funnel from internal resolution_method labels to
+        # the persisted value, so its outputs plus the defaults of the row builders
+        # are the complete emitted set.
+        methods = set(run_extract._METHOD_MAP.values())
+        methods |= {run_extract._map_method(m)
+                    for m in ("llm_brand_new_source", "some_unmapped_method",
+                              "llm_no_target", "")}
+        for fn in (run_extract._merge_multi_row, run_extract._empty_row):
+            default = inspect.signature(fn).parameters["link_method"].default
+            methods.add(default)
+        return methods
+
+    def test_every_emitted_method_is_in_the_enum(self):
+        from shared.schema import LINK_METHOD_VALUES
+        unlisted = self._emitted() - LINK_METHOD_VALUES
+        assert not unlisted, f"link_method values missing from the enum: {unlisted}"
+
+    def test_call_site_literals_are_in_the_enum(self):
+        import inspect, re
+        from shared.schema import LINK_METHOD_VALUES
+        src = inspect.getsource(run_extract)
+        literals = set(re.findall(r'link_method\s*=\s*"([^"]+)"', src))
+        unlisted = literals - LINK_METHOD_VALUES
+        assert not unlisted, f"link_method literals missing from the enum: {unlisted}"
+
+    def test_map_method_passthrough_matches_the_enum(self):
+        from shared.schema import LINK_METHOD_VALUES
+        for value in LINK_METHOD_VALUES:
+            assert run_extract._map_method(value) == value
+
+    def test_reference_screen_resolutions_reach_the_db(self):
+        # csv_to_db imports supabase at module level, so read its source instead of
+        # importing it: the point is that its import filter is the schema set.
+        from pathlib import Path
+        from shared.schema import RESOLVED_LINK_METHODS
+        assert "llm_references" in RESOLVED_LINK_METHODS
+        src = Path(__file__).resolve().parents[1] / "extract" / "csv_to_db.py"
+        text = src.read_text(encoding="utf-8")
+        assert "from shared.schema import RESOLVED_LINK_METHODS" in text
+        assert 'df["link_method"].isin(_RESOLVED_METHODS)' in text
+
+    def test_set_aside_verdicts_are_known_but_unresolved(self):
+        from shared.schema import LINK_METHOD_VALUES, RESOLVED_LINK_METHODS
+        for value in ("not_a_replication", "screen_disagreement"):
+            assert value in LINK_METHOD_VALUES
+            assert value not in RESOLVED_LINK_METHODS
+
+
 class TestOutcomeVocabularyNeverCrosses:
     """A reproduction must only ever carry one of the 9 grid values (or
     cannot_be_determined / not_a_replication), and a replication only the
