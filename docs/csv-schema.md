@@ -30,11 +30,18 @@ All `candidates.csv` columns, plus:
 | Column | Type | Description |
 | ------ | ---- | ----------- |
 | `filter_status` | string | `replication` \| `reproduction` \| `false_positive` \| `needs_review` |
-| `filter_method` | string | `rule_based` \| `llm` \| `both` |
+| `filter_method` | string | `rule_based` \| `both` — see below |
 | `filter_evidence` | string | Phrase or pattern that triggered the classification |
 | `filter_confidence` | string | `high` \| `medium` \| `low` — categorical, not a float |
 
 `filter_confidence` is a three-level label because a single LLM call cannot produce calibrated probabilities.
+
+`run_filter` writes only two values. Every row is classified by the rule filter first
+(`rule_based`), and the LLM is asked only about the rows the rules left at
+`needs_review` — so an LLM verdict always lands on a row that already carries a
+rule-based one, and is recorded as `both`. The third value, `llm`, is written only by
+`filter/refilter_fp.py` when it re-decides a row whose verdict was already `both`.
+`schema.py` lists all three.
 
 ---
 
@@ -55,10 +62,12 @@ All `filtered.csv` columns, plus:
 | `year_o` | int | Publication year of the original study |
 | `authors_o` | string | Authors of the original study (semicolon-separated surnames) |
 | `ref_o` | string | Formatted reference string for the original study |
+| `bibtex_ref_o` | string | BibTeX entry for the original study (`@article` when a journal is known, else `@misc`; cite key `Surname_Year`). Blank when `doi_o` was dropped as a mismatch |
+| `bibtex_ref_r` | string | BibTeX entry for the replication paper, built from the Stage 1 columns. Volume/issue/pages are not tracked at Stage 1, so they are absent |
 | `link_method` | string | How the original was found — see below |
 | `link_evidence` | string | Quote or description supporting the link |
 | `link_confidence` | string | `high` \| `medium` \| `low`; downgraded to `low` on DOI mismatch |
-| `link_llm_model` | string | Model that decided the link; blank for rule-based rows. On `llm_references` rows this is the model that picked the reference, not the two classifiers that screened the paper. On `not_a_replication` and `screen_disagreement` rows it is the pair of Q1 classifiers (`gemini-model+openai-model`) |
+| `link_llm_model` | string | Model that decided the link; blank for rule-based rows. On `llm_references` rows this is the model that picked the reference, not the two classifiers that screened the paper. On `not_a_replication` and `screen_disagreement` rows it is the pair of front-door classifiers, joined with `+` (`GEMINI_LIGHT_MODEL+SCREEN_VOTER2_MODEL`) |
 | `doi_o_verification` | string | DOI verification status — see below |
 | `outcome` | string | Replication outcome — see below |
 | `outcome_phrase` | string | Verbatim phrase from paper describing outcome |
@@ -71,8 +80,8 @@ All `filtered.csv` columns, plus:
 
 ### `link_method` values
 
-The five rule-based methods used to collapse into a single `author_year_match`
-value. They are now emitted distinctly because their reliability differs sharply.
+Each rule-based method is recorded under its own name: their reliability differs
+sharply, so a consumer has to be able to tell them apart.
 
 | Value | Meaning |
 | ----- | ------- |
@@ -80,12 +89,12 @@ value. They are now emitted distinctly because their reliability differs sharply
 | `same_author_year_title_overlap` | Rule-based: all candidates share one author + year; chosen by title-Jaccard overlap with abstract/title |
 | `single_candidate_after_requery` | Rule-based: exactly one OpenAlex candidate remained after re-query, auto-accepted at score 1.0 with **no semantic check** (weakest of the rule-based methods) |
 | `title_pattern_match` | Rule-based: the replication title (e.g. "A Replication of X") named the original, matched to a candidate by title Jaccard |
-| `grobid_ref_match` | Rule-based: a GROBID-parsed reference matched a candidate by DOI or author+year |
+| `grobid_ref_match` | Rule-based: a GROBID-parsed reference matched a candidate by DOI or author+year. The resolver behind it (`shared/disambiguation.resolve_by_grobid_refs`) is not wired into `run_for_doi`, so only stored rows carry this value |
 | `llm_cited_candidates` | LLM chose the original from candidates found by matching an author-year citation in the abstract against the paper's references |
 | `llm_references` | LLM picked the original from the paper's full OpenAlex reference list, accepted only at high confidence (Stage 4.5 screen) |
 | `not_a_replication` | Stage 3's front-door screen concluded at high confidence that the paper does not replicate or reproduce anything; no original exists to link and no PDF was fetched |
 | `llm_fulltext` | LLM resolved the original from full PDF text (also multi-original rows when a PDF/GROBID fed the prompt) |
-| `llm_title_search` | **Provisional, not resolved.** The LLM named an original that was **not** in the candidate/reference list, so the DOI came from a CrossRef/OpenAlex title search against the whole literature. A hand-check of the 2026-07-28 batch put precision near 50%, and the errors are invisible to `doi_o_verification` (the DOI does resolve to the named title; the named title is simply not the paper's target). `link_confidence` is forced to `low`, no outcome is coded, and `sanity_check` quarantines the row to `data/provisional_title_search.csv` for human confirmation |
+| `llm_title_search` | **Provisional, not resolved.** The LLM named an original that was **not** in the candidate/reference list, so the DOI came from a CrossRef/OpenAlex title search against the whole literature. Two points in the ladder search this way and both record this one value: the pre-PDF search on a target the screen named but could not match to a reference (gated on both voters calling the paper a replication at high confidence), and the search after the full-text LLM names a title that is in no candidate list. A hand-check of the 2026-07-28 batch put precision near 50%, and the errors are invisible to `doi_o_verification` (the DOI does resolve to the named title; the named title is simply not the paper's target). `link_confidence` is forced to `low`, no outcome is coded, and `sanity_check` quarantines the row to `data/provisional_title_search.csv` for human confirmation |
 | `screen_disagreement` | The two front-door "is this a replication?" classifiers disagreed; the row is set aside for review rather than processed further, and `sanity_check` quarantines it to `data/screen_disagreement.csv` |
 | `author_year_match_legacy` | Legacy row written before the split; the specific rule-based method cannot be recovered retroactively (see `tools/migrate_link_methods.py`) |
 | `no_original_found` | Pipeline could not identify an original study |
@@ -103,7 +112,9 @@ resolution method cannot silently fall outside the enum.
 
 ### `doi_o_verification` values
 
-Populated automatically before each row is written. See [doi-verification.md](doi-verification.md) for full design.
+Populated automatically before each row is written. The matching thresholds and the three
+correction tiers live in `shared/doi_verify.py`; *DOI Verification* in `CLAUDE.md`
+summarises the design.
 
 | Value | Meaning |
 | ----- | ------- |
@@ -118,9 +129,18 @@ Populated automatically before each row is written. See [doi-verification.md](do
 
 ### `outcome` values
 
-The first six are the **outcome categories** a classifier may emit (defined once in
-`shared/schema.py` as `OUTCOME_CATEGORIES`). `pending` and `api_error` are
-**pipeline-state markers**, not outcomes — they record where a row sits in the pipeline.
+The `type` column selects the vocabulary. A **replication** is coded on the categories
+below (`schema.OUTCOME_CATEGORIES`); a **reproduction** re-runs the original data and
+code, so it is coded on the 3×3 computation/robustness grid instead
+(`schema.REPRODUCTION_OUTCOME_CATEGORIES`, matching the FLoRA entry form's dropdown):
+`computationally successful` \| `computational issues` \| `computation not checked`,
+each combined with `robust` \| `robustness challenges` \| `robustness not checked` —
+e.g. `computationally successful, robustness not checked`. `cannot_be_determined` and
+`not_a_replication` are valid for both. `schema.outcome_categories_for(type)` returns
+the applicable set.
+
+`pending` and `api_error` are **pipeline-state markers**, not outcomes — they record
+where a row sits in the pipeline.
 
 | Value | Meaning |
 | ----- | ------- |
@@ -133,11 +153,10 @@ The first six are the **outcome categories** a classifier may emit (defined once
 | `pending` | Outcome not coded (pipeline-state marker). Written for every row whose `link_method` is not in `RESOLVED_LINK_METHODS` — there is no confirmed original to code an outcome against, so the outcome LLM never runs (`outcome_reasoning` says which method it was) |
 | `api_error` | Extraction failed after retries (pipeline-state marker) |
 
-> `uninformative` is no longer emitted by the classifier after the outcome-coding
-> unification — new rows use `cannot_be_determined`. It remains in
-> `schema.OUTCOME_VALUES` (but not `OUTCOME_CATEGORIES`) so legacy rows in
-> `extracted.csv` / `extracted-test.csv` still validate. Dashboards keep it as a
-> read-only legacy bucket.
+> `uninformative` appears only in stored rows written by an earlier classifier; the
+> equivalent verdict today is `cannot_be_determined`. It is in `schema.OUTCOME_VALUES`
+> (but not `OUTCOME_CATEGORIES`) so those rows in `extracted.csv` /
+> `extracted-test.csv` still validate, and dashboards show it as a read-only bucket.
 
 ---
 

@@ -66,13 +66,12 @@ The monitoring app registers these routes (see `validate/app.py`):
 
 - `/dashboard`      — pipeline stats (CSV column reads) + Supabase validation KPIs
 - `/check`          — Check page: filter/inspect extracted rows, download subsets
-- `/batch`          — batch disambiguation for multiple-match papers
-- `/multi-originals`— multi-original paper review
-- `/`               — redirects to `/dashboard`
+- `/batch`          — batch disambiguation for multiple-match papers (skipped when `FLORA_READONLY=1`)
+- `/multi-originals`— multi-original paper review (skipped when `FLORA_READONLY=1`)
+- `/`, `/pipeline`  — redirect to `/dashboard`
 
-Per-stage tab blueprints (`extract_view`, `search_view`, `filter_view`, `pipeline`,
-`target_pending`, `input`) still exist under `validate/routes/` but are **not
-registered** in `app.py` — treat them as orphaned/legacy.
+`validate/routes/` holds exactly these four blueprints; every one of them is
+registered.
 
 ---
 
@@ -99,7 +98,8 @@ registered** in `app.py` — treat them as orphaned/legacy.
 | `shared/utils.py`              | `clean_doi()`, `cache_key()`, common helpers                                |
 | `shared/config.py`             | All paths, env var loading, rate limits; `MARKITDOWN_CACHE_DIR = cache/markdown/` |
 | `shared/schema.py`             | CSV column definitions — the contract between pipeline stages               |
-| `shared/cache.py`              | Cache read/write/clear helpers                                              |
+| `shared/prompts.py`            | Every LLM prompt in one module, plus `prompt_version()` / `prompt_versions()` — a prompt's version is the hash of its own text and every fragment it splices in |
+| `shared/cache.py`              | Cache read/write/clear helpers; `content_key()` builds the content-complete LLM cache key, `clear_content_keys()` purges one paper's entries |
 
 ### `search/` — Stage 1
 
@@ -125,7 +125,7 @@ registered** in `app.py` — treat them as orphaned/legacy.
 | `extract/run_extract.py`   | Orchestrator: screens each row at the front door (`_front_door_row()`), then classifies match type and routes to single or multi-original; `_resolve_and_code()` runs the ladder, guard and outcome gate for one row; supports `--extracted-test` flag; `_best_fulltext_from_cache()` feeds the best-scoring parse result to the outcome LLM; `_fill_work_ids()` stamps `oa_work_id_r`/`oa_work_id_o` on every row after DOI verification |
 | `extract/link_original.py` | Single-original pipeline. `run_for_doi()` escalates through the resolution ladder below and only reaches the PDF when every cheaper stage declines; runs `parse_all()` on the PDF, scores all methods, uses the winner's text for the DOI-resolution LLM via shared `best_parse_result()` |
 | `extract/multi_original.py`| Multi-original pipeline — finds all target studies (needs improvement)       |
-| `extract/code_outcome.py`  | Keyword + LLM outcome extraction                                             |
+| `extract/code_outcome.py`  | Outcome coding. `extract_outcome()` reads the abstract with an LLM and escalates to a second, fulltext-based call when the abstract cannot settle it (`OUTCOME_FULLTEXT_ESCALATION`); that call also applies the `is_genuine_attempt` veto that yields `outcome = not_a_replication`. The keyword patterns are the `--no-llm` fallback and the engine behind `predict_outcome_keyword()` / `--predicted-outcome`. Reproductions are coded on the 3×3 computation/robustness grid |
 | `extract/promote_test.py`  | CLI + library: merge rows from extracted-test.csv into extracted.csv; `--all`, `--doi`, `--dry-run`, `--force` |
 | `extract/audit_dois.py`    | CLI: retroactive DOI verification of extracted.csv; dry-run by default, `--apply` writes corrections; `--doi`, `--extracted-test` |
 | `extract/sanity_check.py`  | Post-extraction quarantine pass; runs automatically at the end of `run_extract` (completion AND Ctrl-C). First-match-wins routing of problem rows to set-aside CSVs: `screen_disagreement` → `screen_disagreement.csv` (**before** the outcome rule, so a disagreement never lands in the agreed-no file), `not_a_replication`/non-article DOIs → `not_a_replication.csv`, self-links → `unresolved_self_links.csv`, `doi_o_verification==mismatch` → `unresolved_doi_mismatch.csv`, `llm_title_search` (provisional links) → `provisional_title_search.csv`, `target_pending` → `target_pending.csv`, and (with `--deep`) fabricated `doi_o` → `fabricated_original_doi.csv`. `cannot_be_determined` is kept in extracted.csv. Standalone: `python -m extract.sanity_check [--input …] [--deep] [--report-only]` |
@@ -148,7 +148,6 @@ separate Supabase-backed repo.
 | `validate/routes/check.py`         | `GET /check`; filter/inspect extracted rows and download subsets |
 | `validate/routes/batch.py`         | `GET /batch`; batch disambiguation for multiple-match papers |
 | `validate/routes/multi_originals.py` | `GET /multi-originals`; multi-original paper review |
-| `validate/routes/{extract_view,filter_view,search_view,pipeline,target_pending,input}.py` | **Orphaned/legacy** — present under `routes/` but NOT registered in `app.py`; per-stage tab views from an earlier design |
 | `shared/supabase_client.py`        | Read client for the Supabase validation tables; backs the dashboard's Supabase KPIs |
 
 ### `misc/` — Reference only, do not import
@@ -233,7 +232,7 @@ last resort rather than the normal path.
 | - | ----- | ---------- | ------------------------ |
 | 2 | OpenAlex candidate re-query | always — builds the candidate pool from the paper's `referenced_works` | (not a resolver) |
 | 2.5 | Title-pattern resolver | the title matches "A Replication of X" and one candidate matches it | `title_pattern_match` |
-| 3 | Rule-based resolver | the abstract carries an author-year citation matching a candidate | `citation_context_match`, `same_author_year_title_overlap`, `single_candidate_after_requery` |
+| 3 | Rule-based resolver | the abstract carries an author-year citation matching a candidate, or exactly one candidate came back | `citation_context_match`, `same_author_year_title_overlap`, `single_candidate_after_requery` |
 | 4 | Abstract LLM | the abstract carries author-year patterns, with candidates to choose from | `llm_cited_candidates` |
 | 4.5 | **Reference-list target pick** | there are referenced works (regardless of citation patterns) | `llm_references` |
 | 4.6 | Title search on a named-but-unmatched target | the screen agreed at high confidence that this is a replication and named a target it could not match to a reference | `llm_title_search` (**provisional** — see below) |
@@ -426,7 +425,7 @@ python -m filter.run_filter --rebuild-index   # rebuilds cache/filtered_index.tx
 6. **All CSV writes use `utf-8-sig` encoding** (BOM, Excel-compatible). Exception: when appending to an existing file, use plain `utf-8` to avoid embedding BOM mid-file — Excel handles both correctly.
 7. **All DOIs pass through `clean_doi()`** from `shared/utils.py` before writing or comparing.
 8. **All API responses must be cached** using the pattern above before any result is used.
-9. **Rate limiting:** OpenAlex: 0.3 s between calls (`OPENALEX_RATE_SEC` default in `shared/config.py`; override via env). Gemini: 1 s between calls. OpenAI: 0.5 s.
+9. **Rate limiting:** every interval lives in `shared/config.py` and is overridable via env. OpenAlex 0.3 s (`OPENALEX_RATE_SEC`); Gemini 1 s (`GEMINI_RATE_SEC`), OpenAI 0.5 s (`OPENAI_RATE_SEC`), OpenRouter 0.5 s (`OPENROUTER_RATE_SEC`). The LLM intervals are charged **per provider**, against that provider's own last-call timestamp — the screen's two votes go to different providers and neither waits on the other.
 
 ---
 

@@ -14,11 +14,13 @@ CSV (the same files the dashboard's "set-aside" tab reads), one bucket per probl
 
     screen_disagreement→ screen_disagreement.csv   the two Q1 classifiers disagreed
     not_a_replication  → not_a_replication.csv     outcome == not_a_replication
+    non_article        → not_a_replication.csv     doi_r is a figshare data record
+                                                   or a peer-review object
+    self_link          → unresolved_self_links.csv doi_o == doi_r
+    doi_mismatch       → unresolved_doi_mismatch.csv doi_o_verification == mismatch
     title_search_provisional → provisional_title_search.csv  link_method ==
                                                    llm_title_search: a provisional
                                                    link awaiting human confirmation
-    self_link          → unresolved_self_links.csv doi_o == doi_r
-    doi_mismatch       → unresolved_doi_mismatch.csv doi_o_verification == mismatch
     target_pending     → target_pending.csv        link_method == target_pending
     fabricated_doi_o   → fabricated_original_doi.csv doi_o present but registered nowhere
                                                     (only with --deep: doi.org 404 check)

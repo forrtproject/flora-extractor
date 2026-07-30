@@ -229,15 +229,26 @@ Runs automatically at the end of every `run_extract` (on completion and on Ctrl-
 Also runnable standalone:
 
 ```bash
-# Move not_a_replication rows to not_a_replication.csv + report integrity flags
+# Move problem rows to the set-aside CSVs + report integrity flags
 python -m extract.sanity_check
 
 # Check the test sandbox instead
 python -m extract.sanity_check --input data/extracted-test.csv
 
 # Report only — move nothing
-python -m extract.sanity_check --no-move
+python -m extract.sanity_check --report-only
+
+# Also network-verify unregistered doi_o against doi.org and quarantine fabrications
+python -m extract.sanity_check --deep
 ```
+
+Rows land in the **first** bucket they match: `screen_disagreement` →
+`screen_disagreement.csv`; `outcome == not_a_replication` and non-article `doi_r` →
+`not_a_replication.csv`; self-links → `unresolved_self_links.csv`;
+`doi_o_verification == mismatch` → `unresolved_doi_mismatch.csv`; `llm_title_search`
+→ `provisional_title_search.csv`; `target_pending` → `target_pending.csv`; and with
+`--deep`, fabricated `doi_o` → `fabricated_original_doi.csv`. `cannot_be_determined`
+rows stay in `extracted.csv`.
 
 ### Parse-cache cleanup
 
@@ -389,11 +400,9 @@ python -c "import shutil; shutil.rmtree('cache/llm', ignore_errors=True)"
 | `/` | Redirects to `/dashboard` |
 | `/dashboard` | 6-tab monitoring dashboard — see [dashboard-guide.md](dashboard-guide.md) |
 | `/check` | Search/filter/download across any stage — see [check-page.md](check-page.md) |
-| `/search` | Stage 1 candidates table |
-| `/filter` | Stage 2 filtered papers table |
-| `/extract` | Stage 3 extraction results table |
-| `/extract-test` | Stage 3 test sandbox table (with Promote button) |
-| `/validate` | Stage 4 voting queue |
+| `/batch` | Batch disambiguation for multiple-match papers (not registered when `FLORA_READONLY=1`) |
+| `/multi-originals` | Multi-original paper review (not registered when `FLORA_READONLY=1`) |
+| `/pipeline` | Redirects to `/dashboard` |
 | `/api/dashboard/csv-stats` | Pipeline stats JSON (3-tier cascade: stats.json → Parquet → CSV) |
 | `/api/dashboard/download` | Download a full stage CSV (`?stage=candidates\|filtered\|extracted\|extracted-test`) |
 | `/api/check/search` | Filtered/paginated rows as JSON |
