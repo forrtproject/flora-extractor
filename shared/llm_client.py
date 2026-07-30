@@ -35,6 +35,21 @@ from .prompts import (
 from .schema import OUTCOME_CATEGORIES
 from .utils import cache_key, clean_doi
 
+# Output cap for the JSON-returning chat calls. It was 1024, which on a reasoning
+# model (gpt-5-mini) also has to cover hidden reasoning tokens — while the outcome
+# prompts ask for a quote of up to ~1200 characters, ~300 tokens of visible output
+# before any other field. A truncated response is not valid JSON, so it was
+# indistinguishable from a parse failure and got retried rather than reported;
+# both call sites now log it explicitly.
+JSON_MAX_OUTPUT_TOKENS = 4096
+
+# Sampling temperature is deliberately not set on any provider. gpt-5-mini accepts
+# only the default ("Unsupported value: 'temperature' does not support 0.0 with this
+# model"), so pinning 0.0 on Gemini and OpenRouter — as this module used to — meant a
+# row coded by the OpenAI leg was not comparable to one coded by Gemini. Note the
+# consequence: Gemini and OpenRouter now sample at their defaults rather than
+# greedily, so repeat runs are less deterministic than before.
+
 # ── OpenAI session-level token guardrail ─────────────────────────────────────
 # Tracks tokens consumed via call_openai() within the current process.
 # When usage crosses OPENAI_WARN_TOKENS, the pipeline pauses and asks the user
@@ -166,7 +181,10 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature"     : 0.0,
+            # temperature is deliberately NOT set — see the note by
+            # JSON_MAX_OUTPUT_TOKENS. gpt-5-mini rejects any explicit value, so
+            # pinning it here would make Gemini-coded and OpenAI-coded rows differ
+            # by sampling policy as well as by model.
             "responseMimeType": "application/json",
             "maxOutputTokens" : 8192,
             # Note: thinkingConfig is intentionally omitted.
@@ -239,6 +257,13 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
                     print(f"  [Gemini] {key_label} no candidates — blockReason={blocked}")
                     return None, last_error
 
+                if body["candidates"][0].get("finishReason") == "MAX_TOKENS":
+                    last_error = "response truncated at maxOutputTokens"
+                    log.warning("Gemini response hit maxOutputTokens and was cut off — "
+                                "the truncated JSON will fail to parse (model=%s, %s)",
+                                model, key_label)
+                    return None, last_error
+
                 text   = body["candidates"][0]["content"]["parts"][0]["text"]
                 result = _parse_llm_json(text)
                 if result is not None:
@@ -295,13 +320,18 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict],
                     {"role": "user", "content": prompt},
                 ],
                 response_format={"type": "json_object"},
-                max_completion_tokens=1024,
+                max_completion_tokens=JSON_MAX_OUTPUT_TOKENS,
             )
             if response.usage:
                 _track_openai_tokens(response.usage.total_tokens)
                 token_counter.record("openai", response.usage.total_tokens)
                 log.debug("OpenAI usage: +%d tokens (session total: %d)",
                           response.usage.total_tokens, _openai_tokens_session)
+            if response.choices[0].finish_reason == "length":
+                log.warning("OpenAI response hit the %d-token cap and was cut off — "
+                            "the truncated JSON will fail to parse (model=%s)",
+                            JSON_MAX_OUTPUT_TOKENS, model)
+                return None, "response truncated at max_completion_tokens"
             result = _parse_llm_json(response.choices[0].message.content)
             return result, ("" if result else "response was not valid JSON")
         except Exception as e:
@@ -341,9 +371,13 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
                 {"role": "user", "content": prompt},
             ],
             response_format={"type": "json_object"},
-            max_tokens=1024,
-            temperature=0.0,
+            max_tokens=JSON_MAX_OUTPUT_TOKENS,
         )
+        if response.choices[0].finish_reason == "length":
+            log.warning("OpenRouter response hit the %d-token cap and was cut off — "
+                        "the truncated JSON will fail to parse (model=%s)",
+                        JSON_MAX_OUTPUT_TOKENS, use_model)
+            return None, "response truncated at max_tokens"
         result = _parse_llm_json(response.choices[0].message.content)
         if result and response.usage:
             token_counter.record("openrouter", response.usage.total_tokens)
@@ -408,14 +442,12 @@ def identify_original_with_llm(doi_r:          str,
                                  pattern:        str,
                                  candidates:     list[dict],
                                  sections:       dict,
-                                 pdf_url:        str = "",
                                  html_text:      str = "",
                                  validator_note: str = "",
                                  abstract_only:  bool = False) -> dict:
     """
     Identify the original study via LLM.
 
-    pdf_url   — URL to include in prompt when PDF download failed.
     html_text — extracted landing-page text as full-text substitute.
 
     Order: OpenRouter/Qwen (primary when OPENROUTER_API_KEY set) → Gemini → OpenAI.
@@ -432,7 +464,6 @@ def identify_original_with_llm(doi_r:          str,
 
     prompt     = build_identification_prompt(study_r, abstract_r, pattern,
                                              candidates, sections,
-                                             pdf_url=pdf_url,
                                              html_text=html_text,
                                              validator_note=validator_note)
     result     = None
@@ -584,7 +615,6 @@ def call_gemini_with_images(prompt: str,
     payload = {
         "contents"       : [{"parts": parts}],
         "generationConfig": {
-            "temperature"     : 0.0,
             "responseMimeType": "application/json",
             "maxOutputTokens" : 4096,
         },
@@ -638,7 +668,6 @@ def call_gemini_with_pdf(prompt: str,
             ],
         }],
         "generationConfig": {
-            "temperature"     : 0.0,
             "responseMimeType": "application/json",
             "maxOutputTokens" : 4096,
             "mediaResolution" : "MEDIA_RESOLUTION_LOW",
@@ -683,7 +712,6 @@ def identify_all_originals_with_llm(doi_r:        str,
                                       abstract_r:   str,
                                       candidates:   list[dict],
                                       sections:     dict,
-                                      pdf_url:      str = "",
                                       html_text:    str = "",
                                       force_multi:  bool = False) -> dict:
     """
@@ -718,7 +746,7 @@ def identify_all_originals_with_llm(doi_r:        str,
     }
 
     prompt = build_multi_original_prompt(study_r, abstract_r, candidates,
-                                          sections, pdf_url=pdf_url,
+                                          sections,
                                           html_text=html_text,
                                           force_multi=force_multi)
     result     = None
@@ -842,7 +870,7 @@ def identify_all_originals_with_llm(doi_r:        str,
 # loses a genuine replication. Disagreement is not an error — it routes the row to
 # full text, which is what we would have done anyway.
 
-REF_SCREEN_PROMPT_VERSION = "2026-07-28-split-calls-v4"
+REF_SCREEN_PROMPT_VERSION = "2026-07-29-split-calls-v6"
 
 
 def _classify_once(prompt: str, provider: str) -> "dict | None":
@@ -856,7 +884,7 @@ def _classify_once(prompt: str, provider: str) -> "dict | None":
     time.sleep(LLM_RATE_SEC)
     return {
         "is_replication": str(result.get("is_replication", "unclear")).strip().lower(),
-        "confidence":     str(result.get("classification_confidence", "")).strip().lower(),
+        "confidence":     str(result.get("confidence", "")).strip().lower(),
         "evidence":       str(result.get("evidence_quote", "") or ""),
         "reasoning":      str(result.get("reasoning", "") or ""),
         "provider":       provider,
@@ -926,7 +954,7 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
             result, _ = call_openai(tgt_prompt)
         if result:
             time.sleep(LLM_RATE_SEC)
-            out["llm_confidence"]     = str(result.get("target_confidence", "")).strip().lower()
+            out["llm_confidence"]     = str(result.get("confidence", "")).strip().lower()
             out["target_description"] = str(result.get("target_description", "") or "").strip()
             num = result.get("target_number")
             if num is not None and out["llm_confidence"] == "high":

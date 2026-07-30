@@ -121,11 +121,9 @@ def run_multi_original_for_doi(doi_r:       str,
              grobid["grobid_status"], grobid["n_refs_parsed"])
 
     # ── Stage 5: Multi-original LLM ──────────────────────────────────────────
-    pdf_url_for_llm = pdf.get("pdf_url", "") if not pdf.get("pdf_ok") else ""
     try:
         llm = identify_all_originals_with_llm(
             doi_r, study_r, abstract_r, candidates, sections,
-            pdf_url     = pdf_url_for_llm,
             html_text   = pdf.get("html_text", ""),
             force_multi = force_multi,
         )

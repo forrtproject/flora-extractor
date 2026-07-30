@@ -63,13 +63,13 @@ def classify_with_llm(title: str, abstract: str) -> Optional[dict]:
         log.warning("LLM filter: invalid filter_status %r — coercing to needs_review", status)
         status = "needs_review"
 
-    confidence = str(result.get("filter_confidence") or "").strip().lower()
+    confidence = str(result.get("confidence") or "").strip().lower()
     if confidence not in VALID_CONFIDENCE:
         confidence = "low"
 
     # filter_evidence takes the verbatim quote if present; falls back to the one-sentence rationale
     evidence = str(
-        result.get("filter_evidence") or result.get("filter_sort") or ""
+        result.get("filter_evidence") or result.get("reasoning") or ""
     ).strip()[:240]
 
     out = {
