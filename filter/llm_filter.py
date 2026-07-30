@@ -1,26 +1,25 @@
 """
 llm_filter.py — Stage 2 LLM uplift for rows the rule filter couldn't decide.
 
-Only rows with ``filter_status == 'needs_review'`` are sent to the LLM.
-Primary model: OpenAI (FILTER_OPENAI_MODEL, default gpt-5-mini).
-Fallback model: Gemini (rotates API keys automatically on 429).
+Only rows with ``filter_status == 'needs_review'`` are sent to the LLM, through the
+shared provider ladder with OpenAI first: OpenAI (FILTER_OPENAI_MODEL, default
+gpt-5-mini) → Gemini (rotates API keys automatically on 429) → OpenRouter.
 
 Results are cached by hash(title + abstract). Cache key uses the same
 cache_key() helper as all other stages so re-runs are free.
 """
 
-import time
 from typing import Optional
 
 from shared.cache import content_key, read_cache, write_cache
 from shared.config import (
     FILTER_OPENAI_MODEL,
-    GEMINI_API_KEYS, GEMINI_MODEL,
-    LLM_CACHE_DIR, LLM_RATE_SEC,
-    OPENAI_API_KEY, log,
+    GEMINI_MODEL,
+    LLM_CACHE_DIR,
+    log,
 )
 from shared import token_counter
-from shared.llm_client import call_gemini, call_openai
+from shared.llm_client import call_llm
 from shared.prompts import build_filter_prompt, prompt_version
 
 VALID_STATUSES   = {"replication", "reproduction", "false_positive", "needs_review"}
@@ -41,19 +40,14 @@ def classify_with_llm(title: str, abstract: str) -> Optional[dict]:
     if cached is not None:
         return cached
 
-    result = None
-    err    = "no API keys configured"
     token_counter.set_stage("filter")
 
-    # Primary: OpenAI gpt-5-mini (FILTER_OPENAI_MODEL default)
-    if OPENAI_API_KEY:
-        result, err = call_openai(prompt, model=FILTER_OPENAI_MODEL)
-        time.sleep(LLM_RATE_SEC)
-
-    # Fallback: Gemini (call_gemini rotates through all GEMINI_API_KEYS on 429)
-    if result is None and GEMINI_API_KEYS:
-        result, err = call_gemini(prompt, model=GEMINI_MODEL)
-        time.sleep(LLM_RATE_SEC)
+    # OpenAI (FILTER_OPENAI_MODEL) first, then Gemini, then OpenRouter — the shared
+    # ladder, so this arm gets the same last-resort provider and the same retry
+    # behaviour as every other LLM call in the pipeline.
+    result, _model, err = call_llm(prompt, gemini_model=GEMINI_MODEL,
+                                   openai_model=FILTER_OPENAI_MODEL,
+                                   prefer_openai=True)
 
     if result is None:
         log.warning("LLM filter: classification failed (%s)", err)

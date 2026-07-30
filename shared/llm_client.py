@@ -1,8 +1,9 @@
 """
-llm.py — LLM-based original study identification.
+llm_client.py — the pipeline's LLM calls: provider ladder, original-study
+identification, and the two-model replication screen.
 
-Primary model  : OpenRouter / Qwen (when OPENROUTER_API_KEY is set)
-Fallback chain : Gemini → OpenAI
+Provider ladder: Gemini → OpenAI → OpenRouter, in call_llm_ladder(). Each provider
+is rate-limited against its own last-call timestamp.
 
 Public API:
     identify_original_with_llm(doi_r, study_r, abstract_r, pattern,
@@ -20,10 +21,10 @@ import requests
 
 from .config import (
     GEMINI_API_KEYS, GEMINI_MODEL, GEMINI_LIGHT_MODEL, GEMINI_HEAVY_MODEL,
-    GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT, GEMINI_PAID_KEYS,
-    LLM_CACHE_DIR, LLM_RATE_SEC,
-    OPENAI_API_KEY, OPENAI_MODEL,
-    OPENROUTER_API_KEY, OPENROUTER_HEAVY_MODEL,
+    GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT, GEMINI_PAID_KEYS, GEMINI_RATE_SEC,
+    LLM_CACHE_DIR,
+    OPENAI_API_KEY, OPENAI_MODEL, OPENAI_RATE_SEC,
+    OPENROUTER_API_KEY, OPENROUTER_HEAVY_MODEL, OPENROUTER_RATE_SEC,
     SCREEN_VOTER2_MODEL,
     log,
 )
@@ -129,6 +130,31 @@ def _track_gemini_key0_tokens(n_tokens: int) -> None:
     else:
         log.info("User confirmed continuing Gemini key-0 at %.1fM tokens", used_m)
         print("  Continuing with Gemini key-0.\n")
+
+
+# ── Per-provider rate limiting ────────────────────────────────────────────────
+# Each provider is throttled against its OWN last-call timestamp, immediately
+# before the request goes out. Charging the wait to the caller after a successful
+# call — as every call site used to — made the delay unconditional even when the
+# next call went to a different provider, or was served from cache, or never came.
+
+_PROVIDER_RATE_SEC = {
+    "gemini":     GEMINI_RATE_SEC,
+    "openai":     OPENAI_RATE_SEC,
+    "openrouter": OPENROUTER_RATE_SEC,
+}
+_last_call_at: dict[str, float] = {}
+
+
+def _throttle(provider: str) -> None:
+    """Sleep only as long as this provider's minimum interval still has to run."""
+    interval = _PROVIDER_RATE_SEC.get(provider, 1.0)
+    last     = _last_call_at.get(provider)
+    if last is not None:
+        remaining = interval - (time.monotonic() - last)
+        if remaining > 0:
+            time.sleep(remaining)
+    _last_call_at[provider] = time.monotonic()
 
 
 # ── JSON parsing (handles markdown-fenced output) ─────────────────────────────
@@ -246,6 +272,7 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
 
         for attempt in range(2):
             try:
+                _throttle("gemini")
                 r = _gemini_post(url, payload, key_idx, 90)
 
                 if r.status_code == 429:
@@ -342,6 +369,7 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict],
     last_error = "no attempts made"
     for attempt in range(3):
         try:
+            _throttle("openai")
             response = client.chat.completions.create(
                 model=model,
                 messages=[
@@ -393,6 +421,7 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
 
     use_model = model or OPENROUTER_HEAVY_MODEL
     try:
+        _throttle("openrouter")
         response = client.chat.completions.create(
             model=use_model,
             messages=[
@@ -418,49 +447,59 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
 
 # ── Unified LLM router ───────────────────────────────────────────────────────
 
-def call_llm(prompt: str, gemini_model: str = "",
-             prefer_openai: bool = False) -> tuple[Optional[dict], str, str]:
+def call_llm_ladder(prompt: str, gemini_model: str = "", openai_model: str = "",
+                    prefer_openai: bool = False) -> tuple[Optional[dict], str, str, str]:
     """
     Route a prompt through the configured provider chain and return the first
-    successful result.
+    successful result, naming the provider that produced it.
 
     Default order : Gemini -> OpenAI -> OpenRouter (Qwen as last resort).
     prefer_openai : flip to OpenAI -> Gemini -> OpenRouter.
                     Use when Gemini is overloaded (503/429) and OpenAI is preferred.
 
     gemini_model — Gemini model to use (defaults to GEMINI_LIGHT_MODEL).
+    openai_model — OpenAI model to use (defaults to OPENAI_MODEL).
+
+    Returns (result_dict_or_None, provider, model_used, error_description).
+    provider is one of gemini | openai | openrouter, or "none" when every
+    provider failed; model_used is the exact model string that answered.
+    """
+    from .config import GEMINI_LIGHT_MODEL as _LIGHT
+
+    g_model = gemini_model or _LIGHT
+    o_model = openai_model or OPENAI_MODEL
+    errs: dict[str, str] = {}
+
+    order = (("openai", "gemini") if prefer_openai else ("gemini", "openai"))
+    for provider in order + ("openrouter",):
+        if provider == "openrouter" and not OPENROUTER_API_KEY:
+            continue
+        if provider == "gemini":
+            result, errs["Gemini"] = call_gemini(prompt, model=g_model)
+            model = g_model
+        elif provider == "openai":
+            result, errs["OpenAI"] = call_openai(prompt, model=o_model)
+            model = o_model
+        else:
+            result, errs["OpenRouter"] = call_openrouter(prompt)
+            model = OPENROUTER_HEAVY_MODEL
+        if result:
+            return result, provider, model, ""
+
+    return None, "none", "", " | ".join(f"{k}: {v}" for k, v in errs.items())
+
+
+def call_llm(prompt: str, gemini_model: str = "", openai_model: str = "",
+             prefer_openai: bool = False) -> tuple[Optional[dict], str, str]:
+    """Provider ladder without the provider name — see call_llm_ladder.
 
     Returns (result_dict_or_None, model_used, error_description).
     model_used is the exact model string that answered, or "" if all providers failed.
     """
-    from .config import GEMINI_LIGHT_MODEL as _LIGHT
-
-    model      = gemini_model or _LIGHT
-    gemini_err = ""
-    openai_err = ""
-
-    if prefer_openai:
-        result, openai_err = call_openai(prompt)
-        if result:
-            return result, OPENAI_MODEL, ""
-        result, gemini_err = call_gemini(prompt, model=model)
-        if result:
-            return result, model, ""
-    else:
-        result, gemini_err = call_gemini(prompt, model=model)
-        if result:
-            return result, model, ""
-        result, openai_err = call_openai(prompt)
-        if result:
-            return result, OPENAI_MODEL, ""
-
-    if OPENROUTER_API_KEY:
-        result, or_err = call_openrouter(prompt)
-        if result:
-            return result, OPENROUTER_HEAVY_MODEL, ""
-        return None, "", f"Gemini: {gemini_err} | OpenAI: {openai_err} | OpenRouter: {or_err}"
-
-    return None, "", f"Gemini: {gemini_err} | OpenAI: {openai_err}"
+    result, _provider, model, err = call_llm_ladder(
+        prompt, gemini_model=gemini_model, openai_model=openai_model,
+        prefer_openai=prefer_openai)
+    return result, model, err
 
 
 # ── Main dispatcher ───────────────────────────────────────────────────────────
@@ -479,7 +518,8 @@ def identify_original_with_llm(doi_r:          str,
 
     html_text — extracted landing-page text as full-text substitute.
 
-    Order: OpenRouter/Qwen (primary when OPENROUTER_API_KEY set) → Gemini → OpenAI.
+    Order: the shared ladder — Gemini → OpenAI → OpenRouter, the last skipped
+    without an OPENROUTER_API_KEY.
 
     The cache key is the rendered prompt — the candidates, the parsed sections and
     the validator note all reach the model through it — plus the prompt version and
@@ -505,42 +545,8 @@ def identify_original_with_llm(doi_r:          str,
         cached.setdefault("llm_error",  "")
         return cached
 
-    result     = None
-    llm_source = "none"
-    llm_model  = ""
-    llm_error  = ""
-    gemini_err = ""
-    openai_err = ""
-    or_err     = ""
-
-    # Primary: Gemini
-    result, gemini_err = call_gemini(prompt, model=GEMINI_HEAVY_MODEL)
-    if result:
-        llm_source = "gemini"
-        llm_model  = GEMINI_HEAVY_MODEL
-        time.sleep(LLM_RATE_SEC)
-
-    # Fallback 1: OpenAI
-    if not result:
-        result, openai_err = call_openai(prompt)
-        if result:
-            llm_source = "openai"
-            llm_model  = OPENAI_MODEL
-            time.sleep(LLM_RATE_SEC)
-
-    # Fallback 2: OpenRouter (Qwen)
-    if not result and OPENROUTER_API_KEY:
-        result, or_err = call_openrouter(prompt)
-        if result:
-            llm_source = "openrouter"
-            llm_model  = OPENROUTER_HEAVY_MODEL
-            time.sleep(LLM_RATE_SEC)
-
-    if not result:
-        parts = [f"Gemini: {gemini_err}", f"OpenAI: {openai_err}"]
-        if OPENROUTER_API_KEY:
-            parts.append(f"OpenRouter: {or_err}")
-        llm_error = " | ".join(parts)
+    result, llm_source, llm_model, llm_error = call_llm_ladder(
+        prompt, gemini_model=GEMINI_HEAVY_MODEL)
 
     _empty = {
         "resolved"          : False,
@@ -660,6 +666,7 @@ def call_gemini_with_images(prompt: str,
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
                f":generateContent?key={api_key}")
         try:
+            _throttle("gemini")
             r = _gemini_post(url, payload, key_idx, 120)
             if r.status_code == 429:
                 continue
@@ -715,6 +722,7 @@ def call_gemini_with_pdf(prompt: str,
                f":generateContent?key={api_key}")
         for attempt in range(2):
             try:
+                _throttle("gemini")
                 r = _gemini_post(url, payload, key_idx, 45)
                 if r.status_code == 429:
                     break
@@ -787,33 +795,8 @@ def identify_all_originals_with_llm(doi_r:        str,
         "llm_reasoning"    : "",
     }
 
-    result     = None
-    llm_source = "none"
-    llm_model  = ""
-
-    # Primary: Gemini
-    result, _ = call_gemini(prompt, model=GEMINI_HEAVY_MODEL)
-    if result:
-        llm_source = "gemini"
-        llm_model  = GEMINI_HEAVY_MODEL
-        time.sleep(LLM_RATE_SEC)
-
-    # Fallback 1: OpenAI
-    if not result:
-        result, _ = call_openai(prompt)
-        if result:
-            llm_source = "openai"
-            llm_model  = OPENAI_MODEL
-            time.sleep(LLM_RATE_SEC)
-
-    # Fallback 2: OpenRouter (Qwen)
-    if not result and OPENROUTER_API_KEY:
-        result, _ = call_openrouter(prompt)
-        if result:
-            llm_source = "openrouter"
-            llm_model  = OPENROUTER_HEAVY_MODEL
-            time.sleep(LLM_RATE_SEC)
-
+    result, llm_source, llm_model, _err = call_llm_ladder(
+        prompt, gemini_model=GEMINI_HEAVY_MODEL)
     if not result:
         return _empty
 
@@ -928,7 +911,6 @@ def _classify_once(prompt: str, provider: str) -> "dict | None":
         result, _ = call_openrouter(prompt, model=SCREEN_VOTER2_MODEL)
     if not result:
         return None
-    time.sleep(LLM_RATE_SEC)
     return {
         "is_replication": str(result.get("is_replication", "unclear")).strip().lower(),
         "confidence":     str(result.get("confidence", "")).strip().lower(),
@@ -1055,13 +1037,9 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
         if cached is not None:
             result, tgt_source, tgt_model = cached["result"], cached["source"], cached["model"]
         else:
-            tgt_source, tgt_model = "gemini", GEMINI_HEAVY_MODEL
-            result, _ = call_gemini(tgt_prompt, model=GEMINI_HEAVY_MODEL)
-            if not result:
-                tgt_source, tgt_model = "openai", OPENAI_MODEL
-                result, _ = call_openai(tgt_prompt)
+            result, tgt_source, tgt_model, _ = call_llm_ladder(
+                tgt_prompt, gemini_model=GEMINI_HEAVY_MODEL)
             if result:
-                time.sleep(LLM_RATE_SEC)
                 write_cache(LLM_CACHE_DIR, tgt_key,
                             {"result": result, "source": tgt_source,
                              "model": tgt_model})

@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+import shared.openalex_client as oa
 from shared.openalex_client import (
     author_matches,
     extract_author_year_patterns,
@@ -301,3 +302,67 @@ class TestFindAllCandidates:
         for c in cands:
             missing = required - set(c.keys())
             assert not missing, f"Candidate missing fields: {missing}"
+
+
+# ── Title-search caching (audit E4) ──────────────────────────────────────────
+# Both title searches fire several times for one row and a miss is the common
+# answer, so the miss has to be cached too or most of the traffic stays uncached.
+
+class TestTitleSearchCaching:
+    def test_crossref_hit_is_cached(self, tmp_path):
+        hit = {"doi": "10.9/orig", "title": "Time flies", "year": 2010}
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._search_crossref_by_title_live",
+                   return_value=hit) as live:
+            first  = oa._search_crossref_by_title("Time flies", "2010")
+            second = oa._search_crossref_by_title("Time flies", "2010")
+        assert first == second == hit
+        assert live.call_count == 1
+
+    def test_crossref_miss_is_cached(self, tmp_path):
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._search_crossref_by_title_live",
+                   return_value=None) as live:
+            assert oa._search_crossref_by_title("Nothing here", "") is None
+            assert oa._search_crossref_by_title("Nothing here", "") is None
+        assert live.call_count == 1
+
+    def test_openalex_search_is_cached_per_title_and_year(self, tmp_path):
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._search_openalex_by_title_live",
+                   return_value=None) as live:
+            oa._search_openalex_by_title("A title", "2010")
+            oa._search_openalex_by_title("A title", "2011")
+            oa._search_openalex_by_title("A title", "2010")
+        assert live.call_count == 2
+
+
+class TestWorkLookupIsSharedBetweenFetchers:
+    """fetch_openalex_by_doi and fetch_openalex_full_metadata used to request the
+    same work under two different cache keys, doubling round-trips per doi_o."""
+
+    _WORK = {
+        "id": "https://openalex.org/W1", "doi": "https://doi.org/10.9/orig",
+        "title": "Original", "publication_year": 2010,
+        "authorships": [{"author": {"display_name": "Jane Smith"}}],
+        "primary_location": {"source": {"display_name": "Journal"}},
+        "biblio": {"volume": "1", "issue": "2",
+                   "first_page": "3", "last_page": "4"},
+    }
+
+    def test_one_request_serves_both_shapes(self, tmp_path):
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._oa_get",
+                   return_value={"results": [self._WORK]}) as get:
+            cand = oa.fetch_openalex_by_doi("10.9/orig")
+            meta = oa.fetch_openalex_full_metadata("10.9/orig")
+        assert get.call_count == 1
+        assert cand["doi"] == "10.9/orig"
+        assert meta["journal"] == "Journal"
+
+    def test_a_failed_request_is_not_cached(self, tmp_path):
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._oa_get", return_value=None) as get:
+            assert oa.fetch_openalex_by_doi("10.9/orig") is None
+            assert oa.fetch_openalex_by_doi("10.9/orig") is None
+        assert get.call_count == 2

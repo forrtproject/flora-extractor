@@ -6,6 +6,8 @@ poison a row. call_openai previously had a bare try/except (no retry).
 """
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import shared.llm_client as llm
 
 
@@ -522,3 +524,87 @@ def test_identification_key_follows_the_prompt_version(monkeypatch, tmp_path):
     monkeypatch.setattr(llm, "prompt_version", lambda name: "ffffffffffff")
     llm.identify_original_with_llm("10.1/x", "T", "A", "", _CAND, {})
     assert len(calls) == 2
+
+
+# ── Per-provider rate limiting (audit E5) ────────────────────────────────────
+# One global interval charged every provider for every other provider's calls;
+# the screen's two votes go to different providers and still waited a full second
+# between them. Each provider now waits only on its own last call.
+
+class _Clock:
+    def __init__(self):
+        self.now = 100.0
+        self.slept: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, s: float) -> None:
+        self.slept.append(s)
+        self.now += s
+
+
+@pytest.fixture()
+def clock(monkeypatch):
+    c = _Clock()
+    monkeypatch.setattr(llm.time, "monotonic", c.monotonic)
+    monkeypatch.setattr(llm.time, "sleep", c.sleep)
+    monkeypatch.setattr(llm, "_PROVIDER_RATE_SEC",
+                        {"gemini": 1.0, "openai": 0.5, "openrouter": 0.5})
+    llm._last_call_at.clear()
+    return c
+
+
+def test_first_call_to_a_provider_does_not_wait(clock):
+    llm._throttle("gemini")
+    assert clock.slept == []
+
+
+def test_second_call_waits_only_the_remaining_interval(clock):
+    llm._throttle("gemini")
+    clock.now += 0.4
+    llm._throttle("gemini")
+    assert clock.slept == [pytest.approx(0.6)]
+
+
+def test_a_different_provider_does_not_wait_on_this_one(clock):
+    llm._throttle("gemini")
+    llm._throttle("openrouter")
+    assert clock.slept == []
+
+
+def test_no_wait_once_the_interval_has_already_passed(clock):
+    llm._throttle("openai")
+    clock.now += 5.0
+    llm._throttle("openai")
+    assert clock.slept == []
+
+
+# ── Provider ladder (audit C1) ───────────────────────────────────────────────
+
+def test_ladder_names_the_provider_that_answered(monkeypatch):
+    monkeypatch.setattr(llm, "call_gemini", lambda p, model=None: (None, "429"))
+    monkeypatch.setattr(llm, "call_openai",
+                        lambda p, model=None: ({"ok": True}, ""))
+    result, provider, model, err = llm.call_llm_ladder("p", gemini_model="g",
+                                                       openai_model="o")
+    assert (result, provider, model, err) == ({"ok": True}, "openai", "o", "")
+
+
+def test_ladder_falls_through_to_openrouter(monkeypatch):
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "sk-or")
+    monkeypatch.setattr(llm, "call_gemini", lambda p, model=None: (None, "429"))
+    monkeypatch.setattr(llm, "call_openai", lambda p, model=None: (None, "500"))
+    monkeypatch.setattr(llm, "call_openrouter", lambda p, model="": ({"ok": True}, ""))
+    result, provider, _model, _err = llm.call_llm_ladder("p")
+    assert result == {"ok": True}
+    assert provider == "openrouter"
+
+
+def test_ladder_reports_every_provider_error_when_all_fail(monkeypatch):
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "")
+    monkeypatch.setattr(llm, "call_gemini", lambda p, model=None: (None, "429"))
+    monkeypatch.setattr(llm, "call_openai", lambda p, model=None: (None, "500"))
+    result, provider, model, err = llm.call_llm_ladder("p")
+    assert (result, provider, model) == (None, "none", "")
+    assert "429" in err and "500" in err

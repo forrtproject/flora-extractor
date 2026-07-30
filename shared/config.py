@@ -116,7 +116,6 @@ GEMINI_HEAVY_MODEL = os.getenv("GEMINI_HEAVY_MODEL", GEMINI_MODEL)
 
 # OpenRouter (OpenAI-compatible API at openrouter.ai) — optional alternative LLMs
 OPENROUTER_API_KEY    = os.getenv("OPENROUTER_API_KEY",    "")
-OPENROUTER_LIGHT_MODEL = os.getenv("OPENROUTER_LIGHT_MODEL", "qwen/qwen3.5-35b-a3b")
 OPENROUTER_HEAVY_MODEL = os.getenv("OPENROUTER_HEAVY_MODEL", "qwen/qwen3.5-35b-a3b")
 # Second voter of the Stage 4.5 replication screen, called through OpenRouter.
 # Ministral 14B beat every alternative measured on adjudicated hard cases (89.4%
@@ -153,7 +152,15 @@ OPENALEX_RATE_SEC  = float(os.getenv("OPENALEX_RATE_SEC", "0.3"))
 CROSSREF_RATE_SEC  = 0.1
 UNPAYWALL_RATE_SEC = 0.5
 GROBID_RATE_SEC    = 3.0
-LLM_RATE_SEC       = 1.0
+
+# LLM rate limits are per provider and enforced against that provider's own
+# last-call timestamp in shared/llm_client.py. A single global interval charged
+# every provider for every other provider's calls — the two screen votes go to
+# different providers and still waited a full second between them — which on a
+# 2,000-row run is hours of pure sleeping that buys no quota headroom.
+GEMINI_RATE_SEC     = float(os.getenv("GEMINI_RATE_SEC",     "1.0"))
+OPENAI_RATE_SEC     = float(os.getenv("OPENAI_RATE_SEC",     "0.5"))
+OPENROUTER_RATE_SEC = float(os.getenv("OPENROUTER_RATE_SEC", "0.5"))
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
