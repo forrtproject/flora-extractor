@@ -128,7 +128,8 @@ registered** in `app.py` — treat them as orphaned/legacy.
 | `extract/code_outcome.py`  | Keyword + LLM outcome extraction                                             |
 | `extract/promote_test.py`  | CLI + library: merge rows from extracted-test.csv into extracted.csv; `--all`, `--doi`, `--dry-run`, `--force` |
 | `extract/audit_dois.py`    | CLI: retroactive DOI verification of extracted.csv; dry-run by default, `--apply` writes corrections; `--doi`, `--extracted-test` |
-| `extract/sanity_check.py`  | Post-extraction quarantine pass; runs automatically at the end of `run_extract` (completion AND Ctrl-C). First-match-wins routing of problem rows to set-aside CSVs: `not_a_replication`/non-article DOIs → `not_a_replication.csv`, self-links → `unresolved_self_links.csv`, `doi_o_verification==mismatch` → `unresolved_doi_mismatch.csv`, `target_pending` → `target_pending.csv`, and (with `--deep`) fabricated `doi_o` → `fabricated_original_doi.csv`. `cannot_be_determined` is kept in extracted.csv. Standalone: `python -m extract.sanity_check [--input …] [--deep] [--report-only]` |
+| `extract/sanity_check.py`  | Post-extraction quarantine pass; runs automatically at the end of `run_extract` (completion AND Ctrl-C). First-match-wins routing of problem rows to set-aside CSVs: `not_a_replication`/non-article DOIs → `not_a_replication.csv`, self-links → `unresolved_self_links.csv`, `doi_o_verification==mismatch` → `unresolved_doi_mismatch.csv`, `llm_title_search` (provisional links) → `provisional_title_search.csv`, `target_pending` → `target_pending.csv`, and (with `--deep`) fabricated `doi_o` → `fabricated_original_doi.csv`. `cannot_be_determined` is kept in extracted.csv. Standalone: `python -m extract.sanity_check [--input …] [--deep] [--report-only]` |
+| `extract/clean_parse_cache.py` | CLI: delete all-empty parse caches from `cache/parse/` (written by pre-B4 runs that never fetched a PDF and then masked the real parse). Dry run by default, `--apply` deletes |
 | `extract/csv_to_db.py`     | CLI: push resolved extracted.csv rows into the Supabase validation DB (creates 1 `unvalidated` + 1 `record_metadata` + 3 `validation_queue` rows per record; slots `human_1`/`human_2`/`llm`); `--input`, `--dry-run` |
 
 ### `validate/` — Stage 4 (read-only monitoring dashboard)
@@ -210,7 +211,14 @@ last resort rather than the normal path.
 | 3 | Rule-based resolver | the abstract carries an author-year citation matching a candidate | `citation_context_match`, `same_author_year_title_overlap`, `single_candidate_after_requery` |
 | 4 | Abstract LLM | the abstract carries author-year patterns, with candidates to choose from | `llm_cited_candidates` |
 | 4.5 | **Reference-list screen** | there are referenced works (regardless of citation patterns) | `llm_references`, or `not_a_replication` |
-| 5 | PDF acquisition + full-text LLM | everything above declined | `llm_fulltext`, `llm_title_search` |
+| 4.6 | Title search on a named-but-unmatched target | the screen agreed at high confidence that this is a replication and named a target it could not match to a reference | `llm_title_search` (**provisional** — see below) |
+| 5 | PDF acquisition + full-text LLM | everything above declined | `llm_fulltext`, `llm_title_search` (**provisional**) |
+
+`llm_title_search` is the one link method whose answer is not chosen from a bounded
+candidate list, and a hand-check measured it at roughly 50% precision. It is therefore
+**not** in `RESOLVED_LINK_METHODS`: `link_confidence` is forced to `low`, no outcome is
+coded, `csv_to_db` does not import the row, and `sanity_check` sets it aside in
+`data/provisional_title_search.csv` for human confirmation.
 
 Stages 2.5–4 all depend on `find_all_candidates()`, which returns `[]` unless the
 title or abstract contains a parseable `(Author, Year)` citation. Many abstracts —

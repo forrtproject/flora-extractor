@@ -28,7 +28,11 @@ from shared.openalex_client import OpenAlexQuotaExhausted, extract_author_year_p
 from shared.openalex_client import fetch_openalex_by_doi as _oa_by_doi
 from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
 from shared.openalex_client import _search_crossref_by_title, _search_openalex_by_title
-from shared.pdf_parsing import parse_all as _parse_all
+from shared.pdf_parsing import (
+    best_parse_result,
+    parse_all as _parse_all,
+    parse_result_is_empty,
+)
 from shared.prompts import build_match_type_prompt
 from shared.doi_verify import verify_and_correct
 from shared.schema import (
@@ -363,10 +367,16 @@ def _link_confidence(link: dict) -> str:
     #51: single_candidate_after_requery auto-accepts a lone candidate at score 1.0
     with NO semantic check — "exactly one candidate came back" is not evidence it is
     the replication TARGET. Cap it at medium so validation prioritises these rows.
+
+    A title-search link is always low: it is measured at roughly 50% precision and the
+    score it carries is the search's title match, which says the DOI is the named paper
+    — not that the named paper is the target (see LINK_METHOD_VALUES).
     """
     conf = (link["llm_confidence"]
             if link.get("llm_confidence") in {"high", "medium", "low"}
             else _score_to_confidence(link.get("resolution_score", 0)))
+    if _map_method(str(link.get("resolution_method", ""))) == "llm_title_search":
+        return "low"
     if link.get("resolution_method") == "single_candidate_after_requery" and conf == "high":
         return "medium"
     return conf
@@ -642,11 +652,46 @@ def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _has_document(doi_r: str, link: dict) -> bool:
+    """True when there is something for the parsers to read.
+
+    Every stage before Stage 5 returns with pdf={}, so pdf_source is "none" and no
+    document was acquired. Parsing anyway wrote a cache of six empty results, and
+    because the writers early-return on an existing file that empty cache then stood
+    in for the real one on any later run that DID get the PDF (audit B4). A document
+    cached by an earlier run still counts — that is what --recalibrate-outcomes reads.
+    """
+    if bool(link.get("pdf_ok")):
+        return True
+    if str(link.get("pdf_source", "none") or "none") not in {"", "none"}:
+        return True
+    key = cache_key(doi_r)
+    return ((PDF_CACHE_DIR / f"{key}.pdf").exists()
+            or (OA_XML_CACHE_DIR / f"oa_xml_{key}.json").exists())
+
+
+def _read_parse_cache(doi_r: str) -> "dict | None":
+    """Return the cached parse_all results for doi_r, or None on a miss.
+
+    An all-empty cache counts as a miss: it is what a PDF-less run wrote, and reading
+    it back would pin the paper to abstract-only coding forever (audit B4).
+    """
+    cache_file = PARSE_CACHE_DIR / f"parse_{cache_key(doi_r)}.json"
+    if not cache_file.exists():
+        return None
+    try:
+        with cache_file.open(encoding="utf-8") as fh:
+            results = json.load(fh)
+    except Exception:
+        return None
+    return None if parse_result_is_empty(results) else results
+
+
 def _save_parse_cache(doi_r: str) -> None:
     """Run all PDF parsers for doi_r and cache results to PARSE_CACHE_DIR."""
     key      = cache_key(doi_r)
     out_file = PARSE_CACHE_DIR / f"parse_{key}.json"
-    if out_file.exists():
+    if _read_parse_cache(doi_r) is not None:
         return
 
     pdf_path = PDF_CACHE_DIR / f"{key}.pdf"
@@ -663,6 +708,9 @@ def _save_parse_cache(doi_r: str) -> None:
             pass
 
     results = _parse_all(doi_r, pdf_path, oa_xml=oa_xml)
+    if parse_result_is_empty(results):
+        log.debug("[%s] parse produced no text — not caching", doi_r)
+        return
     try:
         with out_file.open("w", encoding="utf-8") as fh:
             json.dump(results, fh, ensure_ascii=False, indent=2)
@@ -682,6 +730,18 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -
                 "outcome_confidence": "high",
                 "out_quote_source": "abstract",
                 "outcome_reasoning": str(link.get("llm_reasoning", "") or ""),
+                "llm_model": str(link.get("llm_model", "") or "")}
+
+    # A title-search link is provisional: the target was matched against the whole
+    # literature rather than a candidate list, at ~50% precision. Coding an outcome
+    # against an unconfirmed pairing states a result for a comparison that may never
+    # have been made, and the row reads as settled once an outcome is attached.
+    if _map_method(str(link.get("resolution_method", ""))) == "llm_title_search":
+        return {"outcome": "cannot_be_determined", "outcome_phrase": "",
+                "outcome_confidence": "low",
+                "out_quote_source": "",
+                "outcome_reasoning": "provisional link from a title search — outcome "
+                                     "not coded until the target is confirmed",
                 "llm_model": str(link.get("llm_model", "") or "")}
 
     # Prefer the best-scoring parse method from the parse cache so the outcome LLM
@@ -716,27 +776,21 @@ def _best_fulltext_from_cache(doi_r: str) -> str:
     Read the parse cache for doi_r, score each method, and return the fulltext
     of the highest-scoring method.  Prefers raw_text (full paper including
     results/discussion/conclusion); falls back to abstract + intro when raw_text
-    is empty.  Returns '' on any failure.
+    is empty.  Returns '' on a miss (including an all-empty cache).
     """
-    cache_file = PARSE_CACHE_DIR / f"parse_{cache_key(doi_r)}.json"
-    if not cache_file.exists():
+    results = _read_parse_cache(doi_r)
+    if results is None:
         return ""
-    try:
-        with cache_file.open(encoding="utf-8") as fh:
-            results = json.load(fh)
-        from shared.pdf_parsing import best_parse_result
-        best = best_parse_result(results)
-        if not best:
-            return ""
-        raw = str(best.get("raw_text", "") or "").strip()
-        if raw:
-            return raw
-        return " ".join(filter(None, [
-            str(best.get("abstract", "") or ""),
-            str(best.get("intro",    "") or ""),
-        ]))
-    except Exception:
+    best = best_parse_result(results)
+    if not best:
         return ""
+    raw = str(best.get("raw_text", "") or "").strip()
+    if raw:
+        return raw
+    return " ".join(filter(None, [
+        str(best.get("abstract", "") or ""),
+        str(best.get("intro",    "") or ""),
+    ]))
 
 
 def _parse_originals(result: dict) -> list[dict]:
@@ -1326,7 +1380,7 @@ def run_extract(no_llm: bool = False,
                     else:
                         link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                                               no_llm=no_llm, no_pdf=no_pdf)
-                        if not no_pdf or recalibrate_outcomes:
+                        if (not no_pdf or recalibrate_outcomes) and _has_document(doi_r, link):
                             _save_parse_cache(doi_r)
                         outcome = _get_outcome(doi_r, row, link,
                                                no_llm=no_llm and not recalibrate_outcomes)
@@ -1365,7 +1419,7 @@ def run_extract(no_llm: bool = False,
             else:
                 link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                                       no_llm=no_llm, no_pdf=no_pdf)
-                if not no_pdf or recalibrate_outcomes:
+                if (not no_pdf or recalibrate_outcomes) and _has_document(doi_r, link):
                     _save_parse_cache(doi_r)
                 outcome = _get_outcome(doi_r, row, link,
                                        no_llm=no_llm and not recalibrate_outcomes)

@@ -239,6 +239,17 @@ python -m extract.sanity_check --input data/extracted-test.csv
 python -m extract.sanity_check --no-move
 ```
 
+### Parse-cache cleanup
+
+Deletes all-empty parse caches from `cache/parse/`. Runs before audit B4 parsed every
+non-multi row, including rows that exited at the reference screen with no PDF, and the
+resulting empty cache then masked the real parse on any later run that did get the PDF.
+
+```bash
+python -m extract.clean_parse_cache          # dry run: count and report
+python -m extract.clean_parse_cache --apply  # delete them
+```
+
 ### DOI verification audit
 
 Retroactively verify `doi_o` values in an existing CSV. Runs automatically during extraction; use this to audit rows that predate the feature.

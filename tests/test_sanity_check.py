@@ -107,3 +107,28 @@ def test_blank_doi_r_rows_do_not_collapse(tmp_path, monkeypatch):
     assert s["moved"]["not_a_replication"] == 2
     moved = pd.read_csv(tmp_path / "not_a_replication.csv", dtype=str, keep_default_na=False)
     assert len(moved) == 2
+
+
+def test_provisional_title_search_rows_are_set_aside(tmp_path, monkeypatch):
+    """A title-search link is ~50% precise and its failure mode is invisible to
+    doi_o_verification, so a verified-looking row must still leave extracted.csv
+    for human confirmation rather than sit there looking resolved (audit D2)."""
+    monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
+    ex = tmp_path / "extracted.csv"
+    _write(ex, [
+        {"doi_r": "10.1/keep", "doi_o": "10.2/o", "outcome": "failure",
+         "doi_o_verification": "verified", "openalex_id_r": "W0",
+         "link_method": "llm_cited_candidates"},
+        {"doi_r": "10.1/prov", "doi_o": "10.2/landmark",
+         "outcome": "cannot_be_determined", "doi_o_verification": "verified",
+         "openalex_id_r": "W1", "link_method": "llm_title_search"},
+    ])
+
+    s = sc.run_sanity_check(ex, move=True, deep=False)
+
+    assert s["moved"]["title_search_provisional"] == 1
+    out = pd.read_csv(ex, dtype=str, keep_default_na=False)
+    assert set(out["doi_r"]) == {"10.1/keep"}
+    moved = pd.read_csv(tmp_path / "provisional_title_search.csv",
+                        dtype=str, keep_default_na=False)
+    assert set(moved["doi_r"]) == {"10.1/prov"}

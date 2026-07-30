@@ -14,6 +14,9 @@ CSV (the same files the dashboard's "set-aside" tab reads), one bucket per probl
 
     not_a_replication  → not_a_replication.csv     outcome == not_a_replication
     screen_disagreement→ screen_disagreement.csv   the two Q1 classifiers disagreed
+    title_search_provisional → provisional_title_search.csv  link_method ==
+                                                   llm_title_search: a provisional
+                                                   link awaiting human confirmation
     self_link          → unresolved_self_links.csv doi_o == doi_r
     doi_mismatch       → unresolved_doi_mismatch.csv doi_o_verification == mismatch
     target_pending     → target_pending.csv        link_method == target_pending
@@ -118,6 +121,12 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
         ("doi_mismatch", "unresolved_doi_mismatch.csv", df["doi_o_verification"] == "mismatch"),
         ("screen_disagreement", "screen_disagreement.csv",
          df["link_method"] == "screen_disagreement"),
+        # Provisional: the target was matched against the whole literature by title
+        # search rather than picked from a candidate list, at ~50% measured precision,
+        # and the failure is invisible to doi_o_verification — the DOI really is the
+        # named paper, it just is not this paper's target. Set aside for confirmation.
+        ("title_search_provisional", "provisional_title_search.csv",
+         df["link_method"] == "llm_title_search"),
         ("target_pending", "target_pending.csv", df["link_method"] == "target_pending"),
     ]
 
@@ -171,6 +180,7 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
             "self_link": "unresolved_self_links.csv",
             "doi_mismatch": "unresolved_doi_mismatch.csv",
             "screen_disagreement": "screen_disagreement.csv",
+            "title_search_provisional": "provisional_title_search.csv",
             "target_pending": "target_pending.csv",
             "fabricated_doi_o": "fabricated_original_doi.csv"}
     for name in dest:

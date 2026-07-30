@@ -412,6 +412,21 @@ def best_parse_result(results: "dict[str, dict]") -> "dict | None":
     return best_r if best_s >= 0 else None
 
 
+def parse_result_is_empty(results: "dict[str, dict] | None") -> bool:
+    """True when no method in a parse_all() output carries any usable text.
+
+    A cached parse with score 0 everywhere — no references, no sections, no raw text —
+    is what gets written when the row never acquired a document. It is
+    indistinguishable from never having parsed the paper, so readers must treat it as
+    a cache miss; the alternative is that one PDF-less run permanently pins a paper to
+    abstract-only outcome coding (audit B4).
+    """
+    if not isinstance(results, dict) or not results:
+        return True
+    return max((score_parse_result(r) for r in results.values()
+                if isinstance(r, dict)), default=0) <= 0
+
+
 def best_parse_method_name(results: "dict[str, dict]") -> str:
     """Return the key of the highest-scoring parse method, or '' if all errored."""
     best_k, best_s = "", -1

@@ -29,7 +29,11 @@ from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_C
 from shared.disambiguation import is_umbrella_paper, jaccard_similarity
 from shared import token_counter
 from shared.llm_client import identify_original_with_llm, screen_references_with_llm
-from shared.pdf_parsing import parse_all as _parse_all, best_parse_result as _best_parse_shared
+from shared.pdf_parsing import (
+    parse_all as _parse_all,
+    best_parse_result as _best_parse_shared,
+    parse_result_is_empty,
+)
 from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_openalex_by_doi, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
 from shared.prompts import build_flora_anchor_note
 from shared.pdf_sources import acquire_pdf
@@ -442,10 +446,21 @@ def clear_pipeline_caches(doi_r: str) -> list[str]:
 
 
 def _write_parse_cache(doi_r: str, parse_results: dict) -> None:
-    """Persist parse_all results to PARSE_CACHE_DIR so run_extract._save_parse_cache() skips re-parsing."""
+    """Persist parse_all results to PARSE_CACHE_DIR so run_extract._save_parse_cache() skips re-parsing.
+
+    An all-empty parse is never written, and an all-empty cache left by an earlier
+    PDF-less run is overwritten rather than preserved (audit B4).
+    """
     out_file = PARSE_CACHE_DIR / f"parse_{cache_key(doi_r)}.json"
-    if out_file.exists():
+    if parse_result_is_empty(parse_results):
         return
+    if out_file.exists():
+        try:
+            with out_file.open(encoding="utf-8") as fh:
+                if not parse_result_is_empty(json.load(fh)):
+                    return
+        except Exception:
+            return
     try:
         out_file.parent.mkdir(parents=True, exist_ok=True)
         with out_file.open("w", encoding="utf-8") as fh:
@@ -715,8 +730,20 @@ def run_for_doi(doi_r:              str,
         # (one sampled paper names its target and has a single reference). Searching
         # the named title is far cheaper than acquiring and parsing the PDF, and the
         # same search already runs after the PDF stage as llm_title_search.
+        #
+        # Gated on a high-confidence screen. This is the one resolver that picks from
+        # the whole literature rather than a supplied candidate list, and the errors
+        # it makes are systematic: a paper that is not a replication at all gets
+        # confidently linked to a landmark it merely cites. classification_confidence
+        # is the weaker of the two Q1 votes and is only populated when the models
+        # agree, so "== high" means both voters called it a replication at high
+        # confidence — the same bar the screen already applies before discarding a row.
+        # The result is still written as provisional (link_method llm_title_search,
+        # link_confidence low, no outcome coded); the gate decides whether to spend
+        # the two searches at all.
         target_desc = screen.get("target_description", "")
-        if screen["is_replication"] == "yes" and target_desc:
+        if (screen["is_replication"] == "yes" and target_desc
+                and screen.get("classification_confidence") == "high"):
             hit = _search_title_for_original(doi_r, target_desc, study_r)
             if hit:
                 log.info("[%s] Resolved by pre-PDF title search: %s", doi_r,

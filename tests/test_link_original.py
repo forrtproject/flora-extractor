@@ -154,3 +154,75 @@ class TestScreenRouting:
         assert "gemini=yes/high" in row["llm_evidence"]
         assert "openai=no/high" in row["llm_evidence"]
         assert "the abstract says replication" in row["llm_evidence"]
+
+
+# ── Stage 4.6 title-search gate (audit D2) ───────────────────────────────────
+
+def _run_to_title_search(screen: dict, hit: "dict | None" = None) -> tuple[dict, object]:
+    """Drive run_for_doi past the screen with the title search stubbed.
+
+    acquire_pdf returns an empty acquisition so a row that gets past the screen
+    without a title-search hit ends at no_fulltext_available instead of exploding.
+    """
+    cands_df = pd.DataFrame([{
+        "doi_r": "10.1/rep", "study_r": "A study", "abstract_r": "No citations here.",
+        "year_r": "2020", "openalex_id_r": "W1", "url_r": "",
+        "author_year_pattern_r": "",
+    }])
+    with patch.object(link_original, "find_all_candidates", return_value=[]), \
+         patch.object(link_original, "fetch_referenced_works_metadata", return_value=[]), \
+         patch.object(link_original, "fetch_opencitations_references", return_value=[]), \
+         patch.object(link_original, "screen_references_with_llm", return_value=screen), \
+         patch.object(link_original, "_search_title_for_original",
+                      return_value=hit) as search, \
+         patch.object(link_original, "acquire_pdf",
+                      return_value={"pdf_path": None, "openalex_xml": None,
+                                    "pdf_source": "none", "pdf_url": "",
+                                    "pdf_ok": False, "pdf_url_tried": []}):
+        return run_for_doi("10.1/rep", cands_df=cands_df), search
+
+
+def _yes_screen(confidence: str) -> dict:
+    return _screen_result(
+        is_replication="yes", models_agree=True,
+        classification_confidence=confidence,
+        target_description="Smith (2010), Time flies from left to right",
+        votes=[{"provider": "gemini", "is_replication": "yes",
+                "confidence": confidence, "reasoning": "r"},
+               {"provider": "openai", "is_replication": "yes",
+                "confidence": confidence, "reasoning": "r"}])
+
+
+_HIT = {
+    "resolved": True, "resolution_method": "llm_title_search_prepdf",
+    "resolved_doi_o": "10.9/orig", "resolved_title_o": "Time flies from left to right",
+    "resolved_year_o": 2010, "resolved_author_o": "Smith", "resolution_score": 1.0,
+}
+
+
+class TestTitleSearchGate:
+    """The title search is the one resolver that matches against the whole
+    literature rather than a supplied candidate list, at ~50% measured precision.
+    It may only spend its two searches on a screen both models called high."""
+
+    def test_high_confidence_screen_runs_the_search(self):
+        row, search = _run_to_title_search(_yes_screen("high"), hit=_HIT)
+        assert search.called
+        assert row["resolution_method"] == "llm_title_search_prepdf"
+        assert row["resolved_doi_o"] == "10.9/orig"
+
+    def test_medium_confidence_screen_does_not_search(self):
+        row, search = _run_to_title_search(_yes_screen("medium"), hit=_HIT)
+        assert not search.called
+        assert row["resolved_doi_o"] == ""
+        assert _map_method(row["resolution_method"]) == "target_pending"
+
+    def test_low_confidence_screen_does_not_search(self):
+        _, search = _run_to_title_search(_yes_screen("low"), hit=_HIT)
+        assert not search.called
+
+    def test_missing_target_description_does_not_search(self):
+        screen = _yes_screen("high")
+        screen["target_description"] = ""
+        _, search = _run_to_title_search(screen, hit=_HIT)
+        assert not search.called

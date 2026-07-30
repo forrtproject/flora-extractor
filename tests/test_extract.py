@@ -1378,7 +1378,9 @@ class TestTitleSearchProvenance:
     def test_schema_knows_the_method(self):
         from shared.schema import LINK_METHOD_VALUES, RESOLVED_LINK_METHODS
         assert "llm_title_search" in LINK_METHOD_VALUES
-        assert "llm_title_search" in RESOLVED_LINK_METHODS
+        # Provisional, not resolved: ~50% measured precision and the failure mode is
+        # invisible to doi_o_verification, so the row must not import (audit D2).
+        assert "llm_title_search" not in RESOLVED_LINK_METHODS
 
     def test_mapped_from_internal_label(self):
         assert run_extract._map_method("llm_title_search_gemini") == "llm_title_search"
@@ -1629,3 +1631,118 @@ class TestScreenProviderPrecheck:
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", [])
         monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "")
         run_extract._check_screen_providers(no_llm=True)
+
+
+# ── Title-search links are provisional, not settled (audit D2) ───────────────
+
+class TestTitleSearchIsProvisional:
+    """A title search picks from the whole literature, not a candidate list, and a
+    hand-check put its precision near 50%. The row must therefore never present as
+    a settled pairing: low confidence, no outcome, and no DB import."""
+
+    def test_link_confidence_is_forced_low(self):
+        for method in ("llm_title_search_prepdf", "llm_title_search_gemini",
+                       "llm_title_search_openai"):
+            link = {"resolution_method": method, "llm_confidence": "high",
+                    "resolution_score": 1.0}
+            assert run_extract._link_confidence(link) == "low", method
+
+    def test_candidate_derived_links_keep_their_confidence(self):
+        link = {"resolution_method": "llm_gemini", "llm_confidence": "high",
+                "resolution_score": 1.0}
+        assert run_extract._link_confidence(link) == "high"
+
+    def test_no_outcome_is_coded_against_a_title_search_link(self):
+        row = pd.Series({"abstract_r": "a", "title_r": "t", "filter_status": "replication"})
+        link = {"resolution_method": "llm_title_search_prepdf",
+                "resolved_title_o": "Some landmark", "llm_model": "m"}
+        with patch.object(run_extract, "extract_outcome",
+                          side_effect=AssertionError("must not code an outcome")):
+            out = run_extract._get_outcome("10.1/x", row, link)
+        assert out["outcome"] == "cannot_be_determined"
+        assert out["outcome_confidence"] == "low"
+        assert "provisional" in out["outcome_reasoning"]
+
+
+# ── Empty parse caches must not poison later runs (audit B4) ────────────────
+
+_EMPTY_PARSE = {m: {"source": m, "abstract": "", "intro": "", "methods": "",
+                    "raw_text": "", "references": [], "error": None}
+                for m in ("grobid", "pdfminer", "markitdown")}
+
+_FULL_PARSE = {**_EMPTY_PARSE,
+               "markitdown": {"source": "markitdown", "abstract": "A real abstract",
+                              "intro": "A real intro", "methods": "", "raw_text": "body",
+                              "references": [{"title": "r"}], "error": None}}
+
+
+class TestEmptyParseCache:
+    def _cache(self, tmp_path, monkeypatch, results):
+        monkeypatch.setattr(run_extract, "PARSE_CACHE_DIR", tmp_path)
+        from shared.utils import cache_key
+        path = tmp_path / f"parse_{cache_key('10.1/x')}.json"
+        path.write_text(json.dumps(results), encoding="utf-8")
+        return path
+
+    def test_all_empty_cache_reads_as_a_miss(self, tmp_path, monkeypatch):
+        self._cache(tmp_path, monkeypatch, _EMPTY_PARSE)
+        assert run_extract._read_parse_cache("10.1/x") is None
+        assert run_extract._best_fulltext_from_cache("10.1/x") == ""
+
+    def test_populated_cache_still_reads(self, tmp_path, monkeypatch):
+        self._cache(tmp_path, monkeypatch, _FULL_PARSE)
+        assert run_extract._read_parse_cache("10.1/x") is not None
+        assert run_extract._best_fulltext_from_cache("10.1/x") == "body"
+
+    def test_empty_cache_is_reparsed_not_trusted(self, tmp_path, monkeypatch):
+        """The whole bug: the empty file existed, so the re-parse never happened."""
+        path = self._cache(tmp_path, monkeypatch, _EMPTY_PARSE)
+        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
+        with patch.object(run_extract, "_parse_all", return_value=_FULL_PARSE) as pa:
+            run_extract._save_parse_cache("10.1/x")
+        assert pa.called
+        assert json.loads(path.read_text(encoding="utf-8"))["markitdown"]["raw_text"] == "body"
+
+    def test_an_empty_parse_is_never_written(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(run_extract, "PARSE_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
+        with patch.object(run_extract, "_parse_all", return_value=_EMPTY_PARSE):
+            run_extract._save_parse_cache("10.1/x")
+        assert list(tmp_path.glob("parse_*.json")) == []
+
+
+class TestParseCacheOnlyAfterTheDocument:
+    """Screen exits return with pdf={}. Parsing them wrote the six-empty cache in
+    the first place, so the row must not reach the parser at all."""
+
+    def _link(self, **over):
+        base = {"pdf_ok": False, "pdf_source": "none"}
+        base.update(over)
+        return base
+
+    def test_screen_exit_has_no_document(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
+        assert not run_extract._has_document("10.1/x", self._link())
+
+    def test_acquired_pdf_has_a_document(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
+        assert run_extract._has_document(
+            "10.1/x", self._link(pdf_ok=True, pdf_source="arxiv"))
+
+    def test_openalex_xml_only_counts_as_a_document(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
+        assert run_extract._has_document(
+            "10.1/x", self._link(pdf_source="openalex_xml"))
+
+    def test_pdf_cached_by_an_earlier_run_counts(self, tmp_path, monkeypatch):
+        """--recalibrate-outcomes re-reads documents a previous run downloaded."""
+        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
+        from shared.utils import cache_key
+        (tmp_path / f"{cache_key('10.1/x')}.pdf").write_bytes(b"%PDF")
+        assert run_extract._has_document("10.1/x", self._link())
