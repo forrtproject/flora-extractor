@@ -12,7 +12,7 @@ cache_key() helper as all other stages so re-runs are free.
 import time
 from typing import Optional
 
-from shared.cache import read_cache, write_cache
+from shared.cache import content_key, read_cache, write_cache
 from shared.config import (
     FILTER_OPENAI_MODEL,
     GEMINI_API_KEYS, GEMINI_MODEL,
@@ -21,8 +21,7 @@ from shared.config import (
 )
 from shared import token_counter
 from shared.llm_client import call_gemini, call_openai
-from shared.prompts import build_filter_prompt
-from shared.utils import cache_key
+from shared.prompts import build_filter_prompt, prompt_version
 
 VALID_STATUSES   = {"replication", "reproduction", "false_positive", "needs_review"}
 VALID_CONFIDENCE = {"high", "medium", "low"}
@@ -32,14 +31,16 @@ def classify_with_llm(title: str, abstract: str) -> Optional[dict]:
     """Return a dict with filter_status, filter_confidence, filter_evidence, or None on hard failure.
 
     Primary: OpenAI (FILTER_OPENAI_MODEL).  Fallback: Gemini (rotates keys on 429).
-    Results cached by hash(title + abstract) in LLM_CACHE_DIR.
+    Results are cached on the rendered prompt, its version and the model that
+    answers it, in LLM_CACHE_DIR.
     """
-    cache_id = cache_key(f"filter|{title}|{abstract}")
+    prompt = build_filter_prompt(title, abstract)
+    cache_id = content_key("filter", "", prompt_version("build_filter_prompt"),
+                           FILTER_OPENAI_MODEL, GEMINI_MODEL, prompt)
     cached = read_cache(LLM_CACHE_DIR, cache_id)
     if cached is not None:
         return cached
 
-    prompt = build_filter_prompt(title, abstract)
     result = None
     err    = "no API keys configured"
     token_counter.set_stage("filter")

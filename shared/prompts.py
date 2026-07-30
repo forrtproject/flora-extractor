@@ -15,8 +15,19 @@ return a string; every decision about *what* to send stays with the caller, ever
 decision about *how it is worded* lives here.
 
 Prompt IDs (L1, L2, …) match the screening-audit inventory.
+
+Every prompt carries a version — `prompt_version("build_outcome_abstract_prompt")` —
+derived from its own text rather than maintained by hand; see the versioning section
+at the foot of this file. Callers fold it into their cache keys, so editing the
+wording here invalidates the answers produced by the previous wording.
 """
+import ast
+import hashlib
+import inspect
+import sys
 import textwrap
+from functools import lru_cache
+from types import FunctionType
 
 # ── S1 / S2 — provider system messages ───────────────────────────────────────
 # Sent with every call_openai() and call_openrouter() request — including the Stage 2
@@ -752,3 +763,102 @@ def build_flora_anchor_note(flora_doi_o: str, flora_study_o: str) -> str:
         f"Evaluate this against the evidence — confirm it if supported, "
         f"override only if you find strong contradicting evidence."
     )
+
+
+# ── Versioning ───────────────────────────────────────────────────────────────
+# A prompt's version is derived from the prompt itself, not declared next to it.
+# The two hand-maintained constants this replaces (PROMPT_VERSION in
+# extract/code_outcome.py, REF_SCREEN_PROMPT_VERSION in shared/llm_client.py) each
+# had to be remembered on every wording change, and the other fourteen prompts had
+# no version at all — so an edit to them silently reused answers produced by the
+# previous wording.
+#
+# There is no registry to keep in step, because there is nothing to add to one: the
+# version of a builder is the hash of its own canonicalised source plus that of
+# every module-level string constant and helper it reaches, computed transitively.
+# Editing a shared fragment (EVIDENCE_POLICY, OUTCOME_RULES, QUOTE_INSTRUCTION, …)
+# therefore changes the version of every prompt that splices it in, and a new
+# builder is versioned the moment it is defined. PROMPT_NAMES is likewise derived
+# from the module contents at import.
+#
+# Canonicalisation runs the source through ast.unparse with docstrings stripped, so
+# reformatting, comments and docstrings do not invalidate a cache — only text that
+# can reach the model does.
+
+_MODULE = sys.modules[__name__]
+
+
+def _strip_docstrings(tree: ast.AST) -> ast.AST:
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef)):
+            continue
+        body = node.body
+        if (body and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)):
+            node.body = body[1:] or [ast.Pass()]
+    return tree
+
+
+def _canonical_source(fn: FunctionType) -> str:
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    return ast.unparse(_strip_docstrings(tree))
+
+
+def _collect(fn: FunctionType, parts: dict[str, str]) -> None:
+    """Record *fn*'s canonical source and, transitively, every module-level string
+    constant and helper function it references."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)):
+            continue
+        name = node.id
+        if name in parts or not hasattr(_MODULE, name):
+            continue
+        value = getattr(_MODULE, name)
+        if isinstance(value, str):
+            # The value, not the expression that built it: REPRO_JSON and friends
+            # are assembled at import from helpers, and the assembled text is what
+            # reaches the model.
+            parts[name] = repr(value)
+        elif isinstance(value, FunctionType) and value.__module__ == __name__:
+            parts[name] = _canonical_source(value)
+            _collect(value, parts)
+
+
+@lru_cache(maxsize=None)
+def prompt_version(name: str) -> str:
+    """Return the 12-hex-char version of the prompt *name* (a builder function or a
+    module-level prompt constant, e.g. "build_filter_prompt", "PDF_REFERENCES_PROMPT").
+
+    Raises KeyError for an unknown name — a cache key must never silently fall back
+    to a constant version.
+    """
+    if not hasattr(_MODULE, name):
+        raise KeyError(f"no prompt named {name!r} in shared.prompts")
+    obj = getattr(_MODULE, name)
+    if isinstance(obj, str):
+        parts = {name: repr(obj)}
+    elif isinstance(obj, FunctionType):
+        parts = {name: _canonical_source(obj)}
+        _collect(obj, parts)
+    else:
+        raise KeyError(f"{name!r} is not a prompt (got {type(obj).__name__})")
+    blob = "\n".join(f"{k}={parts[k]}" for k in sorted(parts))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def prompt_versions(*names: str) -> str:
+    """Joined versions of several prompts — for a cache whose entry can be written by
+    any one of them (the outcome cache escalates from abstract to fulltext)."""
+    return "+".join(prompt_version(n) for n in names)
+
+
+PROMPT_NAMES: tuple[str, ...] = tuple(sorted(
+    name for name, value in vars(_MODULE).items()
+    if not name.startswith("_")
+    and ((isinstance(value, FunctionType) and value.__module__ == __name__
+          and name.startswith("build_"))
+         or (isinstance(value, str) and name.endswith("_PROMPT")))
+))

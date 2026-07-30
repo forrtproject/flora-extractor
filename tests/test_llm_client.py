@@ -381,3 +381,144 @@ def test_flex_is_off_entirely_when_disabled(monkeypatch):
     llm.call_gemini_with_pdf("prompt", b"%PDF-1.4")
     llm.call_gemini_with_images("prompt", [{"mime_type": "image/png", "data": "aGk="}])
     assert all("service_tier" not in p for p in posts)
+
+
+# ── Cache keys (audit E3) ────────────────────────────────────────────────────
+# Every LLM cache key must name what the answer depends on. Keying on the DOI
+# alone replayed one question's answer for a different question.
+
+_TARGET_ANSWER = {"target_number": 1, "confidence": "high",
+                  "target_description": "Smith 2015", "evidence_quote": "q",
+                  "reasoning": "r"}
+
+_VERDICT_YES = {"resolution_method": "llm_refscreen_declined", "is_replication": "yes",
+                "models_agree": True, "classification_confidence": "high", "votes": [],
+                "llm_source": "", "llm_model": "", "llm_evidence": "",
+                "llm_reasoning": "", "llm_prompt": "", "llm_error": ""}
+
+
+def _ref(doi: str, title: str):
+    return {"doi": doi, "title": title, "publication_year": 2015, "first_author": "Smith"}
+
+
+def test_target_key_follows_the_reference_list(monkeypatch, tmp_path):
+    """A changed reference list renumbers the choices, so the old pick must not be
+    replayed against it."""
+    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    n = {"calls": 0}
+
+    def gemini(prompt, model=None):
+        n["calls"] += 1
+        return dict(_TARGET_ANSWER), None
+
+    monkeypatch.setattr(llm, "call_gemini", gemini)
+    refs_a = [_ref("10.1/orig", "Original")]
+    refs_b = [_ref("10.1/other", "A different first reference"), _ref("10.1/orig", "Original")]
+
+    a = llm.screen_references_with_llm("10.1/x", "T", "A", refs_a, classification=dict(_VERDICT_YES))
+    b = llm.screen_references_with_llm("10.1/x", "T", "A", refs_b, classification=dict(_VERDICT_YES))
+
+    assert n["calls"] == 2
+    assert a["resolved_doi_o"] == "10.1/orig"
+    assert b["resolved_doi_o"] == "10.1/other"   # entry 1 of the new list
+    assert len(list(tmp_path.glob("reftarget_*.json"))) == 2
+
+
+def test_classify_key_follows_the_voter_models(monkeypatch, tmp_path):
+    """PR #97's precedent: the voter pair is part of the verdict, so a swapped voter
+    must not read back the previous pair's answer."""
+    calls: list = []
+    _classify(monkeypatch, tmp_path, calls)
+    llm.classify_replication("10.1/x", "Title", "Abstract")
+    assert len(calls) == 2
+    monkeypatch.setattr(llm, "SCREEN_VOTER2_MODEL", "some/other-voter")
+    llm.classify_replication("10.1/x", "Title", "Abstract")
+    assert len(calls) == 4                                   # re-voted, not replayed
+
+
+def test_classify_key_follows_the_abstract(monkeypatch, tmp_path):
+    calls: list = []
+    _classify(monkeypatch, tmp_path, calls)
+    llm.classify_replication("10.1/x", "Title", "Abstract")
+    llm.classify_replication("10.1/x", "Title", "A backfilled, much longer abstract")
+    assert len(calls) == 4
+
+
+def _identify(monkeypatch, tmp_path, answer, calls):
+    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+
+    def gemini(prompt, model=None):
+        calls.append(prompt)
+        return dict(answer), None
+
+    monkeypatch.setattr(llm, "call_gemini", gemini)
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "")
+
+
+_DECLINE = {"selected_candidate_number": None, "selected_title": "", "selected_year": None,
+            "selected_first_author": "", "confidence": "low", "evidence": "", "reasoning": "none"}
+
+_PICK = {"selected_candidate_number": 1, "selected_title": "Original", "selected_year": 2015,
+         "selected_first_author": "Smith", "confidence": "high", "evidence": "e",
+         "reasoning": "r"}
+
+_CAND = [{"title": "Original", "year": 2015, "first_author": "Smith", "all_authors": ["Smith"],
+          "doi": "10.1/orig", "openalex_id": "W1"}]
+
+
+def test_identification_declines_are_cached(monkeypatch, tmp_path):
+    """A decline is an answer. Caching only successes made every declined full-text
+    call repay its API cost on every re-run."""
+    calls: list = []
+    _identify(monkeypatch, tmp_path, _DECLINE, calls)
+    first = llm.identify_original_with_llm("10.1/x", "T", "A", "", _CAND, {})
+    second = llm.identify_original_with_llm("10.1/x", "T", "A", "", _CAND, {})
+
+    assert first["resolution_method"] == "llm_no_target"
+    assert second["resolution_method"] == "llm_no_target"
+    assert len(calls) == 1
+    assert len(list(tmp_path.glob("llm_*.json"))) == 1
+
+
+def test_identification_key_follows_the_candidates(monkeypatch, tmp_path):
+    calls: list = []
+    _identify(monkeypatch, tmp_path, _PICK, calls)
+    llm.identify_original_with_llm("10.1/x", "T", "A", "", _CAND, {})
+    other = [dict(_CAND[0], title="A different candidate", doi="10.1/other")]
+    llm.identify_original_with_llm("10.1/x", "T", "A", "", other, {})
+    assert len(calls) == 2
+
+
+def test_identification_key_follows_the_parsed_sections(monkeypatch, tmp_path):
+    """The abstract-stage call and the full-text call are different questions about
+    the same DOI; the old DOI-only key collided them."""
+    calls: list = []
+    _identify(monkeypatch, tmp_path, _PICK, calls)
+    llm.identify_original_with_llm("10.1/x", "T", "A", "", _CAND, {}, abstract_only=True)
+    llm.identify_original_with_llm("10.1/x", "T", "A", "", _CAND,
+                                   {"intro": "The PDF has since been parsed.",
+                                    "references": []})
+    assert len(calls) == 2
+
+
+def test_identification_api_failure_is_not_cached(monkeypatch, tmp_path):
+    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    monkeypatch.setattr(llm, "call_gemini", lambda *a, **k: (None, "boom"))
+    monkeypatch.setattr(llm, "call_openai", lambda *a, **k: (None, "boom"))
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "")
+    out = llm.identify_original_with_llm("10.1/x", "T", "A", "", _CAND, {})
+    assert out["resolution_method"] == "llm_failed"
+    assert not list(tmp_path.glob("llm_*.json"))
+
+
+def test_identification_key_follows_the_prompt_version(monkeypatch, tmp_path):
+    """The version is folded in on its own account, not only via the rendered text."""
+    calls: list = []
+    _identify(monkeypatch, tmp_path, _PICK, calls)
+    llm.identify_original_with_llm("10.1/x", "T", "A", "", _CAND, {})
+    monkeypatch.setattr(llm, "prompt_version", lambda name: "ffffffffffff")
+    llm.identify_original_with_llm("10.1/x", "T", "A", "", _CAND, {})
+    assert len(calls) == 2

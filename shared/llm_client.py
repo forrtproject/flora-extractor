@@ -28,13 +28,14 @@ from .config import (
     log,
 )
 from . import token_counter
+from .cache import content_key, read_cache, write_cache
 from .prompts import (
     JSON_SYSTEM_MESSAGE,
     build_classify_prompt, build_identification_prompt,
-    build_multi_original_prompt, build_target_prompt,
+    build_multi_original_prompt, build_target_prompt, prompt_version,
 )
 from .schema import OUTCOME_CATEGORIES
-from .utils import cache_key, clean_doi
+from .utils import clean_doi
 
 # Output cap for the JSON-returning chat calls. It was 1024, which on a reasoning
 # model (gpt-5-mini) also has to cover hidden reasoning tokens — while the outcome
@@ -479,21 +480,31 @@ def identify_original_with_llm(doi_r:          str,
     html_text — extracted landing-page text as full-text substitute.
 
     Order: OpenRouter/Qwen (primary when OPENROUTER_API_KEY set) → Gemini → OpenAI.
-    Successful results are cached in LLM_CACHE_DIR.
+
+    The cache key is the rendered prompt — the candidates, the parsed sections and
+    the validator note all reach the model through it — plus the prompt version and
+    the model that will answer. Keying on the DOI alone, as this did, meant the
+    abstract-stage call and the full-text call collided, and a paper whose PDF had
+    since been parsed replayed the answer given when only the abstract was known.
+
+    Every answer the model gives is cached, including "no identifiable original":
+    a decline is a result, and caching only successes made every declined full-text
+    call repay its API cost on every re-run. API failures are still not cached.
     """
-    cache_file = LLM_CACHE_DIR / f"llm_{cache_key(doi_r)}.json"
-    if cache_file.exists():
-        with cache_file.open(encoding="utf-8") as fh:
-            cached = json.load(fh)
+    prompt     = build_identification_prompt(study_r, abstract_r, pattern,
+                                             candidates, sections,
+                                             html_text=html_text,
+                                             validator_note=validator_note)
+    key = content_key("llm", doi_r,
+                      prompt_version("build_identification_prompt"),
+                      GEMINI_HEAVY_MODEL, abstract_only, prompt)
+    cached = read_cache(LLM_CACHE_DIR, key)
+    if cached is not None:
         cached.setdefault("llm_source", "cache")
         cached.setdefault("llm_prompt", "")
         cached.setdefault("llm_error",  "")
         return cached
 
-    prompt     = build_identification_prompt(study_r, abstract_r, pattern,
-                                             candidates, sections,
-                                             html_text=html_text,
-                                             validator_note=validator_note)
     result     = None
     llm_source = "none"
     llm_model  = ""
@@ -614,10 +625,7 @@ def identify_original_with_llm(doi_r:          str,
         "llm_error"         : "",
     }
 
-    if resolved:
-        with cache_file.open("w", encoding="utf-8") as fh:
-            json.dump(output, fh, ensure_ascii=False, indent=2)
-
+    write_cache(LLM_CACHE_DIR, key, output)
     return output
 
 
@@ -756,11 +764,17 @@ def identify_all_originals_with_llm(doi_r:        str,
           "llm_reasoning": str,
         }
     """
-    cache_file = LLM_CACHE_DIR / f"multi_{cache_key(doi_r)}.json"
-    if cache_file.exists() and not force_multi:
-        # When force_multi=True we skip the cache to ensure the stronger prompt runs.
-        with cache_file.open(encoding="utf-8") as fh:
-            cached = json.load(fh)
+    prompt = build_multi_original_prompt(study_r, abstract_r, candidates,
+                                          sections,
+                                          html_text=html_text,
+                                          force_multi=force_multi)
+    # force_multi reaches the model through the prompt, so it separates the two
+    # variants' entries by itself — no cache bypass needed.
+    key = content_key("multi", doi_r,
+                      prompt_version("build_multi_original_prompt"),
+                      GEMINI_HEAVY_MODEL, prompt)
+    cached = read_cache(LLM_CACHE_DIR, key)
+    if cached is not None:
         cached.setdefault("llm_source", "cache")
         return cached
 
@@ -773,10 +787,6 @@ def identify_all_originals_with_llm(doi_r:        str,
         "llm_reasoning"    : "",
     }
 
-    prompt = build_multi_original_prompt(study_r, abstract_r, candidates,
-                                          sections,
-                                          html_text=html_text,
-                                          force_multi=force_multi)
     result     = None
     llm_source = "none"
     llm_model  = ""
@@ -873,10 +883,9 @@ def identify_all_originals_with_llm(doi_r:        str,
         "llm_reasoning"    : str(result.get("reasoning", "") or ""),
     }
 
-    if n_originals > 0:
-        with cache_file.open("w", encoding="utf-8") as fh:
-            json.dump(output, fh, ensure_ascii=False, indent=2)
-
+    # A run that found no originals is cached too: it is the model's answer, not a
+    # failure, and re-asking it every run costs a heavy-model call per paper.
+    write_cache(LLM_CACHE_DIR, key, output)
     return output
 
 
@@ -897,11 +906,6 @@ def identify_all_originals_with_llm(doi_r:        str,
 # the pipeline's filtering work; a single model's high-confidence miss silently
 # loses a genuine replication. Disagreement is not an error — it routes the row to
 # full text, which is what we would have done anyway.
-
-# The voter pair is part of the verdict, so this version string changes whenever
-# either voter does — cached verdicts from a previous pair must not be replayed as
-# the current pair's.
-REF_SCREEN_PROMPT_VERSION = "2026-07-30-split-calls-v6-ministral"
 
 # Q1's two voters, in call order. Both are required: with one provider the screen
 # cannot tell agreement from a lone opinion, so run_extract refuses to start.
@@ -954,10 +958,17 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
                             screen is an API failure, not a verdict, so it is
                             returned uncached — a re-run must be able to succeed.
     """
-    cache_file = LLM_CACHE_DIR / f"classify_{cache_key((doi_r or study_r) + REF_SCREEN_PROMPT_VERSION)}.json"
-    if cache_file.exists():
-        with cache_file.open(encoding="utf-8") as fh:
-            return json.load(fh)
+    cls_prompt = build_classify_prompt(study_r, abstract_r)
+    # The voter pair is part of the verdict — the two models disagree often enough
+    # that this is the question the audit measured a model effect on — so both
+    # models are in the key alongside the prompt version and the text they see.
+    key = content_key("classify", doi_r or study_r,
+                      prompt_version("build_classify_prompt"),
+                      "+".join(_screen_model(p) for p in SCREEN_PROVIDERS),
+                      cls_prompt)
+    cached = read_cache(LLM_CACHE_DIR, key)
+    if cached is not None:
+        return cached
 
     out = {
         "resolution_method": "llm_refscreen_declined",
@@ -967,7 +978,6 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
         "llm_reasoning": "", "llm_prompt": "", "llm_error": "",
     }
 
-    cls_prompt = build_classify_prompt(study_r, abstract_r)
     out["llm_prompt"] = cls_prompt
     votes = [v for v in (_classify_once(cls_prompt, p) for p in SCREEN_PROVIDERS) if v]
 
@@ -1004,9 +1014,7 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
         # Disagreement is informative, not an error — the row is set aside for review.
         out["is_replication"] = "unclear"
 
-    cache_file.parent.mkdir(parents=True, exist_ok=True)
-    with cache_file.open("w", encoding="utf-8") as fh:
-        json.dump(out, fh, ensure_ascii=False, indent=2)
+    write_cache(LLM_CACHE_DIR, key, out)
     return out
 
 
@@ -1036,13 +1044,17 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
         # The pick is cached separately from the classification: the two halves are
         # now decided at different points in the pipeline, and one cache holding
         # both would be written before the second half had run.
-        cache_file = LLM_CACHE_DIR / f"reftarget_{cache_key((doi_r or study_r) + REF_SCREEN_PROMPT_VERSION)}.json"
-        if cache_file.exists():
-            with cache_file.open(encoding="utf-8") as fh:
-                cached = json.load(fh)
+        # The reference list is in the key via the rendered prompt: a re-fetched
+        # or re-parsed list changes which numbered reference the pick refers to,
+        # so replaying the previous pick would point at a different paper.
+        tgt_prompt = build_target_prompt(study_r, abstract_r, refs)
+        tgt_key = content_key("reftarget", doi_r or study_r,
+                              prompt_version("build_target_prompt"),
+                              GEMINI_HEAVY_MODEL, tgt_prompt)
+        cached = read_cache(LLM_CACHE_DIR, tgt_key)
+        if cached is not None:
             result, tgt_source, tgt_model = cached["result"], cached["source"], cached["model"]
         else:
-            tgt_prompt = build_target_prompt(study_r, abstract_r, refs)
             tgt_source, tgt_model = "gemini", GEMINI_HEAVY_MODEL
             result, _ = call_gemini(tgt_prompt, model=GEMINI_HEAVY_MODEL)
             if not result:
@@ -1050,10 +1062,9 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
                 result, _ = call_openai(tgt_prompt)
             if result:
                 time.sleep(LLM_RATE_SEC)
-                cache_file.parent.mkdir(parents=True, exist_ok=True)
-                with cache_file.open("w", encoding="utf-8") as fh:
-                    json.dump({"result": result, "source": tgt_source,
-                               "model": tgt_model}, fh, ensure_ascii=False, indent=2)
+                write_cache(LLM_CACHE_DIR, tgt_key,
+                            {"result": result, "source": tgt_source,
+                             "model": tgt_model})
         if result:
             out["llm_confidence"]     = str(result.get("confidence", "")).strip().lower()
             out["target_description"] = str(result.get("target_description", "") or "").strip()

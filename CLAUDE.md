@@ -274,9 +274,9 @@ screen acts only when both answer and agree, so `GEMINI_API_KEY` and `OPENROUTER
 must both be set — `extract.run_extract` refuses to start otherwise (unless `--no-llm`).
 Voter 2 is deliberately outside the Google lineage: on adjudicated hard cases this pair
 correctly discards 89% of true negatives (gpt-5-mini's pair managed 25%) while still
-losing no genuine replication. Changing either voter requires bumping
-`REF_SCREEN_PROMPT_VERSION`, since the cache key must not replay one pair's verdicts as
-another's. An incomplete screen is reported as such rather than as a verdict, and is
+losing no genuine replication. Changing either voter changes the cache key by itself —
+both voters' model names are folded into it — so one pair's verdicts can never be
+replayed as another's. An incomplete screen is reported as such rather than as a verdict, and is
 never cached:
 
 | Votes | `resolution_method` | `link_method` |
@@ -314,20 +314,41 @@ OPENAI_MODEL=gpt-4o-mini            # override as needed
 
 Every API call (OpenAlex, Gemini, OpenAI, CrossRef) must be cached so that re-runs don't repeat expensive calls.
 
-Use `cache_key()` from `shared/utils.py` to get a stable hash for a given input, then use `shared/cache.py` to read and write:
+**A cache key must name everything the cached answer depends on.** A key that omits an
+input silently answers one question with another question's answer, and a cache that
+cannot be invalidated is a cache that pins a bug. For an LLM call that means the prompt
+version, the model that will answer, and the inputs actually sent:
 
 ```python
-from shared.utils import cache_key
-from shared.cache import read_cache, write_cache
+from shared.cache import content_key, read_cache, write_cache
+from shared.prompts import prompt_version
 
-key = cache_key(doi_r + "_filter")    # unique per call type
-cached = read_cache(key)
+prompt = build_filter_prompt(title, abstract)
+key = content_key("filter", doi_r, prompt_version("build_filter_prompt"),
+                  GEMINI_MODEL, prompt)
+cached = read_cache(LLM_CACHE_DIR, key)
 if cached is None:
-    result = call_api(...)
-    write_cache(key, result)
+    result = call_api(prompt)
+    write_cache(LLM_CACHE_DIR, key, result)
 else:
     result = cached
 ```
+
+`content_key()` produces `<prefix>_<doi hash>_<content hash>`. The DOI hash is in the
+name only so one paper's entries can be found and purged together —
+`clear_content_keys(dir, "outcome", doi)` — never as the key itself.
+
+`prompt_version(name)` (see `shared/prompts.py`) is the sha256 of the prompt's own text
+plus every fragment it splices in, so editing a prompt or a shared fragment invalidates
+exactly the caches that depended on the old wording. There is nothing to register and no
+version constant to remember to bump.
+
+Cache non-answers too. A model that declines to identify a target has answered; a
+provider that returned a 503 has not. Caching only the successes made every declined
+full-text call repay its API cost on every re-run.
+
+For plain API responses (OpenAlex, CrossRef) keyed by identifier, `cache_key()` from
+`shared/utils.py` on that identifier is enough.
 
 Cache files are stored in `cache/` (gitignored). They persist across runs; clear manually if you need fresh data.
 

@@ -273,6 +273,26 @@ class TestFindAllCandidates:
             find_all_candidates("10.9999/rep", "W999", "", "Smith (2010) studied this.", 2020, "")
         assert mock_fetch.call_count == 1
 
+    def test_different_abstract_misses_the_cache(self, tmp_path):
+        """The three call sites pass different titles/abstracts for the same DOI, and
+        the extracted patterns — hence the candidate list — follow from them."""
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client.fetch_referenced_works_metadata",
+                   return_value=_REFS) as mock_fetch:
+            find_all_candidates("10.9999/rep", "W999", "", "Smith (2010) studied this.", 2020, "")
+            find_all_candidates("10.9999/rep", "W999", "", "Jones (2015) studied this.", 2020, "")
+        assert mock_fetch.call_count == 2
+
+    def test_different_title_misses_the_cache(self, tmp_path):
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client.fetch_referenced_works_metadata",
+                   return_value=_REFS) as mock_fetch:
+            find_all_candidates("10.9999/rep", "W999", "A replication of Smith (2010)",
+                                "no patterns here", 2020, "")
+            find_all_candidates("10.9999/rep", "W999", "A replication of Jones (2015)",
+                                "no patterns here", 2020, "")
+        assert mock_fetch.call_count == 2
+
     def test_candidate_fields_present(self, tmp_path):
         """Every candidate dict must have the required fields."""
         cands = self._run(tmp_path, "We replicated Smith (2010).")

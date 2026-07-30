@@ -26,7 +26,7 @@ from typing import Optional
 import requests
 
 from .config import GROBID_CACHE_DIR, GROBID_RATE_SEC, GROBID_SERVER, log
-from .prompts import PDF_IMAGE_REFERENCES_PROMPT, PDF_REFERENCES_PROMPT
+from .prompts import PDF_IMAGE_REFERENCES_PROMPT, PDF_REFERENCES_PROMPT, prompt_version
 
 # ── pdfminer import (installed lazily) ───────────────────────────────────────
 
@@ -264,7 +264,10 @@ def _extract_refs_via_pdf_direct(doi_r: str, pdf_path: Path) -> list[dict]:
     """
     import json
 
-    cache_file = GROBID_CACHE_DIR / f"{pdf_path.stem}_direct_refs.json"
+    # The prompt version is in the filename: re-word the extraction prompt and the
+    # previous wording's reference lists stop being read back.
+    cache_file = (GROBID_CACHE_DIR /
+                  f"{pdf_path.stem}_direct_refs_{prompt_version('PDF_REFERENCES_PROMPT')}.json")
     if cache_file.exists():
         try:
             with cache_file.open(encoding="utf-8") as fh:
@@ -330,7 +333,8 @@ def _extract_refs_via_pdf_images(doi_r: str, pdf_path: Path) -> list[dict]:
     """
     import json
 
-    cache_file = GROBID_CACHE_DIR / f"{pdf_path.stem}_img_refs.json"
+    cache_file = (GROBID_CACHE_DIR /
+                  f"{pdf_path.stem}_img_refs_{prompt_version('PDF_IMAGE_REFERENCES_PROMPT')}.json")
     if cache_file.exists():
         try:
             with cache_file.open(encoding="utf-8") as fh:

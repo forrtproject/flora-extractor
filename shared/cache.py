@@ -4,16 +4,24 @@ cache.py — Cache read/write/clear helpers.
 All cache files live under CACHE_DIR (defined in shared/config.py).
 Keys are generated with cache_key() from shared/utils.py.
 
+An LLM cache entry is named by content_key(): `<prefix>_<doi hash>_<content hash>`,
+where the content hash covers everything the answer depends on — the prompt version
+(shared/prompts.py), the model, and the inputs actually sent. The DOI hash sits in
+the middle of the name purely so a single paper's entries can still be found and
+purged with a glob; it is never the whole key.
+
 Public API:
     read_cache(cache_dir, key, suffix=".json") → dict | None
     write_cache(cache_dir, key, data, suffix=".json") → None
+    content_key(prefix, doi, *parts) → str
     clear_cache(cache_dir, key, suffixes=None) → list[str]
-    read_dual_cache(cache_dir, legacy_key, content_key, mode, suffix=".json") → dict | None
-    write_dual_cache(cache_dir, legacy_key, content_key, data, suffix=".json") → None
+    clear_content_keys(cache_dir, prefix, doi, suffix=".json") → list[str]
 """
 import json
 from pathlib import Path
 from typing import Optional
+
+from .utils import cache_key
 
 
 def read_cache(cache_dir: Path, key: str, suffix: str = ".json") -> Optional[dict]:
@@ -36,39 +44,29 @@ def write_cache(cache_dir: Path, key: str, data: dict, suffix: str = ".json") ->
         json.dump(data, fh, ensure_ascii=False, indent=2)
 
 
-def read_dual_cache(cache_dir: Path, legacy_key: str, content_key: str,
-                    mode: str = "accumulate", suffix: str = ".json") -> Optional[dict]:
-    """Read a dual-written LLM cache entry (see write_dual_cache).
+def content_key(prefix: str, doi: str, *parts: object) -> str:
+    """Return `<prefix>_<hash of doi>_<hash of parts>`.
 
-    Cached LLM results are stored under two keys: a stable *legacy_key* (e.g. keyed
-    on the DOI alone) and a *content_key* that also folds in the model, prompt
-    version and input hash. The read mode controls which one wins:
-
-    - "accumulate" (default): prefer the legacy entry if present — this preserves
-      previously-computed results across prompt/model changes, useful when
-      experimenting so old answers are not thrown away. Falls back to the content
-      key when no legacy entry exists.
-    - "latest": read ONLY the content-keyed entry — this guarantees the result
-      matches the current prompt/model/input, at the cost of ignoring legacy
-      entries. Use in production runs where correctness-to-current-prompt matters.
+    *parts* must name everything the cached answer depends on: the prompt version,
+    the model(s) that will answer, and the inputs actually sent. Values are
+    stringified and joined, so a changed candidate list or reference list produces a
+    different key rather than replaying the previous paper's answer.
     """
-    if mode == "latest":
-        return read_cache(cache_dir, content_key, suffix)
-    legacy = read_cache(cache_dir, legacy_key, suffix)
-    if legacy is not None:
-        return legacy
-    return read_cache(cache_dir, content_key, suffix)
+    joined = "␟".join("" if p is None else str(p) for p in parts)
+    return f"{prefix}_{cache_key(doi or '')}_{cache_key(joined)}"
 
 
-def write_dual_cache(cache_dir: Path, legacy_key: str, content_key: str,
-                     data: dict, suffix: str = ".json") -> None:
-    """Write *data* under BOTH the legacy key and the content key.
-
-    Doubles disk usage for the entry but lets either read mode (accumulate /
-    latest) find it. See read_dual_cache for how the two keys are used.
-    """
-    write_cache(cache_dir, legacy_key, data, suffix)
-    write_cache(cache_dir, content_key, data, suffix)
+def clear_content_keys(cache_dir: Path, prefix: str, doi: str,
+                       suffix: str = ".json") -> list[str]:
+    """Delete every content-keyed entry for *doi* under *prefix*. Returns filenames."""
+    deleted: list[str] = []
+    for path in cache_dir.glob(f"{prefix}_{cache_key(doi or '')}_*{suffix}"):
+        try:
+            path.unlink()
+            deleted.append(path.name)
+        except OSError:
+            pass
+    return deleted
 
 
 def clear_cache(cache_dir: Path, key: str,

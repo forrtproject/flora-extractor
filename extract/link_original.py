@@ -25,6 +25,7 @@ from typing import Optional
 import pandas as pd
 import requests
 
+from shared.cache import clear_content_keys
 from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_CACHE_DIR, RESEARCHER_EMAIL, log
 from shared.disambiguation import is_umbrella_paper, jaccard_similarity
 from shared import token_counter
@@ -426,15 +427,14 @@ def clear_pipeline_caches(doi_r: str) -> list[str]:
     Returns a list of the filenames that were actually deleted.
     """
     key = cache_key(doi_r)
-    targets = [
-        LLM_CACHE_DIR  / f"llm_{key}.json",
-        LLM_CACHE_DIR  / f"llm_{cache_key(doi_r + '_abstract')}.json",
-        GROBID_CACHE_DIR / f"{key}.json",
-        GROBID_CACHE_DIR / f"{key}_direct_refs.json",
-        GROBID_CACHE_DIR / f"{key}_img_refs.json",
-        OA_CACHE_DIR   / f"candidates_{key}.json",
-    ]
-    deleted = []
+    # The LLM and candidate caches are content-keyed, so one DOI can have several
+    # entries (abstract stage vs full text, different candidate lists) — all of them
+    # go, or a re-run reads back the answer this call was meant to discard.
+    deleted = (clear_content_keys(LLM_CACHE_DIR, "llm", doi_r)
+               + clear_content_keys(OA_CACHE_DIR, "candidates", doi_r))
+    targets = [GROBID_CACHE_DIR / f"{key}.json"]
+    targets += GROBID_CACHE_DIR.glob(f"{key}_direct_refs_*.json")
+    targets += GROBID_CACHE_DIR.glob(f"{key}_img_refs_*.json")
     for path in targets:
         if path.exists():
             try:

@@ -175,9 +175,9 @@ carried forward.
 Rows `sanity_check` has already moved out to `data/not_a_replication.csv` or
 `data/screen_disagreement.csv` are no longer in `extracted.csv` and are therefore
 re-processed by any run, with or without the flag. Their verdicts are still pinned by
-the screen cache, which is keyed on `REF_SCREEN_PROMPT_VERSION` — bumping that
-constant (done whenever a voter or the prompt changes) is what makes a re-screen
-actually re-vote.
+the screen cache, but that cache is keyed on the screening prompt's version, both
+voter models and the abstract itself — so changing a voter or the prompt makes a
+re-screen actually re-vote, with nothing to bump by hand.
 
 ### Skipping papers already in FLoRA
 

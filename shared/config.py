@@ -148,13 +148,6 @@ GEMINI_PAID_KEYS: set[int] = {
 OUTCOME_FULLTEXT_ESCALATION = os.getenv(
     "OUTCOME_FULLTEXT_ESCALATION", "true").strip().lower() not in {"false", "0", "no"}
 
-# Global read policy for dual-written LLM caches (see shared/cache.py):
-#   accumulate — prefer the legacy DOI-keyed entry; preserves prior results
-#                across prompt/model changes (good for experimentation). Default.
-#   latest     — read only the content-keyed entry; guarantees the cached result
-#                matches the current prompt/model/input (good for production).
-LLM_CACHE_READ = os.getenv("LLM_CACHE_READ", "accumulate").strip().lower()
-
 # ── Rate limits (seconds between calls) ──────────────────────────────────────
 OPENALEX_RATE_SEC  = float(os.getenv("OPENALEX_RATE_SEC", "0.3"))
 CROSSREF_RATE_SEC  = 0.1

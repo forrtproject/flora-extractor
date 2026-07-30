@@ -18,23 +18,17 @@ import time
 from typing import Optional
 
 from shared.config import (
-    GEMINI_HEAVY_MODEL, LLM_CACHE_DIR, LLM_CACHE_READ, LLM_RATE_SEC,
+    GEMINI_HEAVY_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC,
     OUTCOME_FULLTEXT_ESCALATION, log,
 )
 from shared import token_counter
-from shared.cache import read_dual_cache, write_dual_cache
+from shared.cache import content_key, read_cache, write_cache
 from shared.llm_client import call_llm
 from shared.prompts import (
     build_outcome_abstract_prompt, build_outcome_fulltext_prompt,
-    build_repro_abstract_prompt, build_repro_fulltext_prompt,
+    build_repro_abstract_prompt, build_repro_fulltext_prompt, prompt_versions,
 )
 from shared.schema import OUTCOME_CATEGORIES, outcome_categories_for
-from shared.utils import cache_key
-
-# Bump when the prompt or model wiring changes so the content-keyed cache misses
-# stale entries. read_dual_cache in "latest" mode keys on this; "accumulate" mode
-# still prefers the legacy DOI-keyed entry.
-PROMPT_VERSION = "2026-07-29-codex-review"
 
 # Truncation caps (chars) for the abstract-based and fulltext-escalation prompts.
 _ABSTRACT_CAP = 3000
@@ -217,21 +211,16 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
 
     The primary pass reads the abstract. If it returns cannot_be_determined (or the
     abstract is empty) and parsed fulltext is available, a second, fulltext-based
-    call is made and its result is used. Results are dual-cached (see
-    shared/cache.py): under the legacy DOI key and a content key folding in the
-    model, prompt version and abstract.
-    """
-    legacy_key  = f"outcome_{cache_key(doi_r)}"
-    # record_type is folded into the content key: the same paper classified as a
-    # reproduction gets a different prompt and a different vocabulary, so it must
-    # not read back a replication-coded cache entry.
-    content_key = f"outcome_{cache_key(doi_r + '|' + GEMINI_HEAVY_MODEL + '|' + PROMPT_VERSION + '|' + record_type + '|' + abstract_r)}"
-    cached = read_dual_cache(LLM_CACHE_DIR, legacy_key, content_key, mode=LLM_CACHE_READ)
-    if cached is not None:
-        cached.setdefault("outcome_reasoning", "")
-        return cached
+    call is made and its result is used.
 
+    One cache entry, keyed on everything the answer depends on: the model, the
+    versions of both prompts that could have produced it, the record type (a
+    reproduction gets a different prompt and a different outcome vocabulary, so it
+    must not read back a replication-coded entry), and every input sent — title,
+    abstract, the original-study block and the fulltext the escalation would read.
+    """
     abstract_snip = (abstract_r[:_ABSTRACT_CAP] + "…") if len(abstract_r) > _ABSTRACT_CAP else abstract_r
+    text_snip     = (fulltext[:_FULLTEXT_CAP] + "…") if len(fulltext) > _FULLTEXT_CAP else fulltext
 
     original_block = ""
     if original_title:
@@ -239,13 +228,23 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
             f"This paper replicates: {original_authors} ({original_year}). {original_title}\n\n"
         )
 
+    is_repro = str(record_type or "").strip().lower() == "reproduction"
+    versions = (prompt_versions("build_repro_abstract_prompt", "build_repro_fulltext_prompt")
+                if is_repro else
+                prompt_versions("build_outcome_abstract_prompt", "build_outcome_fulltext_prompt"))
+    key = content_key("outcome", doi_r, GEMINI_HEAVY_MODEL, versions, record_type,
+                      title_r, abstract_snip, original_block, text_snip)
+    cached = read_cache(LLM_CACHE_DIR, key)
+    if cached is not None:
+        cached.setdefault("outcome_reasoning", "")
+        return cached
+
     token_counter.set_stage("extract_outcome")
 
     _fallback = {"outcome": "cannot_be_determined", "outcome_phrase": "",
                  "outcome_confidence": "low", "out_quote_source": "",
                  "outcome_reasoning": "", "llm_model": ""}
 
-    is_repro = str(record_type or "").strip().lower() == "reproduction"
     prompt = (build_repro_abstract_prompt(title_r, abstract_snip, original_block) if is_repro
               else build_outcome_abstract_prompt(title_r, abstract_snip, original_block))
     result, model_used = _call_outcome_llm(prompt, doi_r)
@@ -259,7 +258,6 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
     if (OUTCOME_FULLTEXT_ESCALATION
             and fulltext
             and (output["outcome"] == "cannot_be_determined" or not abstract_r)):
-        text_snip = (fulltext[:_FULLTEXT_CAP] + "…") if len(fulltext) > _FULLTEXT_CAP else fulltext
         esc_prompt = (build_repro_fulltext_prompt(title_r, abstract_snip, text_snip, original_block)
                       if is_repro else
                       build_outcome_fulltext_prompt(title_r, abstract_snip, text_snip, original_block))
@@ -269,7 +267,7 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
             if not output["out_quote_source"]:
                 output["out_quote_source"] = "fulltext"
 
-    write_dual_cache(LLM_CACHE_DIR, legacy_key, content_key, output)
+    write_cache(LLM_CACHE_DIR, key, output)
     return output
 
 

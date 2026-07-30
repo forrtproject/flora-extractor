@@ -33,7 +33,8 @@ from shared.pdf_parsing import (
     parse_all as _parse_all,
     parse_result_is_empty,
 )
-from shared.prompts import build_match_type_prompt
+from shared.cache import content_key, read_cache, write_cache
+from shared.prompts import build_match_type_prompt, prompt_version
 from shared.doi_verify import verify_and_correct
 from shared.schema import (
     EXTRACTED_COLS,
@@ -419,11 +420,6 @@ def classify_match_type(row: dict, no_llm: bool = False) -> dict:
         return {"original_match_type": "single_original",
                 "original_match_confidence": "low", "rule_fired": False}
 
-    cache_file = LLM_CACHE_DIR / f"match_type_{cache_key(doi_r + '_match_type')}.json"
-    if cache_file.exists():
-        with cache_file.open(encoding="utf-8") as fh:
-            return json.load(fh)
-
     try:
         year_r = int(year_r_str) if year_r_str else 2099
     except (ValueError, TypeError):
@@ -457,23 +453,24 @@ def classify_match_type(row: dict, no_llm: bool = False) -> dict:
                     doi_r, e)
         return {"original_match_type": "single_original", "original_match_confidence": "low"}
 
-    # Step 3: call LLM
-    result = _llm_classify_match_type(doi_r, title_r, abstract_r, distinct_pairs, candidates)
+    # Step 3: call LLM. The cache is read here rather than before the candidate
+    # fetch, because the candidate list is in the prompt and so in the key; the
+    # fetch it delays is itself cached on disk.
+    prompt = build_match_type_prompt(title_r, abstract_r, distinct_pairs, candidates)
+    key = content_key("match_type", doi_r,
+                      prompt_version("build_match_type_prompt"),
+                      GEMINI_HEAVY_MODEL, prompt)
+    cached = read_cache(LLM_CACHE_DIR, key)
+    if cached is not None:
+        return cached
 
-    with cache_file.open("w", encoding="utf-8") as fh:
-        json.dump(result, fh, ensure_ascii=False)
-
+    result = _llm_classify_match_type(prompt, doi_r)
+    write_cache(LLM_CACHE_DIR, key, result)
     return result
 
 
-def _llm_classify_match_type(doi_r: str,
-                              title_r: str,
-                              abstract_r: str,
-                              distinct_pairs: set,
-                              candidates: list) -> dict:
+def _llm_classify_match_type(prompt: str, doi_r: str) -> dict:
     """LLM call to classify original_match_type. Returns a dict with both fields."""
-    prompt = build_match_type_prompt(title_r, abstract_r, distinct_pairs, candidates)
-
     token_counter.set_stage("extract_classify")
     result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_HEAVY_MODEL)
     if result:

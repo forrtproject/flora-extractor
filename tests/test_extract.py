@@ -19,7 +19,7 @@ from shared.schema import (
     RESOLVED_LINK_METHODS,
     make_pair_id,
 )
-from shared.cache import read_dual_cache, write_dual_cache
+from shared.cache import content_key, read_cache
 import extract.code_outcome as code_outcome
 import extract.run_extract as run_extract
 from extract.code_outcome import extract_outcome, _keyword_scan, _expand_to_sentences
@@ -524,40 +524,69 @@ class TestOutcomePromptContent:
         assert "…" in prompt
 
 
-class TestDualCache:
-    def test_write_creates_both_keys(self, tmp_path):
-        write_dual_cache(tmp_path, "legacy1", "content1", {"outcome": "success"})
-        assert (tmp_path / "legacy1.json").exists()
-        assert (tmp_path / "content1.json").exists()
+class TestOutcomeCacheKey:
+    """One content-keyed entry per outcome answer — no legacy DOI-only key."""
 
-    def test_accumulate_prefers_legacy(self, tmp_path):
-        write_cache_json(tmp_path, "legacy2", {"outcome": "OLD"})
-        write_cache_json(tmp_path, "content2", {"outcome": "NEW"})
-        got = read_dual_cache(tmp_path, "legacy2", "content2", mode="accumulate")
-        assert got["outcome"] == "OLD"
+    _RET = {"outcome": "success", "outcome_phrase": "x", "confidence": "high",
+            "out_quote_source": "abstract", "outcome_reasoning": ""}
 
-    def test_accumulate_falls_back_to_content(self, tmp_path):
-        write_cache_json(tmp_path, "content3", {"outcome": "NEW"})
-        got = read_dual_cache(tmp_path, "legacy3", "content3", mode="accumulate")
-        assert got["outcome"] == "NEW"
-
-    def test_latest_ignores_legacy(self, tmp_path):
-        write_cache_json(tmp_path, "legacy4", {"outcome": "OLD"})
-        # No content entry → latest mode returns None even though legacy exists.
-        assert read_dual_cache(tmp_path, "legacy4", "content4", mode="latest") is None
-        write_cache_json(tmp_path, "content4", {"outcome": "NEW"})
-        got = read_dual_cache(tmp_path, "legacy4", "content4", mode="latest")
-        assert got["outcome"] == "NEW"
-
-    def test_llm_outcome_dual_writes(self, tmp_path):
-        ret = {"outcome": "success", "outcome_phrase": "x", "confidence": "high",
-               "out_quote_source": "abstract", "outcome_reasoning": ""}
+    def _run(self, tmp_path, **kwargs):
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.call_llm", return_value=(ret, "m", "")), \
+             patch("extract.code_outcome.call_llm", return_value=(self._RET, "m", "")) as mock, \
              patch("extract.code_outcome.time.sleep"):
-            extract_outcome("10.1234/dual", abstract_r="ambiguous abstract", title_r="T")
-        files = list(tmp_path.glob("outcome_*.json"))
-        assert len(files) == 2  # legacy DOI key + content key
+            extract_outcome(kwargs.pop("doi", "10.1234/key"), **kwargs)
+        return mock
+
+    def test_single_entry_written(self, tmp_path):
+        self._run(tmp_path, abstract_r="ambiguous abstract", title_r="T")
+        assert len(list(tmp_path.glob("outcome_*.json"))) == 1
+
+    def test_same_inputs_hit_cache(self, tmp_path):
+        self._run(tmp_path, abstract_r="ambiguous abstract", title_r="T")
+        mock = self._run(tmp_path, abstract_r="ambiguous abstract", title_r="T")
+        assert mock.call_count == 0
+
+    def test_changed_abstract_misses(self, tmp_path):
+        self._run(tmp_path, abstract_r="one abstract", title_r="T")
+        mock = self._run(tmp_path, abstract_r="another abstract", title_r="T")
+        assert mock.call_count == 1
+        assert len(list(tmp_path.glob("outcome_*.json"))) == 2
+
+    def test_changed_record_type_misses(self, tmp_path):
+        self._run(tmp_path, abstract_r="a", title_r="T")
+        mock = self._run(tmp_path, abstract_r="a", title_r="T", record_type="reproduction")
+        assert mock.call_count == 1
+
+    def test_changed_fulltext_misses(self, tmp_path):
+        """The escalation reads the fulltext, so a re-parsed PDF must not replay the
+        verdict reached without it."""
+        self._run(tmp_path, abstract_r="a", title_r="T", fulltext="old text")
+        mock = self._run(tmp_path, abstract_r="a", title_r="T", fulltext="new text")
+        assert mock.call_count == 1
+
+    def test_prompt_version_in_key(self, tmp_path, monkeypatch):
+        from shared import prompts
+        self._run(tmp_path, abstract_r="a", title_r="T")
+        monkeypatch.setattr(prompts, "OUTCOME_RULES", prompts.OUTCOME_RULES + " EDIT")
+        prompts.prompt_version.cache_clear()
+        try:
+            mock = self._run(tmp_path, abstract_r="a", title_r="T")
+        finally:
+            prompts.prompt_version.cache_clear()
+        assert mock.call_count == 1
+
+    def test_accumulate_env_var_is_gone(self):
+        import shared.cache as cache_mod
+        import shared.config as config_mod
+        assert not hasattr(cache_mod, "read_dual_cache")
+        assert not hasattr(cache_mod, "write_dual_cache")
+        assert not hasattr(config_mod, "LLM_CACHE_READ")
+
+    def test_content_key_shape_allows_per_doi_glob(self, tmp_path):
+        from shared.utils import cache_key as _ck
+        key = content_key("outcome", "10.1/x", "a", "b")
+        assert key.startswith(f"outcome_{_ck('10.1/x')}_")
+        assert content_key("outcome", "10.1/x", "a", "c") != key
 
 
 def write_cache_json(cache_dir, key, data):
@@ -644,18 +673,34 @@ class TestClassifyMatchType:
         assert result["original_match_confidence"] == "low"
 
     def test_result_cached_on_second_call(self, tmp_path):
-        """Second call with same doi_r must use cache — OpenAlex + LLM not called again."""
+        """Second call with the same inputs must not repeat the LLM call.
+
+        The candidate list is part of the key, so the (disk-cached) OpenAlex lookup
+        runs first and is expected to be called both times.
+        """
         llm = {"original_match_type": "single_original",
                "confidence": "high", "reasoning": "cached"}
         with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
              patch("extract.run_extract.find_all_candidates",
-                   return_value=_CAND_SINGLE) as mock_oa, \
+                   return_value=_CAND_SINGLE), \
              patch("extract.run_extract.call_llm", return_value=(llm, "gemini-model", "")) as mock_llm, \
              patch("extract.run_extract.time.sleep"):
             classify_match_type(_ROW)  # first call — populates cache
             classify_match_type(_ROW)  # second call — should use cache
-        assert mock_oa.call_count == 1
         assert mock_llm.call_count == 1
+
+    def test_changed_candidates_miss_the_cache(self, tmp_path):
+        """A different candidate list is a different question — it must be re-asked."""
+        llm = {"original_match_type": "single_original", "confidence": "high"}
+        other = [dict(_CAND_SINGLE[0], title="A completely different paper")]
+        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.run_extract.call_llm", return_value=(llm, "m", "")) as mock_llm, \
+             patch("extract.run_extract.time.sleep"):
+            with patch("extract.run_extract.find_all_candidates", return_value=_CAND_SINGLE):
+                classify_match_type(_ROW)
+            with patch("extract.run_extract.find_all_candidates", return_value=other):
+                classify_match_type(_ROW)
+        assert mock_llm.call_count == 2
 
     def test_invalid_llm_match_type_normalised(self, tmp_path):
         """LLM returning an unknown match_type value should become single_original."""

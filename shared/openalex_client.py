@@ -20,6 +20,7 @@ from .config import (
     OA_CACHE_DIR, OPENALEX_API_KEY, OPENALEX_API_KEYS, OPENALEX_RATE_SEC, CROSSREF_RATE_SEC,
     RESEARCHER_EMAIL, log,
 )
+from .cache import content_key
 from .utils import clean_doi, cache_key
 
 # ── Unicode ranges (chr() avoids \u in compiled regexes for Python < 3.12) ────
@@ -512,14 +513,20 @@ def find_all_candidates(doi_r: str,
     Re-fetch all referenced works for *openalex_id_r* and return EVERY work
     that matches any extracted author-year pattern.
 
-    Cached per doi_r in OA_CACHE_DIR / candidates_<hash>.json.
+    Cached in OA_CACHE_DIR on every argument the result depends on, not on doi_r
+    alone: the three call sites pass different titles and abstracts for the same
+    paper (run_extract passes the candidates-file title, link_original the
+    filtered-row one), and the extracted author-year patterns — hence the whole
+    candidate list — follow from them. pattern_str is not in the key because it is
+    not read: the call that used it is commented out below.
 
     Returns a list of dicts:
         openalex_id, doi, title, year, first_author,
         match_year_exact, cited_pattern
     """
 
-    cache_file = OA_CACHE_DIR / f"candidates_{cache_key(doi_r)}.json"
+    key = content_key("candidates", doi_r, openalex_id_r, study_r, abstract_r, year_r)
+    cache_file = OA_CACHE_DIR / f"{key}.json"
     if cache_file.exists():
         with cache_file.open(encoding="utf-8") as fh:
             return json.load(fh)
