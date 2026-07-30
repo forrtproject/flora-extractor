@@ -226,3 +226,43 @@ class TestTitleSearchGate:
         screen["target_description"] = ""
         _, search = _run_to_title_search(screen, hit=_HIT)
         assert not search.called
+
+
+# ── Abstract-stage LLM: self-link exclusion (audit B9) ───────────────────────
+
+class TestAbstractStageExcludeDoi:
+    def test_abstract_llm_receives_the_real_doi_r(self):
+        """identify_original_with_llm uses its doi_r argument as exclude_doi.
+
+        A suffixed key ("<doi>_abstract") never equals a real DOI, so the "never
+        link a paper to itself" exclusion could not fire on this path at all.
+        """
+        cands_df = pd.DataFrame([{
+            "doi_r": "10.1/rep", "study_r": "A replication",
+            "abstract_r": "We replicate Smith (2010).",
+            "year_r": "2020", "openalex_id_r": "W1", "url_r": "",
+            "author_year_pattern_r": "",
+        }])
+        candidates = [{"doi": "10.9/orig", "title": "Original", "year": 2010,
+                       "first_author": "Smith"}]
+        with patch.object(link_original, "find_all_candidates", return_value=candidates), \
+             patch.object(link_original, "_resolve_by_title_pattern", return_value=None), \
+             patch.object(link_original, "_resolve_rule_based",
+                          return_value={"resolved": False,
+                                        "resolution_method": "needs_fulltext"}), \
+             patch.object(link_original, "identify_original_with_llm",
+                          return_value={"resolved": False,
+                                        "resolution_method": "llm_no_target",
+                                        "llm_source": "gemini"}) as llm, \
+             patch.object(link_original, "fetch_referenced_works_metadata", return_value=[]), \
+             patch.object(link_original, "fetch_opencitations_references", return_value=[]), \
+             patch.object(link_original, "screen_references_with_llm",
+                          return_value=_screen_result()), \
+             patch.object(link_original, "acquire_pdf",
+                          return_value={"pdf_path": None, "openalex_xml": None,
+                                        "pdf_source": "none", "pdf_url": "",
+                                        "pdf_ok": False, "pdf_url_tried": []}):
+            run_for_doi("10.1/rep", cands_df=cands_df)
+
+        assert llm.called
+        assert llm.call_args_list[0].args[0] == "10.1/rep"

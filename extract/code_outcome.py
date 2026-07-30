@@ -1,13 +1,19 @@
 """
-code_outcome.py — Keyword + LLM outcome extraction for Stage 3.
+code_outcome.py — LLM outcome coding for Stage 3.
 
-The outcome of a replication is decided from the ABSTRACT by default: a keyword
-scan of title + abstract, then an abstract-based LLM call for anything the scan
-cannot classify. Parsed fulltext is held in reserve — an introduction routinely
-discusses OTHER studies' failures ("X failed to replicate in prior work"), so
-scanning it at high confidence misfires. Fulltext is used only as an escalation:
-when the abstract LLM returns cannot_be_determined (or there is no abstract), a
-second LLM call reads the parsed text.
+The outcome is decided by an LLM reading the ABSTRACT. Parsed fulltext is held in
+reserve — an introduction routinely discusses OTHER studies' failures ("X failed to
+replicate in prior work"), so reading it first misfires. Fulltext is used only as an
+escalation: when the abstract call returns cannot_be_determined (or there is no
+abstract), a second LLM call reads the parsed text.
+
+The keyword scan is the --no-llm fallback, not a pre-filter. Every outcome the
+pipeline records with an LLM available comes from the LLM, which also applies the
+is_genuine_attempt veto that a keyword match cannot. The one other consumer of the
+keyword patterns is predict_outcome_keyword(), the --predicted-outcome sampling
+filter.
+
+Exhausting every provider yields outcome = "api_error", never a verdict.
 
 Public API:
     extract_outcome(doi_r, abstract_r, fulltext, title_r) → dict
@@ -18,7 +24,7 @@ import time
 from typing import Optional
 
 from shared.config import (
-    GEMINI_HEAVY_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC,
+    GEMINI_HEAVY_MODEL, LLM_CACHE_DIR,
     OUTCOME_FULLTEXT_ESCALATION, log,
 )
 from shared import token_counter
@@ -71,7 +77,9 @@ def _expand_to_sentences(text: str, match_start: int, match_end: int,
 
 
 # ── Keyword patterns (Pass 1) ─────────────────────────────────────────────────
-# Failure is checked before success to avoid "failed to replicate" hitting success.
+# Explicit failure phrasings — each one names the replication as the thing that
+# failed, so they are checked before success ("failed to replicate" would otherwise
+# hit the bare-"replicated" success catch-all).
 
 _FAILURE = re.compile(
     r"\b("
@@ -79,13 +87,27 @@ _FAILURE = re.compile(
     r"|did not replicate|not replicated|no support for the original"
     r"|inconsistent with (?:the )?(?:original|prior)"
     r"|results did not (?:hold|replicate)|null result"
-    r"|no evidence|no significant (?:effect|difference)"
     r"|failed to reproduce|did not reproduce"
     r")\b",
     re.IGNORECASE,
 )
 
-_SUCCESS = re.compile(
+# "No evidence" and "no significant difference" describe a statistical test, not a
+# verdict on the replication — and in a SUCCESSFUL replication they routinely
+# describe the comparison against the original ("no significant difference between
+# our estimate and the original"). They are therefore checked last, after success
+# and mixed, and only at medium confidence.
+_FAILURE_WEAK = re.compile(
+    r"\bno (?:evidence|significant (?:effect|difference))\b",
+    re.IGNORECASE,
+)
+
+# The explicit success phrasings, without the bare-"replicated" catch-all. Used
+# both as the success pattern's core and as the veto on a failure match: a
+# sentence carrying one of these is reporting a successful replication whatever
+# else is in it. The catch-all cannot serve as a veto, because "not replicated"
+# contains "replicated".
+_SUCCESS_EXPLICIT = re.compile(
     r"\b("
     r"successfully replicated|replication succeeded|results (?:were )?replicated"
     r"|confirmed the (?:original|findings?|results?|effect)"
@@ -93,8 +115,13 @@ _SUCCESS = re.compile(
     r"|consistent with (?:the )?(?:original|prior)"
     r"|replication was successful|effect was reproduced"
     r"|was (?:successfully )?replicated|replicated successfully"
-    r")\b"
-    r"|(?<!\w)replicated(?!\w)",   # bare "replicated" as low-priority catch-all
+    r")\b",
+    re.IGNORECASE,
+)
+
+_SUCCESS = re.compile(
+    _SUCCESS_EXPLICIT.pattern
+    + r"|(?<!\w)replicated(?!\w)",   # bare "replicated" as low-priority catch-all
     re.IGNORECASE,
 )
 
@@ -126,14 +153,30 @@ _DESCRIPTIVE = re.compile(
 _VALID_OUTCOMES = OUTCOME_CATEGORIES
 
 
+def _failure_match(text: str) -> "re.Match | None":
+    """First explicit failure match whose own sentence does not also report success.
+
+    "The effect did not replicate in Study 1, but was successfully replicated in
+    Study 2" is not a failure; taking the first failure match regardless of what
+    else the sentence says coded a good many successes as failures.
+    """
+    for m in _FAILURE.finditer(text):
+        sentence = _expand_to_sentences(text, m.start(), m.end(), n_context=0)
+        if not _SUCCESS_EXPLICIT.search(sentence):
+            return m
+    return None
+
+
 def _keyword_scan(text: str, source: str) -> Optional[dict]:
     """Return a result dict if a keyword pattern matches, else None.
 
-    Check order: failure → mixed → success → descriptive.
-    Mixed is checked before success so that "partially replicated" resolves
-    to mixed rather than triggering the broad bare-"replicated" success pattern.
+    Check order: explicit failure → mixed → success → weak failure → descriptive.
+    Mixed is checked before success so that "partially replicated" resolves to
+    mixed rather than triggering the broad bare-"replicated" success pattern, and
+    the weak failure patterns are checked after success because they describe a
+    statistical test that a successful replication reports too.
     """
-    m = _FAILURE.search(text)
+    m = _failure_match(text)
     if m:
         return {"outcome": "failure",
                 "outcome_phrase": _expand_to_sentences(text, m.start(), m.end()),
@@ -148,6 +191,11 @@ def _keyword_scan(text: str, source: str) -> Optional[dict]:
         return {"outcome": "success",
                 "outcome_phrase": _expand_to_sentences(text, m.start(), m.end()),
                 "outcome_confidence": "high", "out_quote_source": source}
+    m = _FAILURE_WEAK.search(text)
+    if m:
+        return {"outcome": "failure",
+                "outcome_phrase": _expand_to_sentences(text, m.start(), m.end()),
+                "outcome_confidence": "medium", "out_quote_source": source}
     m = _DESCRIPTIVE.search(text)
     if m:
         return {"outcome": "descriptive",
@@ -157,23 +205,29 @@ def _keyword_scan(text: str, source: str) -> Optional[dict]:
 
 
 def _call_outcome_llm(prompt: str, doi_r: str) -> tuple[Optional[dict], str]:
-    """Call the outcome LLM with up to 3 retries and exponential backoff."""
+    """Call the outcome LLM with up to 3 retries and exponential backoff.
+
+    call_llm reports provider failure by returning None rather than by raising, so
+    the backoff is applied on the None path; keeping it in the except arm alone
+    meant three outer retries — nine provider attempts — fired back to back with no
+    delay at all, which is exactly how a rate-limited provider stays rate-limited.
+    """
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_HEAVY_MODEL,
-                                              prefer_openai=True)
+            result, model_used, err = call_llm(prompt, gemini_model=GEMINI_HEAVY_MODEL,
+                                                prefer_openai=True)
             if result:
-                time.sleep(LLM_RATE_SEC)
                 return result, model_used
         except Exception as e:
-            wait_time = 2 ** attempt  # 1s, 2s, 4s
-            if attempt < max_retries - 1:
-                log.warning("[%s] outcome LLM failed (attempt %d/%d), retrying in %ds: %s",
-                            doi_r, attempt + 1, max_retries, wait_time, str(e))
-                time.sleep(wait_time)
-            else:
-                log.warning("[%s] outcome LLM failed after %d retries: %s", doi_r, max_retries, str(e))
+            err = str(e)
+        wait_time = 2 ** attempt  # 1s, 2s, 4s
+        if attempt < max_retries - 1:
+            log.warning("[%s] outcome LLM failed (attempt %d/%d), retrying in %ds: %s",
+                        doi_r, attempt + 1, max_retries, wait_time, err)
+            time.sleep(wait_time)
+        else:
+            log.warning("[%s] outcome LLM failed after %d retries: %s", doi_r, max_retries, err)
     return None, ""
 
 
@@ -241,16 +295,20 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
 
     token_counter.set_stage("extract_outcome")
 
-    _fallback = {"outcome": "cannot_be_determined", "outcome_phrase": "",
-                 "outcome_confidence": "low", "out_quote_source": "",
-                 "outcome_reasoning": "", "llm_model": ""}
+    # Exhausting every provider is an api_error, not a verdict: cannot_be_determined
+    # is a judgement the model made about the paper, and recording one for the other
+    # made a quota outage indistinguishable from a genuinely unclassifiable abstract.
+    # Not cached — a re-run must be able to code the row.
+    _api_error = {"outcome": "api_error", "outcome_phrase": "",
+                  "outcome_confidence": "low", "out_quote_source": "",
+                  "outcome_reasoning": "", "llm_model": ""}
 
     prompt = (build_repro_abstract_prompt(title_r, abstract_snip, original_block) if is_repro
               else build_outcome_abstract_prompt(title_r, abstract_snip, original_block))
     result, model_used = _call_outcome_llm(prompt, doi_r)
     if not result:
-        log.warning("[%s] outcome LLM failed after all retries — marking cannot_be_determined", doi_r)
-        return _fallback
+        log.warning("[%s] outcome LLM failed after all retries — marking api_error", doi_r)
+        return _api_error
 
     output = _normalise(result, prompt, model_used, record_type)
 
@@ -274,9 +332,13 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
 def predict_outcome_keyword(title_r: str, abstract_r: str) -> str:
     """Fast keyword-only outcome prediction for pre-filtering before extraction.
 
-    Runs the same regex patterns as Pass 1 of extract_outcome but on title +
-    abstract only — no LLM, no fulltext.  Used by --predicted-outcome to decide
-    whether to process a row at all.
+    Runs the same regex patterns as the --no-llm path of extract_outcome but on
+    title + abstract only — no LLM, no fulltext.  Used by --predicted-outcome to
+    decide whether to process a row at all.
+
+    The selection is lexical, so a sample drawn this way is a sample of papers whose
+    abstracts USE the phrasing, not of papers with the outcome: treat it as a way to
+    find rows to look at, never as an estimate of anything.
 
     Returns one of: failure | success | mixed | descriptive | cannot_be_determined
     """

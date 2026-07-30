@@ -13,13 +13,12 @@ Usage:
 """
 import json
 import re
-import time
 from pathlib import Path
 
 import pandas as pd
 
 from shared.config import (
-    BASE_DIR, DATA_DIR, GEMINI_API_KEYS, GEMINI_HEAVY_MODEL, LLM_CACHE_DIR, LLM_RATE_SEC,
+    BASE_DIR, DATA_DIR, GEMINI_API_KEYS, GEMINI_HEAVY_MODEL, LLM_CACHE_DIR,
     OA_XML_CACHE_DIR, OPENROUTER_API_KEY, PARSE_CACHE_DIR, PDF_CACHE_DIR, log,
 )
 from shared import token_counter
@@ -198,12 +197,20 @@ _METHOD_MAP = {
     "single_candidate_after_requery": "single_candidate_after_requery",
     "title_pattern_match":            "title_pattern_match",
     "grobid_ref_match":               "grobid_ref_match",
+    # One entry per provider the ladder can answer from. Without the openrouter
+    # rows, an OpenRouter-answered title search falls through _map_method's
+    # startswith("llm_") catch-all to llm_fulltext — a resolved method — so a
+    # provisional ~50%-precision link is coded, confidence-scored and imported
+    # instead of quarantined.
     "llm_title_search_gemini":        "llm_title_search",
     "llm_title_search_openai":        "llm_title_search",
+    "llm_title_search_openrouter":    "llm_title_search",
     "llm_gemini":                     "llm_fulltext",
     "llm_openai":                     "llm_fulltext",
+    "llm_openrouter":                 "llm_fulltext",
     "llm_cited_candidates_gemini":            "llm_cited_candidates",
     "llm_cited_candidates_openai":            "llm_cited_candidates",
+    "llm_cited_candidates_openrouter":        "llm_cited_candidates",
     # Resolved from the paper's own OpenAlex reference list, at high confidence
     # only — see the Stage 4.5 screen in link_original.run_for_doi.
     "llm_references":                 "llm_references",
@@ -465,32 +472,37 @@ def classify_match_type(row: dict, no_llm: bool = False) -> dict:
         return cached
 
     result = _llm_classify_match_type(prompt, doi_r)
+    # Only a real answer is cached. The failure default is single_original, so
+    # caching it would freeze one 429 into a permanent verdict — a Many Labs paper
+    # whose title does not trip the rule would be routed to the single-original
+    # pipeline on every future run, with no way short of clearing the cache to fix it.
+    if result is None:
+        log.warning("[%s] classify_match_type: LLM failed — defaulting to single_original "
+                    "for this run, not cached", doi_r)
+        return {"original_match_type": "single_original",
+                "original_match_confidence": "low", "classify_llm_model": ""}
     write_cache(LLM_CACHE_DIR, key, result)
     return result
 
 
-def _llm_classify_match_type(prompt: str, doi_r: str) -> dict:
-    """LLM call to classify original_match_type. Returns a dict with both fields."""
+def _llm_classify_match_type(prompt: str, doi_r: str) -> "dict | None":
+    """LLM call to classify original_match_type. None when every provider failed."""
     token_counter.set_stage("extract_classify")
     result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_HEAVY_MODEL)
-    if result:
-        time.sleep(LLM_RATE_SEC)
-        mtype = result.get("original_match_type", "single_original")
-        conf  = result.get("confidence", "low")
-        if mtype not in _VALID_MATCH_TYPES:
-            mtype = "single_original"
-        if conf not in {"high", "medium", "low"}:
-            conf = "low"
-        return {
-            "original_match_type":       mtype,
-            "original_match_confidence": conf,
-            "classify_llm_model":        model_used,
-            "reasoning":                 str(result.get("reasoning", "") or ""),
-        }
-
-    log.warning("[%s] classify_match_type: LLM failed — defaulting to single_original", doi_r)
-    return {"original_match_type": "single_original", "original_match_confidence": "low",
-            "classify_llm_model": ""}
+    if not result:
+        return None
+    mtype = result.get("original_match_type", "single_original")
+    conf  = result.get("confidence", "low")
+    if mtype not in _VALID_MATCH_TYPES:
+        mtype = "single_original"
+    if conf not in {"high", "medium", "low"}:
+        conf = "low"
+    return {
+        "original_match_type":       mtype,
+        "original_match_confidence": conf,
+        "classify_llm_model":        model_used,
+        "reasoning":                 str(result.get("reasoning", "") or ""),
+    }
 
 
 # ── Data adapters ─────────────────────────────────────────────────────────────
@@ -1212,6 +1224,63 @@ def _front_door_row(filter_row: pd.Series, screen: dict) -> "dict | None":
                       "single_original", "low", 1, 1)
 
 
+def _apply_filters(df: pd.DataFrame,
+                   from_year:         "int | None"       = None,
+                   to_year:           "int | None"       = None,
+                   predicted_outcome: "str | None"       = None,
+                   source:            "str | None"       = None,
+                   doi_r_filter:      "list[str] | None" = None) -> pd.DataFrame:
+    """Apply the CLI row filters to the loaded filtered.csv frame.
+
+    Pure dataframe work, and the only part of run_extract that touches no API and
+    writes no row — kept together so the run loop reads as the pipeline.
+    """
+    if from_year is not None or to_year is not None:
+        def _year_int(v: str) -> "int | None":
+            try:
+                return int(v)
+            except (ValueError, TypeError):
+                return None
+        years = df["year_r"].apply(_year_int)
+        mask = pd.Series(True, index=df.index)
+        if from_year is not None:
+            mask &= years.apply(lambda y: y is not None and y >= from_year)
+        if to_year is not None:
+            mask &= years.apply(lambda y: y is not None and y <= to_year)
+        before = len(df)
+        df = df[mask].reset_index(drop=True)
+        log.info("--year filter %s–%s: %d → %d rows",
+                 from_year or "any", to_year or "any", before, len(df))
+
+    # "other" means any outcome that is not failure (success / mixed / descriptive /
+    # cannot_be_determined). Keyword-only, on title + abstract — no LLM, no API calls,
+    # and so a lexical sample rather than a sample of papers with that outcome.
+    if predicted_outcome:
+        want   = predicted_outcome.lower()
+        before = len(df)
+        def _keep(row: pd.Series) -> bool:
+            pred = predict_outcome_keyword(
+                str(row.get("title_r", "")), str(row.get("abstract_r", ""))
+            )
+            return pred != "failure" if want == "other" else pred == want
+        df = df[df.apply(_keep, axis=1)].reset_index(drop=True)
+        log.info("--predicted-outcome %r: %d → %d rows (keyword-selected, not a "
+                 "representative sample)", predicted_outcome, before, len(df))
+
+    if source is not None:
+        before = len(df)
+        df = df[df["source"].str.lower() == source.lower()].reset_index(drop=True)
+        log.info("--source filter %r: %d → %d rows", source, before, len(df))
+
+    if doi_r_filter:
+        target_set = {clean_doi(d) for d in doi_r_filter}
+        before = len(df)
+        df = df[df["doi_r"].apply(clean_doi).isin(target_set)].reset_index(drop=True)
+        log.info("--doi-r filter: %d → %d rows", before, len(df))
+
+    return df
+
+
 def run_extract(no_llm: bool = False,
                 limit: "int | None" = None,
                 no_pdf: bool = False,
@@ -1274,57 +1343,9 @@ def run_extract(no_llm: bool = False,
     df = pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig").fillna("")
     log.info("Stage 3: loaded %d rows from %s", len(df), filtered_path.name)
 
-    # ── Year filter ───────────────────────────────────────────────────────────
-    if from_year is not None or to_year is not None:
-        def _year_int(v: str) -> "int | None":
-            try:
-                return int(v)
-            except (ValueError, TypeError):
-                return None
-        years = df["year_r"].apply(_year_int)
-        mask = pd.Series(True, index=df.index)
-        if from_year is not None:
-            mask &= years.apply(lambda y: y is not None and y >= from_year)
-        if to_year is not None:
-            mask &= years.apply(lambda y: y is not None and y <= to_year)
-        before = len(df)
-        df = df[mask].reset_index(drop=True)
-        log.info(
-            "--year filter %s–%s: %d → %d rows",
-            from_year or "any", to_year or "any", before, len(df),
-        )
-
-    # ── Predicted-outcome filter ──────────────────────────────────────────────
-    # "other" means any outcome that is not failure (success / mixed / descriptive / cannot_be_determined).
-    # Uses keyword-only pre-screening on title + abstract — no LLM, no API calls.
-    if predicted_outcome:
-        want = predicted_outcome.lower()
-        before = len(df)
-        def _keep(row: pd.Series) -> bool:
-            pred = predict_outcome_keyword(
-                str(row.get("title_r", "")), str(row.get("abstract_r", ""))
-            )
-            if want == "other":
-                return pred != "failure"
-            return pred == want
-        df = df[df.apply(_keep, axis=1)].reset_index(drop=True)
-        log.info(
-            "--predicted-outcome %r: %d → %d rows",
-            predicted_outcome, before, len(df),
-        )
-
-    # ── Source filter ─────────────────────────────────────────────────────────
-    if source is not None:
-        before = len(df)
-        df = df[df["source"].str.lower() == source.lower()].reset_index(drop=True)
-        log.info("--source filter %r: %d → %d rows", source, before, len(df))
-
-    # ── doi_r filter ──────────────────────────────────────────────────────────
-    if doi_r_filter:
-        target_set = {clean_doi(d) for d in doi_r_filter}
-        before = len(df)
-        df = df[df["doi_r"].apply(clean_doi).isin(target_set)].reset_index(drop=True)
-        log.info("--doi-r filter: %d → %d rows", before, len(df))
+    df = _apply_filters(df, from_year=from_year, to_year=to_year,
+                        predicted_outcome=predicted_outcome, source=source,
+                        doi_r_filter=doi_r_filter)
 
     flora_skip: set[str] = set()
     if skip_flora_validated:

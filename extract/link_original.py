@@ -19,6 +19,7 @@ import html
 import json
 import re
 import time
+from functools import partial
 from pathlib import Path
 from typing import Optional
 
@@ -142,15 +143,7 @@ def _resolve_by_title_pattern(
     if best_score < 0.3:
         return None
 
-    base = {
-        "resolved":             False,
-        "resolution_method":    "needs_fulltext",
-        "resolved_doi_o":       "",
-        "resolved_title_o":     "",
-        "resolved_year_o":      None,
-        "resolved_author_o":    "",
-        "resolution_score":     0.0,
-    }
+    base = _unresolved("needs_fulltext")
 
     if best_score >= 0.4 and best_score >= sec_score * 1.5:
         log.info("[%s] title_pattern resolved: %s (score=%.3f target=%r)",
@@ -264,15 +257,7 @@ def _resolve_rule_based(
 
     Returns the same shape dict as identify_original_with_llm().
     """
-    base: dict = {
-        "resolved":           False,
-        "resolution_method":  "needs_fulltext",
-        "resolved_doi_o":     "",
-        "resolved_title_o":   "",
-        "resolved_year_o":    None,
-        "resolved_author_o":  "",
-        "resolution_score":   0.0,
-    }
+    base: dict = _unresolved("needs_fulltext")
 
     if not candidates:
         base["resolution_method"] = "no_candidates_found"
@@ -387,16 +372,15 @@ def _resolve_rule_based(
     return base
 
 
-# Columns to pass through from openalex_candidates.csv (no renaming)
+# Columns to pass through from openalex_candidates.csv (no renaming). Only columns
+# some consumer actually reads — the output dict is not a place to park a field
+# nothing downstream looks at.
 _OA_PASSTHROUGH = [
     "study_r", "abstract_r", "year_r", "author_year_pattern_r",
     "openalex_id_r", "match_source", "match_status",
     "doi_o", "study_o", "year_o", "ref_o", "ref_r", "url_r",
-    "llm_study_type", "llm_original_citation", "llm_original_search",
-    "outcome_confidence", "outcome_original_confirmed", "outcome_original_study",
-    "outcome_reasoning", "quote_validated", "quote_similarity",
-    "pathway_source", "fred_match_type", "abstract_source",
-    "validation_status",
+    "outcome_confidence", "outcome_reasoning",
+    "pathway_source", "validation_status",
 ]
 
 # Columns to pull from FLoRA sheet (renamed with flora_ prefix)
@@ -419,20 +403,25 @@ def clear_pipeline_caches(doi_r: str) -> list[str]:
     """
     Delete all intermediate caches for *doi_r* except the PDF file itself.
 
-    Cleared:
-      - LLM result cache (full-text and abstract-only)
-      - GROBID section cache (pdfminer, direct-PDF, and image-based ref extractions)
-      - OpenAlex candidates cache
+    Cleared: every content-keyed cache the pipeline writes for this DOI — the
+    identification LLM, the match-type classification, both halves of the screen,
+    the outcome coding, the multi-original call, the OpenAlex candidate pool, the
+    parsed full text — plus the GROBID section cache. --force that leaves any of
+    these behind does not force a re-decision, it just re-runs the stages around
+    the cached answer.
 
     Returns a list of the filenames that were actually deleted.
     """
     key = cache_key(doi_r)
-    # The LLM and candidate caches are content-keyed, so one DOI can have several
-    # entries (abstract stage vs full text, different candidate lists) — all of them
-    # go, or a re-run reads back the answer this call was meant to discard.
-    deleted = (clear_content_keys(LLM_CACHE_DIR, "llm", doi_r)
-               + clear_content_keys(OA_CACHE_DIR, "candidates", doi_r))
-    targets = [GROBID_CACHE_DIR / f"{key}.json"]
+    # These caches are content-keyed, so one DOI can have several entries (abstract
+    # stage vs full text, different candidate lists) — all of them go, or a re-run
+    # reads back the answer this call was meant to discard.
+    deleted: list[str] = []
+    for prefix in ("llm", "match_type", "classify", "reftarget", "outcome", "multi"):
+        deleted += clear_content_keys(LLM_CACHE_DIR, prefix, doi_r)
+    deleted += clear_content_keys(OA_CACHE_DIR, "candidates", doi_r)
+    targets = [GROBID_CACHE_DIR / f"{key}.json",
+               PARSE_CACHE_DIR / f"parse_{key}.json"]
     targets += GROBID_CACHE_DIR.glob(f"{key}_direct_refs_*.json")
     targets += GROBID_CACHE_DIR.glob(f"{key}_img_refs_*.json")
     for path in targets:
@@ -510,6 +499,24 @@ def _best_parse_result(parse_results: dict[str, dict]) -> dict:
     return parse_results.get("grobid", next(iter(parse_results.values())))
 
 
+def _unresolved(method: str, **extra) -> dict:
+    """The resolver dict for "no original identified", in the shape every resolver returns.
+
+    Giving every producer the same key set is what lets _build_output and _merge_row
+    read the result without .get()-defending against a different shape per stage.
+    """
+    return {
+        "resolved":          False,
+        "resolution_method": method,
+        "resolved_doi_o":    "",
+        "resolved_title_o":  "",
+        "resolved_year_o":   None,
+        "resolved_author_o": "",
+        "resolution_score":  0.0,
+        **extra,
+    }
+
+
 def _first_author(authors) -> str:
     if isinstance(authors, list):
         return str(authors[0]).strip() if authors else ""
@@ -567,14 +574,21 @@ def run_for_doi(doi_r:              str,
     its front door and passes the verdict in, so Stage 4.5 picks the target without
     voting again; a caller without a verdict leaves it None and the screen votes.
 
-    Pipeline stages:
-      1. Load FLoRA sheet + openalex_candidates data for this DOI
-      2. Re-query OpenAlex for all candidate originals
-      3. Same-author/year disambiguation (fast, no PDF)
-      4. If the abstract contains multiple patterns → early abstract-level LLM check
-      5. PDF acquisition (7 sources)
-      6. GROBID reference extraction
-      7. LLM identification (Gemini → OpenAI)
+    The ladder runs cheapest-first and returns at the first stage that resolves, so
+    full-text acquisition is a last resort rather than the normal path:
+      1.   Load FLoRA sheet + openalex_candidates data for this DOI
+      2.   Re-query OpenAlex for candidate originals (from referenced_works)
+      2.5  Title-pattern resolver ("A Replication of X" vs the candidate titles)
+      3.   Rule-based resolver (citation context, same-author/year title overlap)
+      4.   Abstract-level LLM over the candidates, when the abstract cites anyone
+      4.5  Reference-list target pick, which also carries the Q1 screen verdict:
+           an incomplete screen exits as target_pending/api_error, a confident
+           "not a replication" exits without a PDF, a disagreement is set aside
+      4.6  Title search on a target the screen named but could not match to a
+           reference — gated on a high-confidence screen, written as provisional
+      5.   PDF acquisition (7 sources); no document → target_pending
+      6.   parse_all over six parsers, richest result wins
+      7.   Full-text LLM identification
 
     Returns a flat dict with all output columns.
     """
@@ -630,19 +644,22 @@ def run_for_doi(doi_r:              str,
     # Combine anchor note with any user-supplied validation comment
     effective_note = "\n\n".join(filter(None, [anchor_note, validation_comment]))
 
+    # Every exit from here on assembles the same output from the same base data;
+    # only the resolution (and, past the PDF stage, the pdf/grobid/sections blocks)
+    # differ, so bind the four constant arguments once.
+    emit = partial(_build_output, doi_r, flora, cands_row, candidates)
+
     # ── Stage 2.5: Title-pattern resolver ─────────────────────────────────────
     # Runs before citation scoring and before any LLM call.
     title_pat = _resolve_by_title_pattern(doi_r, study_r, candidates)
     if title_pat and title_pat.get("resolved"):
-        return _build_output(doi_r, flora, cands_row, candidates,
-                             title_pat, {}, {}, {})
+        return emit(title_pat, {}, {}, {})
     # ── Stage 3: Rule-based resolver (citation-context + same-author/year) ──────
     stage3 = _resolve_rule_based(doi_r, abstract_r, candidates, year_r, study_r)
     if stage3["resolved"]:
         log.info("[%s] Resolved rule-based (%s): %s", doi_r,
                  stage3["resolution_method"], stage3["resolved_title_o"])
-        return _build_output(doi_r, flora, cands_row, candidates,
-                             stage3, {}, {}, {})
+        return emit(stage3, {}, {}, {})
 
     # ── Stage 4: Abstract-level LLM ──────────────────────────────────────────
     if not no_llm:
@@ -652,8 +669,13 @@ def run_for_doi(doi_r:              str,
         if abstract_r and distinct_pairs:
             log.info("[%s] Abstract has %d author-year patterns — early abstract LLM", doi_r, len(distinct_pairs))
             token_counter.set_stage("extract_abstract")
+            # The real doi_r goes in: identify_original_with_llm uses it as the
+            # exclude_doi for its title search, and a suffixed one never matches the
+            # paper's own DOI, so the "never link a paper to itself" guard could not
+            # fire on this path. abstract_only is already part of the cache key, so
+            # the abstract-stage and full-text answers stay separate without it.
             llm4 = identify_original_with_llm(
-                doi_r + "_abstract",
+                doi_r,
                 study_r, abstract_r, pattern_r, candidates, {},
                 validator_note=effective_note,
                 abstract_only=True,
@@ -661,8 +683,7 @@ def run_for_doi(doi_r:              str,
             if llm4["resolved"]:
                 log.info("[%s] Resolved by abstract LLM: %s", doi_r,
                          llm4["resolved_title_o"])
-                return _build_output(doi_r, flora, cands_row, candidates,
-                                     llm4, {}, {}, {})
+                return emit(llm4, {}, {}, {})
 
     # ── Stage 4.5: Reference-list target pick ────────────────────────────────
     # Stage 3/4 can only fire when the abstract carries a parseable "(Author, Year)"
@@ -689,8 +710,7 @@ def run_for_doi(doi_r:              str,
         if screen["resolution_method"] in {"llm_refscreen_partial", "llm_refscreen_failed"}:
             log.warning("[%s] Reference screen incomplete (%s): %s", doi_r,
                         screen["resolution_method"], screen.get("llm_error", ""))
-            return _build_output(doi_r, flora, cands_row, candidates,
-                                 screen, {}, {}, screen)
+            return emit(screen, {}, {}, screen)
 
         # Discarding needs both models to agree, and to agree confidently. The full
         # screen dict is the resolution so the discarded row still carries the models
@@ -700,15 +720,13 @@ def run_for_doi(doi_r:              str,
                 and screen.get("models_agree")
                 and screen.get("classification_confidence") == "high"):
             log.info("[%s] Reference screen: not a replication — skipping PDF", doi_r)
-            return _build_output(doi_r, flora, cands_row, candidates,
-                                 {**screen, "resolution_method": "llm_not_a_replication"},
-                                 {}, {}, screen)
+            return emit({**screen, "resolution_method": "llm_not_a_replication"},
+                        {}, {}, screen)
 
         if screen["resolved"]:
             log.info("[%s] Resolved from reference list: %s", doi_r,
                      screen["resolved_title_o"])
-            return _build_output(doi_r, flora, cands_row, candidates,
-                                 screen, {}, {}, screen)
+            return emit(screen, {}, {}, screen)
 
         # Two models reaching different verdicts is a signal in its own right, and
         # escalating those rows spends the most expensive path on exactly the cases
@@ -719,8 +737,7 @@ def run_for_doi(doi_r:              str,
                 for v in screen.get("votes", []))
             log.info("[%s] Screen disagreement (%s) — set aside, not escalating",
                      doi_r, verdicts)
-            disagreement = _build_output(
-                doi_r, flora, cands_row, candidates,
+            disagreement = emit(
                 {**screen, "resolution_method": "llm_screen_disagreement"},
                 {}, {}, screen)
             # The row exists to be reviewed by a human, so record who said what —
@@ -756,22 +773,13 @@ def run_for_doi(doi_r:              str,
             if hit:
                 log.info("[%s] Resolved by pre-PDF title search: %s", doi_r,
                          hit["resolved_title_o"])
-                return _build_output(doi_r, flora, cands_row, candidates,
-                                     hit, {}, {}, screen)
+                return emit(hit, {}, {}, screen)
 
     # ── Stage 5: PDF acquisition ─────────────────────────────────────────────
     if no_pdf:
         # Stages 2.5/3/4 didn't resolve — bail out without fulltext.
         log.info("[%s] no_pdf mode — abstract/rules insufficient, writing target_pending", doi_r)
-        return _build_output(doi_r, flora, cands_row, candidates, {
-            "resolved":          False,
-            "resolution_method": "needs_fulltext",
-            "resolved_doi_o":    "",
-            "resolved_title_o":  "",
-            "resolved_year_o":   None,
-            "resolved_author_o": "",
-            "resolution_score":  0.0,
-        }, {}, {}, {})
+        return emit(_unresolved("needs_fulltext"), {}, {}, {})
 
     pdf = acquire_pdf(doi_r, study_r, openalex_id=oa_id_r)
     log.info("[%s] PDF: %s (%s)", doi_r, pdf["pdf_source"], pdf["pdf_url"])
@@ -787,15 +795,7 @@ def run_for_doi(doi_r:              str,
     if pdf_path is None and not oa_xml_content:
         log.info("[%s] no document acquired (%s) — writing target_pending",
                  doi_r, pdf.get("pdf_source", "none"))
-        return _build_output(doi_r, flora, cands_row, candidates, {
-            "resolved":          False,
-            "resolution_method": "no_fulltext_available",
-            "resolved_doi_o":    "",
-            "resolved_title_o":  "",
-            "resolved_year_o":   None,
-            "resolved_author_o": "",
-            "resolution_score":  0.0,
-        }, pdf, {}, {})
+        return emit(_unresolved("no_fulltext_available"), pdf, {}, {})
 
     # ── Stage 6: Parse all — pick richest result to send to LLM ─────────────
     parse_results  = _parse_all(doi_r, pdf_path, oa_xml=oa_xml_content, no_llm=no_llm)
@@ -829,16 +829,8 @@ def run_for_doi(doi_r:              str,
     # ── Stage 7: LLM identification ──────────────────────────────────────────
     if no_llm:
         log.info("[%s] no_llm mode — skipping LLM, writing target_pending", doi_r)
-        return _build_output(doi_r, flora, cands_row, candidates, {
-            "resolved":          False,
-            "resolution_method": "none",
-            "resolved_doi_o":    "",
-            "resolved_title_o":  "",
-            "resolved_year_o":   None,
-            "resolved_author_o": "",
-            "resolution_score":  0.0,
-            "llm_error":         "no_llm mode",
-        }, pdf, grobid, sections)
+        return emit(_unresolved("none", llm_error="no_llm mode"),
+                    pdf, grobid, sections)
 
     # Guard: refuse to call the LLM when it would have nothing to reason from.
     _has_context = (
@@ -849,16 +841,10 @@ def run_for_doi(doi_r:              str,
     )
     if not _has_context:
         log.warning("[%s] No context — skipping LLM, writing target_pending", doi_r)
-        return _build_output(doi_r, flora, cands_row, candidates, {
-            "resolved":          False,
-            "resolution_method": "no_context",
-            "resolved_doi_o":    "",
-            "resolved_title_o":  "",
-            "resolved_year_o":   None,
-            "resolved_author_o": "",
-            "resolution_score":  0.0,
-            "llm_error":         "no_context: abstract missing, PDF unavailable, no refs",
-        }, pdf, grobid, sections)
+        return emit(_unresolved(
+            "no_context",
+            llm_error="no_context: abstract missing, PDF unavailable, no refs"),
+            pdf, grobid, sections)
 
     token_counter.set_stage("extract_fulltext")
     llm = identify_original_with_llm(
@@ -869,8 +855,7 @@ def run_for_doi(doi_r:              str,
     log.info("[%s] LLM: resolved=%s source=%s", doi_r,
              llm["resolved"], llm["llm_source"])
 
-    return _build_output(doi_r, flora, cands_row, candidates,
-                         llm, pdf, grobid, sections)
+    return emit(llm, pdf, grobid, sections)
 
 
 # ── Output builder ────────────────────────────────────────────────────────────

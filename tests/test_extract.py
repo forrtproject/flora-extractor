@@ -122,6 +122,43 @@ class TestKeywordScan:
         hit = _keyword_scan("we failed to replicate the originally replicated finding", "abstract")
         assert hit["outcome"] == "failure"
 
+    def test_success_in_the_same_sentence_vetoes_a_failure_keyword(self):
+        """A failure phrase does not decide a sentence that also reports success."""
+        text = ("The effect did not replicate in Study 1, but was successfully "
+                "replicated in Study 2.")
+        hit = _keyword_scan(text, "abstract")
+        assert hit is not None
+        assert hit["outcome"] != "failure"
+
+    def test_success_elsewhere_does_not_veto_a_failure_sentence(self):
+        """The veto is per sentence — a success claim about a different result is not one."""
+        text = ("The manipulation check was successfully replicated. "
+                "The focal effect failed to replicate.")
+        hit = _keyword_scan(text, "abstract")
+        assert hit is not None
+        assert hit["outcome"] == "failure"
+
+    @pytest.mark.parametrize("text", [
+        "We found no significant difference between our estimate and the original, "
+        "consistent with the original finding.",
+        "There was no evidence of a difference from the original effect; the "
+        "replication was successful.",
+    ])
+    def test_weak_failure_phrases_lose_to_an_explicit_success(self, text):
+        """"No significant difference" describes the test, not the verdict.
+
+        In a successful replication it is how the comparison against the original
+        is reported, so an explicit success claim in the same abstract wins.
+        """
+        hit = _keyword_scan(text, "abstract")
+        assert hit is not None
+        assert hit["outcome"] == "success"
+
+    def test_weak_failure_phrase_alone_still_codes_failure_at_medium(self):
+        hit = _keyword_scan("We found no evidence of ego depletion.", "abstract")
+        assert hit["outcome"] == "failure"
+        assert hit["outcome_confidence"] == "medium"
+
     def test_returns_source_correctly(self):
         hit = _keyword_scan("successfully replicated", "fulltext")
         assert hit["out_quote_source"] == "fulltext"
@@ -215,13 +252,25 @@ class TestExtractOutcome:
             {"resolution_method": "llm_cited_candidates", "llm_confidence": "high"}
         ) == "high"
 
-    def test_llm_failure_returns_cannot_be_determined(self, tmp_path):
-        """LLM failure should return cannot_be_determined, not crash."""
+    def test_llm_failure_returns_api_error(self, tmp_path):
+        """Exhausting every provider is an api_error, not a cannot_be_determined verdict."""
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.time.sleep"), \
              patch("extract.code_outcome.call_llm", return_value=(None, "", "quota | error")):
             result = extract_outcome("10.1234/fail", abstract_r="ambiguous text")
-        assert result["outcome"] == "cannot_be_determined"
+        assert result["outcome"] == "api_error"
         assert result["outcome_confidence"] == "low"
+        # An API failure must not be cached — a re-run has to be able to code the row.
+        assert not list(tmp_path.glob("*.json"))
+
+    def test_llm_failure_backs_off_between_retries(self, tmp_path):
+        """call_llm reports failure by returning None, so the backoff must run on that path."""
+        sleeps: list = []
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.time.sleep", side_effect=sleeps.append), \
+             patch("extract.code_outcome.call_llm", return_value=(None, "", "quota")):
+            extract_outcome("10.1234/fail", abstract_r="ambiguous text")
+        assert sleeps == [1, 2]
 
     def test_llm_result_cached(self, tmp_path):
         """LLM result should be written to cache and reused."""
@@ -629,8 +678,7 @@ class TestClassifyMatchType:
         row = row or _ROW
         with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
              patch("extract.run_extract.find_all_candidates", return_value=oa_result), \
-             patch("extract.run_extract.call_llm", return_value=(llm_result, "gemini-model", "")), \
-             patch("extract.run_extract.time.sleep"):
+             patch("extract.run_extract.call_llm", return_value=(llm_result, "gemini-model", "")):
             return classify_match_type(row)
 
     def test_returns_single_original(self, tmp_path):
@@ -683,8 +731,7 @@ class TestClassifyMatchType:
         with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
              patch("extract.run_extract.find_all_candidates",
                    return_value=_CAND_SINGLE), \
-             patch("extract.run_extract.call_llm", return_value=(llm, "gemini-model", "")) as mock_llm, \
-             patch("extract.run_extract.time.sleep"):
+             patch("extract.run_extract.call_llm", return_value=(llm, "gemini-model", "")) as mock_llm:
             classify_match_type(_ROW)  # first call — populates cache
             classify_match_type(_ROW)  # second call — should use cache
         assert mock_llm.call_count == 1
@@ -694,8 +741,7 @@ class TestClassifyMatchType:
         llm = {"original_match_type": "single_original", "confidence": "high"}
         other = [dict(_CAND_SINGLE[0], title="A completely different paper")]
         with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.run_extract.call_llm", return_value=(llm, "m", "")) as mock_llm, \
-             patch("extract.run_extract.time.sleep"):
+             patch("extract.run_extract.call_llm", return_value=(llm, "m", "")) as mock_llm:
             with patch("extract.run_extract.find_all_candidates", return_value=_CAND_SINGLE):
                 classify_match_type(_ROW)
             with patch("extract.run_extract.find_all_candidates", return_value=other):
@@ -718,8 +764,7 @@ class TestClassifyMatchType:
 
         with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
              patch("extract.run_extract.find_all_candidates", return_value=_CAND_SINGLE), \
-             patch("extract.run_extract.call_llm", side_effect=fake_llm), \
-             patch("extract.run_extract.time.sleep"):
+             patch("extract.run_extract.call_llm", side_effect=fake_llm):
             classify_match_type(_ROW)
 
         prompt = captured_prompt[0]
@@ -1877,8 +1922,7 @@ class TestMatchTypeLLMGate:
         with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
              patch("extract.run_extract.find_all_candidates", return_value=_CAND_MULTI), \
              patch("extract.run_extract.call_llm",
-                   return_value=(llm_answer, "gemini-model", "")) as llm, \
-             patch("extract.run_extract.time.sleep"):
+                   return_value=(llm_answer, "gemini-model", "")) as llm:
             result = classify_match_type(_ROW)
 
         llm.assert_called_once()
@@ -2036,3 +2080,38 @@ class TestParseCacheOnlyAfterTheDocument:
         from shared.utils import cache_key
         (tmp_path / f"{cache_key('10.1/x')}.pdf").write_bytes(b"%PDF")
         assert run_extract._has_document("10.1/x", self._link())
+
+
+class TestMatchTypeFailureIsNotCached:
+    """A 429 is not a verdict (audit B8).
+
+    The failure default is single_original, so caching it freezes a Many Labs paper
+    whose title does not trip the rule into the single-original pipeline for every
+    future run.
+    """
+
+    _ROW_MULTI = {
+        "doi_r": "10.1/rep", "title_r": "A study of several effects",
+        "abstract_r": "We revisit Smith (2010) and Jones (2012) in one paper.",
+        "openalex_id_r": "W1", "year_r": "2020",
+    }
+    _CANDS = [{"doi": "10.9/a", "title": "A", "year": 2010, "first_author": "Smith"},
+              {"doi": "10.9/b", "title": "B", "year": 2012, "first_author": "Jones"}]
+
+    def test_failure_writes_no_cache_entry(self, tmp_path):
+        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.run_extract.find_all_candidates", return_value=self._CANDS), \
+             patch("extract.run_extract.call_llm", return_value=(None, "", "quota")):
+            result = classify_match_type(self._ROW_MULTI)
+        assert result["original_match_type"] == "single_original"
+        assert not list(tmp_path.glob("match_type_*.json"))
+
+    def test_a_later_run_can_still_get_a_real_answer(self, tmp_path):
+        llm = {"original_match_type": "multiple_original", "confidence": "high"}
+        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.run_extract.find_all_candidates", return_value=self._CANDS):
+            with patch("extract.run_extract.call_llm", return_value=(None, "", "quota")):
+                classify_match_type(self._ROW_MULTI)
+            with patch("extract.run_extract.call_llm", return_value=(llm, "m", "")):
+                result = classify_match_type(self._ROW_MULTI)
+        assert result["original_match_type"] == "multiple_original"
