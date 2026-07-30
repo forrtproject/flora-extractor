@@ -83,14 +83,14 @@ value. They are now emitted distinctly because their reliability differs sharply
 | `grobid_ref_match` | Rule-based: a GROBID-parsed reference matched a candidate by DOI or author+year |
 | `llm_cited_candidates` | LLM chose the original from candidates found by matching an author-year citation in the abstract against the paper's references |
 | `llm_references` | LLM picked the original from the paper's full OpenAlex reference list, accepted only at high confidence (Stage 4.5 screen) |
-| `not_a_replication` | The Stage 4.5 screen concluded at high confidence that the paper does not replicate or reproduce anything; no original exists to link and no PDF was fetched |
+| `not_a_replication` | Stage 3's front-door screen concluded at high confidence that the paper does not replicate or reproduce anything; no original exists to link and no PDF was fetched |
 | `llm_fulltext` | LLM resolved the original from full PDF text (also multi-original rows when a PDF/GROBID fed the prompt) |
 | `llm_title_search` | **Provisional, not resolved.** The LLM named an original that was **not** in the candidate/reference list, so the DOI came from a CrossRef/OpenAlex title search against the whole literature. A hand-check of the 2026-07-28 batch put precision near 50%, and the errors are invisible to `doi_o_verification` (the DOI does resolve to the named title; the named title is simply not the paper's target). `link_confidence` is forced to `low`, no outcome is coded, and `sanity_check` quarantines the row to `data/provisional_title_search.csv` for human confirmation |
-| `screen_disagreement` | The two Stage 4.5 "is this a replication?" classifiers disagreed; the row is set aside for review rather than escalated, and `sanity_check` quarantines it to `data/screen_disagreement.csv` |
+| `screen_disagreement` | The two front-door "is this a replication?" classifiers disagreed; the row is set aside for review rather than processed further, and `sanity_check` quarantines it to `data/screen_disagreement.csv` |
 | `author_year_match_legacy` | Legacy row written before the split; the specific rule-based method cannot be recovered retroactively (see `tools/migrate_link_methods.py`) |
 | `no_original_found` | Pipeline could not identify an original study |
-| `target_pending` | Original DOI must be supplied manually. Also written when only one of the two Stage 4.5 classifiers answered — a single vote carries no agreement signal, so the row waits for a re-run instead of being filed as a disagreement |
-| `api_error` | Extraction failed after retries, including a Stage 4.5 screen where **both** classifiers failed |
+| `target_pending` | Original DOI must be supplied manually. Also written when only one of the two front-door classifiers answered — a single vote carries no agreement signal, so the row waits for a re-run instead of being filed as a disagreement |
+| `api_error` | Extraction failed after retries, including a front-door screen where **both** classifiers failed |
 
 The enum lives in `shared/schema.py` as `LINK_METHOD_VALUES`. The subset that counts
 as a resolved link — the rows `extract/csv_to_db.py` imports into the validation DB —
@@ -130,7 +130,7 @@ The first six are the **outcome categories** a classifier may emit (defined once
 | `descriptive` | Adapted methods in a new context, does not test original claim |
 | `cannot_be_determined` | The available text does not state a replication outcome |
 | `not_a_replication` | Text does not describe a genuine attempt to replicate/reproduce the named original (unrelated, biological/technical, or metaphorical use of "replicate"/"reproduce") |
-| `pending` | Outcome not yet extracted (pipeline-state marker) |
+| `pending` | Outcome not coded (pipeline-state marker). Written for every row whose `link_method` is not in `RESOLVED_LINK_METHODS` — there is no confirmed original to code an outcome against, so the outcome LLM never runs (`outcome_reasoning` says which method it was) |
 | `api_error` | Extraction failed after retries (pipeline-state marker) |
 
 > `uninformative` is no longer emitted by the classifier after the outcome-coding

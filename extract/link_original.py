@@ -555,12 +555,17 @@ def run_for_doi(doi_r:              str,
                 force:              bool = False,
                 validation_comment: str  = "",
                 no_llm:             bool = False,
-                no_pdf:             bool = False) -> dict:
+                no_pdf:             bool = False,
+                classification:     Optional[dict] = None) -> dict:
     """
     Run the full disambiguation pipeline for *doi_r*.
 
     force=True clears all intermediate caches (LLM, GROBID, OpenAlex candidates)
     before running, but keeps the cached PDF so the download step is skipped.
+
+    classification is the Q1 verdict from classify_replication(). Stage 3 votes at
+    its front door and passes the verdict in, so Stage 4.5 picks the target without
+    voting again; a caller without a verdict leaves it None and the screen votes.
 
     Pipeline stages:
       1. Load FLoRA sheet + openalex_candidates data for this DOI
@@ -659,12 +664,14 @@ def run_for_doi(doi_r:              str,
                 return _build_output(doi_r, flora, cands_row, candidates,
                                      llm4, {}, {}, {})
 
-    # ── Stage 4.5: Reference-list screen ─────────────────────────────────────
+    # ── Stage 4.5: Reference-list target pick ────────────────────────────────
     # Stage 3/4 can only fire when the abstract carries a parseable "(Author, Year)"
     # citation; without one, candidates is empty and every row would drop to the PDF
-    # route. The referenced works are still available, so ask the LLM whether this is
-    # a replication at all and, if so, which reference is the target — a clear "no"
-    # means there is nothing to chase in the full text.
+    # route. The referenced works are still available, so ask the LLM which reference
+    # is the target. The "is this a replication at all" verdict normally arrives from
+    # Stage 3's front door and is only voted here when a caller supplies none; the
+    # branches below still handle every verdict, because run_for_doi is also called
+    # from the batch tools, which have no front door.
     if not no_llm and (abstract_r or study_r):
         # No references is not a reason to skip: with them the call both screens and
         # resolves, without them it still answers "is this a replication at all".
@@ -672,7 +679,8 @@ def run_for_doi(doi_r:              str,
         if not refs:
             refs = fetch_opencitations_references(doi_r)
         token_counter.set_stage("extract_refscreen")
-        screen = screen_references_with_llm(doi_r, study_r, abstract_r, refs)
+        screen = screen_references_with_llm(doi_r, study_r, abstract_r, refs,
+                                            classification=classification)
 
         # A screen that did not get both votes is an API failure, not a verdict, and
         # must be caught before the disagreement branch below — a lone surviving vote

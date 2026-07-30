@@ -90,7 +90,7 @@ registered** in `app.py` — treat them as orphaned/legacy.
 | File                           | Purpose                                                                     |
 | ------------------------------ | --------------------------------------------------------------------------- |
 | `shared/openalex_client.py`    | OpenAlex API wrapper + `find_all_candidates()` (Stage 3 logic)              |
-| `shared/llm_client.py`         | Gemini + OpenAI calls with key rotation, prompt builders, JSON parsing; `screen_references_with_llm()` is the Stage 4.5 reference-list screen |
+| `shared/llm_client.py`         | Gemini + OpenAI calls with key rotation, prompt builders, JSON parsing; `classify_replication()` is Stage 3's two-model front-door screen and `screen_references_with_llm()` the Stage 4.5 reference-list target pick |
 | `shared/pdf_sources.py`        | Multi-tier PDF acquisition waterfall (arXiv → OSF → Unpaywall → CORE → …)   |
 | `shared/pdf_parsing.py`        | Six PDF parse methods (openalex_xml, pdfminer, GROBID, docpluck, opendataloader, markitdown); `parse_all()` orchestrator; `score_parse_result()`, `best_parse_result()`, `best_parse_method_name()` scoring API |
 | `shared/grobid.py`             | GROBID reference extraction from PDFs                                       |
@@ -122,13 +122,13 @@ registered** in `app.py` — treat them as orphaned/legacy.
 
 | File                       | Purpose                                                                      |
 | -------------------------- | ---------------------------------------------------------------------------- |
-| `extract/run_extract.py`   | Orchestrator: classifies match type, routes to single or multi-original; supports `--extracted-test` flag; `_best_fulltext_from_cache()` feeds the best-scoring parse result to the outcome LLM; `_fill_work_ids()` stamps `oa_work_id_r`/`oa_work_id_o` on every row after DOI verification |
+| `extract/run_extract.py`   | Orchestrator: screens each row at the front door (`_front_door_row()`), then classifies match type and routes to single or multi-original; `_resolve_and_code()` runs the ladder, guard and outcome gate for one row; supports `--extracted-test` flag; `_best_fulltext_from_cache()` feeds the best-scoring parse result to the outcome LLM; `_fill_work_ids()` stamps `oa_work_id_r`/`oa_work_id_o` on every row after DOI verification |
 | `extract/link_original.py` | Single-original pipeline. `run_for_doi()` escalates through the resolution ladder below and only reaches the PDF when every cheaper stage declines; runs `parse_all()` on the PDF, scores all methods, uses the winner's text for the DOI-resolution LLM via shared `best_parse_result()` |
 | `extract/multi_original.py`| Multi-original pipeline — finds all target studies (needs improvement)       |
 | `extract/code_outcome.py`  | Keyword + LLM outcome extraction                                             |
 | `extract/promote_test.py`  | CLI + library: merge rows from extracted-test.csv into extracted.csv; `--all`, `--doi`, `--dry-run`, `--force` |
 | `extract/audit_dois.py`    | CLI: retroactive DOI verification of extracted.csv; dry-run by default, `--apply` writes corrections; `--doi`, `--extracted-test` |
-| `extract/sanity_check.py`  | Post-extraction quarantine pass; runs automatically at the end of `run_extract` (completion AND Ctrl-C). First-match-wins routing of problem rows to set-aside CSVs: `not_a_replication`/non-article DOIs → `not_a_replication.csv`, self-links → `unresolved_self_links.csv`, `doi_o_verification==mismatch` → `unresolved_doi_mismatch.csv`, `llm_title_search` (provisional links) → `provisional_title_search.csv`, `target_pending` → `target_pending.csv`, and (with `--deep`) fabricated `doi_o` → `fabricated_original_doi.csv`. `cannot_be_determined` is kept in extracted.csv. Standalone: `python -m extract.sanity_check [--input …] [--deep] [--report-only]` |
+| `extract/sanity_check.py`  | Post-extraction quarantine pass; runs automatically at the end of `run_extract` (completion AND Ctrl-C). First-match-wins routing of problem rows to set-aside CSVs: `screen_disagreement` → `screen_disagreement.csv` (**before** the outcome rule, so a disagreement never lands in the agreed-no file), `not_a_replication`/non-article DOIs → `not_a_replication.csv`, self-links → `unresolved_self_links.csv`, `doi_o_verification==mismatch` → `unresolved_doi_mismatch.csv`, `llm_title_search` (provisional links) → `provisional_title_search.csv`, `target_pending` → `target_pending.csv`, and (with `--deep`) fabricated `doi_o` → `fabricated_original_doi.csv`. `cannot_be_determined` is kept in extracted.csv. Standalone: `python -m extract.sanity_check [--input …] [--deep] [--report-only]` |
 | `extract/clean_parse_cache.py` | CLI: delete all-empty parse caches from `cache/parse/` (written by pre-B4 runs that never fetched a PDF and then masked the real parse). Dry run by default, `--apply` deletes |
 | `extract/csv_to_db.py`     | CLI: push resolved extracted.csv rows into the Supabase validation DB (creates 1 `unvalidated` + 1 `record_metadata` + 3 `validation_queue` rows per record; slots `human_1`/`human_2`/`llm`); `--input`, `--dry-run` |
 
@@ -180,10 +180,20 @@ Key constraints:
 
 ## Stage 3 Routing Logic
 
-Stage 3 determines `original_match_type` itself as its first step, then routes accordingly:
+Stage 3's **front door** is the classification screen: before anything else, two
+models vote on "is this paper a replication or reproduction at all?"
+(`classify_replication()` in `shared/llm_client.py`). 58% of screened rows are
+discarded there, so every call made before that vote is spent on a row that is then
+thrown away. Only rows that survive the front door pay for match-type
+classification, the resolution ladder, PDF acquisition or outcome coding.
 
 ```python
-# run_extract.py:
+# run_extract.py, per row:
+
+screen = classify_replication(doi_r, title_r, abstract_r)
+# confident agreed "no"  → write not_a_replication and continue
+# models disagree        → write screen_disagreement and continue
+# one vote / no votes    → write target_pending / api_error and continue
 
 original_match_type = classify_match_type(row)   # Stage 3's own classification
 
@@ -196,6 +206,21 @@ else:
     result = run_single(doi_r, ...)
     # → 1 row in extracted.csv
 ```
+
+`classify_match_type` calls its LLM only when the abstract carries **≥ 2 distinct
+author-year pairs** — the only abstract evidence that several different originals are
+being targeted. Below that it returns `single_original` without a call (it answered
+`single_original` for 94% of rows anyway). The deterministic multi-title / "replication
+of N studies" rules run regardless, so Many Labs-style papers still route correctly.
+
+**Outcome coding runs only on a resolved link.** `_outcome_without_coding()` in
+`run_extract.py` is the single gate, derived from `RESOLVED_LINK_METHODS`: a row whose
+`link_method` is not in that set (`target_pending`, `api_error`, `no_original_found`,
+`screen_disagreement`, `not_a_replication`, `llm_title_search`) has no confirmed original
+to code against, so no outcome LLM runs and the row is written `pending` — except
+`not_a_replication`, where the screen's verdict *is* the outcome. The order per row is
+resolve → merge → `_guard_original_link` → `--resolved-only` → outcome, so a row the
+guard demotes or `--resolved-only` discards never reaches the outcome call.
 
 ### Original-study resolution ladder
 
@@ -210,7 +235,7 @@ last resort rather than the normal path.
 | 2.5 | Title-pattern resolver | the title matches "A Replication of X" and one candidate matches it | `title_pattern_match` |
 | 3 | Rule-based resolver | the abstract carries an author-year citation matching a candidate | `citation_context_match`, `same_author_year_title_overlap`, `single_candidate_after_requery` |
 | 4 | Abstract LLM | the abstract carries author-year patterns, with candidates to choose from | `llm_cited_candidates` |
-| 4.5 | **Reference-list screen** | there are referenced works (regardless of citation patterns) | `llm_references`, or `not_a_replication` |
+| 4.5 | **Reference-list target pick** | there are referenced works (regardless of citation patterns) | `llm_references` |
 | 4.6 | Title search on a named-but-unmatched target | the screen agreed at high confidence that this is a replication and named a target it could not match to a reference | `llm_title_search` (**provisional** — see below) |
 | 5 | PDF acquisition + full-text LLM | everything above declined | `llm_fulltext`, `llm_title_search` (**provisional**) |
 
@@ -225,19 +250,23 @@ title or abstract contains a parseable `(Author, Year)` citation. Many abstracts
 clinical and life-sciences ones especially — carry no such citation, so those
 stages cannot fire at all for them.
 
-**Stage 4.5** covers that gap. It shows the LLM the abstract plus the paper's
-OpenAlex reference list and asks two questions in one call:
+**Stage 4.5** covers that gap. The screen asks two questions, split across two
+functions in `shared/llm_client.py` because they are now decided at different points
+in the pipeline:
 
-1. *Is this a replication or reproduction at all?* A confident **no** ends the row:
-   `outcome = not_a_replication`, no PDF is fetched and no outcome LLM runs, and
-   `sanity_check` routes the row to `data/not_a_replication.csv`.
-2. *If yes, which reference is the target?* A target is accepted **only at
-   `confidence == "high"`**. At medium or low the row still escalates to full
-   text — a wrong original is worse than a slow one, and the prompt states
-   explicitly that most abstracts do not name their target and that declining is
-   the expected answer.
-
-Results are cached at `cache/llm/refscreen_{key}.json`.
+1. *Is this a replication or reproduction at all?* — `classify_replication()`, run at
+   Stage 3's front door (above). A confident agreed **no** ends the row there:
+   `outcome = not_a_replication`, no match-type call, no ladder, no PDF, no outcome
+   LLM, and `sanity_check` routes the row to `data/not_a_replication.csv`. Cached at
+   `cache/llm/classify_{key}.json`.
+2. *Which reference is the target?* — `screen_references_with_llm()`, here at Stage
+   4.5, where the reference list has been fetched. It takes the front door's verdict
+   as its `classification` argument rather than voting again (a caller without a
+   verdict, e.g. the batch tools, lets it vote). A target is accepted **only at
+   `confidence == "high"`**; at medium or low the row escalates to full text — a wrong
+   original is worse than a slow one, and the prompt states explicitly that most
+   abstracts do not name their target and that declining is the expected answer.
+   Cached separately at `cache/llm/reftarget_{key}.json`.
 
 **Two providers are required.** Question 1 is voted on by Gemini (`GEMINI_LIGHT_MODEL`)
 *and* OpenRouter (`SCREEN_VOTER2_MODEL`, default `mistralai/ministral-14b-2512`), and the

@@ -934,32 +934,35 @@ def _classify_once(prompt: str, provider: str) -> "dict | None":
     }
 
 
-def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
-                               refs: list[dict]) -> dict:
-    """Classify the paper on two models, then identify its target if they agree it is one.
+def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
+    """Q1 alone: do two models agree that this paper is a replication or reproduction?
 
-    Returns the standard resolver dict plus:
+    Split out of screen_references_with_llm so Stage 3 can ask the question as its
+    front door — before match-type classification, the resolution ladder, the PDF
+    and outcome coding — rather than after paying for all of them. The target pick
+    (Q2) stays in screen_references_with_llm, at the point in the ladder where the
+    reference list has been fetched, and reuses this verdict instead of re-voting.
+
+    Returns:
       is_replication      — the agreed label, or "unclear" when the models disagree
       models_agree        — whether both votes matched
-      llm_confidence      — target confidence (empty when no target call was made)
       classification_confidence — the weaker of the two votes' confidences
-
-    An incomplete screen is reported as such rather than as a verdict:
-    resolution_method is llm_refscreen_partial with one vote and
-    llm_refscreen_failed with none, and neither is cached.
+      votes / llm_*       — who voted what, for the reviewer of a set-aside row
+      resolution_method   — llm_refscreen_declined on a complete screen;
+                            llm_refscreen_partial (one vote) / llm_refscreen_failed
+                            (none) when the screen did not complete. An incomplete
+                            screen is an API failure, not a verdict, so it is
+                            returned uncached — a re-run must be able to succeed.
     """
-    cache_file = LLM_CACHE_DIR / f"refscreen_{cache_key(doi_r + REF_SCREEN_PROMPT_VERSION + str(bool(refs)))}.json"
+    cache_file = LLM_CACHE_DIR / f"classify_{cache_key((doi_r or study_r) + REF_SCREEN_PROMPT_VERSION)}.json"
     if cache_file.exists():
         with cache_file.open(encoding="utf-8") as fh:
             return json.load(fh)
 
     out = {
-        "resolved": False, "resolution_method": "llm_refscreen_declined",
-        "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
-        "resolved_author_o": "", "resolution_score": 0.0,
+        "resolution_method": "llm_refscreen_declined",
         "is_replication": "unclear", "models_agree": False, "votes": [],
-        "llm_confidence": "", "classification_confidence": "",
-        "target_description": "",
+        "classification_confidence": "",
         "llm_source": "", "llm_model": "", "llm_evidence": "",
         "llm_reasoning": "", "llm_prompt": "", "llm_error": "",
     }
@@ -998,18 +1001,60 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
         out["classification_confidence"] = min(
             (v["confidence"] for v in votes), key=lambda c: order.get(c, 0))
     else:
-        # Disagreement is informative, not an error — the row escalates to full text.
+        # Disagreement is informative, not an error — the row is set aside for review.
         out["is_replication"] = "unclear"
 
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    with cache_file.open("w", encoding="utf-8") as fh:
+        json.dump(out, fh, ensure_ascii=False, indent=2)
+    return out
+
+
+def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
+                               refs: list[dict],
+                               classification: "dict | None" = None) -> dict:
+    """Identify the paper's target among its references, given the Q1 verdict.
+
+    classification — the verdict from classify_replication(). Stage 3 runs the
+    classification at its front door and threads the result in here, so the two
+    votes are made once per paper. When it is absent (a caller that has no verdict
+    yet, e.g. the batch tools) the classification runs here.
+
+    Returns the standard resolver dict, the classification fields, and
+    llm_confidence — the TARGET call's confidence, empty when no target call was
+    made. A reference is accepted as the target only at confidence == "high".
+    """
+    out = {
+        "resolved": False, "resolution_method": "llm_refscreen_declined",
+        "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
+        "resolved_author_o": "", "resolution_score": 0.0,
+        "llm_confidence": "", "target_description": "",
+    }
+    out.update(classification or classify_replication(doi_r, study_r, abstract_r))
+
     if out["is_replication"] == "yes" and refs:
-        tgt_prompt = build_target_prompt(study_r, abstract_r, refs)
-        tgt_source, tgt_model = "gemini", GEMINI_HEAVY_MODEL
-        result, _ = call_gemini(tgt_prompt, model=GEMINI_HEAVY_MODEL)
-        if not result:
-            tgt_source, tgt_model = "openai", OPENAI_MODEL
-            result, _ = call_openai(tgt_prompt)
+        # The pick is cached separately from the classification: the two halves are
+        # now decided at different points in the pipeline, and one cache holding
+        # both would be written before the second half had run.
+        cache_file = LLM_CACHE_DIR / f"reftarget_{cache_key((doi_r or study_r) + REF_SCREEN_PROMPT_VERSION)}.json"
+        if cache_file.exists():
+            with cache_file.open(encoding="utf-8") as fh:
+                cached = json.load(fh)
+            result, tgt_source, tgt_model = cached["result"], cached["source"], cached["model"]
+        else:
+            tgt_prompt = build_target_prompt(study_r, abstract_r, refs)
+            tgt_source, tgt_model = "gemini", GEMINI_HEAVY_MODEL
+            result, _ = call_gemini(tgt_prompt, model=GEMINI_HEAVY_MODEL)
+            if not result:
+                tgt_source, tgt_model = "openai", OPENAI_MODEL
+                result, _ = call_openai(tgt_prompt)
+            if result:
+                time.sleep(LLM_RATE_SEC)
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                with cache_file.open("w", encoding="utf-8") as fh:
+                    json.dump({"result": result, "source": tgt_source,
+                               "model": tgt_model}, fh, ensure_ascii=False, indent=2)
         if result:
-            time.sleep(LLM_RATE_SEC)
             out["llm_confidence"]     = str(result.get("confidence", "")).strip().lower()
             out["target_description"] = str(result.get("target_description", "") or "").strip()
             num = result.get("target_number")
@@ -1040,7 +1085,4 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
                         ])),
                     })
 
-    cache_file.parent.mkdir(parents=True, exist_ok=True)
-    with cache_file.open("w", encoding="utf-8") as fh:
-        json.dump(out, fh, ensure_ascii=False, indent=2)
     return out

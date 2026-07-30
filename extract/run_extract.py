@@ -23,7 +23,7 @@ from shared.config import (
     OA_XML_CACHE_DIR, OPENROUTER_API_KEY, PARSE_CACHE_DIR, PDF_CACHE_DIR, log,
 )
 from shared import token_counter
-from shared.llm_client import call_llm
+from shared.llm_client import call_llm, classify_replication
 from shared.openalex_client import OpenAlexQuotaExhausted, extract_author_year_patterns, find_all_candidates
 from shared.openalex_client import fetch_openalex_by_doi as _oa_by_doi
 from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
@@ -39,6 +39,7 @@ from shared.schema import (
     EXTRACTED_COLS,
     LINK_METHOD_VALUES,
     OUTCOME_CATEGORIES,
+    RESOLVED_LINK_METHODS,
     make_pair_id,
 )
 from shared.utils import bare_work_id, cache_key, clean_doi, csv_lock
@@ -210,7 +211,7 @@ _METHOD_MAP = {
     # no original to look for and no reason to fetch the PDF.
     "llm_not_a_replication":          "not_a_replication",
     # The two Q1 classifiers disagreed; the row is set aside for review
-    # rather than escalated (see the Stage 4.5 screen in link_original).
+    # rather than escalated (see the front-door screen in run_extract).
     "llm_screen_disagreement":        "screen_disagreement",
     # LLM ran successfully but concluded no identifiable original study exists.
     # Distinct from llm_failed (API errors) and llm_fulltext (original found).
@@ -433,6 +434,18 @@ def classify_match_type(row: dict, no_llm: bool = False) -> dict:
     # This steps repeats in find_all_candidates, but we need the patterns here to feed into the LLM prompt
     patterns = extract_author_year_patterns(title_r, max_year=year_r) + extract_author_year_patterns(abstract_r, max_year=year_r)
     distinct_pairs = {(p["surname"], p["year"]) for p in patterns}
+
+    # Step 1b: the LLM is being asked whether the paper targets several DIFFERENT
+    # originals, and the abstract's only evidence for that is distinct author-year
+    # citations. With fewer than two there is nothing for it to tell apart, and it
+    # duly answered single_original for 94% of rows (567/601 cached results) — at
+    # heavy-model price, to confirm the default. The deterministic multi-title and
+    # count rules above still run; only the LLM call is gated.
+    if len(distinct_pairs) < 2:
+        log.debug("[%s] classify_match_type: %d distinct author-year pair(s) — "
+                  "single_original without an LLM call", doi_r, len(distinct_pairs))
+        return {"original_match_type": "single_original",
+                "original_match_confidence": "low", "rule_fired": False}
 
     # Step 2: fetch OpenAlex referenced works and match against patterns
     try:
@@ -718,31 +731,66 @@ def _save_parse_cache(doi_r: str) -> None:
         log.debug("[%s] _save_parse_cache write failed: %s", doi_r, exc)
 
 
+# --resolved-only drops these, and they are never outcome-coded: there is no link.
+_NO_LINK_METHODS = {"target_pending", "api_error", "no_original_found"}
+
+
+def _outcome_without_coding(link_method: str, link: dict) -> "dict | None":
+    """The outcome for a row that must not be outcome-coded, or None to code it.
+
+    This is the single gate on outcome coding. Outcome extraction is the last LLM
+    call and the only one that used to run on every row, including the 8,000-character
+    full-text escalation — which fires precisely when the abstract was uninformative,
+    the same rows that failed to resolve. A row whose link_method is not in
+    RESOLVED_LINK_METHODS has no confirmed original to code an outcome against: it is
+    either quarantined by sanity_check (not_a_replication, screen_disagreement,
+    llm_title_search) or carries no link at all (target_pending, api_error,
+    no_original_found). Coding it states a result for a comparison that may never
+    have been made, and makes the row read as settled.
+    """
+    if link_method in RESOLVED_LINK_METHODS:
+        return None
+
+    def _skip(outcome: str, confidence: str, source: str, reasoning: str) -> dict:
+        return {"outcome": outcome, "outcome_phrase": "",
+                "outcome_confidence": confidence, "out_quote_source": source,
+                "outcome_reasoning": reasoning,
+                "llm_model": str(link.get("llm_model", "") or "")}
+
+    if link_method == "api_error":
+        return _skip("api_error", "low", "", str(link.get("llm_error", "") or ""))
+    if link_method == "not_a_replication":
+        # The classification screen already read the abstract and settled this; the
+        # verdict IS the outcome, and sanity_check routes the row on it.
+        return _skip("not_a_replication", "high", "abstract",
+                     str(link.get("llm_reasoning", "") or ""))
+    if link_method == "llm_title_search":
+        return _skip("cannot_be_determined", "low", "",
+                     "provisional link from a title search — outcome not coded "
+                     "until the target is confirmed")
+    if link_method == "screen_disagreement":
+        return _skip("pending", "low", "",
+                     "outcome not coded: the two classifiers disagreed on whether "
+                     "this is a replication — set aside for review")
+    return _skip("pending", "low", "",
+                 f"outcome not coded: no resolved original link ({link_method})")
+
+
+def _apply_outcome(row: dict, outcome: dict) -> dict:
+    """Write the outcome fields onto an already-merged result row."""
+    row.update({
+        "outcome":            outcome.get("outcome",            "cannot_be_determined"),
+        "outcome_phrase":     outcome.get("outcome_phrase",     ""),
+        "outcome_confidence": outcome.get("outcome_confidence", "low"),
+        "out_quote_source":   outcome.get("out_quote_source",   ""),
+        "outcome_reasoning":  outcome.get("outcome_reasoning",  ""),
+    })
+    return row
+
+
 def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -> dict:
     abstract_r = str(row.get("abstract_r", ""))
     title_r    = str(row.get("title_r",    ""))
-
-    # The reference screen already read the abstract and concluded this is not a
-    # replication; coding an outcome for it would just be a second opinion on a
-    # question that has been settled, at the cost of another LLM call.
-    if _map_method(str(link.get("resolution_method", ""))) == "not_a_replication":
-        return {"outcome": "not_a_replication", "outcome_phrase": "",
-                "outcome_confidence": "high",
-                "out_quote_source": "abstract",
-                "outcome_reasoning": str(link.get("llm_reasoning", "") or ""),
-                "llm_model": str(link.get("llm_model", "") or "")}
-
-    # A title-search link is provisional: the target was matched against the whole
-    # literature rather than a candidate list, at ~50% precision. Coding an outcome
-    # against an unconfirmed pairing states a result for a comparison that may never
-    # have been made, and the row reads as settled once an outcome is attached.
-    if _map_method(str(link.get("resolution_method", ""))) == "llm_title_search":
-        return {"outcome": "cannot_be_determined", "outcome_phrase": "",
-                "outcome_confidence": "low",
-                "out_quote_source": "",
-                "outcome_reasoning": "provisional link from a title search — outcome "
-                                     "not coded until the target is confirmed",
-                "llm_model": str(link.get("llm_model", "") or "")}
 
     # Prefer the best-scoring parse method from the parse cache so the outcome LLM
     # receives whichever parser extracted the richest text, not always GROBID.
@@ -833,7 +881,7 @@ def _extract_row_key(row: "dict | pd.Series") -> str:
     return f"title:{title}" if title else ""
 
 
-# Verdicts the Stage 4.5 screen reaches on its own, without ever seeing full text.
+# Verdicts the classification screen reaches on its own, without ever seeing full text.
 # They are the rows a changed voter pair or prompt would decide differently, so
 # --rescreen reopens exactly these and nothing else.
 SCREEN_SET_ASIDE_METHODS = {"not_a_replication", "screen_disagreement"}
@@ -1077,7 +1125,7 @@ def _append_row(out_path, result_row: dict, first: bool) -> None:
 
 
 def _check_screen_providers(no_llm: bool) -> None:
-    """Refuse to start when the Stage 4.5 screen cannot get its second vote.
+    """Refuse to start when the front-door screen cannot get its second vote.
 
     The screen decides whether a paper is a replication at all by voting two
     providers against each other and acting only when they agree. With one
@@ -1094,6 +1142,77 @@ def _check_screen_providers(no_llm: bool) -> None:
             f"Stage 3 needs both reference-screen providers; missing: {', '.join(missing)}. "
             "Set them in .env, or run with --no-llm to skip every LLM stage."
         )
+
+
+def _resolve_and_code(doi_r: str, row: pd.Series, match_type: str, match_conf: str,
+                      classify_model: str, screen: "dict | None",
+                      no_llm: bool, no_pdf: bool, resolved_only: bool,
+                      recalibrate_outcomes: bool) -> "dict | None":
+    """Run the resolution ladder for one single-original row and code its outcome.
+
+    The order is deliberate: resolve, merge, guard, --resolved-only, and only THEN
+    the outcome. The guard can demote a link to target_pending (self-link, no usable
+    original), and --resolved-only discards the row outright — running the outcome
+    LLM before either would spend the pipeline's last call on a row that is about to
+    be dropped. Returns None when the row is not to be written.
+    """
+    link = run_for_doi(doi_r, cands_df=_build_cands_df(row),
+                       no_llm=no_llm, no_pdf=no_pdf, classification=screen)
+    result_row = _guard_original_link(
+        _merge_row(row, link, {}, match_type, match_conf, 1, 1, classify_model))
+    link_method = str(result_row.get("link_method", ""))
+    if resolved_only and link_method in _NO_LINK_METHODS:
+        log.debug("[%s] --resolved-only: skipping %s row", doi_r, link_method)
+        return None
+
+    outcome = _outcome_without_coding(link_method, link)
+    if outcome is None:
+        if (not no_pdf or recalibrate_outcomes) and _has_document(doi_r, link):
+            _save_parse_cache(doi_r)
+        outcome = _get_outcome(doi_r, row, link,
+                               no_llm=no_llm and not recalibrate_outcomes)
+    return _apply_outcome(result_row, outcome)
+
+
+def _front_door_row(filter_row: pd.Series, screen: dict) -> "dict | None":
+    """The row to write when the classification screen ends the paper, else None.
+
+    Three endings, with the semantics the screen used to reach from inside the ladder,
+    after the match-type call and often a PDF had already been paid for:
+
+      incomplete   — one vote is not a verdict: target_pending so a re-run can decide
+                     the row once the provider is back; no votes at all is api_error.
+      confident no — both models agree, both at high confidence: not_a_replication.
+      disagreement — set aside for review, carrying who voted what.
+
+    Everything else ("yes", or a "no" the models were not both sure of) returns None
+    and goes down the ladder.
+    """
+    method = str(screen.get("resolution_method", ""))
+    if method not in {"llm_refscreen_partial", "llm_refscreen_failed"}:
+        if (screen.get("is_replication") == "no" and screen.get("models_agree")
+                and screen.get("classification_confidence") == "high"):
+            method = "llm_not_a_replication"
+        elif not screen.get("models_agree"):
+            method = "llm_screen_disagreement"
+        else:
+            return None
+
+    link = {**screen, "resolution_method": method}
+    if method == "llm_screen_disagreement":
+        # A row set aside for a human must record who said what — "the models
+        # disagreed" alone is not something a reviewer can act on.
+        verdicts = "; ".join(f"{v['provider']}={v['is_replication']}/{v['confidence']}"
+                             for v in screen.get("votes", []))
+        link["llm_evidence"] = "; ".join(filter(None, [
+            f"screen disagreement: {verdicts}" if verdicts else "screen disagreement",
+            str(screen.get("llm_evidence", "") or ""),
+        ]))
+
+    link_method = _map_method(method)
+    return _merge_row(filter_row, link,
+                      _outcome_without_coding(link_method, link),
+                      "single_original", "low", 1, 1)
 
 
 def run_extract(no_llm: bool = False,
@@ -1133,7 +1252,7 @@ def run_extract(no_llm: bool = False,
                            target_pending / api_error / no_original_found rows are silently skipped.
                            Use with --no-llm --no-pdf for a fast rule-based-only pass, then
                            follow up with --resume for the LLM pass on remaining rows.
-    rescreen            — reopen the rows a previous run set aside on the Stage 4.5 screen's
+    rescreen            — reopen the rows a previous run set aside on the classification screen's
                            own verdict (not_a_replication, screen_disagreement) so the current
                            voter pair decides them again. Without it those rows are carried
                            forward untouched, which freezes an old pair's verdicts in place.
@@ -1342,6 +1461,27 @@ def run_extract(no_llm: bool = False,
                     output_rows.append(result_row)
             continue
 
+        # ── Front door: is this a replication at all? ────────────────────────
+        # 58% of the rows that reach the classification screen are discarded there.
+        # Asking first costs nothing — the two votes were already being made — and
+        # spares those rows the heavy-model match-type call, the resolution ladder,
+        # PDF acquisition and outcome coding. The verdict is threaded into
+        # run_for_doi so Stage 4.5 picks a target without voting again.
+        screen = None
+        if not no_llm:
+            token_counter.set_stage("extract_refscreen")
+            screen = classify_replication(
+                doi_r, str(row.get("title_r", "") or row.get("study_r", "")), abstract_r)
+            done = _front_door_row(row, screen)
+            if done is not None:
+                log.info("[%s] front-door screen: %s", doi_r, done["link_method"])
+                if resolved_only and done["link_method"] in _NO_LINK_METHODS:
+                    continue
+                _append_row(out_path, done, first=first_write)
+                first_write = False
+                output_rows.append(done)
+                continue
+
         match = classify_match_type(row.to_dict(), no_llm=no_llm)
         match_type = match["original_match_type"]
         match_conf = match["original_match_confidence"]
@@ -1378,16 +1518,13 @@ def run_extract(no_llm: bool = False,
                                                       link_method="target_pending",
                                                       classify_model=classify_model))
                     else:
-                        link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
-                                              no_llm=no_llm, no_pdf=no_pdf)
-                        if (not no_pdf or recalibrate_outcomes) and _has_document(doi_r, link):
-                            _save_parse_cache(doi_r)
-                        outcome = _get_outcome(doi_r, row, link,
-                                               no_llm=no_llm and not recalibrate_outcomes)
-                        result_rows.append(
-                            _merge_row(row, link, outcome, "single_original", match_conf,
-                                       1, 1, classify_model)
-                        )
+                        row_out = _resolve_and_code(
+                            doi_r, row, "single_original", match_conf, classify_model,
+                            screen=screen, no_llm=no_llm, no_pdf=no_pdf,
+                            resolved_only=resolved_only,
+                            recalibrate_outcomes=recalibrate_outcomes)
+                        if row_out is not None:
+                            result_rows.append(row_out)
                 else:
                     multi_llm_model = str(result.get("llm_model", "") or "")
                     # Label truthfully: the multi pipeline feeds parsed full text /
@@ -1410,23 +1547,20 @@ def run_extract(no_llm: bool = False,
                             "outcome_confidence": str(orig.get("confidence", "low") or "low"),
                             "out_quote_source":   "llm_multi",
                         }
-                        result_rows.append(
+                        result_rows.append(_guard_original_link(
                             _merge_multi_row(row, orig, outcome, match_type, match_conf,
                                              len(originals), multi_llm_model,
                                              link_method=multi_link_method,
                                              classify_model=classify_model)
-                        )
+                        ))
             else:
-                link    = run_for_doi(doi_r, cands_df=_build_cands_df(row),
-                                      no_llm=no_llm, no_pdf=no_pdf)
-                if (not no_pdf or recalibrate_outcomes) and _has_document(doi_r, link):
-                    _save_parse_cache(doi_r)
-                outcome = _get_outcome(doi_r, row, link,
-                                       no_llm=no_llm and not recalibrate_outcomes)
-                result_rows.append(
-                    _merge_row(row, link, outcome, match_type, match_conf, 1, 1,
-                               classify_model)
-                )
+                row_out = _resolve_and_code(
+                    doi_r, row, match_type, match_conf, classify_model,
+                    screen=screen, no_llm=no_llm, no_pdf=no_pdf,
+                    resolved_only=resolved_only,
+                    recalibrate_outcomes=recalibrate_outcomes)
+                if row_out is not None:
+                    result_rows.append(row_out)
 
         except OpenAlexQuotaExhausted:
             raise
@@ -1435,13 +1569,10 @@ def run_extract(no_llm: bool = False,
             result_rows.append(_empty_row(row, match_type, match_conf,
                                           classify_model=classify_model))
 
+        # Self-links and unrecoverable doi_o are already rejected by
+        # _guard_original_link at each producer, ahead of outcome coding.
         for result_row in result_rows:
-            # Reject self-links / recover missing doi_o BEFORE the resolved_only gate,
-            # so a rejected row is filtered out rather than written as a bogus link.
-            result_row = _guard_original_link(result_row)
-            if resolved_only and result_row.get("link_method") in {
-                "target_pending", "api_error", "no_original_found"
-            }:
+            if resolved_only and result_row.get("link_method") in _NO_LINK_METHODS:
                 log.debug("[%s] --resolved-only: skipping %s row",
                           doi_r, result_row.get("link_method"))
                 continue
@@ -1600,7 +1731,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--rescreen", action="store_true",
         help="With --resume (or --extracted-test): also re-process rows a previous run "
-             "set aside on the Stage 4.5 screen's verdict (not_a_replication, "
+             "set aside on the classification screen's verdict (not_a_replication, "
              "screen_disagreement), so a changed voter pair or prompt decides them again. "
              "Rows already moved into data/not_a_replication.csv or "
              "data/screen_disagreement.csv by sanity_check are re-processed anyway, since "

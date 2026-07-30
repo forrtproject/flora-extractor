@@ -96,7 +96,7 @@ def test_screen_both_votes_is_a_complete_screen(monkeypatch, tmp_path):
     assert out["models_agree"] is True
     assert len(out["votes"]) == 2
     assert out["resolution_method"] != "llm_refscreen_partial"
-    assert list(tmp_path.glob("refscreen_*.json"))  # a real verdict is cached
+    assert list(tmp_path.glob("classify_*.json"))  # a real verdict is cached
 
 
 def test_screen_second_vote_runs_the_configured_openrouter_model(monkeypatch, tmp_path):
@@ -120,7 +120,7 @@ def test_screen_one_vote_is_partial_not_a_disagreement(monkeypatch, tmp_path):
     assert "openrouter" in out["llm_error"]
     assert len(out["votes"]) == 1
     assert out["llm_model"] == llm.GEMINI_LIGHT_MODEL   # the model that did answer
-    assert not list(tmp_path.glob("refscreen_*.json"))  # uncached: a retry must succeed
+    assert not list(tmp_path.glob("classify_*.json"))   # uncached: a retry must succeed
 
 
 def test_screen_no_votes_is_a_failure(monkeypatch, tmp_path):
@@ -129,7 +129,7 @@ def test_screen_no_votes_is_a_failure(monkeypatch, tmp_path):
     assert out["resolution_method"] == "llm_refscreen_failed"
     assert "gemini" in out["llm_error"] and "openrouter" in out["llm_error"]
     assert out["votes"] == []
-    assert not list(tmp_path.glob("refscreen_*.json"))
+    assert not list(tmp_path.glob("classify_*.json"))
 
 
 def test_screen_attributes_a_resolved_link_to_the_target_picker(monkeypatch, tmp_path):
@@ -159,6 +159,104 @@ def test_screen_keeps_classifier_attribution_when_no_target_is_picked(monkeypatc
     assert out["llm_model"] == f"{llm.GEMINI_LIGHT_MODEL}+{llm.SCREEN_VOTER2_MODEL}"
     assert out["llm_evidence"] == "q"
     assert "gemini: r" in out["llm_reasoning"] and "openrouter: r" in out["llm_reasoning"]
+
+
+# ── Classification / target split (audit E1) ─────────────────────────────────
+# The Q1 classification is Stage 3's front door and the Q2 target pick stays in the
+# ladder, so the two halves must be separately callable and separately cached — and
+# a threaded-in verdict must never be re-voted.
+
+def _classify(monkeypatch, tmp_path, calls: list, label: str = "yes"):
+    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    vote = dict(_VOTE, is_replication=label)
+
+    def gemini(prompt, model=None):
+        calls.append(("gemini", prompt))
+        return dict(vote), None
+
+    def openrouter(prompt, model=""):
+        calls.append(("openrouter", prompt))
+        return dict(vote), None
+
+    monkeypatch.setattr(llm, "call_gemini", gemini)
+    monkeypatch.setattr(llm, "call_openrouter", openrouter)
+    return vote
+
+
+def test_classification_is_callable_without_the_target_pick(monkeypatch, tmp_path):
+    calls: list = []
+    _classify(monkeypatch, tmp_path, calls)
+    out = llm.classify_replication("10.1/x", "Title", "Abstract")
+
+    assert out["is_replication"] == "yes" and out["models_agree"] is True
+    assert [c[0] for c in calls] == ["gemini", "openrouter"]   # two votes, nothing else
+    assert "resolved" not in out                                # no target fields
+    assert list(tmp_path.glob("classify_*.json"))
+
+
+def test_a_threaded_verdict_is_not_re_voted(monkeypatch, tmp_path):
+    """Stage 3 votes at the front door; Stage 4.5 must reuse that verdict."""
+    calls: list = []
+    _classify(monkeypatch, tmp_path, calls)
+    verdict = llm.classify_replication("10.1/x", "Title", "Abstract")
+    calls.clear()
+
+    refs = [{"doi": "10.1/orig", "title": "Original", "publication_year": 2015,
+             "first_author": "Smith"}]
+    monkeypatch.setattr(llm, "call_gemini", lambda prompt, model=None: (
+        {"target_number": 1, "confidence": "high", "target_description": "Smith 2015",
+         "evidence_quote": "q", "reasoning": "r"}, None))
+    out = llm.screen_references_with_llm("10.1/x", "Title", "Abstract", refs,
+                                         classification=verdict)
+
+    assert out["resolution_method"] == "llm_references"
+    assert out["resolved_doi_o"] == "10.1/orig"
+    assert out["models_agree"] is True          # the verdict came through intact
+    assert calls == []                          # …without a second classification call
+
+
+def test_the_target_pick_is_cached_separately(monkeypatch, tmp_path):
+    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    verdict = {"resolution_method": "llm_refscreen_declined", "is_replication": "yes",
+               "models_agree": True, "classification_confidence": "high", "votes": [],
+               "llm_source": "", "llm_model": "", "llm_evidence": "",
+               "llm_reasoning": "", "llm_prompt": "", "llm_error": ""}
+    refs = [{"doi": "10.1/orig", "title": "Original", "publication_year": 2015,
+             "first_author": "Smith"}]
+    n = {"calls": 0}
+
+    def gemini(prompt, model=None):
+        n["calls"] += 1
+        return ({"target_number": 1, "confidence": "high",
+                 "target_description": "Smith 2015", "evidence_quote": "q",
+                 "reasoning": "r"}, None)
+
+    monkeypatch.setattr(llm, "call_gemini", gemini)
+    first = llm.screen_references_with_llm("10.1/x", "T", "A", refs, classification=verdict)
+    second = llm.screen_references_with_llm("10.1/x", "T", "A", refs, classification=verdict)
+
+    assert first["resolved_doi_o"] == second["resolved_doi_o"] == "10.1/orig"
+    assert n["calls"] == 1
+    assert list(tmp_path.glob("reftarget_*.json"))
+    assert not list(tmp_path.glob("classify_*.json"))  # the verdict is not re-cached here
+
+
+def test_no_target_call_when_the_verdict_is_not_yes(monkeypatch, tmp_path):
+    calls: list = []
+    _classify(monkeypatch, tmp_path, calls, label="no")
+    verdict = llm.classify_replication("10.1/x", "Title", "Abstract")
+    monkeypatch.setattr(llm, "call_gemini", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("no target pick for a paper that is not a replication")))
+
+    out = llm.screen_references_with_llm(
+        "10.1/x", "Title", "Abstract",
+        [{"doi": "10.1/o", "title": "O", "publication_year": 2015, "first_author": "S"}],
+        classification=verdict)
+
+    assert out["is_replication"] == "no"
+    assert out["resolved"] is False
 
 
 # ── Gemini flex tier (audit Q4) ──────────────────────────────────────────────

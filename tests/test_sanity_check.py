@@ -109,6 +109,29 @@ def test_blank_doi_r_rows_do_not_collapse(tmp_path, monkeypatch):
     assert len(moved) == 2
 
 
+def test_disagreement_beats_the_outcome_rule(tmp_path, monkeypatch):
+    """audit B6: not_a_replication.csv is read as "both classifiers agreed this is
+    not a replication". A row where they DISAGREED must never land there, whatever
+    outcome was once coded against it."""
+    monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
+    ex = tmp_path / "extracted.csv"
+    _write(ex, [
+        {"doi_r": "10.1/dis", "outcome": "not_a_replication", "openalex_id_r": "W1",
+         "link_method": "screen_disagreement"},
+        {"doi_r": "10.1/nar", "outcome": "not_a_replication", "openalex_id_r": "W2",
+         "link_method": "not_a_replication"},
+    ])
+
+    s = sc.run_sanity_check(ex, move=True, deep=False)
+
+    assert s["moved"]["screen_disagreement"] == 1
+    assert s["moved"]["not_a_replication"] == 1
+    dis = pd.read_csv(tmp_path / "screen_disagreement.csv", dtype=str, keep_default_na=False)
+    nar = pd.read_csv(tmp_path / "not_a_replication.csv", dtype=str, keep_default_na=False)
+    assert set(dis["doi_r"]) == {"10.1/dis"}
+    assert set(nar["doi_r"]) == {"10.1/nar"}
+
+
 def test_provisional_title_search_rows_are_set_aside(tmp_path, monkeypatch):
     """A title-search link is ~50% precise and its failure mode is invisible to
     doi_o_verification, so a verified-looking row must still leave extracted.csv
