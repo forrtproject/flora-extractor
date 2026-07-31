@@ -149,6 +149,9 @@ OUTCOME_FULLTEXT_ESCALATION = os.getenv(
 
 # ── Rate limits (seconds between calls) ──────────────────────────────────────
 OPENALEX_RATE_SEC  = float(os.getenv("OPENALEX_RATE_SEC", "0.3"))
+# Europe PMC is keyless and public, so the default is deliberately polite. At 25 DOIs
+# per boolean query it still clears ~60 DOIs/sec — comparable to the S2 batch tier.
+EPMC_RATE_SEC      = float(os.getenv("EPMC_RATE_SEC", "0.4"))
 CROSSREF_RATE_SEC  = 0.1
 UNPAYWALL_RATE_SEC = 0.5
 GROBID_RATE_SEC    = 3.0
