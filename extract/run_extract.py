@@ -591,6 +591,7 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
         "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
         "out_quote_source":    outcome.get("out_quote_source",    ""),
         "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
+        "outcome_llm_model":   str(outcome.get("llm_model",       "") or ""),
         "type":          "reproduction"
                          if str(filter_row.get("filter_status", "")) == "reproduction"
                          else "replication",
@@ -645,6 +646,7 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
         "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
         "out_quote_source":    outcome.get("out_quote_source",    ""),
         "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
+        "outcome_llm_model":   str(outcome.get("llm_model",       "") or ""),
         "type":          "reproduction"
                          if str(filter_row.get("filter_status", "")) == "reproduction"
                          else "replication",
@@ -670,6 +672,7 @@ def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
         "link_llm_model": "",
         "outcome": outcome, "outcome_phrase": "",
         "outcome_confidence": "low", "out_quote_source": "", "outcome_reasoning": "",
+        "outcome_llm_model": "",
         "type": "", "original_rank": 1, "n_originals": 1,
     })
     return row
@@ -763,11 +766,15 @@ def _outcome_without_coding(link_method: str, link: dict) -> "dict | None":
     if link_method in RESOLVED_LINK_METHODS:
         return None
 
-    def _skip(outcome: str, confidence: str, source: str, reasoning: str) -> dict:
+    # outcome_llm_model names the model whose verdict IS the outcome. Only
+    # not_a_replication has one: the rest are placeholders for a verdict never made,
+    # and stamping the link stage's model on them would read as an outcome coding.
+    def _skip(outcome: str, confidence: str, source: str, reasoning: str,
+              llm_model: str = "") -> dict:
         return {"outcome": outcome, "outcome_phrase": "",
                 "outcome_confidence": confidence, "out_quote_source": source,
                 "outcome_reasoning": reasoning,
-                "llm_model": str(link.get("llm_model", "") or "")}
+                "llm_model": llm_model}
 
     if link_method == "api_error":
         return _skip("api_error", "low", "", str(link.get("llm_error", "") or ""))
@@ -775,7 +782,8 @@ def _outcome_without_coding(link_method: str, link: dict) -> "dict | None":
         # The classification screen already read the abstract and settled this; the
         # verdict IS the outcome, and sanity_check routes the row on it.
         return _skip("not_a_replication", "high", "abstract",
-                     str(link.get("llm_reasoning", "") or ""))
+                     str(link.get("llm_reasoning", "") or ""),
+                     str(link.get("llm_model", "") or ""))
     if link_method == "llm_title_search":
         return _skip("cannot_be_determined", "low", "",
                      "provisional link from a title search — outcome not coded "
@@ -796,6 +804,7 @@ def _apply_outcome(row: dict, outcome: dict) -> dict:
         "outcome_confidence": outcome.get("outcome_confidence", "low"),
         "out_quote_source":   outcome.get("out_quote_source",   ""),
         "outcome_reasoning":  outcome.get("outcome_reasoning",  ""),
+        "outcome_llm_model":  str(outcome.get("llm_model",      "") or ""),
     })
     return row
 
@@ -1726,6 +1735,7 @@ def run_extract(no_llm: bool = False,
                             "outcome_phrase":     str(orig.get("outcome_evidence", "") or ""),
                             "outcome_confidence": str(orig.get("confidence", "low") or "low"),
                             "out_quote_source":   "llm_multi",
+                            "llm_model":          multi_llm_model,
                         }
                         result_rows.append(_guard_original_link(
                             _merge_multi_row(row, orig, outcome, match_type, match_conf,

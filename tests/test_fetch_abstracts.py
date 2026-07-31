@@ -11,10 +11,13 @@ from search import fetch_abstracts as fa
 
 
 class DummyResponse:
-    def __init__(self, payload=None, status_code=200, headers=None):
+    def __init__(self, payload=None, status_code=200, headers=None, text=""):
         self._payload = payload if payload is not None else {}
         self.status_code = status_code
         self.headers = headers or {}
+        # The batch fetchers log resp.text[:200] on a >=400 body, so a real
+        # response attribute has to exist or the error path itself raises.
+        self.text = text
 
     def json(self):
         return self._payload
@@ -260,6 +263,8 @@ def test_phase4_priority_file_reorders_quota(monkeypatch, tmp_path):
     called_dois: list = []
 
     def fake_get(url, timeout=None, headers=None, **kw):
+        if "europepmc" in url:
+            return DummyResponse({"resultList": {"result": []}})   # Phase 2: all miss
         if "crossref.org" in url:
             return DummyResponse({"message": {}})
         doi = url.split("/content/abstract/doi/", 1)[-1]
@@ -725,6 +730,11 @@ def test_run_fills_from_cache_by_key_priority(monkeypatch, tmp_path):
     monkeypatch.setattr(fa._OA_SESSION, "get", fake_oa_get)
 
     def fake_get(url, timeout=None, headers=None, **kwargs):
+        # Europe PMC (Phase 2) now runs before every other doi-keyed phase, so it
+        # sees all four doi rows first. All miss here, so each row still falls
+        # through to the single source the test intends to exercise.
+        if "europepmc" in url:
+            return DummyResponse({"resultList": {"result": []}})
         if "crossref.org" in url:
             doi = url.split("/works/", 1)[1].split("?", 1)[0]
             if doi == "10.1/cr":
@@ -882,7 +892,7 @@ def test_candidates_parquet_is_never_read_whole(monkeypatch, tmp_path):
                              "must stream via ParquetFile.iter_batches()")
     monkeypatch.setattr(pq, "read_table", guarded_read_table)
 
-    worklist, total_missing, has_oa, has_doi = fa._build_worklist(dry_run=False, limit=None)
+    worklist, total_missing, has_oa, has_doi, _ = fa._build_worklist(dry_run=False, limit=None)
 
     assert total_missing == 2               # rows with blank abstract_r (rows 0 and 2)
     assert has_oa == 1                      # only row 0 has openalex_id_r
@@ -960,3 +970,229 @@ def test_limit_caps_processing(monkeypatch, tmp_path):
     # Only the first two ids ever reached the OpenAlex batch call.
     joined = " ".join(requested)
     assert "W2" not in joined and "W3" not in joined
+
+
+# ---------------------------------------------------------------------------
+# Europe PMC (Phase 2) — the keyless source that covers the Elsevier/Springer gap
+# ---------------------------------------------------------------------------
+
+def _epmc_payload(*records):
+    return {"resultList": {"result": list(records)}}
+
+
+def test_epmc_batch_joins_by_doi_not_by_position(monkeypatch):
+    """Europe PMC returns matches unordered and may omit a DOI entirely, so the
+    join must be by the 'doi' field. A DOI absent from a successful response is a
+    definitive miss, mapped to None."""
+    payload = _epmc_payload(
+        {"doi": "10.1/c", "abstractText": "third"},
+        {"doi": "10.1/a", "abstractText": "first"},
+    )
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, params=None, timeout=None: DummyResponse(payload))
+
+    result = fa._fetch_epmc_batch(["10.1/a", "10.1/b", "10.1/c"])
+    assert result == {"10.1/a": "first", "10.1/b": None, "10.1/c": "third"}
+
+
+def test_epmc_batch_requests_core_view_and_quotes_dois(monkeypatch):
+    """resultType=core is REQUIRED — the 'lite' view omits abstractText, so with it
+    every DOI would silently look like a miss. Guard the query shape too."""
+    captured = {}
+
+    def fake_get(url, params=None, timeout=None):
+        captured["url"] = url
+        captured["params"] = params
+        return DummyResponse(_epmc_payload())
+
+    monkeypatch.setattr(fa._SESSION, "get", fake_get)
+    fa._fetch_epmc_batch(["10.1/a", "10.1/b"])
+
+    assert "europepmc" in captured["url"]
+    assert captured["params"]["resultType"] == "core"
+    assert captured["params"]["query"] == 'DOI:"10.1/a" OR DOI:"10.1/b"'
+
+
+def test_epmc_batch_strips_jats_markup(monkeypatch):
+    monkeypatch.setattr(
+        fa._SESSION, "get",
+        lambda url, params=None, timeout=None: DummyResponse(_epmc_payload(
+            {"doi": "10.1/a",
+             "abstractText": "<jats:p>Real <jats:italic>text</jats:italic></jats:p>"})))
+    assert fa._fetch_epmc_batch(["10.1/a"])["10.1/a"] == "Real text"
+
+
+def test_epmc_batch_duplicate_records_keep_first_abstract(monkeypatch):
+    """A DOI can match both a preprint and its published record. The first record
+    carrying an abstract wins; a later empty one must not overwrite it."""
+    monkeypatch.setattr(
+        fa._SESSION, "get",
+        lambda url, params=None, timeout=None: DummyResponse(_epmc_payload(
+            {"doi": "10.1/a", "abstractText": "the good one"},
+            {"doi": "10.1/a", "abstractText": ""})))
+    assert fa._fetch_epmc_batch(["10.1/a"])["10.1/a"] == "the good one"
+
+
+def test_epmc_batch_whole_batch_failure_returns_none(monkeypatch):
+    """A persistent 5xx returns None so the caller checkpoints nothing — one
+    transient failure must not poison EPMC_BATCH_SIZE DOIs as permanent misses."""
+    monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, params=None, timeout=None:
+                        DummyResponse({}, status_code=503))
+    assert fa._fetch_epmc_batch(["10.1/a", "10.1/b"]) is None
+
+
+def test_epmc_phase_whole_batch_failure_not_checkpointed(monkeypatch, tmp_path):
+    """Phase 2 (Europe PMC): a whole-batch failure leaves every DOI in the batch
+    un-checkpointed, so a later run retries them."""
+    import pandas as pd
+    _setup_run(monkeypatch, tmp_path)
+    monkeypatch.setenv("S2_API_KEY", "")
+    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
+
+    pd.DataFrame({
+        "abstract_r":    ["", ""],
+        "doi_r":         ["10.1/a", "10.1/b"],
+        "openalex_id_r": ["", ""],
+    }).to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
+
+    monkeypatch.setattr(fa._OA_SESSION, "get",
+                        lambda url, timeout=None: DummyResponse({"results": []}))
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, params=None, timeout=None, headers=None, **kw:
+                        DummyResponse({}, status_code=500))
+    fa.run(scopus_limit=0)
+
+    done = _checkpoint()
+    assert "epmc:10.1/a" not in done and "epmc:10.1/b" not in done
+
+
+def test_epmc_hit_skips_s2_and_crossref_entirely(monkeypatch, tmp_path):
+    """Ordering check: Europe PMC runs first, so a DOI it resolves must never reach
+    the S2 batch endpoint or CrossRef at all — not merely be unaffected by them."""
+    import pandas as pd
+    _setup_run(monkeypatch, tmp_path)
+    monkeypatch.setenv("S2_API_KEY", "KEY")
+    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
+
+    pd.DataFrame({
+        "abstract_r":    [""],
+        "doi_r":         ["10.1016/x"],
+        "openalex_id_r": [""],
+    }).to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
+
+    monkeypatch.setattr(fa._OA_SESSION, "get",
+                        lambda url, timeout=None: DummyResponse({"results": []}))
+
+    calls = {"epmc": 0, "crossref": 0, "s2_post": 0}
+
+    def fake_get(url, params=None, timeout=None, headers=None, **kw):
+        if "europepmc" in url:
+            calls["epmc"] += 1
+            return DummyResponse(_epmc_payload(
+                {"doi": "10.1016/x", "abstractText": "EPMC hit"}))
+        if "crossref.org" in url:
+            calls["crossref"] += 1
+        return DummyResponse({"message": {}})
+
+    def fake_post(*a, **k):
+        calls["s2_post"] += 1
+        return DummyResponse([])
+
+    monkeypatch.setattr(fa._SESSION, "get", fake_get)
+    monkeypatch.setattr(fa._SESSION, "post", fake_post)
+    fa.run(scopus_limit=0)
+
+    assert calls["epmc"] == 1
+    assert calls["s2_post"] == 0, "S2 must not be called for a DOI Europe PMC resolved"
+    assert calls["crossref"] == 0, "CrossRef must not be called for a DOI Europe PMC resolved"
+
+    out = pd.read_csv(fa.CANDIDATES_PATH, dtype=str, encoding="utf-8-sig").fillna("")
+    assert out.loc[0, "abstract_r"] == "EPMC hit"
+
+
+def test_dataset_dois_are_excluded_from_every_phase(monkeypatch, tmp_path):
+    """Dataverse/Zenodo DOIs register datasets, not articles — no abstract exists,
+    so they must never reach a fetch phase. They still count as missing."""
+    import pandas as pd
+    _setup_run(monkeypatch, tmp_path)
+    monkeypatch.setenv("S2_API_KEY", "")
+    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
+
+    pd.DataFrame({
+        "abstract_r":    ["", "", ""],
+        "doi_r":         ["10.7910/DVN/ABC", "10.5281/zenodo.123", "10.1016/real"],
+        "openalex_id_r": ["", "", ""],
+    }).to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
+
+    worklist, total_missing, has_oa, has_doi, n_dataset = fa._build_worklist(
+        dry_run=False, limit=None)
+
+    assert total_missing == 3      # all three really are missing an abstract
+    assert n_dataset == 2
+    assert has_doi == 1
+    assert [w["doi_r"] for w in worklist] == ["10.1016/real"]
+
+    queried = []
+
+    def fake_get(url, params=None, timeout=None, headers=None, **kw):
+        queried.append((params or {}).get("query", url))
+        return DummyResponse(_epmc_payload())
+
+    monkeypatch.setattr(fa._OA_SESSION, "get",
+                        lambda url, timeout=None: DummyResponse({"results": []}))
+    monkeypatch.setattr(fa._SESSION, "get", fake_get)
+    fa.run(scopus_limit=0)
+
+    joined = " ".join(queried)
+    assert "10.7910" not in joined and "10.5281" not in joined
+    assert "10.1016/real" in joined
+
+
+def test_enrich_abstracts_batches_epmc_first_and_skips_dataset_dois(monkeypatch, tmp_path):
+    """The per-row path used by run_search's merge shares the waterfall's ordering:
+    Europe PMC is batched first, a DOI it resolves never reaches CrossRef or S2, and
+    dataset DOIs are never queried at all."""
+    import pandas as pd
+
+    monkeypatch.setattr(fa, "ABSTRACT_CACHE_DIR", tmp_path / "abstracts")
+    fa.ABSTRACT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(fa, "FOUND_INDEX_PATH", tmp_path / "found.txt")
+    monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
+    monkeypatch.setenv("S2_API_KEY", "")
+
+    df = pd.DataFrame({
+        "abstract_r": ["", "", "", "keep me"],
+        "doi_r":      ["10.1016/epmc", "10.1/cr", "10.7910/DVN/X", "10.1/untouched"],
+    })
+
+    queries, crossref_dois = [], []
+
+    def fake_get(url, params=None, timeout=None, headers=None, **kw):
+        if "europepmc" in url:
+            queries.append(params["query"])
+            return DummyResponse({"resultList": {"result": [
+                {"doi": "10.1016/epmc", "abstractText": "EPMC hit"}]}})
+        crossref_dois.append(url.split("/works/", 1)[1].split("?", 1)[0])
+        return DummyResponse({"message": {"abstract": "CR hit"}})
+
+    monkeypatch.setattr(fa._SESSION, "get", fake_get)
+
+    out = fa.enrich_abstracts(df)
+
+    assert out.loc[0, "abstract_r"] == "EPMC hit"
+    assert out.loc[1, "abstract_r"] == "CR hit"
+    assert out.loc[2, "abstract_r"] == ""          # dataset DOI: nothing to find
+    assert out.loc[3, "abstract_r"] == "keep me"   # already had one, untouched
+
+    # One batched Europe PMC call covering both article DOIs, and no dataset DOI.
+    assert len(queries) == 1
+    assert "10.1016/epmc" in queries[0] and "10.1/cr" in queries[0]
+    assert "10.7910" not in queries[0]
+
+    # CrossRef only saw the DOI Europe PMC missed.
+    assert crossref_dois == ["10.1/cr"]

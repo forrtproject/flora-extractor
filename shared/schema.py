@@ -80,6 +80,9 @@ EXTRACT_ADDED_COLS = [
     "outcome_confidence",  # str   — high | medium | low
     "out_quote_source",    # str   — abstract | title | fulltext
     "outcome_reasoning",  # str   — one-sentence LLM note explaining the classification choice
+    "outcome_llm_model",   # str   — exact model that coded the outcome ("keyword" for the
+                           #         rule-based fallback, blank when no verdict was made);
+                           #         differs from link_llm_model when a provider falls over mid-run
 
     # Record type and multi-original bookkeeping
     "type",                # str   — replication | reproduction

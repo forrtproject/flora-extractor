@@ -75,6 +75,7 @@ All `filtered.csv` columns, plus:
 | `outcome_confidence` | string | `high` \| `medium` \| `low` |
 | `out_quote_source` | string | Where the outcome quote came from: `abstract` \| `title` \| `fulltext`. `fulltext` appears only on results escalated to the fulltext LLM pass. |
 | `outcome_reasoning` | string | LLM chain-of-thought for the outcome decision |
+| `outcome_llm_model` | string | Model that coded the outcome. Can differ from `link_llm_model` within one run — the outcome step fails over to another provider when the primary's quota runs out. `keyword` on `--no-llm` rule-based rows; blank when no outcome verdict was made (`pending`, `api_error`) |
 | `type` | string | `replication` \| `reproduction` |
 | `original_rank` | int | 1 for single-original; 1, 2, 3… for multi-original |
 | `n_originals` | int | Total number of originals for this paper |
