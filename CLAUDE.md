@@ -111,6 +111,7 @@ registered.
 | `search/external_lists.py`   | Bob Reed list scraper, I4R list scraper (pluggable — see Stage 1 docs)      |
 | `search/deduplicate.py`      | Merge sources, deduplicate by DOI + fuzzy title, cross-check FLoRA sheet    |
 | `search/run_search.py`       | Orchestrator: calls all sources, appends to `data/candidates.csv` via index |
+| `search/fetch_abstracts.py`  | Backfills missing `abstract_r`: OpenAlex → Europe PMC → S2 → CrossRef → Scopus, each with its own checkpoint namespace; `enrich_abstracts()` is the per-row version called during the Stage 1 merge |
 
 ### `filter/` — Stage 2
 

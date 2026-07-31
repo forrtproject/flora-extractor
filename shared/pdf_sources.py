@@ -907,7 +907,11 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
             pass
 
     # Tier 4 — Unpaywall direct PDFs
-    uw_all     = get_all_unpaywall_pdf_urls(doi_r)
+    # Every other tier is guarded by `if not dl["success"]`; this one was not, so a
+    # DOI already served by arXiv/OSF/OpenAlex still cost an Unpaywall round-trip.
+    # Tiers 8 and 11 are the only other consumers of uw_landing/uw_direct and both
+    # sit inside `if not dl["success"]` blocks, so the empty list is never reached.
+    uw_all     = get_all_unpaywall_pdf_urls(doi_r) if not dl["success"] else []
     uw_direct  = [u for u in uw_all if u["type"] == "pdf"]
     uw_landing = [u for u in uw_all if u["type"] == "landing"]
 
