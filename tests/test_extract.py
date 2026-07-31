@@ -2036,12 +2036,12 @@ class TestEmptyParseCache:
     def test_all_empty_cache_reads_as_a_miss(self, tmp_path, monkeypatch):
         self._cache(tmp_path, monkeypatch, _EMPTY_PARSE)
         assert run_extract._read_parse_cache("10.1/x") is None
-        assert run_extract._best_fulltext_from_cache("10.1/x") == ""
+        assert run_extract._best_fulltext_from_cache("10.1/x") == ("", "none")
 
     def test_populated_cache_still_reads(self, tmp_path, monkeypatch):
         self._cache(tmp_path, monkeypatch, _FULL_PARSE)
         assert run_extract._read_parse_cache("10.1/x") is not None
-        assert run_extract._best_fulltext_from_cache("10.1/x") == "body"
+        assert run_extract._best_fulltext_from_cache("10.1/x") == ("body", "tail")
 
     def test_empty_cache_is_reparsed_not_trusted(self, tmp_path, monkeypatch):
         """The whole bug: the empty file existed, so the re-parse never happened."""
@@ -2130,3 +2130,69 @@ class TestMatchTypeFailureIsNotCached:
             with patch("extract.run_extract.call_llm", return_value=(llm, "m", "")):
                 result = classify_match_type(self._ROW_MULTI)
         assert result["original_match_type"] == "multiple_original"
+
+
+class TestOutcomeReadsTheDiscussion:
+    """FLoRA's rule: the abstract, and failing that the discussion and conclusion.
+    The escalation used to send the first 8,000 characters — i.e. the introduction,
+    which routinely reports OTHER studies' replication failures."""
+
+    _PAPER = ("Introduction\n" + ("Earlier work failed to replicate this. " * 100)
+              + "\nGeneral Discussion\n"
+              + ("Our replication succeeded in every respect. " * 30)
+              + "\nReferences\nSmith, J. (2010). A paper.\n")
+
+    def _cache(self, tmp_path, monkeypatch, results):
+        import json
+        from shared.utils import cache_key
+        monkeypatch.setattr(run_extract, "PARSE_CACHE_DIR", tmp_path)
+        (tmp_path / f"parse_{cache_key('10.1/x')}.json").write_text(
+            json.dumps(results), encoding="utf-8")
+
+    def test_escalation_text_is_the_discussion(self, tmp_path, monkeypatch):
+        self._cache(tmp_path, monkeypatch, {
+            "markitdown": {"source": "markitdown", "abstract": "a", "intro": "i",
+                           "references": [], "raw_text": self._PAPER, "error": None},
+        })
+        text, provenance = run_extract._best_fulltext_from_cache("10.1/x")
+        assert provenance == "discussion"
+        assert "Our replication succeeded" in text
+        assert "Earlier work failed to replicate" not in text
+
+    def test_a_parser_with_no_raw_text_does_not_hide_one_that_has_it(self, tmp_path,
+                                                                     monkeypatch):
+        """GROBID scores highly on references but returns no raw_text at all;
+        falling back to its abstract+intro discarded a full parse another method
+        had already produced."""
+        self._cache(tmp_path, monkeypatch, {
+            "grobid": {"source": "grobid", "abstract": "a", "intro": "i",
+                       "references": [{"title": "t"}] * 40, "raw_text": "",
+                       "error": None},
+            "markitdown": {"source": "markitdown", "abstract": "a", "intro": "i",
+                           "references": [], "raw_text": self._PAPER, "error": None},
+        })
+        text, provenance = run_extract._best_fulltext_from_cache("10.1/x")
+        assert provenance == "discussion"
+        assert "Our replication succeeded" in text
+
+    def test_the_model_is_told_which_section_it_is_reading(self, tmp_path, monkeypatch):
+        import pandas as pd
+        self._cache(tmp_path, monkeypatch, {
+            "markitdown": {"source": "markitdown", "abstract": "a", "intro": "i",
+                           "references": [], "raw_text": self._PAPER, "error": None},
+        })
+        captured = {}
+
+        def fake_extract_outcome(doi_r, abstract_r, fulltext="", *a, **kw):
+            captured["fulltext"] = fulltext
+            return {"outcome": "success", "outcome_phrase": "", "outcome_confidence": "high",
+                    "out_quote_source": "fulltext", "outcome_reasoning": ""}
+
+        monkeypatch.setattr(run_extract, "extract_outcome", fake_extract_outcome)
+        run_extract._get_outcome(
+            "10.1/x",
+            pd.Series({"abstract_r": "", "title_r": "T", "filter_status": "replication"}),
+            {},
+        )
+        assert captured["fulltext"].startswith("[SOURCE: discussion / conclusion")
+        assert "Our replication succeeded" in captured["fulltext"]

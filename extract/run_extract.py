@@ -29,8 +29,10 @@ from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
 from shared.openalex_client import _search_crossref_by_title, _search_openalex_by_title
 from shared.pdf_parsing import (
     best_parse_result,
+    outcome_text,
     parse_all as _parse_all,
     parse_result_is_empty,
+    score_parse_result,
 )
 from shared.cache import content_key, read_cache, write_cache
 from shared.prompts import build_match_type_prompt, prompt_version
@@ -803,16 +805,24 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -
     title_r    = str(row.get("title_r",    ""))
 
     # Prefer the best-scoring parse method from the parse cache so the outcome LLM
-    # receives whichever parser extracted the richest text, not always GROBID.
-    fulltext = _best_fulltext_from_cache(doi_r)
-    if not fulltext:
-        # Fallback: GROBID sections that run_for_doi already extracted
+    # receives whichever parser extracted the richest text, not always GROBID —
+    # narrowed to the discussion/conclusion, which is where FLoRA's rule says the
+    # outcome is stated when the abstract does not state it.
+    fulltext, provenance = _best_fulltext_from_cache(doi_r)
+    if fulltext:
+        fulltext = (f"[{_PROVENANCE_LABEL[provenance]}]\n\n{fulltext}")
+    else:
+        # Fallback: GROBID sections that run_for_doi already extracted. The intro is
+        # in here for want of anything better; it is the section that most often
+        # discusses OTHER studies' replication failures, and the prompt says so.
         fulltext = " ".join(filter(None, [
             str(link.get("grobid_abstract", "") or ""),
             str(link.get("grobid_intro",    "") or ""),
             str(link.get("grobid_methods",  "") or ""),
             str(link.get("html_text",       "") or ""),
         ]))
+        if fulltext:
+            fulltext = f"[{_PROVENANCE_LABEL['sections']}]\n\n{fulltext}"
 
     # filter_status decides the outcome vocabulary: a reproduction is coded on the
     # computation/robustness grid, not success/failure (see shared/schema.py).
@@ -829,26 +839,51 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -
     )
 
 
-def _best_fulltext_from_cache(doi_r: str) -> str:
-    """
-    Read the parse cache for doi_r, score each method, and return the fulltext
-    of the highest-scoring method.  Prefers raw_text (full paper including
-    results/discussion/conclusion); falls back to abstract + intro when raw_text
-    is empty.  Returns '' on a miss (including an all-empty cache).
+# Leaves room for the SOURCE label below under code_outcome._FULLTEXT_CAP, which
+# truncates from the front — without the headroom the label would push the last
+# few hundred characters of the discussion past the cap.
+_OUTCOME_TEXT_CHARS = 7600
+
+# Told to the model alongside the text, so it never attributes a quote to a
+# section it was not shown.
+_PROVENANCE_LABEL = {
+    "discussion": "SOURCE: discussion / conclusion section of the paper",
+    "tail":       "SOURCE: closing pages of the paper, before the reference list",
+    "sections":   "SOURCE: abstract, introduction and methods only — the closing "
+                  "sections could not be parsed. Statements about replication "
+                  "failures in an introduction usually concern OTHER studies",
+}
+
+
+def _best_fulltext_from_cache(doi_r: str) -> tuple[str, str]:
+    """The outcome-bearing text for doi_r, as (text, provenance).
+
+    Reads the parse cache, and takes the raw text of the highest-scoring method
+    that actually has raw text — the top-scoring method overall can be GROBID,
+    which returns sections and no raw text at all, and falling straight back to
+    its abstract + intro discarded a full parse another method had produced.
+
+    `outcome_text()` then narrows that to the discussion/conclusion. Returns
+    ("", "none") on a cache miss or an all-empty cache.
     """
     results = _read_parse_cache(doi_r)
-    if results is None:
-        return ""
+    if not results:
+        return "", "none"
+    ranked = sorted((r for r in results.values() if isinstance(r, dict)),
+                    key=score_parse_result, reverse=True)
+    for result in ranked:
+        raw = str(result.get("raw_text", "") or "").strip()
+        if raw:
+            return outcome_text(raw, max_chars=_OUTCOME_TEXT_CHARS)
+
     best = best_parse_result(results)
     if not best:
-        return ""
-    raw = str(best.get("raw_text", "") or "").strip()
-    if raw:
-        return raw
-    return " ".join(filter(None, [
+        return "", "none"
+    joined = " ".join(filter(None, [
         str(best.get("abstract", "") or ""),
         str(best.get("intro",    "") or ""),
-    ]))
+    ])).strip()
+    return (joined, "sections") if joined else ("", "none")
 
 
 def _parse_originals(result: dict) -> list[dict]:

@@ -679,7 +679,9 @@ def build_outcome_fulltext_prompt(title_r: str, abstract_snip: str, text_snip: s
         + original_block
         + f"TITLE: {title_r}\n"
         f"ABSTRACT: {abstract_snip or '(not available)'}\n"
-        f"PARSED FULLTEXT: {text_snip or '(not available)'}\n\n"
+        f"PAPER TEXT: {text_snip or '(not available)'}\n"
+        "(The SOURCE line above the paper text says which part of the paper it "
+        "comes from. Do not attribute a quote to a section you were not shown.)\n\n"
         + OUTCOME_RULES +
         "Judge the outcome of THIS paper's own replication, not outcomes it reports "
         "for other studies in its background or literature review.\n\n"
@@ -720,7 +722,9 @@ def build_repro_fulltext_prompt(title_r: str, abstract_snip: str, text_snip: str
         + original_block
         + f"TITLE: {title_r}\n"
         f"ABSTRACT: {abstract_snip or '(not available)'}\n"
-        f"PARSED FULLTEXT: {text_snip or '(not available)'}\n\n"
+        f"PAPER TEXT: {text_snip or '(not available)'}\n"
+        "(The SOURCE line above the paper text says which part of the paper it "
+        "comes from. Do not attribute a quote to a section you were not shown.)\n\n"
         + REPRO_OUTCOME_RULES
         + "Judge THIS paper's own reproduction attempt, not results it reports for other "
           "studies in its background or literature review.\n\n"

@@ -374,6 +374,77 @@ def parse_markitdown(pdf_path, doi_r: str) -> dict:
     })
 
 
+# ── Outcome-bearing text ──────────────────────────────────────────────────────
+# FLoRA codes the outcome from the abstract and, when the abstract does not state
+# it, from "what is written in the report (discussion and conclusion sections)"
+# (FLoRA FAQ, "What is the outcome based on?"). The escalation used to send the
+# first 8,000 characters of the parsed text, which for a typical article ends
+# somewhere in the methods: it read the introduction — the one section that
+# routinely reports OTHER studies' replication failures — and truncated away the
+# sections the rule names.
+
+import re as _re
+
+# A heading line, not a mention in running prose: anchored to the start of a line
+# and allowed only a short tail (a subtitle, a page number), so "in the Discussion
+# we return to…" cannot match.
+_DISCUSSION_HEADER = _re.compile(
+    r"(?im)^[^\S\n]{0,8}(?:\d+[.\s]{1,3})?(?:general\s+|overall\s+)?"
+    r"(?:discussion|conclusions?|concluding\s+remarks|"
+    r"(?:summary|discussion)\s+and\s+(?:discussion|conclusions?|implications))"
+    r"[^\S\n]*[:.]?[^\n]{0,40}$"
+)
+
+# The last section heading before the discussion can start is the references one,
+# and that boundary is already solved: the same pattern grobid._split_sections
+# uses, taking the last match so an in-text "References show…" cannot win.
+def _references_start(text: str) -> int:
+    from .grobid import _SECTION_HEADERS
+    matches = list(_SECTION_HEADERS["references"].finditer(text))
+    return matches[-1].start() if matches else len(text)
+
+
+# Below this fraction of the body a "Discussion" heading is almost always a
+# structured abstract's own label ("Discussion: we find…") rather than the
+# section, and taking it would hand the model the front of the paper again —
+# exactly the failure this function exists to remove.
+_MIN_DISCUSSION_POSITION = 0.4
+
+# A heading with almost nothing under it is a table of contents entry or a
+# running header, not the section.
+_MIN_DISCUSSION_CHARS = 300
+
+
+def outcome_text(raw_text: str, max_chars: int = 8000) -> tuple[str, str]:
+    """The part of a paper that states its own replication verdict.
+
+    Returns (text, provenance) where provenance is one of:
+      "discussion" — sliced from the last discussion/conclusion heading to the
+                     references, which is what the FLoRA rule asks for;
+      "tail"       — no usable heading, so the text immediately before the
+                     references. Still the right end of the paper;
+      "none"       — nothing to send.
+
+    The caller passes the provenance to the model, so a quote is never attributed
+    to a section the model was not shown.
+    """
+    if not raw_text or not raw_text.strip():
+        return "", "none"
+
+    body = raw_text[:_references_start(raw_text)]
+    if not body.strip():
+        body = raw_text
+
+    for m in reversed(list(_DISCUSSION_HEADER.finditer(body))):
+        if m.start() < len(body) * _MIN_DISCUSSION_POSITION:
+            break
+        block = body[m.start():].strip()
+        if len(block) >= _MIN_DISCUSSION_CHARS:
+            return block[:max_chars], "discussion"
+
+    return body[-max_chars:].strip(), "tail"
+
+
 # ── Parse scoring ─────────────────────────────────────────────────────────────
 
 def score_parse_result(r: dict) -> int:

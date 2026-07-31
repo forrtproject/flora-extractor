@@ -313,3 +313,30 @@ def test_provisional_title_search_rows_are_not_imported(capsys, monkeypatch, tmp
 
     assert "Resolved (import):  1" in out
     assert "llm_title_search" not in csv_to_db._RESOLVED_METHODS
+
+
+def test_study_columns_carry_identifiers_not_titles():
+    """study_r / study_o are study identifiers. They used to carry paper titles,
+    which made one column name mean a study number in FLoRA's codebook and a title
+    in the DB, and left the real study numbers with nowhere to go (issue #103)."""
+    import pandas as pd
+    from extract import csv_to_db
+    row = pd.Series({
+        "doi_r": "10.1/rep", "title_r": "A Replication of Smith (2010)",
+        "doi_o": "10.2/orig", "title_o": "The Original Work", "study_o": "1, 2",
+        "doi_o_verification": "verified",
+    })
+    out = csv_to_db._build_unvalidated_row("rec-1", row)
+    assert out["study_o"] == "1, 2"
+    assert out["title_o"] == "The Original Work"
+    assert out["title_r"] == "A Replication of Smith (2010)"
+    assert out["study_r"] == ""
+    assert "Original" not in out["study_o"]
+
+
+def test_missing_study_o_is_empty_not_a_title():
+    import pandas as pd
+    from extract import csv_to_db
+    out = csv_to_db._build_unvalidated_row(
+        "rec-2", pd.Series({"doi_r": "10.1/r", "title_o": "Some Title"}))
+    assert out["study_o"] == ""

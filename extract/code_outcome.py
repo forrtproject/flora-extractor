@@ -1,11 +1,16 @@
 """
 code_outcome.py — LLM outcome coding for Stage 3.
 
-The outcome is decided by an LLM reading the ABSTRACT. Parsed fulltext is held in
-reserve — an introduction routinely discusses OTHER studies' failures ("X failed to
-replicate in prior work"), so reading it first misfires. Fulltext is used only as an
-escalation: when the abstract call returns cannot_be_determined (or there is no
-abstract), a second LLM call reads the parsed text.
+The outcome is decided by an LLM reading the ABSTRACT, and on escalation — when the
+abstract call returns cannot_be_determined, or there is no abstract — by a second call
+reading the paper's DISCUSSION AND CONCLUSION. That order is FLoRA's rule: "We rely on
+what replication authors say in the abstract, or if not stated there, what is written
+in the report (discussion and conclusion sections)."
+
+The escalation text is selected by `pdf_parsing.outcome_text()`, not taken from the
+front of the parse: an introduction routinely discusses OTHER studies' failures ("X
+failed to replicate in prior work"), and the head of a paper truncated at
+_FULLTEXT_CAP is mostly introduction and methods.
 
 The keyword scan is the --no-llm fallback, not a pre-filter. Every outcome the
 pipeline records with an LLM available comes from the LLM, which also applies the

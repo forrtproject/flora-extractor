@@ -179,3 +179,76 @@ class TestParseMarkitdown:
                    return_value=_error_result("markitdown", "no pdf_path")):
             result = parse_all("10.1234/x", pdf_path=None, oa_xml=None)
         assert "markitdown" in result
+
+
+class TestOutcomeText:
+    """FLoRA reads the outcome from the abstract and, failing that, from the
+    discussion and conclusion — not from the front of the paper."""
+
+    _PAPER = (
+        "Title of the paper\n\nAbstract\nWe attempted a replication.\n\n"
+        "1. Introduction\n" + ("Prior work failed to replicate the effect. " * 60) +
+        "\n2. Methods\n" + ("We recruited participants. " * 60) +
+        "\n3. Results\n" + ("The effect was estimated. " * 40) +
+        "\n4. General Discussion\n" + ("We did not replicate the original effect. " * 30) +
+        "\nReferences\nSmith, J. (2010). A paper.\n"
+    )
+
+    def test_returns_the_discussion_not_the_introduction(self):
+        from shared.pdf_parsing import outcome_text
+        text, provenance = outcome_text(self._PAPER)
+        assert provenance == "discussion"
+        assert text.startswith("4. General Discussion")
+        assert "Prior work failed to replicate" not in text
+
+    def test_stops_before_the_reference_list(self):
+        from shared.pdf_parsing import outcome_text
+        text, _ = outcome_text(self._PAPER)
+        assert "Smith, J. (2010)" not in text
+
+    def test_falls_back_to_the_tail_when_no_heading(self):
+        from shared.pdf_parsing import outcome_text
+        paper = ("Introduction\n" + ("background prose. " * 200)
+                 + "CLOSING STATEMENT the effect did not replicate.\n"
+                 + "References\nSmith, J. (2010). A paper.\n")
+        text, provenance = outcome_text(paper)
+        assert provenance == "tail"
+        assert "CLOSING STATEMENT" in text
+        assert "Smith, J. (2010)" not in text
+
+    def test_structured_abstract_label_does_not_win(self):
+        """'Discussion:' in a structured abstract sits at the front of the paper —
+        taking it would hand back the introduction this function exists to avoid."""
+        from shared.pdf_parsing import outcome_text
+        paper = ("Discussion: we consider the implications.\n"
+                 + ("body prose about methods. " * 300)
+                 + "final paragraph with the verdict.\n")
+        text, provenance = outcome_text(paper)
+        assert provenance == "tail"
+        assert "final paragraph with the verdict." in text
+
+    def test_heading_with_no_content_is_skipped(self):
+        from shared.pdf_parsing import outcome_text
+        paper = (("body prose. " * 300) + "\nConclusion\n")
+        text, provenance = outcome_text(paper)
+        assert provenance == "tail"
+
+    def test_respects_max_chars(self):
+        from shared.pdf_parsing import outcome_text
+        text, _ = outcome_text(self._PAPER, max_chars=100)
+        assert len(text) <= 100
+
+    def test_empty_input(self):
+        from shared.pdf_parsing import outcome_text
+        assert outcome_text("") == ("", "none")
+        assert outcome_text("   ") == ("", "none")
+
+    def test_in_text_mention_is_not_a_heading(self):
+        from shared.pdf_parsing import outcome_text
+        paper = ("Introduction\n" + ("prose. " * 100)
+                 + "We return to this point in the Discussion of our findings below. "
+                 + ("more prose. " * 200)
+                 + "\nDiscussion\n" + ("the effect replicated. " * 30))
+        text, provenance = outcome_text(paper)
+        assert provenance == "discussion"
+        assert text.startswith("Discussion")

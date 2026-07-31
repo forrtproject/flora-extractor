@@ -59,7 +59,7 @@ All `filtered.csv` columns, plus:
 | `oa_work_id_o` | string | OpenAlex work ID of the original study, bare form. Resolved from `doi_o` *after* DOI verification, so it always describes the DOI actually written. Blank when `doi_o` is blank or unindexed in OpenAlex |
 | `doi_o` | string | DOI of the original (target) study |
 | `title_o` | string | Title of the original study |
-| `study_o` | string | FLoRA's `study_o`: which study **inside** the original paper is targeted, as a number — several numbers (`1, 2`) when one replication targets several studies from the same paper. Blank when the original reports a single study or the replication does not say. Only the multi-original path fills it. Not the same field as the validation DB's `study_o`, which holds a title |
+| `study_o` | string | FLoRA's `study_o`: which study **inside** the original paper is targeted, as a number — several numbers (`1, 2`) when one replication targets several studies from the same paper. Blank when the original reports a single study or the replication does not say. Only the multi-original path fills it. A study identifier, never a title (issue #103) |
 | `year_o` | int | Publication year of the original study |
 | `authors_o` | string | Authors of the original study (semicolon-separated surnames) |
 | `ref_o` | string | Formatted reference string for the original study |
@@ -171,11 +171,17 @@ Human validation runs in a **separate repo backed by Supabase**.
 
 `extract/csv_to_db.py` pushes resolved `extracted.csv` rows (those with
 `filter_status ∈ {replication, reproduction}` and a resolved `link_method`) into three
-Supabase tables:
+Supabase tables.
+
+> **The import needs a schema change in the validation repo before it will run.**
+> `unvalidated` needs `title_r` and `title_o` columns: `study_r` / `study_o` are study
+> identifiers and were carrying paper titles instead. Until those columns exist every
+> insert fails with a PostgREST "column does not exist" error — nothing is written and
+> nothing is corrupted. Tracked in issue #103.
 
 | Table | Rows per record | Contents |
 | ----- | --------------- | -------- |
-| `unvalidated` | 1 | The record shown to validators (`doi_r`/`study_r`/`doi_o`/`study_o`/`outcome`/…), `validation_status = 'unvalidated'` |
+| `unvalidated` | 1 | The record shown to validators (`doi_r`/`title_r`/`doi_o`/`title_o`/`study_o`/`outcome`/…), `validation_status = 'unvalidated'` |
 | `record_metadata` | 1 | Supplementary extraction fields (filter/link/outcome method, confidence, model, ranks) |
 | `validation_queue` | 3 | One slot each for `human_1`, `human_2`, `llm` |
 
