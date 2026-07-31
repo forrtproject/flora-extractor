@@ -751,6 +751,21 @@ def call_gemini_with_pdf(prompt: str,
 
 # ── Multi-original dispatcher ─────────────────────────────────────────────────
 
+def _clean_study_number(value) -> str:
+    """FLoRA `study_o` for one targeted study: a bare number, or "" if there is none.
+
+    The prompt asks for a number but models answer "Study 2", "Experiment 3a" or 2.
+    Everything but the digits (and a trailing letter, which distinguishes Study 3a
+    from 3b) is dropped, so that rows collapsed onto one original paper join into
+    the codebook's "1, 2" form rather than "Study 1, Experiment 2".
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    m = re.search(r"\d+[a-z]?", text, re.IGNORECASE)
+    return m.group(0).lower() if m else ""
+
+
 def identify_all_originals_with_llm(doi_r:        str,
                                       study_r:      str,
                                       abstract_r:   str,
@@ -844,6 +859,7 @@ def identify_all_originals_with_llm(doi_r:        str,
             "evidence"         : str(o.get("evidence",        "") or ""),
             "confidence"       : str(o.get("confidence", "low") or "low"),
             "candidate_number" : cand_num,
+            "study_number"     : _clean_study_number(o.get("study_number")),
             "outcome"          : raw_outcome,
             "outcome_evidence" : str(o.get("outcome_evidence", "") or ""),
         })

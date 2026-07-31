@@ -360,11 +360,21 @@ _MULTI_TEMPLATE = textwrap.dedent("""
       is_false_positive to true and return an empty originals list
     - When an original matches an entry in the candidate list above, put its number in
       candidate_number; otherwise set candidate_number to null
+    - List one entry per targeted study, INCLUDING when several targeted studies come
+      from the same original paper. For each entry set study_number to the study's
+      number within that paper as the replication refers to it ("Study 2",
+      "Experiment 3" → "2", "3"), or leave it empty when the original reports a single
+      study or the replication does not say which one. Entries that share a paper will
+      be combined into one database row afterwards, so do not merge them here.
     - For outcome: look for the result for THAT SPECIFIC study (e.g. in a results table or
       per-study section), NOT the overall aggregate across all studies
     - outcome values: success (effect confirmed), failure (effect not found), mixed
       (partial), descriptive (methods reused in a new context without testing the
-      original claim), cannot_be_determined (the text does not state an outcome)
+      original claim), statistically_successful_but_flawed (effect obtained, but the
+      paper's main message is that the method does not validly test the claim),
+      uninformative (the authors themselves say their attempt cannot speak to the
+      original, e.g. underpowered), cannot_be_determined (the text does not state an
+      outcome)
 
     Respond with ONLY this JSON — no prose outside the braces:
     {{
@@ -377,9 +387,10 @@ _MULTI_TEMPLATE = textwrap.dedent("""
           "title": "<full title of the original study>",
           "first_author_surname": "<surname of first author>",
           "year": <4-digit year or null>,
+          "study_number": "<study number within that paper, e.g. 2, or empty>",
           "evidence": "<1-2 sentence quote from the paper showing this study is replicated>",
           "confidence": "<high|medium|low>",
-          "outcome": "<success|failure|mixed|descriptive|cannot_be_determined>",
+          "outcome": "<{outcome_enum}>",
           "outcome_evidence": "<1-2 sentence quote showing the outcome for THIS specific study, or empty if not found>"
         }}
       ]
@@ -439,6 +450,7 @@ def build_multi_original_prompt(study_r:     str,
 
     return _MULTI_TEMPLATE.format(
         policy=EVIDENCE_POLICY,
+        outcome_enum=OUTCOME_ENUM,
         force_multi_directive=force_multi_directive,
         study_r=study_r,
         abstract_snip=abstract_snip or "(not available)",
@@ -556,13 +568,24 @@ OUTCOME_RULES = (
     "- failure: the authors conclude the original finding was NOT found, was contradicted, or failed to replicate\n"
     "- mixed: the AUTHORS THEMSELVES present their evidence as partly supporting and partly not — e.g. some of several tested findings replicated and others did not. Use mixed only when the paper frames its own result that way; do not infer it from a reduced effect size, or because you would have judged the evidence differently\n"
     "- descriptive: the authors describe their study as a replication and reuse the original's methods in a new context/population, but never compare their results against the original finding. If the paper DOES compare its results to the original's — even in a new population — code success/failure/mixed instead\n"
-    "- cannot_be_determined: no verdict can be reached from the text — either it lacks the information, or the authors themselves report the result as inconclusive (e.g. underpowered, evidence neither confirming nor contradicting the original)\n\n"
+    "- statistically_successful_but_flawed: the authors obtained the original effect BUT argue their own (or the original's) method does not validly test the hypothesis — e.g. 'we replicated the effect using the original materials, but show that they are not a valid test of the claim'. Use this only when that critique is the paper's main message; a replication that merely notes minor limitations is success\n"
+    "- uninformative: the AUTHORS THEMSELVES state their study cannot speak to the original — e.g. it was underpowered, the design failed, or they report the evidence as neither confirming nor contradicting. The paper reached a conclusion; that conclusion is 'this tells us nothing'\n"
+    "- cannot_be_determined: WE cannot tell from the text supplied. The paper may well state an outcome somewhere we were not shown. Use this for missing evidence on our side, never for a paper that reports its own result as inconclusive — that is uninformative\n\n"
     "Few-shot examples:\n"
     "1. DESCRIPTIVE (methods reused, original claim not tested): 'Study x used method A to study reasons for 911 calls in city 1. Here, we replicate this method to understand 911 calls in city 2.'\n"
     "2. CANNOT_BE_DETERMINED (insufficient detail): 'We conducted a replication study in a different population.' (no mention of success or failure)\n"
     "3. MIXED (partial success): 'We replicated the main effect but not the interaction.'\n"
-    "4. SUCCESS (confirmation): 'Our findings confirm Smith et al. (2015)'\n\n"
+    "4. SUCCESS (confirmation): 'Our findings confirm Smith et al. (2015)'\n"
+    "5. UNINFORMATIVE (the authors' own verdict): 'Our sample was too small to provide a meaningful test of the original effect.'\n"
+    "6. STATISTICALLY_SUCCESSFUL_BUT_FLAWED: 'We obtained the original effect, but demonstrate that the paradigm cannot distinguish the hypothesised mechanism from a simpler alternative.'\n\n"
 )
+
+# The replication outcome enum as it appears in every JSON block that asks for one.
+# Assembled from one string so the abstract prompt, the fulltext prompt and the
+# multi-original prompt cannot drift apart — they did, and a value offered by one
+# and not another is a value the pipeline silently coerces away.
+OUTCOME_ENUM = ("success|failure|mixed|descriptive|"
+                "statistically_successful_but_flawed|uninformative|cannot_be_determined")
 
 # Shared by every outcome prompt. The quote is the reviewer's evidence, so it must be a
 # self-contained passage, not a clipped fragment — validators were getting quotes that
@@ -639,7 +662,7 @@ def build_outcome_abstract_prompt(title_r: str, abstract_snip: str,
         "Do not guess an outcome the abstract does not support.\n\n"
         + JSON_INSTRUCTION +
         '{"is_genuine_attempt": <true|false>, '
-        '"outcome": "<success|failure|mixed|descriptive|cannot_be_determined>", '
+        '"outcome": "<' + OUTCOME_ENUM + '>", '
         + QUOTE_INSTRUCTION
         + CONFIDENCE_FIELD +
         '"out_quote_source": "<abstract|title>", '
@@ -656,7 +679,9 @@ def build_outcome_fulltext_prompt(title_r: str, abstract_snip: str, text_snip: s
         + original_block
         + f"TITLE: {title_r}\n"
         f"ABSTRACT: {abstract_snip or '(not available)'}\n"
-        f"PARSED FULLTEXT: {text_snip or '(not available)'}\n\n"
+        f"PAPER TEXT: {text_snip or '(not available)'}\n"
+        "(The SOURCE line above the paper text says which part of the paper it "
+        "comes from. Do not attribute a quote to a section you were not shown.)\n\n"
         + OUTCOME_RULES +
         "Judge the outcome of THIS paper's own replication, not outcomes it reports "
         "for other studies in its background or literature review.\n\n"
@@ -664,7 +689,7 @@ def build_outcome_fulltext_prompt(title_r: str, abstract_snip: str, text_snip: s
         "the full text genuinely lacks the information.\n\n"
         + JSON_INSTRUCTION +
         '{"is_genuine_attempt": <true|false>, '
-        '"outcome": "<success|failure|mixed|descriptive|cannot_be_determined>", '
+        '"outcome": "<' + OUTCOME_ENUM + '>", '
         + QUOTE_INSTRUCTION
         + CONFIDENCE_FIELD +
         '"out_quote_source": "<abstract|title|fulltext>", '
@@ -697,7 +722,9 @@ def build_repro_fulltext_prompt(title_r: str, abstract_snip: str, text_snip: str
         + original_block
         + f"TITLE: {title_r}\n"
         f"ABSTRACT: {abstract_snip or '(not available)'}\n"
-        f"PARSED FULLTEXT: {text_snip or '(not available)'}\n\n"
+        f"PAPER TEXT: {text_snip or '(not available)'}\n"
+        "(The SOURCE line above the paper text says which part of the paper it "
+        "comes from. Do not attribute a quote to a section you were not shown.)\n\n"
         + REPRO_OUTCOME_RULES
         + "Judge THIS paper's own reproduction attempt, not results it reports for other "
           "studies in its background or literature review.\n\n"

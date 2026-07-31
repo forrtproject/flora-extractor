@@ -29,8 +29,10 @@ from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
 from shared.openalex_client import _search_crossref_by_title, _search_openalex_by_title
 from shared.pdf_parsing import (
     best_parse_result,
+    outcome_text,
     parse_all as _parse_all,
     parse_result_is_empty,
+    score_parse_result,
 )
 from shared.cache import content_key, read_cache, write_cache
 from shared.prompts import build_match_type_prompt, prompt_version
@@ -632,6 +634,7 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
             str(orig.get("year",         "") or ""),
             title_o,
         ))),
+        "study_o":         str(orig.get("study_number", "") or ""),
         "bibtex_ref_r":    _build_bibtex_r(filter_row),
         "link_method":     link_method,
         "link_evidence":   str(orig.get("evidence",     "") or ""),
@@ -802,16 +805,24 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -
     title_r    = str(row.get("title_r",    ""))
 
     # Prefer the best-scoring parse method from the parse cache so the outcome LLM
-    # receives whichever parser extracted the richest text, not always GROBID.
-    fulltext = _best_fulltext_from_cache(doi_r)
-    if not fulltext:
-        # Fallback: GROBID sections that run_for_doi already extracted
+    # receives whichever parser extracted the richest text, not always GROBID —
+    # narrowed to the discussion/conclusion, which is where FLoRA's rule says the
+    # outcome is stated when the abstract does not state it.
+    fulltext, provenance = _best_fulltext_from_cache(doi_r)
+    if fulltext:
+        fulltext = (f"[{_PROVENANCE_LABEL[provenance]}]\n\n{fulltext}")
+    else:
+        # Fallback: GROBID sections that run_for_doi already extracted. The intro is
+        # in here for want of anything better; it is the section that most often
+        # discusses OTHER studies' replication failures, and the prompt says so.
         fulltext = " ".join(filter(None, [
             str(link.get("grobid_abstract", "") or ""),
             str(link.get("grobid_intro",    "") or ""),
             str(link.get("grobid_methods",  "") or ""),
             str(link.get("html_text",       "") or ""),
         ]))
+        if fulltext:
+            fulltext = f"[{_PROVENANCE_LABEL['sections']}]\n\n{fulltext}"
 
     # filter_status decides the outcome vocabulary: a reproduction is coded on the
     # computation/robustness grid, not success/failure (see shared/schema.py).
@@ -828,26 +839,51 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -
     )
 
 
-def _best_fulltext_from_cache(doi_r: str) -> str:
-    """
-    Read the parse cache for doi_r, score each method, and return the fulltext
-    of the highest-scoring method.  Prefers raw_text (full paper including
-    results/discussion/conclusion); falls back to abstract + intro when raw_text
-    is empty.  Returns '' on a miss (including an all-empty cache).
+# Leaves room for the SOURCE label below under code_outcome._FULLTEXT_CAP, which
+# truncates from the front — without the headroom the label would push the last
+# few hundred characters of the discussion past the cap.
+_OUTCOME_TEXT_CHARS = 7600
+
+# Told to the model alongside the text, so it never attributes a quote to a
+# section it was not shown.
+_PROVENANCE_LABEL = {
+    "discussion": "SOURCE: discussion / conclusion section of the paper",
+    "tail":       "SOURCE: closing pages of the paper, before the reference list",
+    "sections":   "SOURCE: abstract, introduction and methods only — the closing "
+                  "sections could not be parsed. Statements about replication "
+                  "failures in an introduction usually concern OTHER studies",
+}
+
+
+def _best_fulltext_from_cache(doi_r: str) -> tuple[str, str]:
+    """The outcome-bearing text for doi_r, as (text, provenance).
+
+    Reads the parse cache, and takes the raw text of the highest-scoring method
+    that actually has raw text — the top-scoring method overall can be GROBID,
+    which returns sections and no raw text at all, and falling straight back to
+    its abstract + intro discarded a full parse another method had produced.
+
+    `outcome_text()` then narrows that to the discussion/conclusion. Returns
+    ("", "none") on a cache miss or an all-empty cache.
     """
     results = _read_parse_cache(doi_r)
-    if results is None:
-        return ""
+    if not results:
+        return "", "none"
+    ranked = sorted((r for r in results.values() if isinstance(r, dict)),
+                    key=score_parse_result, reverse=True)
+    for result in ranked:
+        raw = str(result.get("raw_text", "") or "").strip()
+        if raw:
+            return outcome_text(raw, max_chars=_OUTCOME_TEXT_CHARS)
+
     best = best_parse_result(results)
     if not best:
-        return ""
-    raw = str(best.get("raw_text", "") or "").strip()
-    if raw:
-        return raw
-    return " ".join(filter(None, [
+        return "", "none"
+    joined = " ".join(filter(None, [
         str(best.get("abstract", "") or ""),
         str(best.get("intro",    "") or ""),
-    ]))
+    ])).strip()
+    return (joined, "sections") if joined else ("", "none")
 
 
 def _parse_originals(result: dict) -> list[dict]:
@@ -862,6 +898,89 @@ def _parse_originals(result: dict) -> list[dict]:
         except json.JSONDecodeError:
             return []
     return []
+
+
+# Verdicts that say something about the replication result. cannot_be_determined,
+# uninformative, descriptive and not_a_replication do not, so they never outvote a
+# study that reached a verdict when several studies are aggregated onto one row.
+_SUBSTANTIVE_OUTCOMES = {"success", "failure", "mixed",
+                         "statistically_successful_but_flawed"}
+
+
+def _aggregate_outcomes(outcomes: list[str]) -> str:
+    """One outcome for several studies replicated from the SAME original paper.
+
+    FLoRA aggregates: "A replication study can have multiple studies but their results
+    are aggregated … conflicting results, which we consider as mixed" (FLoRA FAQ,
+    "What level is the database?"). So two substantive verdicts that disagree become
+    mixed, one substantive verdict carries the row whatever the silent studies say,
+    and a row with no substantive verdict at all falls back to the most informative
+    non-verdict present.
+    """
+    substantive = [o for o in outcomes if o in _SUBSTANTIVE_OUTCOMES]
+    if len(set(substantive)) > 1:
+        return "mixed"
+    if substantive:
+        return substantive[0]
+    for fallback in ("uninformative", "descriptive", "not_a_replication"):
+        if fallback in outcomes:
+            return fallback
+    return "cannot_be_determined"
+
+
+def _collapse_same_paper_originals(originals: list[dict]) -> list[dict]:
+    """Merge targeted studies that belong to the SAME original paper into one entry.
+
+    FLoRA's coding level is one row per pair of *references*: several studies from one
+    original paper stay one row, with their numbers in `study_o` ("1, 2"); several
+    original papers are several rows. The LLM is asked for one entry per study, so the
+    grouping happens here.
+
+    It also removes a duplicate-key bug: `pair_id` is md5(doi_r|doi_o), so two entries
+    sharing an original DOI produced two rows with the same pair_id — the identifier
+    every other system joins on.
+
+    Entries are grouped by resolved DOI; those without one fall back to their
+    normalised title, so an unresolved paper's studies still group together. Order is
+    preserved and ranks are renumbered 1..N over the groups.
+    """
+    groups: dict[str, list[dict]] = {}
+    order: list[str] = []
+    for orig in originals:
+        doi = clean_doi(str(orig.get("doi", "") or ""))
+        key = doi or "title:" + " ".join(str(orig.get("title", "") or "").lower().split())
+        if not key.strip() or key == "title:":
+            key = f"unkeyed:{len(order)}"
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(orig)
+
+    collapsed = []
+    for rank, key in enumerate(order, 1):
+        members = groups[key]
+        merged = dict(members[0])
+        merged["rank"] = rank
+        if len(members) > 1:
+            numbers = [n for n in (str(m.get("study_number", "") or "") for m in members) if n]
+            # Only meaningful when every member said which study it was: a partial list
+            # would claim the replication targeted studies it never mentioned.
+            merged["study_number"] = (", ".join(dict.fromkeys(numbers))
+                                      if len(numbers) == len(members) else "")
+            merged["outcome"] = _aggregate_outcomes(
+                [str(m.get("outcome", "") or "") for m in members])
+            merged["evidence"] = " ".join(
+                dict.fromkeys(str(m.get("evidence", "") or "").strip() for m in members
+                              if str(m.get("evidence", "") or "").strip()))
+            merged["outcome_evidence"] = " ".join(
+                dict.fromkeys(str(m.get("outcome_evidence", "") or "").strip() for m in members
+                              if str(m.get("outcome_evidence", "") or "").strip()))
+            # The row is only as good as its weakest member — it now stands for all of them.
+            merged["confidence"] = min(
+                (str(m.get("confidence", "low") or "low") for m in members),
+                key=lambda c: {"high": 2, "medium": 1}.get(c, 0))
+        collapsed.append(merged)
+    return collapsed
 
 
 # ── FLoRA entry sheet skip helper ────────────────────────────────────────────
@@ -1544,6 +1663,12 @@ def run_extract(no_llm: bool = False,
                         if row_out is not None:
                             result_rows.append(row_out)
                 else:
+                    n_studies = len(originals)
+                    originals = _collapse_same_paper_originals(originals)
+                    if len(originals) < n_studies:
+                        log.info("[%s] %d targeted studies → %d original paper(s) "
+                                 "(FLoRA coding level: one row per reference pair)",
+                                 doi_r, n_studies, len(originals))
                     multi_llm_model = str(result.get("llm_model", "") or "")
                     # Label truthfully: the multi pipeline feeds parsed full text /
                     # GROBID references into the prompt whenever a PDF was obtained,

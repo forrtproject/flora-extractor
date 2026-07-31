@@ -13,7 +13,9 @@ Other agent runtimes: see [AGENTS.md](AGENTS.md), which points here.
 The pipeline produces structured records identifying:
 
 1. Which original target study a replication targets
-2. What the replication result was (success / failure / mixed / descriptive / cannot_be_determined / not_a_replication)
+2. What the replication result was (success / failure / mixed / descriptive /
+   statistically_successful_but_flawed / uninformative / cannot_be_determined /
+   not_a_replication)
 
 ---
 
@@ -172,6 +174,8 @@ Key constraints:
 
 - `filter_confidence` is categorical (`high | medium | low`), not a float — a single LLM call cannot produce calibrated probabilities.
 - `outcome = descriptive`: paper replicated methods in a different context but does not test the original claim. Include in extraction; flag for review during validation.
+- `outcome = uninformative` vs `cannot_be_determined`: the first is the AUTHORS' verdict (their attempt cannot speak to the original — underpowered, design failure), the second is OURS (we could not reach a verdict from the text available). Coding one as the other makes a correctly-coded paper look unread.
+- `study_o` holds the target study NUMBER(s) inside the original paper (FLoRA's coding level: several studies from one original paper are one row, several original papers are several rows). The validation DB uses the same name for a title — see `extract/csv_to_db.py`.
 - `api_error` in any field means extraction failed after retries — reviewers see these in the Validate tab.
 - `original_match_type` is determined by Stage 3 as its first routing step — not inherited from Stage 2.
 

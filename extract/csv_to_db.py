@@ -11,6 +11,15 @@ For each imported row this script creates:
 
 Safe to re-run: rows already in the database are detected by pair_id and skipped.
 
+REQUIRES A SCHEMA CHANGE IN THE VALIDATION REPO BEFORE IT WILL RUN. `unvalidated`
+needs `title_r` and `title_o` columns. `study_r` / `study_o` are study identifiers —
+which study inside the paper is meant — and were carrying paper titles instead, so
+one column name meant a study number in FLoRA's codebook and a title in the DB, and
+the real study numbers had nowhere to go. This script now sends titles as titles and
+`study_o` as the number extracted.csv holds. Until those two columns exist, every
+insert fails with a PostgREST "column does not exist" error; nothing is written and
+nothing is corrupted.
+
 Usage:
     python -m extract.csv_to_db --input data/extracted.csv
 
@@ -32,7 +41,7 @@ load_dotenv()
 # Columns shown in the UI for all main tables
 _DISPLAY_COLS = {
     "doi_r", "title_r", "year_r", "url_r", "ref_r", "abstract_r",
-    "doi_o", "title_o", "year_o", "ref_o", "type",
+    "doi_o", "title_o", "study_o", "year_o", "ref_o", "type",
     "outcome", "outcome_phrase", "out_quote_source",
 }
 
@@ -108,13 +117,24 @@ def _build_unvalidated_row(record_id: str, row: pd.Series) -> dict:
     return {
         "record_id":        record_id,
         "doi_r":            _s(row.get("doi_r")),
-        "study_r":          _s(row.get("title_r")),
+        # study_r / study_o are STUDY IDENTIFIERS — which study inside the paper is
+        # meant — never titles. They used to carry title_r / title_o, which made one
+        # column name mean a study number in FLoRA's codebook and a title in the DB,
+        # and left the actual study numbers with nowhere to go.
+        #
+        # The pipeline does not code a study number for the replication itself, so
+        # study_r is empty until it does; study_o comes from extracted.csv. The titles
+        # move to title_r / title_o, which the validation DB needs columns for — see
+        # issue #103.
+        "study_r":          "",
+        "title_r":          _s(row.get("title_r")),
         "year_r":           _s(row.get("year_r")),
         "url_r":            _s(row.get("url_r")),
         "ref_r":            _s(row.get("ref_r")),
         "abstract_r":       _s(row.get("abstract_r")),
         "doi_o":            _s(row.get("doi_o")),
-        "study_o":          _s(row.get("title_o")),
+        "study_o":          _s(row.get("study_o")),
+        "title_o":          _s(row.get("title_o")),
         "year_o":           _s(row.get("year_o")),
         "url_o":            _derive_url_o(row),
         "ref_o":            _s(row.get("ref_o")),

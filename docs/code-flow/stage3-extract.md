@@ -207,10 +207,21 @@ extract_outcome(doi_r, abstract_r, fulltext, title_r, record_type=…)
     └── otherwise → _llm_outcome():
             abstract pass (GEMINI_HEAVY_MODEL, OpenAI preferred on retry)
             └── returns cannot_be_determined, or there is no abstract, and parsed
-                fulltext exists → second, fulltext-based call (8,000-char cap),
+                fulltext exists → second call over the paper's DISCUSSION AND
+                CONCLUSION (8,000-char cap),
                 disable with OUTCOME_FULLTEXT_ESCALATION=false
             the same call judges is_genuine_attempt; false → not_a_replication
 ```
+
+The escalation text is chosen by `pdf_parsing.outcome_text()`, which slices from the
+last discussion/conclusion heading to the reference list, and falls back to the closing
+pages before the references when no heading is found. That is FLoRA's rule — "what
+replication authors say in the abstract, or if not stated there, what is written in the
+report (discussion and conclusion sections)" — and it fixes a real misread: the
+escalation used to send the first 8,000 characters of the parse, which for a typical
+article is the introduction and methods. The introduction is the one section that
+routinely reports OTHER studies' replication failures. The text is labelled with a
+`SOURCE:` line so the model never attributes a quote to a section it was not shown.
 
 Exhausting every provider yields `outcome = api_error`, never a verdict, and is not
 cached — `cannot_be_determined` is a judgement about the paper, and recording one for a
