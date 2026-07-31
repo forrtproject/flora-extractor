@@ -12,10 +12,15 @@ completion AND on Ctrl-C, via the __main__ finally block), and standalone:
 Rows that do not belong in the resolved set are moved OUT to a dedicated set-aside
 CSV (the same files the dashboard's "set-aside" tab reads), one bucket per problem:
 
-    not_a_replication  → not_a_replication.csv     outcome == not_a_replication
     screen_disagreement→ screen_disagreement.csv   the two Q1 classifiers disagreed
+    not_a_replication  → not_a_replication.csv     outcome == not_a_replication
+    non_article        → not_a_replication.csv     doi_r is a figshare data record
+                                                   or a peer-review object
     self_link          → unresolved_self_links.csv doi_o == doi_r
     doi_mismatch       → unresolved_doi_mismatch.csv doi_o_verification == mismatch
+    title_search_provisional → provisional_title_search.csv  link_method ==
+                                                   llm_title_search: a provisional
+                                                   link awaiting human confirmation
     target_pending     → target_pending.csv        link_method == target_pending
     fabricated_doi_o   → fabricated_original_doi.csv doi_o present but registered nowhere
                                                     (only with --deep: doi.org 404 check)
@@ -110,14 +115,24 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
 
     # (bucket name, destination file, row mask) — first match wins per row.
     rules = [
+        # Disagreement first: not_a_replication.csv is read as "both classifiers agreed
+        # this is not a replication", and a disagreement row whose outcome happened to
+        # be coded not_a_replication used to win the outcome rule and land there,
+        # biasing any precision computed over that file (audit B6).
+        ("screen_disagreement", "screen_disagreement.csv",
+         df["link_method"] == "screen_disagreement"),
         ("not_a_replication", "not_a_replication.csv", df["outcome"] == "not_a_replication"),
         # figshare data records / peer-review objects: Stage-2 false positives (#17) that
         # predate the rule_filter DOI exclusion. Routed to the not_a_replication bucket.
         ("non_article", "not_a_replication.csv", df["doi_r"].map(lambda d: bool(non_article_doi(d)))),
         ("self_link", "unresolved_self_links.csv", (doi_o != "") & (doi_o == doi_r)),
         ("doi_mismatch", "unresolved_doi_mismatch.csv", df["doi_o_verification"] == "mismatch"),
-        ("screen_disagreement", "screen_disagreement.csv",
-         df["link_method"] == "screen_disagreement"),
+        # Provisional: the target was matched against the whole literature by title
+        # search rather than picked from a candidate list, at ~50% measured precision,
+        # and the failure is invisible to doi_o_verification — the DOI really is the
+        # named paper, it just is not this paper's target. Set aside for confirmation.
+        ("title_search_provisional", "provisional_title_search.csv",
+         df["link_method"] == "llm_title_search"),
         ("target_pending", "target_pending.csv", df["link_method"] == "target_pending"),
     ]
 
@@ -167,10 +182,11 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
     print("=" * 70)
     print(f"  rows {n_before} -> {len(df)}")
     print("  -- moved to set-aside CSVs --")
-    dest = {"not_a_replication": "not_a_replication.csv", "non_article": "not_a_replication.csv",
+    dest = {"screen_disagreement": "screen_disagreement.csv",
+            "not_a_replication": "not_a_replication.csv", "non_article": "not_a_replication.csv",
             "self_link": "unresolved_self_links.csv",
             "doi_mismatch": "unresolved_doi_mismatch.csv",
-            "screen_disagreement": "screen_disagreement.csv",
+            "title_search_provisional": "provisional_title_search.csv",
             "target_pending": "target_pending.csv",
             "fabricated_doi_o": "fabricated_original_doi.csv"}
     for name in dest:

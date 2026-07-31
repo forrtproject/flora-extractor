@@ -23,6 +23,7 @@ from extract.code_outcome import extract_outcome
 from shared.config import DATA_DIR, LLM_CACHE_DIR, OA_XML_CACHE_DIR, PARSE_CACHE_DIR, PDF_CACHE_DIR, log
 from shared.dashboard_cache import refresh as _dashboard_refresh
 from shared.pdf_parsing import best_parse_result, parse_all as _parse_all
+from shared.cache import clear_content_keys
 from shared.utils import cache_key, clean_doi
 
 
@@ -232,13 +233,8 @@ def recalibrate_outcomes(
             for idx in candidate_indices:
                 doi_clean = clean_doi(str(df_full.at[idx, "doi_r"]))
                 if doi_clean:
-                    cache_file = LLM_CACHE_DIR / f"outcome_{cache_key(doi_clean)}.json"
-                    if cache_file.exists():
-                        try:
-                            cache_file.unlink()
-                            cache_cleared += 1
-                        except Exception as e:
-                            log.warning("Failed to delete %s: %s", cache_file.name, e)
+                    cache_cleared += len(
+                        clear_content_keys(LLM_CACHE_DIR, "outcome", doi_clean))
             log.info("Cleared %d outcome cache files", cache_cleared)
 
     rows_processed = 0
@@ -297,12 +293,7 @@ def recalibrate_outcomes(
                     fulltext = _get_best_fulltext(doi_r)
                     # Bust cached abstract-only LLM result so the new call uses fulltext.
                     if fulltext and not clear_cache:
-                        outcome_cache = LLM_CACHE_DIR / f"outcome_{cache_key(doi_r)}.json"
-                        if outcome_cache.exists():
-                            try:
-                                outcome_cache.unlink()
-                            except Exception:
-                                pass
+                        clear_content_keys(LLM_CACHE_DIR, "outcome", doi_r)
                     if fulltext:
                         log.info("  [%s] fulltext available (%d chars)", doi_r, len(fulltext))
                     else:

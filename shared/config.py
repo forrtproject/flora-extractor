@@ -116,19 +116,29 @@ GEMINI_HEAVY_MODEL = os.getenv("GEMINI_HEAVY_MODEL", GEMINI_MODEL)
 
 # OpenRouter (OpenAI-compatible API at openrouter.ai) — optional alternative LLMs
 OPENROUTER_API_KEY    = os.getenv("OPENROUTER_API_KEY",    "")
-OPENROUTER_LIGHT_MODEL = os.getenv("OPENROUTER_LIGHT_MODEL", "qwen/qwen3.5-35b-a3b")
 OPENROUTER_HEAVY_MODEL = os.getenv("OPENROUTER_HEAVY_MODEL", "qwen/qwen3.5-35b-a3b")
+# Second voter of the Stage 4.5 replication screen, called through OpenRouter.
+# Ministral 14B beat every alternative measured on adjudicated hard cases (89.4%
+# correct vs 66% for gpt-5-mini) while discarding no genuine replication, and its
+# errors overlap little with the Google first voter's.
+SCREEN_VOTER2_MODEL = os.getenv("SCREEN_VOTER2_MODEL", "mistralai/ministral-14b-2512")
 
 # ── External servers ──────────────────────────────────────────────────────────
 GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")
 
 # ── Gemini flex inference ─────────────────────────────────────────────────────
-# When True, adds service_tier=flex to requests on the first (paid) key only.
-# Flex inference costs 50% less but may take up to 15 minutes per call.
-# Only enable this if GEMINI_API_KEY (key 1) is a paid-tier key.
+# Flex inference costs 50% less than standard — the same discount as Batch, but
+# without any job-submission plumbing — at the price of queueing for up to 15
+# minutes per call. It is only available on paid-tier (billing-enabled) keys.
 GEMINI_USE_FLEX     = os.getenv("GEMINI_USE_FLEX", "").lower() in ("1", "true", "yes")
 # Timeout in seconds for flex calls — must cover the 15-minute worst case.
 GEMINI_FLEX_TIMEOUT = int(os.getenv("GEMINI_FLEX_TIMEOUT", "900"))
+# Which keys are paid, by 1-based slot number (GEMINI_API_KEY = 1, GEMINI_API_KEY_2 = 2, …).
+# Flex follows the key rather than its position in the rotation, so a disabled or
+# reordered key does not silently drop every call back to standard pricing.
+GEMINI_PAID_KEYS: set[int] = {
+    int(n) for n in os.getenv("GEMINI_PAID_KEYS", "1").replace(",", " ").split() if n.isdigit()
+}
 
 # ── Outcome extraction ────────────────────────────────────────────────────────
 # When the abstract-based outcome LLM returns cannot_be_determined (or the
@@ -137,19 +147,20 @@ GEMINI_FLEX_TIMEOUT = int(os.getenv("GEMINI_FLEX_TIMEOUT", "900"))
 OUTCOME_FULLTEXT_ESCALATION = os.getenv(
     "OUTCOME_FULLTEXT_ESCALATION", "true").strip().lower() not in {"false", "0", "no"}
 
-# Global read policy for dual-written LLM caches (see shared/cache.py):
-#   accumulate — prefer the legacy DOI-keyed entry; preserves prior results
-#                across prompt/model changes (good for experimentation). Default.
-#   latest     — read only the content-keyed entry; guarantees the cached result
-#                matches the current prompt/model/input (good for production).
-LLM_CACHE_READ = os.getenv("LLM_CACHE_READ", "accumulate").strip().lower()
-
 # ── Rate limits (seconds between calls) ──────────────────────────────────────
 OPENALEX_RATE_SEC  = float(os.getenv("OPENALEX_RATE_SEC", "0.3"))
 CROSSREF_RATE_SEC  = 0.1
 UNPAYWALL_RATE_SEC = 0.5
 GROBID_RATE_SEC    = 3.0
-LLM_RATE_SEC       = 1.0
+
+# LLM rate limits are per provider and enforced against that provider's own
+# last-call timestamp in shared/llm_client.py. A single global interval charged
+# every provider for every other provider's calls — the two screen votes go to
+# different providers and still waited a full second between them — which on a
+# 2,000-row run is hours of pure sleeping that buys no quota headroom.
+GEMINI_RATE_SEC     = float(os.getenv("GEMINI_RATE_SEC",     "1.0"))
+OPENAI_RATE_SEC     = float(os.getenv("OPENAI_RATE_SEC",     "0.5"))
+OPENROUTER_RATE_SEC = float(os.getenv("OPENROUTER_RATE_SEC", "0.5"))
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(

@@ -66,13 +66,12 @@ The monitoring app registers these routes (see `validate/app.py`):
 
 - `/dashboard`      — pipeline stats (CSV column reads) + Supabase validation KPIs
 - `/check`          — Check page: filter/inspect extracted rows, download subsets
-- `/batch`          — batch disambiguation for multiple-match papers
-- `/multi-originals`— multi-original paper review
-- `/`               — redirects to `/dashboard`
+- `/batch`          — batch disambiguation for multiple-match papers (skipped when `FLORA_READONLY=1`)
+- `/multi-originals`— multi-original paper review (skipped when `FLORA_READONLY=1`)
+- `/`, `/pipeline`  — redirect to `/dashboard`
 
-Per-stage tab blueprints (`extract_view`, `search_view`, `filter_view`, `pipeline`,
-`target_pending`, `input`) still exist under `validate/routes/` but are **not
-registered** in `app.py` — treat them as orphaned/legacy.
+`validate/routes/` holds exactly these four blueprints; every one of them is
+registered.
 
 ---
 
@@ -90,7 +89,7 @@ registered** in `app.py` — treat them as orphaned/legacy.
 | File                           | Purpose                                                                     |
 | ------------------------------ | --------------------------------------------------------------------------- |
 | `shared/openalex_client.py`    | OpenAlex API wrapper + `find_all_candidates()` (Stage 3 logic)              |
-| `shared/llm_client.py`         | Gemini + OpenAI calls with key rotation, prompt builders, JSON parsing; `screen_references_with_llm()` is the Stage 4.5 reference-list screen |
+| `shared/llm_client.py`         | Gemini + OpenAI calls with key rotation, prompt builders, JSON parsing; `classify_replication()` is Stage 3's two-model front-door screen and `screen_references_with_llm()` the Stage 4.5 reference-list target pick |
 | `shared/pdf_sources.py`        | Multi-tier PDF acquisition waterfall (arXiv → OSF → Unpaywall → CORE → …)   |
 | `shared/pdf_parsing.py`        | Six PDF parse methods (openalex_xml, pdfminer, GROBID, docpluck, opendataloader, markitdown); `parse_all()` orchestrator; `score_parse_result()`, `best_parse_result()`, `best_parse_method_name()` scoring API |
 | `shared/grobid.py`             | GROBID reference extraction from PDFs                                       |
@@ -99,7 +98,8 @@ registered** in `app.py` — treat them as orphaned/legacy.
 | `shared/utils.py`              | `clean_doi()`, `cache_key()`, common helpers                                |
 | `shared/config.py`             | All paths, env var loading, rate limits; `MARKITDOWN_CACHE_DIR = cache/markdown/` |
 | `shared/schema.py`             | CSV column definitions — the contract between pipeline stages               |
-| `shared/cache.py`              | Cache read/write/clear helpers                                              |
+| `shared/prompts.py`            | Every LLM prompt in one module, plus `prompt_version()` / `prompt_versions()` — a prompt's version is the hash of its own text and every fragment it splices in |
+| `shared/cache.py`              | Cache read/write/clear helpers; `content_key()` builds the content-complete LLM cache key, `clear_content_keys()` purges one paper's entries |
 
 ### `search/` — Stage 1
 
@@ -122,13 +122,14 @@ registered** in `app.py` — treat them as orphaned/legacy.
 
 | File                       | Purpose                                                                      |
 | -------------------------- | ---------------------------------------------------------------------------- |
-| `extract/run_extract.py`   | Orchestrator: classifies match type, routes to single or multi-original; supports `--extracted-test` flag; `_best_fulltext_from_cache()` feeds the best-scoring parse result to the outcome LLM; `_fill_work_ids()` stamps `oa_work_id_r`/`oa_work_id_o` on every row after DOI verification |
+| `extract/run_extract.py`   | Orchestrator: screens each row at the front door (`_front_door_row()`), then classifies match type and routes to single or multi-original; `_resolve_and_code()` runs the ladder, guard and outcome gate for one row; supports `--extracted-test` flag; `_best_fulltext_from_cache()` feeds the best-scoring parse result to the outcome LLM; `_fill_work_ids()` stamps `oa_work_id_r`/`oa_work_id_o` on every row after DOI verification |
 | `extract/link_original.py` | Single-original pipeline. `run_for_doi()` escalates through the resolution ladder below and only reaches the PDF when every cheaper stage declines; runs `parse_all()` on the PDF, scores all methods, uses the winner's text for the DOI-resolution LLM via shared `best_parse_result()` |
 | `extract/multi_original.py`| Multi-original pipeline — finds all target studies (needs improvement)       |
-| `extract/code_outcome.py`  | Keyword + LLM outcome extraction                                             |
+| `extract/code_outcome.py`  | Outcome coding. `extract_outcome()` reads the abstract with an LLM and escalates to a second, fulltext-based call when the abstract cannot settle it (`OUTCOME_FULLTEXT_ESCALATION`); that call also applies the `is_genuine_attempt` veto that yields `outcome = not_a_replication`. The keyword patterns are the `--no-llm` fallback and the engine behind `predict_outcome_keyword()` / `--predicted-outcome`. Reproductions are coded on the 3×3 computation/robustness grid |
 | `extract/promote_test.py`  | CLI + library: merge rows from extracted-test.csv into extracted.csv; `--all`, `--doi`, `--dry-run`, `--force` |
 | `extract/audit_dois.py`    | CLI: retroactive DOI verification of extracted.csv; dry-run by default, `--apply` writes corrections; `--doi`, `--extracted-test` |
-| `extract/sanity_check.py`  | Post-extraction quarantine pass; runs automatically at the end of `run_extract` (completion AND Ctrl-C). First-match-wins routing of problem rows to set-aside CSVs: `not_a_replication`/non-article DOIs → `not_a_replication.csv`, self-links → `unresolved_self_links.csv`, `doi_o_verification==mismatch` → `unresolved_doi_mismatch.csv`, `target_pending` → `target_pending.csv`, and (with `--deep`) fabricated `doi_o` → `fabricated_original_doi.csv`. `cannot_be_determined` is kept in extracted.csv. Standalone: `python -m extract.sanity_check [--input …] [--deep] [--report-only]` |
+| `extract/sanity_check.py`  | Post-extraction quarantine pass; runs automatically at the end of `run_extract` (completion AND Ctrl-C). First-match-wins routing of problem rows to set-aside CSVs: `screen_disagreement` → `screen_disagreement.csv` (**before** the outcome rule, so a disagreement never lands in the agreed-no file), `not_a_replication`/non-article DOIs → `not_a_replication.csv`, self-links → `unresolved_self_links.csv`, `doi_o_verification==mismatch` → `unresolved_doi_mismatch.csv`, `llm_title_search` (provisional links) → `provisional_title_search.csv`, `target_pending` → `target_pending.csv`, and (with `--deep`) fabricated `doi_o` → `fabricated_original_doi.csv`. `cannot_be_determined` is kept in extracted.csv. Standalone: `python -m extract.sanity_check [--input …] [--deep] [--report-only]` |
+| `extract/clean_parse_cache.py` | CLI: delete all-empty parse caches from `cache/parse/` (written by pre-B4 runs that never fetched a PDF and then masked the real parse). Dry run by default, `--apply` deletes |
 | `extract/csv_to_db.py`     | CLI: push resolved extracted.csv rows into the Supabase validation DB (creates 1 `unvalidated` + 1 `record_metadata` + 3 `validation_queue` rows per record; slots `human_1`/`human_2`/`llm`); `--input`, `--dry-run` |
 
 ### `validate/` — Stage 4 (read-only monitoring dashboard)
@@ -147,7 +148,6 @@ separate Supabase-backed repo.
 | `validate/routes/check.py`         | `GET /check`; filter/inspect extracted rows and download subsets |
 | `validate/routes/batch.py`         | `GET /batch`; batch disambiguation for multiple-match papers |
 | `validate/routes/multi_originals.py` | `GET /multi-originals`; multi-original paper review |
-| `validate/routes/{extract_view,filter_view,search_view,pipeline,target_pending,input}.py` | **Orphaned/legacy** — present under `routes/` but NOT registered in `app.py`; per-stage tab views from an earlier design |
 | `shared/supabase_client.py`        | Read client for the Supabase validation tables; backs the dashboard's Supabase KPIs |
 
 ### `misc/` — Reference only, do not import
@@ -179,10 +179,20 @@ Key constraints:
 
 ## Stage 3 Routing Logic
 
-Stage 3 determines `original_match_type` itself as its first step, then routes accordingly:
+Stage 3's **front door** is the classification screen: before anything else, two
+models vote on "is this paper a replication or reproduction at all?"
+(`classify_replication()` in `shared/llm_client.py`). 58% of screened rows are
+discarded there, so every call made before that vote is spent on a row that is then
+thrown away. Only rows that survive the front door pay for match-type
+classification, the resolution ladder, PDF acquisition or outcome coding.
 
 ```python
-# run_extract.py:
+# run_extract.py, per row:
+
+screen = classify_replication(doi_r, title_r, abstract_r)
+# confident agreed "no"  → write not_a_replication and continue
+# models disagree        → write screen_disagreement and continue
+# one vote / no votes    → write target_pending / api_error and continue
 
 original_match_type = classify_match_type(row)   # Stage 3's own classification
 
@@ -196,6 +206,21 @@ else:
     # → 1 row in extracted.csv
 ```
 
+`classify_match_type` calls its LLM only when the abstract carries **≥ 2 distinct
+author-year pairs** — the only abstract evidence that several different originals are
+being targeted. Below that it returns `single_original` without a call (it answered
+`single_original` for 94% of rows anyway). The deterministic multi-title / "replication
+of N studies" rules run regardless, so Many Labs-style papers still route correctly.
+
+**Outcome coding runs only on a resolved link.** `_outcome_without_coding()` in
+`run_extract.py` is the single gate, derived from `RESOLVED_LINK_METHODS`: a row whose
+`link_method` is not in that set (`target_pending`, `api_error`, `no_original_found`,
+`screen_disagreement`, `not_a_replication`, `llm_title_search`) has no confirmed original
+to code against, so no outcome LLM runs and the row is written `pending` — except
+`not_a_replication`, where the screen's verdict *is* the outcome. The order per row is
+resolve → merge → `_guard_original_link` → `--resolved-only` → outcome, so a row the
+guard demotes or `--resolved-only` discards never reaches the outcome call.
+
 ### Original-study resolution ladder
 
 `run_for_doi()` in `extract/link_original.py` works from cheapest to most
@@ -207,29 +232,63 @@ last resort rather than the normal path.
 | - | ----- | ---------- | ------------------------ |
 | 2 | OpenAlex candidate re-query | always — builds the candidate pool from the paper's `referenced_works` | (not a resolver) |
 | 2.5 | Title-pattern resolver | the title matches "A Replication of X" and one candidate matches it | `title_pattern_match` |
-| 3 | Rule-based resolver | the abstract carries an author-year citation matching a candidate | `citation_context_match`, `same_author_year_title_overlap`, `single_candidate_after_requery` |
+| 3 | Rule-based resolver | the abstract carries an author-year citation matching a candidate, or exactly one candidate came back | `citation_context_match`, `same_author_year_title_overlap`, `single_candidate_after_requery` |
 | 4 | Abstract LLM | the abstract carries author-year patterns, with candidates to choose from | `llm_cited_candidates` |
-| 4.5 | **Reference-list screen** | there are referenced works (regardless of citation patterns) | `llm_references`, or `not_a_replication` |
-| 5 | PDF acquisition + full-text LLM | everything above declined | `llm_fulltext`, `llm_title_search` |
+| 4.5 | **Reference-list target pick** | there are referenced works (regardless of citation patterns) | `llm_references` |
+| 4.6 | Title search on a named-but-unmatched target | the screen agreed at high confidence that this is a replication and named a target it could not match to a reference | `llm_title_search` (**provisional** — see below) |
+| 5 | PDF acquisition + full-text LLM | everything above declined | `llm_fulltext`, `llm_title_search` (**provisional**) |
+
+`llm_title_search` is the one link method whose answer is not chosen from a bounded
+candidate list, and a hand-check measured it at roughly 50% precision. It is therefore
+**not** in `RESOLVED_LINK_METHODS`: `link_confidence` is forced to `low`, no outcome is
+coded, `csv_to_db` does not import the row, and `sanity_check` sets it aside in
+`data/provisional_title_search.csv` for human confirmation.
 
 Stages 2.5–4 all depend on `find_all_candidates()`, which returns `[]` unless the
 title or abstract contains a parseable `(Author, Year)` citation. Many abstracts —
 clinical and life-sciences ones especially — carry no such citation, so those
 stages cannot fire at all for them.
 
-**Stage 4.5** covers that gap. It shows the LLM the abstract plus the paper's
-OpenAlex reference list and asks two questions in one call:
+**Stage 4.5** covers that gap. The screen asks two questions, split across two
+functions in `shared/llm_client.py` because they are now decided at different points
+in the pipeline:
 
-1. *Is this a replication or reproduction at all?* A confident **no** ends the row:
-   `outcome = not_a_replication`, no PDF is fetched and no outcome LLM runs, and
-   `sanity_check` routes the row to `data/not_a_replication.csv`.
-2. *If yes, which reference is the target?* A target is accepted **only at
-   `confidence == "high"`**. At medium or low the row still escalates to full
-   text — a wrong original is worse than a slow one, and the prompt states
-   explicitly that most abstracts do not name their target and that declining is
-   the expected answer.
+1. *Is this a replication or reproduction at all?* — `classify_replication()`, run at
+   Stage 3's front door (above). A confident agreed **no** ends the row there:
+   `outcome = not_a_replication`, no match-type call, no ladder, no PDF, no outcome
+   LLM, and `sanity_check` routes the row to `data/not_a_replication.csv`. Cached at
+   `cache/llm/classify_{key}.json`.
+2. *Which reference is the target?* — `screen_references_with_llm()`, here at Stage
+   4.5, where the reference list has been fetched. It takes the front door's verdict
+   as its `classification` argument rather than voting again (a caller without a
+   verdict, e.g. the batch tools, lets it vote). A target is accepted **only at
+   `confidence == "high"`**; at medium or low the row escalates to full text — a wrong
+   original is worse than a slow one, and the prompt states explicitly that most
+   abstracts do not name their target and that declining is the expected answer.
+   Cached separately at `cache/llm/reftarget_{key}.json`.
 
-Results are cached at `cache/llm/refscreen_{key}.json`.
+**Two providers are required.** Question 1 is voted on by Gemini (`GEMINI_LIGHT_MODEL`)
+*and* OpenRouter (`SCREEN_VOTER2_MODEL`, default `mistralai/ministral-14b-2512`), and the
+screen acts only when both answer and agree, so `GEMINI_API_KEY` and `OPENROUTER_API_KEY`
+must both be set — `extract.run_extract` refuses to start otherwise (unless `--no-llm`).
+Voter 2 is deliberately outside the Google lineage: on adjudicated hard cases this pair
+correctly discards 89% of true negatives (gpt-5-mini's pair managed 25%) while still
+losing no genuine replication. Changing either voter changes the cache key by itself —
+both voters' model names are folded into it — so one pair's verdicts can never be
+replayed as another's. An incomplete screen is reported as such rather than as a verdict, and is
+never cached:
+
+| Votes | `resolution_method` | `link_method` |
+| ----- | ------------------- | ------------- |
+| 2 | agreement/disagreement as above | resolved, `not_a_replication`, or `screen_disagreement` |
+| 1 | `llm_refscreen_partial` | `target_pending` — one vote is not a disagreement; the row waits for a re-run |
+| 0 | `llm_refscreen_failed` | `api_error` |
+
+Rows the screen sets aside (`not_a_replication`, `screen_disagreement`) carry the
+screen's models in `link_llm_model` and its verdicts/evidence in `link_evidence`, so a
+reviewer can see what decided them. On a resolved `llm_references` row those fields
+instead name the model that picked the reference — that call, not the Q1 vote, made the
+link.
 
 ---
 
@@ -254,20 +313,41 @@ OPENAI_MODEL=gpt-4o-mini            # override as needed
 
 Every API call (OpenAlex, Gemini, OpenAI, CrossRef) must be cached so that re-runs don't repeat expensive calls.
 
-Use `cache_key()` from `shared/utils.py` to get a stable hash for a given input, then use `shared/cache.py` to read and write:
+**A cache key must name everything the cached answer depends on.** A key that omits an
+input silently answers one question with another question's answer, and a cache that
+cannot be invalidated is a cache that pins a bug. For an LLM call that means the prompt
+version, the model that will answer, and the inputs actually sent:
 
 ```python
-from shared.utils import cache_key
-from shared.cache import read_cache, write_cache
+from shared.cache import content_key, read_cache, write_cache
+from shared.prompts import prompt_version
 
-key = cache_key(doi_r + "_filter")    # unique per call type
-cached = read_cache(key)
+prompt = build_filter_prompt(title, abstract)
+key = content_key("filter", doi_r, prompt_version("build_filter_prompt"),
+                  GEMINI_MODEL, prompt)
+cached = read_cache(LLM_CACHE_DIR, key)
 if cached is None:
-    result = call_api(...)
-    write_cache(key, result)
+    result = call_api(prompt)
+    write_cache(LLM_CACHE_DIR, key, result)
 else:
     result = cached
 ```
+
+`content_key()` produces `<prefix>_<doi hash>_<content hash>`. The DOI hash is in the
+name only so one paper's entries can be found and purged together —
+`clear_content_keys(dir, "outcome", doi)` — never as the key itself.
+
+`prompt_version(name)` (see `shared/prompts.py`) is the sha256 of the prompt's own text
+plus every fragment it splices in, so editing a prompt or a shared fragment invalidates
+exactly the caches that depended on the old wording. There is nothing to register and no
+version constant to remember to bump.
+
+Cache non-answers too. A model that declines to identify a target has answered; a
+provider that returned a 503 has not. Caching only the successes made every declined
+full-text call repay its API cost on every re-run.
+
+For plain API responses (OpenAlex, CrossRef) keyed by identifier, `cache_key()` from
+`shared/utils.py` on that identifier is enough.
 
 Cache files are stored in `cache/` (gitignored). They persist across runs; clear manually if you need fresh data.
 
@@ -345,7 +425,7 @@ python -m filter.run_filter --rebuild-index   # rebuilds cache/filtered_index.tx
 6. **All CSV writes use `utf-8-sig` encoding** (BOM, Excel-compatible). Exception: when appending to an existing file, use plain `utf-8` to avoid embedding BOM mid-file — Excel handles both correctly.
 7. **All DOIs pass through `clean_doi()`** from `shared/utils.py` before writing or comparing.
 8. **All API responses must be cached** using the pattern above before any result is used.
-9. **Rate limiting:** OpenAlex: 0.3 s between calls (`OPENALEX_RATE_SEC` default in `shared/config.py`; override via env). Gemini: 1 s between calls. OpenAI: 0.5 s.
+9. **Rate limiting:** every interval lives in `shared/config.py` and is overridable via env. OpenAlex 0.3 s (`OPENALEX_RATE_SEC`); Gemini 1 s (`GEMINI_RATE_SEC`), OpenAI 0.5 s (`OPENAI_RATE_SEC`), OpenRouter 0.5 s (`OPENROUTER_RATE_SEC`). The LLM intervals are charged **per provider**, against that provider's own last-call timestamp — the screen's two votes go to different providers and neither waits on the other.
 
 ---
 
@@ -407,16 +487,45 @@ Key variables:
 ```bash
 RESEARCHER_EMAIL=you@example.com      # required for OpenAlex/Crossref politeness headers
 GEMINI_API_KEY=...                    # required for LLM calls
-GEMINI_API_KEY_2=...                  # optional: key rotation for higher quota
+GEMINI_API_KEY_2=...                  # optional: failover key (does NOT raise quota — see below)
 OPENAI_API_KEY=...                    # optional fallback LLM
+OPENROUTER_API_KEY=...                # required for Stage 3 (screen voter 2)
 S2_API_KEY=...                        # optional: Semantic Scholar API key (Stage 1)
 GROBID_URL=http://localhost:8070      # default; override if GROBID runs elsewhere
 GEMINI_MODEL=gemini-3-flash-preview   # primary Gemini model
 GEMINI_HEAVY_MODEL=gemini-3-flash-preview  # used for DOI resolution (defaults to GEMINI_MODEL)
 OPENAI_MODEL=gpt-5-mini               # OpenAI fallback
+SCREEN_VOTER2_MODEL=mistralai/ministral-14b-2512  # Stage 4.5 screen, voter 2 (OpenRouter)
 FILTER_OPENAI_MODEL=gpt-5-mini        # Stage 2 filter primary model
-GEMINI_USE_FLEX=true                  # 50% cost reduction; requires paid GEMINI_API_KEY
+GEMINI_USE_FLEX=true                  # 50% cost reduction; paid keys only
+GEMINI_PAID_KEYS=1                    # 1-based key slots that are paid; flex applies to these
 ```
+
+### Gemini quota: billing, not key rotation
+
+Gemini rate limits are applied **per project, not per API key**. Extra
+`GEMINI_API_KEY_N` slots from the same project therefore share one bucket — they
+buy failover against a revoked or misconfigured key, not throughput. Sharding a
+workload across projects to multiply free quota is both against Google's terms
+and arithmetically hopeless here.
+
+The binding constraint is the heavy model's free-tier ceiling of **20 requests per
+day**. A single row costs 1–4 heavy calls as it escalates the resolution ladder,
+so the free tier sustains roughly 5–20 rows/day: a 2,000-row run is not runnable.
+Enabling billing (**Tier 1**) raises that ceiling to **10,000 RPD**.
+
+Billing is not a layer on top of the free tier — it replaces it, so usage is
+billed from the first token, and a project past its spend cap returns
+`429 RESOURCE_EXHAUSTED` rather than falling back to free quota. Paid-tier
+prompts and responses are also excluded from Google's product-improvement use,
+which matters for unpublished abstracts.
+
+**Intended configuration: one paid project with `GEMINI_USE_FLEX=true`.** Flex
+carries the same 50% discount as Batch with no job-submission plumbing, and the
+pipeline applies it to every Gemini call — including the PDF and image calls,
+which carry the largest payloads. Flex requests can queue, so they use
+`GEMINI_FLEX_TIMEOUT` (default 900s) instead of the standard per-call timeout; if
+the API rejects the flex tier, the call is retried once at standard tier.
 
 GROBID is optional. If `GROBID_URL` points to a server that is not running, the PDF extraction step logs a warning and falls back to abstract-only processing. It does not crash.
 

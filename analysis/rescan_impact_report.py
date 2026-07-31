@@ -120,13 +120,17 @@ def audit_stage3_relink_impact(limit: int | None = None) -> pd.DataFrame:
                 break
 
             doi_r = clean_doi(str(row.get("doi_r", "")))
-            cache_path = _OA_CACHE_DIR / f"candidates_{cache_key(doi_r)}.json"
-            if not cache_path.exists():
+            # Content-keyed: one DOI can have several candidate lists (the call
+            # sites pass different titles). Newest wins — it is the list the last
+            # extraction run actually saw.
+            paths = sorted(_OA_CACHE_DIR.glob(f"candidates_{cache_key(doi_r)}_*.json"),
+                           key=lambda p: p.stat().st_mtime, reverse=True)
+            if not paths:
                 n_skipped_no_cache += 1
                 continue
 
             try:
-                candidates = json.loads(cache_path.read_text(encoding="utf-8"))
+                candidates = json.loads(paths[0].read_text(encoding="utf-8"))
             except Exception:
                 n_skipped_no_cache += 1
                 continue

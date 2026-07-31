@@ -12,8 +12,14 @@ from unittest.mock import MagicMock, call, patch
 import pandas as pd
 import pytest
 
-from shared.schema import EXTRACTED_COLS, OUTCOME_CATEGORIES, make_pair_id
-from shared.cache import read_dual_cache, write_dual_cache
+from shared.schema import (
+    EXTRACTED_COLS,
+    LINK_METHOD_VALUES,
+    OUTCOME_CATEGORIES,
+    RESOLVED_LINK_METHODS,
+    make_pair_id,
+)
+from shared.cache import content_key, read_cache
 import extract.code_outcome as code_outcome
 import extract.run_extract as run_extract
 from extract.code_outcome import extract_outcome, _keyword_scan, _expand_to_sentences
@@ -116,6 +122,43 @@ class TestKeywordScan:
         hit = _keyword_scan("we failed to replicate the originally replicated finding", "abstract")
         assert hit["outcome"] == "failure"
 
+    def test_success_in_the_same_sentence_vetoes_a_failure_keyword(self):
+        """A failure phrase does not decide a sentence that also reports success."""
+        text = ("The effect did not replicate in Study 1, but was successfully "
+                "replicated in Study 2.")
+        hit = _keyword_scan(text, "abstract")
+        assert hit is not None
+        assert hit["outcome"] != "failure"
+
+    def test_success_elsewhere_does_not_veto_a_failure_sentence(self):
+        """The veto is per sentence — a success claim about a different result is not one."""
+        text = ("The manipulation check was successfully replicated. "
+                "The focal effect failed to replicate.")
+        hit = _keyword_scan(text, "abstract")
+        assert hit is not None
+        assert hit["outcome"] == "failure"
+
+    @pytest.mark.parametrize("text", [
+        "We found no significant difference between our estimate and the original, "
+        "consistent with the original finding.",
+        "There was no evidence of a difference from the original effect; the "
+        "replication was successful.",
+    ])
+    def test_weak_failure_phrases_lose_to_an_explicit_success(self, text):
+        """"No significant difference" describes the test, not the verdict.
+
+        In a successful replication it is how the comparison against the original
+        is reported, so an explicit success claim in the same abstract wins.
+        """
+        hit = _keyword_scan(text, "abstract")
+        assert hit is not None
+        assert hit["outcome"] == "success"
+
+    def test_weak_failure_phrase_alone_still_codes_failure_at_medium(self):
+        hit = _keyword_scan("We found no evidence of ego depletion.", "abstract")
+        assert hit["outcome"] == "failure"
+        assert hit["outcome_confidence"] == "medium"
+
     def test_returns_source_correctly(self):
         hit = _keyword_scan("successfully replicated", "fulltext")
         assert hit["out_quote_source"] == "fulltext"
@@ -209,13 +252,25 @@ class TestExtractOutcome:
             {"resolution_method": "llm_cited_candidates", "llm_confidence": "high"}
         ) == "high"
 
-    def test_llm_failure_returns_cannot_be_determined(self, tmp_path):
-        """LLM failure should return cannot_be_determined, not crash."""
+    def test_llm_failure_returns_api_error(self, tmp_path):
+        """Exhausting every provider is an api_error, not a cannot_be_determined verdict."""
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.time.sleep"), \
              patch("extract.code_outcome.call_llm", return_value=(None, "", "quota | error")):
             result = extract_outcome("10.1234/fail", abstract_r="ambiguous text")
-        assert result["outcome"] == "cannot_be_determined"
+        assert result["outcome"] == "api_error"
         assert result["outcome_confidence"] == "low"
+        # An API failure must not be cached — a re-run has to be able to code the row.
+        assert not list(tmp_path.glob("*.json"))
+
+    def test_llm_failure_backs_off_between_retries(self, tmp_path):
+        """call_llm reports failure by returning None, so the backoff must run on that path."""
+        sleeps: list = []
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.time.sleep", side_effect=sleeps.append), \
+             patch("extract.code_outcome.call_llm", return_value=(None, "", "quota")):
+            extract_outcome("10.1234/fail", abstract_r="ambiguous text")
+        assert sleeps == [1, 2]
 
     def test_llm_result_cached(self, tmp_path):
         """LLM result should be written to cache and reused."""
@@ -518,40 +573,69 @@ class TestOutcomePromptContent:
         assert "…" in prompt
 
 
-class TestDualCache:
-    def test_write_creates_both_keys(self, tmp_path):
-        write_dual_cache(tmp_path, "legacy1", "content1", {"outcome": "success"})
-        assert (tmp_path / "legacy1.json").exists()
-        assert (tmp_path / "content1.json").exists()
+class TestOutcomeCacheKey:
+    """One content-keyed entry per outcome answer — no legacy DOI-only key."""
 
-    def test_accumulate_prefers_legacy(self, tmp_path):
-        write_cache_json(tmp_path, "legacy2", {"outcome": "OLD"})
-        write_cache_json(tmp_path, "content2", {"outcome": "NEW"})
-        got = read_dual_cache(tmp_path, "legacy2", "content2", mode="accumulate")
-        assert got["outcome"] == "OLD"
+    _RET = {"outcome": "success", "outcome_phrase": "x", "confidence": "high",
+            "out_quote_source": "abstract", "outcome_reasoning": ""}
 
-    def test_accumulate_falls_back_to_content(self, tmp_path):
-        write_cache_json(tmp_path, "content3", {"outcome": "NEW"})
-        got = read_dual_cache(tmp_path, "legacy3", "content3", mode="accumulate")
-        assert got["outcome"] == "NEW"
-
-    def test_latest_ignores_legacy(self, tmp_path):
-        write_cache_json(tmp_path, "legacy4", {"outcome": "OLD"})
-        # No content entry → latest mode returns None even though legacy exists.
-        assert read_dual_cache(tmp_path, "legacy4", "content4", mode="latest") is None
-        write_cache_json(tmp_path, "content4", {"outcome": "NEW"})
-        got = read_dual_cache(tmp_path, "legacy4", "content4", mode="latest")
-        assert got["outcome"] == "NEW"
-
-    def test_llm_outcome_dual_writes(self, tmp_path):
-        ret = {"outcome": "success", "outcome_phrase": "x", "confidence": "high",
-               "out_quote_source": "abstract", "outcome_reasoning": ""}
+    def _run(self, tmp_path, **kwargs):
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.call_llm", return_value=(ret, "m", "")), \
+             patch("extract.code_outcome.call_llm", return_value=(self._RET, "m", "")) as mock, \
              patch("extract.code_outcome.time.sleep"):
-            extract_outcome("10.1234/dual", abstract_r="ambiguous abstract", title_r="T")
-        files = list(tmp_path.glob("outcome_*.json"))
-        assert len(files) == 2  # legacy DOI key + content key
+            extract_outcome(kwargs.pop("doi", "10.1234/key"), **kwargs)
+        return mock
+
+    def test_single_entry_written(self, tmp_path):
+        self._run(tmp_path, abstract_r="ambiguous abstract", title_r="T")
+        assert len(list(tmp_path.glob("outcome_*.json"))) == 1
+
+    def test_same_inputs_hit_cache(self, tmp_path):
+        self._run(tmp_path, abstract_r="ambiguous abstract", title_r="T")
+        mock = self._run(tmp_path, abstract_r="ambiguous abstract", title_r="T")
+        assert mock.call_count == 0
+
+    def test_changed_abstract_misses(self, tmp_path):
+        self._run(tmp_path, abstract_r="one abstract", title_r="T")
+        mock = self._run(tmp_path, abstract_r="another abstract", title_r="T")
+        assert mock.call_count == 1
+        assert len(list(tmp_path.glob("outcome_*.json"))) == 2
+
+    def test_changed_record_type_misses(self, tmp_path):
+        self._run(tmp_path, abstract_r="a", title_r="T")
+        mock = self._run(tmp_path, abstract_r="a", title_r="T", record_type="reproduction")
+        assert mock.call_count == 1
+
+    def test_changed_fulltext_misses(self, tmp_path):
+        """The escalation reads the fulltext, so a re-parsed PDF must not replay the
+        verdict reached without it."""
+        self._run(tmp_path, abstract_r="a", title_r="T", fulltext="old text")
+        mock = self._run(tmp_path, abstract_r="a", title_r="T", fulltext="new text")
+        assert mock.call_count == 1
+
+    def test_prompt_version_in_key(self, tmp_path, monkeypatch):
+        from shared import prompts
+        self._run(tmp_path, abstract_r="a", title_r="T")
+        monkeypatch.setattr(prompts, "OUTCOME_RULES", prompts.OUTCOME_RULES + " EDIT")
+        prompts.prompt_version.cache_clear()
+        try:
+            mock = self._run(tmp_path, abstract_r="a", title_r="T")
+        finally:
+            prompts.prompt_version.cache_clear()
+        assert mock.call_count == 1
+
+    def test_accumulate_env_var_is_gone(self):
+        import shared.cache as cache_mod
+        import shared.config as config_mod
+        assert not hasattr(cache_mod, "read_dual_cache")
+        assert not hasattr(cache_mod, "write_dual_cache")
+        assert not hasattr(config_mod, "LLM_CACHE_READ")
+
+    def test_content_key_shape_allows_per_doi_glob(self, tmp_path):
+        from shared.utils import cache_key as _ck
+        key = content_key("outcome", "10.1/x", "a", "b")
+        assert key.startswith(f"outcome_{_ck('10.1/x')}_")
+        assert content_key("outcome", "10.1/x", "a", "c") != key
 
 
 def write_cache_json(cache_dir, key, data):
@@ -562,10 +646,13 @@ def write_cache_json(cache_dir, key, data):
 
 # ── classify_match_type unit tests (Issue 8) ─────────────────────────────────
 
+# Two distinct author-year pairs: below that the LLM match-type call is gated off
+# (audit E1) and classify_match_type returns single_original without asking.
 _ROW = {
     "doi_r": "10.1000/test",
     "title_r": "A Replication Study",
-    "abstract_r": "We replicated Smith (2010) and found consistent results.",
+    "abstract_r": "We replicated Smith (2010) and Jones (2012) and found "
+                  "consistent results.",
     "year_r": "2020",
     "openalex_id_r": "W999",
 }
@@ -591,8 +678,7 @@ class TestClassifyMatchType:
         row = row or _ROW
         with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
              patch("extract.run_extract.find_all_candidates", return_value=oa_result), \
-             patch("extract.run_extract.call_llm", return_value=(llm_result, "gemini-model", "")), \
-             patch("extract.run_extract.time.sleep"):
+             patch("extract.run_extract.call_llm", return_value=(llm_result, "gemini-model", "")):
             return classify_match_type(row)
 
     def test_returns_single_original(self, tmp_path):
@@ -635,18 +721,32 @@ class TestClassifyMatchType:
         assert result["original_match_confidence"] == "low"
 
     def test_result_cached_on_second_call(self, tmp_path):
-        """Second call with same doi_r must use cache — OpenAlex + LLM not called again."""
+        """Second call with the same inputs must not repeat the LLM call.
+
+        The candidate list is part of the key, so the (disk-cached) OpenAlex lookup
+        runs first and is expected to be called both times.
+        """
         llm = {"original_match_type": "single_original",
                "confidence": "high", "reasoning": "cached"}
         with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
              patch("extract.run_extract.find_all_candidates",
-                   return_value=_CAND_SINGLE) as mock_oa, \
-             patch("extract.run_extract.call_llm", return_value=(llm, "gemini-model", "")) as mock_llm, \
-             patch("extract.run_extract.time.sleep"):
+                   return_value=_CAND_SINGLE), \
+             patch("extract.run_extract.call_llm", return_value=(llm, "gemini-model", "")) as mock_llm:
             classify_match_type(_ROW)  # first call — populates cache
             classify_match_type(_ROW)  # second call — should use cache
-        assert mock_oa.call_count == 1
         assert mock_llm.call_count == 1
+
+    def test_changed_candidates_miss_the_cache(self, tmp_path):
+        """A different candidate list is a different question — it must be re-asked."""
+        llm = {"original_match_type": "single_original", "confidence": "high"}
+        other = [dict(_CAND_SINGLE[0], title="A completely different paper")]
+        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.run_extract.call_llm", return_value=(llm, "m", "")) as mock_llm:
+            with patch("extract.run_extract.find_all_candidates", return_value=_CAND_SINGLE):
+                classify_match_type(_ROW)
+            with patch("extract.run_extract.find_all_candidates", return_value=other):
+                classify_match_type(_ROW)
+        assert mock_llm.call_count == 2
 
     def test_invalid_llm_match_type_normalised(self, tmp_path):
         """LLM returning an unknown match_type value should become single_original."""
@@ -664,8 +764,7 @@ class TestClassifyMatchType:
 
         with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
              patch("extract.run_extract.find_all_candidates", return_value=_CAND_SINGLE), \
-             patch("extract.run_extract.call_llm", side_effect=fake_llm), \
-             patch("extract.run_extract.time.sleep"):
+             patch("extract.run_extract.call_llm", side_effect=fake_llm):
             classify_match_type(_ROW)
 
         prompt = captured_prompt[0]
@@ -705,8 +804,28 @@ _MOCK_MULTI = {
 }
 _MOCK_MATCH = {"original_match_type": "single_original", "original_match_confidence": "high"}
 
+# Stage 3's front door: both classifiers agree the paper is a replication, so the
+# row goes down the ladder exactly as it did before the screen moved to the front.
+_YES_SCREEN = {
+    "resolution_method": "llm_refscreen_declined", "is_replication": "yes",
+    "models_agree": True, "classification_confidence": "high",
+    "votes": [{"provider": "gemini", "is_replication": "yes",
+               "confidence": "high", "reasoning": "r"},
+              {"provider": "openrouter", "is_replication": "yes",
+               "confidence": "high", "reasoning": "r"}],
+    "llm_source": "gemini+openrouter", "llm_model": "flash-lite+ministral",
+    "llm_evidence": "", "llm_reasoning": "", "llm_prompt": "", "llm_error": "",
+}
+
 
 class TestRunExtract:
+    @pytest.fixture(autouse=True)
+    def _screen_providers_configured(self, monkeypatch):
+        """run_extract refuses to start unless both Q1 screen providers are configured.
+        These tests mock every LLM call, so satisfy the check rather than bypass it."""
+        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["test-key"])
+        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "test-key")
+
     def _run(self, filtered_csv: str, mock_multi=None, mock_match=None):
         """Helper: write a temp CSV, run extract with mocked APIs, return result DataFrame."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv",
@@ -714,7 +833,8 @@ class TestRunExtract:
             f.write(filtered_csv)
             tmp = Path(f.name)
 
-        with patch("extract.run_extract.classify_match_type",
+        with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
+             patch("extract.run_extract.classify_match_type",
                    return_value=mock_match or _MOCK_MATCH), \
              patch("extract.run_extract.run_for_doi", return_value=_MOCK_LINK), \
              patch("extract.run_extract.run_multi_original_for_doi",
@@ -768,7 +888,8 @@ class TestRunExtract:
             f.write(csv)
             tmp = Path(f.name)
 
-        with patch("extract.run_extract.classify_match_type", mock_classify), \
+        with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
+             patch("extract.run_extract.classify_match_type", mock_classify), \
              patch("extract.run_extract.run_for_doi", return_value=_MOCK_LINK), \
              patch("extract.run_extract.run_multi_original_for_doi",
                    return_value={"is_false_positive": False, "n_originals": 0,
@@ -854,7 +975,8 @@ class TestRunExtract:
             f.write(csv)
             tmp = Path(f.name)
 
-        with patch("extract.run_extract.classify_match_type", mock_classify), \
+        with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
+             patch("extract.run_extract.classify_match_type", mock_classify), \
              patch("extract.run_extract.run_for_doi", return_value=_MOCK_LINK), \
              patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
              patch("extract.run_extract.verify_and_correct",
@@ -928,7 +1050,8 @@ class TestRunExtract:
             "10.1000/rep,Rep Paper,Abstract,2020,Jones,J. Psych,,W2,openalex,"
             "replication,rule_based,direct replication,high\n"
         )
-        with patch("extract.run_extract.classify_match_type", return_value=_MOCK_MATCH), \
+        with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
+             patch("extract.run_extract.classify_match_type", return_value=_MOCK_MATCH), \
              patch("extract.run_extract.run_for_doi", return_value=_MOCK_LINK), \
              patch("extract.run_extract.run_multi_original_for_doi",
                    return_value={"is_false_positive": False, "n_originals": 0,
@@ -1371,7 +1494,9 @@ class TestTitleSearchProvenance:
     def test_schema_knows_the_method(self):
         from shared.schema import LINK_METHOD_VALUES, RESOLVED_LINK_METHODS
         assert "llm_title_search" in LINK_METHOD_VALUES
-        assert "llm_title_search" in RESOLVED_LINK_METHODS
+        # Provisional, not resolved: ~50% measured precision and the failure mode is
+        # invisible to doi_o_verification, so the row must not import (audit D2).
+        assert "llm_title_search" not in RESOLVED_LINK_METHODS
 
     def test_mapped_from_internal_label(self):
         assert run_extract._map_method("llm_title_search_gemini") == "llm_title_search"
@@ -1471,3 +1596,522 @@ class TestOutcomeVocabularyNeverCrosses:
         from shared.schema import outcome_categories_for
         assert "success" not in outcome_categories_for("reproduction")
         assert "computationally successful, robust" not in outcome_categories_for("replication")
+
+
+# ── Decision-model attribution and the two-provider requirement ──────────────
+
+class TestClassifyModelAttribution:
+    """Routing is the one decision with no attribution otherwise: the match-type
+    classifier's model was computed and thrown away."""
+
+    _FILTER_ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "Rep",
+                             "filter_status": "replication"})
+
+    def test_merge_row_persists_the_classifier_model(self):
+        link = {"resolution_method": "llm_fulltext", "resolved_doi_o": "10.1/orig",
+                "resolved_title_o": "Original", "resolved_year_o": 2000,
+                "resolved_author_o": "Smith", "resolution_score": 1.0,
+                "llm_confidence": "high"}
+        with patch("extract.run_extract._build_ref_o", return_value=("ref", "auth", "bib")):
+            row = _merge_row(self._FILTER_ROW, link, _MOCK_OUTCOME,
+                             "single_original", "high", 1, 1, "gemini-heavy")
+        assert row["classify_llm_model"] == "gemini-heavy"
+
+    def test_merge_multi_row_persists_the_classifier_model(self):
+        with patch("extract.run_extract._build_ref_o", return_value=("", "", "")):
+            row = _merge_multi_row(self._FILTER_ROW,
+                                   {"rank": 1, "doi": "10.1/o", "title": "O",
+                                    "first_author": "A", "year": 2001,
+                                    "confidence": "high"},
+                                   _MOCK_OUTCOME, "multiple_original", "high", 2,
+                                   classify_model="gemini-heavy")
+        assert row["classify_llm_model"] == "gemini-heavy"
+
+    def test_empty_row_persists_the_classifier_model(self):
+        row = run_extract._empty_row(self._FILTER_ROW, "single_original", "low",
+                                     link_method="target_pending",
+                                     classify_model="gemini-heavy")
+        assert row["classify_llm_model"] == "gemini-heavy"
+
+    def test_classify_llm_model_is_in_the_schema(self):
+        assert "classify_llm_model" in EXTRACTED_COLS
+
+
+class TestMultiRowRecordType:
+    """A reproduction is coded in a different outcome vocabulary than a replication,
+    so a multi-original reproduction labelled 'replication' is validated against the
+    wrong categories."""
+
+    _ORIG = {"rank": 1, "doi": "10.1/o", "title": "O", "first_author": "A",
+             "year": 2001, "confidence": "high"}
+
+    def _row(self, filter_status: str) -> dict:
+        with patch("extract.run_extract._build_ref_o", return_value=("", "", "")):
+            return _merge_multi_row(
+                pd.Series({"doi_r": "10.1/rep", "title_r": "Rep",
+                           "filter_status": filter_status}),
+                self._ORIG, _MOCK_OUTCOME, "multiple_original", "high", 2)
+
+    def test_reproduction_keeps_its_type(self):
+        assert self._row("reproduction")["type"] == "reproduction"
+
+    def test_replication_is_unchanged(self):
+        assert self._row("replication")["type"] == "replication"
+
+    def test_matches_the_single_original_path(self):
+        """_merge_row already honours filter_status; the multi path must not disagree."""
+        link = {"resolution_method": "llm_fulltext", "resolved_doi_o": "10.1/orig",
+                "resolved_title_o": "Original", "resolved_year_o": 2000,
+                "resolved_author_o": "Smith", "resolution_score": 1.0,
+                "llm_confidence": "high"}
+        with patch("extract.run_extract._build_ref_o", return_value=("r", "a", "b")):
+            single = _merge_row(pd.Series({"doi_r": "10.1/rep", "title_r": "Rep",
+                                           "filter_status": "reproduction"}),
+                                link, _MOCK_OUTCOME, "single_original", "high", 1, 1)
+        assert single["type"] == self._row("reproduction")["type"]
+
+
+class TestRescreenReopensSetAsides:
+    """--resume carries every resolved row forward, which freezes the Stage 4.5
+    screen's own verdicts under whichever voter pair produced them."""
+
+    @staticmethod
+    def _csv(tmp_path, rows: list[dict]) -> Path:
+        df = pd.DataFrame(rows)
+        for c in EXTRACTED_COLS:
+            if c not in df.columns:
+                df[c] = ""
+        path = tmp_path / "extracted.csv"
+        df[EXTRACTED_COLS].to_csv(path, index=False, encoding="utf-8-sig")
+        return path
+
+    _ROWS = [
+        {"doi_r": "10.1/keep", "filter_status": "replication",
+         "link_method": "llm_references", "doi_o": "10.1/o", "outcome": "success"},
+        {"doi_r": "10.1/nar", "filter_status": "replication",
+         "link_method": "not_a_replication", "outcome": "not_a_replication"},
+        {"doi_r": "10.1/dis", "filter_status": "replication",
+         "link_method": "screen_disagreement", "outcome": "pending"},
+    ]
+
+    def test_without_the_flag_set_asides_are_carried_forward(self, tmp_path):
+        resolved, pending = run_extract._load_extracted_rows(self._csv(tmp_path, self._ROWS))
+        assert set(resolved) == {"10.1/keep", "10.1/nar", "10.1/dis"}
+        assert pending == set()
+
+    def test_rescreen_reopens_only_the_set_asides(self, tmp_path):
+        resolved, pending = run_extract._load_extracted_rows(
+            self._csv(tmp_path, self._ROWS), rescreen=True)
+        assert set(resolved) == {"10.1/keep"}
+        assert pending == set()   # reopened rows are re-processed, not carried as pending
+
+    def test_rescreen_reopens_the_whole_multi_original_paper(self, tmp_path):
+        rows = [
+            {"doi_r": "10.1/multi", "filter_status": "replication", "original_rank": "1",
+             "link_method": "llm_references", "doi_o": "10.1/o1", "outcome": "success"},
+            {"doi_r": "10.1/multi", "filter_status": "replication", "original_rank": "2",
+             "link_method": "screen_disagreement", "outcome": "pending"},
+        ]
+        resolved, _ = run_extract._load_extracted_rows(self._csv(tmp_path, rows),
+                                                      rescreen=True)
+        assert resolved == {}
+
+    def test_flag_reaches_run_extract(self):
+        import inspect
+        assert "rescreen" in inspect.signature(run_extract.run_extract).parameters
+
+
+class TestScreenProviderPrecheck:
+    """The Stage 4.5 screen needs two providers to have anything to agree about,
+    so a run configured with one must fail at startup, not 2,000 rows in."""
+
+    def test_missing_openrouter_key_raises(self, monkeypatch):
+        """Voter 2 runs on OpenRouter, so an OpenAI key no longer satisfies the screen."""
+        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["k"])
+        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "")
+        with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
+            run_extract._check_screen_providers(no_llm=False)
+
+    def test_missing_gemini_key_raises(self, monkeypatch):
+        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", [])
+        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "k")
+        with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
+            run_extract._check_screen_providers(no_llm=False)
+
+    def test_both_keys_present_passes(self, monkeypatch):
+        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["k"])
+        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "k")
+        run_extract._check_screen_providers(no_llm=False)
+
+    def test_no_llm_skips_the_check(self, monkeypatch):
+        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", [])
+        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "")
+        run_extract._check_screen_providers(no_llm=True)
+
+
+# ── Title-search links are provisional, not settled (audit D2) ───────────────
+
+class TestTitleSearchIsProvisional:
+    """A title search picks from the whole literature, not a candidate list, and a
+    hand-check put its precision near 50%. The row must therefore never present as
+    a settled pairing: low confidence, no outcome, and no DB import."""
+
+    def test_link_confidence_is_forced_low(self):
+        for method in ("llm_title_search_prepdf", "llm_title_search_gemini",
+                       "llm_title_search_openai"):
+            link = {"resolution_method": method, "llm_confidence": "high",
+                    "resolution_score": 1.0}
+            assert run_extract._link_confidence(link) == "low", method
+
+    def test_candidate_derived_links_keep_their_confidence(self):
+        link = {"resolution_method": "llm_gemini", "llm_confidence": "high",
+                "resolution_score": 1.0}
+        assert run_extract._link_confidence(link) == "high"
+
+    def test_no_outcome_is_coded_against_a_title_search_link(self):
+        link = {"resolution_method": "llm_title_search_prepdf",
+                "resolved_title_o": "Some landmark", "llm_model": "m"}
+        out = run_extract._outcome_without_coding("llm_title_search", link)
+        assert out is not None, "a provisional link must not be outcome-coded"
+        assert out["outcome"] == "cannot_be_determined"
+        assert out["outcome_confidence"] == "low"
+        assert "provisional" in out["outcome_reasoning"]
+
+
+# ── The classification screen is Stage 3's front door (audit E1) ─────────────
+# 58% of the rows reaching the screen are discarded there. Every call made before
+# it — the heavy-model match-type call, the resolution ladder, the PDF, the outcome
+# call — is spent on a row that is then thrown away, so the screen runs first and
+# the discarded rows must reach NONE of those.
+
+_FILTERED_CSV = (
+    "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
+    "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
+    "10.1000/rep,Rep Paper,Abstract text,2020,Jones,J. Psych,,W2,openalex,"
+    "replication,rule_based,direct replication,high\n"
+)
+
+
+def _screen(**over) -> dict:
+    return {**_YES_SCREEN, **over}
+
+
+class TestFrontDoorScreen:
+    def _run(self, screen, tmp_path, monkeypatch):
+        """Run Stage 3 over one row with the screen returning `screen`.
+
+        Returns (result_df, match_mock, ladder_mock, outcome_mock) so a test can
+        assert that the heavy calls after the front door were never made.
+        """
+        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["test-key"])
+        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "test-key")
+        (tmp_path / "filtered.csv").write_text(_FILTERED_CSV, encoding="utf-8-sig")
+        m_match = MagicMock(return_value=_MOCK_MATCH)
+        m_link  = MagicMock(return_value=_MOCK_LINK)
+        m_out   = MagicMock(return_value=_MOCK_OUTCOME)
+        with patch.object(run_extract, "classify_replication", return_value=screen), \
+             patch.object(run_extract, "classify_match_type", m_match), \
+             patch.object(run_extract, "run_for_doi", m_link), \
+             patch.object(run_extract, "extract_outcome", m_out), \
+             patch.object(run_extract, "verify_and_correct",
+                          side_effect=lambda doi, *a, **k: {
+                              "doi_o": doi, "doi_o_verification": "skipped",
+                              "evidence_note": ""}), \
+             patch.object(run_extract, "_oa_by_doi", return_value=None), \
+             patch.object(run_extract, "DATA_DIR", tmp_path), \
+             patch.object(run_extract, "BASE_DIR", tmp_path):
+            result = run_extract.run_extract()
+        return result, m_match, m_link, m_out
+
+    def test_a_confident_no_is_written_without_any_further_call(self, tmp_path, monkeypatch):
+        result, m_match, m_link, m_out = self._run(
+            _screen(is_replication="no", llm_reasoning="gemini: unrelated"),
+            tmp_path, monkeypatch)
+
+        assert list(result["link_method"]) == ["not_a_replication"]
+        assert list(result["outcome"]) == ["not_a_replication"]
+        m_match.assert_not_called()
+        m_link.assert_not_called()
+        m_out.assert_not_called()
+
+    def test_a_disagreement_skips_every_downstream_call(self, tmp_path, monkeypatch):
+        """audit B6: a disagreement row used to run an outcome call, whose
+        not_a_replication answer then leaked it into not_a_replication.csv."""
+        result, m_match, m_link, m_out = self._run(
+            _screen(is_replication="unclear", models_agree=False,
+                    classification_confidence="",
+                    votes=[{"provider": "gemini", "is_replication": "yes",
+                            "confidence": "high", "reasoning": "y"},
+                           {"provider": "openrouter", "is_replication": "no",
+                            "confidence": "high", "reasoning": "n"}]),
+            tmp_path, monkeypatch)
+
+        assert list(result["link_method"]) == ["screen_disagreement"]
+        assert list(result["outcome"]) == ["pending"]
+        assert "gemini=yes/high" in result.iloc[0]["link_evidence"]
+        assert "openrouter=no/high" in result.iloc[0]["link_evidence"]
+        m_match.assert_not_called()
+        m_link.assert_not_called()
+        m_out.assert_not_called()
+
+    def test_an_unsure_no_still_goes_down_the_ladder(self, tmp_path, monkeypatch):
+        """Discarding a paper takes two confident models; a hedged no is not enough."""
+        result, m_match, m_link, _ = self._run(
+            _screen(is_replication="no", classification_confidence="medium"),
+            tmp_path, monkeypatch)
+
+        assert result.iloc[0]["link_method"] == "same_author_year_title_overlap"
+        m_match.assert_called_once()
+        m_link.assert_called_once()
+
+    def test_one_vote_is_target_pending_not_a_verdict(self, tmp_path, monkeypatch):
+        result, m_match, m_link, m_out = self._run(
+            _screen(resolution_method="llm_refscreen_partial", models_agree=False,
+                    is_replication="unclear", llm_error="classifier failed: openrouter"),
+            tmp_path, monkeypatch)
+
+        assert list(result["link_method"]) == ["target_pending"]
+        m_match.assert_not_called()
+        m_link.assert_not_called()
+        m_out.assert_not_called()
+
+    def test_no_votes_is_an_api_error(self, tmp_path, monkeypatch):
+        result, _, m_link, _ = self._run(
+            _screen(resolution_method="llm_refscreen_failed", models_agree=False,
+                    is_replication="unclear", llm_error="classifier failed: gemini, openrouter"),
+            tmp_path, monkeypatch)
+
+        assert list(result["link_method"]) == ["api_error"]
+        assert list(result["outcome"]) == ["api_error"]
+        m_link.assert_not_called()
+
+    def test_the_verdict_is_threaded_into_the_ladder_not_re_voted(self, tmp_path, monkeypatch):
+        _, _, m_link, _ = self._run(_YES_SCREEN, tmp_path, monkeypatch)
+
+        assert m_link.call_args[1]["classification"] == _YES_SCREEN
+
+
+class TestMatchTypeLLMGate:
+    """The match-type LLM answered single_original for 94% of rows. It can only
+    distinguish several targets from distinct author-year citations, so with fewer
+    than two the call is gated off — the deterministic rules still run (audit E1)."""
+
+    _ONE_PAIR = dict(_ROW, abstract_r="We replicated Smith (2010) closely.")
+
+    def test_one_author_year_pair_skips_the_llm(self, tmp_path):
+        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.run_extract.find_all_candidates") as oa, \
+             patch("extract.run_extract.call_llm") as llm:
+            result = classify_match_type(self._ONE_PAIR)
+
+        assert result["original_match_type"] == "single_original"
+        llm.assert_not_called()
+        oa.assert_not_called()   # the candidate fetch only exists to feed that prompt
+
+    def test_no_citations_at_all_skips_the_llm(self, tmp_path):
+        row = dict(_ROW, abstract_r="A close replication in a new sample.")
+        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.run_extract.call_llm") as llm:
+            result = classify_match_type(row)
+
+        assert result["original_match_type"] == "single_original"
+        llm.assert_not_called()
+
+    def test_two_pairs_still_ask_the_llm(self, tmp_path):
+        llm_answer = {"original_match_type": "multiple_original", "confidence": "high"}
+        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.run_extract.find_all_candidates", return_value=_CAND_MULTI), \
+             patch("extract.run_extract.call_llm",
+                   return_value=(llm_answer, "gemini-model", "")) as llm:
+            result = classify_match_type(_ROW)
+
+        llm.assert_called_once()
+        assert result["original_match_type"] == "multiple_original"
+
+    def test_the_rules_still_fire_below_the_gate(self, tmp_path):
+        """A Many Labs paper with no citation in its abstract must still route to
+        multiple_original — only the LLM call is gated, not the rules."""
+        row = dict(_ROW, title_r="Many Labs 2: Investigating Variation",
+                   abstract_r="A large-scale project.")
+        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.run_extract.call_llm") as llm:
+            result = classify_match_type(row)
+
+        assert result["original_match_type"] == "multiple_original"
+        llm.assert_not_called()
+
+
+class TestOutcomeGate:
+    """Outcome coding runs only on a resolved link (audit E2). One gate, derived
+    from RESOLVED_LINK_METHODS — not a stack of per-method special cases."""
+
+    def test_every_resolved_method_is_coded(self):
+        for method in RESOLVED_LINK_METHODS:
+            assert run_extract._outcome_without_coding(method, {}) is None, method
+
+    def test_no_unresolved_method_is_coded(self):
+        for method in LINK_METHOD_VALUES - RESOLVED_LINK_METHODS:
+            assert run_extract._outcome_without_coding(method, {}) is not None, method
+
+    def test_set_aside_and_pending_rows_are_marked_pending(self):
+        for method in ("screen_disagreement", "target_pending", "no_original_found"):
+            out = run_extract._outcome_without_coding(method, {})
+            assert out["outcome"] == "pending", method
+
+    def test_a_not_a_replication_row_keeps_the_screen_verdict(self):
+        out = run_extract._outcome_without_coding(
+            "not_a_replication", {"llm_reasoning": "gemini: unrelated"})
+        assert out["outcome"] == "not_a_replication"
+        assert out["outcome_reasoning"] == "gemini: unrelated"
+
+    def test_a_guard_demoted_row_is_not_outcome_coded(self, monkeypatch):
+        """The guard rejects a self-link AFTER the ladder ran but BEFORE the outcome
+        call — so the row must be demoted first and never reach extract_outcome."""
+        row = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
+                         "filter_status": "replication"})
+        self_link = dict(_MOCK_LINK, resolved_doi_o="10.1/rep")
+        with patch.object(run_extract, "run_for_doi", return_value=self_link), \
+             patch.object(run_extract, "extract_outcome",
+                          side_effect=AssertionError("must not code an outcome")):
+            out = run_extract._resolve_and_code(
+                "10.1/rep", row, "single_original", "high", "", screen=None,
+                no_llm=False, no_pdf=True, resolved_only=False,
+                recalibrate_outcomes=False)
+
+        assert out["link_method"] == "target_pending"
+        assert out["outcome"] == "pending"
+
+    def test_resolved_only_drops_the_row_before_the_outcome_call(self):
+        row = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
+                         "filter_status": "replication"})
+        pending = {"resolution_method": "no_fulltext_available", "resolved_doi_o": "",
+                   "resolved_title_o": "", "resolved_year_o": None,
+                   "resolved_author_o": "", "resolution_score": 0.0}
+        with patch.object(run_extract, "run_for_doi", return_value=pending), \
+             patch.object(run_extract, "extract_outcome",
+                          side_effect=AssertionError("must not code an outcome")):
+            out = run_extract._resolve_and_code(
+                "10.1/rep", row, "single_original", "high", "", screen=None,
+                no_llm=False, no_pdf=True, resolved_only=True,
+                recalibrate_outcomes=False)
+
+        assert out is None
+
+
+# ── Empty parse caches must not poison later runs (audit B4) ────────────────
+
+_EMPTY_PARSE = {m: {"source": m, "abstract": "", "intro": "", "methods": "",
+                    "raw_text": "", "references": [], "error": None}
+                for m in ("grobid", "pdfminer", "markitdown")}
+
+_FULL_PARSE = {**_EMPTY_PARSE,
+               "markitdown": {"source": "markitdown", "abstract": "A real abstract",
+                              "intro": "A real intro", "methods": "", "raw_text": "body",
+                              "references": [{"title": "r"}], "error": None}}
+
+
+class TestEmptyParseCache:
+    def _cache(self, tmp_path, monkeypatch, results):
+        monkeypatch.setattr(run_extract, "PARSE_CACHE_DIR", tmp_path)
+        from shared.utils import cache_key
+        path = tmp_path / f"parse_{cache_key('10.1/x')}.json"
+        path.write_text(json.dumps(results), encoding="utf-8")
+        return path
+
+    def test_all_empty_cache_reads_as_a_miss(self, tmp_path, monkeypatch):
+        self._cache(tmp_path, monkeypatch, _EMPTY_PARSE)
+        assert run_extract._read_parse_cache("10.1/x") is None
+        assert run_extract._best_fulltext_from_cache("10.1/x") == ""
+
+    def test_populated_cache_still_reads(self, tmp_path, monkeypatch):
+        self._cache(tmp_path, monkeypatch, _FULL_PARSE)
+        assert run_extract._read_parse_cache("10.1/x") is not None
+        assert run_extract._best_fulltext_from_cache("10.1/x") == "body"
+
+    def test_empty_cache_is_reparsed_not_trusted(self, tmp_path, monkeypatch):
+        """The whole bug: the empty file existed, so the re-parse never happened."""
+        path = self._cache(tmp_path, monkeypatch, _EMPTY_PARSE)
+        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
+        with patch.object(run_extract, "_parse_all", return_value=_FULL_PARSE) as pa:
+            run_extract._save_parse_cache("10.1/x")
+        assert pa.called
+        assert json.loads(path.read_text(encoding="utf-8"))["markitdown"]["raw_text"] == "body"
+
+    def test_an_empty_parse_is_never_written(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(run_extract, "PARSE_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
+        with patch.object(run_extract, "_parse_all", return_value=_EMPTY_PARSE):
+            run_extract._save_parse_cache("10.1/x")
+        assert list(tmp_path.glob("parse_*.json")) == []
+
+
+class TestParseCacheOnlyAfterTheDocument:
+    """Screen exits return with pdf={}. Parsing them wrote the six-empty cache in
+    the first place, so the row must not reach the parser at all."""
+
+    def _link(self, **over):
+        base = {"pdf_ok": False, "pdf_source": "none"}
+        base.update(over)
+        return base
+
+    def test_screen_exit_has_no_document(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
+        assert not run_extract._has_document("10.1/x", self._link())
+
+    def test_acquired_pdf_has_a_document(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
+        assert run_extract._has_document(
+            "10.1/x", self._link(pdf_ok=True, pdf_source="arxiv"))
+
+    def test_openalex_xml_only_counts_as_a_document(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
+        assert run_extract._has_document(
+            "10.1/x", self._link(pdf_source="openalex_xml"))
+
+    def test_pdf_cached_by_an_earlier_run_counts(self, tmp_path, monkeypatch):
+        """--recalibrate-outcomes re-reads documents a previous run downloaded."""
+        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
+        from shared.utils import cache_key
+        (tmp_path / f"{cache_key('10.1/x')}.pdf").write_bytes(b"%PDF")
+        assert run_extract._has_document("10.1/x", self._link())
+
+
+class TestMatchTypeFailureIsNotCached:
+    """A 429 is not a verdict (audit B8).
+
+    The failure default is single_original, so caching it freezes a Many Labs paper
+    whose title does not trip the rule into the single-original pipeline for every
+    future run.
+    """
+
+    _ROW_MULTI = {
+        "doi_r": "10.1/rep", "title_r": "A study of several effects",
+        "abstract_r": "We revisit Smith (2010) and Jones (2012) in one paper.",
+        "openalex_id_r": "W1", "year_r": "2020",
+    }
+    _CANDS = [{"doi": "10.9/a", "title": "A", "year": 2010, "first_author": "Smith"},
+              {"doi": "10.9/b", "title": "B", "year": 2012, "first_author": "Jones"}]
+
+    def test_failure_writes_no_cache_entry(self, tmp_path):
+        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.run_extract.find_all_candidates", return_value=self._CANDS), \
+             patch("extract.run_extract.call_llm", return_value=(None, "", "quota")):
+            result = classify_match_type(self._ROW_MULTI)
+        assert result["original_match_type"] == "single_original"
+        assert not list(tmp_path.glob("match_type_*.json"))
+
+    def test_a_later_run_can_still_get_a_real_answer(self, tmp_path):
+        llm = {"original_match_type": "multiple_original", "confidence": "high"}
+        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.run_extract.find_all_candidates", return_value=self._CANDS):
+            with patch("extract.run_extract.call_llm", return_value=(None, "", "quota")):
+                classify_match_type(self._ROW_MULTI)
+            with patch("extract.run_extract.call_llm", return_value=(llm, "m", "")):
+                result = classify_match_type(self._ROW_MULTI)
+        assert result["original_match_type"] == "multiple_original"

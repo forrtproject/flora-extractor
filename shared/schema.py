@@ -38,6 +38,7 @@ EXTRACT_ADDED_COLS = [
     # Original-match type — determined by Stage 3 as its first routing step
     "original_match_type",       # str   — single_original | multiple_match | multiple_original
     "original_match_confidence", # str   — high | medium | low
+    "classify_llm_model",  # str   — exact model that classified original_match_type (blank when a rule fired or the LLM failed)
 
     # OpenAlex work IDs — bare form (e.g. W2884670852), not the https://openalex.org/ URL.
     # openalex_id_r above carries the URL form inherited from Stage 1; these two are the
@@ -117,14 +118,18 @@ RESOLVED_LINK_METHODS = {
     # Stage 4.5: the LLM picked the target from the paper's OpenAlex reference list,
     # accepted only at confidence == "high" (see link_original.run_for_doi).
     "llm_references",
-    # DOI came from a CrossRef/OpenAlex title search because the LLM named an
-    # original that was NOT in the candidate/reference list. Kept distinct from
-    # llm_fulltext: every doi_o mismatch found in the 2026-07 audit came from this
-    # path, so it must stay filterable rather than blend into candidate-derived links.
-    "llm_title_search",
 }
 
 LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
+    # PROVISIONAL, not resolved. The DOI came from a CrossRef/OpenAlex title search
+    # because the LLM named an original that was NOT in the candidate/reference list —
+    # the only link method whose answer is not picked from a bounded candidate set, so
+    # a plausible-sounding title can be matched against the whole literature. A
+    # hand-check of the 2026-07-28 batch put precision near 50%, and the errors are
+    # invisible to DOI verification: the DOI really does resolve to the named title,
+    # it is simply not the paper's target. These rows are quarantined by sanity_check
+    # for human confirmation and are NOT imported for validation.
+    "llm_title_search",
     # Legacy rows written before the granular split, remapped by
     # tools/migrate_link_methods.py — they cannot be disaggregated retroactively.
     "author_year_match_legacy",

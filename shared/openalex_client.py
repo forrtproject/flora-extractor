@@ -20,6 +20,7 @@ from .config import (
     OA_CACHE_DIR, OPENALEX_API_KEY, OPENALEX_API_KEYS, OPENALEX_RATE_SEC, CROSSREF_RATE_SEC,
     RESEARCHER_EMAIL, log,
 )
+from .cache import content_key, read_cache, write_cache
 from .utils import clean_doi, cache_key
 
 # ── Unicode ranges (chr() avoids \u in compiled regexes for Python < 3.12) ────
@@ -512,14 +513,20 @@ def find_all_candidates(doi_r: str,
     Re-fetch all referenced works for *openalex_id_r* and return EVERY work
     that matches any extracted author-year pattern.
 
-    Cached per doi_r in OA_CACHE_DIR / candidates_<hash>.json.
+    Cached in OA_CACHE_DIR on every argument the result depends on, not on doi_r
+    alone: the three call sites pass different titles and abstracts for the same
+    paper (run_extract passes the candidates-file title, link_original the
+    filtered-row one), and the extracted author-year patterns — hence the whole
+    candidate list — follow from them. pattern_str is not in the key because it is
+    not read: the call that used it is commented out below.
 
     Returns a list of dicts:
         openalex_id, doi, title, year, first_author,
         match_year_exact, cited_pattern
     """
 
-    cache_file = OA_CACHE_DIR / f"candidates_{cache_key(doi_r)}.json"
+    key = content_key("candidates", doi_r, openalex_id_r, study_r, abstract_r, year_r)
+    cache_file = OA_CACHE_DIR / f"{key}.json"
     if cache_file.exists():
         with cache_file.open(encoding="utf-8") as fh:
             return json.load(fh)
@@ -769,13 +776,37 @@ def _jaccard(a: str, b: str) -> float:
     return len(ta & tb) / len(ta | tb)
 
 
+def _cached_title_search(source: str, title: str, year: str, search) -> Optional[dict]:
+    """Disk-cache a title search, misses included.
+
+    The title searches fire three to five times for a single row — the pre-PDF
+    resolver, both reference builders and the link guard all ask — and a miss is
+    the common answer, so caching only the hits would leave most of the traffic
+    uncached. A miss is stored as {"hit": null}, which is a result like any other.
+    """
+    if not title:
+        return None
+    key = content_key(f"titlesearch_{source}", "", title, year)
+    cached = read_cache(OA_CACHE_DIR, key)
+    if cached is not None:
+        return cached.get("hit")
+    hit = search(title, year)
+    write_cache(OA_CACHE_DIR, key, {"hit": hit})
+    return hit
+
+
 def _search_crossref_by_title(title: str, year: str = "") -> Optional[dict]:
     """Search CrossRef by title and return full metadata if a confident hit is found.
 
     Uses a Jaccard threshold of 0.7 to confirm the top hit matches *title*,
     and requires the year to be within ±2 when *year* is provided.
-    Returns same shape as fetch_openalex_full_metadata, or None.
+    Returns same shape as fetch_openalex_full_metadata, or None. Cached per
+    (title, year) in OA_CACHE_DIR.
     """
+    return _cached_title_search("crossref", title, year, _search_crossref_by_title_live)
+
+
+def _search_crossref_by_title_live(title: str, year: str = "") -> Optional[dict]:
     try:
         r = requests.get(
             "https://api.crossref.org/works",
@@ -844,8 +875,13 @@ def _search_openalex_by_title(title: str, year: str = "") -> Optional[dict]:
     """Search OpenAlex by title and return full metadata if a confident hit is found.
 
     Jaccard threshold 0.7 against *title*; year ±2 when *year* is provided.
-    Returns same shape as fetch_openalex_full_metadata, or None.
+    Returns same shape as fetch_openalex_full_metadata, or None. Cached per
+    (title, year) in OA_CACHE_DIR.
     """
+    return _cached_title_search("openalex", title, year, _search_openalex_by_title_live)
+
+
+def _search_openalex_by_title_live(title: str, year: str = "") -> Optional[dict]:
     params: dict = {
         "filter" : f"title.search:{title[:200]}",
         "select" : "id,doi,title,publication_year,authorships,primary_location,biblio",
@@ -887,6 +923,43 @@ def _search_openalex_by_title(title: str, year: str = "") -> Optional[dict]:
     return None
 
 
+def _fetch_openalex_work(doi: str) -> Optional[dict]:
+    """Fetch the raw OpenAlex work for *doi*, cached once per DOI.
+
+    fetch_openalex_by_doi() and fetch_openalex_full_metadata() both need this work
+    and used to request it separately under different cache keys, so every doi_o
+    was fetched twice. They now share one lookup and derive their own shapes from
+    it; the select list is the union of what either needs. A DOI OpenAlex does not
+    hold is cached as a miss, so the full-metadata path reaches its CrossRef
+    fallback without re-asking.
+    """
+    doi = clean_doi(doi)
+    if not doi:
+        return None
+
+    cache_file = OA_CACHE_DIR / f"oa_work_{cache_key(doi)}.json"
+    if cache_file.exists():
+        with cache_file.open(encoding="utf-8") as fh:
+            return json.load(fh).get("work")
+
+    data = _oa_get(
+        "https://api.openalex.org/works",
+        {
+            "filter" : f"doi:{doi}",
+            "select" : "id,doi,title,publication_year,authorships,primary_location,biblio",
+            "mailto" : RESEARCHER_EMAIL,
+        },
+    )
+    if data is None:
+        return None   # request failed — a failure is not an answer, do not cache it
+
+    work = (data.get("results") or [None])[0]
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    with cache_file.open("w", encoding="utf-8") as fh:
+        json.dump({"work": work}, fh, ensure_ascii=False, indent=2)
+    return work
+
+
 def fetch_openalex_full_metadata(doi: str) -> Optional[dict]:
     """Fetch full metadata for a DOI: authors (APA-formatted), journal, biblio fields.
 
@@ -908,16 +981,8 @@ def fetch_openalex_full_metadata(doi: str) -> Optional[dict]:
 
     # ── Try OpenAlex first ────────────────────────────────────────────────────
     result: Optional[dict] = None
-    data = _oa_get(
-        "https://api.openalex.org/works",
-        {
-            "filter" : f"doi:{doi}",
-            "select" : "id,doi,title,publication_year,authorships,primary_location,biblio",
-            "mailto" : RESEARCHER_EMAIL,
-        },
-    )
-    if data and data.get("results"):
-        work    = data["results"][0]
+    work = _fetch_openalex_work(doi)
+    if work:
         authors = _all_authors_apa(work)
         loc     = work.get("primary_location") or {}
         src     = loc.get("source") or {}
@@ -960,32 +1025,16 @@ def fetch_openalex_by_doi(doi: str) -> Optional[dict]:
     in the same format as find_all_candidates() entries.
 
     Used to inject the FLoRA-verified original into the candidate pool for
-    validated DOIs. Cached per DOI in OA_CACHE_DIR/doi_lookup_<hash>.json.
-    Returns None if the DOI is not found or the request fails.
+    validated DOIs. The underlying OpenAlex work is cached by _fetch_openalex_work;
+    this shape is derived from it. Returns None if the DOI is not found or the
+    request fails.
     """
-    doi = clean_doi(doi)
-    if not doi:
+    work = _fetch_openalex_work(doi)
+    if not work:
         return None
 
-    cache_file = OA_CACHE_DIR / f"doi_lookup_{cache_key(doi)}.json"
-    if cache_file.exists():
-        with cache_file.open(encoding="utf-8") as fh:
-            return json.load(fh)
-
-    data = _oa_get(
-        "https://api.openalex.org/works",
-        {
-            "filter" : f"doi:{doi}",
-            "select" : "id,doi,title,publication_year,authorships",
-            "mailto" : RESEARCHER_EMAIL,
-        },
-    )
-    if not data or not data.get("results"):
-        return None
-
-    work    = data["results"][0]
     authors = _first_author_surnames(work)
-    result  = {
+    return {
         "openalex_id"     : work.get("id", ""),
         "doi"             : clean_doi(work.get("doi", "") or ""),
         "title"           : work.get("title", ""),
@@ -995,10 +1044,6 @@ def fetch_openalex_by_doi(doi: str) -> Optional[dict]:
         "match_year_exact": True,
         "cited_pattern"   : "flora_anchor",
     }
-
-    cache_file.parent.mkdir(parents=True, exist_ok=True)
-    with cache_file.open("w", encoding="utf-8") as fh:
-        json.dump(result, fh, ensure_ascii=False, indent=2)
 
     return result
 

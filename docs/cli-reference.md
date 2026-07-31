@@ -143,6 +143,9 @@ python -m extract.run_extract --extracted-test
 # Resume from last processed row
 python -m extract.run_extract --resume
 
+# Resume, and also re-decide rows a previous run set aside on the classification screen
+python -m extract.run_extract --resume --rescreen
+
 # Skip LLM calls (rule-based only)
 python -m extract.run_extract --no-llm
 
@@ -158,6 +161,23 @@ python -m extract.run_extract --no-skip-flora-validated
 
 **Input:** `data/filtered.csv`  
 **Output:** `data/extracted.csv` (or `data/extracted-test.csv` with `--extracted-test`)
+
+### Re-screening set-aside rows
+
+`--resume` carries every already-resolved row forward untouched, including the rows
+the classification screen decided on its own (`link_method`/`outcome` of
+`not_a_replication` or `screen_disagreement`). That is right for a resumed run and
+wrong after the screen changes: an old voter pair's verdicts would survive
+indefinitely. `--rescreen` reopens exactly those rows — the whole paper, so a
+multi-original paper is re-screened as a unit — and leaves every other resolved row
+carried forward.
+
+Rows `sanity_check` has already moved out to `data/not_a_replication.csv` or
+`data/screen_disagreement.csv` are no longer in `extracted.csv` and are therefore
+re-processed by any run, with or without the flag. Their verdicts are still pinned by
+the screen cache, but that cache is keyed on the screening prompt's version, both
+voter models and the abstract itself — so changing a voter or the prompt makes a
+re-screen actually re-vote, with nothing to bump by hand.
 
 ### Skipping papers already in FLoRA
 
@@ -209,14 +229,36 @@ Runs automatically at the end of every `run_extract` (on completion and on Ctrl-
 Also runnable standalone:
 
 ```bash
-# Move not_a_replication rows to not_a_replication.csv + report integrity flags
+# Move problem rows to the set-aside CSVs + report integrity flags
 python -m extract.sanity_check
 
 # Check the test sandbox instead
 python -m extract.sanity_check --input data/extracted-test.csv
 
 # Report only — move nothing
-python -m extract.sanity_check --no-move
+python -m extract.sanity_check --report-only
+
+# Also network-verify unregistered doi_o against doi.org and quarantine fabrications
+python -m extract.sanity_check --deep
+```
+
+Rows land in the **first** bucket they match: `screen_disagreement` →
+`screen_disagreement.csv`; `outcome == not_a_replication` and non-article `doi_r` →
+`not_a_replication.csv`; self-links → `unresolved_self_links.csv`;
+`doi_o_verification == mismatch` → `unresolved_doi_mismatch.csv`; `llm_title_search`
+→ `provisional_title_search.csv`; `target_pending` → `target_pending.csv`; and with
+`--deep`, fabricated `doi_o` → `fabricated_original_doi.csv`. `cannot_be_determined`
+rows stay in `extracted.csv`.
+
+### Parse-cache cleanup
+
+Deletes all-empty parse caches from `cache/parse/`. Runs before audit B4 parsed every
+non-multi row, including rows that exited at the reference screen with no PDF, and the
+resulting empty cache then masked the real parse on any later run that did get the PDF.
+
+```bash
+python -m extract.clean_parse_cache          # dry run: count and report
+python -m extract.clean_parse_cache --apply  # delete them
 ```
 
 ### DOI verification audit
@@ -358,11 +400,9 @@ python -c "import shutil; shutil.rmtree('cache/llm', ignore_errors=True)"
 | `/` | Redirects to `/dashboard` |
 | `/dashboard` | 6-tab monitoring dashboard — see [dashboard-guide.md](dashboard-guide.md) |
 | `/check` | Search/filter/download across any stage — see [check-page.md](check-page.md) |
-| `/search` | Stage 1 candidates table |
-| `/filter` | Stage 2 filtered papers table |
-| `/extract` | Stage 3 extraction results table |
-| `/extract-test` | Stage 3 test sandbox table (with Promote button) |
-| `/validate` | Stage 4 voting queue |
+| `/batch` | Batch disambiguation for multiple-match papers (not registered when `FLORA_READONLY=1`) |
+| `/multi-originals` | Multi-original paper review (not registered when `FLORA_READONLY=1`) |
+| `/pipeline` | Redirects to `/dashboard` |
 | `/api/dashboard/csv-stats` | Pipeline stats JSON (3-tier cascade: stats.json → Parquet → CSV) |
 | `/api/dashboard/download` | Download a full stage CSV (`?stage=candidates\|filtered\|extracted\|extracted-test`) |
 | `/api/check/search` | Filtered/paginated rows as JSON |

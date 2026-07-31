@@ -1,8 +1,9 @@
 """
-llm.py — LLM-based original study identification.
+llm_client.py — the pipeline's LLM calls: provider ladder, original-study
+identification, and the two-model replication screen.
 
-Primary model  : OpenRouter / Qwen (when OPENROUTER_API_KEY is set)
-Fallback chain : Gemini → OpenAI
+Provider ladder: Gemini → OpenAI → OpenRouter, in call_llm_ladder(). Each provider
+is rate-limited against its own last-call timestamp.
 
 Public API:
     identify_original_with_llm(doi_r, study_r, abstract_r, pattern,
@@ -20,20 +21,22 @@ import requests
 
 from .config import (
     GEMINI_API_KEYS, GEMINI_MODEL, GEMINI_LIGHT_MODEL, GEMINI_HEAVY_MODEL,
-    GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT,
-    LLM_CACHE_DIR, LLM_RATE_SEC,
-    OPENAI_API_KEY, OPENAI_MODEL,
-    OPENROUTER_API_KEY, OPENROUTER_HEAVY_MODEL,
+    GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT, GEMINI_PAID_KEYS, GEMINI_RATE_SEC,
+    LLM_CACHE_DIR,
+    OPENAI_API_KEY, OPENAI_MODEL, OPENAI_RATE_SEC,
+    OPENROUTER_API_KEY, OPENROUTER_HEAVY_MODEL, OPENROUTER_RATE_SEC,
+    SCREEN_VOTER2_MODEL,
     log,
 )
 from . import token_counter
+from .cache import content_key, read_cache, write_cache
 from .prompts import (
     JSON_SYSTEM_MESSAGE,
     build_classify_prompt, build_identification_prompt,
-    build_multi_original_prompt, build_target_prompt,
+    build_multi_original_prompt, build_target_prompt, prompt_version,
 )
 from .schema import OUTCOME_CATEGORIES
-from .utils import cache_key, clean_doi
+from .utils import clean_doi
 
 # Output cap for the JSON-returning chat calls. It was 1024, which on a reasoning
 # model (gpt-5-mini) also has to cover hidden reasoning tokens — while the outcome
@@ -129,6 +132,31 @@ def _track_gemini_key0_tokens(n_tokens: int) -> None:
         print("  Continuing with Gemini key-0.\n")
 
 
+# ── Per-provider rate limiting ────────────────────────────────────────────────
+# Each provider is throttled against its OWN last-call timestamp, immediately
+# before the request goes out. Charging the wait to the caller after a successful
+# call — as every call site used to — made the delay unconditional even when the
+# next call went to a different provider, or was served from cache, or never came.
+
+_PROVIDER_RATE_SEC = {
+    "gemini":     GEMINI_RATE_SEC,
+    "openai":     OPENAI_RATE_SEC,
+    "openrouter": OPENROUTER_RATE_SEC,
+}
+_last_call_at: dict[str, float] = {}
+
+
+def _throttle(provider: str) -> None:
+    """Sleep only as long as this provider's minimum interval still has to run."""
+    interval = _PROVIDER_RATE_SEC.get(provider, 1.0)
+    last     = _last_call_at.get(provider)
+    if last is not None:
+        remaining = interval - (time.monotonic() - last)
+        if remaining > 0:
+            time.sleep(remaining)
+    _last_call_at[provider] = time.monotonic()
+
+
 # ── JSON parsing (handles markdown-fenced output) ─────────────────────────────
 
 def _parse_llm_json(text: str) -> Optional[dict]:
@@ -160,6 +188,40 @@ def _parse_llm_json(text: str) -> Optional[dict]:
             pass
 
     return None
+
+
+# ── Gemini flex inference ─────────────────────────────────────────────────────
+# Flex costs 50% less (identical to Batch pricing) but is only offered on paid
+# keys, so the decision follows which key is in use — GEMINI_PAID_KEYS — rather
+# than the key's position in the rotation.
+
+def _gemini_use_flex(key_idx: int) -> bool:
+    return GEMINI_USE_FLEX and (key_idx + 1) in GEMINI_PAID_KEYS
+
+
+def _gemini_post(url: str, payload: dict, key_idx: int, base_timeout: int):
+    """
+    POST to Gemini, adding service_tier=flex when the key in use is paid.
+
+    Flex requests can queue for up to 15 minutes, so they get GEMINI_FLEX_TIMEOUT
+    instead of the call site's standard timeout. If the API rejects the flex tier
+    (a model or key that does not offer it), the same request is retried once at
+    standard tier rather than losing the row.
+    """
+    use_flex = _gemini_use_flex(key_idx)
+    if use_flex:
+        payload["service_tier"] = "flex"
+    else:
+        payload.pop("service_tier", None)
+
+    r = requests.post(url, json=payload,
+                      timeout=GEMINI_FLEX_TIMEOUT if use_flex else base_timeout)
+    if use_flex and r.status_code == 400 and "service_tier" in r.text.replace("serviceTier", "service_tier"):
+        log.warning("Gemini rejected service_tier=flex on key %d — retrying at standard tier",
+                    key_idx + 1)
+        payload.pop("service_tier", None)
+        r = requests.post(url, json=payload, timeout=base_timeout)
+    return r
 
 
 # ── Gemini (primary) ──────────────────────────────────────────────────────────
@@ -196,28 +258,22 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
     }
 
     if GEMINI_USE_FLEX:
-        log.debug("Gemini flex inference enabled — key 0 uses service_tier=flex (timeout=%ds)", GEMINI_FLEX_TIMEOUT)
+        log.debug("Gemini flex inference enabled on paid keys %s (timeout=%ds)",
+                  sorted(GEMINI_PAID_KEYS), GEMINI_FLEX_TIMEOUT)
 
     last_error = "all keys exhausted"
     for key_idx, api_key in enumerate(GEMINI_API_KEYS):
         if key_idx == 0 and _gemini_key0_disabled:
             log.debug("Gemini key-0 disabled by guardrail — skipping to free-tier keys")
             continue
-        # Flex inference: apply only on key 0 (the paid key).
-        # Keys 1+ are assumed free-tier and use standard inference.
-        use_flex = GEMINI_USE_FLEX and key_idx == 0
-        if use_flex:
-            payload["service_tier"] = "flex"
-        elif "service_tier" in payload:
-            del payload["service_tier"]
-        call_timeout = GEMINI_FLEX_TIMEOUT if use_flex else 90
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
                f":generateContent?key={api_key}")
         key_label = f"key {key_idx + 1}/{len(GEMINI_API_KEYS)}"
 
         for attempt in range(2):
             try:
-                r = requests.post(url, json=payload, timeout=call_timeout)
+                _throttle("gemini")
+                r = _gemini_post(url, payload, key_idx, 90)
 
                 if r.status_code == 429:
                     last_error = f"quota exhausted on {key_label} (429)"
@@ -313,6 +369,7 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict],
     last_error = "no attempts made"
     for attempt in range(3):
         try:
+            _throttle("openai")
             response = client.chat.completions.create(
                 model=model,
                 messages=[
@@ -364,6 +421,7 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
 
     use_model = model or OPENROUTER_HEAVY_MODEL
     try:
+        _throttle("openrouter")
         response = client.chat.completions.create(
             model=use_model,
             messages=[
@@ -389,49 +447,59 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
 
 # ── Unified LLM router ───────────────────────────────────────────────────────
 
-def call_llm(prompt: str, gemini_model: str = "",
-             prefer_openai: bool = False) -> tuple[Optional[dict], str, str]:
+def call_llm_ladder(prompt: str, gemini_model: str = "", openai_model: str = "",
+                    prefer_openai: bool = False) -> tuple[Optional[dict], str, str, str]:
     """
     Route a prompt through the configured provider chain and return the first
-    successful result.
+    successful result, naming the provider that produced it.
 
     Default order : Gemini -> OpenAI -> OpenRouter (Qwen as last resort).
     prefer_openai : flip to OpenAI -> Gemini -> OpenRouter.
                     Use when Gemini is overloaded (503/429) and OpenAI is preferred.
 
     gemini_model — Gemini model to use (defaults to GEMINI_LIGHT_MODEL).
+    openai_model — OpenAI model to use (defaults to OPENAI_MODEL).
+
+    Returns (result_dict_or_None, provider, model_used, error_description).
+    provider is one of gemini | openai | openrouter, or "none" when every
+    provider failed; model_used is the exact model string that answered.
+    """
+    from .config import GEMINI_LIGHT_MODEL as _LIGHT
+
+    g_model = gemini_model or _LIGHT
+    o_model = openai_model or OPENAI_MODEL
+    errs: dict[str, str] = {}
+
+    order = (("openai", "gemini") if prefer_openai else ("gemini", "openai"))
+    for provider in order + ("openrouter",):
+        if provider == "openrouter" and not OPENROUTER_API_KEY:
+            continue
+        if provider == "gemini":
+            result, errs["Gemini"] = call_gemini(prompt, model=g_model)
+            model = g_model
+        elif provider == "openai":
+            result, errs["OpenAI"] = call_openai(prompt, model=o_model)
+            model = o_model
+        else:
+            result, errs["OpenRouter"] = call_openrouter(prompt)
+            model = OPENROUTER_HEAVY_MODEL
+        if result:
+            return result, provider, model, ""
+
+    return None, "none", "", " | ".join(f"{k}: {v}" for k, v in errs.items())
+
+
+def call_llm(prompt: str, gemini_model: str = "", openai_model: str = "",
+             prefer_openai: bool = False) -> tuple[Optional[dict], str, str]:
+    """Provider ladder without the provider name — see call_llm_ladder.
 
     Returns (result_dict_or_None, model_used, error_description).
     model_used is the exact model string that answered, or "" if all providers failed.
     """
-    from .config import GEMINI_LIGHT_MODEL as _LIGHT
-
-    model      = gemini_model or _LIGHT
-    gemini_err = ""
-    openai_err = ""
-
-    if prefer_openai:
-        result, openai_err = call_openai(prompt)
-        if result:
-            return result, OPENAI_MODEL, ""
-        result, gemini_err = call_gemini(prompt, model=model)
-        if result:
-            return result, model, ""
-    else:
-        result, gemini_err = call_gemini(prompt, model=model)
-        if result:
-            return result, model, ""
-        result, openai_err = call_openai(prompt)
-        if result:
-            return result, OPENAI_MODEL, ""
-
-    if OPENROUTER_API_KEY:
-        result, or_err = call_openrouter(prompt)
-        if result:
-            return result, OPENROUTER_HEAVY_MODEL, ""
-        return None, "", f"Gemini: {gemini_err} | OpenAI: {openai_err} | OpenRouter: {or_err}"
-
-    return None, "", f"Gemini: {gemini_err} | OpenAI: {openai_err}"
+    result, _provider, model, err = call_llm_ladder(
+        prompt, gemini_model=gemini_model, openai_model=openai_model,
+        prefer_openai=prefer_openai)
+    return result, model, err
 
 
 # ── Main dispatcher ───────────────────────────────────────────────────────────
@@ -450,58 +518,35 @@ def identify_original_with_llm(doi_r:          str,
 
     html_text — extracted landing-page text as full-text substitute.
 
-    Order: OpenRouter/Qwen (primary when OPENROUTER_API_KEY set) → Gemini → OpenAI.
-    Successful results are cached in LLM_CACHE_DIR.
+    Order: the shared ladder — Gemini → OpenAI → OpenRouter, the last skipped
+    without an OPENROUTER_API_KEY.
+
+    The cache key is the rendered prompt — the candidates, the parsed sections and
+    the validator note all reach the model through it — plus the prompt version and
+    the model that will answer. Keying on the DOI alone, as this did, meant the
+    abstract-stage call and the full-text call collided, and a paper whose PDF had
+    since been parsed replayed the answer given when only the abstract was known.
+
+    Every answer the model gives is cached, including "no identifiable original":
+    a decline is a result, and caching only successes made every declined full-text
+    call repay its API cost on every re-run. API failures are still not cached.
     """
-    cache_file = LLM_CACHE_DIR / f"llm_{cache_key(doi_r)}.json"
-    if cache_file.exists():
-        with cache_file.open(encoding="utf-8") as fh:
-            cached = json.load(fh)
+    prompt     = build_identification_prompt(study_r, abstract_r, pattern,
+                                             candidates, sections,
+                                             html_text=html_text,
+                                             validator_note=validator_note)
+    key = content_key("llm", doi_r,
+                      prompt_version("build_identification_prompt"),
+                      GEMINI_HEAVY_MODEL, abstract_only, prompt)
+    cached = read_cache(LLM_CACHE_DIR, key)
+    if cached is not None:
         cached.setdefault("llm_source", "cache")
         cached.setdefault("llm_prompt", "")
         cached.setdefault("llm_error",  "")
         return cached
 
-    prompt     = build_identification_prompt(study_r, abstract_r, pattern,
-                                             candidates, sections,
-                                             html_text=html_text,
-                                             validator_note=validator_note)
-    result     = None
-    llm_source = "none"
-    llm_model  = ""
-    llm_error  = ""
-    gemini_err = ""
-    openai_err = ""
-    or_err     = ""
-
-    # Primary: Gemini
-    result, gemini_err = call_gemini(prompt, model=GEMINI_HEAVY_MODEL)
-    if result:
-        llm_source = "gemini"
-        llm_model  = GEMINI_HEAVY_MODEL
-        time.sleep(LLM_RATE_SEC)
-
-    # Fallback 1: OpenAI
-    if not result:
-        result, openai_err = call_openai(prompt)
-        if result:
-            llm_source = "openai"
-            llm_model  = OPENAI_MODEL
-            time.sleep(LLM_RATE_SEC)
-
-    # Fallback 2: OpenRouter (Qwen)
-    if not result and OPENROUTER_API_KEY:
-        result, or_err = call_openrouter(prompt)
-        if result:
-            llm_source = "openrouter"
-            llm_model  = OPENROUTER_HEAVY_MODEL
-            time.sleep(LLM_RATE_SEC)
-
-    if not result:
-        parts = [f"Gemini: {gemini_err}", f"OpenAI: {openai_err}"]
-        if OPENROUTER_API_KEY:
-            parts.append(f"OpenRouter: {or_err}")
-        llm_error = " | ".join(parts)
+    result, llm_source, llm_model, llm_error = call_llm_ladder(
+        prompt, gemini_model=GEMINI_HEAVY_MODEL)
 
     _empty = {
         "resolved"          : False,
@@ -586,10 +631,7 @@ def identify_original_with_llm(doi_r:          str,
         "llm_error"         : "",
     }
 
-    if resolved:
-        with cache_file.open("w", encoding="utf-8") as fh:
-            json.dump(output, fh, ensure_ascii=False, indent=2)
-
+    write_cache(LLM_CACHE_DIR, key, output)
     return output
 
 
@@ -624,7 +666,8 @@ def call_gemini_with_images(prompt: str,
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
                f":generateContent?key={api_key}")
         try:
-            r = requests.post(url, json=payload, timeout=120)
+            _throttle("gemini")
+            r = _gemini_post(url, payload, key_idx, 120)
             if r.status_code == 429:
                 continue
             if r.status_code != 200:
@@ -679,7 +722,8 @@ def call_gemini_with_pdf(prompt: str,
                f":generateContent?key={api_key}")
         for attempt in range(2):
             try:
-                r = requests.post(url, json=payload, timeout=45)
+                _throttle("gemini")
+                r = _gemini_post(url, payload, key_idx, 45)
                 if r.status_code == 429:
                     break
                 if r.status_code in (500, 503) and attempt == 0:
@@ -728,11 +772,17 @@ def identify_all_originals_with_llm(doi_r:        str,
           "llm_reasoning": str,
         }
     """
-    cache_file = LLM_CACHE_DIR / f"multi_{cache_key(doi_r)}.json"
-    if cache_file.exists() and not force_multi:
-        # When force_multi=True we skip the cache to ensure the stronger prompt runs.
-        with cache_file.open(encoding="utf-8") as fh:
-            cached = json.load(fh)
+    prompt = build_multi_original_prompt(study_r, abstract_r, candidates,
+                                          sections,
+                                          html_text=html_text,
+                                          force_multi=force_multi)
+    # force_multi reaches the model through the prompt, so it separates the two
+    # variants' entries by itself — no cache bypass needed.
+    key = content_key("multi", doi_r,
+                      prompt_version("build_multi_original_prompt"),
+                      GEMINI_HEAVY_MODEL, prompt)
+    cached = read_cache(LLM_CACHE_DIR, key)
+    if cached is not None:
         cached.setdefault("llm_source", "cache")
         return cached
 
@@ -745,37 +795,8 @@ def identify_all_originals_with_llm(doi_r:        str,
         "llm_reasoning"    : "",
     }
 
-    prompt = build_multi_original_prompt(study_r, abstract_r, candidates,
-                                          sections,
-                                          html_text=html_text,
-                                          force_multi=force_multi)
-    result     = None
-    llm_source = "none"
-    llm_model  = ""
-
-    # Primary: Gemini
-    result, _ = call_gemini(prompt, model=GEMINI_HEAVY_MODEL)
-    if result:
-        llm_source = "gemini"
-        llm_model  = GEMINI_HEAVY_MODEL
-        time.sleep(LLM_RATE_SEC)
-
-    # Fallback 1: OpenAI
-    if not result:
-        result, _ = call_openai(prompt)
-        if result:
-            llm_source = "openai"
-            llm_model  = OPENAI_MODEL
-            time.sleep(LLM_RATE_SEC)
-
-    # Fallback 2: OpenRouter (Qwen)
-    if not result and OPENROUTER_API_KEY:
-        result, _ = call_openrouter(prompt)
-        if result:
-            llm_source = "openrouter"
-            llm_model  = OPENROUTER_HEAVY_MODEL
-            time.sleep(LLM_RATE_SEC)
-
+    result, llm_source, llm_model, _err = call_llm_ladder(
+        prompt, gemini_model=GEMINI_HEAVY_MODEL)
     if not result:
         return _empty
 
@@ -845,10 +866,9 @@ def identify_all_originals_with_llm(doi_r:        str,
         "llm_reasoning"    : str(result.get("reasoning", "") or ""),
     }
 
-    if n_originals > 0:
-        with cache_file.open("w", encoding="utf-8") as fh:
-            json.dump(output, fh, ensure_ascii=False, indent=2)
-
+    # A run that found no originals is cached too: it is the model's answer, not a
+    # failure, and re-asking it every run costs a heavy-model call per paper.
+    write_cache(LLM_CACHE_DIR, key, output)
     return output
 
 
@@ -870,18 +890,27 @@ def identify_all_originals_with_llm(doi_r:        str,
 # loses a genuine replication. Disagreement is not an error — it routes the row to
 # full text, which is what we would have done anyway.
 
-REF_SCREEN_PROMPT_VERSION = "2026-07-29-split-calls-v6"
+# Q1's two voters, in call order. Both are required: with one provider the screen
+# cannot tell agreement from a lone opinion, so run_extract refuses to start.
+# Voter 2 runs on OpenRouter (Ministral 14B by default) rather than OpenAI: on
+# adjudicated hard cases the pair discards 89% of true negatives against gpt-5-mini's
+# 25%, losing no genuine replication, because a non-Google lineage errs elsewhere
+# than the Gemini first voter does.
+SCREEN_PROVIDERS = ("gemini", "openrouter")
+
+
+def _screen_model(provider: str) -> str:
+    return GEMINI_LIGHT_MODEL if provider == "gemini" else SCREEN_VOTER2_MODEL
 
 
 def _classify_once(prompt: str, provider: str) -> "dict | None":
-    """One classification vote. provider is 'gemini' or 'openai'."""
+    """One classification vote. provider is 'gemini' or 'openrouter'."""
     if provider == "gemini":
         result, _ = call_gemini(prompt, model=GEMINI_LIGHT_MODEL)
     else:
-        result, _ = call_openai(prompt, model=OPENAI_MODEL)
+        result, _ = call_openrouter(prompt, model=SCREEN_VOTER2_MODEL)
     if not result:
         return None
-    time.sleep(LLM_RATE_SEC)
     return {
         "is_replication": str(result.get("is_replication", "unclear")).strip().lower(),
         "confidence":     str(result.get("confidence", "")).strip().lower(),
@@ -891,49 +920,69 @@ def _classify_once(prompt: str, provider: str) -> "dict | None":
     }
 
 
-def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
-                               refs: list[dict]) -> dict:
-    """Classify the paper on two models, then identify its target if they agree it is one.
+def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
+    """Q1 alone: do two models agree that this paper is a replication or reproduction?
 
-    Returns the standard resolver dict plus:
+    Split out of screen_references_with_llm so Stage 3 can ask the question as its
+    front door — before match-type classification, the resolution ladder, the PDF
+    and outcome coding — rather than after paying for all of them. The target pick
+    (Q2) stays in screen_references_with_llm, at the point in the ladder where the
+    reference list has been fetched, and reuses this verdict instead of re-voting.
+
+    Returns:
       is_replication      — the agreed label, or "unclear" when the models disagree
       models_agree        — whether both votes matched
-      llm_confidence      — target confidence (empty when no target call was made)
       classification_confidence — the weaker of the two votes' confidences
+      votes / llm_*       — who voted what, for the reviewer of a set-aside row
+      resolution_method   — llm_refscreen_declined on a complete screen;
+                            llm_refscreen_partial (one vote) / llm_refscreen_failed
+                            (none) when the screen did not complete. An incomplete
+                            screen is an API failure, not a verdict, so it is
+                            returned uncached — a re-run must be able to succeed.
     """
-    cache_file = LLM_CACHE_DIR / f"refscreen_{cache_key(doi_r + REF_SCREEN_PROMPT_VERSION + str(bool(refs)))}.json"
-    if cache_file.exists():
-        with cache_file.open(encoding="utf-8") as fh:
-            return json.load(fh)
+    cls_prompt = build_classify_prompt(study_r, abstract_r)
+    # The voter pair is part of the verdict — the two models disagree often enough
+    # that this is the question the audit measured a model effect on — so both
+    # models are in the key alongside the prompt version and the text they see.
+    key = content_key("classify", doi_r or study_r,
+                      prompt_version("build_classify_prompt"),
+                      "+".join(_screen_model(p) for p in SCREEN_PROVIDERS),
+                      cls_prompt)
+    cached = read_cache(LLM_CACHE_DIR, key)
+    if cached is not None:
+        return cached
 
     out = {
-        "resolved": False, "resolution_method": "llm_refscreen_declined",
-        "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
-        "resolved_author_o": "", "resolution_score": 0.0,
+        "resolution_method": "llm_refscreen_declined",
         "is_replication": "unclear", "models_agree": False, "votes": [],
-        "llm_confidence": "", "classification_confidence": "",
-        "target_description": "",
+        "classification_confidence": "",
         "llm_source": "", "llm_model": "", "llm_evidence": "",
         "llm_reasoning": "", "llm_prompt": "", "llm_error": "",
     }
 
-    cls_prompt = build_classify_prompt(study_r, abstract_r)
     out["llm_prompt"] = cls_prompt
-    votes = [v for v in (_classify_once(cls_prompt, "gemini"),
-                         _classify_once(cls_prompt, "openai")) if v]
-    if not votes:
-        out["resolution_method"] = "llm_refscreen_failed"
-        out["llm_error"] = "both classifiers failed"
-        return out
+    votes = [v for v in (_classify_once(cls_prompt, p) for p in SCREEN_PROVIDERS) if v]
 
     # Keep the individual votes: a disagreement row is set aside for human review,
     # and "the models disagreed" is not reviewable without knowing who said what.
     out["votes"] = [{k: v[k] for k in ("provider", "is_replication", "confidence", "reasoning")}
                     for v in votes]
     out["llm_source"] = "+".join(v["provider"] for v in votes)
-    out["llm_model"]  = f"{GEMINI_LIGHT_MODEL}+{OPENAI_MODEL}"
-    out["llm_evidence"]  = votes[0]["evidence"]
+    out["llm_model"]  = "+".join(_screen_model(v["provider"]) for v in votes)
+    out["llm_evidence"]  = votes[0]["evidence"] if votes else ""
     out["llm_reasoning"] = " | ".join(f"{v['provider']}: {v['reasoning']}" for v in votes)
+
+    # A missing vote is an API failure, not a verdict. Reporting it as a normal
+    # result would file the row as a two-model disagreement and corrupt the
+    # agreement rate, and caching it would freeze one transient failure into a
+    # permanent one. Return uncached so a re-run can screen the row properly.
+    if len(votes) < 2:
+        answered = {v["provider"] for v in votes}
+        out["resolution_method"] = ("llm_refscreen_partial" if votes
+                                    else "llm_refscreen_failed")
+        out["llm_error"] = "classifier failed: " + ", ".join(
+            p for p in SCREEN_PROVIDERS if p not in answered)
+        return out
 
     labels = {v["is_replication"] for v in votes}
     out["models_agree"] = len(votes) == 2 and len(labels) == 1
@@ -944,16 +993,57 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
         out["classification_confidence"] = min(
             (v["confidence"] for v in votes), key=lambda c: order.get(c, 0))
     else:
-        # Disagreement is informative, not an error — the row escalates to full text.
+        # Disagreement is informative, not an error — the row is set aside for review.
         out["is_replication"] = "unclear"
 
+    write_cache(LLM_CACHE_DIR, key, out)
+    return out
+
+
+def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
+                               refs: list[dict],
+                               classification: "dict | None" = None) -> dict:
+    """Identify the paper's target among its references, given the Q1 verdict.
+
+    classification — the verdict from classify_replication(). Stage 3 runs the
+    classification at its front door and threads the result in here, so the two
+    votes are made once per paper. When it is absent (a caller that has no verdict
+    yet, e.g. the batch tools) the classification runs here.
+
+    Returns the standard resolver dict, the classification fields, and
+    llm_confidence — the TARGET call's confidence, empty when no target call was
+    made. A reference is accepted as the target only at confidence == "high".
+    """
+    out = {
+        "resolved": False, "resolution_method": "llm_refscreen_declined",
+        "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
+        "resolved_author_o": "", "resolution_score": 0.0,
+        "llm_confidence": "", "target_description": "",
+    }
+    out.update(classification or classify_replication(doi_r, study_r, abstract_r))
+
     if out["is_replication"] == "yes" and refs:
+        # The pick is cached separately from the classification: the two halves are
+        # now decided at different points in the pipeline, and one cache holding
+        # both would be written before the second half had run.
+        # The reference list is in the key via the rendered prompt: a re-fetched
+        # or re-parsed list changes which numbered reference the pick refers to,
+        # so replaying the previous pick would point at a different paper.
         tgt_prompt = build_target_prompt(study_r, abstract_r, refs)
-        result, _ = call_gemini(tgt_prompt, model=GEMINI_HEAVY_MODEL)
-        if not result:
-            result, _ = call_openai(tgt_prompt)
+        tgt_key = content_key("reftarget", doi_r or study_r,
+                              prompt_version("build_target_prompt"),
+                              GEMINI_HEAVY_MODEL, tgt_prompt)
+        cached = read_cache(LLM_CACHE_DIR, tgt_key)
+        if cached is not None:
+            result, tgt_source, tgt_model = cached["result"], cached["source"], cached["model"]
+        else:
+            result, tgt_source, tgt_model, _ = call_llm_ladder(
+                tgt_prompt, gemini_model=GEMINI_HEAVY_MODEL)
+            if result:
+                write_cache(LLM_CACHE_DIR, tgt_key,
+                            {"result": result, "source": tgt_source,
+                             "model": tgt_model})
         if result:
-            time.sleep(LLM_RATE_SEC)
             out["llm_confidence"]     = str(result.get("confidence", "")).strip().lower()
             out["target_description"] = str(result.get("target_description", "") or "").strip()
             num = result.get("target_number")
@@ -963,6 +1053,9 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
                 except (ValueError, TypeError, IndexError):
                     ref = None
                 if ref is not None:
+                    # The link is this call's decision, not Q1's, so the row is
+                    # attributed to the model that picked the reference and
+                    # carries the quote that justifies the pick.
                     out.update({
                         "resolved":          True,
                         "resolution_method": "llm_references",
@@ -971,9 +1064,14 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
                         "resolved_year_o":   ref.get("publication_year") or ref.get("year"),
                         "resolved_author_o": ref.get("first_author", "") or "",
                         "resolution_score":  1.0,
+                        "llm_source":        tgt_source,
+                        "llm_model":         tgt_model,
+                        "llm_evidence":      (str(result.get("evidence_quote", "") or "").strip()
+                                              or out["llm_evidence"]),
+                        "llm_reasoning":     " | ".join(filter(None, [
+                            out["llm_reasoning"],
+                            f"target ({tgt_source}): {result.get('reasoning', '') or ''}".strip(),
+                        ])),
                     })
 
-    cache_file.parent.mkdir(parents=True, exist_ok=True)
-    with cache_file.open("w", encoding="utf-8") as fh:
-        json.dump(out, fh, ensure_ascii=False, indent=2)
     return out

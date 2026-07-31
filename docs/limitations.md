@@ -30,18 +30,23 @@ no-phrase bucket before treating the accepted set as complete.
 
 The `TECHNICAL_OBJECT` and `TECHNICAL_VERB` patterns in
 [`filter/spec/exclusion-patterns.yaml`](../filter/spec/exclusion-patterns.yaml)
-hard-exclude phrases such as *"replicated the analysis code of Smith (2019)"*. Some of
-these are genuinely **in-scope computational reproductions** — and the Stage-2 LLM
-prompt itself treats same-data reproduction as in-scope. So the exclusion regex and the
-LLM prompt currently disagree on this class.
+match phrases such as *"replicated the analysis code of Smith (2019)"*. Some of these
+are genuinely **in-scope computational reproductions** — and the Stage-2 LLM prompt
+itself treats same-data reproduction as in-scope. The patterns are kept because they
+buy specificity: they drop the large volume of molecular-biology and pure-software
+"replication" noise.
 
-This is **deliberate for now**: the patterns buy specificity (they correctly drop the
-large volume of molecular-biology and pure-software "replication" noise), and losing a
-few reproductions is the accepted cost.
+The narrow overlap is rescued rather than lost. When an exclusion pattern fires,
+`filter/rule_filter.py` re-checks the text for a replication phrase with exclusions
+ignored; if that phrase **and** an author-year citation are both present, the row is
+sent to the LLM as `needs_review` at medium confidence (`filter_evidence` records
+`exclusion:<pattern>; phrase+cite present — LLM review`) instead of being rejected.
+Rows where the exclusion fires without both signals are still `false_positive` at high
+confidence with no LLM review.
 
-**Revisit obligation:** re-examine rows where a `TECHNICAL_*` exclusion fired **and** a
-replication phrase **and** an author-year citation were also present, and readmit the
-computational-reproduction misfires.
+**Revisit obligation:** the rescue gate requires a *parseable* author-year citation, so
+an in-scope reproduction that names its target in prose alone is still dropped. Measure
+how much that costs before treating the technical-exclusion bucket as clean.
 
 ---
 
@@ -56,12 +61,17 @@ on for triage or downstream weighting until it is recalibrated.
 ## (d) Missing abstracts force title-only decisions
 
 Of the **~2.32M filtered rows, ~494k lack an abstract**. For those rows the phrase and
-LLM decisions were made on the **title only**, which is materially weaker signal. An
-abstract-backfill fix is **in progress** (including a planned Scopus tier in the backfill
-waterfall — see the in-flight-changes note in `CLAUDE.md`).
+LLM decisions were made on the **title only**, which is materially weaker signal.
 
-**Revisit obligation:** once abstract backfill lands, re-run Stage 2 over the
-previously title-only rows.
+`search/fetch_abstracts.py` backfills abstracts through a four-tier waterfall (OpenAlex
+batch → Semantic Scholar batch → CrossRef by DOI → Scopus by DOI), but a backfilled
+abstract does not by itself change a decision already written to `filtered.csv`: the
+Stage-2 resume index makes `run_filter` skip those rows. `filter/reset_backfilled`
+drops the rows that were decided empty-abstract and whose abstract has since arrived,
+so they are screened again.
+
+**Revisit obligation:** run backfill → `reset_backfilled --apply` → `run_filter` over
+the previously title-only rows, and report how many decisions the abstracts changed.
 
 ---
 

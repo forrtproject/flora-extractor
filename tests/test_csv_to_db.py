@@ -296,3 +296,20 @@ def test_url_o_empty_when_nothing_to_point_at():
 def test_url_o_accepts_corrected_doi():
     row = {"doi_o": "10.2/fixed", "doi_o_verification": "corrected", "title_o": "T"}
     assert csv_to_db._derive_url_o(row) == "https://doi.org/10.2/fixed"
+
+
+def test_provisional_title_search_rows_are_not_imported(capsys, monkeypatch, tmp_path):
+    """llm_title_search matches a title against the whole literature at ~50%
+    precision, and doi_o_verification cannot catch the errors — the DOI really is
+    the named paper. Such a row must never reach a validator as a resolved link."""
+    df = pd.DataFrame([
+        {"filter_status": "replication", "link_method": "llm_cited_candidates",
+         "doi_r": "10.1/a", "doi_o": "10.2/a", "pair_id": "pa"},
+        {"filter_status": "replication", "link_method": "llm_title_search",
+         "doi_r": "10.1/b", "doi_o": "10.2/landmark", "pair_id": "pb"},
+    ])
+
+    out = _run_and_capture(df, capsys, monkeypatch, tmp_path)
+
+    assert "Resolved (import):  1" in out
+    assert "llm_title_search" not in csv_to_db._RESOLVED_METHODS
