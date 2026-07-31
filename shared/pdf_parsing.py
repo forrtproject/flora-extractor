@@ -414,6 +414,10 @@ _MIN_DISCUSSION_POSITION = 0.4
 # running header, not the section.
 _MIN_DISCUSSION_CHARS = 300
 
+# Marks the gap in a discussion kept head-and-tail, so the model does not read the
+# two halves as consecutive text.
+_ELLIPSIS = "\n…\n"
+
 
 def outcome_text(raw_text: str, max_chars: int = 8000) -> tuple[str, str]:
     """The part of a paper that states its own replication verdict.
@@ -440,7 +444,14 @@ def outcome_text(raw_text: str, max_chars: int = 8000) -> tuple[str, str]:
             break
         block = body[m.start():].strip()
         if len(block) >= _MIN_DISCUSSION_CHARS:
-            return block[:max_chars], "discussion"
+            if len(block) <= max_chars:
+                return block, "discussion"
+            # A head-only truncation drops the closing paragraphs, which is where
+            # the authors state their verdict — keep both ends of the discussion.
+            budget = max_chars - len(_ELLIPSIS)
+            head = int(budget * 0.6)
+            return (f"{block[:head].strip()}{_ELLIPSIS}{block[head - budget:].strip()}",
+                    "discussion")
 
     return body[-max_chars:].strip(), "tail"
 

@@ -336,6 +336,30 @@ class TestTitleSearchCaching:
             oa._search_openalex_by_title("A title", "2010")
         assert live.call_count == 2
 
+    def test_crossref_transport_failure_is_not_cached(self, tmp_path):
+        """A provider that never answered has not said "no match" — caching its
+        silence would pin the outage for every future run."""
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._search_crossref_by_title_live",
+                   side_effect=oa._TitleSearchUnavailable("timeout")) as live:
+            assert oa._search_crossref_by_title("Time flies", "2010") is None
+            assert oa._search_crossref_by_title("Time flies", "2010") is None
+        assert live.call_count == 2
+        assert list(tmp_path.glob("titlesearch_*")) == []
+
+    def test_crossref_request_exception_raises_unavailable(self):
+        with patch("shared.openalex_client.requests.get",
+                   side_effect=RuntimeError("connection reset")):
+            with pytest.raises(oa._TitleSearchUnavailable):
+                oa._search_crossref_by_title_live("Time flies", "2010")
+
+    def test_openalex_no_response_raises_but_empty_results_is_a_miss(self):
+        with patch("shared.openalex_client._oa_get", return_value=None):
+            with pytest.raises(oa._TitleSearchUnavailable):
+                oa._search_openalex_by_title_live("Time flies", "2010")
+        with patch("shared.openalex_client._oa_get", return_value={"results": []}):
+            assert oa._search_openalex_by_title_live("Time flies", "2010") is None
+
 
 class TestWorkLookupIsSharedBetweenFetchers:
     """fetch_openalex_by_doi and fetch_openalex_full_metadata used to request the

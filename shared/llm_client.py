@@ -447,8 +447,25 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
 
 # ── Unified LLM router ───────────────────────────────────────────────────────
 
+def ladder_fingerprint(gemini_model: str = "", openai_model: str = "",
+                       openrouter: bool = True) -> str:
+    """Every model a call_llm_ladder with these arguments could be answered by.
+
+    Belongs in a cache key: the ladder falls through to OpenAI and OpenRouter, so
+    a key naming only the Gemini model would let one model's answer be replayed as
+    another's the next time Gemini is down.
+    """
+    from .config import GEMINI_LIGHT_MODEL as _LIGHT
+
+    models = [gemini_model or _LIGHT, openai_model or OPENAI_MODEL]
+    if openrouter:
+        models.append(OPENROUTER_HEAVY_MODEL)
+    return "|".join(models)
+
+
 def call_llm_ladder(prompt: str, gemini_model: str = "", openai_model: str = "",
-                    prefer_openai: bool = False) -> tuple[Optional[dict], str, str, str]:
+                    prefer_openai: bool = False,
+                    openrouter: bool = True) -> tuple[Optional[dict], str, str, str]:
     """
     Route a prompt through the configured provider chain and return the first
     successful result, naming the provider that produced it.
@@ -456,6 +473,8 @@ def call_llm_ladder(prompt: str, gemini_model: str = "", openai_model: str = "",
     Default order : Gemini -> OpenAI -> OpenRouter (Qwen as last resort).
     prefer_openai : flip to OpenAI -> Gemini -> OpenRouter.
                     Use when Gemini is overloaded (503/429) and OpenAI is preferred.
+    openrouter    : False stops the ladder after OpenAI. For calls whose answer is
+                    only trustworthy from a strong model.
 
     gemini_model — Gemini model to use (defaults to GEMINI_LIGHT_MODEL).
     openai_model — OpenAI model to use (defaults to OPENAI_MODEL).
@@ -472,7 +491,7 @@ def call_llm_ladder(prompt: str, gemini_model: str = "", openai_model: str = "",
 
     order = (("openai", "gemini") if prefer_openai else ("gemini", "openai"))
     for provider in order + ("openrouter",):
-        if provider == "openrouter" and not OPENROUTER_API_KEY:
+        if provider == "openrouter" and (not openrouter or not OPENROUTER_API_KEY):
             continue
         if provider == "gemini":
             result, errs["Gemini"] = call_gemini(prompt, model=g_model)
@@ -537,7 +556,7 @@ def identify_original_with_llm(doi_r:          str,
                                              validator_note=validator_note)
     key = content_key("llm", doi_r,
                       prompt_version("build_identification_prompt"),
-                      GEMINI_HEAVY_MODEL, abstract_only, prompt)
+                      ladder_fingerprint(GEMINI_HEAVY_MODEL), abstract_only, prompt)
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
         cached.setdefault("llm_source", "cache")
@@ -795,7 +814,7 @@ def identify_all_originals_with_llm(doi_r:        str,
     # variants' entries by itself — no cache bypass needed.
     key = content_key("multi", doi_r,
                       prompt_version("build_multi_original_prompt"),
-                      GEMINI_HEAVY_MODEL, prompt)
+                      ladder_fingerprint(GEMINI_HEAVY_MODEL), prompt)
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
         cached.setdefault("llm_source", "cache")
@@ -1048,13 +1067,16 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
         tgt_prompt = build_target_prompt(study_r, abstract_r, refs)
         tgt_key = content_key("reftarget", doi_r or study_r,
                               prompt_version("build_target_prompt"),
-                              GEMINI_HEAVY_MODEL, tgt_prompt)
+                              ladder_fingerprint(GEMINI_HEAVY_MODEL, openrouter=False),
+                              tgt_prompt)
         cached = read_cache(LLM_CACHE_DIR, tgt_key)
         if cached is not None:
             result, tgt_source, tgt_model = cached["result"], cached["source"], cached["model"]
         else:
+            # No OpenRouter rung: a wrong original is worse than an unresolved
+            # one, so this pick stops at the two strong providers.
             result, tgt_source, tgt_model, _ = call_llm_ladder(
-                tgt_prompt, gemini_model=GEMINI_HEAVY_MODEL)
+                tgt_prompt, gemini_model=GEMINI_HEAVY_MODEL, openrouter=False)
             if result:
                 write_cache(LLM_CACHE_DIR, tgt_key,
                             {"result": result, "source": tgt_source,

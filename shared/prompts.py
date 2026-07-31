@@ -872,6 +872,10 @@ def prompt_version(name: str) -> str:
         _collect(obj, parts)
     else:
         raise KeyError(f"{name!r} is not a prompt (got {type(obj).__name__})")
+    # Every OpenAI/OpenRouter request splices JSON_SYSTEM_MESSAGE in at the provider
+    # layer, so it is part of what the model was asked even though no builder
+    # mentions it — re-word it and every prompt's version must move.
+    parts["JSON_SYSTEM_MESSAGE"] = repr(JSON_SYSTEM_MESSAGE)
     blob = "\n".join(f"{k}={parts[k]}" for k in sorted(parts))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 

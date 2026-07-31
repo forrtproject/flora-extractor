@@ -114,6 +114,16 @@ class TestChangeDetection:
         changed = {n for n in PROMPT_NAMES if after[n] != before[n]}
         assert changed == {"build_repro_abstract_prompt", "build_repro_fulltext_prompt"}
 
+    def test_json_system_message_edit_changes_every_version(self, monkeypatch):
+        """It is spliced into every OpenAI/OpenRouter request at the provider layer,
+        so it is part of what the model was asked even though no builder names it."""
+        before = self._versions()
+        monkeypatch.setattr(prompts, "JSON_SYSTEM_MESSAGE",
+                            prompts.JSON_SYSTEM_MESSAGE + " Be brief.")
+        prompt_version.cache_clear()
+        after = self._versions()
+        assert all(after[n] != before[n] for n in PROMPT_NAMES)
+
     def test_docstrings_are_not_part_of_the_version(self):
         """Canonicalisation strips docstrings and comments: only text that can reach
         the model moves a version."""

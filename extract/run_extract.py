@@ -22,7 +22,7 @@ from shared.config import (
     OA_XML_CACHE_DIR, OPENROUTER_API_KEY, PARSE_CACHE_DIR, PDF_CACHE_DIR, log,
 )
 from shared import token_counter
-from shared.llm_client import call_llm, classify_replication
+from shared.llm_client import call_llm, classify_replication, ladder_fingerprint
 from shared.openalex_client import OpenAlexQuotaExhausted, extract_author_year_patterns, find_all_candidates
 from shared.openalex_client import fetch_openalex_by_doi as _oa_by_doi
 from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
@@ -468,7 +468,7 @@ def classify_match_type(row: dict, no_llm: bool = False) -> dict:
     prompt = build_match_type_prompt(title_r, abstract_r, distinct_pairs, candidates)
     key = content_key("match_type", doi_r,
                       prompt_version("build_match_type_prompt"),
-                      GEMINI_HEAVY_MODEL, prompt)
+                      ladder_fingerprint(GEMINI_HEAVY_MODEL), prompt)
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
         return cached
@@ -948,8 +948,16 @@ def _collapse_same_paper_originals(originals: list[dict]) -> list[dict]:
     order: list[str] = []
     for orig in originals:
         doi = clean_doi(str(orig.get("doi", "") or ""))
-        key = doi or "title:" + " ".join(str(orig.get("title", "") or "").lower().split())
-        if not key.strip() or key == "title:":
+        if doi:
+            key = doi
+        else:
+            # Title alone collapses two distinct originals that share a generic
+            # title ("Study 1"), so year and first author join the fallback key.
+            title = " ".join(str(orig.get("title", "") or "").lower().split())
+            year = str(orig.get("year", "") or "").strip()
+            author = str(orig.get("first_author", "") or "").lower().strip()
+            key = f"title:{title}|{year}|{author}" if title else ""
+        if not key.strip():
             key = f"unkeyed:{len(order)}"
         if key not in groups:
             groups[key] = []
@@ -1014,9 +1022,31 @@ def _extract_row_key(row: "dict | pd.Series") -> str:
 # --rescreen reopens exactly these and nothing else.
 SCREEN_SET_ASIDE_METHODS = {"not_a_replication", "screen_disagreement"}
 
+# Where sanity_check parks the screen's own verdicts (see extract/sanity_check.py).
+# A resumed run must read them too, or every screened-out paper is screened again.
+SCREEN_SET_ASIDE_FILES = ("not_a_replication.csv", "screen_disagreement.csv")
+
+
+def _screen_set_aside_keys(data_dir) -> set[str]:
+    """Row keys of papers the screen already settled and sanity_check moved out."""
+    keys: set[str] = set()
+    for fname in SCREEN_SET_ASIDE_FILES:
+        path = data_dir / fname
+        if not path.exists():
+            continue
+        df = pd.read_csv(path, dtype=str, encoding="utf-8-sig").fillna("")
+        if df.empty:
+            continue
+        keys |= {k for k in df.apply(_extract_row_key, axis=1) if k}
+    return keys
+
 
 def _load_extracted_rows(out_path, rescreen: bool = False) -> tuple[dict[str, list[dict]], set[str]]:
     """Partition extracted.csv rows by resolution status for --resume mode.
+
+    Also reads the screen's set-aside CSVs, which hold papers sanity_check moved out
+    of extracted.csv; without them a resume re-screens every paper the screen already
+    settled.
 
     False_positive rows in the existing file are dropped — they should never have
     been written to extracted.csv and will not be re-written on resume.
@@ -1030,8 +1060,11 @@ def _load_extracted_rows(out_path, rescreen: bool = False) -> tuple[dict[str, li
         resolved — row_key → list of rows that are fully resolved (link_method != target_pending)
         pending  — set of row_key where at least one row has link_method == target_pending
     """
+    # An empty list of rows: the paper is settled, so it is skipped, but its row
+    # stays in the set-aside CSV rather than being written back to extracted.csv.
+    set_aside_keys = set() if rescreen else _screen_set_aside_keys(Path(out_path).parent)
     if not out_path.exists():
-        return {}, set()
+        return {k: [] for k in set_aside_keys}, set()
     df = pd.read_csv(out_path, dtype=str, encoding="utf-8-sig").fillna("")
     # Drop false_positive rows that were incorrectly written in a prior run.
     df = df[df["filter_status"] != "false_positive"]
@@ -1063,6 +1096,8 @@ def _load_extracted_rows(out_path, rescreen: bool = False) -> tuple[dict[str, li
             pending.add(row_key)
         else:
             resolved[row_key] = rows
+    for key in set_aside_keys - pending:
+        resolved.setdefault(key, [])
     return resolved, pending
 
 
@@ -1110,7 +1145,9 @@ def _guard_original_link(row: dict) -> dict:
         row["link_confidence"] = "low"
         prior = str(row.get("link_evidence", "") or "")
         row["link_evidence"] = (f"{prior} | rejected: {reason}" if prior else f"rejected: {reason}")
-        return row
+        # The multi-original path merges the outcome before the guard runs, so a
+        # demoted row would otherwise keep a coded outcome on an unresolved link.
+        return _apply_outcome(row, _outcome_without_coding("target_pending", row) or {})
 
     def _is_self(cand_doi: str) -> str:
         if cand_doi and doi_r and cand_doi == doi_r:

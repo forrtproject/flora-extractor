@@ -18,6 +18,7 @@ Public API:
     parse_tei_sections(tei_xml)       → dict
 """
 import base64
+import hashlib
 import re
 import time
 from pathlib import Path
@@ -25,7 +26,7 @@ from typing import Optional
 
 import requests
 
-from .config import GROBID_CACHE_DIR, GROBID_RATE_SEC, GROBID_SERVER, log
+from .config import GEMINI_MODEL, GROBID_CACHE_DIR, GROBID_RATE_SEC, GROBID_SERVER, log
 from .prompts import PDF_IMAGE_REFERENCES_PROMPT, PDF_REFERENCES_PROMPT, prompt_version
 
 # ── pdfminer import (installed lazily) ───────────────────────────────────────
@@ -254,6 +255,19 @@ def parse_pdf_sections(pdf_path: Path) -> dict:
 _MAX_PDF_BYTES = 45 * 1024 * 1024   # 45 MB safety margin (Gemini limit: 50 MB)
 
 
+def _pdf_fingerprint(pdf_path: Path) -> str:
+    """Short content hash of a PDF, for cache filenames.
+
+    The path is not an identity: a re-downloaded or corrected PDF lands at the
+    same cache/pdf/<doi>.pdf and would otherwise replay the old file's references.
+    """
+    try:
+        return hashlib.sha256(pdf_path.read_bytes()).hexdigest()[:12]
+    except Exception as e:
+        log.debug("Could not fingerprint %s: %s", pdf_path, e)
+        return "nohash"
+
+
 def _extract_refs_via_pdf_direct(doi_r: str, pdf_path: Path) -> list[dict]:
     """
     Send the full PDF directly to Gemini with MEDIA_RESOLUTION_LOW for reference
@@ -264,10 +278,11 @@ def _extract_refs_via_pdf_direct(doi_r: str, pdf_path: Path) -> list[dict]:
     """
     import json
 
-    # The prompt version is in the filename: re-word the extraction prompt and the
-    # previous wording's reference lists stop being read back.
+    # Prompt version, model and PDF content are all in the filename: change any of
+    # them and the previous answer's reference list stops being read back.
     cache_file = (GROBID_CACHE_DIR /
-                  f"{pdf_path.stem}_direct_refs_{prompt_version('PDF_REFERENCES_PROMPT')}.json")
+                  f"{pdf_path.stem}_direct_refs_{prompt_version('PDF_REFERENCES_PROMPT')}"
+                  f"_{GEMINI_MODEL}_{_pdf_fingerprint(pdf_path)}.json")
     if cache_file.exists():
         try:
             with cache_file.open(encoding="utf-8") as fh:
@@ -334,7 +349,8 @@ def _extract_refs_via_pdf_images(doi_r: str, pdf_path: Path) -> list[dict]:
     import json
 
     cache_file = (GROBID_CACHE_DIR /
-                  f"{pdf_path.stem}_img_refs_{prompt_version('PDF_IMAGE_REFERENCES_PROMPT')}.json")
+                  f"{pdf_path.stem}_img_refs_{prompt_version('PDF_IMAGE_REFERENCES_PROMPT')}"
+                  f"_{GEMINI_MODEL}_{_pdf_fingerprint(pdf_path)}.json")
     if cache_file.exists():
         try:
             with cache_file.open(encoding="utf-8") as fh:
