@@ -804,7 +804,7 @@ _MOCK_LINK = {
 _MOCK_OUTCOME = {
     "outcome": "success", "outcome_phrase": "replicated",
     "outcome_confidence": "high", "out_quote_source": "abstract",
-    "outcome_reasoning": "",
+    "outcome_reasoning": "", "llm_model": "gemini-outcome",
 }
 _MOCK_MULTI = {
     "is_false_positive": False,
@@ -1648,6 +1648,43 @@ class TestClassifyModelAttribution:
                                      classify_model="gemini-heavy")
         assert row["classify_llm_model"] == "gemini-heavy"
 
+    def test_merge_row_persists_the_outcome_model(self):
+        link = {"resolution_method": "llm_fulltext", "resolved_doi_o": "10.1/orig",
+                "resolved_title_o": "Original", "resolved_year_o": 2000,
+                "resolved_author_o": "Smith", "resolution_score": 1.0,
+                "llm_confidence": "high", "llm_model": "gemini-link"}
+        with patch("extract.run_extract._build_ref_o", return_value=("ref", "auth", "bib")):
+            row = _merge_row(self._FILTER_ROW, link, _MOCK_OUTCOME,
+                             "single_original", "high", 1, 1, "gemini-heavy")
+        # The outcome step fails over independently of the link step, so the two
+        # models can differ inside one run — that is the whole point of the column.
+        assert row["outcome_llm_model"] == "gemini-outcome"
+        assert row["link_llm_model"] == "gemini-link"
+
+    def test_merge_multi_row_persists_the_outcome_model(self):
+        with patch("extract.run_extract._build_ref_o", return_value=("", "", "")):
+            row = _merge_multi_row(self._FILTER_ROW,
+                                   {"rank": 1, "doi": "10.1/o", "title": "O",
+                                    "first_author": "A", "year": 2001,
+                                    "confidence": "high"},
+                                   _MOCK_OUTCOME, "multiple_original", "high", 2,
+                                   classify_model="gemini-heavy")
+        assert row["outcome_llm_model"] == "gemini-outcome"
+
+    def test_apply_outcome_persists_the_outcome_model(self):
+        """The post-gate writer is the one that runs on every coded row — a column
+        filled only by _merge_row would be blank on exactly the rows that got coded."""
+        row = run_extract._apply_outcome({}, _MOCK_OUTCOME)
+        assert row["outcome_llm_model"] == "gemini-outcome"
+        assert row["outcome"] == "success"
+
+    def test_keyword_coded_rows_name_the_rule_not_a_model(self):
+        from extract.code_outcome import extract_outcome
+        out = extract_outcome("10.1/rep", "We failed to replicate the original effect.",
+                              title_r="A replication", no_llm=True)
+        assert out["outcome"] == "failure"
+        assert out["llm_model"] == "keyword"
+
     def test_classify_llm_model_is_in_the_schema(self):
         assert "classify_llm_model" in EXTRACTED_COLS
 
@@ -1978,6 +2015,18 @@ class TestOutcomeGate:
             "not_a_replication", {"llm_reasoning": "gemini: unrelated"})
         assert out["outcome"] == "not_a_replication"
         assert out["outcome_reasoning"] == "gemini: unrelated"
+
+    def test_only_a_real_verdict_names_an_outcome_model(self):
+        """outcome_llm_model names the model whose verdict IS the outcome. A pending
+        row has no verdict, so stamping the link stage's model on it would read as a
+        coding that never happened."""
+        for method in ("screen_disagreement", "target_pending", "no_original_found",
+                       "llm_title_search", "api_error"):
+            out = run_extract._outcome_without_coding(method, {"llm_model": "gemini-link"})
+            assert out["llm_model"] == "", method
+        settled = run_extract._outcome_without_coding(
+            "not_a_replication", {"llm_model": "gemini-light+ministral"})
+        assert settled["llm_model"] == "gemini-light+ministral"
 
     def test_a_guard_demoted_row_is_not_outcome_coded(self, monkeypatch):
         """The guard rejects a self-link AFTER the ladder ran but BEFORE the outcome
