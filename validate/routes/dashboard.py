@@ -29,8 +29,10 @@ ANALYSIS_DIR = BASE_DIR / "analysis"
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
-_OUTCOME_KEYS = ("success", "failure", "mixed", "uninformative",
-                 "cannot_be_determined", "descriptive", "pending", "api_error")
+_OUTCOME_KEYS = ("success", "failure", "mixed", "descriptive",
+                 "statistically_successful_but_flawed", "uninformative",
+                 "cannot_be_determined", "not_a_replication",
+                 "pending", "api_error")
 # The five rule-based resolution methods are now distinct link_method values. The
 # dashboard's coarse "author_year_match" tile aggregates them (plus legacy/literal
 # author_year_match rows); the granular per-method breakdown lives in stats.json's

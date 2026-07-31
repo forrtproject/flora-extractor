@@ -59,6 +59,7 @@ All `filtered.csv` columns, plus:
 | `oa_work_id_o` | string | OpenAlex work ID of the original study, bare form. Resolved from `doi_o` *after* DOI verification, so it always describes the DOI actually written. Blank when `doi_o` is blank or unindexed in OpenAlex |
 | `doi_o` | string | DOI of the original (target) study |
 | `title_o` | string | Title of the original study |
+| `study_o` | string | FLoRA's `study_o`: which study **inside** the original paper is targeted, as a number — several numbers (`1, 2`) when one replication targets several studies from the same paper. Blank when the original reports a single study or the replication does not say. Only the multi-original path fills it. Not the same field as the validation DB's `study_o`, which holds a title |
 | `year_o` | int | Publication year of the original study |
 | `authors_o` | string | Authors of the original study (semicolon-separated surnames) |
 | `ref_o` | string | Formatted reference string for the original study |
@@ -148,15 +149,18 @@ where a row sits in the pipeline.
 | `failure` | Replication failed to find the original effect |
 | `mixed` | Some aspects replicated, others did not |
 | `descriptive` | Adapted methods in a new context, does not test original claim |
-| `cannot_be_determined` | The available text does not state a replication outcome |
+| `statistically_successful_but_flawed` | The original effect was obtained, but the paper's main message is that the method does not validly test the claim |
+| `uninformative` | The **authors themselves** report that their attempt cannot speak to the original — underpowered, design failure, evidence neither confirming nor contradicting |
+| `cannot_be_determined` | **We** could not reach a verdict from the text available to the pipeline. Not the same as `uninformative`: that is the paper's conclusion, this is our extraction falling short |
 | `not_a_replication` | Text does not describe a genuine attempt to replicate/reproduce the named original (unrelated, biological/technical, or metaphorical use of "replicate"/"reproduce") |
 | `pending` | Outcome not coded (pipeline-state marker). Written for every row whose `link_method` is not in `RESOLVED_LINK_METHODS` — there is no confirmed original to code an outcome against, so the outcome LLM never runs (`outcome_reasoning` says which method it was) |
 | `api_error` | Extraction failed after retries (pipeline-state marker) |
 
-> `uninformative` appears only in stored rows written by an earlier classifier; the
-> equivalent verdict today is `cannot_be_determined`. It is in `schema.OUTCOME_VALUES`
-> (but not `OUTCOME_CATEGORIES`) so those rows in `extracted.csv` /
-> `extracted-test.csv` still validate, and dashboards show it as a read-only bucket.
+> `uninformative` and `statistically_successful_but_flawed` are FLoRA codebook
+> categories that the pipeline could not emit until the rule-alignment pass.
+> `uninformative` had been retired into `OUTCOME_LEGACY_VALUES` and folded into
+> `cannot_be_determined`, which merged a property of the paper with a limit of our
+> extraction; it is a live category again, and `OUTCOME_LEGACY_VALUES` is now empty.
 
 ---
 

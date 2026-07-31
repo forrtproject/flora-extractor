@@ -183,15 +183,15 @@ def test_build_confusion_matrices_canonicalises_outcome_vocab():
         {"validation_status": "validated", "type": "replication", "final_type": "replication",
          "outcome": "success", "final_outcome": "successful"},           # same, diff vocab
         {"validation_status": "validated", "type": "replication", "final_type": "replication",
-         "outcome": "cannot_be_determined", "final_outcome": "uninformative"},  # same
+         "outcome": "uninformative", "final_outcome": "uninformative"},  # same
         {"validation_status": "validated", "type": "replication", "final_type": "replication",
          "outcome": "success", "final_outcome": "failed"},               # genuine miscode
     ]
     oc = sc.build_confusion_matrices(rows)["outcome"]
     assert oc["n"] == 3
-    assert oc["correct"] == 2, "success/successful and cbd/uninformative are agreement"
-    # canonical labels only — no 'successful'/'failed'/'uninformative' leak through
-    assert set(oc["labels"]) <= {"success", "failure", "cannot_be_determined"}
+    assert oc["correct"] == 2, "success/successful is agreement; uninformative matches itself"
+    # canonical labels only — no 'successful'/'failed' leak through
+    assert set(oc["labels"]) <= {"success", "failure", "uninformative"}
     i, j = oc["labels"].index("success"), oc["labels"].index("failure")
     assert oc["matrix"][i][j] == 1
 
@@ -201,3 +201,17 @@ def test_build_confusion_matrices_empty():
     m = sc.build_confusion_matrices([])
     assert m["outcome"]["n"] == 0 and m["outcome"]["accuracy"] == 0.0
     assert m["outcome"]["labels"] == [] and m["outcome"]["matrix"] == []
+
+
+def test_uninformative_is_no_longer_folded_into_cannot_be_determined():
+    """The two mean different things — the authors' verdict vs our failure to reach
+    one — so a human choosing uninformative over the pipeline's cannot_be_determined
+    is a real correction and must land off the diagonal."""
+    import shared.supabase_client as sc
+    rows = [
+        {"validation_status": "validated", "type": "replication", "final_type": "replication",
+         "outcome": "cannot_be_determined", "final_outcome": "uninformative"},
+    ]
+    oc = sc.build_confusion_matrices(rows)["outcome"]
+    assert oc["n"] == 1
+    assert oc["correct"] == 0

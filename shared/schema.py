@@ -50,6 +50,17 @@ EXTRACT_ADDED_COLS = [
     # Original study
     "doi_o",               # str   — original study DOI
     "title_o",             # str   — original study title
+    # FLoRA's `study_o`: WHICH study inside the original paper is targeted, as a
+    # number, and several numbers when one replication targets several studies from
+    # the same paper ("1, 2"). Blank when the original reports a single study or the
+    # replication does not say. It is what makes FLoRA's coding level representable —
+    # one row per pair of REFERENCES, so several studies within one original paper
+    # stay one row, while several original PAPERS are several rows. Only the
+    # multi-original path fills it — see _collapse_same_paper_originals() in
+    # extract/run_extract.py, which does the grouping.
+    # NOT the same field as the validation DB's `study_o`, which holds a title —
+    # see extract/csv_to_db.py.
+    "study_o",             # str   — target study number(s) within the original paper
     "year_o",              # int   — original study publication year
     "authors_o",           # str   — original study authors, semicolon-separated APA names (e.g. "Bransford, J. D.; Franks, J. J.")
     "ref_o",               # str   — full APA-style citation fetched from OpenAlex after doi_o resolved
@@ -153,8 +164,24 @@ DOI_VERIFICATION_VALUES = {
 # The canonical outcome enum. This is the single source of truth for the
 # outcome categories a classifier may emit — code_outcome and run_extract both
 # import OUTCOME_CATEGORIES rather than defining their own copies.
+#
+# The five substantive values mirror the FLoRA codebook's dropdown. Two of them were
+# missing until the rule-alignment pass:
+#   uninformative — the FLoRA category for a replication whose AUTHORS say it cannot
+#     speak to the original (underpowered, failed at the design level). It had been
+#     retired as legacy and folded into cannot_be_determined, which conflated a
+#     property of the paper with a failure of our extraction: merged, the database
+#     could not tell a null-informative replication from an unread one, and every
+#     "share we could not code" figure silently counted correctly-coded papers.
+#   statistically_successful_but_flawed — FLoRA's category for "we replicated the
+#     effect using the original methods, but show those methods do not test the
+#     hypothesis". Without it such papers code as `success`, which is the reading
+#     FLoRA created the category to avoid.
 OUTCOME_CATEGORIES = {
-    "success", "failure", "mixed", "descriptive", "cannot_be_determined",
+    "success", "failure", "mixed", "descriptive",
+    "statistically_successful_but_flawed",
+    "uninformative",
+    "cannot_be_determined",
     # Emitted when the classifier judges is_genuine_attempt=false: the text does not
     # describe a real attempt to replicate/reproduce the named original at all.
     "not_a_replication",
@@ -187,9 +214,11 @@ REPRODUCTION_OUTCOME_CATEGORIES = {
 #   api_error — outcome extraction failed after retries
 OUTCOME_STATE_MARKERS = {"pending", "api_error"}
 
-# Values the classifier no longer emits but that still exist in stored CSVs:
-#   uninformative — predates cannot_be_determined (outcome-coding unification)
-OUTCOME_LEGACY_VALUES = {"uninformative"}
+# Values the classifier no longer emits but that still exist in stored CSVs.
+# Empty since `uninformative` was restored as a live category above — the stored
+# rows carrying it are now valid under the current enum rather than tolerated
+# exceptions to it. Kept as a named set so the next retirement has somewhere to go.
+OUTCOME_LEGACY_VALUES: set = set()
 
 # Every value that may legitimately appear in the `outcome` CSV column. Validators of
 # STORED data (e.g. extract/audit_extracted.py) must check against this, not

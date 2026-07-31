@@ -357,19 +357,25 @@ _CONFUSION_FIELDS: dict[str, tuple[str, str]] = {
 # but not listed (e.g. reproduction-grid outcomes) is appended alphabetically.
 _PREFERRED_LABELS: dict[str, list[str]] = {
     "outcome": ["success", "failure", "mixed", "descriptive",
+                "statistically_successful_but_flawed", "uninformative",
                 "cannot_be_determined", "not_a_replication"],
     "type":    ["replication", "reproduction"],
 }
 
-# The pipeline codes outcomes as success/failure/cannot_be_determined, but the
-# validation DB stores the final in FLoRA's vocabulary (successful/failed/uninformative
-# — see the UPDATEs in flora-validation/db_schema.sql). Canonicalise both sides so
-# success-vs-successful reads as agreement (the diagonal), not a spurious correction —
-# otherwise the matrix hugely overstates the pipeline's error rate.
+# The validation DB stores the human final in FLoRA's own spelling
+# (successful/failed — see the UPDATEs in flora-validation/db_schema.sql).
+# Canonicalise both sides so success-vs-successful reads as agreement (the diagonal),
+# not a spurious correction — otherwise the matrix hugely overstates the pipeline's
+# error rate.
+#
+# `uninformative` used to be folded into cannot_be_determined here, back when the
+# pipeline could not emit it. It now can, and the two mean different things — the
+# authors' verdict versus our failure to reach one — so a human who chose
+# uninformative over the pipeline's cannot_be_determined has made a real correction
+# and the matrix should show it off-diagonal.
 _OUTCOME_CANON: dict[str, str] = {
     "successful": "success",
     "failed": "failure",
-    "uninformative": "cannot_be_determined",
 }
 
 

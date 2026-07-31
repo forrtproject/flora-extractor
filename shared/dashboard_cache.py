@@ -39,11 +39,11 @@ _STAGE_CSV: dict[str, Path] = {
 }
 
 # Canonical outcome categories + pipeline-state markers (see shared/schema.py).
-# "uninformative" is retained only as a legacy bucket so historical rows written
-# before the enum was unified still appear in the breakdown; it is no longer emitted.
 _OUTCOME_KEYS = (
-    "success", "failure", "mixed", "descriptive", "cannot_be_determined",
-    "pending", "api_error", "uninformative",
+    "success", "failure", "mixed", "descriptive",
+    "statistically_successful_but_flawed", "uninformative",
+    "cannot_be_determined", "not_a_replication",
+    "pending", "api_error",
 )
 _METHOD_KEYS = (
     # Granular rule-based resolution methods (formerly collapsed to author_year_match).

@@ -21,8 +21,10 @@ function pillOutcome(v) {
     success:      'background:#dcfce7;color:#166534',
     failure:      'background:#fee2e2;color:#991b1b',
     mixed:        'background:#fef3c7;color:#92400e',
-    uninformative:'background:#e2e8f0;color:#334155',
+    statistically_successful_but_flawed:'background:#e0e7ff;color:#3730a3',
+    uninformative:'background:#ede9fe;color:#5b21b6',
     cannot_be_determined:'background:#e2e8f0;color:#334155',
+    not_a_replication:'background:#fee2e2;color:#991b1b',
     descriptive:  'background:#e2e8f0;color:#334155',
     pending:      'background:#e2e8f0;color:#334155',
   };

@@ -423,24 +423,30 @@ class TestOutcomeEnumSingleSource:
     def test_run_extract_valid_is_schema_categories(self):
         assert run_extract._VALID_OUTCOMES is OUTCOME_CATEGORIES
 
-    def test_uninformative_dropped(self):
-        assert "uninformative" not in OUTCOME_CATEGORIES
-
     def test_cannot_be_determined_present(self):
         assert "cannot_be_determined" in OUTCOME_CATEGORIES
 
     def test_categories_are_exact(self):
         # not_a_replication is a genuine classifier output (is_genuine_attempt=false),
-        # so it belongs in the category enum alongside #61's unified five.
+        # so it belongs in the category enum. uninformative and
+        # statistically_successful_but_flawed are FLoRA codebook categories restored
+        # in the rule-alignment pass — see shared/schema.py.
         assert OUTCOME_CATEGORIES == {
-            "success", "failure", "mixed", "descriptive", "cannot_be_determined",
-            "not_a_replication",
+            "success", "failure", "mixed", "descriptive",
+            "statistically_successful_but_flawed", "uninformative",
+            "cannot_be_determined", "not_a_replication",
         }
 
-    def test_legacy_uninformative_still_valid_for_stored_rows(self):
-        from shared.schema import OUTCOME_VALUES
-        assert "uninformative" not in OUTCOME_CATEGORIES
+    def test_uninformative_is_a_live_category_not_a_legacy_value(self):
+        """FLoRA's 'the authors say their study is uninformative' is a coding, not a
+        historical artefact — and is distinct from 'we could not tell'."""
+        from shared.schema import OUTCOME_LEGACY_VALUES, OUTCOME_VALUES
+        assert "uninformative" in OUTCOME_CATEGORIES
         assert "uninformative" in OUTCOME_VALUES
+        assert "uninformative" not in OUTCOME_LEGACY_VALUES
+
+    def test_flawed_success_is_distinguishable_from_success(self):
+        assert "statistically_successful_but_flawed" in OUTCOME_CATEGORIES
 
 
 class TestKeywordScanNoFulltext:
@@ -549,7 +555,16 @@ class TestOutcomePromptContent:
     def test_example_one_relabelled_descriptive(self, tmp_path):
         prompt = self._prompt(tmp_path)
         assert "1. DESCRIPTIVE" in prompt
-        assert "UNINFORMATIVE" not in prompt
+
+    def test_uninformative_and_flawed_success_are_offered(self, tmp_path):
+        """Both FLoRA categories must appear in the rules AND in the JSON enum — a
+        category defined in prose but absent from the enum is silently coerced away."""
+        prompt = self._prompt(tmp_path)
+        assert "- uninformative:" in prompt
+        assert "- statistically_successful_but_flawed:" in prompt
+        assert ('"outcome": "<success|failure|mixed|descriptive|'
+                'statistically_successful_but_flawed|uninformative|'
+                'cannot_be_determined>"') in prompt
 
     def test_no_default_to_cannot_be_determined_line(self, tmp_path):
         prompt = self._prompt(tmp_path)

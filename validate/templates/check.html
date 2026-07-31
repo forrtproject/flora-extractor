@@ -260,9 +260,11 @@
           <label><input type="checkbox" data-ms-val="outcome" value="success"> Success</label>
           <label><input type="checkbox" data-ms-val="outcome" value="failure"> Failure</label>
           <label><input type="checkbox" data-ms-val="outcome" value="mixed"> Mixed</label>
+          <label><input type="checkbox" data-ms-val="outcome" value="descriptive"> Descriptive</label>
+          <label><input type="checkbox" data-ms-val="outcome" value="statistically_successful_but_flawed"> Statistically successful but flawed</label>
           <label><input type="checkbox" data-ms-val="outcome" value="uninformative"> Uninformative</label>
           <label><input type="checkbox" data-ms-val="outcome" value="cannot_be_determined"> Cannot be determined</label>
-          <label><input type="checkbox" data-ms-val="outcome" value="descriptive"> Descriptive</label>
+          <label><input type="checkbox" data-ms-val="outcome" value="not_a_replication"> Not a replication</label>
           <label><input type="checkbox" data-ms-val="outcome" value="pending"> Pending</label>
           <label><input type="checkbox" data-ms-val="outcome" value="api_error"> API error</label>
         </div>
@@ -564,6 +566,7 @@ var DETAIL_LONG_COLS = new Set(['abstract_r','ref_r','ref_o','bibtex_ref_r','bib
 var DETAIL_DOI_COLS  = new Set(['doi_r','doi_o']);
 var BADGE_COLORS = {
   success:'#22c55e', failure:'#ef4444', mixed:'#f59e0b', uninformative:'#8b5cf6',
+  statistically_successful_but_flawed:'#6366f1', not_a_replication:'#b91c1c',
   cannot_be_determined:'#6b7280', descriptive:'#3b82f6', pending:'#9ca3af', api_error:'#dc2626',
   replication:'#22c55e', reproduction:'#3b82f6', false_positive:'#ef4444', needs_review:'#f59e0b',
   high:'#22c55e', medium:'#f59e0b', low:'#ef4444',

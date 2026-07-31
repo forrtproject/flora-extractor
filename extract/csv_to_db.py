@@ -114,6 +114,12 @@ def _build_unvalidated_row(record_id: str, row: pd.Series) -> dict:
         "ref_r":            _s(row.get("ref_r")),
         "abstract_r":       _s(row.get("abstract_r")),
         "doi_o":            _s(row.get("doi_o")),
+        # The validation DB's study_o/study_r are TITLES — they pair with doi_o/doi_r
+        # and are what a validator reads. FLoRA's codebook uses the same name for the
+        # target study NUMBER inside the original paper, which extracted.csv now
+        # carries in its own `study_o` column. Two schemas, one name: this line
+        # deliberately sends the title, and the study numbers stay out of the DB until
+        # the validation repo has a column for them.
         "study_o":          _s(row.get("title_o")),
         "year_o":           _s(row.get("year_o")),
         "url_o":            _derive_url_o(row),
