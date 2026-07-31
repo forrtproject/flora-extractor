@@ -31,7 +31,12 @@ from shared.openalex_client import _search_crossref_by_title, _search_openalex_b
 from shared.pdf_parsing import parse_all as _parse_all
 from shared.prompts import build_match_type_prompt
 from shared.doi_verify import verify_and_correct
-from shared.schema import EXTRACTED_COLS, OUTCOME_CATEGORIES, make_pair_id
+from shared.schema import (
+    EXTRACTED_COLS,
+    LINK_METHOD_VALUES,
+    OUTCOME_CATEGORIES,
+    make_pair_id,
+)
 from shared.utils import bare_work_id, cache_key, clean_doi, csv_lock
 # Shared with csv_to_db so extraction and validation skip the same set (see shared/flora_skip.py)
 from shared.flora_skip import (
@@ -331,12 +336,7 @@ def _rule_classify_multi_original(title_r: str, abstract_r: str) -> "dict | None
 def _map_method(method: str) -> str:
     if method in _METHOD_MAP:
         return _METHOD_MAP[method]
-    if method in {"citation_context_match", "same_author_year_title_overlap",
-                  "single_candidate_after_requery", "title_pattern_match",
-                  "grobid_ref_match", "author_year_match_legacy",
-                  "llm_cited_candidates", "llm_fulltext", "llm_references",
-                  "not_a_replication", "screen_disagreement",
-                  "no_original_found", "target_pending", "api_error"}:
+    if method in LINK_METHOD_VALUES:
         return method
     if method == "llm_no_target":
         return "no_original_found"
