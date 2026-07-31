@@ -34,7 +34,7 @@ from shared.config import (
 )
 from shared import token_counter
 from shared.cache import content_key, read_cache, write_cache
-from shared.llm_client import call_llm
+from shared.llm_client import call_llm, ladder_fingerprint
 from shared.prompts import (
     build_outcome_abstract_prompt, build_outcome_fulltext_prompt,
     build_repro_abstract_prompt, build_repro_fulltext_prompt, prompt_versions,
@@ -291,7 +291,8 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
     versions = (prompt_versions("build_repro_abstract_prompt", "build_repro_fulltext_prompt")
                 if is_repro else
                 prompt_versions("build_outcome_abstract_prompt", "build_outcome_fulltext_prompt"))
-    key = content_key("outcome", doi_r, GEMINI_HEAVY_MODEL, versions, record_type,
+    key = content_key("outcome", doi_r, ladder_fingerprint(GEMINI_HEAVY_MODEL),
+                      versions, record_type,
                       title_r, abstract_snip, original_block, text_snip)
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
@@ -325,10 +326,15 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
                       if is_repro else
                       build_outcome_fulltext_prompt(title_r, abstract_snip, text_snip, original_block))
         esc_result, esc_model = _call_outcome_llm(esc_prompt, doi_r)
-        if esc_result:
-            output = _normalise(esc_result, esc_prompt, esc_model, record_type)
-            if not output["out_quote_source"]:
-                output["out_quote_source"] = "fulltext"
+        if not esc_result:
+            # Caching the abstract's cannot_be_determined here would retire the
+            # escalation for good; the fulltext call must stay retryable.
+            log.warning("[%s] outcome fulltext escalation failed — returning the "
+                        "abstract verdict uncached so a re-run retries it", doi_r)
+            return output
+        output = _normalise(esc_result, esc_prompt, esc_model, record_type)
+        if not output["out_quote_source"]:
+            output["out_quote_source"] = "fulltext"
 
     write_cache(LLM_CACHE_DIR, key, output)
     return output

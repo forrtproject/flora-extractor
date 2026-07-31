@@ -317,6 +317,25 @@ class TestSamePaperStudiesCollapse:
         assert len(out) == 2
         assert out[0]["study_number"] == "1, 2"
 
+    def test_doi_less_entries_with_the_same_title_but_different_years_stay_apart(self):
+        """Generic titles repeat across the literature — the title alone is not an
+        identity, so a DOI-less entry is keyed on year and first author too."""
+        from extract.run_extract import _collapse_same_paper_originals
+        a = self._orig(1, "", "1", title="Experiment 1")
+        b = self._orig(2, "", "1", title="Experiment 1")
+        b["year"] = 1998
+        out = _collapse_same_paper_originals([a, b])
+        assert len(out) == 2
+        assert [o["rank"] for o in out] == [1, 2]
+
+    def test_doi_less_entries_with_the_same_title_but_different_authors_stay_apart(self):
+        from extract.run_extract import _collapse_same_paper_originals
+        a = self._orig(1, "", "1", title="Experiment 1")
+        b = self._orig(2, "", "1", title="Experiment 1")
+        b["first_author"] = "Jones"
+        out = _collapse_same_paper_originals([a, b])
+        assert len(out) == 2
+
     def test_study_o_reaches_the_row(self):
         import pandas as pd
         from extract.run_extract import _merge_multi_row

@@ -19,7 +19,7 @@ from shared.config import (
     log,
 )
 from shared import token_counter
-from shared.llm_client import call_llm
+from shared.llm_client import call_llm, ladder_fingerprint
 from shared.prompts import build_filter_prompt, prompt_version
 
 VALID_STATUSES   = {"replication", "reproduction", "false_positive", "needs_review"}
@@ -35,7 +35,8 @@ def classify_with_llm(title: str, abstract: str) -> Optional[dict]:
     """
     prompt = build_filter_prompt(title, abstract)
     cache_id = content_key("filter", "", prompt_version("build_filter_prompt"),
-                           FILTER_OPENAI_MODEL, GEMINI_MODEL, prompt)
+                           ladder_fingerprint(GEMINI_MODEL, FILTER_OPENAI_MODEL),
+                           prompt)
     cached = read_cache(LLM_CACHE_DIR, cache_id)
     if cached is not None:
         return cached

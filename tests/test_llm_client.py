@@ -608,3 +608,61 @@ def test_ladder_reports_every_provider_error_when_all_fail(monkeypatch):
     result, provider, model, err = llm.call_llm_ladder("p")
     assert (result, provider, model) == (None, "none", "")
     assert "429" in err and "500" in err
+
+
+def test_ladder_can_stop_before_openrouter(monkeypatch):
+    """The reference-target pick must not fall through to the cheap last resort:
+    a wrong original is worse than an unresolved one."""
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "sk-or")
+    monkeypatch.setattr(llm, "call_gemini", lambda p, model=None: (None, "429"))
+    monkeypatch.setattr(llm, "call_openai", lambda p, model=None: (None, "500"))
+    monkeypatch.setattr(llm, "call_openrouter", lambda p, model="": ({"ok": True}, ""))
+    result, provider, _model, _err = llm.call_llm_ladder("p", openrouter=False)
+    assert (result, provider) == (None, "none")
+
+
+# ── Cache keys name every model the ladder can reach ─────────────────────────
+
+def test_ladder_fingerprint_lists_every_reachable_model():
+    fp = llm.ladder_fingerprint("gem-1", "oai-1")
+    assert fp.split("|") == ["gem-1", "oai-1", llm.OPENROUTER_HEAVY_MODEL]
+    assert llm.ladder_fingerprint("gem-1", "oai-1", openrouter=False) == "gem-1|oai-1"
+
+
+def test_ladder_fingerprint_moves_with_the_fallback_models(monkeypatch):
+    before = llm.ladder_fingerprint("gem-1")
+    monkeypatch.setattr(llm, "OPENAI_MODEL", "oai-next")
+    assert llm.ladder_fingerprint("gem-1") != before
+
+
+def test_identification_key_follows_the_openai_fallback(monkeypatch, tmp_path):
+    """Gemini going down means OpenAI answers — so the key has to name it too."""
+    calls: list = []
+    _identify(monkeypatch, tmp_path, {"resolved": False, "reasoning": "no"}, calls)
+    llm.identify_original_with_llm("10.1/x", "T", "A", "p", [], {})
+    monkeypatch.setattr(llm, "OPENAI_MODEL", "oai-next")
+    llm.identify_original_with_llm("10.1/x", "T", "A", "p", [], {})
+    assert len(calls) == 2
+
+
+def test_target_key_follows_the_openai_fallback(monkeypatch, tmp_path):
+    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    verdict = {"resolution_method": "llm_refscreen_declined", "is_replication": "yes",
+               "models_agree": True, "classification_confidence": "high", "votes": [],
+               "llm_source": "", "llm_model": "", "llm_evidence": "",
+               "llm_reasoning": "", "llm_prompt": "", "llm_error": ""}
+    refs = [_ref("10.1/orig", "Original")]
+    n = {"calls": 0}
+
+    def gemini(prompt, model=None):
+        n["calls"] += 1
+        return ({"target_number": 1, "confidence": "high",
+                 "target_description": "Smith 2015", "evidence_quote": "q",
+                 "reasoning": "r"}, None)
+
+    monkeypatch.setattr(llm, "call_gemini", gemini)
+    llm.screen_references_with_llm("10.1/x", "T", "A", refs, classification=verdict)
+    monkeypatch.setattr(llm, "OPENAI_MODEL", "oai-next")
+    llm.screen_references_with_llm("10.1/x", "T", "A", refs, classification=verdict)
+    assert n["calls"] == 2

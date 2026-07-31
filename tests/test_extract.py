@@ -541,6 +541,34 @@ class TestFulltextEscalation:
         assert mock_llm.call_count == 2
         assert result["outcome"] == "failure"
 
+    def test_failed_escalation_is_not_cached(self, tmp_path):
+        """Caching the abstract's cannot_be_determined after the fulltext call died
+        would retire the escalation permanently."""
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
+             patch("extract.code_outcome.time.sleep"), \
+             patch("extract.code_outcome._call_outcome_llm",
+                   side_effect=[(self._ABS_CBD, "m"), (None, "")]) as mock_llm:
+            result = extract_outcome(
+                "10.1234/escfail", abstract_r="ambiguous abstract",
+                fulltext="RESULTS: the effect did not replicate.", title_r="A Study",
+            )
+        assert mock_llm.call_count == 2
+        assert result["outcome"] == "cannot_be_determined"
+        assert list(tmp_path.glob("outcome_*.json")) == []
+
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
+             patch("extract.code_outcome.time.sleep"), \
+             patch("extract.code_outcome._call_outcome_llm",
+                   side_effect=[(self._ABS_CBD, "m"), (self._FT_FAIL, "m")]) as retry:
+            result = extract_outcome(
+                "10.1234/escfail", abstract_r="ambiguous abstract",
+                fulltext="RESULTS: the effect did not replicate.", title_r="A Study",
+            )
+        assert retry.call_count == 2
+        assert result["outcome"] == "failure"
+
 
 class TestOutcomePromptContent:
     def _prompt(self, tmp_path, **kw):
@@ -1382,6 +1410,18 @@ class TestGuardOriginalLink:
             self._row(doi_o="", title_o="  a study of THINGS.  "))
         assert out["link_method"] == "target_pending"
 
+    def test_demotion_clears_a_merged_outcome(self):
+        """The multi-original path merges the outcome before the guard runs, so a
+        rejected row would otherwise carry a coded outcome on an unresolved link."""
+        out = run_extract._guard_original_link(self._row(
+            doi_o="10.1/repl", outcome="success", outcome_phrase="we replicated it",
+            outcome_confidence="high", out_quote_source="llm_multi"))
+        assert out["link_method"] == "target_pending"
+        assert out["outcome"] == "pending"
+        assert out["outcome_phrase"] == ""
+        assert out["outcome_confidence"] == "low"
+        assert out["out_quote_source"] == ""
+
     def test_good_link_untouched(self):
         out = run_extract._guard_original_link(self._row())
         assert out["link_method"] == "llm_fulltext"
@@ -1771,6 +1811,55 @@ class TestRescreenReopensSetAsides:
     def test_flag_reaches_run_extract(self):
         import inspect
         assert "rescreen" in inspect.signature(run_extract.run_extract).parameters
+
+
+class TestResumeReadsTheScreenSetAsides:
+    """sanity_check moves the screen's verdicts out of extracted.csv, so a resume
+    that reads only extracted.csv re-screens every paper the screen already settled."""
+
+    @staticmethod
+    def _write(path: Path, rows: list[dict]) -> None:
+        df = pd.DataFrame(rows)
+        for c in EXTRACTED_COLS:
+            if c not in df.columns:
+                df[c] = ""
+        df[EXTRACTED_COLS].to_csv(path, index=False, encoding="utf-8-sig")
+
+    def _setup(self, tmp_path) -> Path:
+        out = tmp_path / "extracted.csv"
+        self._write(out, [{"doi_r": "10.1/keep", "filter_status": "replication",
+                           "link_method": "llm_references", "doi_o": "10.1/o",
+                           "outcome": "success"}])
+        self._write(tmp_path / "not_a_replication.csv",
+                    [{"doi_r": "10.1/nar", "filter_status": "replication",
+                      "link_method": "not_a_replication", "outcome": "not_a_replication"}])
+        self._write(tmp_path / "screen_disagreement.csv",
+                    [{"doi_r": "10.1/dis", "filter_status": "replication",
+                      "link_method": "screen_disagreement", "outcome": "pending"}])
+        return out
+
+    def test_set_aside_papers_count_as_resolved(self, tmp_path):
+        resolved, pending = run_extract._load_extracted_rows(self._setup(tmp_path))
+        assert set(resolved) == {"10.1/keep", "10.1/nar", "10.1/dis"}
+        assert pending == set()
+
+    def test_set_aside_rows_are_not_written_back_to_extracted_csv(self, tmp_path):
+        resolved, _ = run_extract._load_extracted_rows(self._setup(tmp_path))
+        assert resolved["10.1/nar"] == []
+        assert resolved["10.1/dis"] == []
+        assert len(resolved["10.1/keep"]) == 1
+
+    def test_rescreen_ignores_the_set_aside_files(self, tmp_path):
+        resolved, _ = run_extract._load_extracted_rows(self._setup(tmp_path),
+                                                       rescreen=True)
+        assert set(resolved) == {"10.1/keep"}
+
+    def test_missing_set_aside_files_are_fine(self, tmp_path):
+        out = tmp_path / "extracted.csv"
+        self._write(out, [{"doi_r": "10.1/keep", "filter_status": "replication",
+                           "link_method": "llm_references", "doi_o": "10.1/o"}])
+        resolved, _ = run_extract._load_extracted_rows(out)
+        assert set(resolved) == {"10.1/keep"}
 
 
 class TestScreenProviderPrecheck:

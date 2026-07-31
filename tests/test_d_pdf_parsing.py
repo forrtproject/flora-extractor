@@ -238,6 +238,22 @@ class TestOutcomeText:
         text, _ = outcome_text(self._PAPER, max_chars=100)
         assert len(text) <= 100
 
+    def test_an_over_long_discussion_keeps_its_ending(self):
+        """The verdict is in the closing paragraphs, so a head-only truncation
+        drops exactly the sentence the escalation exists to read."""
+        from shared.pdf_parsing import outcome_text
+        paper = ("Introduction\n" + ("background prose. " * 800)
+                 + "\n4. General Discussion\n"
+                 + ("We consider the implications at length. " * 300)
+                 + "In sum, the original effect did not replicate.\n"
+                 + "References\nSmith, J. (2010). A paper.\n")
+        text, provenance = outcome_text(paper, max_chars=2000)
+        assert provenance == "discussion"
+        assert len(text) <= 2000
+        assert text.startswith("4. General Discussion")
+        assert "In sum, the original effect did not replicate." in text
+        assert "background prose" not in text
+
     def test_empty_input(self):
         from shared.pdf_parsing import outcome_text
         assert outcome_text("") == ("", "none")
@@ -252,3 +268,47 @@ class TestOutcomeText:
         text, provenance = outcome_text(paper)
         assert provenance == "discussion"
         assert text.startswith("Discussion")
+
+
+class TestDirectRefsCacheIdentity:
+    """The direct/image reference caches are keyed on filenames, and cache/pdf holds
+    one file per DOI — so a replaced PDF, or a changed model, must not read back the
+    previous answer."""
+
+    _REFS = {"references": [{"authors": ["Smith"], "year": 2010, "title": "A paper"}]}
+
+    def _run(self, tmp_path, pdf: Path):
+        from shared import grobid
+        with patch.object(grobid, "GROBID_CACHE_DIR", tmp_path), \
+             patch("shared.llm_client.call_gemini_with_pdf",
+                   return_value=self._REFS) as call:
+            grobid._extract_refs_via_pdf_direct("10.1/x", pdf)
+        return call
+
+    def test_same_pdf_hits_the_cache(self, tmp_path):
+        pdf = tmp_path / "10.1_x.pdf"
+        pdf.write_bytes(b"%PDF-1.4 first version")
+        assert self._run(tmp_path, pdf).call_count == 1
+        assert self._run(tmp_path, pdf).call_count == 0
+
+    def test_replaced_pdf_at_the_same_path_misses(self, tmp_path):
+        pdf = tmp_path / "10.1_x.pdf"
+        pdf.write_bytes(b"%PDF-1.4 first version")
+        self._run(tmp_path, pdf)
+        pdf.write_bytes(b"%PDF-1.4 a different paper entirely")
+        assert self._run(tmp_path, pdf).call_count == 1
+
+    def test_changed_model_misses(self, tmp_path, monkeypatch):
+        from shared import grobid
+        pdf = tmp_path / "10.1_x.pdf"
+        pdf.write_bytes(b"%PDF-1.4 first version")
+        self._run(tmp_path, pdf)
+        monkeypatch.setattr(grobid, "GEMINI_MODEL", "gemini-next")
+        assert self._run(tmp_path, pdf).call_count == 1
+
+    def test_image_refs_cache_also_names_the_pdf_and_model(self):
+        import inspect
+        from shared import grobid
+        src = inspect.getsource(grobid._extract_refs_via_pdf_images)
+        assert "_pdf_fingerprint(pdf_path)" in src
+        assert "GEMINI_MODEL" in src

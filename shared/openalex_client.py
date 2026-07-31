@@ -776,6 +776,10 @@ def _jaccard(a: str, b: str) -> float:
     return len(ta & tb) / len(ta | tb)
 
 
+class _TitleSearchUnavailable(Exception):
+    """The provider never answered — distinct from a genuine no-match."""
+
+
 def _cached_title_search(source: str, title: str, year: str, search) -> Optional[dict]:
     """Disk-cache a title search, misses included.
 
@@ -783,6 +787,7 @@ def _cached_title_search(source: str, title: str, year: str, search) -> Optional
     resolver, both reference builders and the link guard all ask — and a miss is
     the common answer, so caching only the hits would leave most of the traffic
     uncached. A miss is stored as {"hit": null}, which is a result like any other.
+    A transport or API failure is not: caching it would pin the outage forever.
     """
     if not title:
         return None
@@ -790,7 +795,10 @@ def _cached_title_search(source: str, title: str, year: str, search) -> Optional
     cached = read_cache(OA_CACHE_DIR, key)
     if cached is not None:
         return cached.get("hit")
-    hit = search(title, year)
+    try:
+        hit = search(title, year)
+    except _TitleSearchUnavailable:
+        return None
     write_cache(OA_CACHE_DIR, key, {"hit": hit})
     return hit
 
@@ -819,7 +827,7 @@ def _search_crossref_by_title_live(title: str, year: str = "") -> Optional[dict]
         items = r.json().get("message", {}).get("items") or []
     except Exception as exc:
         log.debug("CrossRef title search failed: %s", exc)
-        return None
+        raise _TitleSearchUnavailable(str(exc)) from exc
 
     for item in items:
         hit_titles = item.get("title") or []
@@ -889,7 +897,9 @@ def _search_openalex_by_title_live(title: str, year: str = "") -> Optional[dict]
         "mailto" : RESEARCHER_EMAIL,
     }
     data = _oa_get("https://api.openalex.org/works", params)
-    if not data or not data.get("results"):
+    if data is None:
+        raise _TitleSearchUnavailable("OpenAlex title search returned no response")
+    if not data.get("results"):
         return None
 
     for work in data["results"]:
