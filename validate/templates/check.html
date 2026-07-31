@@ -559,7 +559,7 @@ var DETAIL_SECTIONS = [
   { label: 'Original Study',   cols: ['doi_o','year_o','title_o','authors_o','ref_o','bibtex_ref_o'] },
   { label: 'Link',             cols: ['original_match_type','original_match_confidence','link_method','link_confidence','link_llm_model','link_evidence'] },
   { label: 'DOI Verification', cols: ['doi_o_verification'] },
-  { label: 'Outcome',          cols: ['outcome','outcome_confidence','out_quote_source','outcome_phrase','outcome_reasoning'] },
+  { label: 'Outcome',          cols: ['outcome','outcome_confidence','out_quote_source','outcome_llm_model','outcome_phrase','outcome_reasoning'] },
   { label: 'Meta',             cols: ['type','original_rank','n_originals','pair_id'] },
 ];
 var DETAIL_LONG_COLS = new Set(['abstract_r','ref_r','ref_o','bibtex_ref_r','bibtex_ref_o','link_evidence','filter_evidence','outcome_phrase','outcome_reasoning','title_r','title_o','url_r']);

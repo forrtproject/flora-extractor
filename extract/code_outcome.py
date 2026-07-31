@@ -375,7 +375,7 @@ def extract_outcome(doi_r: str,
     Returns a dict with keys: outcome, outcome_phrase, outcome_confidence,
     out_quote_source, outcome_reasoning (empty string for keyword-matched rows).
     """
-    _kw_fallback = {"outcome_reasoning": ""}
+    _kw_fallback = {"outcome_reasoning": "", "llm_model": "keyword"}
 
     # The keyword patterns below are replication-specific ("failed to replicate",
     # "successfully replicated", ...). Running them on a reproduction would code it
@@ -384,7 +384,7 @@ def extract_outcome(doi_r: str,
         if no_llm:
             return {"outcome": "cannot_be_determined", "outcome_phrase": "",
                     "outcome_confidence": "low", "out_quote_source": "",
-                    "outcome_reasoning": ""}
+                    "outcome_reasoning": "", "llm_model": ""}
         return _llm_outcome(doi_r, title_r, abstract_r, fulltext,
                             original_title=original_title,
                             original_authors=original_authors,
@@ -412,7 +412,7 @@ def extract_outcome(doi_r: str,
         # prose about OTHER studies' outcomes misfires the patterns.
         return {"outcome": "cannot_be_determined", "outcome_phrase": "",
                 "outcome_confidence": "low", "out_quote_source": "",
-                "outcome_reasoning": ""}
+                "outcome_reasoning": "", "llm_model": "keyword"}
 
     # LLM pass (abstract-based, with fulltext escalation) — codes the outcome AND
     # applies the is_genuine_attempt veto.
