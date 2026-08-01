@@ -18,7 +18,7 @@ from rapidfuzz import fuzz
 
 from shared.config import DATA_DIR, log
 from shared.schema import CANDIDATES_COLS
-from shared.utils import clean_doi
+from shared.utils import clean_doi, non_article_doi
 
 
 # Paths to FLoRA data files for deduplication
@@ -28,12 +28,6 @@ FLORA_CSV_PATH = DATA_DIR / "flora.csv"
 # Fuzzy title similarity threshold. RapidFuzz token_sort_ratio sorts words before
 # comparing strings, which makes it useful when titles differ mainly in word order.
 TITLE_MATCH_THRESHOLD = 90
-
-# DOI prefix for figshare — a data/figure repository, never a scholarly paper.
-_FIGSHARE_PREFIX = "10.6084/"
-
-# PeerJ embeds peer reviews as citable objects with "/reviews/N" in the DOI path.
-_PEER_REVIEW_RE = re.compile(r"/reviews/", re.IGNORECASE)
 
 # Versioned preprint DOIs end with _vN (e.g. 10.31234/osf.io/abc123_v2).
 _VERSIONED_RE = re.compile(r"^(.+?)_v(\d+)$", re.IGNORECASE)
@@ -113,44 +107,17 @@ def _richness(row: pd.Series) -> int:
     return sum(1 for v in row if v is not None and str(v).strip() not in ("", "nan"))
 
 
-def _best_row(group: pd.DataFrame) -> pd.Series:
-    """Select the richest row from a group of presumed duplicates.
-
-    Parameters
-    ----------
-    group
-        Group of rows representing the same paper.
-
-    Returns
-    -------
-    pd.Series
-        The row with the highest richness score.
-    """
-    scores = group.apply(_richness, axis=1)
-    return group.loc[scores.idxmax()]
-
-
 # ---------------------------------------------------------------------------
 # Pass 0a — DOI-pattern exclusions (figshare, peer reviews)
 # ---------------------------------------------------------------------------
 
 
 def _exclude_by_doi_pattern(df: pd.DataFrame) -> pd.DataFrame:
-    """Drop rows whose DOI identifies a non-paper object.
-
-    Excluded patterns:
-    - ``10.6084/`` — figshare datasets/figures; never a scholarly paper.
-    - ``/reviews/`` in the DOI path — PeerJ embeds peer-review text as
-      citable objects distinct from the reviewed article.
-    """
-    def _should_exclude(doi: str) -> bool:
-        if not doi or not isinstance(doi, str):
-            return False
-        doi = doi.strip()
-        return doi.startswith(_FIGSHARE_PREFIX) or bool(_PEER_REVIEW_RE.search(doi))
-
+    """Drop rows whose DOI identifies a non-paper object (figshare data records,
+    peer-review/editorial-decision objects) — see shared.utils.non_article_doi,
+    which is the single definition of that rule and which Stage 2 applies too."""
     before = len(df)
-    mask = ~df["doi_r"].apply(_should_exclude)
+    mask = ~df["doi_r"].apply(lambda d: bool(non_article_doi(str(d or ""))))
     df = df[mask].reset_index(drop=True)
     removed = before - len(df)
     if removed:

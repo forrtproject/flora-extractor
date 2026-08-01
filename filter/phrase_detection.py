@@ -103,15 +103,6 @@ def is_non_scholarly_context(text: str) -> Optional[str]:
     return None
 
 
-def has_replication_phrase(text: str) -> bool:
-    """True iff the text contains a replication phrase AND no exclusion fires."""
-    if not text:
-        return False
-    if is_non_scholarly_context(text):
-        return False
-    return any(regex.search(text) for regex in REPLICATION_PHRASES)
-
-
 def find_replication_phrase_span(text: str,
                                  ignore_exclusions: bool = False) -> Optional[tuple[str, int, int]]:
     """Return (lowercase phrase, start, end) for the first matching replication phrase, or None.
@@ -129,12 +120,6 @@ def find_replication_phrase_span(text: str,
         if m:
             return m.group(0).lower(), m.start(), m.end()
     return None
-
-
-def find_replication_phrase(text: str) -> Optional[str]:
-    """Return the lowercase first matching replication phrase, or None."""
-    match = find_replication_phrase_span(text)
-    return match[0] if match else None
 
 
 def is_reproduction_only(text: str) -> bool:
