@@ -118,9 +118,9 @@ See `.env.example` for the full list with descriptions. Key variables:
 | `RESEARCHER_EMAIL` | Yes | Politeness header for APIs |
 | `GEMINI_API_KEY` | Yes | Primary LLM |
 | `GEMINI_API_KEY_2..N` | No | Key rotation for higher quota |
-| `OPENAI_API_KEY` | No | Fallback LLM |
-| `OPENROUTER_API_KEY` | Stage 3 | Second voter of the Stage 4.5 screen; also makes Qwen primary for linking |
-| `SCREEN_VOTER2_MODEL` | No | Screen voter 2 (default `mistralai/ministral-14b-2512`) |
+| `OPENAI_API_KEY` | Stage 3 | Second voter of the front-door screen with the default `SCREEN_VOTER2_MODEL`; also the middle rung of the linking ladder |
+| `OPENROUTER_API_KEY` | No | Last rung of the linking ladder; required for Stage 3 only if `SCREEN_VOTER2_MODEL` contains a `/` |
+| `SCREEN_VOTER2_MODEL` | No | Screen voter 2 (default `gpt-5.4-mini`; an id containing `/` is routed to OpenRouter) |
 | `SUPABASE_URL` | No | Validation monitoring tab |
 | `SUPABASE_SERVICE_KEY` | No | Validation monitoring tab |
 | `GROBID_URL` | No | PDF reference extraction (default: localhost:8070) |

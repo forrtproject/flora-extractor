@@ -1035,11 +1035,9 @@ def _screen_record_type(votes: list[dict]) -> str:
     quals = [v["classification"] for v in votes if v["classification"] in SCREEN_QUALIFYING]
     if not quals:
         return ""
-    if len(quals) == 2 and quals[0] == quals[1]:
-        chosen = quals[0]
-    else:
-        chosen = quals[0]
-    return "replication" if chosen == "both" else chosen
+    # Agreement and the fallback pick the same element: quals is in call order, so
+    # quals[0] is Gemini's answer whenever Gemini gave a qualifying one.
+    return "replication" if quals[0] == "both" else quals[0]
 
 
 def _screen_categories(votes: list[dict]) -> list[str]:
