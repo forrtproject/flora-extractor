@@ -336,6 +336,13 @@ def recalibrate_outcomes(
                 df_full.at[orig_idx, "outcome_confidence"] = result.get("outcome_confidence", "")
                 df_full.at[orig_idx, "out_quote_source"] = result.get("out_quote_source", "")
                 df_full.at[orig_idx, "outcome_reasoning"] = result.get("outcome_reasoning", "")
+                for col in ("outcome_computation", "outcome_computational_quote",
+                            "out_quote_computational_source", "outcome_robustness",
+                            "outcome_robustness_quote", "out_quote_robust_source"):
+                    df_full.at[orig_idx, col] = result.get(col, "")
+                # The full-text pass can correct the record type it was coded in.
+                if result.get("record_type"):
+                    df_full.at[orig_idx, "type"] = result["record_type"]
 
             except TokenBudgetExhausted:
                 raise   # the budget stops the run, it does not fail one row

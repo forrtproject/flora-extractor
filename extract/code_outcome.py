@@ -14,9 +14,13 @@ _FULLTEXT_CAP is mostly introduction and methods.
 
 The keyword scan is the --no-llm fallback, not a pre-filter. Every outcome the
 pipeline records with an LLM available comes from the LLM, which also applies the
-is_genuine_attempt veto that a keyword match cannot. The one other consumer of the
+record_type_check veto that a keyword match cannot. The one other consumer of the
 keyword patterns is predict_outcome_keyword(), the --predicted-outcome sampling
 filter.
+
+A reproduction is coded on two independent axes (computation and robustness), each
+with its own quote and quote source; the shared `outcome` column carries the two
+verdicts joined, so one column reads the same way for both record types.
 
 Exhausting every provider yields outcome = "api_error", never a verdict.
 
@@ -36,10 +40,12 @@ from shared import token_counter
 from shared.cache import content_key, read_cache, write_cache
 from shared.llm_client import call_llm, ladder_fingerprint
 from shared.prompts import (
-    build_outcome_abstract_prompt, build_outcome_fulltext_prompt,
-    build_repro_abstract_prompt, build_repro_fulltext_prompt, prompt_versions,
+    build_outcome_prompt, build_repro_outcome_prompt, prompt_version,
 )
-from shared.schema import OUTCOME_CATEGORIES, outcome_categories_for
+from shared.schema import (
+    COMPUTATION_OUTCOME_VALUES, OUTCOME_CATEGORIES, ROBUSTNESS_OUTCOME_VALUES,
+    derive_reproduction_outcome, outcome_categories_for,
+)
 from shared.token_usage import TokenBudgetExhausted
 
 # Truncation caps (chars) for the abstract-based and fulltext-escalation prompts.
@@ -155,8 +161,17 @@ _DESCRIPTIVE = re.compile(
 )
 
 # Single source of truth (schema.OUTCOME_CATEGORIES) — includes not_a_replication,
-# which _llm_outcome emits when is_genuine_attempt=false.
+# which _llm_outcome emits when the full-text pass answers record_type_check="neither".
 _VALID_OUTCOMES = OUTCOME_CATEGORIES
+
+# The empty axis block a replication row carries, and the block a "neither" verdict
+# clears a reproduction row down to.
+_EMPTY_AXES = {
+    "outcome_computation": "", "outcome_computational_quote": "",
+    "out_quote_computational_source": "",
+    "outcome_robustness": "", "outcome_robustness_quote": "",
+    "out_quote_robust_source": "",
+}
 
 
 def _failure_match(text: str) -> "re.Match | None":
@@ -239,41 +254,127 @@ def _call_outcome_llm(prompt: str, doi_r: str) -> tuple[Optional[dict], str]:
     return None, ""
 
 
-def _normalise(result: dict, prompt: str, model_used: str,
-               record_type: str = "replication") -> dict:
-    outcome = str(result.get("outcome", "cannot_be_determined")).lower()
-    # Reproductions use the 3x3 computation/robustness grid, replications the
-    # success/failure/... enum. Validating against the wrong one would silently
-    # coerce every reproduction verdict to cannot_be_determined.
-    if outcome not in outcome_categories_for(record_type):
-        outcome = "cannot_be_determined"
+def _text(value) -> str:
+    """A response field as a string, with JSON null read as absent.
 
-    # is_genuine_attempt defaults to True when absent (e.g. a cached response written
-    # before this field existed, or a test double that omits it) — absence must not
-    # silently reclassify existing/mocked rows as false positives.
-    if result.get("is_genuine_attempt", True) is False:
+    The prompts no longer spend model attention policing JSON discipline, so the
+    parser repairs what a parser should repair. `null` for a quote or a source is
+    the model saying "none", not a value to stringify as "None".
+    """
+    return "" if value is None else str(value)
+
+
+def _as_bool(value) -> bool:
+    """`confident`, tolerating the string form. Models return "true"/"True" often
+    enough that reading it as a truthy non-empty string — or as False — is a real
+    misreading of a real answer."""
+    if isinstance(value, bool):
+        return value
+    return _text(value).strip().lower() == "true"
+
+
+def _normalise(result: dict, prompt: str, model_used: str,
+               record_type: str = "replication", fulltext_pass: bool = False) -> dict:
+    """The LLM response as the row shape, in the vocabulary *record_type* selects.
+
+    record_type_check is asked for on the FULL-TEXT pass only, so its absence on the
+    abstract pass is not a verdict — reading it as one would let a single model end a
+    row on exactly the evidence two validated screen voters already saw.
+    """
+    is_repro = str(record_type or "").strip().lower() == "reproduction"
+    rtc = _text(result.get("record_type_check")).strip().lower() if fulltext_pass else ""
+
+    axes = dict(_EMPTY_AXES)
+    if is_repro:
+        computation = _text(result.get("outcome_computation")).strip()
+        robustness = _text(result.get("outcome_robustness")).strip()
+        # An unrecognised axis value is a value the pipeline cannot act on; recording
+        # it as unsettled is honest, recording it verbatim is not.
+        if computation not in COMPUTATION_OUTCOME_VALUES:
+            computation = "cannot_be_determined"
+        if robustness not in ROBUSTNESS_OUTCOME_VALUES:
+            robustness = "cannot_be_determined"
+        axes = {
+            "outcome_computation":            computation,
+            "outcome_computational_quote":    _text(result.get("outcome_computational_quote")),
+            "out_quote_computational_source": _text(result.get("out_quote_computational_source")),
+            "outcome_robustness":             robustness,
+            "outcome_robustness_quote":       _text(result.get("outcome_robustness_quote")),
+            "out_quote_robust_source":        _text(result.get("out_quote_robust_source")),
+        }
+        outcome = derive_reproduction_outcome(computation, robustness)
+        # A reproduction's evidence lives in the two axis quotes; the shared
+        # outcome_phrase would have to be one of them chosen arbitrarily, which is
+        # exactly the one-quote-for-two-judgments problem the axes were split to end.
+        phrase, source = "", ""
+    else:
+        outcome = _text(result.get("outcome", "cannot_be_determined")).lower()
+        # Reproductions use the computation/robustness axes, replications the
+        # success/failure/... enum. Validating against the wrong one would silently
+        # coerce every verdict to cannot_be_determined.
+        if outcome not in outcome_categories_for(record_type):
+            outcome = "cannot_be_determined"
+        phrase = _text(result.get("outcome_phrase"))
+        source = _text(result.get("out_quote_source"))
+
+    # "neither" is the veto the retired is_genuine_attempt used to carry, now earned by
+    # the methods rather than by one model re-deciding the screen's question.
+    if rtc == "neither":
         outcome = "not_a_replication"
+        axes = dict(_EMPTY_AXES)
+        phrase, source = "", ""
 
     return {
         "outcome":            outcome,
-        "outcome_phrase":     str(result.get("outcome_phrase",    "") or ""),
-        "outcome_confidence": str(result.get("confidence", "low") or "low"),
-        "out_quote_source":   str(result.get("out_quote_source",  "") or ""),
-        "outcome_reasoning":  str(result.get("outcome_reasoning", "") or ""),
+        "outcome_phrase":     phrase,
+        "outcome_confidence": "high" if _as_bool(result.get("confident")) else "low",
+        "out_quote_source":   source,
+        "outcome_reasoning":  _text(result.get("outcome_reasoning")),
+        **axes,
+        "record_type_check":  rtc,
         "llm_model":          model_used,
         "llm_prompt":         prompt,
         "llm_response":       json.dumps(result, ensure_ascii=False),
     }
 
 
-def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
-                 original_title: str = "", original_authors: str = "",
-                 original_year: str = "", record_type: str = "replication") -> dict:
-    """LLM-based outcome extraction.
+def _unsettled(output: dict, is_repro: bool) -> bool:
+    """Whether the abstract pass left something for the full text to settle.
 
-    The primary pass reads the abstract. If it returns cannot_be_determined (or the
+    A reproduction has two axes, and either one unresolved is a reason to read the
+    full text: treating a settled computation verdict beside an unresolved robustness
+    verdict as done would silently record "not checked" as though the paper had been
+    read to the end.
+    """
+    if is_repro:
+        return (output["outcome_computation"] == "cannot_be_determined"
+                or output["outcome_robustness"] == "cannot_be_determined")
+    return output["outcome"] == "cannot_be_determined"
+
+
+def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
+                    original_title: str = "", original_authors: str = "",
+                    original_year: str = "", record_type: str = "replication",
+                    recoded: bool = False) -> tuple[dict, bool]:
+    """LLM-based outcome extraction, with whether the result may be cached.
+
+    Two results are deliberately NOT cacheable: api_error after provider exhaustion,
+    and the abstract verdict returned when the full-text escalation itself failed.
+    Both are transient, and a cached one is a definitive miss the pipeline never
+    retries. A recode inherits the cacheability of the call it delegated to — the
+    outer call cannot tell a delegated api_error from a delegated verdict by looking
+    at the dict, and writing one under the original vocabulary's key checkpointed an
+    outage as an answer.
+
+    The primary pass reads the abstract. If it leaves the verdict unsettled (or the
     abstract is empty) and parsed fulltext is available, a second, fulltext-based
-    call is made and its result is used.
+    call is made and its result REPLACES the first — for a reproduction that means
+    both axes, never one axis from each call.
+
+    The full-text pass also answers record_type_check, the first look the pipeline
+    gets at the methods. "neither" vetoes the row; naming the other vocabulary
+    re-codes it once under the other prompt — one hop, never a loop, so a call made
+    to fix a mis-typed row is not itself re-typed.
 
     One cache entry, keyed on everything the answer depends on: the model, the
     versions of both prompts that could have produced it, the record type (a
@@ -284,23 +385,18 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
     abstract_snip = (abstract_r[:_ABSTRACT_CAP] + "…") if len(abstract_r) > _ABSTRACT_CAP else abstract_r
     text_snip     = (fulltext[:_FULLTEXT_CAP] + "…") if len(fulltext) > _FULLTEXT_CAP else fulltext
 
-    original_block = ""
-    if original_title:
-        original_block = (
-            f"This paper replicates: {original_authors} ({original_year}). {original_title}\n\n"
-        )
-
     is_repro = str(record_type or "").strip().lower() == "reproduction"
-    versions = (prompt_versions("build_repro_abstract_prompt", "build_repro_fulltext_prompt")
-                if is_repro else
-                prompt_versions("build_outcome_abstract_prompt", "build_outcome_fulltext_prompt"))
+    build = build_repro_outcome_prompt if is_repro else build_outcome_prompt
+    version = prompt_version(
+        "build_repro_outcome_prompt" if is_repro else "build_outcome_prompt")
     key = content_key("outcome", doi_r, ladder_fingerprint(GEMINI_HEAVY_MODEL),
-                      versions, record_type,
-                      title_r, abstract_snip, original_block, text_snip)
+                      version, record_type,
+                      title_r, abstract_snip,
+                      original_authors, original_year, original_title, text_snip)
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
         cached.setdefault("outcome_reasoning", "")
-        return cached
+        return cached, True
 
     token_counter.set_stage("extract_outcome")
 
@@ -310,36 +406,65 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
     # Not cached — a re-run must be able to code the row.
     _api_error = {"outcome": "api_error", "outcome_phrase": "",
                   "outcome_confidence": "low", "out_quote_source": "",
-                  "outcome_reasoning": "", "llm_model": ""}
+                  "outcome_reasoning": "", "llm_model": "", **_EMPTY_AXES}
 
-    prompt = (build_repro_abstract_prompt(title_r, abstract_snip, original_block) if is_repro
-              else build_outcome_abstract_prompt(title_r, abstract_snip, original_block))
+    prompt = build(title_r, abstract_snip, original_authors, original_year, original_title)
     result, model_used = _call_outcome_llm(prompt, doi_r)
     if not result:
         log.warning("[%s] outcome LLM failed after all retries — marking api_error", doi_r)
-        return _api_error
+        return _api_error, False
 
     output = _normalise(result, prompt, model_used, record_type)
+    cacheable = True
 
     # Escalation: the abstract could not settle it → read the parsed fulltext.
-    if (OUTCOME_FULLTEXT_ESCALATION
-            and fulltext
-            and (output["outcome"] == "cannot_be_determined" or not abstract_r)):
-        esc_prompt = (build_repro_fulltext_prompt(title_r, abstract_snip, text_snip, original_block)
-                      if is_repro else
-                      build_outcome_fulltext_prompt(title_r, abstract_snip, text_snip, original_block))
+    if OUTCOME_FULLTEXT_ESCALATION and fulltext and (_unsettled(output, is_repro)
+                                                     or not abstract_r):
+        esc_prompt = build(title_r, abstract_snip, original_authors, original_year,
+                           original_title, text_snip=text_snip)
         esc_result, esc_model = _call_outcome_llm(esc_prompt, doi_r)
         if not esc_result:
             # Caching the abstract's cannot_be_determined here would retire the
             # escalation for good; the fulltext call must stay retryable.
             log.warning("[%s] outcome fulltext escalation failed — returning the "
                         "abstract verdict uncached so a re-run retries it", doi_r)
-            return output
-        output = _normalise(esc_result, esc_prompt, esc_model, record_type)
-        if not output["out_quote_source"]:
+            return output, False
+        output = _normalise(esc_result, esc_prompt, esc_model, record_type,
+                            fulltext_pass=True)
+        if not output["out_quote_source"] and output["outcome_phrase"]:
             output["out_quote_source"] = "fulltext"
+        for quote_col, source_col in (
+                ("outcome_computational_quote", "out_quote_computational_source"),
+                ("outcome_robustness_quote",    "out_quote_robust_source")):
+            if output[quote_col] and not output[source_col]:
+                output[source_col] = "fulltext"
 
-    write_cache(LLM_CACHE_DIR, key, output)
+        other = "reproduction" if not is_repro else "replication"
+        if not recoded and output["record_type_check"] == other:
+            log.info("[%s] full text says this is a %s, not a %s — re-coding once",
+                     doi_r, other, record_type)
+            output, cacheable = _outcome_result(doi_r, title_r, abstract_r, fulltext,
+                                                original_title=original_title,
+                                                original_authors=original_authors,
+                                                original_year=original_year,
+                                                record_type=other, recoded=True)
+            output = {**output, "record_type": other}
+
+    if cacheable:
+        write_cache(LLM_CACHE_DIR, key, output)
+    return output, cacheable
+
+
+def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
+                 original_title: str = "", original_authors: str = "",
+                 original_year: str = "", record_type: str = "replication") -> dict:
+    """The outcome row for *doi_r* — see _outcome_result, whose cacheability flag the
+    pipeline has no use for."""
+    output, _ = _outcome_result(doi_r, title_r, abstract_r, fulltext,
+                                original_title=original_title,
+                                original_authors=original_authors,
+                                original_year=original_year,
+                                record_type=record_type)
     return output
 
 
@@ -378,13 +503,16 @@ def extract_outcome(doi_r: str,
                     record_type: str = "replication") -> dict:
     """Extract the outcome from available text.
 
-    record_type selects the vocabulary: "reproduction" uses the 3x3
-    computation/robustness grid, anything else the replication enum.
+    record_type selects the vocabulary: "reproduction" uses the computation/robustness
+    axes, anything else the replication enum. It can also be corrected here — when the
+    full-text pass reports the other vocabulary the row is re-coded once and the
+    returned dict carries a "record_type" key for the caller to write to `type`.
 
     Returns a dict with keys: outcome, outcome_phrase, outcome_confidence,
-    out_quote_source, outcome_reasoning (empty string for keyword-matched rows).
+    out_quote_source, outcome_reasoning (empty string for keyword-matched rows) and
+    the six reproduction axis fields (empty on a replication row).
     """
-    _kw_fallback = {"outcome_reasoning": "", "llm_model": "keyword"}
+    _kw_fallback = {"outcome_reasoning": "", "llm_model": "keyword", **_EMPTY_AXES}
 
     # The keyword patterns below are replication-specific ("failed to replicate",
     # "successfully replicated", ...). Running them on a reproduction would code it
@@ -393,7 +521,7 @@ def extract_outcome(doi_r: str,
         if no_llm:
             return {"outcome": "cannot_be_determined", "outcome_phrase": "",
                     "outcome_confidence": "low", "out_quote_source": "",
-                    "outcome_reasoning": "", "llm_model": ""}
+                    "outcome_reasoning": "", "llm_model": "", **_EMPTY_AXES}
         return _llm_outcome(doi_r, title_r, abstract_r, fulltext,
                             original_title=original_title,
                             original_authors=original_authors,
@@ -401,11 +529,12 @@ def extract_outcome(doi_r: str,
                             record_type="reproduction")
 
     # Keyword fast-path is the NO-LLM fallback only (#70). When the LLM is available
-    # every "is this a genuine replication?" decision must be seen by it: _llm_outcome
-    # judges is_genuine_attempt (vetoing obvious non-replications to not_a_replication)
-    # as well as coding the outcome. A bare keyword hit like "failed to replicate" can
-    # fire on background prose or an AI-generated abstract, so short-circuiting on it
-    # would let obvious non-replications through as coded replications.
+    # every "is this a genuine replication?" decision must be seen by it: on the
+    # full-text pass _llm_outcome judges record_type_check (vetoing papers that do not
+    # check the named original to not_a_replication) as well as coding the outcome. A
+    # bare keyword hit like "failed to replicate" can fire on background prose or an
+    # AI-generated abstract, so short-circuiting on it would let obvious
+    # non-replications through as coded replications.
     if no_llm:
         # Title scan — only high-confidence hits (avoid "replication of X" false triggers).
         if title_r:
@@ -421,10 +550,10 @@ def extract_outcome(doi_r: str,
         # prose about OTHER studies' outcomes misfires the patterns.
         return {"outcome": "cannot_be_determined", "outcome_phrase": "",
                 "outcome_confidence": "low", "out_quote_source": "",
-                "outcome_reasoning": "", "llm_model": "keyword"}
+                "outcome_reasoning": "", "llm_model": "keyword", **_EMPTY_AXES}
 
     # LLM pass (abstract-based, with fulltext escalation) — codes the outcome AND
-    # applies the is_genuine_attempt veto.
+    # applies the record_type_check veto.
     return _llm_outcome(doi_r, title_r, abstract_r, fulltext,
                         original_title=original_title,
                         original_authors=original_authors,

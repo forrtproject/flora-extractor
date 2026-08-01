@@ -198,17 +198,23 @@ class TestExtractOutcome:
         assert result["outcome"] == "failure"
 
     def test_keyword_hit_vetoed_as_not_a_replication(self, tmp_path):
-        """#70: a 'failed to replicate' abstract that the LLM judges is_genuine_attempt
-        =false becomes not_a_replication instead of a coded failure."""
-        mock = {"outcome": "failure", "outcome_phrase": "background prose",
-                "is_genuine_attempt": False, "confidence": "high",
-                "out_quote_source": "abstract"}
+        """#70: a 'failed to replicate' abstract whose full text shows the paper checks
+        no named original becomes not_a_replication instead of a coded failure. The veto
+        is the FULL-TEXT pass's record_type_check — the abstract pass never carries it."""
+        abstract_cbd = {"outcome": "cannot_be_determined", "outcome_phrase": "",
+                        "confident": False, "out_quote_source": ""}
+        fulltext_neither = {"outcome": "failure", "outcome_phrase": "background prose",
+                            "record_type_check": "neither", "confident": True,
+                            "out_quote_source": "fulltext"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")), \
+             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
+             patch("extract.code_outcome.call_llm",
+                   side_effect=[(abstract_cbd, "m", ""), (fulltext_neither, "m", "")]), \
              patch("extract.code_outcome.time.sleep"):
             result = extract_outcome(
                 "10.1234/veto",
                 abstract_r="prior work failed to replicate the effect, we do something else",
+                fulltext="This paper is about something else entirely.",
                 title_r="Not actually a replication",
             )
         assert result["outcome"] == "not_a_replication"
@@ -325,15 +331,12 @@ class TestLLMOutcomePrompt:
             tmp_path, original_title="The Original", original_authors="Smith", original_year="2010"
         )
         prompt = mock_llm.call_args[0][0]
-        assert "This paper replicates" in prompt
-        assert "The Original" in prompt
-        assert "Smith" in prompt
-        assert "2010" in prompt
+        assert "THIS PAPER REPLICATES: Smith (2010). The Original" in prompt
 
     def test_no_original_block_when_title_empty(self, tmp_path):
         _, mock_llm = self._run_llm(tmp_path)
         prompt = mock_llm.call_args[0][0]
-        assert "This paper replicates" not in prompt
+        assert "THIS PAPER REPLICATES" not in prompt
 
     def test_fulltext_not_in_abstract_prompt(self, tmp_path):
         """#61 abstract-first: the FIRST call must be abstract-only. Fulltext is held
@@ -370,48 +373,21 @@ class TestLLMOutcomePrompt:
             result = extract_outcome("10.1234/fail2", abstract_r="ambiguous")
         assert result.get("outcome_reasoning", "") == ""
 
-    def test_prompt_asks_for_is_genuine_attempt(self, tmp_path):
-        _, mock_llm = self._run_llm(tmp_path)
-        prompt = mock_llm.call_args[0][0]
-        assert "is_genuine_attempt" in prompt
-
-    def test_not_a_genuine_attempt_forces_not_a_replication_outcome(self, tmp_path):
+    def test_abstract_pass_never_reads_a_record_type_check(self, tmp_path):
+        """The abstract pass sees exactly the evidence two validated screen voters
+        already saw, so it is not asked to re-decide what the paper is — and a stray
+        answer must not end the row."""
         llm_return = {
-            "is_genuine_attempt": False,
-            "outcome": "success",
-            "outcome_phrase": "unrelated colloquial use of the word replication",
-            "outcome_confidence": "high",
-            "out_quote_source": "abstract",
-            "outcome_reasoning": "The text uses 'replication' metaphorically and never "
-                                 "engages with the named original study.",
-        }
-        result, _ = self._run_llm(tmp_path, llm_return=llm_return)
-        assert result["outcome"] == "not_a_replication"
-
-    def test_genuine_attempt_true_keeps_model_outcome(self, tmp_path):
-        llm_return = {
-            "is_genuine_attempt": True,
             "outcome": "failure",
             "outcome_phrase": "We did not find support for the original effect.",
-            "outcome_confidence": "high",
+            "record_type_check": "neither",
+            "confident": True,
             "out_quote_source": "abstract",
             "outcome_reasoning": "Authors explicitly state the effect did not replicate.",
         }
-        result, _ = self._run_llm(tmp_path, llm_return=llm_return)
+        result, mock_llm = self._run_llm(tmp_path, llm_return=llm_return)
+        assert "record_type_check" not in mock_llm.call_args[0][0]
         assert result["outcome"] == "failure"
-
-    def test_missing_is_genuine_attempt_field_defaults_to_true(self, tmp_path):
-        """Backward compatibility: a model response without the new field (e.g. from
-        stale test doubles) must not be treated as a false positive by default."""
-        llm_return = {
-            "outcome": "success",
-            "outcome_phrase": "We confirmed the effect.",
-            "outcome_confidence": "high",
-            "out_quote_source": "abstract",
-            "outcome_reasoning": "All effects replicated.",
-        }
-        result, _ = self._run_llm(tmp_path, llm_return=llm_return)
-        assert result["outcome"] == "success"
 
 
 # ── Outcome-coding unification tests ─────────────────────────────────────────
@@ -584,25 +560,30 @@ class TestOutcomePromptContent:
 
     def test_example_one_relabelled_descriptive(self, tmp_path):
         prompt = self._prompt(tmp_path)
-        assert "1. DESCRIPTIVE" in prompt
+        assert "— descriptive: the methods are reused" in prompt
 
     def test_uninformative_and_flawed_success_are_offered(self, tmp_path):
-        """Both FLoRA categories must appear in the rules AND in the JSON enum — a
-        category defined in prose but absent from the enum is silently coerced away."""
+        """Both FLoRA categories must appear in the rules AND in the response schema —
+        a category defined in prose but absent from the schema is silently coerced away."""
         prompt = self._prompt(tmp_path)
-        assert "- uninformative:" in prompt
-        assert "- statistically_successful_but_flawed:" in prompt
-        assert ('"outcome": "<success|failure|mixed|descriptive|'
-                'statistically_successful_but_flawed|uninformative|'
-                'cannot_be_determined>"') in prompt
+        assert '- "uninformative" —' in prompt
+        assert '- "statistically_successful_but_flawed" —' in prompt
+        assert ('- "outcome": one of "success", "failure", "mixed", "descriptive",\n'
+                '  "statistically_successful_but_flawed", "uninformative", '
+                '"cannot_be_determined"') in prompt
 
     def test_no_default_to_cannot_be_determined_line(self, tmp_path):
         prompt = self._prompt(tmp_path)
         assert "rather than 'uninformative'" not in prompt
 
-    def test_abstract_prompt_quote_source_excludes_fulltext(self, tmp_path):
+    def test_abstract_pass_names_no_fulltext_evidence(self, tmp_path):
+        """The abstract pass must not tell the model it holds full text, or quotes come
+        back attributed to a section the model never saw."""
         prompt = self._prompt(tmp_path)
-        assert '"out_quote_source": "<abstract|title>"' in prompt
+        assert ("You have the paper's title and abstract, and the original study it has "
+                "been linked to.") in prompt
+        assert "PAPER TEXT" not in prompt
+        assert "record_type_check" not in prompt
 
     def test_abstract_truncated_at_3000(self, tmp_path):
         long_abstract = ("A" * 2999) + "MARKER_INSIDE" + ("B" * 3000) + "MARKER_OUTSIDE"
@@ -616,6 +597,27 @@ class TestOutcomePromptContent:
         assert "MARKER_OUTSIDE" not in prompt
         assert "MARKER_INSIDE" not in prompt  # sits just past the 3000-char cap
         assert "…" in prompt
+
+
+class TestOutcomePromptPlaceholderInjection:
+    """Paper text that happens to contain a template placeholder must render literally.
+    Chained .replace() calls rescanned their own output, so a title containing
+    "{abstract_r}" was replaced by the abstract."""
+
+    def test_placeholder_text_in_every_input_survives_verbatim(self):
+        from shared.prompts import build_outcome_prompt, build_repro_outcome_prompt
+        marks = {"title": "T {abstract_r} {fulltext_block}",
+                 "abstract": "A {fulltext_block} {title_r}",
+                 "authors": "{title_r} et al",
+                 "year": "{field_count}",
+                 "orig_title": "O {evidence_line} {record_type_check_field}",
+                 "text": "F {abstract_r} {original_block}"}
+        for build in (build_outcome_prompt, build_repro_outcome_prompt):
+            prompt = build(marks["title"], marks["abstract"], marks["authors"],
+                           marks["year"], marks["orig_title"], text_snip=marks["text"],
+                           multi_original=True)
+            for value in marks.values():
+                assert value in prompt, (build.__name__, value)
 
 
 class TestOutcomeCacheKey:
@@ -661,7 +663,8 @@ class TestOutcomeCacheKey:
     def test_prompt_version_in_key(self, tmp_path, monkeypatch):
         from shared import prompts
         self._run(tmp_path, abstract_r="a", title_r="T")
-        monkeypatch.setattr(prompts, "OUTCOME_RULES", prompts.OUTCOME_RULES + " EDIT")
+        monkeypatch.setattr(prompts, "_OUTCOME_TEMPLATE",
+                            prompts._OUTCOME_TEMPLATE + " EDIT")
         prompts.prompt_version.cache_clear()
         try:
             mock = self._run(tmp_path, abstract_r="a", title_r="T")
@@ -1409,41 +1412,86 @@ class TestReproductionOutcome:
     """Reproductions use a different vocabulary from replications; the row's
     type must select it, or every reproduction verdict is coerced away."""
 
-    def test_grid_has_nine_values(self):
-        from shared.schema import REPRODUCTION_OUTCOME_CATEGORIES as R
-        assert len(R) == 9
-        for comp in ("computationally successful", "computational issues",
-                     "computation not checked"):
-            for rob in ("robust", "robustness challenges", "robustness not checked"):
+    def test_grid_is_two_axis_vocabularies_plus_the_derived_join(self):
+        from shared.schema import (COMPUTATION_OUTCOME_VALUES,
+                                   REPRODUCTION_OUTCOME_CATEGORIES as R,
+                                   ROBUSTNESS_OUTCOME_VALUES)
+        assert COMPUTATION_OUTCOME_VALUES == {
+            "computationally reproducible", "computational issues",
+            "technical failure", "not checked", "cannot_be_determined"}
+        assert ROBUSTNESS_OUTCOME_VALUES == {
+            "robust", "robustness challenges", "not checked", "cannot_be_determined"}
+        # The derived join set holds only the settled combinations: an unsettled axis
+        # derives cannot_be_determined instead of a joined string.
+        assert len(R) == 12
+        for comp in ("computationally reproducible", "computational issues",
+                     "technical failure", "not checked"):
+            for rob in ("robust", "robustness challenges", "not checked"):
                 assert f"{comp}, {rob}" in R
+        assert not any("cannot_be_determined" in v for v in R)
 
     def test_vocabulary_selected_by_type(self):
         from shared.schema import outcome_categories_for
         repro = outcome_categories_for("reproduction")
         repl = outcome_categories_for("replication")
-        assert "computationally successful, robust" in repro
-        assert "computationally successful, robust" not in repl
+        assert "computationally reproducible, robust" in repro
+        assert "computationally reproducible, robust" not in repl
         assert "success" in repl and "success" not in repro
         assert "cannot_be_determined" in repro and "cannot_be_determined" in repl
 
-    def test_repro_outcome_survives_normalisation(self, tmp_path):
-        """A valid grid value must be kept, not coerced to cannot_be_determined."""
-        mock = {"outcome": "computational issues, robustness challenges",
-                "outcome_phrase": "x" * 400, "confidence": "high",
-                "out_quote_source": "abstract", "outcome_reasoning": "r"}
+    def test_old_grid_values_are_legacy_not_current(self):
+        """The 3x3 strings are still on disk in 17 rows, so a stored-data validator
+        must accept them — but nothing emits them any more."""
+        from shared.schema import (OUTCOME_LEGACY_VALUES, OUTCOME_VALUES,
+                                   REPRODUCTION_OUTCOME_CATEGORIES)
+        assert "computationally successful, robust" in OUTCOME_LEGACY_VALUES
+        assert "computationally successful, robust" in OUTCOME_VALUES
+        assert "computationally successful, robust" not in REPRODUCTION_OUTCOME_CATEGORIES
+
+    def test_axes_are_stored_and_the_outcome_is_derived(self, tmp_path):
+        mock = {"outcome_computation": "computational issues",
+                "outcome_computational_quote": "The coefficient differed.",
+                "out_quote_computational_source": "abstract",
+                "outcome_robustness": "robustness challenges",
+                "outcome_robustness_quote": "Two specifications reversed the sign.",
+                "out_quote_robust_source": "abstract",
+                "confident": True, "outcome_reasoning": "r"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")), \
              patch("extract.code_outcome.time.sleep"):
             res = extract_outcome("10.1/repro", abstract_r="we re-ran their code",
                                   record_type="reproduction")
         assert res["outcome"] == "computational issues, robustness challenges"
+        assert res["outcome_computation"] == "computational issues"
+        assert res["outcome_robustness"] == "robustness challenges"
+        assert res["out_quote_robust_source"] == "abstract"
+        assert res["outcome_confidence"] == "high"
+
+    def test_unsettled_axis_derives_cannot_be_determined(self, tmp_path):
+        """Half a verdict must not read as a whole one — but the settled axis is
+        still stored."""
+        mock = {"outcome_computation": "computationally reproducible",
+                "outcome_computational_quote": "Every number came out again.",
+                "out_quote_computational_source": "abstract",
+                "outcome_robustness": "cannot_be_determined",
+                "confident": False, "outcome_reasoning": "r"}
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", False), \
+             patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")), \
+             patch("extract.code_outcome.time.sleep"):
+            res = extract_outcome("10.1/half", abstract_r="a re-analysis",
+                                  record_type="reproduction")
+        assert res["outcome"] == "cannot_be_determined"
+        assert res["outcome_computation"] == "computationally reproducible"
+        assert res["outcome_confidence"] == "low"
 
     def test_replication_value_rejected_for_reproduction(self, tmp_path):
         """If the LLM answers with the replication vocabulary for a reproduction,
         it must NOT be accepted silently."""
-        mock = {"outcome": "success", "outcome_phrase": "q", "confidence": "high",
+        mock = {"outcome": "success", "outcome_phrase": "q", "confident": True,
                 "out_quote_source": "abstract", "outcome_reasoning": "r"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", False), \
              patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")), \
              patch("extract.code_outcome.time.sleep"):
             res = extract_outcome("10.1/repro2", abstract_r="re-analysis",
@@ -1453,9 +1501,12 @@ class TestReproductionOutcome:
     def test_reproduction_skips_replication_keyword_scan(self, tmp_path):
         """'failed to replicate' in a reproduction abstract must not shortcut to
         the replication enum — it must reach the reproduction LLM prompt."""
-        mock = {"outcome": "computational issues, robustness not checked",
-                "outcome_phrase": "q", "confidence": "high",
-                "out_quote_source": "abstract", "outcome_reasoning": "r"}
+        mock = {"outcome_computation": "computational issues",
+                "outcome_computational_quote": "q",
+                "out_quote_computational_source": "abstract",
+                "outcome_robustness": "not checked",
+                "outcome_robustness_quote": "", "out_quote_robust_source": "",
+                "confident": True, "outcome_reasoning": "r"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")) as mock_llm, \
              patch("extract.code_outcome.time.sleep"):
@@ -1463,9 +1514,9 @@ class TestReproductionOutcome:
                                   abstract_r="We failed to replicate the reported numbers.",
                                   record_type="reproduction")
         assert mock_llm.called, "reproduction must not be short-circuited by keyword scan"
-        assert res["outcome"] == "computational issues, robustness not checked"
-        assert "REPRODUCTION" in mock_llm.call_args[0][0]
-        assert "computationally successful, robust" in mock_llm.call_args[0][0]
+        assert res["outcome"] == "computational issues, not checked"
+        assert "reproduction study" in mock_llm.call_args[0][0]
+        assert "AXIS 1 — outcome_computation" in mock_llm.call_args[0][0]
 
     def test_replication_uses_keyword_scan_only_in_no_llm(self):
         # Replications use the keyword scan as the no_llm fallback; reproductions never do.
@@ -1475,14 +1526,187 @@ class TestReproductionOutcome:
         mock_llm.assert_not_called()
         assert res["outcome"] == "failure"
 
-    def test_prompts_ask_for_long_untrimmed_quotes(self):
-        from shared.prompts import (build_outcome_abstract_prompt,
-                                    build_repro_abstract_prompt)
-        for p in (build_outcome_abstract_prompt("t", "a", ""),
-                  build_repro_abstract_prompt("t", "a", "")):
-            assert "COMPLETE sentences" in p
-            assert "1200" in p
-            assert "Never truncate" in p
+    def test_both_vocabularies_ask_for_self_contained_quotes(self):
+        from shared.prompts import build_outcome_prompt, build_repro_outcome_prompt
+        for p in (build_outcome_prompt("t", "a"), build_repro_outcome_prompt("t", "a")):
+            assert "Quote 1-4" in p
+            assert "complete" in p
+            assert "self-contained" in p
+
+
+# ── Per-axis escalation, record_type_check and response repair ──────────────
+
+class TestReproductionEscalation:
+    """A reproduction has two axes, and either one unresolved is a reason to read the
+    full text — but the escalation re-codes BOTH, so no row ever carries one axis from
+    the abstract beside the other from the full text."""
+
+    _ABS_HALF = {"outcome_computation": "computationally reproducible",
+                 "outcome_computational_quote": "All numbers matched.",
+                 "out_quote_computational_source": "abstract",
+                 "outcome_robustness": "cannot_be_determined",
+                 "outcome_robustness_quote": "", "out_quote_robust_source": "",
+                 "confident": False, "outcome_reasoning": "robustness unclear"}
+    _FT_BOTH = {"outcome_computation": "technical failure",
+                "outcome_computational_quote": "The deposited archive would not run.",
+                "out_quote_computational_source": "fulltext",
+                "outcome_robustness": "robustness challenges",
+                "outcome_robustness_quote": "Two specifications reversed the sign.",
+                "out_quote_robust_source": "fulltext",
+                "confident": True, "outcome_reasoning": "both settled from the methods"}
+
+    def _run(self, tmp_path, responses, **kw):
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
+             patch("extract.code_outcome.time.sleep"), \
+             patch("extract.code_outcome.call_llm",
+                   side_effect=[(r, "m", "") for r in responses]) as mock_llm:
+            result = extract_outcome("10.1/axis", abstract_r="a re-analysis",
+                                     fulltext="METHODS: we re-ran the archive.",
+                                     title_r="A Reproduction",
+                                     record_type="reproduction", **kw)
+        return result, mock_llm
+
+    def test_one_unsettled_axis_escalates(self, tmp_path):
+        result, mock_llm = self._run(tmp_path, [self._ABS_HALF, self._FT_BOTH])
+        assert mock_llm.call_count == 2
+
+    def test_escalation_replaces_both_axes(self, tmp_path):
+        result, _ = self._run(tmp_path, [self._ABS_HALF, self._FT_BOTH])
+        assert result["outcome_computation"] == "technical failure"
+        assert result["outcome_robustness"] == "robustness challenges"
+        assert result["outcome"] == "technical failure, robustness challenges"
+
+    def test_both_axes_settled_does_not_escalate(self, tmp_path):
+        settled = dict(self._ABS_HALF, outcome_robustness="robust",
+                       outcome_robustness_quote="It held across specifications.",
+                       out_quote_robust_source="abstract")
+        result, mock_llm = self._run(tmp_path, [settled])
+        assert mock_llm.call_count == 1
+        assert result["outcome"] == "computationally reproducible, robust"
+
+
+class TestRecordTypeCheckRecode:
+    """The full-text pass is the first call in the pipeline to see the methods, and
+    the screen that set `type` could not. A row coded in the wrong vocabulary is
+    re-coded once — one hop, never a loop."""
+
+    _ABS_CBD = {"outcome": "cannot_be_determined", "outcome_phrase": "",
+                "confident": False, "out_quote_source": ""}
+    _FT_SAYS_REPRO = {"outcome": "failure", "outcome_phrase": "It did not hold.",
+                      "record_type_check": "reproduction", "confident": True,
+                      "out_quote_source": "fulltext", "outcome_reasoning": "r"}
+    _REPRO_VERDICT = {"outcome_computation": "computational issues",
+                      "outcome_computational_quote": "The coefficient differed.",
+                      "out_quote_computational_source": "abstract",
+                      "outcome_robustness": "not checked",
+                      "outcome_robustness_quote": "", "out_quote_robust_source": "",
+                      "confident": True, "outcome_reasoning": "r"}
+
+    def _run(self, tmp_path, responses, record_type="replication"):
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
+             patch("extract.code_outcome.time.sleep"), \
+             patch("extract.code_outcome.call_llm",
+                   side_effect=[(r, "m", "") for r in responses]) as mock_llm:
+            result = extract_outcome("10.1/type", abstract_r="ambiguous",
+                                     fulltext="METHODS: we re-analysed their data.",
+                                     title_r="A Study", record_type=record_type)
+        return result, mock_llm
+
+    def test_other_vocabulary_recodes_once_and_reports_the_type(self, tmp_path):
+        result, mock_llm = self._run(
+            tmp_path, [self._ABS_CBD, self._FT_SAYS_REPRO, self._REPRO_VERDICT])
+        # abstract, full text, then one reproduction-vocabulary call.
+        assert mock_llm.call_count == 3
+        assert result["outcome"] == "computational issues, not checked"
+        assert result["record_type"] == "reproduction"
+        assert "reproduction study" in mock_llm.call_args_list[2][0][0]
+
+    def test_the_recode_is_not_itself_re_checked(self, tmp_path):
+        """The reproduction call's full-text pass saying "replication" must not send
+        the row back — one hop, no loop."""
+        repro_abs_cbd = {"outcome_computation": "cannot_be_determined",
+                         "outcome_robustness": "cannot_be_determined",
+                         "confident": False, "outcome_reasoning": "r"}
+        repro_ft = dict(self._REPRO_VERDICT, record_type_check="replication")
+        result, mock_llm = self._run(
+            tmp_path, [self._ABS_CBD, self._FT_SAYS_REPRO, repro_abs_cbd, repro_ft])
+        assert mock_llm.call_count == 4
+        assert result["record_type"] == "reproduction"
+
+    def test_a_matching_answer_changes_nothing(self, tmp_path):
+        ft_agrees = dict(self._FT_SAYS_REPRO, record_type_check="replication")
+        result, mock_llm = self._run(tmp_path, [self._ABS_CBD, ft_agrees])
+        assert mock_llm.call_count == 2
+        assert result["outcome"] == "failure"
+        assert "record_type" not in result
+
+    def test_unclear_changes_nothing(self, tmp_path):
+        ft_unclear = dict(self._FT_SAYS_REPRO, record_type_check="unclear")
+        result, mock_llm = self._run(tmp_path, [self._ABS_CBD, ft_unclear])
+        assert mock_llm.call_count == 2
+        assert result["outcome"] == "failure"
+
+    def test_a_failed_recode_is_not_cached(self, tmp_path):
+        """The recode's own call failing yields api_error, which the outer call must not
+        checkpoint under the replication key — a re-run has to try again."""
+        first, _ = self._run(
+            tmp_path, [self._ABS_CBD, self._FT_SAYS_REPRO, None, None, None])
+        assert first["outcome"] == "api_error"
+        second, mock_llm = self._run(
+            tmp_path, [self._ABS_CBD, self._FT_SAYS_REPRO, self._REPRO_VERDICT])
+        assert mock_llm.call_count == 3
+        assert second["outcome"] == "computational issues, not checked"
+
+    def test_a_successful_recode_is_cached(self, tmp_path):
+        self._run(tmp_path, [self._ABS_CBD, self._FT_SAYS_REPRO, self._REPRO_VERDICT])
+        result, mock_llm = self._run(tmp_path, [])
+        assert mock_llm.call_count == 0
+        assert result["outcome"] == "computational issues, not checked"
+        assert result["record_type"] == "reproduction"
+
+    def test_a_recoded_type_reaches_the_row(self):
+        row = run_extract._apply_outcome(
+            {"type": "replication"},
+            {"outcome": "computational issues, robust", "record_type": "reproduction"})
+        assert row["type"] == "reproduction"
+
+
+class TestOutcomeResponseRepair:
+    """The prompts no longer spend model attention on JSON discipline, so the parser
+    repairs what a parser should repair. (The trailing-comma repair lives in
+    llm_client._parse_llm_json and is covered there.)"""
+
+    def _run(self, tmp_path, response):
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", False), \
+             patch("extract.code_outcome.call_llm", return_value=(response, "m", "")), \
+             patch("extract.code_outcome.time.sleep"):
+            return extract_outcome("10.1/repair", abstract_r="an abstract",
+                                   title_r="T")
+
+    def test_string_true_is_read_as_confident(self, tmp_path):
+        for value in ("true", "True"):
+            result = self._run(tmp_path, {"outcome": "success", "outcome_phrase": "q",
+                                          "out_quote_source": "abstract",
+                                          "confident": value,
+                                          "outcome_reasoning": f"r{value}"})
+            assert result["outcome_confidence"] == "high", value
+
+    def test_string_false_is_not_read_as_confident(self, tmp_path):
+        result = self._run(tmp_path, {"outcome": "success", "outcome_phrase": "q",
+                                      "out_quote_source": "abstract",
+                                      "confident": "false", "outcome_reasoning": "r"})
+        assert result["outcome_confidence"] == "low"
+
+    def test_null_becomes_empty_not_the_string_none(self, tmp_path):
+        result = self._run(tmp_path, {"outcome": "success", "outcome_phrase": None,
+                                      "out_quote_source": None, "confident": True,
+                                      "outcome_reasoning": None})
+        assert result["outcome_phrase"] == ""
+        assert result["out_quote_source"] == ""
+        assert result["outcome_reasoning"] == ""
 
 
 # ── Original-link guard: self-links, DOI recovery, graceful empties ──────────

@@ -143,13 +143,31 @@ summarises the design.
 
 The `type` column selects the vocabulary. A **replication** is coded on the categories
 below (`schema.OUTCOME_CATEGORIES`); a **reproduction** re-runs the original data and
-code, so it is coded on the 3×3 computation/robustness grid instead
-(`schema.REPRODUCTION_OUTCOME_CATEGORIES`, matching the FLoRA entry form's dropdown):
-`computationally successful` \| `computational issues` \| `computation not checked`,
-each combined with `robust` \| `robustness challenges` \| `robustness not checked` —
-e.g. `computationally successful, robustness not checked`. `cannot_be_determined` and
-`not_a_replication` are valid for both. `schema.outcome_categories_for(type)` returns
-the applicable set.
+code, so it is coded on two independent axes instead, each in its own column with its
+own quote and quote source (see the reproduction axes below). Its `outcome` is DERIVED
+from those two: the settled values joined with `, `, computation first — e.g.
+`computationally reproducible, robustness challenges`. Either axis at
+`cannot_be_determined` derives `cannot_be_determined`, and `record_type_check=neither`
+derives `not_a_replication` with both axes empty. `schema.REPRODUCTION_OUTCOME_CATEGORIES`
+holds the twelve settled joins and `schema.outcome_categories_for(type)` returns the
+applicable set. The nine strings of the retired 3×3 grid
+(`computationally successful, …`) live on in `schema.OUTCOME_LEGACY_VALUES` for rows
+already on disk.
+
+### Reproduction outcome axes
+
+| Column | Values |
+| ------ | ------ |
+| `outcome_computation` | `computationally reproducible` \| `computational issues` \| `technical failure` \| `not checked` \| `cannot_be_determined` (`schema.COMPUTATION_OUTCOME_VALUES`) |
+| `outcome_computational_quote` | verbatim passage proving the computation verdict |
+| `out_quote_computational_source` | `title` \| `abstract` \| `fulltext`, or two joined by ` \| ` matching the quote |
+| `outcome_robustness` | `robust` \| `robustness challenges` \| `not checked` \| `cannot_be_determined` (`schema.ROBUSTNESS_OUTCOME_VALUES`) |
+| `outcome_robustness_quote` | verbatim passage proving the robustness verdict |
+| `out_quote_robust_source` | as `out_quote_computational_source` |
+
+`technical failure` is the reproduction defeated by the materials — no data, no code,
+an unrunnable workflow — the case the 3×3 grid could only record as a numerical
+disagreement that was never observed. All six columns are empty on a replication row.
 
 `pending` and `api_error` are **pipeline-state markers**, not outcomes — they record
 where a row sits in the pipeline.

@@ -227,6 +227,56 @@ def test_quote_not_checked_when_source_not_abstract():
         outcome_phrase="something not present in the abstract at all here")])
 
 
+def test_joined_quote_checked_against_the_source_in_the_same_position():
+    """A two-passage quote lists its two sources in the same order. Testing the joined
+    string against the abstract flagged every one of them, because the fulltext half
+    was never in the abstract to begin with."""
+    assert "quote_not_in_abstract" not in _checks_fired([_clean_row(
+        abstract_r="The study found a clear effect here.",
+        outcome_phrase="found a clear effect | and the discussion said something else",
+        out_quote_source="abstract | fulltext")])
+
+
+def test_joined_quote_still_fires_on_the_abstract_half():
+    assert "quote_not_in_abstract" in _checks_fired([_clean_row(
+        abstract_r="This paper is about photosynthesis in tomato plants.",
+        outcome_phrase="the priming effect did not replicate | nor in the second sample",
+        out_quote_source="abstract | fulltext")])
+
+
+def test_reproduction_axis_quotes_are_checked_too():
+    fired = _checks_fired([_clean_row(
+        abstract_r="Re-running the code returned the reported coefficients.",
+        outcome_phrase="", out_quote_source="",
+        outcome_computational_quote="returned the reported coefficients",
+        out_quote_computational_source="abstract",
+        outcome_robustness_quote="a sentence found nowhere in this abstract at all",
+        out_quote_robust_source="abstract")])
+    assert "quote_not_in_abstract" in fired
+
+
+def test_quote_source_count_mismatch_fires_both_ways():
+    """A passage with no source of its own, or a source with no passage, leaves part of
+    the quote unaudited — silently dropping the surplus said nothing about it."""
+    more_quotes = _clean_row(
+        abstract_r="The study found a clear effect here.",
+        outcome_phrase="found a clear effect | and a second passage entirely",
+        out_quote_source="abstract")
+    more_sources = _clean_row(
+        abstract_r="The study found a clear effect here.",
+        outcome_phrase="found a clear effect",
+        out_quote_source="abstract | fulltext")
+    for row in (more_quotes, more_sources):
+        assert "quote_source_count_mismatch" in _checks_fired([row])
+        assert _severity_of([row], "quote_source_count_mismatch") == WARNING
+    # The pairs that do align are still checked.
+    assert "quote_not_in_abstract" in _checks_fired([_clean_row(
+        abstract_r="This paper is about photosynthesis in tomato plants.",
+        outcome_phrase="the priming effect did not replicate | a second passage",
+        out_quote_source="abstract")])
+    assert "quote_source_count_mismatch" not in _checks_fired([_clean_row()])
+
+
 def test_low_link_confidence_fires():
     assert "low_link_confidence" in _checks_fired([_clean_row(link_confidence="low")])
 

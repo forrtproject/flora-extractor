@@ -75,45 +75,38 @@ class TestChangeDetection:
         changed = {n for n in PROMPT_NAMES if after[n] != before[n]}
         for name in ("build_match_type_prompt",
                      "build_multi_original_prompt", "build_target_prompt",
-                     "build_outcome_abstract_prompt", "build_outcome_fulltext_prompt",
-                     "build_repro_abstract_prompt", "build_repro_fulltext_prompt"):
+                     ):
             assert name in changed, f"{name} did not follow EVIDENCE_POLICY"
+        # The two outcome prompts state their own evidence policy inline, so they do
+        # not follow it either.
+        assert "build_outcome_prompt" not in changed
+        assert "build_repro_outcome_prompt" not in changed
         # Prompts that do not splice it in are untouched — the front-door screen
         # prompt states its own policy, so it is one of them.
         assert "PDF_REFERENCES_PROMPT" not in changed
         assert "build_classify_prompt" not in changed
 
-    def test_outcome_rules_edit_reaches_outcome_prompts_only(self, monkeypatch):
+    def test_outcome_template_edit_reaches_its_vocabulary_only(self, monkeypatch):
+        """One prompt per vocabulary now, and the two are separate documents: an edit
+        to the replication body must not invalidate reproduction verdicts."""
         before = self._versions()
-        monkeypatch.setattr(prompts, "OUTCOME_RULES", prompts.OUTCOME_RULES + "5. ...\n")
+        monkeypatch.setattr(prompts, "_OUTCOME_TEMPLATE",
+                            prompts._OUTCOME_TEMPLATE + "\n5. ...")
         prompt_version.cache_clear()
         after = self._versions()
         changed = {n for n in PROMPT_NAMES if after[n] != before[n]}
-        assert changed == {"build_outcome_abstract_prompt", "build_outcome_fulltext_prompt"}
+        assert changed == {"build_outcome_prompt"}
 
-    def test_quote_instruction_reaches_the_outcome_prompts(self, monkeypatch):
+    def test_pass_only_fragments_reach_both_vocabularies(self, monkeypatch):
+        """The PAPER TEXT block is spliced by both builders, so editing it moves both
+        — the fragment is shared even though the bodies are not."""
         before = self._versions()
-        monkeypatch.setattr(prompts, "QUOTE_INSTRUCTION",
-                            prompts.QUOTE_INSTRUCTION.replace("3-6", "2-4"))
+        monkeypatch.setattr(prompts, "_PAPER_TEXT_BLOCK",
+                            prompts._PAPER_TEXT_BLOCK + "\n")
         prompt_version.cache_clear()
         after = self._versions()
         changed = {n for n in PROMPT_NAMES if after[n] != before[n]}
-        assert changed == {"build_outcome_abstract_prompt", "build_outcome_fulltext_prompt"}
-
-    def test_composed_constants_are_captured_by_value(self, monkeypatch):
-        """The reproduction prompts reach QUOTE_INSTRUCTION through REPRO_JSON, which
-        is assembled at import. A version is computed from the assembled *value*, so
-        editing either source in the file changes it — this pins the value half,
-        which a monkeypatch of the upstream fragment cannot reach."""
-        before = self._versions()
-        monkeypatch.setattr(prompts, "REPRO_JSON_ABSTRACT",
-                            prompts.REPRO_JSON_ABSTRACT + " ")
-        monkeypatch.setattr(prompts, "REPRO_OUTCOME_RULES",
-                            prompts.REPRO_OUTCOME_RULES + "Extra axis note.\n")
-        prompt_version.cache_clear()
-        after = self._versions()
-        changed = {n for n in PROMPT_NAMES if after[n] != before[n]}
-        assert changed == {"build_repro_abstract_prompt", "build_repro_fulltext_prompt"}
+        assert changed == {"build_outcome_prompt", "build_repro_outcome_prompt"}
 
     def test_json_system_message_edit_changes_every_version(self, monkeypatch):
         """It is spliced into every OpenAI/OpenRouter request at the provider layer,
@@ -134,9 +127,10 @@ class TestChangeDetection:
         assert "_TARGET_PROMPT" in src
 
     def test_prompt_versions_joins_and_follows_each(self, monkeypatch):
-        pair = ("build_outcome_abstract_prompt", "build_outcome_fulltext_prompt")
+        pair = ("build_outcome_prompt", "build_repro_outcome_prompt")
         before = prompt_versions(*pair)
         assert before == "+".join(prompt_version(n) for n in pair)
-        monkeypatch.setattr(prompts, "OUTCOME_RULES", prompts.OUTCOME_RULES + "x")
+        monkeypatch.setattr(prompts, "_OUTCOME_TEMPLATE",
+                            prompts._OUTCOME_TEMPLATE + "x")
         prompt_version.cache_clear()
         assert prompt_versions(*pair) != before

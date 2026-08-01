@@ -230,8 +230,8 @@ the guard demotes or `--resolved-only` discards never reaches the outcome call.
 ```
 extract_outcome(doi_r, abstract_r, fulltext, title_r, record_type=…)
     │
-    ├── record_type == "reproduction" → straight to the LLM on the 3×3
-    │   computation/robustness grid (the replication keyword patterns would code it
+    ├── record_type == "reproduction" → straight to the LLM on the two
+    │   computation/robustness axes (the replication keyword patterns would code it
     │   in the wrong vocabulary)
     │
     ├── --no-llm → keyword scan of the title (high-confidence hits only) then the
@@ -240,11 +240,14 @@ extract_outcome(doi_r, abstract_r, fulltext, title_r, record_type=…)
     │
     └── otherwise → _llm_outcome():
             abstract pass (GEMINI_HEAVY_MODEL, OpenAI preferred on retry)
-            └── returns cannot_be_determined, or there is no abstract, and parsed
-                fulltext exists → second call over the paper's DISCUSSION AND
-                CONCLUSION (8,000-char cap),
-                disable with OUTCOME_FULLTEXT_ESCALATION=false
-            the same call judges is_genuine_attempt; false → not_a_replication
+            └── leaves the verdict unsettled (a reproduction: EITHER axis at
+                cannot_be_determined), or there is no abstract, and parsed fulltext
+                exists → second call over the paper's DISCUSSION AND CONCLUSION
+                (8,000-char cap), whose answer replaces the first entirely — never
+                one axis from each; disable with OUTCOME_FULLTEXT_ESCALATION=false
+            only that full-text call judges record_type_check: "neither" →
+                not_a_replication; the other vocabulary → the row is re-coded once
+                under the other prompt and `type` is corrected (one hop, no loop)
 ```
 
 The escalation text is chosen by `pdf_parsing.outcome_text()`, which slices from the

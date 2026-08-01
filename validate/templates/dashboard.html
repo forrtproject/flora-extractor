@@ -356,7 +356,7 @@ a.leg-row:hover { background:var(--surface-2); }
 .table-scroll { max-height:420px; overflow-y:auto; }
 .yield-bar { height:4px; background:var(--accent); border-radius:2px; min-width:1px; }
 
-/* ── Reproduction 3x3 heatmap ───────────────────────────────────────────────── */
+/* ── Reproduction 4x3 heatmap ───────────────────────────────────────────────── */
 .heat-grid { display:grid; grid-template-columns:auto repeat(3,1fr); gap:3px; font-size:10px; }
 .heat-corner { }
 .heat-head, .heat-side {
@@ -1192,9 +1192,15 @@ python -m extract.audit_dois --apply  # write corrections</pre>
               <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Outcome — Added by Stage 3</td></tr>
               <tr><td class="col-name">outcome</td><td class="col-desc">success | failure | mixed | descriptive | cannot_be_determined | pending | api_error (legacy rows may carry uninformative)</td></tr>
               <tr><td class="col-name">outcome_phrase</td><td class="col-desc">Keyword phrase that triggered the outcome classification</td></tr>
-              <tr><td class="col-name">outcome_confidence</td><td class="col-desc">high | medium | low</td></tr>
-              <tr><td class="col-name">out_quote_source</td><td class="col-desc">abstract | fulltext</td></tr>
+              <tr><td class="col-name">outcome_confidence</td><td class="col-desc">high | low</td></tr>
+              <tr><td class="col-name">out_quote_source</td><td class="col-desc">title | abstract | fulltext</td></tr>
               <tr><td class="col-name">outcome_reasoning</td><td class="col-desc">LLM chain-of-thought</td></tr>
+              <tr><td class="col-name">outcome_computation</td><td class="col-desc">Reproductions: computationally reproducible | computational issues | technical failure | not checked</td></tr>
+              <tr><td class="col-name">outcome_computational_quote</td><td class="col-desc">Quote proving the computation verdict</td></tr>
+              <tr><td class="col-name">out_quote_computational_source</td><td class="col-desc">title | abstract | fulltext</td></tr>
+              <tr><td class="col-name">outcome_robustness</td><td class="col-desc">Reproductions: robust | robustness challenges | not checked</td></tr>
+              <tr><td class="col-name">outcome_robustness_quote</td><td class="col-desc">Quote proving the robustness verdict</td></tr>
+              <tr><td class="col-name">out_quote_robust_source</td><td class="col-desc">title | abstract | fulltext</td></tr>
               <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Multi-original metadata — Stage 3</td></tr>
               <tr><td class="col-name">type</td><td class="col-desc">replication | reproduction</td></tr>
               <tr><td class="col-name">original_rank</td><td class="col-desc">1 for single; 1, 2, 3… for multi-original</td></tr>
@@ -2255,9 +2261,9 @@ function renderYearChart(el, byYear, minYear) {
   });
 }
 
-// ── Reproduction 3x3 heatmap ─────────────────────────────────────────────────
-const REPRO_ROWS = ['computationally successful','computational issues','computation not checked'];
-const REPRO_COLS = ['robust','robustness challenges','robustness not checked'];
+// ── Reproduction 4x3 heatmap ─────────────────────────────────────────────────
+const REPRO_ROWS = ['computationally reproducible','computational issues','technical failure','not checked'];
+const REPRO_COLS = ['robust','robustness challenges','not checked'];
 
 function renderReproHeat(el, extraEl, byOutcome) {
   const data = byOutcome || {};
@@ -2266,7 +2272,7 @@ function renderReproHeat(el, extraEl, byOutcome) {
     const v = data[`${r}, ${c}`] || 0;
     grid[`${r}|${c}`] = v; inGrid += v;
   }));
-  // Anything not on the 3x3 grid (cannot_be_determined, api_error, legacy values).
+  // Anything not on the 4x3 grid (cannot_be_determined, api_error, the retired 3x3 values).
   const off = Object.entries(data)
     .filter(([k]) => !(REPRO_ROWS.some(r => k.startsWith(r + ',')) ))
     .sort((a,b) => b[1]-a[1]);
