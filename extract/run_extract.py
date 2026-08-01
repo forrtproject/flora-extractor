@@ -567,8 +567,11 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
         row["title_r"] = row.get("study_r", "")
     doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
     doi_o_clean = clean_doi(link.get("resolved_doi_o", "") or "")
+    title_o_str = str(link.get("resolved_title_o", "") or "")
     row.update({
-        "pair_id":           make_pair_id(doi_r_clean, doi_o_clean),
+        "pair_id":           make_pair_id(doi_r_clean, doi_o_clean,
+                                          str(row.get("oa_work_id_o", "") or ""),
+                                          title_o_str),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
         "classify_llm_model":        classify_model,
@@ -614,15 +617,11 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
         conf_str = "low"
     doi_r_clean  = clean_doi(str(filter_row.get("doi_r", "")))
     doi_o_clean  = clean_doi(orig.get("doi", "") or "")
-    rank         = orig.get("rank", 1)
     title_o      = str(orig.get("title", "") or "")
-    # pair_id is the cross-system row key. make_pair_id(doi_r, "") collides for every
-    # unresolved original of the same paper, so when doi_o is empty seed the hash with
-    # a stable disambiguator (rank + title) instead of "". Done here at the call site,
-    # not in shared.schema.make_pair_id, to keep that helper a pure DOI-pair hash.
-    pair_seed    = doi_o_clean or f"rank:{rank}:{title_o[:120]}"
     row.update({
-        "pair_id":           make_pair_id(doi_r_clean, pair_seed),
+        "pair_id":           make_pair_id(doi_r_clean, doi_o_clean,
+                                          str(orig.get("openalex_id", "") or ""),
+                                          title_o),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
         "classify_llm_model":        classify_model,
@@ -1218,7 +1217,9 @@ def _verify_row(row: dict) -> dict:
     row["doi_o_verification"] = v["doi_o_verification"]
     if v["doi_o"] != old_doi:
         row["doi_o"]   = v["doi_o"]
-        row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), v["doi_o"])
+        row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), v["doi_o"],
+                                      str(row.get("oa_work_id_o", "") or ""),
+                                      str(row.get("title_o", "") or ""))
         new_ref, new_authors, new_bibtex = _build_ref_o(v["doi_o"],
                                             str(row.get("authors_o", "") or ""),
                                             str(row.get("year_o",    "") or ""),
@@ -1234,7 +1235,9 @@ def _verify_row(row: dict) -> dict:
         # title/author/year claim is retained so the row can still be reviewed.
         row["doi_o"] = ""
         row["bibtex_ref_o"] = ""
-        row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), "")
+        row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), "",
+                                      str(row.get("oa_work_id_o", "") or ""),
+                                      str(row.get("title_o", "") or ""))
         row["link_confidence"] = "low"
     if v["evidence_note"]:
         existing = str(row.get("link_evidence", "") or "")

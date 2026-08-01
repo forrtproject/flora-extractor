@@ -262,10 +262,32 @@ def empty_extract_row() -> dict:
     return {col: "" for col in EXTRACTED_COLS}
 
 
-def make_pair_id(doi_r: str, doi_o: str) -> str:
-    """MD5 of the replication-original DOI pair. Full 32-char hex string."""
+def make_pair_id(doi_r: str, doi_o: str, oa_work_id_o: str = "",
+                 title_o: str = "") -> str:
+    """MD5 of the replication-original pair. Full 32-char hex string.
+
+    Some originals genuinely have no registered DOI (books, chapters, pre-DOI-era
+    papers), so doi_o stays blank and every DOI-less original of the same
+    replication used to hash to the same "doi_r|" — csv_to_db dedupes on pair_id
+    and silently dropped all but one. Fall back to the OpenAlex work id, then the
+    title, so those rows keep distinct identities.
+
+    Calling this with only (doi_r, doi_o) and a non-blank doi_o is byte-identical
+    to the pre-fallback hash, which is what keeps pair_ids already imported into
+    the validation DB stable.
+    """
     import hashlib
-    return hashlib.md5(f"{doi_r}|{doi_o}".encode()).hexdigest()
+    import re
+    from shared.utils import bare_work_id
+
+    second = doi_o or ""
+    if not second:
+        work_id = bare_work_id(oa_work_id_o)
+        if work_id:
+            second = f"oa:{work_id}"
+        elif str(title_o or "").strip():
+            second = "t:" + re.sub(r"\s+", " ", str(title_o).strip().lower())
+    return hashlib.md5(f"{doi_r}|{second}".encode()).hexdigest()
 
 def empty_validated_row() -> dict:
     return {col: "" for col in VALIDATED_COLS}

@@ -73,6 +73,30 @@ def test_doi_o_verified_ok(verification):
         [_clean_row(doi_o_verification=verification)])
 
 
+def test_no_doi_with_openalex_id_is_not_a_blocker():
+    """Books, chapters and pre-DOI-era papers have no DOI to verify. The row is
+    still identifiable — and clickable — through its OpenAlex work id."""
+    row = _clean_row(doi_o="", doi_o_verification="no_doi",
+                     oa_work_id_o="W2003152982", title_o="Gender Advertisements")
+    assert _checks_fired([row]) == set()
+
+
+def test_no_doi_with_openalex_url_form_is_not_a_blocker():
+    row = _clean_row(doi_o="", doi_o_verification="no_doi",
+                     oa_work_id_o="https://openalex.org/W2003152982")
+    assert "doi_o_unverified" not in _checks_fired([row])
+
+
+def test_no_doi_without_openalex_id_still_blocks():
+    row = _clean_row(doi_o="", doi_o_verification="no_doi", oa_work_id_o="")
+    assert _severity_of([row], "doi_o_unverified") == BLOCKER
+
+
+def test_openalex_id_does_not_rescue_other_verification_values():
+    row = _clean_row(doi_o_verification="mismatch", oa_work_id_o="W2003152982")
+    assert _severity_of([row], "doi_o_unverified") == BLOCKER
+
+
 def test_self_link_fires():
     row = _clean_row(doi_o="10.1/REPL")  # differs only by case → clean_doi equal
     assert "self_link" in _checks_fired([row])

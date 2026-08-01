@@ -1154,6 +1154,52 @@ class TestGranularLinkMethods:
         assert row["link_method"] == method
 
 
+# ── pair_id identity: stability for DOI rows, distinctness without a DOI ──────
+
+class TestMakePairId:
+    def test_doi_pair_hashes_are_frozen(self):
+        """pair_id is the identity key the validation DB already holds, and csv_to_db
+        skips pair_ids it has seen. If the hash of a row with a doi_o ever changes,
+        every imported record re-imports as a duplicate — so these literals are the
+        pre-fallback md5("doi_r|doi_o") values and must never move."""
+        assert (make_pair_id("10.1/rep", "10.2/orig")
+                == "cdb1325243087bf3f8292ff737cf69cc")
+        assert (make_pair_id("10.25669/9kzj-tc3j", "10.1037/0022-3514.51.6.1173")
+                == "22e94c46165158b30a740f3e66114c82")
+        assert make_pair_id("", "") == "b99834bc19bbad24580b3adfa04fb947"
+
+    def test_extra_arguments_are_ignored_when_doi_o_is_set(self):
+        assert (make_pair_id("10.1/rep", "10.2/orig", "W123", "A Title")
+                == make_pair_id("10.1/rep", "10.2/orig"))
+
+    def test_returns_32_char_hex(self):
+        pid = make_pair_id("10.1/rep", "", "W2003152982")
+        assert len(pid) == 32 and all(c in "0123456789abcdef" for c in pid)
+
+    def test_two_doi_less_originals_of_one_replication_are_distinct(self):
+        """The collision this fallback exists to fix: without it both originals
+        hash to "doi_r|" and csv_to_db silently drops one of them."""
+        a = make_pair_id("10.1/rep", "", "W1")
+        b = make_pair_id("10.1/rep", "", "W2")
+        c = make_pair_id("10.1/rep", "", "", "Gender Advertisements")
+        d = make_pair_id("10.1/rep", "", "", "Frame Analysis")
+        assert len({a, b, c, d, make_pair_id("10.1/rep", "")}) == 5
+
+    def test_work_id_wins_over_title(self):
+        assert (make_pair_id("10.1/rep", "", "W1", "Some Title")
+                == make_pair_id("10.1/rep", "", "W1", "Another Title"))
+
+    def test_work_id_form_and_title_whitespace_are_normalised(self):
+        assert (make_pair_id("10.1/rep", "", "https://openalex.org/W1")
+                == make_pair_id("10.1/rep", "", "w1"))
+        assert (make_pair_id("10.1/rep", "", "", "  Gender   Advertisements ")
+                == make_pair_id("10.1/rep", "", "", "Gender Advertisements"))
+
+    def test_non_work_openalex_id_falls_through_to_title(self):
+        assert (make_pair_id("10.1/rep", "", "A5023888391", "T")
+                == make_pair_id("10.1/rep", "", "", "T"))
+
+
 # ── Multi-original pair_id uniqueness + truthful link_method ──────────────────
 
 class TestMergeMultiRow:
@@ -1184,6 +1230,13 @@ class TestMergeMultiRow:
         r = self._merge({"rank": 1, "doi": "10.1/x", "title": "X",
                          "first_author": "A", "year": 2001, "confidence": "high"})
         assert r["pair_id"] == make_pair_id("10.1/rep", "10.1/x")
+
+    def test_two_doi_less_originals_with_openalex_ids_are_distinct(self):
+        r1 = self._merge({"rank": 1, "doi": "", "title": "A Book",
+                          "openalex_id": "W1", "confidence": "high"})
+        r2 = self._merge({"rank": 2, "doi": "", "title": "A Book",
+                          "openalex_id": "W2", "confidence": "high"})
+        assert r1["pair_id"] != r2["pair_id"]
 
     def test_link_method_label_is_passed_through(self):
         r = self._merge({"rank": 1, "doi": "10.1/x", "title": "X",
