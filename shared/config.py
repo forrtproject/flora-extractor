@@ -116,6 +116,17 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 GEMINI_LIGHT_MODEL = os.getenv("GEMINI_LIGHT_MODEL", "gemini-3.5-flash-lite")
 GEMINI_HEAVY_MODEL = os.getenv("GEMINI_HEAVY_MODEL", GEMINI_MODEL)
 
+# Thinking level for the heavy model (gemini-3-flash-preview accepts "minimal" or
+# "high"). Empty — the default — sends nothing and keeps the model's own default,
+# which is what every cached answer on disk was produced under. The redesign wants
+# this flipped to "minimal": thinking tokens are billed as output and dominate the
+# heavy model's cost, but the flip must follow a quality spot-check on linking and
+# outcome coding, not precede it. It only applies to GEMINI_HEAVY_MODEL calls, and
+# a non-empty value is folded into every cache key naming that model
+# (cache_model_id() in shared/llm_client.py), so the two settings never share an
+# answer.
+GEMINI_THINKING_LEVEL = os.getenv("GEMINI_THINKING_LEVEL", "").strip().lower()
+
 # OpenRouter (OpenAI-compatible API at openrouter.ai) — optional alternative LLMs
 OPENROUTER_API_KEY    = os.getenv("OPENROUTER_API_KEY",    "")
 OPENROUTER_HEAVY_MODEL = os.getenv("OPENROUTER_HEAVY_MODEL", "qwen/qwen3.5-35b-a3b")
@@ -145,6 +156,16 @@ GEMINI_FLEX_TIMEOUT = int(os.getenv("GEMINI_FLEX_TIMEOUT", "900"))
 GEMINI_PAID_KEYS: set[int] = {
     int(n) for n in os.getenv("GEMINI_PAID_KEYS", "1").replace(",", " ").split() if n.isdigit()
 }
+
+# ── OpenAI flex tier ──────────────────────────────────────────────────────────
+# The same trade as Gemini flex: 50% off standard pricing in exchange for queueing,
+# on the metered provider this pipeline actually pays per token. Unlike Gemini it
+# does not depend on which key is in use — flex is a property of the account — so a
+# single flag decides it. A model that does not offer flex, or a queue that has no
+# capacity, is answered at standard tier instead of losing the row.
+OPENAI_USE_FLEX     = os.getenv("OPENAI_USE_FLEX", "").lower() in ("1", "true", "yes")
+# Timeout in seconds for flex calls — must cover the queueing worst case.
+OPENAI_FLEX_TIMEOUT = int(os.getenv("OPENAI_FLEX_TIMEOUT", "900"))
 
 # ── Outcome extraction ────────────────────────────────────────────────────────
 # When the abstract-based outcome LLM returns cannot_be_determined (or the

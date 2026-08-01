@@ -522,6 +522,115 @@ def test_flex_is_off_entirely_when_disabled(monkeypatch):
     assert all("service_tier" not in p for p in posts)
 
 
+# ── OpenAI flex tier ─────────────────────────────────────────────────────────
+# The mirror of the Gemini path on the metered provider: half price for queueing,
+# with a standard-tier call standing in whenever flex will not serve the request.
+
+def _openai_flex_env(monkeypatch, use_flex=True):
+    monkeypatch.setattr(llm, "OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(llm, "OPENAI_USE_FLEX", use_flex)
+    monkeypatch.setattr(llm, "OPENAI_FLEX_TIMEOUT", 900)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+
+
+def test_openai_flex_is_sent_with_the_long_timeout(monkeypatch):
+    _openai_flex_env(monkeypatch)
+    calls: list = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return _resp('{"ok": true}')
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.side_effect = create
+    with patch("openai.OpenAI", return_value=fake_client):
+        assert llm.call_openai("prompt")[0] == {"ok": True}
+
+    assert calls[0]["service_tier"] == "flex"
+    assert calls[0]["timeout"] == 900   # flex calls queue — not the client default
+
+
+def test_openai_flex_refusal_falls_back_to_standard_within_the_attempt(monkeypatch):
+    _openai_flex_env(monkeypatch)
+    calls: list = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        if "service_tier" in kwargs:
+            raise RuntimeError("400: service_tier 'flex' is not supported for this model")
+        return _resp('{"ok": true}')
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.side_effect = create
+    with patch("openai.OpenAI", return_value=fake_client):
+        assert llm.call_openai("prompt")[0] == {"ok": True}
+
+    # Two requests, one attempt: a refused tier must not eat a retry from the
+    # api_error budget, and the standard call carries no flex timeout.
+    assert len(calls) == 2
+    assert "service_tier" not in calls[1] and "timeout" not in calls[1]
+
+
+def test_openai_flex_off_by_default(monkeypatch):
+    _openai_flex_env(monkeypatch, use_flex=False)
+    calls: list = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return _resp('{"ok": true}')
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.side_effect = create
+    with patch("openai.OpenAI", return_value=fake_client):
+        llm.call_openai("prompt")
+
+    assert all("service_tier" not in c for c in calls)
+
+
+# ── Gemini thinking level ────────────────────────────────────────────────────
+# A spend lever that changes the answer: it may only be sent on the heavy model,
+# and whenever it is sent it must be part of that model's cache key.
+
+def _thinking_env(monkeypatch, level="minimal"):
+    monkeypatch.setattr(llm, "GEMINI_THINKING_LEVEL", level)
+    monkeypatch.setattr(llm, "GEMINI_HEAVY_MODEL", "gemini-3-flash-preview")
+    monkeypatch.setattr(llm, "GEMINI_API_KEYS", ["k1"])
+    monkeypatch.setattr(llm, "GEMINI_USE_FLEX", False)
+
+
+def test_thinking_level_is_sent_only_on_the_heavy_model(monkeypatch):
+    _thinking_env(monkeypatch)
+    posts: list = []
+
+    def post(url, json=None, timeout=None):
+        posts.append(dict(json))
+        return _gemini_ok()
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    llm.call_gemini("prompt", model="gemini-3-flash-preview")
+    llm.call_gemini("prompt", model="gemini-3.5-flash-lite")
+
+    assert posts[0]["generationConfig"]["thinkingLevel"] == "minimal"
+    assert "thinkingLevel" not in posts[1]["generationConfig"]   # light model untouched
+
+    # Unset is the default and must send nothing at all.
+    posts.clear()
+    monkeypatch.setattr(llm, "GEMINI_THINKING_LEVEL", "")
+    llm.call_gemini("prompt", model="gemini-3-flash-preview")
+    assert "thinkingLevel" not in posts[0]["generationConfig"]
+
+
+def test_thinking_level_changes_the_heavy_model_cache_key(monkeypatch):
+    _thinking_env(monkeypatch, level="")
+    default_key   = llm.ladder_fingerprint("gemini-3-flash-preview")
+    light_default = llm.ladder_fingerprint("gemini-3.5-flash-lite")
+
+    monkeypatch.setattr(llm, "GEMINI_THINKING_LEVEL", "minimal")
+    assert llm.ladder_fingerprint("gemini-3-flash-preview") != default_key
+    # Only the heavy model's answers were produced under the level.
+    assert llm.ladder_fingerprint("gemini-3.5-flash-lite") == light_default
+
+
 # ── Cache keys (audit E3) ────────────────────────────────────────────────────
 # Every LLM cache key must name what the answer depends on. Keying on the DOI
 # alone replayed one question's answer for a different question.

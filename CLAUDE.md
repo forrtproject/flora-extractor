@@ -170,6 +170,10 @@ key = content_key("outcome", doi_r, prompt_version("build_outcome_prompt"),
                   GEMINI_MODEL, prompt)
 ```
 
+A Gemini model reaches a key only through `cache_model_id()` (via
+`ladder_fingerprint()`), which appends any active `GEMINI_THINKING_LEVEL` — a
+thinking level changes the answer, so the two settings never share a cache entry.
+
 `prompt_version(name)` hashes the prompt text plus every spliced fragment — editing a
 prompt invalidates exactly its caches, nothing to register. Cache non-answers too (a
 decline is an answer; a 503 is not). Plain API responses keyed by identifier use
@@ -223,6 +227,8 @@ GEMINI_MODEL=...  GEMINI_HEAVY_MODEL=...  OPENAI_MODEL=...
 SCREEN_VOTER2_MODEL=gpt-5.4-mini
 OPENAI_DAILY_TOKEN_BUDGET=8000000   # 0 disables the cap
 GEMINI_USE_FLEX=true            # 50% discount on paid keys; flex uses GEMINI_FLEX_TIMEOUT
+OPENAI_USE_FLEX=true            # same trade on OpenAI; refused flex falls back to standard
+GEMINI_THINKING_LEVEL=          # unset = model default; "minimal" is in the cache key
 ```
 
 Gemini quota is per project, not per key — extra `GEMINI_API_KEY_N` slots buy failover,
