@@ -1,0 +1,590 @@
+[
+  {
+    "id": "H001",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2568,
+      "out": 95
+    },
+    "raw": "```json\n{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"tool_benchmark\"],\n  \"evidence_quote\": \"a proper assessment of assay accuracy and the reproducibility of low abundance variant detection\",\n  \"reasoning\": \"The study evaluates the performance of a new tool (NGS assays) by benchmarking it against established Sanger sequencing standards, not by re-testing a specific earlier reported finding.\"\n}\n```",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "a proper assessment of assay accuracy and the reproducibility of low abundance variant detection",
+    "reasoning": "The study evaluates the performance of a new tool (NGS assays) by benchmarking it against established Sanger sequencing standards, not by re-testing a specific earlier reported finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H002",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2542,
+      "out": 86
+    },
+    "raw": "```json\n{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"builds_on_literature\", \"terminology_only\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The study tests whether established background knowledge (geographic access affecting diagnostic delay) applies in its own sample, without targeting a specific earlier reported finding for re-testing.\"\n}\n```",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "builds_on_literature",
+      "terminology_only"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The study tests whether established background knowledge (geographic access affecting diagnostic delay) applies in its own sample, without targeting a specific earlier reported finding for re-testing.",
+    "schema_error": null
+  },
+  {
+    "id": "H003",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2736,
+      "out": 115
+    },
+    "raw": "```json\n{\n  \"classification\": \"reproduction\",\n  \"confident\": true,\n  \"categories\": [\"measurement_validation\", \"context_transfer\"],\n  \"evidence_quote\": \"The present study was designed to investigate the psychometric properties of the Persian version of the Dizziness Handicap Inventory (P-DHI).\",\n  \"reasoning\": \"The study re-validates an already published instrument (the Dizziness Handicap Inventory) in a new language and population, explicitly assessing its reliability and reproducibility.\"\n}\n```",
+    "classification": "reproduction",
+    "confident": true,
+    "categories": [
+      "measurement_validation",
+      "context_transfer"
+    ],
+    "evidence_quote": "The present study was designed to investigate the psychometric properties of the Persian version of the Dizziness Handicap Inventory (P-DHI).",
+    "reasoning": "The study re-validates an already published instrument (the Dizziness Handicap Inventory) in a new language and population, explicitly assessing its reliability and reproducibility.",
+    "schema_error": null
+  },
+  {
+    "id": "H004",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2700,
+      "out": 131
+    },
+    "raw": "```json\n{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\"clearly_declared\", \"context_transfer\", \"builds_on_literature\"],\n  \"evidence_quote\": \"This objective will serve as a replication of past research to provide additional validation of their findings and as an aggregate effort to test these constructs within a complex model.\",\n  \"reasoning\": \"The abstract explicitly states the study aims to replicate and validate past research findings on consumer perceptions of foreign products, including testing constructs in a new context (U.S. consumers and three Asian countries).\"\n}\n```",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared",
+      "context_transfer",
+      "builds_on_literature"
+    ],
+    "evidence_quote": "This objective will serve as a replication of past research to provide additional validation of their findings and as an aggregate effort to test these constructs within a complex model.",
+    "reasoning": "The abstract explicitly states the study aims to replicate and validate past research findings on consumer perceptions of foreign products, including testing constructs in a new context (U.S. consumers and three Asian countries).",
+    "schema_error": null
+  },
+  {
+    "id": "H005",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2632,
+      "out": 90
+    },
+    "raw": "```json\n{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"builds_on_literature\", \"terminology_only\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The study tests established background knowledge (heritability of weight loss) and does not explicitly aim to replicate or reproduce a specific prior finding, nor does it re-analyze earlier data.\"\n}\n```",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "builds_on_literature",
+      "terminology_only"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The study tests established background knowledge (heritability of weight loss) and does not explicitly aim to replicate or reproduce a specific prior finding, nor does it re-analyze earlier data.",
+    "schema_error": null
+  },
+  {
+    "id": "H006",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2456,
+      "out": 105
+    },
+    "raw": "```json\n{\n  \"classification\": \"reproduction\",\n  \"confident\": true,\n  \"categories\": [\"measurement_validation\", \"initial_validation\"],\n  \"evidence_quote\": \"Adaptaci\u00f3n psicom\u00e9trica preliminar del Child Abuse Potential Inventory en Venezuela\",\n  \"reasoning\": \"The study performs the first validation of an existing instrument (CAPI) in a new population, which qualifies as a reproduction under measurement validation rules, even though it is the initial adaptation.\"\n}\n```",
+    "classification": "reproduction",
+    "confident": true,
+    "categories": [
+      "measurement_validation",
+      "initial_validation"
+    ],
+    "evidence_quote": "Adaptaci\u00f3n psicom\u00e9trica preliminar del Child Abuse Potential Inventory en Venezuela",
+    "reasoning": "The study performs the first validation of an existing instrument (CAPI) in a new population, which qualifies as a reproduction under measurement validation rules, even though it is the initial adaptation.",
+    "schema_error": null
+  },
+  {
+    "id": "H007",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2671,
+      "out": 66
+    },
+    "raw": "```json\n{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"terminology_only\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The abstract describes evolutionary patterns of viral sequences without aiming to re-test or validate a specific earlier reported finding.\"\n}\n```",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The abstract describes evolutionary patterns of viral sequences without aiming to re-test or validate a specific earlier reported finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H008",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2639,
+      "out": 117
+    },
+    "raw": "```json\n{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"tool_benchmark\"],\n  \"evidence_quote\": \"This study used four trailers of different designs, and measurements were made over a time period of 90 days, which may happen in practical measurements.\",\n  \"reasoning\": \"The study evaluates the precision and consistency of measurement tools (CPX trailers) by comparing their performance on standardized road surfaces, which qualifies as tool benchmarking rather than checking a specific earlier reported finding.\"\n}\n```",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "This study used four trailers of different designs, and measurements were made over a time period of 90 days, which may happen in practical measurements.",
+    "reasoning": "The study evaluates the precision and consistency of measurement tools (CPX trailers) by comparing their performance on standardized road surfaces, which qualifies as tool benchmarking rather than checking a specific earlier reported finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H009",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2317,
+      "out": 95
+    },
+    "raw": "```json\n{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\"clearly_declared\", \"context_transfer\"],\n  \"evidence_quote\": \"The presentation will outline the online replication of an in-lab vowel recall experiment\",\n  \"reasoning\": \"The authors explicitly state their aim to replicate an earlier in-lab experiment in an online setting, qualifying as a context-transfer replication.\"\n}\n```",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared",
+      "context_transfer"
+    ],
+    "evidence_quote": "The presentation will outline the online replication of an in-lab vowel recall experiment",
+    "reasoning": "The authors explicitly state their aim to replicate an earlier in-lab experiment in an online setting, qualifying as a context-transfer replication.",
+    "schema_error": null
+  },
+  {
+    "id": "H010",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2888,
+      "out": 97
+    },
+    "raw": "```json\n{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\"clearly_declared\", \"context_transfer\"],\n  \"evidence_quote\": \"This research is a kind of causal research and is a replication of the earlier research.\",\n  \"reasoning\": \"The authors explicitly declare the study as a replication of prior research, testing the same variables in a new regional context (North Sumatra).\"\n}\n```",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared",
+      "context_transfer"
+    ],
+    "evidence_quote": "This research is a kind of causal research and is a replication of the earlier research.",
+    "reasoning": "The authors explicitly declare the study as a replication of prior research, testing the same variables in a new regional context (North Sumatra).",
+    "schema_error": null
+  },
+  {
+    "id": "H011",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2801,
+      "out": 120
+    },
+    "raw": "```json\n{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\"measurement_validation\", \"context_transfer\"],\n  \"evidence_quote\": \"The MI was validated using targeted bisulphite sequencing in the Generations Study (n=440 case-control pairs), and replicated in a meta-analysis including four study cohorts.\",\n  \"reasoning\": \"The study explicitly aims to validate and replicate a previously developed methylation index (MI) for breast cancer risk across independent cohorts, qualifying as a replication and measurement validation.\"\n}\n```",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "measurement_validation",
+      "context_transfer"
+    ],
+    "evidence_quote": "The MI was validated using targeted bisulphite sequencing in the Generations Study (n=440 case-control pairs), and replicated in a meta-analysis including four study cohorts.",
+    "reasoning": "The study explicitly aims to validate and replicate a previously developed methylation index (MI) for breast cancer risk across independent cohorts, qualifying as a replication and measurement validation.",
+    "schema_error": null
+  },
+  {
+    "id": "H012",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2980,
+      "out": 86
+    },
+    "raw": "```json\n{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"builds_on_literature\", \"terminology_only\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The study reports a novel GWAS finding and does not aim to re-test or reproduce a specific earlier published claim, instead building on established background knowledge of WM genetics.\"\n}\n```",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "builds_on_literature",
+      "terminology_only"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The study reports a novel GWAS finding and does not aim to re-test or reproduce a specific earlier published claim, instead building on established background knowledge of WM genetics.",
+    "schema_error": null
+  },
+  {
+    "id": "H013",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2886,
+      "out": 93
+    },
+    "raw": "```json\n{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"tool_benchmark\", \"terminology_only\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The study evaluates survey methodology (detection probability) for population monitoring, not a specific earlier-reported finding, and uses 'replication' in the sense of increasing spatial/temporal survey coverage, not checking prior research.\"\n}\n```",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark",
+      "terminology_only"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The study evaluates survey methodology (detection probability) for population monitoring, not a specific earlier-reported finding, and uses 'replication' in the sense of increasing spatial/temporal survey coverage, not checking prior research.",
+    "schema_error": null
+  },
+  {
+    "id": "H014",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2841,
+      "out": 146
+    },
+    "raw": "```json\n{\n  \"classification\": \"reproduction\",\n  \"confident\": true,\n  \"categories\": [\"measurement_validation\", \"context_transfer\"],\n  \"evidence_quote\": \"To further study the recovery rate of GIN eggs from cattle faeces, this study was conducted in two laboratories, one in Belgium and one in Italy to evaluate the sensitivity, accuracy, precision and reproducibility of the Mini-FLOTAC and McMaster techniques\",\n  \"reasoning\": \"The study re-evaluates the performance of an already published diagnostic technique (Mini-FLOTAC) in a new setting (two laboratories) to validate its reproducibility and accuracy, explicitly comparing it to prior work.\"\n}\n```",
+    "classification": "reproduction",
+    "confident": true,
+    "categories": [
+      "measurement_validation",
+      "context_transfer"
+    ],
+    "evidence_quote": "To further study the recovery rate of GIN eggs from cattle faeces, this study was conducted in two laboratories, one in Belgium and one in Italy to evaluate the sensitivity, accuracy, precision and reproducibility of the Mini-FLOTAC and McMaster techniques",
+    "reasoning": "The study re-evaluates the performance of an already published diagnostic technique (Mini-FLOTAC) in a new setting (two laboratories) to validate its reproducibility and accuracy, explicitly comparing it to prior work.",
+    "schema_error": null
+  },
+  {
+    "id": "H015",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2671,
+      "out": 66
+    },
+    "raw": "```json\n{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"terminology_only\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The abstract describes evolutionary patterns of viral sequences without aiming to re-test or validate a specific earlier reported finding.\"\n}\n```",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The abstract describes evolutionary patterns of viral sequences without aiming to re-test or validate a specific earlier reported finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H016",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2660,
+      "out": 66
+    },
+    "raw": "```json\n{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"terminology_only\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The study analyzes evolutionary patterns of viral sequences without explicitly aiming to replicate or reproduce a specific earlier reported finding.\"\n}\n```",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The study analyzes evolutionary patterns of viral sequences without explicitly aiming to replicate or reproduce a specific earlier reported finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H017",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2975,
+      "out": 89
+    },
+    "raw": "```json\n{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"terminology_only\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The paper discusses lessons from Ethiopia's success in reducing under-5 mortality and emphasizes the potential for replicating interventions in other settings, but it does not aim to re-test or validate a specific finding from earlier published research.\"\n}\n```",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The paper discusses lessons from Ethiopia's success in reducing under-5 mortality and emphasizes the potential for replicating interventions in other settings, but it does not aim to re-test or validate a specific finding from earlier published research.",
+    "schema_error": null
+  },
+  {
+    "id": "H018",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2660,
+      "out": 67
+    },
+    "raw": "```json\n{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"terminology_only\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The study analyzes evolutionary patterns of viral sequences without explicitly aiming to re-test or validate a specific earlier reported finding.\"\n}\n```",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The study analyzes evolutionary patterns of viral sequences without explicitly aiming to re-test or validate a specific earlier reported finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H019",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2671,
+      "out": 66
+    },
+    "raw": "```json\n{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"terminology_only\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The abstract describes evolutionary patterns of viral sequences without aiming to re-test or validate a specific earlier reported finding.\"\n}\n```",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The abstract describes evolutionary patterns of viral sequences without aiming to re-test or validate a specific earlier reported finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H020",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2671,
+      "out": 66
+    },
+    "raw": "```json\n{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"terminology_only\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The abstract describes evolutionary patterns of viral sequences without aiming to re-test or validate a specific earlier reported finding.\"\n}\n```",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The abstract describes evolutionary patterns of viral sequences without aiming to re-test or validate a specific earlier reported finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H021",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2405,
+      "out": 94
+    },
+    "raw": "```json\n{\n  \"classification\": \"reproduction\",\n  \"confident\": true,\n  \"categories\": [\"measurement_validation\", \"context_transfer\"],\n  \"evidence_quote\": \"Reproducibility of prognostic results was confirmed for new ACS cases\",\n  \"reasoning\": \"The study validates an existing prognostic model (reported in earlier research) by applying it to new cases, confirming its reproducibility in a distinct sample.\"\n}\n```",
+    "classification": "reproduction",
+    "confident": true,
+    "categories": [
+      "measurement_validation",
+      "context_transfer"
+    ],
+    "evidence_quote": "Reproducibility of prognostic results was confirmed for new ACS cases",
+    "reasoning": "The study validates an existing prognostic model (reported in earlier research) by applying it to new cases, confirming its reproducibility in a distinct sample.",
+    "schema_error": null
+  },
+  {
+    "id": "H022",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2675,
+      "out": 73
+    },
+    "raw": "```json\n{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"terminology_only\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The study compares outcomes before and after a service reconfiguration within the same institution, without explicitly checking a previously reported finding from another published study.\"\n}\n```",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The study compares outcomes before and after a service reconfiguration within the same institution, without explicitly checking a previously reported finding from another published study.",
+    "schema_error": null
+  },
+  {
+    "id": "H023",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2660,
+      "out": 67
+    },
+    "raw": "```json\n{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"terminology_only\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The study analyzes evolutionary patterns of viral sequences without explicitly aiming to re-test or validate a specific earlier reported finding.\"\n}\n```",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The study analyzes evolutionary patterns of viral sequences without explicitly aiming to re-test or validate a specific earlier reported finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H024",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2613,
+      "out": 94
+    },
+    "raw": "```json\n{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"terminology_only\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The paper discusses the process of repatriation and curation of S\u00e1mi artefacts, using the term 'replication' in the context of creating copies of valued objects, which does not qualify as a replication or reproduction study of prior research findings.\"\n}\n```",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The paper discusses the process of repatriation and curation of S\u00e1mi artefacts, using the term 'replication' in the context of creating copies of valued objects, which does not qualify as a replication or reproduction study of prior research findings.",
+    "schema_error": null
+  },
+  {
+    "id": "H025",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2660,
+      "out": 67
+    },
+    "raw": "```json\n{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"terminology_only\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The study analyzes evolutionary patterns of viral sequences without explicitly aiming to re-test or validate a specific earlier reported finding.\"\n}\n```",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The study analyzes evolutionary patterns of viral sequences without explicitly aiming to re-test or validate a specific earlier reported finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H026",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2564,
+      "out": 112
+    },
+    "raw": "```json\n{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\"measurement_validation\", \"context_transfer\"],\n  \"evidence_quote\": \"assess the applicability and reproducibility of the GP atlas on a sample of the eastern Utter Pradesh (UP) population\",\n  \"reasoning\": \"The study explicitly aims to re-validate an established skeletal maturity assessment method (Greulich\u2013Pyle atlas) in a new population, qualifying as a replication with a context transfer.\"\n}\n```",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "measurement_validation",
+      "context_transfer"
+    ],
+    "evidence_quote": "assess the applicability and reproducibility of the GP atlas on a sample of the eastern Utter Pradesh (UP) population",
+    "reasoning": "The study explicitly aims to re-validate an established skeletal maturity assessment method (Greulich\u2013Pyle atlas) in a new population, qualifying as a replication with a context transfer.",
+    "schema_error": null
+  },
+  {
+    "id": "H027",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2593,
+      "out": 102
+    },
+    "raw": "```json\n{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\"builds_on_literature\", \"clearly_declared\"],\n  \"evidence_quote\": \"revisiting the Mississippi Fan\",\n  \"reasoning\": \"The study explicitly aims to re-test and validate long-standing assumptions in sequence stratigraphy by re-examining a foundational dataset (Mississippi Fan), qualifying as a replication of prior claims.\"\n}\n```",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "builds_on_literature",
+      "clearly_declared"
+    ],
+    "evidence_quote": "revisiting the Mississippi Fan",
+    "reasoning": "The study explicitly aims to re-test and validate long-standing assumptions in sequence stratigraphy by re-examining a foundational dataset (Mississippi Fan), qualifying as a replication of prior claims.",
+    "schema_error": null
+  },
+  {
+    "id": "H028",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2644,
+      "out": 107
+    },
+    "raw": "```json\n{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\"clearly_declared\", \"self_retest\"],\n  \"evidence_quote\": \"followed by the replication of the top SNPs in an additional set of 185 patients\",\n  \"reasoning\": \"The study explicitly aims to replicate the association between specific genetic variants (SNPs) and biochemical recurrence in a new patient cohort after initially identifying candidate SNPs in a discovery set.\"\n}\n```",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared",
+      "self_retest"
+    ],
+    "evidence_quote": "followed by the replication of the top SNPs in an additional set of 185 patients",
+    "reasoning": "The study explicitly aims to replicate the association between specific genetic variants (SNPs) and biochemical recurrence in a new patient cohort after initially identifying candidate SNPs in a discovery set.",
+    "schema_error": null
+  },
+  {
+    "id": "H029",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2649,
+      "out": 104
+    },
+    "raw": "```json\n{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\"clearly_declared\", \"context_transfer\"],\n  \"evidence_quote\": \"This research was a replication of original research conducted in 1981 by Dr. H. Wohlfarth\",\n  \"reasoning\": \"The authors explicitly frame the study as a replication of a previously published finding, testing the same environmental effects in a new setting and population.\"\n}\n```",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared",
+      "context_transfer"
+    ],
+    "evidence_quote": "This research was a replication of original research conducted in 1981 by Dr. H. Wohlfarth",
+    "reasoning": "The authors explicitly frame the study as a replication of a previously published finding, testing the same environmental effects in a new setting and population.",
+    "schema_error": null
+  },
+  {
+    "id": "H030",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2518,
+      "out": 101
+    },
+    "raw": "```json\n{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\"clearly_declared\", \"context_transfer\"],\n  \"evidence_quote\": \"The purpose of this pilot study, a replication of a study that originated in Australia for large classroom sizes\",\n  \"reasoning\": \"The abstract explicitly frames the study as a replication of an earlier published work, testing the same pedagogical strategy in a new cultural context.\"\n}\n```",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared",
+      "context_transfer"
+    ],
+    "evidence_quote": "The purpose of this pilot study, a replication of a study that originated in Australia for large classroom sizes",
+    "reasoning": "The abstract explicitly frames the study as a replication of an earlier published work, testing the same pedagogical strategy in a new cultural context.",
+    "schema_error": null
+  }
+]

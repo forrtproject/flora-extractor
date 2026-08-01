@@ -239,3 +239,60 @@ Only two things: the gitignored `cache/llm/` that `build_adjudication.py` pulls 
 text from, and the script that folded the `hojudge_*` votes into `heldout_truth.json`,
 which was never written down — the held-out truth file therefore cannot be regenerated
 from what is here.
+
+---
+
+## Known arguable case: F140
+
+`F140` (Brolan et al. 2014, *Globalization and Health*, `10.1186/1744-8603-10-19`) is a FLoRA
+entry that the v3.2 screen discards. It is recorded here as **arguable, not as a miss**: the
+screen and the FLoRA label disagree on a coding question the team has not settled, and the
+evaluation reports it separately from settled misses for that reason.
+
+The paper asks what the post-2015 development goals would look like if the method used to
+construct the Millennium Development Goals were applied to newer UN targets. It re-applies a
+published *method* to new material and contrasts the resulting goals with the HLP's 12.
+
+- **Case for including it** (FLoRA's label): the paper re-runs an earlier construction
+  methodology and compares its output against what the original process produced.
+- **Case for discarding it** (the screen's verdict): what is reused is a procedure, not a
+  claim; no empirical finding reported by earlier research is being checked. This is the
+  framework-reuse clause of non-qualifying sense 3, added in v3.1 to fix leak pattern P7.
+
+Deciding it "in" therefore means narrowing that clause — plausibly to reuse *without*
+comparison against the original's result — and re-running to confirm the three P7 cases do not
+return. Deciding it "out" means the FLoRA entry is a label the current rules do not support.
+
+**Not an abstract-quality artefact.** The entry sheet's `abstract_r` for this row is 217
+characters (one concluding sentence); OpenAlex holds the full 2,323-character structured
+abstract. Re-running the screen on the full text changes nothing — Gemini 3.5 Flash-Lite still
+answers `none`, confidently, citing the methodological sense of "replicated".
+
+### Harness caveat this surfaced
+
+`flora_positive_cases.json` was built from the entry sheet's `abstract_r` column, but the
+pipeline sources abstracts through `search/fetch_abstracts.py` (OpenAlex → Europe PMC → S2 →
+CrossRef → Scopus). The FLoRA case set is therefore not the text production sees: 22 of the 300
+abstracts are under 700 characters and 2 under 400 (median 1,237). Sensitivity measured on this
+set is a **floor**, not an estimate. Rebuilding the set from the pipeline's own abstract
+sources is the fix.
+
+---
+
+## Prompt lineage
+
+| file | status |
+| --- | --- |
+| `prompt_v3.txt` | first spec-written screening prompt; the evaluation baseline alongside the production prompt. |
+| `prompt_v31.txt` | rule fixes for the leak patterns in `leak_analysis.md` plus the instrument-boundary ruling. **Never fully evaluated** — its run was stopped a quarter of the way through and folded into v3.2, so no `voter_v31_*` results are kept. Retained as the readable statement of the rule changes (`prompt_v31_diff.md`). |
+| `prompt_v32.txt` | **the validated candidate.** v3.1 plus the binary `confident` field. Results: `report_v32.md`, `gate_sweep_v32.md`. |
+
+Truth-set lineage: `human_truth.json` (first pass) → `human_truth_revised.json` (the coder's
+own recodes) → `human_truth_v31.json` (**superseded — contains three flips an agent applied to
+human-coded cases without authority**) → `human_truth_v32.json` (**current**: those three
+reverted to the coder's labels). Held-out: `heldout_truth_v31.json` → `heldout_truth_v32.json`
+(**current**; its four instrument-boundary flips were confirmed by the lead).
+
+**Truth sets are human-write-only.** A policy ruling clarifies what the *prompt* tells models;
+it is not authority to re-label a case a human coder has already decided. The `_v31` human file
+is kept only so this episode stays visible.
