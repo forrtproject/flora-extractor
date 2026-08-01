@@ -1078,6 +1078,16 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
     return out
 
 
+# The target-pick half of screen_references_with_llm's return value, before a
+# reference has been picked — the resolver keys every ladder stage returns.
+_UNPICKED_TARGET = {
+    "resolved": False, "resolution_method": "llm_refscreen_declined",
+    "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
+    "resolved_author_o": "", "resolution_score": 0.0,
+    "llm_confidence": "", "target_description": "",
+}
+
+
 def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
                                refs: list[dict],
                                classification: "dict | None" = None) -> dict:
@@ -1088,17 +1098,17 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
     votes are made once per paper. When it is absent (a caller that has no verdict
     yet, e.g. the batch tools) the classification runs here.
 
-    Returns the standard resolver dict, the classification fields, and
-    llm_confidence — the TARGET call's confidence, empty when no target call was
+    The return value is the union of two contracts, in this order: the target
+    pick's keys (_UNPICKED_TARGET below) and, over them, every key
+    classify_replication() returns. The classification wins on the one key they
+    share, resolution_method, so an incomplete screen is reported as incomplete
+    rather than as a target this function declined to pick.
+
+    llm_confidence is the TARGET call's confidence, empty when no target call was
     made. A reference is accepted as the target only at confidence == "high".
     """
-    out = {
-        "resolved": False, "resolution_method": "llm_refscreen_declined",
-        "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
-        "resolved_author_o": "", "resolution_score": 0.0,
-        "llm_confidence": "", "target_description": "",
-    }
-    out.update(classification or classify_replication(doi_r, study_r, abstract_r))
+    out = {**_UNPICKED_TARGET,
+           **(classification or classify_replication(doi_r, study_r, abstract_r))}
 
     if out["screen_classification"] in SCREEN_QUALIFYING and refs:
         # The pick is cached separately from the classification: the two halves are

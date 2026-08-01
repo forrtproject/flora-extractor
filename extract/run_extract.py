@@ -856,12 +856,9 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False,
         # Fallback: GROBID sections that run_for_doi already extracted. The intro is
         # in here for want of anything better; it is the section that most often
         # discusses OTHER studies' replication failures, and the prompt says so.
-        fulltext = " ".join(filter(None, [
-            str(link.get("grobid_abstract", "") or ""),
-            str(link.get("grobid_intro",    "") or ""),
-            str(link.get("grobid_methods",  "") or ""),
-            str(link.get("html_text",       "") or ""),
-        ]))
+        fulltext = " ".join(filter(None, (
+            str(link.get(key) or "") for key in
+            ("grobid_abstract", "grobid_intro", "grobid_methods", "html_text"))))
         if fulltext:
             fulltext = f"[{_PROVENANCE_LABEL['sections']}]\n\n{fulltext}"
 
