@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 import shared.openalex_client as oa
+from shared.cache import content_key, write_cache
 from shared.openalex_client import (
     author_matches,
     extract_author_year_patterns,
@@ -352,6 +353,47 @@ class TestTitleSearchCaching:
                    side_effect=RuntimeError("connection reset")):
             with pytest.raises(oa._TitleSearchUnavailable):
                 oa._search_crossref_by_title_live("Time flies", "2010")
+
+    def test_openalex_hit_carries_the_bare_work_id(self):
+        """An original OpenAlex indexes without a DOI has no other identity, so the
+        title search must hand back its W-id rather than only the (empty) DOI."""
+        work = {"id": "https://openalex.org/W2884670852", "doi": None,
+                "title": "Gender Advertisements", "publication_year": 1979,
+                "authorships": [{"author": {"display_name": "Erving Goffman"}}],
+                "primary_location": {}, "biblio": {}}
+        with patch("shared.openalex_client._oa_get", return_value={"results": [work]}):
+            hit = oa._search_openalex_by_title_live("Gender Advertisements", "1979")
+        assert hit["openalex_id"] == "W2884670852"
+        assert hit["doi"] == ""
+
+    def test_crossref_hit_carries_an_empty_work_id_and_the_same_shape(self):
+        item = {"DOI": "10.9/orig", "title": ["Time flies"],
+                "issued": {"date-parts": [[2010]]}}
+        with patch("shared.openalex_client.requests.get") as get:
+            get.return_value.status_code = 200
+            get.return_value.json.return_value = {"message": {"items": [item]}}
+            crossref_hit = oa._search_crossref_by_title_live("Time flies", "2010")
+
+        work = {"id": "https://openalex.org/W1", "doi": "https://doi.org/10.9/orig",
+                "title": "Time flies", "publication_year": 2010,
+                "authorships": [], "primary_location": {}, "biblio": {}}
+        with patch("shared.openalex_client._oa_get", return_value={"results": [work]}):
+            openalex_hit = oa._search_openalex_by_title_live("Time flies", "2010")
+
+        assert crossref_hit["openalex_id"] == "", "CrossRef has no OpenAlex ids"
+        assert set(crossref_hit) == set(openalex_hit)
+
+    def test_old_cache_entries_are_not_reused(self, tmp_path):
+        """Entries written before openalex_id was returned must miss, not silently
+        strip the work id off every original already searched."""
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path):
+            stale = content_key("titlesearch_openalex", "", "A title", "2010")
+            write_cache(tmp_path, stale, {"hit": {"doi": "10.9/orig", "title": "A title"}})
+            with patch("shared.openalex_client._search_openalex_by_title_live",
+                       return_value={"doi": "", "openalex_id": "W1"}) as live:
+                hit = oa._search_openalex_by_title("A title", "2010")
+        assert hit["openalex_id"] == "W1"
+        assert live.call_count == 1
 
     def test_openalex_no_response_raises_but_empty_results_is_a_miss(self):
         with patch("shared.openalex_client._oa_get", return_value=None):

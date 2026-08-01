@@ -21,7 +21,7 @@ from .config import (
     RESEARCHER_EMAIL, log,
 )
 from .cache import content_key, read_cache, write_cache
-from .utils import clean_doi, cache_key
+from .utils import bare_work_id, clean_doi, cache_key
 
 # ── Unicode ranges (chr() avoids \u in compiled regexes for Python < 3.12) ────
 _UNI_RANGE  = chr(0x00C0) + "-" + chr(0x024F) + chr(0x1E00) + "-" + chr(0x1EFF)
@@ -780,6 +780,9 @@ class _TitleSearchUnavailable(Exception):
     """The provider never answered — distinct from a genuine no-match."""
 
 
+_TITLE_SEARCH_SHAPE = "v2-openalex-id"
+
+
 def _cached_title_search(source: str, title: str, year: str, search) -> Optional[dict]:
     """Disk-cache a title search, misses included.
 
@@ -791,7 +794,11 @@ def _cached_title_search(source: str, title: str, year: str, search) -> Optional
     """
     if not title:
         return None
-    key = content_key(f"titlesearch_{source}", "", title, year)
+    # _TITLE_SEARCH_SHAPE is part of the key because the cached value is a dict shape,
+    # not just an answer: entries written before openalex_id was returned would still
+    # be found and would silently strip the work id a DOI-less original is keyed on.
+    # Bump it whenever the returned dict gains or loses a field.
+    key = content_key(f"titlesearch_{source}", "", title, year, _TITLE_SEARCH_SHAPE)
     cached = read_cache(OA_CACHE_DIR, key)
     if cached is not None:
         return cached.get("hit")
@@ -808,8 +815,8 @@ def _search_crossref_by_title(title: str, year: str = "") -> Optional[dict]:
 
     Uses a Jaccard threshold of 0.7 to confirm the top hit matches *title*,
     and requires the year to be within ±2 when *year* is provided.
-    Returns same shape as fetch_openalex_full_metadata, or None. Cached per
-    (title, year) in OA_CACHE_DIR.
+    Returns the fetch_openalex_full_metadata shape plus openalex_id (always "" here
+    — CrossRef has no OpenAlex ids), or None. Cached per (title, year) in OA_CACHE_DIR.
     """
     return _cached_title_search("crossref", title, year, _search_crossref_by_title_live)
 
@@ -866,15 +873,16 @@ def _search_crossref_by_title_live(title: str, year: str = "") -> Optional[dict]
                 break
 
         return {
-            "doi"       : clean_doi(item.get("DOI", "") or ""),
-            "title"     : hit_title,
-            "year"      : hit_year_val,
-            "authors"   : authors,
-            "journal"   : containers[0] if containers else "",
-            "volume"    : item.get("volume") or "",
-            "issue"     : item.get("issue") or "",
-            "first_page": first_page.strip(),
-            "last_page" : last_page.strip(),
+            "doi"        : clean_doi(item.get("DOI", "") or ""),
+            "openalex_id": "",   # CrossRef has none; kept so both title searches share a shape
+            "title"      : hit_title,
+            "year"       : hit_year_val,
+            "authors"    : authors,
+            "journal"    : containers[0] if containers else "",
+            "volume"     : item.get("volume") or "",
+            "issue"      : item.get("issue") or "",
+            "first_page" : first_page.strip(),
+            "last_page"  : last_page.strip(),
         }
     return None
 
@@ -883,7 +891,8 @@ def _search_openalex_by_title(title: str, year: str = "") -> Optional[dict]:
     """Search OpenAlex by title and return full metadata if a confident hit is found.
 
     Jaccard threshold 0.7 against *title*; year ±2 when *year* is provided.
-    Returns same shape as fetch_openalex_full_metadata, or None. Cached per
+    Returns the fetch_openalex_full_metadata shape plus openalex_id (the bare W-id,
+    which is the only identity a DOI-less original has), or None. Cached per
     (title, year) in OA_CACHE_DIR.
     """
     return _cached_title_search("openalex", title, year, _search_openalex_by_title_live)
@@ -920,15 +929,16 @@ def _search_openalex_by_title_live(title: str, year: str = "") -> Optional[dict]
         src     = loc.get("source") or {}
         biblio  = work.get("biblio") or {}
         return {
-            "doi"       : clean_doi(work.get("doi", "") or ""),
-            "title"     : hit_title,
-            "year"      : work.get("publication_year"),
-            "authors"   : authors,
-            "journal"   : (src.get("display_name") or "").strip(),
-            "volume"    : biblio.get("volume") or "",
-            "issue"     : biblio.get("issue") or "",
-            "first_page": biblio.get("first_page") or "",
-            "last_page" : biblio.get("last_page") or "",
+            "doi"        : clean_doi(work.get("doi", "") or ""),
+            "openalex_id": bare_work_id(work.get("id", "") or ""),
+            "title"      : hit_title,
+            "year"       : work.get("publication_year"),
+            "authors"    : authors,
+            "journal"    : (src.get("display_name") or "").strip(),
+            "volume"     : biblio.get("volume") or "",
+            "issue"      : biblio.get("issue") or "",
+            "first_page" : biblio.get("first_page") or "",
+            "last_page"  : biblio.get("last_page") or "",
         }
     return None
 

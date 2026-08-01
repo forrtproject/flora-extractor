@@ -1518,6 +1518,75 @@ class TestGuardOriginalLink:
             out = run_extract._guard_original_link(self._row(doi_o="", title_o="n/a"))
         assert out["link_method"] == "target_pending"
 
+    def test_doi_less_original_keeps_the_openalex_work_id(self):
+        """A book or pre-DOI-era original OpenAlex indexes without a DOI: the work
+        id is the row's only identity, so it must reach oa_work_id_o and pair_id."""
+        hit = {"doi": "", "openalex_id": "W123", "title": "The Original Work"}
+        with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
+             patch("extract.run_extract._search_openalex_by_title", return_value=hit):
+            out = run_extract._guard_original_link(self._row(doi_o=""))
+        assert out["link_method"] == "llm_fulltext"
+        assert out["doi_o"] == ""
+        assert out["doi_o_verification"] == "no_doi"
+        assert out["oa_work_id_o"] == "W123"
+        assert out["pair_id"] == make_pair_id("10.1/repl", "", "W123")
+
+    def test_doi_less_original_without_a_work_id_is_left_alone(self):
+        with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
+             patch("extract.run_extract._search_openalex_by_title",
+                   return_value={"doi": "", "openalex_id": ""}):
+            out = run_extract._guard_original_link(self._row(doi_o=""))
+        assert out["doi_o_verification"] == "no_doi"
+        assert out.get("oa_work_id_o", "") == ""
+        assert out["pair_id"] == "p", "no identifier found — pair_id must not be re-keyed"
+
+    def test_work_id_matching_the_replication_is_a_self_link(self):
+        hit = {"doi": "", "openalex_id": "W999", "title": "The Original Work"}
+        with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
+             patch("extract.run_extract._search_openalex_by_title", return_value=hit):
+            out = run_extract._guard_original_link(
+                self._row(doi_o="", openalex_id_r="https://openalex.org/W999"))
+        assert out["link_method"] == "target_pending"
+        assert out.get("oa_work_id_o", "") == ""
+
+    def test_recovered_doi_keeps_the_legacy_two_argument_pair_id(self):
+        """pair_ids already imported into the validation DB key on md5("doi_r|doi_o"),
+        so a DOI-recovering hit must not fold the work id into the hash."""
+        hit = {"doi": "10.9/found", "openalex_id": "W123"}
+        with patch("extract.run_extract._search_crossref_by_title", return_value=hit):
+            out = run_extract._guard_original_link(self._row(doi_o=""))
+        assert out["doi_o"] == "10.9/found"
+        assert out["pair_id"] == make_pair_id("10.1/repl", "10.9/found")
+        assert out.get("oa_work_id_o", "") == ""
+
+
+class TestNoDoiWorkIdSurvivesVerification:
+    """The guard sets oa_work_id_o before _verify_row and _fill_work_ids run."""
+
+    def _row(self):
+        return {"doi_r": "10.1/repl", "title_r": "Repl", "doi_o": "",
+                "title_o": "Gender Advertisements", "year_o": "1979",
+                "authors_o": "Goffman", "link_method": "llm_fulltext",
+                "link_confidence": "high", "oa_work_id_o": "W123",
+                "oa_work_id_r": "W555",
+                "doi_o_verification": "no_doi",
+                "pair_id": make_pair_id("10.1/repl", "", "W123")}
+
+    def test_verify_row_keeps_no_doi_and_the_pair_id(self):
+        v = {"doi_o_verification": "not_found", "doi_o": "",
+             "evidence_note": "No DOI found for resolved title/author"}
+        with patch("extract.run_extract.verify_and_correct", return_value=v):
+            out = run_extract._verify_row(self._row())
+        assert out["doi_o_verification"] == "no_doi"
+        assert out["oa_work_id_o"] == "W123"
+        assert out["pair_id"] == make_pair_id("10.1/repl", "", "W123")
+
+    def test_fill_work_ids_leaves_the_guard_set_id_alone(self):
+        with patch("extract.run_extract._oa_by_doi") as by_doi:
+            out = run_extract._fill_work_ids(self._row())
+        assert out["oa_work_id_o"] == "W123"
+        by_doi.assert_not_called()
+
 
 # ── Mismatched doi_o must not survive into the row (fix 1) ───────────────────
 
