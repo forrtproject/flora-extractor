@@ -23,6 +23,7 @@ from extract.code_outcome import extract_outcome
 from shared.config import DATA_DIR, LLM_CACHE_DIR, OA_XML_CACHE_DIR, PARSE_CACHE_DIR, PDF_CACHE_DIR, log
 from shared.dashboard_cache import refresh as _dashboard_refresh
 from shared.pdf_parsing import best_parse_result, parse_all as _parse_all
+from shared.token_budget import TokenBudgetExhausted
 from shared.cache import clear_content_keys
 from shared.utils import cache_key, clean_doi
 
@@ -336,6 +337,8 @@ def recalibrate_outcomes(
                 df_full.at[orig_idx, "out_quote_source"] = result.get("out_quote_source", "")
                 df_full.at[orig_idx, "outcome_reasoning"] = result.get("outcome_reasoning", "")
 
+            except TokenBudgetExhausted:
+                raise   # the budget stops the run, it does not fail one row
             except Exception as e:
                 log.error("[%s] Error: %s", doi_r, str(e))
                 errors.append({"doi": doi_r, "error": str(e)})
@@ -348,6 +351,10 @@ def recalibrate_outcomes(
 
     except KeyboardInterrupt:
         log.warning("\nInterrupted after %d/%d rows — saving progress...", rows_processed, len(candidate_indices))
+    except TokenBudgetExhausted as exc:
+        log.error("%s", exc)
+        log.warning("Stopped after %d/%d rows — saving progress...",
+                    rows_processed, len(candidate_indices))
     finally:
         _save()
 

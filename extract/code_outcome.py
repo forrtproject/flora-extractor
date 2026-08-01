@@ -40,6 +40,7 @@ from shared.prompts import (
     build_repro_abstract_prompt, build_repro_fulltext_prompt, prompt_versions,
 )
 from shared.schema import OUTCOME_CATEGORIES, outcome_categories_for
+from shared.token_budget import TokenBudgetExhausted
 
 # Truncation caps (chars) for the abstract-based and fulltext-escalation prompts.
 _ABSTRACT_CAP = 3000
@@ -224,6 +225,8 @@ def _call_outcome_llm(prompt: str, doi_r: str) -> tuple[Optional[dict], str]:
                                                 prefer_openai=True)
             if result:
                 return result, model_used
+        except TokenBudgetExhausted:
+            raise   # retrying a call the budget refuses only delays the stop
         except Exception as e:
             err = str(e)
         wait_time = 2 ** attempt  # 1s, 2s, 4s

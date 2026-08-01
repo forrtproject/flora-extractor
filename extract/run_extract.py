@@ -25,6 +25,7 @@ from shared.config import (
 )
 from shared import token_counter
 from shared.llm_client import call_llm, classify_replication, ladder_fingerprint
+from shared.token_budget import TokenBudgetExhausted
 from shared.openalex_client import OpenAlexQuotaExhausted, extract_author_year_patterns, find_all_candidates
 from shared.openalex_client import fetch_openalex_by_doi as _oa_by_doi
 from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
@@ -1818,7 +1819,9 @@ def run_extract(no_llm: bool = False,
                 if row_out is not None:
                     result_rows.append(row_out)
 
-        except OpenAlexQuotaExhausted:
+        except (OpenAlexQuotaExhausted, TokenBudgetExhausted):
+            # Not a per-row failure: the row was never examined, and writing it as
+            # api_error would bury the reason the rest of the run stops too.
             raise
         except Exception as e:
             log.error("[%s] extraction failed: %s", doi_r, e)
@@ -2083,7 +2086,7 @@ if __name__ == "__main__":
                 recalibrate_outcomes=args.recalibrate_outcomes,
                 rescreen=args.rescreen,
             )
-    except OpenAlexQuotaExhausted as exc:
+    except (OpenAlexQuotaExhausted, TokenBudgetExhausted) as exc:
         log.error("%s", exc)
         log.error("Rows written before the stop are intact; re-run with --resume to continue.")
     finally:

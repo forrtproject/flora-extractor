@@ -32,6 +32,7 @@ from extract.run_extract import (
     _rule_classify_multi_original,
     _score_to_confidence,
 )
+from shared.token_budget import TokenBudgetExhausted
 
 
 # ── Sentence expansion unit tests ────────────────────────────────────────────
@@ -2335,6 +2336,41 @@ class TestFrontDoorScreen:
         assert result.iloc[0]["filter_status"] == "reproduction"
         assert result.iloc[0]["filter_method"] == "screen"
         assert result.iloc[0]["screen_categories"] == "clearly_declared|context_transfer"
+
+
+class TestDailyTokenBudgetStops:
+    """The daily budget is a spend ceiling, not a row error. When it runs out the
+    run stops the way Ctrl-C does: the rows already written stay on disk, and the
+    row that could not be screened is not written as an examined api_error."""
+
+    _TWO_ROWS = _FILTERED_CSV + (
+        "10.1000/rep2,Second Paper,Abstract text,2021,Smith,J. Psych,,W3,openalex,"
+        "replication,rule_based,direct replication,high\n")
+
+    def test_the_run_stops_and_keeps_the_rows_written_before_it(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["test-key"])
+        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "test-key")
+        (tmp_path / "filtered.csv").write_text(self._TWO_ROWS, encoding="utf-8-sig")
+        screen = MagicMock(side_effect=[_YES_SCREEN,
+                                        TokenBudgetExhausted("budget spent")])
+
+        with patch.object(run_extract, "classify_replication", screen), \
+             patch.object(run_extract, "classify_match_type", return_value=_MOCK_MATCH), \
+             patch.object(run_extract, "run_for_doi", return_value=_MOCK_LINK), \
+             patch.object(run_extract, "extract_outcome", return_value=_MOCK_OUTCOME), \
+             patch.object(run_extract, "verify_and_correct",
+                          side_effect=lambda doi, *a, **k: {
+                              "doi_o": doi, "doi_o_verification": "skipped",
+                              "evidence_note": ""}), \
+             patch.object(run_extract, "_oa_by_doi", return_value=None), \
+             patch.object(run_extract, "DATA_DIR", tmp_path), \
+             patch.object(run_extract, "BASE_DIR", tmp_path):
+            with pytest.raises(TokenBudgetExhausted):
+                run_extract.run_extract()
+
+        written = pd.read_csv(tmp_path / "extracted.csv", dtype=str, encoding="utf-8-sig")
+        assert list(written["doi_r"]) == ["10.1000/rep"]
+        assert "api_error" not in set(written["link_method"])
 
 
 class TestMatchTypeLLMGate:

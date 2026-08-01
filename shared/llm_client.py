@@ -11,9 +11,7 @@ Public API:
 """
 import base64
 import json
-import os
 import re
-import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -29,7 +27,7 @@ from .config import (
     SCREEN_VOTER2_MODEL,
     log,
 )
-from . import token_counter
+from . import token_budget, token_counter
 from .cache import content_key, read_cache, write_cache
 from .prompts import (
     JSON_SYSTEM_MESSAGE,
@@ -54,80 +52,17 @@ JSON_MAX_OUTPUT_TOKENS = 4096
 # consequence: Gemini and OpenRouter now sample at their defaults rather than
 # greedily, so repeat runs are less deterministic than before.
 
-# ── Session-level token guardrails ───────────────────────────────────────────
-# Two budgets, one mechanism: tokens spent through call_openai(), and tokens spent
-# on Gemini key 0 (the paid one; keys 1+ are free-tier and unaffected). Crossing a
-# threshold asks whether to keep spending, and "no" disables that provider for the
-# rest of the process.
-#
-# The question is only asked on a terminal. Under nohup, cron or CI, input() raises
-# EOFError immediately, and reading that as "no" would silently disable a provider
-# that nobody declined — with voter 2 on OpenAI that turns every subsequent screen
-# into a one-vote partial. Off a TTY the guardrail therefore logs and continues:
-# a budget warning must not become an unattended shutdown.
-#
-# Thresholds are in tokens, via env: OPENAI_WARN_TOKENS (default 8M),
-# GEMINI_WARN_TOKENS (default 0 = off).
-
-_TOKEN_GUARDS: dict[str, dict] = {
-    "openai": {
-        "label":     "OpenAI token guardrail",
-        "on_stop":   "OpenAI disabled. Remaining rows will use Gemini only.",
-        "yes_hint":  "Continue using OpenAI for remaining rows?",
-        "choice":    "Y = keep going   N = disable OpenAI (Gemini-only for rest of run)",
-        "threshold": int(os.getenv("OPENAI_WARN_TOKENS", "8000000")),
-        "used": 0, "prompted": False, "disabled": False,
-    },
-    "gemini_key0": {
-        "label":     "Gemini key-0 guardrail",
-        "on_stop":   "Gemini key-0 disabled. Remaining rows will use free-tier keys only.",
-        "yes_hint":  "Continue using Gemini key-0 (paid) for remaining rows?",
-        "choice":    "Y = keep going   N = skip key-0 (free-tier keys only for rest of run)",
-        "threshold": int(os.getenv("GEMINI_WARN_TOKENS", "0")),
-        "used": 0, "prompted": False, "disabled": False,
-    },
-}
+# ── Token accounting ──────────────────────────────────────────────────────────
+# Every provider call reports what it cost in its usage field. That number goes to
+# two places: the in-process token_counter, which attributes it to a pipeline stage
+# for the end-of-run summary, and token_budget, which holds the hard daily ceiling
+# across runs and providers. Each call_* function checks the budget before it spends.
 
 
-def _track_tokens(guard_name: str, n_tokens: int) -> None:
-    """Add n_tokens to a guard's session counter; prompt once when it crosses."""
-    g = _TOKEN_GUARDS[guard_name]
-    if not g["threshold"]:
-        return
-    g["used"] += n_tokens
-    if g["prompted"] or g["used"] < g["threshold"]:
-        return
-    g["prompted"] = True
-    used_m   = g["used"] / 1_000_000
-    thresh_m = g["threshold"] / 1_000_000
-
-    if not sys.stdin.isatty():
-        log.warning("%s: %.1fM tokens used this session (threshold %.0fM). "
-                    "Not a terminal, so continuing without asking.",
-                    g["label"], used_m, thresh_m)
-        return
-
-    print(f"\n{'=' * 62}")
-    print(f"  {g['label']}: {used_m:.1f}M tokens used this session")
-    print(f"  (threshold: {thresh_m:.0f}M — set the *_WARN_TOKENS env var to change)")
-    print(f"  {g['yes_hint']}")
-    print(f"  {g['choice']}")
-    print(f"{'=' * 62}")
-    try:
-        answer = input("  Your choice [Y/n]: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        answer = "n"
-    if answer in ("n", "no"):
-        g["disabled"] = True
-        log.info("%s: disabled by user at %.1fM tokens", g["label"], used_m)
-        print(f"  {g['on_stop']}\n")
-    else:
-        log.info("%s: user confirmed continuing at %.1fM tokens", g["label"], used_m)
-        print("  Continuing.\n")
-
-
-def _guard_disabled(guard_name: str) -> bool:
-    return _TOKEN_GUARDS[guard_name]["disabled"]
+def _record_tokens(provider: str, n_tokens: int) -> None:
+    """Charge a completed call's tokens to the run's stage total and the day's budget."""
+    token_counter.record(provider, n_tokens)
+    token_budget.record(n_tokens)
 
 
 # ── Per-provider rate limiting ────────────────────────────────────────────────
@@ -241,6 +176,8 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
         log.warning("No GEMINI_API_KEY set — skipping Gemini")
         return None, "no API keys configured"
 
+    token_budget.check()
+
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -264,9 +201,6 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
 
     last_error = "all keys exhausted"
     for key_idx, api_key in enumerate(GEMINI_API_KEYS):
-        if key_idx == 0 and _guard_disabled("gemini_key0"):
-            log.debug("Gemini key-0 disabled by guardrail — skipping to free-tier keys")
-            continue
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
                f":generateContent?key={api_key}")
         key_label = f"key {key_idx + 1}/{len(GEMINI_API_KEYS)}"
@@ -325,9 +259,7 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
                 result = _parse_llm_json(text)
                 if result is not None:
                     n_tok = int((body.get("usageMetadata") or {}).get("totalTokenCount", 0))
-                    token_counter.record("gemini", n_tok)
-                    if key_idx == 0:
-                        _track_tokens("gemini_key0", n_tok)
+                    _record_tokens("gemini", n_tok)
                     if key_idx > 0:
                         log.info("Gemini succeeded on %s", key_label)
                     return result, ""
@@ -365,8 +297,7 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL,
         log.warning("OPENAI_API_KEY not set — skipping OpenAI")
         return None, "OPENAI_API_KEY not configured"
 
-    if _guard_disabled("openai"):
-        return None, "OpenAI disabled — token limit reached and user declined to continue"
+    token_budget.check()
 
     import openai
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
@@ -390,10 +321,9 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL,
                 **extra,
             )
             if response.usage:
-                _track_tokens("openai", response.usage.total_tokens)
-                token_counter.record("openai", response.usage.total_tokens)
-                log.debug("OpenAI usage: +%d tokens (session total: %d)",
-                          response.usage.total_tokens, _TOKEN_GUARDS["openai"]["used"])
+                _record_tokens("openai", response.usage.total_tokens)
+                log.debug("OpenAI usage: +%d tokens (day total: %d)",
+                          response.usage.total_tokens, token_budget.spent_today())
             if response.choices[0].finish_reason == "length":
                 log.warning("OpenAI response hit the %d-token cap and was cut off — "
                             "the truncated JSON will fail to parse (model=%s)",
@@ -423,6 +353,8 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
     if not OPENROUTER_API_KEY:
         return None, "OPENROUTER_API_KEY not configured"
 
+    token_budget.check()
+
     import openai
     client = openai.OpenAI(
         api_key=OPENROUTER_API_KEY,
@@ -448,7 +380,7 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
             return None, "response truncated at max_tokens"
         result = _parse_llm_json(response.choices[0].message.content)
         if result and response.usage:
-            token_counter.record("openrouter", response.usage.total_tokens)
+            _record_tokens("openrouter", response.usage.total_tokens)
         return result, ("" if result else "response was not valid JSON")
     except Exception as e:
         log.warning("OpenRouter call failed (model=%s): %s", use_model, e)
@@ -679,6 +611,8 @@ def call_gemini_with_images(prompt: str,
     if not GEMINI_API_KEYS:
         return None
 
+    token_budget.check()
+
     parts: list[dict] = [{"text": prompt}]
     for img in image_b64_list:
         parts.append({"inline_data": {"mime_type": img["mime_type"], "data": img["data"]}})
@@ -705,6 +639,8 @@ def call_gemini_with_images(prompt: str,
             body = r.json()
             if not body.get("candidates"):
                 return None
+            _record_tokens("gemini",
+                           int((body.get("usageMetadata") or {}).get("totalTokenCount", 0)))
             text = body["candidates"][0]["content"]["parts"][0]["text"]
             return _parse_llm_json(text)
         except Exception as e:
@@ -729,6 +665,8 @@ def call_gemini_with_pdf(prompt: str,
     """
     if not GEMINI_API_KEYS:
         return None
+
+    token_budget.check()
 
     pdf_b64 = base64.b64encode(pdf_bytes).decode()
 
@@ -767,6 +705,8 @@ def call_gemini_with_pdf(prompt: str,
                 body = r.json()
                 if not body.get("candidates"):
                     return None
+                _record_tokens("gemini",
+                               int((body.get("usageMetadata") or {}).get("totalTokenCount", 0)))
                 text = body["candidates"][0]["content"]["parts"][0]["text"]
                 return _parse_llm_json(text)
             except Exception as e:
