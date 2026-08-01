@@ -170,6 +170,9 @@ def _parse_llm_json(text: str) -> Optional[dict]:
     text = text.strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$",          "", text).strip()
+    # A trailing comma before } or ] was the only malformed-response mode seen in
+    # ~2,100 screening-validation calls (6 cases), and json.loads rejects it.
+    text = re.sub(r",\s*([}\]])", r"\1", text)
 
     try:
         result = json.loads(text)
@@ -181,7 +184,7 @@ def _parse_llm_json(text: str) -> Optional[dict]:
     m = re.search(r"\{.*\}", text, re.DOTALL)
     if m:
         try:
-            result = json.loads(m.group(0))
+            result = json.loads(re.sub(r",\s*([}\]])", r"\1", m.group(0)))
             if isinstance(result, dict):
                 return result
         except json.JSONDecodeError:
@@ -348,9 +351,16 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
 
 # ── OpenAI (fallback) ─────────────────────────────────────────────────────────
 
-def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict], str]:
+def call_openai(prompt: str, model: str = OPENAI_MODEL,
+                reasoning_effort: str = "") -> tuple[Optional[dict], str]:
     """
     Call OpenAI chat completion with response_format=json_object.
+
+    reasoning_effort — passed through only when set, so the reasoning models bill
+    hidden thinking at the caller's chosen budget. The screen sends "low": its
+    output is a short JSON and the eval that validated the voter pair ran it that
+    way. Callers that omit it keep the API default.
+
     Returns (result_dict_or_None, error_description).
     """
     if not OPENAI_API_KEY:
@@ -370,6 +380,7 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict],
     for attempt in range(3):
         try:
             _throttle("openai")
+            extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
             response = client.chat.completions.create(
                 model=model,
                 messages=[
@@ -378,6 +389,7 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict],
                 ],
                 response_format={"type": "json_object"},
                 max_completion_tokens=JSON_MAX_OUTPUT_TOKENS,
+                **extra,
             )
             if response.usage:
                 _track_openai_tokens(response.usage.total_tokens)
@@ -927,11 +939,27 @@ def identify_all_originals_with_llm(doi_r:        str,
 
 # Q1's two voters, in call order. Both are required: with one provider the screen
 # cannot tell agreement from a lone opinion, so run_extract refuses to start.
-# Voter 2 runs on OpenRouter (Ministral 14B by default) rather than OpenAI: on
-# adjudicated hard cases the pair discards 89% of true negatives against gpt-5-mini's
-# 25%, losing no genuine replication, because a non-Google lineage errs elsewhere
-# than the Gemini first voter does.
-SCREEN_PROVIDERS = ("gemini", "openrouter")
+# Voter 2 is gpt-5.4-mini on OpenAI direct: on the v3.2 gate sweep this pair
+# discards 89% of adjudicated hard negatives with zero settled misses, against 73%
+# for Ministral via OpenRouter on the same gate. A model id containing "/" is an
+# OpenRouter id, so swapping the env var reroutes the call without a code change.
+SCREEN_CLASSIFICATIONS = ("replication", "reproduction", "both", "none", "unclear")
+SCREEN_QUALIFYING      = ("replication", "reproduction", "both")
+
+# The v3.2 prompt's category enum, in prompt order — the order the union is joined in.
+SCREEN_CATEGORIES = (
+    "clearly_declared", "self_retest", "measurement_validation", "context_transfer",
+    "incidental_finding", "initial_validation", "tool_benchmark",
+    "builds_on_literature", "terminology_only", "about_replication", "other",
+)
+
+
+def _voter2_provider() -> str:
+    return "openrouter" if "/" in SCREEN_VOTER2_MODEL else "openai"
+
+
+def _screen_providers() -> tuple[str, str]:
+    return ("gemini", _voter2_provider())
 
 
 def _screen_model(provider: str) -> str:
@@ -939,24 +967,92 @@ def _screen_model(provider: str) -> str:
 
 
 def _classify_once(prompt: str, provider: str) -> "dict | None":
-    """One classification vote. provider is 'gemini' or 'openrouter'."""
+    """One classification vote on the v3.2 five-field schema."""
     if provider == "gemini":
         result, _ = call_gemini(prompt, model=GEMINI_LIGHT_MODEL)
-    else:
+    elif provider == "openrouter":
         result, _ = call_openrouter(prompt, model=SCREEN_VOTER2_MODEL)
+    else:
+        result, _ = call_openai(prompt, model=SCREEN_VOTER2_MODEL,
+                                reasoning_effort="low")
     if not result:
         return None
+
+    classification = str(result.get("classification", "")).strip().lower()
+    if classification not in SCREEN_CLASSIFICATIONS:
+        classification = "unclear"
+    raw_confident = result.get("confident")
+    if isinstance(raw_confident, str):
+        confident = raw_confident.strip().lower() == "true"
+    else:
+        confident = bool(raw_confident)
+    raw_categories = result.get("categories")
+    categories = [c for c in (str(x).strip().lower()
+                              for x in (raw_categories if isinstance(raw_categories, list) else []))
+                  if c in SCREEN_CATEGORIES]
     return {
-        "is_replication": str(result.get("is_replication", "unclear")).strip().lower(),
-        "confidence":     str(result.get("confidence", "")).strip().lower(),
+        "classification": classification,
+        "confident":      confident,
+        "categories":     categories,
         "evidence":       str(result.get("evidence_quote", "") or ""),
         "reasoning":      str(result.get("reasoning", "") or ""),
         "provider":       provider,
     }
 
 
+def screen_gate(votes: list[dict]) -> "str | None":
+    """G-softqual, the gate the v3.2 sweep validated: 89% of adjudicated hard
+    negatives discarded with zero settled misses.
+
+    Returns "discard", "proceed", or None when fewer than two voters answered (an
+    incomplete screen is an API failure, not a verdict).
+
+    Discard when every vote is "none" at any confidence, or when at least one voter
+    said "none" confidently and every other vote is a qualifying-or-unclear answer
+    the voter explicitly declined to stand behind. Everything else proceeds — a
+    confident "none" against a confident qualifying answer is a real split, and
+    false inclusions are cheap where false discards are not.
+    """
+    if len(votes) < 2:
+        return None
+    is_none = [v["classification"] == "none" for v in votes]
+    if all(is_none):
+        return "discard"
+    if not any(n and v["confident"] for n, v in zip(is_none, votes)):
+        return "proceed"
+    soft = all(n or (v["classification"] in SCREEN_QUALIFYING + ("unclear",)
+                     and not v["confident"])
+               for n, v in zip(is_none, votes))
+    return "discard" if soft else "proceed"
+
+
+def _screen_record_type(votes: list[dict]) -> str:
+    """The paper type the screen settled on, for the `type` column and the outcome
+    vocabulary. Both voters agreeing on a qualifying label wins; a "both" answer or
+    a replication-vs-reproduction split falls back to the first qualifying voter in
+    call order (Gemini). "both" maps to "replication" because such a paper collects
+    new data, and replication outcome vocabulary applies to it; the raw
+    classifications stay visible in the votes.
+    """
+    quals = [v["classification"] for v in votes if v["classification"] in SCREEN_QUALIFYING]
+    if not quals:
+        return ""
+    if len(quals) == 2 and quals[0] == quals[1]:
+        chosen = quals[0]
+    else:
+        chosen = quals[0]
+    return "replication" if chosen == "both" else chosen
+
+
+def _screen_categories(votes: list[dict]) -> list[str]:
+    """Deduplicated union of both voters' categories, in the prompt's enum order."""
+    seen = {c for v in votes for c in v["categories"]}
+    return [c for c in SCREEN_CATEGORIES if c in seen]
+
+
 def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
-    """Q1 alone: do two models agree that this paper is a replication or reproduction?
+    """Q1 alone: two models judge whether this paper is the kind of study the
+    database collects, and screen_gate() turns their two votes into one decision.
 
     Split out of screen_references_with_llm so Stage 3 can ask the question as its
     front door — before match-type classification, the resolution ladder, the PDF
@@ -965,9 +1061,11 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
     reference list has been fetched, and reuses this verdict instead of re-voting.
 
     Returns:
-      is_replication      — the agreed label, or "unclear" when the models disagree
-      models_agree        — whether both votes matched
-      classification_confidence — the weaker of the two votes' confidences
+      screen_verdict      — "discard" or "proceed" (empty on an incomplete screen)
+      screen_classification — the combined qualifying label, or "none"/"unclear"
+      record_type         — "replication"/"reproduction", empty when neither voter
+                            gave a qualifying answer
+      categories          — union of both voters' categories, in enum order
       votes / llm_*       — who voted what, for the reviewer of a set-aside row
       resolution_method   — llm_refscreen_declined on a complete screen;
                             llm_refscreen_partial (one vote) / llm_refscreen_failed
@@ -975,13 +1073,14 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
                             screen is an API failure, not a verdict, so it is
                             returned uncached — a re-run must be able to succeed.
     """
+    providers  = _screen_providers()
     cls_prompt = build_classify_prompt(study_r, abstract_r)
     # The voter pair is part of the verdict — the two models disagree often enough
     # that this is the question the audit measured a model effect on — so both
     # models are in the key alongside the prompt version and the text they see.
     key = content_key("classify", doi_r or study_r,
                       prompt_version("build_classify_prompt"),
-                      "+".join(_screen_model(p) for p in SCREEN_PROVIDERS),
+                      "+".join(_screen_model(p) for p in providers),
                       cls_prompt)
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
@@ -989,18 +1088,19 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
 
     out = {
         "resolution_method": "llm_refscreen_declined",
-        "is_replication": "unclear", "models_agree": False, "votes": [],
-        "classification_confidence": "",
+        "screen_verdict": "", "screen_classification": "unclear",
+        "record_type": "", "categories": [], "votes": [],
         "llm_source": "", "llm_model": "", "llm_evidence": "",
         "llm_reasoning": "", "llm_prompt": "", "llm_error": "",
     }
 
     out["llm_prompt"] = cls_prompt
-    votes = [v for v in (_classify_once(cls_prompt, p) for p in SCREEN_PROVIDERS) if v]
+    votes = [v for v in (_classify_once(cls_prompt, p) for p in providers) if v]
 
-    # Keep the individual votes: a disagreement row is set aside for human review,
-    # and "the models disagreed" is not reviewable without knowing who said what.
-    out["votes"] = [{k: v[k] for k in ("provider", "is_replication", "confidence", "reasoning")}
+    # Keep the individual votes: the gate's decision is not reviewable without
+    # knowing who said what.
+    out["votes"] = [{k: v[k] for k in
+                     ("provider", "classification", "confident", "categories", "reasoning")}
                     for v in votes]
     out["llm_source"] = "+".join(v["provider"] for v in votes)
     out["llm_model"]  = "+".join(_screen_model(v["provider"]) for v in votes)
@@ -1008,28 +1108,23 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
     out["llm_reasoning"] = " | ".join(f"{v['provider']}: {v['reasoning']}" for v in votes)
 
     # A missing vote is an API failure, not a verdict. Reporting it as a normal
-    # result would file the row as a two-model disagreement and corrupt the
-    # agreement rate, and caching it would freeze one transient failure into a
-    # permanent one. Return uncached so a re-run can screen the row properly.
+    # result would file the row as a screen outcome and corrupt the discard rate,
+    # and caching it would freeze one transient failure into a permanent one.
+    # Return uncached so a re-run can screen the row properly.
     if len(votes) < 2:
         answered = {v["provider"] for v in votes}
         out["resolution_method"] = ("llm_refscreen_partial" if votes
                                     else "llm_refscreen_failed")
         out["llm_error"] = "classifier failed: " + ", ".join(
-            p for p in SCREEN_PROVIDERS if p not in answered)
+            p for p in providers if p not in answered)
         return out
 
-    labels = {v["is_replication"] for v in votes}
-    out["models_agree"] = len(votes) == 2 and len(labels) == 1
-    if out["models_agree"]:
-        out["is_replication"] = votes[0]["is_replication"]
-        # The weaker vote governs: acting on a discard needs both models sure.
-        order = {"high": 2, "medium": 1, "low": 0, "": 0}
-        out["classification_confidence"] = min(
-            (v["confidence"] for v in votes), key=lambda c: order.get(c, 0))
-    else:
-        # Disagreement is informative, not an error — the row is set aside for review.
-        out["is_replication"] = "unclear"
+    out["screen_verdict"] = screen_gate(votes)
+    out["record_type"]    = _screen_record_type(votes)
+    out["categories"]     = _screen_categories(votes)
+    labels = {v["classification"] for v in votes}
+    out["screen_classification"] = (out["record_type"] or
+                                    (labels.pop() if len(labels) == 1 else "unclear"))
 
     write_cache(LLM_CACHE_DIR, key, out)
     return out
@@ -1057,7 +1152,7 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
     }
     out.update(classification or classify_replication(doi_r, study_r, abstract_r))
 
-    if out["is_replication"] == "yes" and refs:
+    if out["screen_classification"] in SCREEN_QUALIFYING and refs:
         # The pick is cached separately from the classification: the two halves are
         # now decided at different points in the pipeline, and one cache holding
         # both would be written before the second half had run.

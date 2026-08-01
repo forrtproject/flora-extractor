@@ -20,7 +20,8 @@ import pandas as pd
 
 from shared.config import (
     BASE_DIR, DATA_DIR, GEMINI_API_KEYS, GEMINI_HEAVY_MODEL, LLM_CACHE_DIR,
-    OA_XML_CACHE_DIR, OPENROUTER_API_KEY, PARSE_CACHE_DIR, PDF_CACHE_DIR, log,
+    OA_XML_CACHE_DIR, OPENAI_API_KEY, OPENROUTER_API_KEY, PARSE_CACHE_DIR,
+    PDF_CACHE_DIR, SCREEN_VOTER2_MODEL, log,
 )
 from shared import token_counter
 from shared.llm_client import call_llm, classify_replication, ladder_fingerprint
@@ -221,9 +222,6 @@ _METHOD_MAP = {
     # The same screen concluded the paper is not a replication at all, so there is
     # no original to look for and no reason to fetch the PDF.
     "llm_not_a_replication":          "not_a_replication",
-    # The two Q1 classifiers disagreed; the row is set aside for review
-    # rather than escalated (see the front-door screen in run_extract).
-    "llm_screen_disagreement":        "screen_disagreement",
     # LLM ran successfully but concluded no identifiable original study exists.
     # Distinct from llm_failed (API errors) and llm_fulltext (original found).
     "llm_no_target":                  "no_original_found",
@@ -1334,15 +1332,19 @@ def _check_screen_providers(no_llm: bool) -> None:
     """Refuse to start when the front-door screen cannot get its second vote.
 
     The screen decides whether a paper is a replication at all by voting two
-    providers against each other and acting only when they agree. With one
-    provider configured every screened row returns a single vote, which the
-    pipeline can only treat as an incomplete screen — the whole run would produce
-    target_pending rows and discard nothing.
+    providers against each other. With one provider configured every screened row
+    returns a single vote, which the pipeline can only treat as an incomplete
+    screen — the whole run would produce target_pending rows and discard nothing.
+
+    Which key voter 2 needs follows SCREEN_VOTER2_MODEL: an OpenRouter model id
+    contains "/", anything else is called on OpenAI direct.
     """
     if no_llm:
         return
+    voter2 = (("OPENROUTER_API_KEY", OPENROUTER_API_KEY) if "/" in SCREEN_VOTER2_MODEL
+              else ("OPENAI_API_KEY", OPENAI_API_KEY))
     missing = [name for name, key in (("GEMINI_API_KEY", GEMINI_API_KEYS[0] if GEMINI_API_KEYS else ""),
-                                      ("OPENROUTER_API_KEY", OPENROUTER_API_KEY)) if not key]
+                                      voter2) if not key]
     if missing:
         raise RuntimeError(
             f"Stage 3 needs both reference-screen providers; missing: {', '.join(missing)}. "
@@ -1383,35 +1385,34 @@ def _resolve_and_code(doi_r: str, row: pd.Series, match_type: str, match_conf: s
 def _front_door_row(filter_row: pd.Series, screen: dict) -> "dict | None":
     """The row to write when the classification screen ends the paper, else None.
 
-    Three endings, with the semantics the screen used to reach from inside the ladder,
+    Two endings, with the semantics the screen used to reach from inside the ladder,
     after the match-type call and often a PDF had already been paid for:
 
-      incomplete   — one vote is not a verdict: target_pending so a re-run can decide
-                     the row once the provider is back; no votes at all is api_error.
-      confident no — both models agree, both at high confidence: not_a_replication.
-      disagreement — set aside for review, carrying who voted what.
+      incomplete — one vote is not a verdict: target_pending so a re-run can decide
+                   the row once the provider is back; no votes at all is api_error.
+      discard    — screen_gate() says the two votes settle it: not_a_replication.
 
-    Everything else ("yes", or a "no" the models were not both sure of) returns None
-    and goes down the ladder.
+    A gate "proceed" returns None and goes down the ladder. There is no
+    disagreement ending: a confident "none" against a confident qualifying answer
+    proceeds, because a false inclusion costs a ladder run and a false discard
+    costs the paper.
     """
     method = str(screen.get("resolution_method", ""))
     if method not in {"llm_refscreen_partial", "llm_refscreen_failed"}:
-        if (screen.get("is_replication") == "no" and screen.get("models_agree")
-                and screen.get("classification_confidence") == "high"):
-            method = "llm_not_a_replication"
-        elif not screen.get("models_agree"):
-            method = "llm_screen_disagreement"
-        else:
+        if screen.get("screen_verdict") != "discard":
             return None
+        method = "llm_not_a_replication"
 
     link = {**screen, "resolution_method": method}
-    if method == "llm_screen_disagreement":
-        # A row set aside for a human must record who said what — "the models
-        # disagreed" alone is not something a reviewer can act on.
-        verdicts = "; ".join(f"{v['provider']}={v['is_replication']}/{v['confidence']}"
-                             for v in screen.get("votes", []))
+    if method == "llm_not_a_replication":
+        # A discarded row must record who said what — the verdict alone is not
+        # something a reviewer can act on.
+        verdicts = "; ".join(
+            f"{v['provider']}={v['classification']}/"
+            f"{'confident' if v['confident'] else 'unconfident'}"
+            for v in screen.get("votes", []))
         link["llm_evidence"] = "; ".join(filter(None, [
-            f"screen disagreement: {verdicts}" if verdicts else "screen disagreement",
+            f"screen discard: {verdicts}" if verdicts else "screen discard",
             str(screen.get("llm_evidence", "") or ""),
         ]))
 

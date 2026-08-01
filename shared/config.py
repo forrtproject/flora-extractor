@@ -117,11 +117,11 @@ GEMINI_HEAVY_MODEL = os.getenv("GEMINI_HEAVY_MODEL", GEMINI_MODEL)
 # OpenRouter (OpenAI-compatible API at openrouter.ai) — optional alternative LLMs
 OPENROUTER_API_KEY    = os.getenv("OPENROUTER_API_KEY",    "")
 OPENROUTER_HEAVY_MODEL = os.getenv("OPENROUTER_HEAVY_MODEL", "qwen/qwen3.5-35b-a3b")
-# Second voter of the Stage 4.5 replication screen, called through OpenRouter.
-# Ministral 14B beat every alternative measured on adjudicated hard cases (89.4%
-# correct vs 66% for gpt-5-mini) while discarding no genuine replication, and its
-# errors overlap little with the Google first voter's.
-SCREEN_VOTER2_MODEL = os.getenv("SCREEN_VOTER2_MODEL", "mistralai/ministral-14b-2512")
+# Second voter of the front-door replication screen. On the v3.2 gate sweep this
+# model paired with Gemini Flash-Lite discards 89% of adjudicated hard negatives
+# with zero settled misses; Ministral via OpenRouter reached 73% on the same gate.
+# An id containing "/" is routed to OpenRouter, anything else to OpenAI direct.
+SCREEN_VOTER2_MODEL = os.getenv("SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
 
 # ── External servers ──────────────────────────────────────────────────────────
 GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")

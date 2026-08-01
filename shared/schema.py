@@ -150,11 +150,12 @@ LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
     # LLM ran with full context but concluded no identifiable original study exists.
     # These papers are likely Stage 2 false positives or self-replications; exclude from DB import.
     "no_original_found",
-    # Stage 4.5 verdicts that end the row without a target: the screen concluded the
-    # paper replicates nothing (not_a_replication), or the two Q1 classifiers
-    # disagreed and the row was set aside for review (screen_disagreement).
-    # sanity_check quarantines both; exclude from DB import.
+    # Screen verdicts that end the row without a target. sanity_check quarantines
+    # both; exclude from DB import.
     "not_a_replication",
+    # Historical, no longer emitted: the front door's gate has no disagreement
+    # terminal state, so a split now proceeds down the ladder. Rows on disk still
+    # carry the value and --rescreen must keep reopening them.
     "screen_disagreement",
     "target_pending", "api_error",
 }

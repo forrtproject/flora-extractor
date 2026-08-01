@@ -30,7 +30,9 @@ from shared.cache import clear_content_keys
 from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_CACHE_DIR, RESEARCHER_EMAIL, log
 from shared.disambiguation import is_umbrella_paper, jaccard_similarity
 from shared import token_counter
-from shared.llm_client import identify_original_with_llm, screen_references_with_llm
+from shared.llm_client import (
+    SCREEN_QUALIFYING, identify_original_with_llm, screen_references_with_llm,
+)
 from shared.pdf_parsing import (
     parse_all as _parse_all,
     best_parse_result as _best_parse_shared,
@@ -704,50 +706,37 @@ def run_for_doi(doi_r:              str,
                                             classification=classification)
 
         # A screen that did not get both votes is an API failure, not a verdict, and
-        # must be caught before the disagreement branch below — a lone surviving vote
-        # is not two models disagreeing. One vote → target_pending, so a re-run can
-        # screen the row once the provider is back; no votes → api_error.
+        # must be caught before the gate below — a lone surviving vote is not a
+        # decision. One vote → target_pending, so a re-run can screen the row once
+        # the provider is back; no votes → api_error.
         if screen["resolution_method"] in {"llm_refscreen_partial", "llm_refscreen_failed"}:
             log.warning("[%s] Reference screen incomplete (%s): %s", doi_r,
                         screen["resolution_method"], screen.get("llm_error", ""))
             return emit(screen, {}, {}, screen)
 
-        # Discarding needs both models to agree, and to agree confidently. The full
+        # The gate is screen_gate(), defined once in shared/llm_client.py. The full
         # screen dict is the resolution so the discarded row still carries the models
         # that voted, their evidence and their reasoning — it is set aside for review,
         # and a row with no attribution is not reviewable.
-        if (screen["is_replication"] == "no"
-                and screen.get("models_agree")
-                and screen.get("classification_confidence") == "high"):
-            log.info("[%s] Reference screen: not a replication — skipping PDF", doi_r)
-            return emit({**screen, "resolution_method": "llm_not_a_replication"},
-                        {}, {}, screen)
+        if screen.get("screen_verdict") == "discard":
+            verdicts = "; ".join(
+                f"{v['provider']}={v['classification']}/"
+                f"{'confident' if v['confident'] else 'unconfident'}"
+                for v in screen.get("votes", []))
+            log.info("[%s] Reference screen: discard (%s) — skipping PDF", doi_r, verdicts)
+            discard = emit({**screen, "resolution_method": "llm_not_a_replication"},
+                           {}, {}, screen)
+            # _merge_row reads the row's link_evidence from llm_evidence, so set that.
+            discard["llm_evidence"] = "; ".join(filter(None, [
+                f"screen discard: {verdicts}" if verdicts else "screen discard",
+                screen.get("llm_evidence", ""),
+            ]))
+            return discard
 
         if screen["resolved"]:
             log.info("[%s] Resolved from reference list: %s", doi_r,
                      screen["resolved_title_o"])
             return emit(screen, {}, {}, screen)
-
-        # Two models reaching different verdicts is a signal in its own right, and
-        # escalating those rows spends the most expensive path on exactly the cases
-        # least likely to reward it. Set them aside for review instead.
-        if not screen.get("models_agree"):
-            verdicts = "; ".join(
-                f"{v['provider']}={v['is_replication']}/{v['confidence']}"
-                for v in screen.get("votes", []))
-            log.info("[%s] Screen disagreement (%s) — set aside, not escalating",
-                     doi_r, verdicts)
-            disagreement = emit(
-                {**screen, "resolution_method": "llm_screen_disagreement"},
-                {}, {}, screen)
-            # The row exists to be reviewed by a human, so record who said what —
-            # "the models disagreed" alone is not something a reviewer can act on.
-            # _merge_row reads the row's link_evidence from llm_evidence, so set that.
-            disagreement["llm_evidence"] = "; ".join(filter(None, [
-                f"screen disagreement: {verdicts}" if verdicts else "screen disagreement",
-                screen.get("llm_evidence", ""),
-            ]))
-            return disagreement
 
         # ── Stage 4.6: Title search on a named-but-unmatched target ──────────
         # The screen can recognise the target in the abstract yet fail to match it
@@ -756,19 +745,19 @@ def run_for_doi(doi_r:              str,
         # the named title is far cheaper than acquiring and parsing the PDF, and the
         # same search already runs after the PDF stage as llm_title_search.
         #
-        # Gated on a high-confidence screen. This is the one resolver that picks from
-        # the whole literature rather than a supplied candidate list, and the errors
-        # it makes are systematic: a paper that is not a replication at all gets
-        # confidently linked to a landmark it merely cites. classification_confidence
-        # is the weaker of the two Q1 votes and is only populated when the models
-        # agree, so "== high" means both voters called it a replication at high
-        # confidence — the same bar the screen already applies before discarding a row.
-        # The result is still written as provisional (link_method llm_title_search,
-        # link_confidence low, no outcome coded); the gate decides whether to spend
-        # the two searches at all.
+        # Gated on both voters giving a qualifying answer AND both standing behind
+        # it. This is the one resolver that picks from the whole literature rather
+        # than a supplied candidate list, and the errors it makes are systematic: a
+        # paper that is not a replication at all gets confidently linked to a
+        # landmark it merely cites. The result is still written as provisional
+        # (link_method llm_title_search, link_confidence low, no outcome coded); the
+        # gate decides whether to spend the two searches at all.
         target_desc = screen.get("target_description", "")
-        if (screen["is_replication"] == "yes" and target_desc
-                and screen.get("classification_confidence") == "high"):
+        votes = screen.get("votes", [])
+        both_sure = (len(votes) == 2
+                     and all(v["classification"] in SCREEN_QUALIFYING and v["confident"]
+                             for v in votes))
+        if target_desc and both_sure:
             hit = _search_title_for_original(doi_r, target_desc, study_r)
             if hit:
                 log.info("[%s] Resolved by pre-PDF title search: %s", doi_r,
