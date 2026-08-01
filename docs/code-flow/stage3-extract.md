@@ -119,13 +119,28 @@ may_stop_at_a_rule(title_r, abstract_r, year_r)
     AND no stated study count ("replications of N studies", 3 ≤ N < 1900)
         → a deterministic rung may END the row
     otherwise
-        → its pick is WITHHELD; the ladder continues to a call that can enumerate,
-          and the pick is restored only if that call returned ≤ 1 target
+        → its pick is WITHHELD until something that can enumerate targets speaks
 ```
 
-A false positive costs one LLM call; a false negative silently drops N-1 originals.
-Project names are not a signal: Many Labs is many labs replicating **one** original, and
-a Registered Replication Report likewise.
+The pick is withheld, never discarded. It is restored:
+
+- at every exit where nothing enumerated — `--no-pdf`, no document acquired, no
+  context, an incomplete screen (`--no-llm` never withholds, since nothing there could
+  ever enumerate and the ladder would only pay for a PDF);
+- after the full-text call, when that call **answered** and either named no target or
+  named the same work (compared on the mapped record's DOI, falling back to
+  title + year + first author).
+
+A provider failure is not an answer: it exits as `llm_failed` carrying its `llm_error`,
+so a re-run asks again rather than freezing an unconfirmed rule pick into a resolved
+row. A false positive on the gate costs one LLM call; a false negative silently drops
+N-1 originals. Project names are not a signal: Many Labs is many labs replicating
+**one** original, and a Registered Replication Report likewise.
+
+A later rung can also settle on ONE original for a paper an earlier successful call
+already saw two in — its reference list was simply shorter. The ladder keeps the answer
+with the most `match_certain` targets, and emits the union rather than the single link,
+so the adapter writes every original including the one that rung resolved.
 
 ## Original-study resolution ladder (`link_original.run_for_doi`)
 

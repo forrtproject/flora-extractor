@@ -143,10 +143,13 @@ apply `--resolved-only`, then code the outcome once per original through
 `extract_outcome`. Ranks are renumbered after the drops. Unmatched targets get no row;
 the shortfall is reported in `link_evidence`. Because the ladder returns at its first
 success, `may_stop_at_a_rule()` in `link_original.py` withholds a deterministic pick
-whenever the paper's own text does not rule out a second target, and restores it only
-if an enumerating call then found at most one. `original_match_type` /
-`original_match_confidence` are observations about the answer, not a prediction made
-before it.
+whenever the paper's own text does not rule out a second target. The pick is withheld
+only UNTIL something that can enumerate targets speaks: it is restored at every exit
+where nothing did (`--no-pdf`, no document, no context, an incomplete screen — and
+`--no-llm` never withholds at all), and after the full-text call when that call named
+nothing or named the same work. A provider failure is not that answer, so it does not
+restore. `original_match_type`, `original_match_confidence` and `n_originals` are
+observations, settled after the guard's demotions and `--resolved-only`'s drops.
 
 **Two outcome prompts, one per vocabulary.** `build_outcome_prompt()` (replication)
 and `build_repro_outcome_prompt()` (reproduction) each serve both passes: supplying the

@@ -71,8 +71,8 @@ EXTRACT_ADDED_COLS = [
     # stay one row, while several original PAPERS are several rows. Both link paths
     # fill it from the LLM's study_numbers — the per-target adapter additionally
     # groups on it, see _collapse_same_paper_originals() in extract/run_extract.py.
-    # NOT the same field as the validation DB's `study_o`, which holds a title —
-    # see extract/csv_to_db.py.
+    # The validation DB's `study_o` used to hold a title; csv_to_db now sends this
+    # number there and the titles to title_o — see extract/csv_to_db.py.
     "study_o",             # str   — target study number(s) within the original paper
     "year_o",              # int   — original study publication year
     "authors_o",           # str   — original study authors, semicolon-separated APA names (e.g. "Bransford, J. D.; Franks, J. J.")

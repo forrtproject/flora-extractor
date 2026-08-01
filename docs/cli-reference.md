@@ -441,7 +441,6 @@ python -c "import shutil; shutil.rmtree('cache/llm', ignore_errors=True)"
 | `/dashboard` | 6-tab monitoring dashboard — see [dashboard-guide.md](dashboard-guide.md) |
 | `/check` | Search/filter/download across any stage — see [check-page.md](check-page.md) |
 | `/batch` | Batch disambiguation for multiple-match papers (not registered when `FLORA_READONLY=1`) |
-| `/multi-originals` | Multi-original paper review (not registered when `FLORA_READONLY=1`) |
 | `/pipeline` | Redirects to `/dashboard` |
 | `/api/dashboard/csv-stats` | Pipeline stats JSON (3-tier cascade: stats.json → Parquet → CSV) |
 | `/api/dashboard/download` | Download a full stage CSV (`?stage=candidates\|filtered\|extracted\|extracted-test`) |

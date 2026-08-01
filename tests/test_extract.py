@@ -660,6 +660,26 @@ class TestOutcomeCacheKey:
         assert mock.call_count == 1
         assert len(list(tmp_path.glob("outcome_*.json"))) == 2
 
+    def test_the_flag_is_appended_only_when_set(self, tmp_path):
+        """A key component that is always present moves EVERY key. The outcome cache
+        is the most expensive one the pipeline holds — its entries may carry a
+        full-text escalation — so a single-original key must be byte-identical to the
+        one written before the flag existed."""
+        from shared.cache import content_key
+        from shared.llm_client import ladder_fingerprint
+        from shared.config import GEMINI_HEAVY_MODEL
+        from shared.prompts import prompt_version
+
+        parts = (ladder_fingerprint(GEMINI_HEAVY_MODEL),
+                 prompt_version("build_outcome_prompt"), "replication",
+                 "T", "a", "", "", "", "")
+        pre_pr = content_key("outcome", "10.1234/key", *parts)
+        with_flag = content_key("outcome", "10.1234/key", *parts, "multi_original")
+
+        self._run(tmp_path, abstract_r="a", title_r="T")
+        assert [f.stem for f in tmp_path.glob("outcome_*.json")] == [pre_pr]
+        assert with_flag != pre_pr
+
     def test_changed_fulltext_misses(self, tmp_path):
         """The escalation reads the fulltext, so a re-parsed PDF must not replay the
         verdict reached without it."""
@@ -3064,6 +3084,140 @@ class TestPerTargetAdapter:
         assert rows[0]["link_method"] == "same_author_year_title_overlap"
         assert rows[0]["doi_o"] == "10.1037/h0054651"
         assert rows[0]["study_r"] == "2"          # from the link, not from a target
+
+
+class TestAdapterRowsSettleAfterTheDrops:
+    """Everything that describes the GROUP — the match type, the count, the
+    confidence — is only knowable once the guard and --resolved-only have run."""
+
+    _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
+                      "filter_status": "replication"})
+
+    def _run(self, targets, resolved_only=False, **over):
+        link = dict(_MOCK_LINK, resolved=False, resolution_method="llm_multi_target",
+                    resolved_doi_o="", resolved_title_o="", multi_target=True,
+                    n_targets=len(targets), target_stage="llm_gemini",
+                    unidentified_count=0, targets=targets, llm_model="gemini-heavy",
+                    **over)
+        with patch.object(run_extract, "run_for_doi", return_value=link), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch.object(run_extract, "extract_outcome", return_value=_MOCK_OUTCOME):
+            return run_extract._resolve_and_code(
+                "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
+                resolved_only=resolved_only, recalibrate_outcomes=False)
+
+    def test_a_paper_whose_second_target_is_rejected_is_not_multiple_original(self):
+        """The match type is the row count, and the row count is only final after the
+        guard: a surviving single row that still says multiple_original overcounts
+        every multi-original figure on the dashboard."""
+        rows = self._run([
+            _mock_target("@self", "10.1/rep", "The paper itself", "Self", 2020),
+            _mock_target("@jones2011", "10.1/b", "Second original", "Jones", 2011)])
+
+        assert len(rows) == 2
+        survivors = [r for r in rows if r["link_method"] != "target_pending"]
+        assert len(survivors) == 1
+        # Both rows agree on the group, and the demoted one is not a high-confidence
+        # match to an original it no longer has.
+        assert {r["original_match_type"] for r in rows} == {"multiple_original"}
+        demoted = [r for r in rows if r["link_method"] == "target_pending"][0]
+        assert demoted["original_match_confidence"] == "low"
+        assert survivors[0]["original_match_confidence"] == "high"
+
+    def test_resolved_only_leaves_a_single_original_paper(self):
+        rows = self._run([
+            _mock_target("@self", "10.1/rep", "The paper itself", "Self", 2020),
+            _mock_target("@jones2011", "10.1/b", "Second original", "Jones", 2011)],
+            resolved_only=True)
+
+        assert len(rows) == 1
+        assert rows[0]["original_match_type"] == "single_original"
+        assert rows[0]["n_originals"] == 1
+        assert rows[0]["original_match_confidence"] == "high"
+
+    def test_a_provisional_link_is_never_written_at_high_confidence(self):
+        """A DOI the pipeline had to search for is ~50% precise. The single path caps
+        it at low through _link_confidence; the adapter must not undo that."""
+        target = _mock_target("@smith2009", "", "An unindexed original", "Smith", 2009)
+        with patch.object(run_extract, "run_for_doi", return_value=dict(
+                _MOCK_LINK, resolved=False, resolution_method="llm_multi_target",
+                resolved_doi_o="", resolved_title_o="", multi_target=True, n_targets=1,
+                target_stage="llm_gemini", unidentified_count=0, targets=[target])), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch("shared.doi_verify.resolve_doi_by_metadata",
+                   return_value={"doi": "10.9/found"}), \
+             patch.object(run_extract, "extract_outcome", return_value=_MOCK_OUTCOME):
+            rows = run_extract._resolve_and_code(
+                "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
+                resolved_only=False, recalibrate_outcomes=False)
+
+        assert rows[0]["link_method"] == "llm_title_search"
+        assert rows[0]["link_confidence"] == "low"
+        assert rows[0]["original_match_confidence"] == "low"   # not a resolved method
+
+    def test_two_targets_that_verify_to_one_doi_become_one_row(self):
+        """The collapse groups what the MODEL said; the guard then recovers a DOI for
+        a target that had none, so two entries can arrive at one doi_o afterwards —
+        and two rows sharing a doi_o share a pair_id."""
+        targets = [_mock_target("@a", "", "An unindexed original", "Smith", 2009,
+                                study_numbers="1", replication_study_numbers="1"),
+                   _mock_target("@b", "", "An unindexed original (reprint)", "Smith",
+                                2009, study_numbers="2",
+                                replication_study_numbers="2")]
+        outcomes = iter([dict(_MOCK_OUTCOME, outcome="success"),
+                         dict(_MOCK_OUTCOME, outcome="failure")])
+        with patch.object(run_extract, "run_for_doi", return_value=dict(
+                _MOCK_LINK, resolved=False, resolution_method="llm_multi_target",
+                resolved_doi_o="", resolved_title_o="", multi_target=True, n_targets=2,
+                target_stage="llm_gemini", unidentified_count=0, targets=targets)), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch("shared.doi_verify.resolve_doi_by_metadata", return_value=None), \
+             patch.object(run_extract, "_search_crossref_by_title",
+                          return_value={"doi": "10.9/same", "openalex_id": ""}), \
+             patch.object(run_extract, "extract_outcome",
+                          side_effect=lambda *a, **k: next(outcomes)):
+            rows = run_extract._resolve_and_code(
+                "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
+                resolved_only=False, recalibrate_outcomes=False)
+
+        assert len(rows) == 1
+        assert rows[0]["doi_o"] == "10.9/same"
+        assert rows[0]["study_o"] == "1, 2"
+        assert rows[0]["study_r"] == "1, 2"
+        # Two verdicts about one original are reconciled by FLoRA's rule, not by
+        # taking whichever row happened to be first.
+        assert rows[0]["outcome"] == "mixed"
+        assert rows[0]["n_originals"] == 1
+
+
+def test_a_rejected_row_states_nothing_about_the_original_it_lost():
+    """Every one of these fields describes the original the guard just rejected. A row
+    that keeps them reads as a link to a paper the pipeline explicitly refused."""
+    row = {"doi_r": "10.1/rep", "title_r": "A Study of Things",
+           "doi_o": "10.1/rep", "title_o": "A Study of Things", "study_o": "1",
+           "study_r": "2", "year_o": "2009", "authors_o": "Smith, J.",
+           "ref_o": "Smith, J. (2009). A Study of Things.",
+           "bibtex_ref_o": "@article{Smith_2009,}", "oa_work_id_o": "W123",
+           "link_method": "llm_fulltext", "link_confidence": "high"}
+    out = run_extract._guard_original_link(row)
+
+    assert out["link_method"] == "target_pending"
+    for column in ("doi_o", "title_o", "study_o", "study_r", "year_o", "authors_o",
+                   "ref_o", "bibtex_ref_o", "oa_work_id_o"):
+        assert out[column] == "", column
+
+
+def test_study_r_is_not_written_onto_an_unresolved_link():
+    """The ladder can carry a target list past an exit that resolved nothing. Those
+    study numbers belong to the targets' own rows, not to a row with no original."""
+    unresolved = {"resolution_method": "needs_fulltext", "resolved": False,
+                  "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
+                  "resolved_author_o": "", "resolved_study_o": "", "resolved_study_r": "2"}
+    with patch("extract.run_extract._build_ref_o", return_value=("", "", "")):
+        row = _merge_row(pd.Series({"doi_r": "10.1/rep", "title_r": "T",
+                                    "filter_status": "replication"}),
+                         unresolved, {}, "single_original", "low", 1, 1)
+    assert row["study_r"] == ""
 
 
 def test_no_live_reference_to_the_deleted_builders():

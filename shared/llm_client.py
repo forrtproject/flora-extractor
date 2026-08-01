@@ -692,11 +692,14 @@ def identify_targets_with_llm(doi_r:          str,
         cached.setdefault("llm_error",  "")
         cached.setdefault("target_stage", "")
         cached.setdefault("resolved_study_r", "")
-        # Entries written before the mapped record was kept on the target resolve
-        # their keys here instead. The key namespace is a pure function of
-        # (candidates, references), so this call rebuilt the same map; without the
-        # repair a cached multi-target answer reaches the adapter record-less and
-        # every one of its targets is dropped as unmatched.
+        # Future-proofing, not migration: no entry on disk is record-less today,
+        # because adding replication_study_numbers moved
+        # prompt_version("build_target_prompt") and so every key with it. The repair
+        # stays because the output shape can change again WITHOUT the key changing,
+        # and the failure mode is silent — a record-less target is dropped as
+        # unmatched, so the row loses an original it had already paid to find. The key
+        # namespace is a pure function of (candidates, references), so this call
+        # rebuilt the same map the cached answer was written against.
         for t in cached.get("targets") or []:
             if t.get("key") and not t.get("record"):
                 t["record"] = key_map.get(t["key"])
