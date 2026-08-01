@@ -836,6 +836,18 @@ def _original_block(verb_line: str, original_authors: str, original_year: str,
             f"{multi_note}\n\n")
 
 
+def _fill(template: str, values: dict[str, str]) -> str:
+    """Substitute every {placeholder} in *template* in one pass, never rescanning.
+
+    Chained .replace() calls read what earlier calls wrote, so a paper whose title
+    contains the literal text "{abstract_r}" had its abstract spliced into the title
+    line, and an abstract containing "{fulltext_block}" injected the PAPER TEXT block.
+    Substituting in a single regex pass makes an input's own braces inert.
+    """
+    pattern = re.compile(r"\{(" + "|".join(map(re.escape, values)) + r")\}")
+    return pattern.sub(lambda m: values[m.group(1)], template)
+
+
 def build_outcome_prompt(title_r: str, abstract_snip: str,
                          original_authors: str = "", original_year: str = "",
                          original_title: str = "", text_snip: str = "",
@@ -848,20 +860,19 @@ def build_outcome_prompt(title_r: str, abstract_snip: str,
     would offer "fulltext" as a quote source the model never saw.
     """
     fulltext = bool(text_snip)
-    return (
-        _OUTCOME_TEMPLATE
-        .replace("{evidence_line}", _EVIDENCE_FULLTEXT if fulltext else _EVIDENCE_ABSTRACT)
-        .replace("{field_count}", "six" if fulltext else "five")
-        .replace("{record_type_check_field}", _OUTCOME_RTC_FIELD if fulltext else "")
-        .replace("{record_type_check_meaning}", _OUTCOME_RTC_MEANING if fulltext else "")
-        .replace("{original_block}", _original_block(
+    return _fill(_OUTCOME_TEMPLATE, {
+        "evidence_line": _EVIDENCE_FULLTEXT if fulltext else _EVIDENCE_ABSTRACT,
+        "field_count": "six" if fulltext else "five",
+        "record_type_check_field": _OUTCOME_RTC_FIELD if fulltext else "",
+        "record_type_check_meaning": _OUTCOME_RTC_MEANING if fulltext else "",
+        "original_block": _original_block(
             "THIS PAPER REPLICATES:", original_authors, original_year, original_title,
-            _MULTI_ORIGINAL_NOTE.replace("{verb}", "replicates") if multi_original else ""))
-        .replace("{title_r}", title_r or "(not available)")
-        .replace("{abstract_r}", abstract_snip or "(not available)")
-        .replace("{fulltext_block}",
-                 _PAPER_TEXT_BLOCK.replace("{text_snip}", text_snip) if fulltext else "")
-    )
+            _fill(_MULTI_ORIGINAL_NOTE, {"verb": "replicates"}) if multi_original else ""),
+        "title_r": title_r or "(not available)",
+        "abstract_r": abstract_snip or "(not available)",
+        "fulltext_block": (_fill(_PAPER_TEXT_BLOCK, {"text_snip": text_snip})
+                           if fulltext else ""),
+    })
 
 
 def build_repro_outcome_prompt(title_r: str, abstract_snip: str,
@@ -874,19 +885,18 @@ def build_repro_outcome_prompt(title_r: str, abstract_snip: str,
     The pass is selected exactly as in build_outcome_prompt.
     """
     fulltext = bool(text_snip)
-    return (
-        _REPRO_OUTCOME_TEMPLATE
-        .replace("{evidence_line}", _EVIDENCE_FULLTEXT if fulltext else _EVIDENCE_ABSTRACT)
-        .replace("{field_count}", "nine" if fulltext else "eight")
-        .replace("{record_type_check_field}", _REPRO_RTC_FIELD if fulltext else "")
-        .replace("{original_block}", _original_block(
+    return _fill(_REPRO_OUTCOME_TEMPLATE, {
+        "evidence_line": _EVIDENCE_FULLTEXT if fulltext else _EVIDENCE_ABSTRACT,
+        "field_count": "nine" if fulltext else "eight",
+        "record_type_check_field": _REPRO_RTC_FIELD if fulltext else "",
+        "original_block": _original_block(
             "THIS PAPER REPRODUCES:", original_authors, original_year, original_title,
-            _MULTI_ORIGINAL_NOTE.replace("{verb}", "reproduces") if multi_original else ""))
-        .replace("{title_r}", title_r or "(not available)")
-        .replace("{abstract_r}", abstract_snip or "(not available)")
-        .replace("{fulltext_block}",
-                 _PAPER_TEXT_BLOCK.replace("{text_snip}", text_snip) if fulltext else "")
-    )
+            _fill(_MULTI_ORIGINAL_NOTE, {"verb": "reproduces"}) if multi_original else ""),
+        "title_r": title_r or "(not available)",
+        "abstract_r": abstract_snip or "(not available)",
+        "fulltext_block": (_fill(_PAPER_TEXT_BLOCK, {"text_snip": text_snip})
+                           if fulltext else ""),
+    })
 
 
 # ── L12 / L13 — reference extraction from a PDF, when parsing fails ──────────

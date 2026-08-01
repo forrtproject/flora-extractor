@@ -599,6 +599,27 @@ class TestOutcomePromptContent:
         assert "…" in prompt
 
 
+class TestOutcomePromptPlaceholderInjection:
+    """Paper text that happens to contain a template placeholder must render literally.
+    Chained .replace() calls rescanned their own output, so a title containing
+    "{abstract_r}" was replaced by the abstract."""
+
+    def test_placeholder_text_in_every_input_survives_verbatim(self):
+        from shared.prompts import build_outcome_prompt, build_repro_outcome_prompt
+        marks = {"title": "T {abstract_r} {fulltext_block}",
+                 "abstract": "A {fulltext_block} {title_r}",
+                 "authors": "{title_r} et al",
+                 "year": "{field_count}",
+                 "orig_title": "O {evidence_line} {record_type_check_field}",
+                 "text": "F {abstract_r} {original_block}"}
+        for build in (build_outcome_prompt, build_repro_outcome_prompt):
+            prompt = build(marks["title"], marks["abstract"], marks["authors"],
+                           marks["year"], marks["orig_title"], text_snip=marks["text"],
+                           multi_original=True)
+            for value in marks.values():
+                assert value in prompt, (build.__name__, value)
+
+
 class TestOutcomeCacheKey:
     """One content-keyed entry per outcome answer — no legacy DOI-only key."""
 

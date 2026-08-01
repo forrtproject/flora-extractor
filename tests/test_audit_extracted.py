@@ -255,6 +255,28 @@ def test_reproduction_axis_quotes_are_checked_too():
     assert "quote_not_in_abstract" in fired
 
 
+def test_quote_source_count_mismatch_fires_both_ways():
+    """A passage with no source of its own, or a source with no passage, leaves part of
+    the quote unaudited — silently dropping the surplus said nothing about it."""
+    more_quotes = _clean_row(
+        abstract_r="The study found a clear effect here.",
+        outcome_phrase="found a clear effect | and a second passage entirely",
+        out_quote_source="abstract")
+    more_sources = _clean_row(
+        abstract_r="The study found a clear effect here.",
+        outcome_phrase="found a clear effect",
+        out_quote_source="abstract | fulltext")
+    for row in (more_quotes, more_sources):
+        assert "quote_source_count_mismatch" in _checks_fired([row])
+        assert _severity_of([row], "quote_source_count_mismatch") == WARNING
+    # The pairs that do align are still checked.
+    assert "quote_not_in_abstract" in _checks_fired([_clean_row(
+        abstract_r="This paper is about photosynthesis in tomato plants.",
+        outcome_phrase="the priming effect did not replicate | a second passage",
+        out_quote_source="abstract")])
+    assert "quote_source_count_mismatch" not in _checks_fired([_clean_row()])
+
+
 def test_low_link_confidence_fires():
     assert "low_link_confidence" in _checks_fired([_clean_row(link_confidence="low")])
 

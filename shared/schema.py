@@ -251,11 +251,14 @@ def derive_reproduction_outcome(computation: str, robustness: str) -> str:
 
     An unsettled axis makes the whole verdict unsettled — the axis columns still carry
     whatever the other axis settled, but the single `outcome` column a reader sorts on
-    must not read as settled when half of it is not.
+    must not read as settled when half of it is not. An axis value outside its
+    vocabulary is unsettled for the same reason: joining it would mint an `outcome`
+    outside REPRODUCTION_OUTCOME_CATEGORIES.
     """
     comp = str(computation or "").strip()
     rob = str(robustness or "").strip()
-    if (comp in ("", "cannot_be_determined") or rob in ("", "cannot_be_determined")):
+    if (comp not in COMPUTATION_OUTCOME_VALUES - {"cannot_be_determined"}
+            or rob not in ROBUSTNESS_OUTCOME_VALUES - {"cannot_be_determined"}):
         return "cannot_be_determined"
     return f"{comp}, {rob}"
 

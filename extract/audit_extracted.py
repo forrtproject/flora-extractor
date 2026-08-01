@@ -79,27 +79,37 @@ def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", str(text or "").strip().lower())
 
 
-def _abstract_quote_miss(quote: str, sources: str, abstract: str) -> "float | None":
-    """The worst partial_ratio of a passage claimed to come from the abstract but not
-    found there, or None when every such passage checks out.
+def _abstract_quote_check(quote: str, sources: str,
+                          abstract: str) -> "tuple[float | None, tuple[int, int] | None]":
+    """(worst partial_ratio of a passage claimed to be in the abstract but missing from
+    it, count mismatch between passages and sources) — each None when nothing fired.
 
     A quote may span two sections, joined by " | " with its sources listed in the same
     order. Testing the joined string against the abstract flagged every one of those
     as missing, because half of it was never in the abstract to begin with — so each
     passage is checked against the source named in its own position.
+
+    When the two lists are of different lengths the positional pairing is only partly
+    trustworthy, so the mismatch is reported as its own finding and the pairs that do
+    align are still checked. Pairing by zip alone dropped the surplus silently, which
+    left passages unaudited and said nothing about it.
     """
     quotes = [q.strip() for q in str(quote or "").split(_QUOTE_JOIN)]
     named = [s.strip() for s in str(sources or "").split(_QUOTE_JOIN)]
+    mismatch = None
+    if any(quotes) and any(named) and len(quotes) != len(named):
+        mismatch = (len(quotes), len(named))
     na = _norm(abstract)
     worst: "float | None" = None
-    for passage, source in zip(quotes, named):
+    for i in range(min(len(quotes), len(named))):
+        passage, source = quotes[i], named[i]
         if not passage or source != "abstract":
             continue
         nq = _norm(passage)
         fuzzy = fuzz.partial_ratio(nq, na) if nq and na else 0.0
         if nq not in na and fuzzy < _QUOTE_FUZZ_THRESHOLD:
             worst = fuzzy if worst is None else min(worst, fuzzy)
-    return worst
+    return worst, mismatch
 
 
 def _as_int(val) -> "int | None":
@@ -160,8 +170,12 @@ def _row_checks(row: pd.Series) -> list[tuple[str, str, str]]:
 
     abstract = str(row.get("abstract_r", "") or "")
     for quote_col, source_col in _QUOTE_COLUMNS:
-        fuzzy = _abstract_quote_miss(str(row.get(quote_col, "") or ""),
-                                     str(row.get(source_col, "") or ""), abstract)
+        fuzzy, mismatch = _abstract_quote_check(str(row.get(quote_col, "") or ""),
+                                                str(row.get(source_col, "") or ""), abstract)
+        if mismatch is not None:
+            out.append(("quote_source_count_mismatch", WARNING,
+                        f"{quote_col} has {mismatch[0]} passage(s) but {source_col} "
+                        f"names {mismatch[1]} source(s)"))
         if fuzzy is not None:
             out.append(("quote_not_in_abstract", WARNING,
                         f"{quote_col} not found in abstract_r (partial_ratio={fuzzy:.0f})"))
