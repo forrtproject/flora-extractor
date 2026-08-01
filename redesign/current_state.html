@@ -47,15 +47,16 @@ details.prompt[open] summary { border-bottom:1px solid var(--rule); margin-botto
 <main>
 
 <h1>FLoRA Extractor — Current State &amp; Way Forward</h1>
-<p class="subtitle">The pipeline as it stands on <code>main</code> (<code>f026ea4</code>, 2026-08-01),
+<p class="subtitle">The pipeline as it stands on <code>main</code> (<code>6f5243b</code>, 2026-08-01),
 what can be trusted, and what to do next. Companion to the screening audit, which holds the
-historical record and evidence trails. §8.1 and §8.2 are merged as of this commit
-(PRs&nbsp;#116 and&nbsp;#117); §6.2 records the post-merge architecture review.</p>
+historical record and evidence trails. All three §8 prompt replacements are merged
+(PRs&nbsp;#116, #117, #118); §6.2 records the post-merge architecture review.</p>
 
 <div class="box">
 <p><strong>In one paragraph.</strong> The extraction pipeline is in its best-verified state to
-date: 863 tests pass, three independent code reviews found no open blocking defects, and the
-validated v3.2 screen (§8.1) and the merged target prompt (§8.2) are on <code>main</code>. The two constraints that dominate
+date: 879 tests pass, three independent code reviews found no open blocking defects, and the
+validated v3.2 screen (§8.1), the merged target prompt (§8.2) and the two-prompt outcome
+coding with the 4×3 reproduction grid (§8.3) are all on <code>main</code>. The two constraints that dominate
 everything else are upstream and downstream of the code: <strong>Stage&nbsp;2 sends the pipeline
 roughly twice as many papers as it should</strong> (about half of what reaches Stage&nbsp;3 is not
 a replication), and <strong>the Supabase import is blocked</strong> until the validation repo adds
@@ -192,7 +193,7 @@ and several schema items, and none can be settled by implementation alone.</p>
 <tr><td>Overlapping observations</td><td>FLoRA allows a replication to share observations with the original; the filter prompt forbids it</td><td>align the filter to FLoRA</td></tr>
 <tr><td>Report types</td><td>registrations, non-persistent blogs, Google Docs are named exclusions with no implementation, and the two source documents contradict each other on blogs</td><td>settle the list, implement as a cheap URL/DOI rule</td></tr>
 <tr><td><code>study_r</code></td><td>the validation DB has the column, FLoRA's codebook explicitly does not</td><td>drop it (part of the #103 migration)</td></tr>
-<tr><td>Reproduction grid <span class="tag t-ops">settled</span></td><td>the pipeline emits a 3×3 grid joined into one string with one shared quote; the codebook's grid is 4×3 in two separately coded fields, each with its own quote and quote source</td><td><strong>decided:</strong> <code>outcome_computation</code> (computationally reproducible · computational issues · technical failure · not checked) × <code>outcome_robustness</code> (robust · robustness challenges · not checked), each with its own quote and source — drafted in <a href="#outcomeprompts">§8.3</a>. Only 17 reproductions exist (14 with empty outcomes), so recoding is cheap</td></tr>
+<tr><td>Reproduction grid <span class="tag t-ops">settled</span></td><td>the pipeline emits a 3×3 grid joined into one string with one shared quote; the codebook's grid is 4×3 in two separately coded fields, each with its own quote and quote source</td><td><strong>decided:</strong> <code>outcome_computation</code> (computationally reproducible · computational issues · technical failure · not checked) × <code>outcome_robustness</code> (robust · robustness challenges · not checked), each with its own quote and source — implemented in <a href="#outcomeprompts">§8.3</a> (PR&nbsp;#118). Only 17 reproductions exist (14 with empty outcomes, kept as tolerated legacy values until recoded), so recoding is cheap</td></tr>
 </table></div>
 
 <p><strong>Then the one measurement that settles the rest.</strong> A replacement screening
@@ -266,8 +267,9 @@ or validate; either way make pipeline reporting reflect what was actually sent.<
 prompt already.</li>
 </ul>
 
-<p><strong>Outcome prompts</strong> — both items below are now drafted in
-<a href="#outcomeprompts">§8.3</a>, which folds the four outcome prompts into two.</p>
+<p><strong>Outcome prompts</strong> — both items below are settled by
+<a href="#outcomeprompts">§8.3</a>, merged in PR&nbsp;#118, which folds the four outcome
+prompts into two.</p>
 <ul>
 <li>Move <code>GENUINE_ATTEMPT_RULE</code> above the outcome rules — it is still appended
 after them (<code>shared/prompts.py:631</code>) — with the ~50-row before/after spot-check
@@ -400,9 +402,9 @@ evidence from the 75 hand-coded cases; open items tracked in issues #103, #94, #
 
 <p>Three prompt replacements follow the pipeline in order: the first decides which papers
 enter it, the second decides what each surviving paper is linked to, and the third decides
-what the paper found. <strong>The first two are merged into <code>main</code></strong>
-(PR&nbsp;#116 for §8.1 with the Stage&nbsp;1–3 refactor pass, PR&nbsp;#117 reworked on top of
-it for §8.2; 863 tests pass); the third is drafted below.
+what the paper found. <strong>All three are merged into <code>main</code></strong>:
+PR&nbsp;#116 for §8.1 with the Stage&nbsp;1–3 refactor pass, PR&nbsp;#117 reworked on top of
+it for §8.2, and PR&nbsp;#118 for §8.3.
 Adopted together they supersede seventeen of the twenty prompt blocks in §9, leaving the two
 PDF-extraction prompts and the provider system message.</p>
 
@@ -855,6 +857,11 @@ model, and their cached answers have different shapes and different acceptance p
 
 <h3 id="outcomeprompts">8.3 · The outcome prompts — four collapse to two</h3>
 
+<p><span class="tag t-ops">done</span> Merged (PR&nbsp;#118, 2026-08-01) exactly as specified
+below — see the §8.3.1 status note for the two follow-ups (legacy reproduction recode, the
+receiving-side Supabase migration). The prose below is kept as the design rationale; "today"
+in it means pre-#118.</p>
+
 <p>Outcome coding runs four prompt builders today:
 <code>build_outcome_abstract_prompt</code>, <code>build_outcome_fulltext_prompt</code>,
 <code>build_repro_abstract_prompt</code> and <code>build_repro_fulltext_prompt</code> — a 2×2
@@ -1235,6 +1242,15 @@ and do not infer a more specific section):
 Respond with the JSON object only.</pre></details>
 
 <h3 id="outcome-impl">8.3.1 · Implementation checklist</h3>
+
+<p><span class="tag t-ops">done</span> Items 1–7 and 9 are implemented and merged
+(PR&nbsp;#118, 2026-08-01), reviewed adversarially by codex with all findings fixed under
+regression tests. Item&nbsp;8 (one outcome call per target on the multi path) is deliberately
+deferred to the §8.2 multi-original rework — §6.2 finding&nbsp;#1. Still outstanding around
+the merge: the 17 stored reproduction rows keep their legacy 3×3 values
+(<code>OUTCOME_LEGACY_VALUES</code>) until a live recode run, and <strong><code>csv_to_db</code>
+must not run against production until the receiving-side migration lands</strong>
+(flora-validation#3) — the import would reject the six new fields.</p>
 
 <p>Everything the two prompts require, in dependency order, with the decisions a builder would
 otherwise have to invent. The prompt merge is the small half: the grid change touches the
