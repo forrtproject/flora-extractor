@@ -457,10 +457,12 @@ Use `unittest.mock.patch` or `pytest-mock` to mock external API calls in unit te
 from unittest.mock import patch
 
 def test_classify_replication(tmp_path):
-    with patch("filter.llm_filter.call_gemini") as mock_gemini:
-        mock_gemini.return_value = {"filter_status": "replication", ...}
-        result = classify_with_llm(sample_row)
-    assert result["filter_status"] == "replication"
+    with patch("shared.llm_client.call_gemini") as mock_gemini:
+        mock_gemini.return_value = ({"classification": "replication",
+                                     "confident": True, "categories": ["clearly_declared"],
+                                     "evidence_quote": "", "reasoning": ""}, None)
+        vote = _classify_once("prompt", "gemini")
+    assert vote["classification"] == "replication"
 ```
 
 ### Live API tests

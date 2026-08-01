@@ -31,21 +31,23 @@ no-phrase bucket before treating the accepted set as complete.
 The `TECHNICAL_OBJECT` and `TECHNICAL_VERB` patterns in
 [`filter/spec/exclusion-patterns.yaml`](../filter/spec/exclusion-patterns.yaml)
 match phrases such as *"replicated the analysis code of Smith (2019)"*. Some of these
-are genuinely **in-scope computational reproductions** — and the Stage-2 LLM prompt
-itself treats same-data reproduction as in-scope. The patterns are kept because they
+are genuinely **in-scope computational reproductions**, which the pipeline treats as
+in-scope. The patterns are kept because they
 buy specificity: they drop the large volume of molecular-biology and pure-software
 "replication" noise.
 
 The narrow overlap is rescued rather than lost. When an exclusion pattern fires,
 `filter/rule_filter.py` re-checks the text for a replication phrase with exclusions
 ignored; if that phrase **and** an author-year citation are both present, the row is
-sent to the LLM as `needs_review` at medium confidence (`filter_evidence` records
-`exclusion:<pattern>; phrase+cite present — LLM review`) instead of being rejected.
-Rows where the exclusion fires without both signals are still `false_positive` at high
-confidence with no LLM review.
+kept as `needs_review` at medium confidence (`filter_evidence` records
+`exclusion:<pattern>; phrase+cite present — LLM review`) instead of being rejected, and
+reaches Stage 3's front-door screen. Rows where the exclusion fires without both
+signals are still `false_positive` at high confidence and never reach the screen.
 
 **Revisit obligation:** the rescue gate requires a *parseable* author-year citation, so
-an in-scope reproduction that names its target in prose alone is still dropped. Measure
+an in-scope reproduction that names its target in prose alone is still dropped — and
+since the Stage-2 LLM escalation was retired, the rule filter is the only thing standing
+between a `false_positive` verdict and the paper never being seen again. Measure
 how much that costs before treating the technical-exclusion bucket as clean.
 
 ---

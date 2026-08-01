@@ -16,8 +16,8 @@ Per RULEBOOK §Filter:
 
 Adds the FILTER_ADDED_COLS to ``df`` (filter_status, filter_method,
 filter_evidence, filter_confidence). ``filter_method`` is always
-``rule_based`` here; ``llm_filter`` may overwrite it to ``llm`` or ``both``
-later.
+``rule_based`` here; Stage 3 overwrites it to ``screen`` on the rows its
+front-door screen passes.
 """
 
 import pandas as pd

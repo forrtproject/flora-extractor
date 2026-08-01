@@ -104,7 +104,6 @@ ELSEVIER_API_KEY = os.getenv("ELSEVIER_API_KEY", "")
 
 # ── Model identifiers ─────────────────────────────────────────────────────────
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
-FILTER_OPENAI_MODEL = os.getenv("FILTER_OPENAI_MODEL", "gpt-5-mini")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 
 # Per-task model selection — light for classify_match_type & code_outcome,

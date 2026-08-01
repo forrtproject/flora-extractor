@@ -54,70 +54,11 @@ EVIDENCE_POLICY = (
 # Every prompt closes with this exact sentence, and every prompt that asks for a
 # confidence uses the key `confidence` with the values below. Before this, five
 # prompts phrased the instruction five ways and named the field five ways
-# (filter_confidence, original_match_confidence, classification_confidence,
-# target_confidence, outcome_confidence) for no reason a reader could reconstruct.
+# (original_match_confidence, target_confidence, outcome_confidence and others)
+# for no reason a reader could reconstruct. The front-door screen is the exception:
+# it takes a boolean `confident`, the field the v3.2 evaluation validated.
 JSON_INSTRUCTION = "Respond with ONLY this JSON — no prose outside the braces:\n"
 CONFIDENCE_FIELD = '"confidence": "<high|medium|low>", '
-
-
-# ── L1 — Stage 2 filter ──────────────────────────────────────────────────────
-
-def build_filter_prompt(title: str, abstract: str) -> str:
-    return (
-        EVIDENCE_POLICY +
-        "Classify the paper into EXACTLY ONE of these types:\n\n"
-        "1) replication\n"
-        "- Analyses observations that were NOT part of the original study's analytic "
-        "sample, in order to re-test a finding from a previously published study.\n"
-        "- Must intend to replicate a specific prior study or experiment; it is not enough "
-        "to report that findings replicate earlier work.\n"
-        "- Can be direct/close or conceptual.\n"
-        "- Includes a new experiment or survey, a different cohort, jurisdiction, site or "
-        "time period, a later wave, and secondary-data replications drawing a distinct "
-        "sample from the same repository or recurring data source.\n"
-        "- Key criterion: the observations analysed are not the original's.\n\n"
-        "2) reproduction\n"
-        "- Re-analyses the original study's ACTUAL observations — its analytic dataset, "
-        "code or computational workflow — to check the reported result.\n"
-        "- Focuses on computational reproducibility or robustness of reported findings.\n"
-        "- Still a reproduction when the authors call it a 'replication', or when they add "
-        "alternative specifications, corrections or robustness checks to the original data.\n"
-        "- Key criterion: the original's own analytic dataset is re-used. Sharing a "
-        "database, registry, panel or survey programme with the original is NOT enough — "
-        "if the observations or analytic sample are new, it is a replication.\n\n"
-        "3) false_positive\n"
-        "- NOT actually a replication or reproduction despite similar language.\n"
-        "- Includes:\n"
-        "  - meta-analyses or systematic reviews\n"
-        "  - papers about the replication crisis/research methodology\n"
-        "  - data/code papers\n"
-        "  - biological replication (cells, DNA, organisms, viruses)\n"
-        "  - robustness/sensitivity checks within the paper\n"
-        "  - papers mentioning the need for 'replication' or otherwise discussing rather "
-        "than doing it\n"
-        "  - papers that report only an internal replication (e.g. 'In Study 2, we "
-        "replicate our findings from Study 1'). But a paper that replicates a "
-        "PREVIOUSLY PUBLISHED study still qualifies, even when that study is by the "
-        "same authors, and a multi-study paper qualifies if ANY of its studies "
-        "replicates previously published work\n\n"
-        "Decision rules:\n"
-        "1. Authors' labels follow field conventions and can mislead: in economics and "
-        "some other fields, a re-analysis of the ORIGINAL data is itself called a "
-        "'replication'. Classify by the data criterion, not the label — same original "
-        "data means reproduction even when the authors call it a replication.\n"
-        "2. false_positive overrides whenever the paper only superficially resembles "
-        "replication/reproduction.\n\n"
-        "PAPER TO CLASSIFY\n\n"
-        f"Title:\n{title}\n\n"
-        f"Abstract:\n{abstract}\n\n"
-        + JSON_INSTRUCTION +
-        "{\n"
-        '  "filter_status": "<replication|reproduction|false_positive>",\n'
-        '  "confidence": "<high|medium|low>",\n'
-        '  "filter_evidence": "<short verbatim supporting phrase ≤120 chars>",\n'
-        '  "reasoning": "<one-sentence explanation>"\n'
-        "}"
-    )
 
 
 # ── L2 — Stage 3 match-type classification ───────────────────────────────────

@@ -52,10 +52,12 @@ Never make live API calls in unit tests. Use `unittest.mock.patch`:
 from unittest.mock import patch
 
 def test_classify_replication():
-    with patch("filter.llm_filter.call_gemini") as mock:
-        mock.return_value = {"filter_status": "replication", ...}
-        result = classify_with_llm(sample_row)
-    assert result["filter_status"] == "replication"
+    with patch("shared.llm_client.call_gemini") as mock:
+        mock.return_value = ({"classification": "replication", "confident": True,
+                              "categories": ["clearly_declared"],
+                              "evidence_quote": "", "reasoning": ""}, None)
+        vote = llm._classify_once("prompt", "gemini")
+    assert vote["classification"] == "replication"
 ```
 
 ### Schema tests

@@ -17,7 +17,6 @@ from shared import token_counter
 from shared.schema import CANDIDATES_COLS, FILTERED_COLS
 from shared.utils import clean_doi
 from filter.rule_filter import classify_row as _rule_classify
-from filter.llm_filter import classify_with_llm as _llm_classify
 
 # ---------------------------------------------------------------------------
 # Filtered index — avoids loading the full filtered.csv to build already_done
@@ -258,7 +257,6 @@ def run_filter(limit: "int | None" = None,
     survived = 0
     bad_id_count = 0
     rows_with_empty_keys_input = 0
-    llm_failures = 0   # #45: rows deferred because every LLM model failed
     # Position of each surviving (post year/source filter) row in read order.
     # This reproduces exactly the 0-based RangeIndex the previous implementation
     # obtained from pd.concat(chunks, ignore_index=True): concat renumbers the
@@ -329,40 +327,15 @@ def run_filter(limit: "int | None" = None,
                 stop = True
                 break
 
-            doi_r    = str(row.get("doi_r")       or "")
-            title    = str(row.get("title_r")    or "")
-            abstract = str(row.get("abstract_r") or "")
+            doi_r = str(row.get("doi_r") or "")
 
             # Rule filter
             row_dict = row.to_dict()
             row_dict.update(_rule_classify(row_dict))
 
-            # LLM uplift for rows the rule filter couldn't decide
-            if row_dict.get("filter_status") == "needs_review":
-                verdict = _llm_classify(title, abstract)
-                if verdict:
-                    row_dict["filter_status"]     = verdict["filter_status"]
-                    row_dict["filter_confidence"] = verdict["filter_confidence"]
-                    prior = str(row_dict.get("filter_evidence") or "")
-                    row_dict["filter_evidence"] = (
-                        f"{prior} | llm:{verdict['filter_evidence']}"
-                        if prior else f"llm:{verdict['filter_evidence']}"
-                    )
-                    row_dict["filter_method"] = (
-                        "both" if row_dict.get("filter_method") == "rule_based" else "llm"
-                    )
-                else:
-                    # #45: every model failed after its own retries. Writing the row now
-                    # would record it as `needs_review` — indistinguishable from genuine
-                    # uncertainty — and indexing the key would retire it forever. Leave
-                    # both undone so the next run reprocesses the row from candidates.csv;
-                    # writing-then-retrying instead would duplicate it, since the index is
-                    # the only dedup.
-                    llm_failures += 1
-                    log.warning("[%s] LLM classification failed after retries — row left "
-                                "unwritten and unindexed for retry on the next run", doi_r)
-                    continue
-
+            # needs_review rows are written through as they are. Stage 3's
+            # front-door screen is the validated decider of "is this a replication
+            # at all", so a second, weaker LLM verdict here only pre-empts it.
             _append_row(out_path, row_dict, first=first_write)
             first_write = False
             new_rows += 1
@@ -376,9 +349,6 @@ def run_filter(limit: "int | None" = None,
                      doi_r, row_dict.get("filter_status"), new_rows)
 
     log.info("Stage 2: read %d candidates, %d survived filters", total_read, survived)
-    if llm_failures:
-        log.warning("Stage 2: %d row(s) deferred — the LLM failed on every model. They "
-                    "were NOT written and NOT indexed; re-run to retry them.", llm_failures)
     if from_year is not None or to_year is not None:
         log.info("--year filter %s–%s applied during chunked read",
                  from_year or "any", to_year or "any")

@@ -1713,6 +1713,13 @@ def run_extract(no_llm: bool = False,
                 first_write = False
                 output_rows.append(done)
                 continue
+            # The screen passed the row, so its verdict is the paper-type field —
+            # filter_status is that field (issue #93), and Stage 2 now leaves
+            # undecidable rows at needs_review for exactly this call to settle.
+            # Without the overwrite csv_to_db's import mask would drop them.
+            if screen.get("record_type"):
+                row["filter_status"] = screen["record_type"]
+                row["filter_method"] = "screen"
 
         match = classify_match_type(row.to_dict(), no_llm=no_llm)
         match_type = match["original_match_type"]

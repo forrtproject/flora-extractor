@@ -29,19 +29,23 @@ All `candidates.csv` columns, plus:
 
 | Column | Type | Description |
 | ------ | ---- | ----------- |
-| `filter_status` | string | `replication` \| `reproduction` \| `false_positive` \| `needs_review` |
-| `filter_method` | string | `rule_based` \| `both` — see below |
+| `filter_status` | string | `replication` \| `reproduction` \| `false_positive` \| `needs_review` — the paper-type field; see below |
+| `filter_method` | string | `rule_based` \| `screen` — see below |
 | `filter_evidence` | string | Phrase or pattern that triggered the classification |
 | `filter_confidence` | string | `high` \| `medium` \| `low` — categorical, not a float |
 
 `filter_confidence` is a three-level label because a single LLM call cannot produce calibrated probabilities.
 
-`run_filter` writes only two values. Every row is classified by the rule filter first
-(`rule_based`), and the LLM is asked only about the rows the rules left at
-`needs_review` — so an LLM verdict always lands on a row that already carries a
-rule-based one, and is recorded as `both`. The third value, `llm`, is written only by
-`filter/refilter_fp.py` when it re-decides a row whose verdict was already `both`.
-`schema.py` lists all three.
+`run_filter` writes one value: every row is classified by the deterministic rule
+filter (`rule_based`), and rows the rules cannot decide are written through as
+`needs_review`. Stage 3's front-door screen is the validated decider of "is this a
+replication at all", so when it passes a row, `run_extract` overwrites
+`filter_status` with the screen's paper type (`replication` / `reproduction`) and
+sets `filter_method` to `screen`, recording which call made the call.
+
+`llm` and `both` are **historical**: Stage 2 had an LLM escalation for
+`needs_review` rows, which is retired. Rows written before the v3.2 screen still
+carry those values and `schema.py` still lists them.
 
 ---
 

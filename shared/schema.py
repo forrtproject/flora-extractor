@@ -26,7 +26,7 @@ CANDIDATES_COLS = [
 # All CANDIDATES_COLS + the following:
 FILTER_ADDED_COLS = [
     "filter_status",     # str — replication | reproduction | false_positive | needs_review
-    "filter_method",     # str — rule_based | llm | both
+    "filter_method",     # str — rule_based | screen; llm/both are historical
     "filter_evidence",   # str — phrase or quote that triggered classification
     "filter_confidence", # str — high | medium | low  (categorical, not float)
 ]

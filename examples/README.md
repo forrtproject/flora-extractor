@@ -31,7 +31,7 @@ multi-original case.
 
 1. Loads `filter/spec/exclusion-patterns.yaml`.
 2. Applies `apply_rule_filter` (phrase detection + author-year cite gate + non-scholarly exclusion).
-3. Applies `apply_llm_filter` to anything left as `needs_review`. With no API key the LLM step is a no-op.
+3. Writes anything left as `needs_review` through unchanged — Stage 3's front-door screen decides those rows.
 
 The script then prints the `filter_status` breakdown and the first five rows of the result.
 
