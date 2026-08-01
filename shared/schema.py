@@ -245,6 +245,9 @@ def outcome_categories_for(record_type: str) -> set:
         return REPRODUCTION_OUTCOME_CATEGORIES | {"cannot_be_determined", "not_a_replication"}
     return OUTCOME_CATEGORIES
 
+# The `type` column may also be EMPTY: when the front-door screen proceeds without a
+# qualifying vote and Stage 2 left the row at needs_review, nothing has said what the
+# paper is, and the pipeline records that rather than defaulting to replication.
 TYPE_VALUES = {"replication", "reproduction"}
 
 VALIDATION_STATUS_VALUES = {"confirmed", "rejected", "pending", "needs_review"}

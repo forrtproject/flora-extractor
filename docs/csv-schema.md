@@ -43,11 +43,10 @@ replication at all", so when it passes a row, `run_extract` overwrites
 `filter_status` with the screen's paper type (`replication` / `reproduction`) and
 sets `filter_method` to `screen`, recording which call made the call. When the gate
 proceeds without any qualifying vote (unclear/unclear, or an unconfident `none`
-against an unconfident qualifying answer) no call has said what the paper is: a
-`filter_status` already at `replication` or `reproduction` is left alone, anything
-else defaults to `replication`, and `filter_method` still names whoever last actually
-decided. No row that reaches Stage 3 stays at `needs_review` — `csv_to_db` imports
-nothing else, so a resolved pairing left there would be invisible to human validation.
+against an unconfident qualifying answer) no call has said what the paper is, so both
+fields keep Stage 2's values and `type` is left empty. Such a row is resolved and
+outcome-coded but stays at `needs_review`, which `csv_to_db` does not import: it waits
+on the check page for a human to say what it is.
 
 `llm` and `both` are **historical**: Stage 2 had an LLM escalation for
 `needs_review` rows, which is retired. Rows written before the v3.2 screen still
@@ -87,7 +86,7 @@ All `filtered.csv` columns, plus:
 | `out_quote_source` | string | Where the outcome quote came from: `abstract` \| `title` \| `fulltext`. `fulltext` appears only on results escalated to the fulltext LLM pass. |
 | `outcome_reasoning` | string | LLM chain-of-thought for the outcome decision |
 | `outcome_llm_model` | string | Model that coded the outcome. Can differ from `link_llm_model` within one run — the outcome step fails over to another provider when the primary's quota runs out. `keyword` on `--no-llm` rule-based rows; blank when no outcome verdict was made (`pending`, `api_error`) |
-| `type` | string | `replication` \| `reproduction`. Decided by the front-door screen (a `both` classification is recorded as `replication`, since such a paper collects new data); falls back to Stage 2's `filter_status` only on `--no-llm` rows, where no screen ran. Also selects the outcome vocabulary — a reproduction is coded on the computation/robustness grid |
+| `type` | string | `replication` \| `reproduction` \| empty. Decided by the front-door screen (a `both` classification is recorded as `replication`, since such a paper collects new data), falling back to Stage 2's `filter_status`. **Empty** when neither decided — the screen proceeded without a qualifying vote on a row Stage 2 left at `needs_review`; such a row is coded on the replication vocabulary but carries no type and is not imported. Also selects the outcome vocabulary — a reproduction is coded on the computation/robustness grid |
 | `original_rank` | int | 1 for single-original; 1, 2, 3… for multi-original |
 | `n_originals` | int | Total number of originals for this paper |
 

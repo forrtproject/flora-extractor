@@ -563,14 +563,22 @@ def _record_type(filter_row: pd.Series, screen: "dict | None") -> str:
     on the computation/robustness grid, not success/failure (see shared/schema.py).
 
     The front-door screen decides it — that is the call that read the abstract and
-    said what the paper is. Stage 2's filter_status is only the --no-llm fallback,
-    where no screen ran.
+    said what the paper is. Stage 2's filter_status stands in when the screen
+    proceeded without a qualifying vote, and is the whole answer on a --no-llm run
+    where no screen ran at all.
+
+    When neither has decided, the field is left EMPTY rather than defaulted: a paper
+    nobody has classified is not a replication because replication is the commoner
+    answer. Such a row still resolves an original and is still outcome-coded (on the
+    replication vocabulary, the more general of the two grids), but it carries no
+    type into the CSV and csv_to_db leaves it for a human.
     """
     if screen and screen.get("record_type"):
         return str(screen["record_type"])
-    return ("reproduction"
-            if str(filter_row.get("filter_status", "")).strip().lower() == "reproduction"
-            else "replication")
+    status = str(filter_row.get("filter_status", "")).strip().lower()
+    if status in {"replication", "reproduction"}:
+        return status
+    return "" if screen else "replication"
 
 
 def _screen_categories(screen: "dict | None") -> str:
@@ -1714,22 +1722,15 @@ def run_extract(no_llm: bool = False,
                 first_write = False
                 output_rows.append(done)
                 continue
-            # The screen passed the row, so the paper-type field has to be settled
-            # here: filter_status is that field (issue #93), Stage 2 now leaves
-            # undecidable rows at needs_review, and csv_to_db imports nothing that
-            # is not replication or reproduction. A row left at needs_review could
-            # resolve an original and get an outcome and still be invisible to human
-            # validation.
+            # filter_status is the paper-type field (issue #93), so a screen that
+            # said what the paper is overwrites it. A gate that proceeded without a
+            # qualifying vote (unclear/unclear, or an unconfident none against an
+            # unconfident qualifying answer) said nothing, and the row keeps whatever
+            # Stage 2 left — a needs_review row stays needs_review, waits for a human
+            # on the check page, and is not imported by csv_to_db.
             if screen.get("record_type"):
                 row["filter_status"] = screen["record_type"]
                 row["filter_method"] = "screen"   # the screen decided the type
-            elif str(row.get("filter_status", "")) not in {"replication", "reproduction"}:
-                # The gate proceeded without a qualifying vote (unclear/unclear, or
-                # an unconfident none against an unconfident qualifying answer), so
-                # no call has said what the paper is. Default to replication, as the
-                # old filter_status derivation did for everything non-reproduction,
-                # and leave filter_method naming whoever last actually decided.
-                row["filter_status"] = "replication"
 
         match = classify_match_type(row.to_dict(), no_llm=no_llm)
         match_type = match["original_match_type"]

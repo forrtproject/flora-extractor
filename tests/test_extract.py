@@ -2278,11 +2278,12 @@ class TestFrontDoorScreen:
 
         assert m_link.call_args[1]["classification"] == _YES_SCREEN
 
-    def test_a_proceed_without_a_qualifying_vote_still_imports(self, tmp_path, monkeypatch):
+    def test_a_proceed_without_a_qualifying_vote_invents_no_type(self, tmp_path, monkeypatch):
         """A needs_review row the gate proceeds on without any qualifying vote
-        (unclear/unclear) can still resolve an original and get an outcome. If
-        filter_status stayed needs_review, csv_to_db's import mask would drop the
-        row and the pairing would never reach a human validator."""
+        (unclear/unclear) still resolves an original and is still outcome-coded, but
+        nothing has said what kind of paper it is. Writing "replication" there would
+        be a guess presented as a reading, so the type stays empty, the row stays
+        needs_review, and csv_to_db leaves it for the check page."""
         needs_review_csv = _FILTERED_CSV.replace(
             "replication,rule_based,direct replication,high",
             "needs_review,rule_based,phrase without a cite,medium")
@@ -2295,22 +2296,20 @@ class TestFrontDoorScreen:
         row = result.iloc[0]
         m_link.assert_called_once()
         assert row["link_method"] == "same_author_year_title_overlap"
-        # The paper type defaults to replication, as the old filter_status
-        # derivation did for everything non-reproduction…
-        assert row["filter_status"] == "replication"
-        assert row["type"] == "replication"
-        assert m_out.call_args[1]["record_type"] == "replication"
-        # …but no call decided it, so provenance still names the rule filter.
+        assert row["type"] == ""
+        assert row["filter_status"] == "needs_review"
         assert row["filter_method"] == "rule_based"
-        # The row passes csv_to_db's import mask — the point of all of the above.
-        statuses, methods = _import_mask()
-        assert row["filter_status"] in statuses
-        assert row["link_method"] in methods
+        # Coded on the replication vocabulary, the more general of the two grids.
+        assert m_out.call_args[1]["record_type"] == ""
+        # It waits for a human rather than importing — that is the point.
+        statuses, _ = _import_mask()
+        assert row["filter_status"] not in statuses
 
-    def test_a_proceed_without_a_qualifying_vote_keeps_a_decided_type(
+    def test_a_proceed_without_a_qualifying_vote_keeps_stage_2s_type(
             self, tmp_path, monkeypatch):
-        """Stage 2 already said reproduction and no screen call overrode it, so the
-        default must not quietly rewrite the row to replication."""
+        """Stage 2 already said reproduction and no screen call overrode it. That is
+        a decided type, not an invented one, so it stands — and with it the
+        computation/robustness vocabulary the outcome call has to use."""
         repro_csv = _FILTERED_CSV.replace(
             "replication,rule_based,direct replication,high",
             "reproduction,rule_based,re-analysis of the original data,high")
