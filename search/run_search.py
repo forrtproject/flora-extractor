@@ -34,8 +34,9 @@ from typing import Optional
 import pandas as pd
 
 from shared.config import CACHE_DIR, DATA_DIR, OA_CACHE_DIR, log
+from shared.csv_index import KeyIndex, dedup_csv
+from shared.row_key import row_keys
 from shared.schema import CANDIDATES_COLS
-from shared.utils import clean_doi
 from search.openalex_search import (
     fetch_openalex_candidates,
     fetch_openalex_concept_candidates,
@@ -52,122 +53,18 @@ from search.fetch_abstracts import enrich_abstracts
 # Candidates index — avoids loading the full CSV to check for duplicates
 # ---------------------------------------------------------------------------
 
-_CANDIDATES_INDEX_PATH = CACHE_DIR / "candidates_index.txt"
-
-
-def _row_keys(row: "pd.Series | dict") -> list[str]:
-    """All identifying keys for a row. Stored in the index to detect duplicates
-    via any identifier (openalex_id takes priority, then doi, url, title)."""
-    keys = []
-    oa = str(row.get("openalex_id_r", "") or "").strip()
-    if oa:
-        keys.append(f"oa:{oa}")
-    doi = clean_doi(str(row.get("doi_r", "") or ""))
-    if doi:
-        keys.append(doi)
-    url = str(row.get("url_r", "") or "").strip()
-    if url:
-        keys.append(f"url:{url}")
-    # #53: title is a LAST-RESORT identifier only. A row with a DOI/OpenAlex id/URL must
-    # dedupe on that, never on its title — otherwise two distinct works sharing a title
-    # (Reply/Commentary pairs, "Registered Replication Report" stubs, identically-titled
-    # corrections) collide and the second is silently dropped.
-    title = str(row.get("title_r", "") or "").lower().strip()
-    if title and not keys:
-        keys.append(f"title:{title}")
-    return keys
-
-
-def _load_candidates_index() -> set[str]:
-    """Load candidates index from disk, streaming to avoid loading entire file in memory.
-
-    With 2M+ entries, reading all at once causes MemoryError on Windows.
-    This reads line-by-line instead, keeping memory usage bounded.
-    """
-    if not _CANDIDATES_INDEX_PATH.exists():
-        return set()
-
-    index = set()
-    try:
-        with open(_CANDIDATES_INDEX_PATH, "r", encoding="utf-8") as f:
-            for line in f:
-                key = line.strip()
-                if key:  # Skip empty lines
-                    index.add(key)
-        log.info("Candidates index loaded: %d keys from disk", len(index))
-    except MemoryError:
-        log.error("MemoryError loading candidates index — file may be too large (%s)",
-                  _CANDIDATES_INDEX_PATH.stat().st_size / (1024**3) if _CANDIDATES_INDEX_PATH.exists() else "unknown")
-        raise
-    except Exception as e:
-        log.error("Failed to load candidates index: %s", e)
-        raise
-
-    return index
-
-
-def _save_candidates_index(index: set[str]) -> None:
-    # Stream keys to disk line-by-line to avoid building a giant string in memory.
-    tmp = _CANDIDATES_INDEX_PATH.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.writelines(k + "\n" for k in index)
-    tmp.replace(_CANDIDATES_INDEX_PATH)
-
-
-def _append_to_candidates_index(new_keys: set[str]) -> None:
-    """Append only new keys to the index — avoids rewriting the full 2.9M-key file."""
-    with open(_CANDIDATES_INDEX_PATH, "a", encoding="utf-8") as f:
-        f.writelines(k + "\n" for k in new_keys)
+# Every key a row has, so a duplicate is caught via any of its identifiers.
+CANDIDATES_INDEX = KeyIndex(CACHE_DIR / "candidates_index.txt", row_keys, "Candidates")
 
 
 def build_candidates_index(csv_path: Path) -> set[str]:
-    """Build candidates index from CSV in 50k-row chunks. Run once on migration
-    or when index is missing/stale. Writes the index file and returns the set.
-
-    Mirrors _row_keys()'s identifier priority (oa > doi > url > title-as-last-resort).
-    Before this fix, a rebuild added a title key for EVERY row unconditionally — a
-    separate code path that never picked up the #53 fix — so a DOI-less row sharing a
-    title with any identifier-bearing row would still collide after "purging" the
-    index. Title keys here are now scoped to identifier-less rows only, exactly like
-    an incremental merge would write them.
-    """
-    log.info("Building candidates index from %s (reading in chunks)...", csv_path)
-    index: set[str] = set()
-    chunks_read = 0
-    for chunk in pd.read_csv(
-        csv_path, encoding="utf-8-sig", chunksize=50_000, dtype=str, low_memory=False
-    ):
-        chunk = chunk.fillna("")
-        n = len(chunk)
-        blank = pd.Series([""] * n, index=chunk.index)
-        oa    = chunk["openalex_id_r"].str.strip() if "openalex_id_r" in chunk.columns else blank
-        dois  = chunk["doi_r"].apply(lambda x: clean_doi(str(x))) if "doi_r" in chunk.columns else blank
-        urls  = chunk["url_r"].str.strip() if "url_r" in chunk.columns else blank
-        titles = chunk["title_r"].str.lower().str.strip() if "title_r" in chunk.columns else blank
-
-        index.update(("oa:" + oa)[oa != ""].tolist())
-        index.update(d for d in dois if d)
-        index.update(("url:" + urls)[urls != ""].tolist())
-
-        # #53: title is a last-resort identifier only — a row with any other
-        # identifier must never contribute a title key to the index.
-        has_other_id = (oa != "") | (dois != "") | (urls != "")
-        title_only = titles[(titles != "") & ~has_other_id]
-        index.update(("title:" + title_only).tolist())
-
-        chunks_read += 1
-    log.info("Candidates index built: %d keys from %d chunks — saving to disk", len(index), chunks_read)
-    _save_candidates_index(index)
-    return index
+    """Rebuild cache/candidates_index.txt from *csv_path*. One-time migration, or
+    after candidates.csv is edited outside the pipeline (``--rebuild-index``)."""
+    return CANDIDATES_INDEX.build(csv_path)
 
 
 def _load_or_build_candidates_index(csv_path: Path) -> set[str]:
-    index = _load_candidates_index()
-    if index:
-        return index
-    if csv_path.exists():
-        return build_candidates_index(csv_path)
-    return set()
+    return CANDIDATES_INDEX.load_or_build(csv_path)
 
 
 # ---------------------------------------------------------------------------
@@ -409,7 +306,7 @@ def _merge_into_candidates_csv(new_df: pd.DataFrame, out_path: "Path") -> None:
     seen_in_batch: set[str] = set()
 
     def _is_truly_new(row: pd.Series) -> bool:
-        keys = _row_keys(row)
+        keys = row_keys(row)
         if any(k in index or k in seen_in_batch for k in keys):
             return False
         seen_in_batch.update(keys)
@@ -443,8 +340,8 @@ def _merge_into_candidates_csv(new_df: pd.DataFrame, out_path: "Path") -> None:
     # Append only new keys — never rewrites the full index file.
     new_keys: set[str] = set()
     for _, row in truly_new.iterrows():
-        new_keys.update(_row_keys(row))
-    _append_to_candidates_index(new_keys)
+        new_keys.update(row_keys(row))
+    CANDIDATES_INDEX.append(new_keys)
 
     log.info("Merge: index updated — %d new keys appended", len(new_keys))
 
@@ -702,71 +599,8 @@ def run_search_auto_advance(
 
 
 def dedup_candidates_csv(dry_run: bool = False) -> tuple[int, int]:
-    """Remove duplicate rows from candidates.csv in-place.
-
-    Reads the file in 50k-row chunks, keeping the first occurrence of each
-    unique identifier (oa_id > doi > url > title).  Rows with no identifier
-    are kept unconditionally.  Writes to a temp file then atomically replaces
-    the original; rebuilds the candidates index afterwards.
-
-    Returns
-    -------
-    (rows_before, rows_after) — counts for logging / CLI output.
-    """
-    path = DATA_DIR / "candidates.csv"
-    if not path.exists():
-        raise FileNotFoundError(f"candidates.csv not found at {path}")
-
-    seen_keys: set[str] = set()
-    rows_before = 0
-    rows_after = 0
-    tmp_path = path.with_suffix(".dedup.tmp")
-    first_write = True
-
-    for chunk in pd.read_csv(
-        path, encoding="utf-8-sig", dtype=str, chunksize=50_000,
-        on_bad_lines="skip", low_memory=False,
-    ):
-        chunk = chunk.fillna("")
-        rows_before += len(chunk)
-
-        keep_mask: list[bool] = []
-        for _, row in chunk.iterrows():
-            keys = _row_keys(row)
-            primary = keys[0] if keys else None
-            if primary is None or primary not in seen_keys:
-                seen_keys.update(keys)
-                keep_mask.append(True)
-                rows_after += 1
-            else:
-                keep_mask.append(False)
-
-        if not dry_run:
-            kept = chunk[keep_mask]
-            if not kept.empty:
-                kept.to_csv(
-                    tmp_path,
-                    mode="w" if first_write else "a",
-                    index=False,
-                    encoding="utf-8-sig" if first_write else "utf-8",
-                    header=first_write,
-                )
-                first_write = False
-
-    removed = rows_before - rows_after
-    log.info(
-        "dedup_candidates_csv: %d -> %d rows (%d duplicates%s)",
-        rows_before, rows_after, removed,
-        " -- dry run, no changes written" if dry_run else "",
-    )
-
-    if not dry_run and not first_write:
-        tmp_path.replace(path)
-        log.info("candidates.csv replaced -- rebuilding index...")
-        build_candidates_index(path)
-        log.info("Index rebuilt.")
-
-    return rows_before, rows_after
+    """Remove duplicate rows from candidates.csv in-place; rebuild the index."""
+    return dedup_csv(DATA_DIR / "candidates.csv", CANDIDATES_INDEX, dry_run=dry_run)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -885,7 +719,7 @@ if __name__ == "__main__":
         csv_path = DATA_DIR / "candidates.csv"
         if csv_path.exists():
             idx = build_candidates_index(csv_path)
-            print(f"Rebuilt candidates index: {len(idx)} keys -> {_CANDIDATES_INDEX_PATH}")
+            print(f"Rebuilt candidates index: {len(idx)} keys -> {CANDIDATES_INDEX.path}")
         else:
             print("candidates.csv not found — nothing to rebuild.")
         raise SystemExit(0)
@@ -897,7 +731,7 @@ if __name__ == "__main__":
             print(f"DRY RUN -- would remove {removed:,} duplicates: {before:,} -> {after:,} rows")
         else:
             print(f"Done -- removed {removed:,} duplicates: {before:,} -> {after:,} rows")
-            print(f"candidates.csv and {_CANDIDATES_INDEX_PATH} updated.")
+            print(f"candidates.csv and {CANDIDATES_INDEX.path} updated.")
         raise SystemExit(0)
 
     if args.harvest_only:

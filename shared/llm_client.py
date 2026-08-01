@@ -11,7 +11,6 @@ Public API:
 """
 import base64
 import json
-import os
 import re
 import time
 from pathlib import Path
@@ -28,7 +27,7 @@ from .config import (
     SCREEN_VOTER2_MODEL,
     log,
 )
-from . import token_counter
+from . import token_counter, token_usage
 from .cache import content_key, read_cache, write_cache
 from .prompts import (
     JSON_SYSTEM_MESSAGE,
@@ -53,83 +52,32 @@ JSON_MAX_OUTPUT_TOKENS = 4096
 # consequence: Gemini and OpenRouter now sample at their defaults rather than
 # greedily, so repeat runs are less deterministic than before.
 
-# ── OpenAI session-level token guardrail ─────────────────────────────────────
-# Tracks tokens consumed via call_openai() within the current process.
-# When usage crosses OPENAI_WARN_TOKENS, the pipeline pauses and asks the user
-# whether to continue.  Override the threshold via env var (in tokens):
-#   OPENAI_WARN_TOKENS=9000000
-_openai_tokens_session: int = 0
-_openai_limit_prompted: bool = False   # ensure we only prompt once
-_openai_disabled:       bool = False   # set to True when user answers N
-_OPENAI_WARN_THRESHOLD: int = int(os.getenv("OPENAI_WARN_TOKENS", "8000000"))
+# ── Token accounting ──────────────────────────────────────────────────────────
+# Every provider call reports what it cost in its usage field. That number goes to
+# two places: token_counter, which attributes it to a pipeline stage for the
+# end-of-run summary, and token_usage, which persists it per day, provider and model
+# with input and output kept apart. Only call_openai also checks a ceiling — see
+# OPENAI_DAILY_TOKEN_BUDGET; the other providers are recorded, not capped.
 
 
-def _track_openai_tokens(n_tokens: int) -> None:
-    """Add n_tokens to the session counter and prompt the user if the threshold is crossed."""
-    global _openai_tokens_session, _openai_limit_prompted, _openai_disabled
-    _openai_tokens_session += n_tokens
-    if _openai_limit_prompted or _openai_tokens_session < _OPENAI_WARN_THRESHOLD:
-        return
-    _openai_limit_prompted = True
-    used_m     = _openai_tokens_session / 1_000_000
-    thresh_m   = _OPENAI_WARN_THRESHOLD  / 1_000_000
-    print(f"\n{'=' * 62}")
-    print(f"  OpenAI token guardrail: {used_m:.1f}M tokens used this session")
-    print(f"  (threshold: {thresh_m:.0f}M — set OPENAI_WARN_TOKENS to change)")
-    print(f"  Continue using OpenAI for remaining rows?")
-    print(f"  Y = keep going   N = disable OpenAI (Gemini-only for rest of run)")
-    print(f"{'=' * 62}")
-    try:
-        answer = input("  Your choice [Y/n]: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        answer = "n"
-    if answer in ("n", "no"):
-        _openai_disabled = True
-        log.info("OpenAI disabled by user at %.1fM tokens", used_m)
-        print("  OpenAI disabled. Remaining rows will use Gemini only.\n")
-    else:
-        log.info("User confirmed continuing OpenAI at %.1fM tokens", used_m)
-        print("  Continuing with OpenAI.\n")
+def _record_tokens(provider: str, model: str, n_in: int, n_out: int) -> None:
+    """Charge a completed call to the run's stage total and the day's usage record."""
+    token_counter.record(provider, n_in + n_out)
+    token_usage.record(provider, model, n_in, n_out)
 
 
-# ── Gemini key-0 (paid) session-level token guardrail ────────────────────────
-# Only active when GEMINI_WARN_TOKENS is set to a positive integer (default: 0 = off).
-# Tracks tokens on key 0 only (the paid key). Keys 1+ are free-tier and unaffected.
-# When usage crosses the threshold the pipeline pauses and asks whether to continue.
-_gemini_key0_tokens_session: int  = 0
-_gemini_key0_limit_prompted: bool = False
-_gemini_key0_disabled:       bool = False
-_GEMINI_WARN_THRESHOLD: int = int(os.getenv("GEMINI_WARN_TOKENS", "0"))
+def _gemini_usage(body: dict) -> tuple[int, int]:
+    """(input, output) tokens from a Gemini response body.
 
-
-def _track_gemini_key0_tokens(n_tokens: int) -> None:
-    """Add n_tokens for key-0 and prompt the user if the threshold is crossed."""
-    global _gemini_key0_tokens_session, _gemini_key0_limit_prompted, _gemini_key0_disabled
-    if not _GEMINI_WARN_THRESHOLD:
-        return
-    _gemini_key0_tokens_session += n_tokens
-    if _gemini_key0_limit_prompted or _gemini_key0_tokens_session < _GEMINI_WARN_THRESHOLD:
-        return
-    _gemini_key0_limit_prompted = True
-    used_m   = _gemini_key0_tokens_session / 1_000_000
-    thresh_m = _GEMINI_WARN_THRESHOLD / 1_000_000
-    print(f"\n{'=' * 62}")
-    print(f"  Gemini key-0 guardrail: {used_m:.1f}M tokens used this session")
-    print(f"  (threshold: {thresh_m:.0f}M — set GEMINI_WARN_TOKENS to change)")
-    print(f"  Continue using Gemini key-0 (paid) for remaining rows?")
-    print(f"  Y = keep going   N = skip key-0 (free-tier keys only for rest of run)")
-    print(f"{'=' * 62}")
-    try:
-        answer = input("  Your choice [Y/n]: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        answer = "n"
-    if answer in ("n", "no"):
-        _gemini_key0_disabled = True
-        log.info("Gemini key-0 disabled by user at %.1fM tokens", used_m)
-        print("  Gemini key-0 disabled. Remaining rows will use free-tier keys only.\n")
-    else:
-        log.info("User confirmed continuing Gemini key-0 at %.1fM tokens", used_m)
-        print("  Continuing with Gemini key-0.\n")
+    Output is the total minus the prompt rather than candidatesTokenCount: thinking
+    tokens are billed as output and are only in the total. A response without
+    usageMetadata yields (0, 0), which records nothing.
+    """
+    u     = body.get("usageMetadata") or {}
+    n_in  = int(u.get("promptTokenCount", 0) or 0)
+    total = int(u.get("totalTokenCount", 0) or 0)
+    n_out = (total - n_in) if total else int(u.get("candidatesTokenCount", 0) or 0)
+    return n_in, max(n_out, 0)
 
 
 # ── Per-provider rate limiting ────────────────────────────────────────────────
@@ -170,6 +118,9 @@ def _parse_llm_json(text: str) -> Optional[dict]:
     text = text.strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$",          "", text).strip()
+    # A trailing comma before } or ] was the only malformed-response mode seen in
+    # ~2,100 screening-validation calls (6 cases), and json.loads rejects it.
+    text = re.sub(r",\s*([}\]])", r"\1", text)
 
     try:
         result = json.loads(text)
@@ -181,7 +132,7 @@ def _parse_llm_json(text: str) -> Optional[dict]:
     m = re.search(r"\{.*\}", text, re.DOTALL)
     if m:
         try:
-            result = json.loads(m.group(0))
+            result = json.loads(re.sub(r",\s*([}\]])", r"\1", m.group(0)))
             if isinstance(result, dict):
                 return result
         except json.JSONDecodeError:
@@ -263,9 +214,6 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
 
     last_error = "all keys exhausted"
     for key_idx, api_key in enumerate(GEMINI_API_KEYS):
-        if key_idx == 0 and _gemini_key0_disabled:
-            log.debug("Gemini key-0 disabled by guardrail — skipping to free-tier keys")
-            continue
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
                f":generateContent?key={api_key}")
         key_label = f"key {key_idx + 1}/{len(GEMINI_API_KEYS)}"
@@ -320,13 +268,11 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
                                 model, key_label)
                     return None, last_error
 
-                text   = body["candidates"][0]["content"]["parts"][0]["text"]
+                text = body["candidates"][0]["content"]["parts"][0]["text"]
+                # Recorded before parsing: a non-JSON response was still billed.
+                _record_tokens("gemini", model, *_gemini_usage(body))
                 result = _parse_llm_json(text)
                 if result is not None:
-                    n_tok = int((body.get("usageMetadata") or {}).get("totalTokenCount", 0))
-                    token_counter.record("gemini", n_tok)
-                    if key_idx == 0:
-                        _track_gemini_key0_tokens(n_tok)
                     if key_idx > 0:
                         log.info("Gemini succeeded on %s", key_label)
                     return result, ""
@@ -348,17 +294,23 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
 
 # ── OpenAI (fallback) ─────────────────────────────────────────────────────────
 
-def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict], str]:
+def call_openai(prompt: str, model: str = OPENAI_MODEL,
+                reasoning_effort: str = "") -> tuple[Optional[dict], str]:
     """
     Call OpenAI chat completion with response_format=json_object.
+
+    reasoning_effort — passed through only when set, so the reasoning models bill
+    hidden thinking at the caller's chosen budget. The screen sends "low": its
+    output is a short JSON and the eval that validated the voter pair ran it that
+    way. Callers that omit it keep the API default.
+
     Returns (result_dict_or_None, error_description).
     """
     if not OPENAI_API_KEY:
         log.warning("OPENAI_API_KEY not set — skipping OpenAI")
         return None, "OPENAI_API_KEY not configured"
 
-    if _openai_disabled:
-        return None, "OpenAI disabled — token limit reached and user declined to continue"
+    token_usage.check_openai_budget()
 
     import openai
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
@@ -370,6 +322,7 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict],
     for attempt in range(3):
         try:
             _throttle("openai")
+            extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
             response = client.chat.completions.create(
                 model=model,
                 messages=[
@@ -378,12 +331,14 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL) -> tuple[Optional[dict],
                 ],
                 response_format={"type": "json_object"},
                 max_completion_tokens=JSON_MAX_OUTPUT_TOKENS,
+                **extra,
             )
             if response.usage:
-                _track_openai_tokens(response.usage.total_tokens)
-                token_counter.record("openai", response.usage.total_tokens)
-                log.debug("OpenAI usage: +%d tokens (session total: %d)",
-                          response.usage.total_tokens, _openai_tokens_session)
+                _record_tokens("openai", model,
+                               response.usage.prompt_tokens,
+                               response.usage.completion_tokens)
+                log.debug("OpenAI usage: +%d tokens (day total: %d)",
+                          response.usage.total_tokens, token_usage.spent("openai"))
             if response.choices[0].finish_reason == "length":
                 log.warning("OpenAI response hit the %d-token cap and was cut off — "
                             "the truncated JSON will fail to parse (model=%s)",
@@ -436,9 +391,11 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
                         "the truncated JSON will fail to parse (model=%s)",
                         JSON_MAX_OUTPUT_TOKENS, use_model)
             return None, "response truncated at max_tokens"
+        if response.usage:
+            _record_tokens("openrouter", use_model,
+                           response.usage.prompt_tokens,
+                           response.usage.completion_tokens)
         result = _parse_llm_json(response.choices[0].message.content)
-        if result and response.usage:
-            token_counter.record("openrouter", response.usage.total_tokens)
         return result, ("" if result else "response was not valid JSON")
     except Exception as e:
         log.warning("OpenRouter call failed (model=%s): %s", use_model, e)
@@ -695,6 +652,7 @@ def call_gemini_with_images(prompt: str,
             body = r.json()
             if not body.get("candidates"):
                 return None
+            _record_tokens("gemini", model, *_gemini_usage(body))
             text = body["candidates"][0]["content"]["parts"][0]["text"]
             return _parse_llm_json(text)
         except Exception as e:
@@ -757,6 +715,7 @@ def call_gemini_with_pdf(prompt: str,
                 body = r.json()
                 if not body.get("candidates"):
                     return None
+                _record_tokens("gemini", model, *_gemini_usage(body))
                 text = body["candidates"][0]["content"]["parts"][0]["text"]
                 return _parse_llm_json(text)
             except Exception as e:
@@ -927,36 +886,122 @@ def identify_all_originals_with_llm(doi_r:        str,
 
 # Q1's two voters, in call order. Both are required: with one provider the screen
 # cannot tell agreement from a lone opinion, so run_extract refuses to start.
-# Voter 2 runs on OpenRouter (Ministral 14B by default) rather than OpenAI: on
-# adjudicated hard cases the pair discards 89% of true negatives against gpt-5-mini's
-# 25%, losing no genuine replication, because a non-Google lineage errs elsewhere
-# than the Gemini first voter does.
-SCREEN_PROVIDERS = ("gemini", "openrouter")
+# Voter 2 is gpt-5.4-mini on OpenAI direct: on the v3.2 gate sweep this pair
+# discards 89% of adjudicated hard negatives with zero settled misses, against 73%
+# for Ministral via OpenRouter on the same gate. A model id containing "/" is an
+# OpenRouter id, so swapping the env var reroutes the call without a code change.
+SCREEN_CLASSIFICATIONS = ("replication", "reproduction", "both", "none", "unclear")
+SCREEN_QUALIFYING      = ("replication", "reproduction", "both")
+
+# The v3.2 prompt's category enum, in prompt order — the order the union is joined in.
+SCREEN_CATEGORIES = (
+    "clearly_declared", "self_retest", "measurement_validation", "context_transfer",
+    "incidental_finding", "initial_validation", "tool_benchmark",
+    "builds_on_literature", "terminology_only", "about_replication", "other",
+)
 
 
-def _screen_model(provider: str) -> str:
-    return GEMINI_LIGHT_MODEL if provider == "gemini" else SCREEN_VOTER2_MODEL
+def screen_voters() -> list[tuple[str, str, str]]:
+    """Q1's voters in call order, as (provider, model, env var holding its key).
 
-
-def _classify_once(prompt: str, provider: str) -> "dict | None":
-    """One classification vote. provider is 'gemini' or 'openrouter'."""
-    if provider == "gemini":
-        result, _ = call_gemini(prompt, model=GEMINI_LIGHT_MODEL)
+    The one place the voter pair is configured: it drives the per-vote dispatch, the
+    "+".join fingerprint the classification cache is keyed on, and run_extract's
+    startup key check. Swapping SCREEN_VOTER2_MODEL therefore reroutes the call, the
+    cache key and the required key together — a model id containing "/" is an
+    OpenRouter id, anything else is called on OpenAI direct.
+    """
+    if "/" in SCREEN_VOTER2_MODEL:
+        voter2 = ("openrouter", SCREEN_VOTER2_MODEL, "OPENROUTER_API_KEY")
     else:
-        result, _ = call_openrouter(prompt, model=SCREEN_VOTER2_MODEL)
+        voter2 = ("openai", SCREEN_VOTER2_MODEL, "OPENAI_API_KEY")
+    return [("gemini", GEMINI_LIGHT_MODEL, "GEMINI_API_KEY"), voter2]
+
+
+def _classify_once(prompt: str, provider: str, model: str) -> "dict | None":
+    """One classification vote on the v3.2 five-field schema."""
+    if provider == "gemini":
+        result, _ = call_gemini(prompt, model=model)
+    elif provider == "openrouter":
+        result, _ = call_openrouter(prompt, model=model)
+    else:
+        result, _ = call_openai(prompt, model=model, reasoning_effort="low")
     if not result:
         return None
+
+    classification = str(result.get("classification", "")).strip().lower()
+    if classification not in SCREEN_CLASSIFICATIONS:
+        classification = "unclear"
+    raw_confident = result.get("confident")
+    if isinstance(raw_confident, str):
+        confident = raw_confident.strip().lower() == "true"
+    else:
+        confident = bool(raw_confident)
+    raw_categories = result.get("categories")
+    categories = [c for c in (str(x).strip().lower()
+                              for x in (raw_categories if isinstance(raw_categories, list) else []))
+                  if c in SCREEN_CATEGORIES]
     return {
-        "is_replication": str(result.get("is_replication", "unclear")).strip().lower(),
-        "confidence":     str(result.get("confidence", "")).strip().lower(),
+        "classification": classification,
+        "confident":      confident,
+        "categories":     categories,
         "evidence":       str(result.get("evidence_quote", "") or ""),
         "reasoning":      str(result.get("reasoning", "") or ""),
         "provider":       provider,
+        "model":          model,
     }
 
 
+def screen_gate(votes: list[dict]) -> "str | None":
+    """G-softqual, the gate the v3.2 sweep validated: 89% of adjudicated hard
+    negatives discarded with zero settled misses.
+
+    Returns "discard", "proceed", or None when fewer than two voters answered (an
+    incomplete screen is an API failure, not a verdict).
+
+    Discard when every vote is "none" at any confidence, or when at least one voter
+    said "none" confidently and every other vote is a qualifying-or-unclear answer
+    the voter explicitly declined to stand behind. Everything else proceeds — a
+    confident "none" against a confident qualifying answer is a real split, and
+    false inclusions are cheap where false discards are not.
+    """
+    if len(votes) < 2:
+        return None
+    is_none = [v["classification"] == "none" for v in votes]
+    if all(is_none):
+        return "discard"
+    if not any(n and v["confident"] for n, v in zip(is_none, votes)):
+        return "proceed"
+    soft = all(n or (v["classification"] in SCREEN_QUALIFYING + ("unclear",)
+                     and not v["confident"])
+               for n, v in zip(is_none, votes))
+    return "discard" if soft else "proceed"
+
+
+def _screen_record_type(votes: list[dict]) -> str:
+    """The paper type the screen settled on, for the `type` column and the outcome
+    vocabulary. Both voters agreeing on a qualifying label wins; a "both" answer or
+    a replication-vs-reproduction split falls back to the first qualifying voter in
+    call order (Gemini). "both" maps to "replication" because such a paper collects
+    new data, and replication outcome vocabulary applies to it; the raw
+    classifications stay visible in the votes.
+    """
+    quals = [v["classification"] for v in votes if v["classification"] in SCREEN_QUALIFYING]
+    if not quals:
+        return ""
+    # Agreement and the fallback pick the same element: quals is in call order, so
+    # quals[0] is Gemini's answer whenever Gemini gave a qualifying one.
+    return "replication" if quals[0] == "both" else quals[0]
+
+
+def _screen_categories(votes: list[dict]) -> list[str]:
+    """Deduplicated union of both voters' categories, in the prompt's enum order."""
+    seen = {c for v in votes for c in v["categories"]}
+    return [c for c in SCREEN_CATEGORIES if c in seen]
+
+
 def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
-    """Q1 alone: do two models agree that this paper is a replication or reproduction?
+    """Q1 alone: two models judge whether this paper is the kind of study the
+    database collects, and screen_gate() turns their two votes into one decision.
 
     Split out of screen_references_with_llm so Stage 3 can ask the question as its
     front door — before match-type classification, the resolution ladder, the PDF
@@ -965,9 +1010,11 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
     reference list has been fetched, and reuses this verdict instead of re-voting.
 
     Returns:
-      is_replication      — the agreed label, or "unclear" when the models disagree
-      models_agree        — whether both votes matched
-      classification_confidence — the weaker of the two votes' confidences
+      screen_verdict      — "discard" or "proceed" (empty on an incomplete screen)
+      screen_classification — the combined qualifying label, or "none"/"unclear"
+      record_type         — "replication"/"reproduction", empty when neither voter
+                            gave a qualifying answer
+      categories          — union of both voters' categories, in enum order
       votes / llm_*       — who voted what, for the reviewer of a set-aside row
       resolution_method   — llm_refscreen_declined on a complete screen;
                             llm_refscreen_partial (one vote) / llm_refscreen_failed
@@ -975,13 +1022,14 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
                             screen is an API failure, not a verdict, so it is
                             returned uncached — a re-run must be able to succeed.
     """
+    voters     = screen_voters()
     cls_prompt = build_classify_prompt(study_r, abstract_r)
     # The voter pair is part of the verdict — the two models disagree often enough
     # that this is the question the audit measured a model effect on — so both
     # models are in the key alongside the prompt version and the text they see.
     key = content_key("classify", doi_r or study_r,
                       prompt_version("build_classify_prompt"),
-                      "+".join(_screen_model(p) for p in SCREEN_PROVIDERS),
+                      "+".join(model for _, model, _ in voters),
                       cls_prompt)
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
@@ -989,50 +1037,56 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
 
     out = {
         "resolution_method": "llm_refscreen_declined",
-        "is_replication": "unclear", "models_agree": False, "votes": [],
-        "classification_confidence": "",
+        "screen_verdict": "", "screen_classification": "unclear",
+        "record_type": "", "categories": [], "votes": [],
         "llm_source": "", "llm_model": "", "llm_evidence": "",
         "llm_reasoning": "", "llm_prompt": "", "llm_error": "",
     }
 
     out["llm_prompt"] = cls_prompt
-    votes = [v for v in (_classify_once(cls_prompt, p) for p in SCREEN_PROVIDERS) if v]
+    votes = [v for v in (_classify_once(cls_prompt, p, m) for p, m, _ in voters) if v]
 
-    # Keep the individual votes: a disagreement row is set aside for human review,
-    # and "the models disagreed" is not reviewable without knowing who said what.
-    out["votes"] = [{k: v[k] for k in ("provider", "is_replication", "confidence", "reasoning")}
+    # Keep the individual votes: the gate's decision is not reviewable without
+    # knowing who said what.
+    out["votes"] = [{k: v[k] for k in
+                     ("provider", "classification", "confident", "categories", "reasoning")}
                     for v in votes]
     out["llm_source"] = "+".join(v["provider"] for v in votes)
-    out["llm_model"]  = "+".join(_screen_model(v["provider"]) for v in votes)
+    out["llm_model"]  = "+".join(v["model"] for v in votes)
     out["llm_evidence"]  = votes[0]["evidence"] if votes else ""
     out["llm_reasoning"] = " | ".join(f"{v['provider']}: {v['reasoning']}" for v in votes)
 
     # A missing vote is an API failure, not a verdict. Reporting it as a normal
-    # result would file the row as a two-model disagreement and corrupt the
-    # agreement rate, and caching it would freeze one transient failure into a
-    # permanent one. Return uncached so a re-run can screen the row properly.
+    # result would file the row as a screen outcome and corrupt the discard rate,
+    # and caching it would freeze one transient failure into a permanent one.
+    # Return uncached so a re-run can screen the row properly.
     if len(votes) < 2:
         answered = {v["provider"] for v in votes}
         out["resolution_method"] = ("llm_refscreen_partial" if votes
                                     else "llm_refscreen_failed")
         out["llm_error"] = "classifier failed: " + ", ".join(
-            p for p in SCREEN_PROVIDERS if p not in answered)
+            p for p, _, _ in voters if p not in answered)
         return out
 
-    labels = {v["is_replication"] for v in votes}
-    out["models_agree"] = len(votes) == 2 and len(labels) == 1
-    if out["models_agree"]:
-        out["is_replication"] = votes[0]["is_replication"]
-        # The weaker vote governs: acting on a discard needs both models sure.
-        order = {"high": 2, "medium": 1, "low": 0, "": 0}
-        out["classification_confidence"] = min(
-            (v["confidence"] for v in votes), key=lambda c: order.get(c, 0))
-    else:
-        # Disagreement is informative, not an error — the row is set aside for review.
-        out["is_replication"] = "unclear"
+    out["screen_verdict"] = screen_gate(votes)
+    out["record_type"]    = _screen_record_type(votes)
+    out["categories"]     = _screen_categories(votes)
+    labels = {v["classification"] for v in votes}
+    out["screen_classification"] = (out["record_type"] or
+                                    (labels.pop() if len(labels) == 1 else "unclear"))
 
     write_cache(LLM_CACHE_DIR, key, out)
     return out
+
+
+# The target-pick half of screen_references_with_llm's return value, before a
+# reference has been picked — the resolver keys every ladder stage returns.
+_UNPICKED_TARGET = {
+    "resolved": False, "resolution_method": "llm_refscreen_declined",
+    "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
+    "resolved_author_o": "", "resolution_score": 0.0,
+    "llm_confidence": "", "target_description": "",
+}
 
 
 def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
@@ -1045,19 +1099,19 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
     votes are made once per paper. When it is absent (a caller that has no verdict
     yet, e.g. the batch tools) the classification runs here.
 
-    Returns the standard resolver dict, the classification fields, and
-    llm_confidence — the TARGET call's confidence, empty when no target call was
+    The return value is the union of two contracts, in this order: the target
+    pick's keys (_UNPICKED_TARGET below) and, over them, every key
+    classify_replication() returns. The classification wins on the one key they
+    share, resolution_method, so an incomplete screen is reported as incomplete
+    rather than as a target this function declined to pick.
+
+    llm_confidence is the TARGET call's confidence, empty when no target call was
     made. A reference is accepted as the target only at confidence == "high".
     """
-    out = {
-        "resolved": False, "resolution_method": "llm_refscreen_declined",
-        "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
-        "resolved_author_o": "", "resolution_score": 0.0,
-        "llm_confidence": "", "target_description": "",
-    }
-    out.update(classification or classify_replication(doi_r, study_r, abstract_r))
+    out = {**_UNPICKED_TARGET,
+           **(classification or classify_replication(doi_r, study_r, abstract_r))}
 
-    if out["is_replication"] == "yes" and refs:
+    if out["screen_classification"] in SCREEN_QUALIFYING and refs:
         # The pick is cached separately from the classification: the two halves are
         # now decided at different points in the pipeline, and one cache holding
         # both would be written before the second half had run.

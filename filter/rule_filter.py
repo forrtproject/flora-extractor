@@ -14,17 +14,13 @@ Per RULEBOOK §Filter:
     - If only reproduction-flavoured phrases fire, the status is ``reproduction``
       with the same author-year cite gating.
 
-Adds the FILTER_ADDED_COLS to ``df`` (filter_status, filter_method,
-filter_evidence, filter_confidence). ``filter_method`` is always
-``rule_based`` here; ``llm_filter`` may overwrite it to ``llm`` or ``both``
-later.
+``classify_row`` returns the four FILTER_ADDED_COLS values (filter_status,
+filter_method, filter_evidence, filter_confidence) for one candidate row.
+``filter_method`` is always ``rule_based`` here; Stage 3 overwrites it to
+``screen`` on the rows its front-door screen passes.
 """
 
-import pandas as pd
-
-from shared.config import log
 from shared.openalex_client import extract_author_year_patterns
-from shared.schema import FILTER_ADDED_COLS
 from shared.utils import non_article_doi, sentence_spans
 
 from filter.phrase_detection import (
@@ -41,11 +37,15 @@ def _author_year_cites(text: str, year: int | None) -> list:
             if year else extract_author_year_patterns(text, strict_bare=True))
 
 
-def _classify_row(title: str, abstract: str, year: int | None, doi: str = "") -> dict:
-    """Return the four FILTER_ADDED_COLS values for one candidate row."""
-    title = title or ""
-    abstract = abstract or ""
-    text = f"{title}\n{abstract}".strip()
+def classify_row(row: dict) -> dict:
+    """Return the four FILTER_ADDED_COLS values for a single candidate row dict."""
+    year_val = row.get("year_r")
+    try:
+        year = int(year_val) if year_val and str(year_val).strip() else None
+    except (ValueError, TypeError):
+        year = None
+    doi = str(row.get("doi_r") or "")
+    text = f"{row.get('title_r') or ''}\n{row.get('abstract_r') or ''}".strip()
 
     # Hard-exclude non-article DOIs (figshare data records, peer-review objects) — #17.
     doi_excl = non_article_doi(doi)
@@ -136,43 +136,3 @@ def _classify_row(title: str, abstract: str, year: int | None, doi: str = "") ->
         "filter_evidence": f"phrase:{phrase!s}; cite:{sample_cite}",
         "filter_confidence": "high",
     }
-
-
-def classify_row(row: dict) -> dict:
-    """Return FILTER_ADDED_COLS values for a single candidate row dict."""
-    title    = str(row.get("title_r")    or "")
-    abstract = str(row.get("abstract_r") or "")
-    year_val = row.get("year_r")
-    try:
-        year = int(year_val) if year_val and str(year_val).strip() else None
-    except (ValueError, TypeError):
-        year = None
-    return _classify_row(title, abstract, year, str(row.get("doi_r") or ""))
-
-
-def apply_rule_filter(df: pd.DataFrame) -> pd.DataFrame:
-    """Add FILTER_ADDED_COLS to ``df`` using rule-based classification."""
-    if df.empty:
-        for col in FILTER_ADDED_COLS:
-            if col not in df.columns:
-                df[col] = ""
-        return df
-
-    out_rows: list[dict] = []
-    for _, row in df.iterrows():
-        title = str(row.get("title_r") or "")
-        abstract = str(row.get("abstract_r") or "")
-        year_val = row.get("year_r")
-        try:
-            year = int(year_val) if pd.notna(year_val) and str(year_val).strip() else None
-        except (ValueError, TypeError):
-            year = None
-        out_rows.append(_classify_row(title, abstract, year, str(row.get("doi_r") or "")))
-
-    additions = pd.DataFrame(out_rows, index=df.index)
-    for col in FILTER_ADDED_COLS:
-        df[col] = additions[col]
-
-    counts = df["filter_status"].value_counts().to_dict()
-    log.info("Rule filter: %s", counts)
-    return df

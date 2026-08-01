@@ -30,24 +30,21 @@ from typing import Optional
 import requests
 
 from .config import (
-    OA_CACHE_DIR, OA_XML_CACHE_DIR, OPENALEX_API_KEY, PDF_CACHE_DIR, RESEARCHER_EMAIL,
+    OA_CACHE_DIR, OA_XML_CACHE_DIR, PDF_CACHE_DIR, RESEARCHER_EMAIL,
     SERPAPI_KEY, SERPAPI_KEYS, UNPAYWALL_RATE_SEC, log,
 )
+from .openalex_keys import headers as oa_headers
 from .utils import clean_doi, cache_key
 
 # ── Shared rate-limit state ───────────────────────────────────────────────────
 _unpaywall_last = 0.0
 _ss_last        = 0.0
 
-# Build the OpenAlex request header once — add Authorization if a key is configured.
 # The key is optional: without it you get the polite pool (mailto= parameter);
-# with it you get higher rate limits and access to content.openalex.org bulk endpoints.
-_OA_HEADERS: dict = {
-    "User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})",
-    "Accept": "application/json",
-}
-if OPENALEX_API_KEY:
-    _OA_HEADERS["Authorization"] = f"Bearer {OPENALEX_API_KEY}"
+# with it you get higher rate limits and access to content.openalex.org bulk
+# endpoints. Built per request so a key rotated out mid-run is not still in use here.
+def _oa_request_headers() -> dict:
+    return {**oa_headers(), "Accept": "application/json"}
 
 
 # ── Unpaywall ─────────────────────────────────────────────────────────────────
@@ -355,7 +352,7 @@ def get_openalex_fulltext(openalex_id: str) -> "dict | None":
         r = requests.get(
             f"https://api.openalex.org/works/{oa_id}",
             params={"select": "has_content,content_urls", "mailto": RESEARCHER_EMAIL},
-            headers=_OA_HEADERS,
+            headers=_oa_request_headers(),
             timeout=15,
         )
         if r.status_code != 200:
@@ -379,7 +376,7 @@ def get_openalex_fulltext(openalex_id: str) -> "dict | None":
     try:
         r2 = requests.get(
             xml_url, timeout=30,
-            headers=_OA_HEADERS,
+            headers=_oa_request_headers(),
         )
         if r2.status_code != 200:
             log.debug("OpenAlex XML download failed (%s) for %s", r2.status_code, oa_id)

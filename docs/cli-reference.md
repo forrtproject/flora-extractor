@@ -205,7 +205,7 @@ python -m extract.run_extract --no-skip-flora-validated
 
 `--resume` carries every already-resolved row forward untouched, including the rows
 the classification screen decided on its own (`link_method`/`outcome` of
-`not_a_replication` or `screen_disagreement`). That is right for a resumed run and
+`not_a_replication`, plus the historical `screen_disagreement`). That is right for a resumed run and
 wrong after the screen changes: an old voter pair's verdicts would survive
 indefinitely. `--rescreen` reopens exactly those rows — the whole paper, so a
 multi-original paper is re-screened as a unit — and leaves every other resolved row
@@ -282,7 +282,8 @@ python -m extract.sanity_check --deep
 ```
 
 Rows land in the **first** bucket they match: `screen_disagreement` →
-`screen_disagreement.csv`; `outcome == not_a_replication` and non-article `doi_r` →
+`screen_disagreement.csv` (historical rows only — the front door no longer emits that
+value); `outcome == not_a_replication` and non-article `doi_r` →
 `not_a_replication.csv`; self-links → `unresolved_self_links.csv`;
 `doi_o_verification == mismatch` → `unresolved_doi_mismatch.csv`; `llm_title_search`
 → `provisional_title_search.csv`; `target_pending` → `target_pending.csv`; and with

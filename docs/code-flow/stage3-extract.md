@@ -34,12 +34,12 @@ run_extract.py
     └── for each remaining row:
             │
             ├── FRONT DOOR — classify_replication(doi_r, title_r, abstract_r)
-            │       two models vote on "is this a replication or reproduction at all?"
-            │       ├── agreed "no", both high confidence  → not_a_replication, row done
-            │       ├── models disagree                    → screen_disagreement, row done
+            │       two models vote on the v3.2 schema; screen_gate() decides
+            │       ├── gate says "discard"                → not_a_replication, row done
             │       ├── one vote answered                  → target_pending, row done
             │       ├── no votes answered                  → api_error, row done
-            │       └── anything else                      → continue
+            │       └── gate says "proceed"                → continue, carrying the
+            │           screen's record_type and screen_categories into the row
             │
             ├── classify_match_type(row) → original_match_type
             │
@@ -65,27 +65,37 @@ untouched, and a multi-original paper is reopened as a unit.
 
 ## The front door (`shared/llm_client.classify_replication`)
 
-Two providers vote, and the pipeline acts only when they agree:
+Two providers vote on the validated **v3.2** schema — `classification` ∈
+{`replication`, `reproduction`, `both`, `none`, `unclear`}, boolean `confident`, an
+array of `categories` from an 11-value enum, `evidence_quote`, `reasoning`:
 
 | Voter | Provider | Model |
 | ----- | -------- | ----- |
 | 1 | Gemini | `GEMINI_LIGHT_MODEL` |
-| 2 | OpenRouter | `SCREEN_VOTER2_MODEL` (default `mistralai/ministral-14b-2512`) |
+| 2 | OpenAI, or OpenRouter when the id contains `/` | `SCREEN_VOTER2_MODEL` (default `gpt-5.4-mini`) |
 
-Both keys are required — `run_extract` refuses to start without `GEMINI_API_KEY` and
-`OPENROUTER_API_KEY` (unless `--no-llm`), because with one provider every row returns a
-single vote, which is not a verdict. Voter 2 sits outside the Google lineage on
-purpose: its errors overlap little with voter 1's.
+`run_extract` refuses to start without `GEMINI_API_KEY` and whichever of
+`OPENAI_API_KEY` / `OPENROUTER_API_KEY` voter 2 needs (unless `--no-llm`), because with
+one provider every row returns a single vote, which is not a verdict. Voter 2 sits
+outside the Google lineage on purpose: its errors overlap little with voter 1's.
 
-`classification_confidence` is the **weaker** of the two votes, and is populated only
-when the models agree — so `== "high"` means both voters were sure. Discarding a row
-requires an agreed "no" at that bar.
+**The gate is `screen_gate()`** — G-softqual from the v3.2 sweep, defined once and
+called from both the front door and the batch-tools path in `link_original.py`. It
+discards when every vote is `none` at any confidence, or when one voter said `none`
+confidently and every other vote is a qualifying-or-`unclear` answer with
+`confident: false`. Everything else proceeds: a confident `none` against a confident
+qualifying answer is a real split, and it goes down the ladder rather than terminating.
+There is no `screen_disagreement` outcome any more.
+
+The screen also sets `record_type` (both voters agreeing on a qualifying label wins; a
+`both` answer or a split falls back to voter 1's, and `both` maps to `replication`) and
+`screen_categories` (the union of both voters' categories, `|`-joined in enum order).
 
 A screen that did not get both votes is an API failure, not a verdict: it is returned
 uncached (`llm_refscreen_partial` with one vote, `llm_refscreen_failed` with none) so a
-re-run can decide the row once the provider is back. Rows set aside for review carry
-each voter's label and confidence in `link_evidence` and both model names in
-`link_llm_model` — "the models disagreed" alone is not something a reviewer can act on.
+re-run can decide the row once the provider is back. Discarded rows carry each voter's
+label and confidence in `link_evidence` and both model names in `link_llm_model` — the
+verdict alone is not something a reviewer can act on.
 
 Cached at `cache/llm/classify_{key}.json`, keyed on the prompt version, **both** model
 names and the abstract itself.
@@ -188,7 +198,7 @@ outcome against, so no outcome LLM runs:
 | `not_a_replication` | `not_a_replication` — the screen's verdict *is* the outcome |
 | `api_error` | `api_error` |
 | `llm_title_search` | `cannot_be_determined` (provisional link, outcome deferred) |
-| `screen_disagreement`, `target_pending`, `no_original_found` | `pending`, with the reason in `outcome_reasoning` |
+| `target_pending`, `no_original_found`, and the historical `screen_disagreement` | `pending`, with the reason in `outcome_reasoning` |
 
 The order per row is resolve → merge → guard → `--resolved-only` → outcome, so a row
 the guard demotes or `--resolved-only` discards never reaches the outcome call.
@@ -273,7 +283,7 @@ resolved set are moved out to set-aside CSVs, **first match wins**, in this orde
 
 | Bucket | Destination | Rule |
 | ------ | ----------- | ---- |
-| `screen_disagreement` | `screen_disagreement.csv` | `link_method == screen_disagreement` |
+| `screen_disagreement` | `screen_disagreement.csv` | `link_method == screen_disagreement` — **historical rows only**; the front door no longer emits it |
 | `not_a_replication` | `not_a_replication.csv` | `outcome == not_a_replication` |
 | `non_article` | `not_a_replication.csv` | `doi_r` is a figshare data record / peer-review object |
 | `self_link` | `unresolved_self_links.csv` | `doi_o == doi_r` |
@@ -282,9 +292,9 @@ resolved set are moved out to set-aside CSVs, **first match wins**, in this orde
 | `target_pending` | `target_pending.csv` | `link_method == target_pending` |
 | `fabricated_doi_o` | `fabricated_original_doi.csv` | `--deep` only: `doi_o` present but doi.org 404s |
 
-Order is load-bearing. Disagreements are claimed first so that a disagreement row whose
-outcome happened to be coded `not_a_replication` cannot land in the agreed-no file and
-bias any precision computed over it.
+Order is load-bearing. Old `screen_disagreement` rows are claimed first so that one
+whose outcome happened to be coded `not_a_replication` cannot land in the agreed-no file
+and bias any precision computed over it.
 
 `cannot_be_determined` rows stay in `extracted.csv` — a linked original with an
 undecidable outcome is still a real record. Chronology errors, duplicate `pair_id`s and

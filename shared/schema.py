@@ -26,7 +26,7 @@ CANDIDATES_COLS = [
 # All CANDIDATES_COLS + the following:
 FILTER_ADDED_COLS = [
     "filter_status",     # str — replication | reproduction | false_positive | needs_review
-    "filter_method",     # str — rule_based | llm | both
+    "filter_method",     # str — rule_based | screen; llm/both are historical
     "filter_evidence",   # str — phrase or quote that triggered classification
     "filter_confidence", # str — high | medium | low  (categorical, not float)
 ]
@@ -72,6 +72,9 @@ EXTRACT_ADDED_COLS = [
     "link_evidence",       # str   — quote or pattern used for linking
     "link_confidence",     # str   — high | medium | low
     "link_llm_model",      # str   — exact model used for DOI resolution (e.g. gemini-2.0-flash)
+    "screen_categories",   # str   — |-joined union of the front-door screen's category
+                           #         labels (SCREEN_CATEGORIES in shared/llm_client.py);
+                           #         multi-valued, so filter it by substring, never equality
     "doi_o_verification",  # str   — verified | corrected | mismatch | no_doi | not_found | no_metadata | api_error | skipped
 
     # Outcome
@@ -150,11 +153,12 @@ LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
     # LLM ran with full context but concluded no identifiable original study exists.
     # These papers are likely Stage 2 false positives or self-replications; exclude from DB import.
     "no_original_found",
-    # Stage 4.5 verdicts that end the row without a target: the screen concluded the
-    # paper replicates nothing (not_a_replication), or the two Q1 classifiers
-    # disagreed and the row was set aside for review (screen_disagreement).
-    # sanity_check quarantines both; exclude from DB import.
+    # Screen verdicts that end the row without a target. sanity_check quarantines
+    # both; exclude from DB import.
     "not_a_replication",
+    # Historical, no longer emitted: the front door's gate has no disagreement
+    # terminal state, so a split now proceeds down the ladder. Rows on disk still
+    # carry the value and --rescreen must keep reopening them.
     "screen_disagreement",
     "target_pending", "api_error",
 }
@@ -241,6 +245,9 @@ def outcome_categories_for(record_type: str) -> set:
         return REPRODUCTION_OUTCOME_CATEGORIES | {"cannot_be_determined", "not_a_replication"}
     return OUTCOME_CATEGORIES
 
+# The `type` column may also be EMPTY: when the front-door screen proceeds without a
+# qualifying vote and Stage 2 left the row at needs_review, nothing has said what the
+# paper is, and the pipeline records that rather than defaulting to replication.
 TYPE_VALUES = {"replication", "reproduction"}
 
 VALIDATION_STATUS_VALUES = {"confirmed", "rejected", "pending", "needs_review"}

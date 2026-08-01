@@ -26,11 +26,9 @@ run_filter.py
     │           → 'replication' / 'reproduction' / 'false_positive' with high confidence
     │           → 'needs_review' with medium/low confidence for uncertain cases
     │
-    │       If 'needs_review':
-    │           llm_filter.classify_with_llm(row) → updates status + confidence
-    │               call_llm() with filter prompt
-    │               cache result by DOI
-    │               merge LLM result with rule result
+    │       'needs_review' rows are written through unchanged — Stage 3's
+    │       front-door screen is the validated decider of "is this a
+    │       replication at all"
     │
     │       skip rows already in filtered index
     │       write to filtered.csv (append mode after first write)
@@ -48,9 +46,11 @@ run_filter.py
 3. Check for at least one author-year citation (e.g. "Smith (2018)") → `high` confidence
 4. Without citation: `medium` or `low` confidence → `needs_review`
 
-**LLM classifier** (`filter/llm_filter.py`):
-
-Only called for `needs_review` rows. Sends title + abstract to an LLM with a binary prompt. Result cached by DOI. Sets `filter_method = "llm"` (or `"both"` when rule also fired).
+**No LLM step.** Stage 2 is deterministic: `needs_review` rows are written through
+as they are and reach Stage 3, whose two-model front-door screen decides them. When
+that screen passes a row, `run_extract` overwrites `filter_status` with the screen's
+paper type and sets `filter_method = "screen"`. `llm` and `both` are historical
+values from the retired Stage 2 escalation.
 
 ## `filter_confidence` values
 
@@ -61,5 +61,4 @@ Only called for `needs_review` rows. Sends title + abstract to an LLM with a bin
 | Function | File | Description |
 |----------|------|-------------|
 | `apply_rules()` | `filter/rule_filter.py` | Rule-based classification |
-| `classify_with_llm()` | `filter/llm_filter.py` | LLM classification for uncertain rows |
 | `run_filter()` | `filter/run_filter.py` | Main orchestrator, chunked read |

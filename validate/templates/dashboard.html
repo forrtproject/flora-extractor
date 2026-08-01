@@ -858,7 +858,7 @@ python -m search.run_search --harvest-only</pre>
         <div class="docs-card">
           <div class="docs-card-head">What Stage 2 does</div>
           <p>Removes false positives and classifies candidates into <code>replication</code>, <code>reproduction</code>, <code>needs_review</code>, or <code>false_positive</code>. Reads <code>candidates.csv</code> in <strong>50 k-row chunks</strong> to avoid OOM on files with 1M+ rows.</p>
-          <p>The <strong>rule filter</strong> runs first and handles ~99% of rows with no API calls. Only rows marked <code>needs_review</code> by the rules are sent to the <strong>LLM</strong>. Results are streamed row-by-row to <code>filtered.csv</code> via a persistent index (<code>cache/filtered_index.txt</code>) so interrupted runs resume without reprocessing.</p>
+          <p>Stage 2 is <strong>deterministic</strong>: the rule filter decides every row with no API calls, and rows it cannot decide stay <code>needs_review</code> and are written through unchanged — Stage 3's two-model front-door screen is the validated decider of "is this a replication at all". Results are streamed row-by-row to <code>filtered.csv</code> via a persistent index (<code>cache/filtered_index.txt</code>) so interrupted runs resume without reprocessing.</p>
         </div>
 
         <div class="docs-card">
@@ -920,18 +920,9 @@ python -m search.run_search --harvest-only</pre>
         </div>
 
         <div class="docs-card">
-          <div class="docs-card-head">LLM prompt (what the model receives)</div>
-          <p>For uncertain rows the LLM receives the paper title and abstract with this instruction:</p>
-          <pre class="cli-block" style="white-space:pre-wrap">Classify this paper as one of:
-  replication   — directly replicates or attempts to reproduce a prior study
-  reproduction  — reproduces methods in a different context, not testing the original claim
-  false_positive — about replication in biology/CS, or unrelated
-
-Title: {title}
-Abstract: {abstract}
-
-Respond with JSON: {"filter_status": "...", "filter_evidence": "...", "filter_confidence": "high|medium|low"}</pre>
-          <p style="margin-top:8px">LLM configured via <code>FILTER_OPENAI_MODEL</code> env var (primary); Gemini fallback via <code>GEMINI_MODEL</code>. Responses cached by <code>hash(title + abstract)</code> so identical rows never re-query the LLM.</p>
+          <div class="docs-card-head">No LLM in Stage 2</div>
+          <p>Stage 2 used to escalate <code>needs_review</code> rows to an LLM. That step is retired: a second, weaker verdict here only pre-empted Stage 3's validated front-door screen. <code>needs_review</code> rows now flow straight to Stage 3, and when the screen passes one, <code>run_extract</code> overwrites <code>filter_status</code> with the screen's paper type and sets <code>filter_method</code> to <code>screen</code>.</p>
+          <p style="margin-top:8px">The values <code>llm</code> and <code>both</code> in <code>filter_method</code> are historical — rows written before the swap still carry them.</p>
         </div>
 
         <div class="docs-card">
@@ -972,7 +963,7 @@ python -m filter.run_filter --rebuild-index     # rebuild index from filtered.cs
               <tr><td class="col-name">ref_r</td><td class="col-desc">Formatted reference string</td><td class="col-desc">Open Science Collaboration (2015). Science.</td></tr>
               <tr style="background:var(--surface-2)"><td colspan="3" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Added by Stage 2</td></tr>
               <tr><td class="col-name">filter_status</td><td class="col-desc">Classification result</td><td class="col-desc">replication | reproduction | false_positive | needs_review</td></tr>
-              <tr><td class="col-name">filter_method</td><td class="col-desc">Which classifier decided</td><td class="col-desc">rule_based | llm | both</td></tr>
+              <tr><td class="col-name">filter_method</td><td class="col-desc">Which classifier decided</td><td class="col-desc">rule_based | screen (llm, both = historical)</td></tr>
               <tr><td class="col-name">filter_evidence</td><td class="col-desc">Phrase or quote that triggered classification</td><td class="col-desc">phrase:direct replication; cite:(Bargh, 1996)</td></tr>
               <tr><td class="col-name">filter_confidence</td><td class="col-desc">high | medium | low (categorical)</td><td class="col-desc">high</td></tr>
             </tbody>
@@ -1086,7 +1077,7 @@ python -m filter.run_filter --rebuild-index     # rebuild index from filtered.cs
               <div class="flow-node-head">Rule 5 — Same-sentence proximity gate</div>
               Is the citation in the <strong>same sentence</strong> as the replication phrase? A phrase and a
               citation that merely co-occur somewhere in the abstract are frequently unrelated.<br>
-              <strong>No →</strong> uncertain — send to LLM
+              <strong>No →</strong> uncertain — left as <code>needs_review</code>
             </div>
             <div class="flow-arrow-down">↓ same sentence</div>
             <div class="flow-node" style="border-left:3px solid #16a34a">
@@ -1098,9 +1089,8 @@ python -m filter.run_filter --rebuild-index     # rebuild index from filtered.cs
             <div class="flow-arrow-down">↓ uncertain rows from Rules 4 + 5</div>
             <div class="flow-node" style="border-left:3px solid #2563eb">
               <span class="flow-count llm" id="fe-llm">—</span>
-              <div class="flow-node-head">LLM classify</div>
-              Title + abstract sent to GPT (<code>FILTER_OPENAI_MODEL</code>); Gemini fallback via <code>GEMINI_MODEL</code>. Response cached by <code>hash(title+abstract)</code> — identical rows never re-query.<br>
-              <span style="margin-top:4px;display:block">Output: <code>replication</code> / <code>reproduction</code> / <code>false_positive</code> / <code>needs_review</code> with <code>filter_evidence</code> quote</span>
+              <div class="flow-node-head">Written through as <code>needs_review</code></div>
+              No LLM call here. Stage 3's two-model front-door screen decides these rows and, when it passes one, overwrites <code>filter_status</code> with its paper type and sets <code>filter_method</code> to <code>screen</code>.
               <div class="flow-split" id="fe-llm-split"></div>
             </div>
             <div class="flow-arrow-down">↓</div>
@@ -2199,7 +2189,7 @@ window.addEventListener('hashchange', _tabFromHash);
 (function wrapDocsDrawers(){
   const LABELS = {
     'tab-search':       'Stage 1 reference — sources, search phrases, dedup passes, CLI flags',
-    'tab-filter':       'Stage 2 reference — decision logic, phrase list, LLM prompt, CLI flags',
+    'tab-filter':       'Stage 2 reference — decision logic, phrase list, CLI flags',
     'tab-extract':      'Stage 3 reference — pipeline steps, column dictionary, CLI flags',
     'tab-extract-test': 'Stage 3 sandbox reference — test workflow and promote commands',
     'tab-supabase':     'Stage 4 reference — validation workflow, configuration, field meanings',

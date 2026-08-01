@@ -39,9 +39,9 @@ class TestCoverage:
         assert len(set(versions.values())) == len(versions)
 
     def test_version_is_stable_across_calls(self):
-        first = prompt_version("build_filter_prompt")
+        first = prompt_version("build_classify_prompt")
         prompt_version.cache_clear()
-        assert prompt_version("build_filter_prompt") == first
+        assert prompt_version("build_classify_prompt") == first
 
     def test_unknown_name_raises(self):
         with pytest.raises(KeyError):
@@ -63,7 +63,7 @@ class TestChangeDetection:
         prompt_version.cache_clear()
         after = self._versions()
         assert after["build_identification_prompt"] != before["build_identification_prompt"]
-        assert after["build_filter_prompt"] == before["build_filter_prompt"]
+        assert after["build_classify_prompt"] == before["build_classify_prompt"]
 
     def test_shared_fragment_edit_changes_every_user(self, monkeypatch):
         """EVIDENCE_POLICY opens most prompts — editing it must invalidate them all."""
@@ -73,9 +73,9 @@ class TestChangeDetection:
         prompt_version.cache_clear()
         after = self._versions()
         changed = {n for n in PROMPT_NAMES if after[n] != before[n]}
-        for name in ("build_filter_prompt", "build_match_type_prompt",
+        for name in ("build_match_type_prompt",
                      "build_identification_prompt", "build_multi_original_prompt",
-                     "build_classify_prompt", "build_target_prompt",
+                     "build_target_prompt",
                      "build_outcome_abstract_prompt", "build_outcome_fulltext_prompt",
                      "build_repro_abstract_prompt", "build_repro_fulltext_prompt"):
             assert name in changed, f"{name} did not follow EVIDENCE_POLICY"

@@ -20,7 +20,6 @@ def _resp(content: str):
 
 def test_call_openai_retries_then_succeeds(monkeypatch):
     monkeypatch.setattr(llm, "OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(llm, "_openai_disabled", False)
     sleeps: list = []
     monkeypatch.setattr(llm.time, "sleep", lambda s: sleeps.append(s))
 
@@ -44,7 +43,6 @@ def test_call_openai_retries_then_succeeds(monkeypatch):
 
 def test_call_openai_returns_none_after_three_failures(monkeypatch):
     monkeypatch.setattr(llm, "OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(llm, "_openai_disabled", False)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
 
     fake_client = MagicMock()
@@ -57,21 +55,23 @@ def test_call_openai_returns_none_after_three_failures(monkeypatch):
     assert fake_client.chat.completions.create.call_count == 3
 
 
-# ── Stage 4.5 reference screen ───────────────────────────────────────────────
-# The screen votes two providers on "is this a replication?". A missing vote is an
-# API failure, not a verdict, and must never reach the pipeline as a disagreement.
-# (Extends the two regression tests from PR #84, which this work supersedes.)
+# ── The front-door screen ────────────────────────────────────────────────────
+# Two providers vote on the v3.2 five-field schema and screen_gate() turns the two
+# votes into "discard" or "proceed". A missing vote is an API failure, not a verdict.
 
-_VOTE = {"is_replication": "yes", "classification_confidence": "high",
-         "confidence": "high", "evidence_quote": "q", "reasoning": "r"}
+def _v(classification="replication", confident=True, categories=("clearly_declared",)):
+    """One raw model response in the v3.2 schema."""
+    return {"classification": classification, "confident": confident,
+            "categories": list(categories), "evidence_quote": "q", "reasoning": "r"}
 
 
 def _screen(monkeypatch, tmp_path, gemini_ok: bool, voter2_ok: bool,
-            refs=None, target=None, vote_label: str = "yes", calls=None):
-    """Run screen_references_with_llm with each classifier either answering or failing."""
+            refs=None, target=None, vote=None, calls=None):
+    """Run screen_references_with_llm with each voter either answering or failing."""
     monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
-    vote = dict(_VOTE, is_replication=vote_label)
+    monkeypatch.setattr(llm, "SCREEN_VOTER2_MODEL", "mistralai/ministral-14b-2512")
+    vote = vote or _v()
 
     def gemini(prompt, model=None):
         if target is not None and "REFERENCES" in prompt:
@@ -83,8 +83,8 @@ def _screen(monkeypatch, tmp_path, gemini_ok: bool, voter2_ok: bool,
             calls.append(model)
         return (dict(vote), None) if voter2_ok else (None, "boom")
 
-    def openai(prompt, model=None):
-        raise AssertionError("the screen must not call OpenAI for its second vote")
+    def openai(prompt, model=None, reasoning_effort=""):
+        raise AssertionError("an OpenRouter voter id must not reach call_openai")
 
     monkeypatch.setattr(llm, "call_gemini", gemini)
     monkeypatch.setattr(llm, "call_openrouter", openrouter)
@@ -92,33 +92,131 @@ def _screen(monkeypatch, tmp_path, gemini_ok: bool, voter2_ok: bool,
     return llm.screen_references_with_llm("10.1/x", "Title", "Abstract", refs or [])
 
 
+# ── screen_gate: G-softqual, mirroring analysis/screening_eval/gate_sweep_v32.py ──
+
+@pytest.mark.parametrize("votes,expected", [
+    # Both "none", at any confidence → discard.
+    ([_v("none", True),  _v("none", True)],  "discard"),
+    ([_v("none", False), _v("none", False)], "discard"),
+    ([_v("none", True),  _v("none", False)], "discard"),
+    # One confident "none" + an unconfident partner → discard (the softqual clause).
+    ([_v("none", True),  _v("unclear", False)],     "discard"),
+    ([_v("none", True),  _v("replication", False)], "discard"),
+    ([_v("unclear", False), _v("none", True)],      "discard"),
+    # A confident split is a real disagreement — it proceeds.
+    ([_v("none", True),  _v("replication", True)], "proceed"),
+    ([_v("none", True),  _v("unclear", True)],     "proceed"),
+    # No confident "none" at all → proceed.
+    ([_v("none", False), _v("replication", False)], "proceed"),
+    ([_v("replication", True), _v("reproduction", True)], "proceed"),
+    ([_v("unclear", False), _v("unclear", False)],  "proceed"),
+])
+def test_screen_gate(votes, expected):
+    parsed = [dict(v, provider="p") for v in votes]
+    assert llm.screen_gate(parsed) == expected
+
+
+def test_screen_gate_needs_two_votes():
+    assert llm.screen_gate([dict(_v("none"), provider="gemini")]) is None
+    assert llm.screen_gate([]) is None
+
+
+# ── Vote parsing ─────────────────────────────────────────────────────────────
+
+def test_a_classification_outside_the_enum_becomes_unclear(monkeypatch):
+    monkeypatch.setattr(llm, "call_gemini",
+                        lambda p, model=None: ({"classification": "maybe",
+                                                "confident": True,
+                                                "categories": ["clearly_declared"]}, None))
+    assert llm._classify_once("p", "gemini", "flash-lite")["classification"] == "unclear"
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (True, True), (False, False), ("true", True), ("false", False),
+    ("TRUE", True), (None, False), ("", False),
+])
+def test_confident_is_coerced_to_a_bool(monkeypatch, raw, expected):
+    monkeypatch.setattr(llm, "call_gemini",
+                        lambda p, model=None: ({"classification": "replication",
+                                                "confident": raw, "categories": []}, None))
+    vote = llm._classify_once("p", "gemini", "flash-lite")
+    assert vote["confident"] is expected
+
+
+def test_categories_keep_enum_values_in_order_and_drop_the_rest(monkeypatch):
+    monkeypatch.setattr(llm, "call_gemini", lambda p, model=None: (
+        {"classification": "replication", "confident": True,
+         "categories": ["context_transfer", "not_a_category", "clearly_declared"]}, None))
+    vote = llm._classify_once("p", "gemini", "flash-lite")
+    assert vote["categories"] == ["context_transfer", "clearly_declared"]
+
+
+def test_a_trailing_comma_still_parses():
+    """The only malformed-response mode seen in ~2,100 validation calls."""
+    assert llm._parse_llm_json('{"classification": "none", "confident": true,}') == {
+        "classification": "none", "confident": True}
+    assert llm._parse_llm_json('prose {"categories": ["other",],}')["categories"] == ["other"]
+
+
+# ── Voter-2 routing ──────────────────────────────────────────────────────────
+
+def test_a_slashless_voter_id_calls_openai_not_openrouter(monkeypatch):
+    monkeypatch.setattr(llm, "SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
+    seen: dict = {}
+
+    def openai(prompt, model=None, reasoning_effort=""):
+        seen.update(model=model, reasoning_effort=reasoning_effort)
+        return _v(), None
+
+    monkeypatch.setattr(llm, "call_openai", openai)
+    monkeypatch.setattr(llm, "call_openrouter", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("an OpenAI voter id must not reach OpenRouter")))
+
+    assert [v[0] for v in llm.screen_voters()] == ["gemini", "openai"]
+    vote = llm._classify_once("p", "openai", "gpt-5.4-mini")
+    assert vote["provider"] == "openai"
+    assert seen == {"model": "gpt-5.4-mini", "reasoning_effort": "low"}
+
+
+def test_a_slashed_voter_id_calls_openrouter(monkeypatch):
+    monkeypatch.setattr(llm, "SCREEN_VOTER2_MODEL", "mistralai/ministral-14b-2512")
+    seen: dict = {}
+    monkeypatch.setattr(llm, "call_openrouter",
+                        lambda p, model="": (seen.update(model=model), (_v(), None))[1])
+    monkeypatch.setattr(llm, "call_openai", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("an OpenRouter voter id must not reach OpenAI")))
+
+    assert [v[0] for v in llm.screen_voters()] == ["gemini", "openrouter"]
+    assert llm._classify_once("p", "openrouter", "mistralai/ministral-14b-2512")["provider"] == "openrouter"
+    assert seen["model"] == "mistralai/ministral-14b-2512"
+
+
+# ── Screen bookkeeping ───────────────────────────────────────────────────────
+
 def test_screen_both_votes_is_a_complete_screen(monkeypatch, tmp_path):
     out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=True)
 
-    assert out["models_agree"] is True
+    assert out["screen_verdict"] == "proceed"
     assert len(out["votes"]) == 2
     assert out["resolution_method"] != "llm_refscreen_partial"
     assert list(tmp_path.glob("classify_*.json"))  # a real verdict is cached
 
 
-def test_screen_second_vote_runs_the_configured_openrouter_model(monkeypatch, tmp_path):
-    """Voter 2 is Ministral on OpenRouter, not an OpenAI model — the helper asserts
-    OpenAI is never called, and the vote must be attributed to the configured model."""
+def test_screen_attributes_each_vote_to_its_model(monkeypatch, tmp_path):
     calls: list[str] = []
     out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=True, calls=calls)
 
-    assert calls == [llm.SCREEN_VOTER2_MODEL]
-    assert llm.SCREEN_VOTER2_MODEL == "mistralai/ministral-14b-2512"
-    assert llm.SCREEN_PROVIDERS == ("gemini", "openrouter")
+    assert calls == ["mistralai/ministral-14b-2512"]
     assert [v["provider"] for v in out["votes"]] == ["gemini", "openrouter"]
     assert out["llm_source"] == "gemini+openrouter"
-    assert out["llm_model"] == f"{llm.GEMINI_LIGHT_MODEL}+{llm.SCREEN_VOTER2_MODEL}"
+    assert out["llm_model"] == f"{llm.GEMINI_LIGHT_MODEL}+mistralai/ministral-14b-2512"
 
 
-def test_screen_one_vote_is_partial_not_a_disagreement(monkeypatch, tmp_path):
+def test_screen_one_vote_is_partial_not_a_verdict(monkeypatch, tmp_path):
     out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=False)
 
     assert out["resolution_method"] == "llm_refscreen_partial"
+    assert out["screen_verdict"] == ""
     assert "openrouter" in out["llm_error"]
     assert len(out["votes"]) == 1
     assert out["llm_model"] == llm.GEMINI_LIGHT_MODEL   # the model that did answer
@@ -136,7 +234,7 @@ def test_screen_no_votes_is_a_failure(monkeypatch, tmp_path):
 
 def test_screen_attributes_a_resolved_link_to_the_target_picker(monkeypatch, tmp_path):
     """The reference was picked by the L5 call, so the row must name that model and
-    quote its evidence — not the Q1 classifier pair that only said "yes, a replication"."""
+    quote its evidence — not the Q1 voter pair that only said "yes, a replication"."""
     refs = [{"doi": "10.1/orig", "title": "Original", "publication_year": 2015,
              "first_author": "Smith"}]
     out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=True, refs=refs,
@@ -152,15 +250,53 @@ def test_screen_attributes_a_resolved_link_to_the_target_picker(monkeypatch, tmp
     assert out["llm_evidence"] == "we re-test Smith (2015)"
 
 
-def test_screen_keeps_classifier_attribution_when_no_target_is_picked(monkeypatch, tmp_path):
-    """A 'no' verdict is the classifiers' decision, so the discard path keeps their
-    models, evidence and per-model reasoning — the row is set aside for review."""
-    out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=True, vote_label="no")
+def test_screen_keeps_voter_attribution_when_no_target_is_picked(monkeypatch, tmp_path):
+    """A discard is the voters' decision, so the row keeps their models, evidence
+    and per-model reasoning — it is set aside for review."""
+    out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=True,
+                  vote=_v("none", True, ["terminology_only"]))
 
-    assert out["is_replication"] == "no"
-    assert out["llm_model"] == f"{llm.GEMINI_LIGHT_MODEL}+{llm.SCREEN_VOTER2_MODEL}"
+    assert out["screen_verdict"] == "discard"
+    assert out["screen_classification"] == "none"
+    assert out["record_type"] == ""
+    assert out["llm_model"] == f"{llm.GEMINI_LIGHT_MODEL}+mistralai/ministral-14b-2512"
     assert out["llm_evidence"] == "q"
     assert "gemini: r" in out["llm_reasoning"] and "openrouter: r" in out["llm_reasoning"]
+
+
+# ── record_type and categories ───────────────────────────────────────────────
+
+def _two_votes(monkeypatch, tmp_path, v1, v2):
+    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    monkeypatch.setattr(llm, "SCREEN_VOTER2_MODEL", "mistralai/ministral-14b-2512")
+    monkeypatch.setattr(llm, "call_gemini", lambda p, model=None: (dict(v1), None))
+    monkeypatch.setattr(llm, "call_openrouter", lambda p, model="": (dict(v2), None))
+    return llm.classify_replication("10.1/x", "Title", "Abstract")
+
+
+@pytest.mark.parametrize("v1,v2,expected", [
+    (_v("replication"),  _v("replication"),  "replication"),
+    (_v("reproduction"), _v("reproduction"), "reproduction"),
+    # A split or a "both" falls back to voter 1's qualifying answer…
+    (_v("replication"),  _v("reproduction"), "replication"),
+    (_v("reproduction"), _v("replication"),  "reproduction"),
+    (_v("both"),         _v("reproduction"), "replication"),
+    # …and to voter 2's when voter 1 gave no qualifying answer.
+    (_v("none", True),   _v("reproduction", True), "reproduction"),
+    (_v("unclear", False), _v("replication", True), "replication"),
+    # Neither qualifying → no record_type at all.
+    (_v("none"),         _v("unclear"),      ""),
+])
+def test_record_type_from_the_votes(monkeypatch, tmp_path, v1, v2, expected):
+    assert _two_votes(monkeypatch, tmp_path, v1, v2)["record_type"] == expected
+
+
+def test_categories_are_the_union_in_enum_order(monkeypatch, tmp_path):
+    out = _two_votes(monkeypatch, tmp_path,
+                     _v(categories=["context_transfer", "clearly_declared"]),
+                     _v(categories=["clearly_declared", "self_retest"]))
+    assert out["categories"] == ["clearly_declared", "self_retest", "context_transfer"]
 
 
 # ── Classification / target split (audit E1) ─────────────────────────────────
@@ -168,10 +304,11 @@ def test_screen_keeps_classifier_attribution_when_no_target_is_picked(monkeypatc
 # ladder, so the two halves must be separately callable and separately cached — and
 # a threaded-in verdict must never be re-voted.
 
-def _classify(monkeypatch, tmp_path, calls: list, label: str = "yes"):
+def _classify(monkeypatch, tmp_path, calls: list, vote=None):
     monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
-    vote = dict(_VOTE, is_replication=label)
+    monkeypatch.setattr(llm, "SCREEN_VOTER2_MODEL", "mistralai/ministral-14b-2512")
+    vote = vote or _v()
 
     def gemini(prompt, model=None):
         calls.append(("gemini", prompt))
@@ -191,7 +328,7 @@ def test_classification_is_callable_without_the_target_pick(monkeypatch, tmp_pat
     _classify(monkeypatch, tmp_path, calls)
     out = llm.classify_replication("10.1/x", "Title", "Abstract")
 
-    assert out["is_replication"] == "yes" and out["models_agree"] is True
+    assert out["screen_verdict"] == "proceed" and out["record_type"] == "replication"
     assert [c[0] for c in calls] == ["gemini", "openrouter"]   # two votes, nothing else
     assert "resolved" not in out                                # no target fields
     assert list(tmp_path.glob("classify_*.json"))
@@ -214,15 +351,16 @@ def test_a_threaded_verdict_is_not_re_voted(monkeypatch, tmp_path):
 
     assert out["resolution_method"] == "llm_references"
     assert out["resolved_doi_o"] == "10.1/orig"
-    assert out["models_agree"] is True          # the verdict came through intact
+    assert out["screen_verdict"] == "proceed"   # the verdict came through intact
     assert calls == []                          # …without a second classification call
 
 
 def test_the_target_pick_is_cached_separately(monkeypatch, tmp_path):
     monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
-    verdict = {"resolution_method": "llm_refscreen_declined", "is_replication": "yes",
-               "models_agree": True, "classification_confidence": "high", "votes": [],
+    verdict = {"resolution_method": "llm_refscreen_declined", "screen_verdict": "proceed",
+               "screen_classification": "replication", "record_type": "replication",
+               "categories": [], "votes": [],
                "llm_source": "", "llm_model": "", "llm_evidence": "",
                "llm_reasoning": "", "llm_prompt": "", "llm_error": ""}
     refs = [{"doi": "10.1/orig", "title": "Original", "publication_year": 2015,
@@ -245,9 +383,9 @@ def test_the_target_pick_is_cached_separately(monkeypatch, tmp_path):
     assert not list(tmp_path.glob("classify_*.json"))  # the verdict is not re-cached here
 
 
-def test_no_target_call_when_the_verdict_is_not_yes(monkeypatch, tmp_path):
+def test_no_target_call_when_no_voter_gave_a_qualifying_answer(monkeypatch, tmp_path):
     calls: list = []
-    _classify(monkeypatch, tmp_path, calls, label="no")
+    _classify(monkeypatch, tmp_path, calls, vote=_v("none", True))
     verdict = llm.classify_replication("10.1/x", "Title", "Abstract")
     monkeypatch.setattr(llm, "call_gemini", lambda *a, **k: (_ for _ in ()).throw(
         AssertionError("no target pick for a paper that is not a replication")))
@@ -257,7 +395,7 @@ def test_no_target_call_when_the_verdict_is_not_yes(monkeypatch, tmp_path):
         [{"doi": "10.1/o", "title": "O", "publication_year": 2015, "first_author": "S"}],
         classification=verdict)
 
-    assert out["is_replication"] == "no"
+    assert out["screen_verdict"] == "discard"
     assert out["resolved"] is False
 
 
@@ -393,8 +531,9 @@ _TARGET_ANSWER = {"target_number": 1, "confidence": "high",
                   "target_description": "Smith 2015", "evidence_quote": "q",
                   "reasoning": "r"}
 
-_VERDICT_YES = {"resolution_method": "llm_refscreen_declined", "is_replication": "yes",
-                "models_agree": True, "classification_confidence": "high", "votes": [],
+_VERDICT_YES = {"resolution_method": "llm_refscreen_declined",
+                "screen_verdict": "proceed", "screen_classification": "replication",
+                "record_type": "replication", "categories": [], "votes": [],
                 "llm_source": "", "llm_model": "", "llm_evidence": "",
                 "llm_reasoning": "", "llm_prompt": "", "llm_error": ""}
 
@@ -648,8 +787,9 @@ def test_identification_key_follows_the_openai_fallback(monkeypatch, tmp_path):
 def test_target_key_follows_the_openai_fallback(monkeypatch, tmp_path):
     monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
-    verdict = {"resolution_method": "llm_refscreen_declined", "is_replication": "yes",
-               "models_agree": True, "classification_confidence": "high", "votes": [],
+    verdict = {"resolution_method": "llm_refscreen_declined",
+               "screen_verdict": "proceed", "screen_classification": "replication",
+               "record_type": "replication", "categories": [], "votes": [],
                "llm_source": "", "llm_model": "", "llm_evidence": "",
                "llm_reasoning": "", "llm_prompt": "", "llm_error": ""}
     refs = [_ref("10.1/orig", "Original")]

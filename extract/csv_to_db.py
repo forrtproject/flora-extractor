@@ -164,6 +164,7 @@ def _build_metadata_row(record_id: str, row: pd.Series) -> dict:
         "link_evidence":              _s(row.get("link_evidence")),
         "link_confidence":            _s(row.get("link_confidence")),
         "link_llm_model":             _s(row.get("link_llm_model")),
+        "screen_categories":          _s(row.get("screen_categories")),
         "outcome_confidence":         _s(row.get("outcome_confidence")),
         "authors_r":                  _s(row.get("authors_r")),
         "authors_o":                  _s(row.get("authors_o")),

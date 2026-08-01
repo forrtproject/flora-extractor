@@ -101,10 +101,12 @@ RESEARCHER_EMAIL = os.getenv("RESEARCHER_EMAIL", "research@example.com")
 S2_API_KEY = os.getenv("S2_API_KEY") or os.getenv("SEMANTIC_SCHOLAR_KEY", "")
 # Elsevier Scopus API key — optional abstract-backfill tier (~10k requests/week quota)
 ELSEVIER_API_KEY = os.getenv("ELSEVIER_API_KEY", "")
+# An institutional token grants Scopus entitlement off the subscribing network;
+# without it Elsevier entitlement is IP-bound (campus network / VPN).
+ELSEVIER_INSTTOKEN = os.getenv("ELSEVIER_INSTTOKEN", "").strip()
 
 # ── Model identifiers ─────────────────────────────────────────────────────────
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
-FILTER_OPENAI_MODEL = os.getenv("FILTER_OPENAI_MODEL", "gpt-5-mini")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 
 # Per-task model selection — light for classify_match_type & code_outcome,
@@ -117,11 +119,15 @@ GEMINI_HEAVY_MODEL = os.getenv("GEMINI_HEAVY_MODEL", GEMINI_MODEL)
 # OpenRouter (OpenAI-compatible API at openrouter.ai) — optional alternative LLMs
 OPENROUTER_API_KEY    = os.getenv("OPENROUTER_API_KEY",    "")
 OPENROUTER_HEAVY_MODEL = os.getenv("OPENROUTER_HEAVY_MODEL", "qwen/qwen3.5-35b-a3b")
-# Second voter of the Stage 4.5 replication screen, called through OpenRouter.
-# Ministral 14B beat every alternative measured on adjudicated hard cases (89.4%
-# correct vs 66% for gpt-5-mini) while discarding no genuine replication, and its
-# errors overlap little with the Google first voter's.
-SCREEN_VOTER2_MODEL = os.getenv("SCREEN_VOTER2_MODEL", "mistralai/ministral-14b-2512")
+# Second voter of the front-door replication screen. On the v3.2 gate sweep this
+# model paired with Gemini Flash-Lite discards 89% of adjudicated hard negatives
+# with zero settled misses; Ministral via OpenRouter reached 73% on the same gate.
+# An id containing "/" is routed to OpenRouter, anything else to OpenAI direct.
+SCREEN_VOTER2_MODEL = os.getenv("SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
+
+# ── Stage 1 engine source ─────────────────────────────────────────────────────
+# FLORA_USE_ENGINE=1 (or true/yes/on) opts into the YAML-spec engine source.
+FLORA_USE_ENGINE = os.getenv("FLORA_USE_ENGINE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 # ── External servers ──────────────────────────────────────────────────────────
 GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")
@@ -147,14 +153,45 @@ GEMINI_PAID_KEYS: set[int] = {
 OUTCOME_FULLTEXT_ESCALATION = os.getenv(
     "OUTCOME_FULLTEXT_ESCALATION", "true").strip().lower() not in {"false", "0", "no"}
 
+# ── Daily OpenAI token budget ─────────────────────────────────────────────────
+# A hard ceiling on OpenAI tokens (prompt + completion) bought per calendar day —
+# the metered spend in this pipeline. The running total is persisted (see
+# shared/token_usage.py), so it survives a restart and is shared by concurrent runs;
+# a call that would be made past the ceiling is refused rather than billed. Gemini
+# and OpenRouter usage is recorded but never capped. Set OPENAI_DAILY_TOKEN_BUDGET=0
+# to lift the cap — that is the explicit override, and nothing else disables it.
+OPENAI_DAILY_TOKEN_BUDGET = int(os.getenv("OPENAI_DAILY_TOKEN_BUDGET", "8000000"))
+
 # ── Rate limits (seconds between calls) ──────────────────────────────────────
 OPENALEX_RATE_SEC  = float(os.getenv("OPENALEX_RATE_SEC", "0.3"))
 # Europe PMC is keyless and public, so the default is deliberately polite. At 25 DOIs
 # per boolean query it still clears ~60 DOIs/sec — comparable to the S2 batch tier.
 EPMC_RATE_SEC      = float(os.getenv("EPMC_RATE_SEC", "0.4"))
-CROSSREF_RATE_SEC  = 0.1
+CROSSREF_RATE_SEC  = float(os.getenv("CROSSREF_RATE_SEC",  "0.1"))
+S2_RATE_SEC        = float(os.getenv("S2_RATE_SEC",        "0.5"))
+SCOPUS_RATE_SEC    = float(os.getenv("SCOPUS_RATE_SEC",    "1.0"))  # Elsevier: ~1 req/sec
 UNPAYWALL_RATE_SEC = 0.5
 GROBID_RATE_SEC    = 3.0
+
+# ── Abstract backfill: batch sizes and quota caps ────────────────────────────
+# OpenAlex filter= accepts up to 50 pipe-separated ids per call.
+OA_BATCH_SIZE   = int(os.getenv("OA_BATCH_SIZE", "50"))
+# Europe PMC's search endpoint takes a boolean query, so a batch is
+# 'DOI:"a" OR DOI:"b" ...' in one GET. 25 keeps the URL near 1.3 kB, well inside
+# what the endpoint accepts.
+EPMC_BATCH_SIZE = int(os.getenv("EPMC_BATCH_SIZE", "25"))
+# S2's /graph/v1/paper/batch endpoint accepts up to 500 ids per call. Verified
+# 2026-07-27/28 on a full production run over this corpus's entire 494,406-row S2
+# target list: ~49.8 DOIs/sec sustained at a 14.5% hit rate, vs CrossRef's ~3/sec
+# one-at-a-time. At 5.0s between batches, whole-batch failures (all 3 retries
+# exhausted) clustered in the first ~10 minutes then dropped to near-zero (~2.4% of
+# ~550 batches overall) — a real improvement over 3.0s's ~20% failure rate. Do not
+# re-tune this by hammering the live API in quick isolated bursts: cumulative load
+# on the key appears to matter, not just the gap between the two calls in front of you.
+S2_BATCH_SIZE     = int(os.getenv("S2_BATCH_SIZE", "500"))
+S2_BATCH_RATE_SEC = float(os.getenv("S2_BATCH_RATE_SEC", "5.0"))
+# Keep a Scopus run under the ~10k/week quota.
+SCOPUS_DEFAULT_LIMIT = int(os.getenv("SCOPUS_DEFAULT_LIMIT", "9000"))
 
 # LLM rate limits are per provider and enforced against that provider's own
 # last-call timestamp in shared/llm_client.py. A single global interval charged

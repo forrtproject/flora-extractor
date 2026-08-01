@@ -21,6 +21,13 @@ Nothing is sent anywhere and no model verdicts are embedded.
 
 The screening prompt is validated: 84% of hard negatives discarded with zero missed positives
 (89% under the softened gate), against 61% for the production prompt. Numbers and method in
-`analysis/screening_eval/report_v32.md`. Implementation is pending final review — the checklist
-in §8.1.1 of `current_state.html` covers the prompt swap, the schema and gate changes, the
-`record_type` migration, the Stage 2 LLM filter retirement, and the cache consequences.
+`analysis/screening_eval/report_v32.md`.
+
+**Implemented on branch `redesign/screen-swap-8.1`.** The §8.1.1 checklist in
+`current_state.html` is done: the v3.2 prompt is `_CLASSIFY_PROMPT` in `shared/prompts.py`,
+the five-field schema is parsed in `shared/llm_client.py`, the G-softqual gate is
+`screen_gate()` (one definition, called from both the front door and the batch-tools path),
+`record_type` and the new `screen_categories` column come from the screen, voter 2 is
+`gpt-5.4-mini` on OpenAI direct, and the Stage 2 LLM filter is deleted. Editing the prompt
+moved `prompt_version("build_classify_prompt")`, so every screened row re-votes — that is
+the intended full re-screen.

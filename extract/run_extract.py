@@ -20,10 +20,14 @@ import pandas as pd
 
 from shared.config import (
     BASE_DIR, DATA_DIR, GEMINI_API_KEYS, GEMINI_HEAVY_MODEL, LLM_CACHE_DIR,
-    OA_XML_CACHE_DIR, OPENROUTER_API_KEY, PARSE_CACHE_DIR, PDF_CACHE_DIR, log,
+    OA_XML_CACHE_DIR, OPENAI_API_KEY, OPENROUTER_API_KEY, PARSE_CACHE_DIR,
+    PDF_CACHE_DIR, log,
 )
 from shared import token_counter
-from shared.llm_client import call_llm, classify_replication, ladder_fingerprint
+from shared.llm_client import (
+    call_llm, classify_replication, ladder_fingerprint, screen_voters,
+)
+from shared.token_usage import TokenBudgetExhausted
 from shared.openalex_client import OpenAlexQuotaExhausted, extract_author_year_patterns, find_all_candidates
 from shared.openalex_client import fetch_openalex_by_doi as _oa_by_doi
 from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
@@ -37,6 +41,7 @@ from shared.pdf_parsing import (
 )
 from shared.cache import content_key, read_cache, write_cache
 from shared.prompts import build_match_type_prompt, prompt_version
+from shared.row_key import primary_key
 from shared.doi_verify import keeps_no_doi, verify_and_correct
 from shared.schema import (
     EXTRACTED_COLS,
@@ -221,9 +226,6 @@ _METHOD_MAP = {
     # The same screen concluded the paper is not a replication at all, so there is
     # no original to look for and no reason to fetch the PDF.
     "llm_not_a_replication":          "not_a_replication",
-    # The two Q1 classifiers disagreed; the row is set aside for review
-    # rather than escalated (see the front-door screen in run_extract).
-    "llm_screen_disagreement":        "screen_disagreement",
     # LLM ran successfully but concluded no identifiable original study exists.
     # Distinct from llm_failed (API errors) and llm_fulltext (original found).
     "llm_no_target":                  "no_original_found",
@@ -306,6 +308,23 @@ def _valid_multi_count(n: int) -> bool:
     return _MULTI_N_MIN <= n < _MULTI_N_MAX
 
 
+def _match_type_result(match_type: str, confidence: str, rule_fired: bool = False,
+                       classify_model: str = "", reasoning: str = "") -> dict:
+    """The one shape classify_match_type returns, whichever path decided it.
+
+    Every caller reads rule_fired and classify_llm_model; a path that omitted them
+    (an OpenAlex failure, or a result cached before the key existed) was answered
+    with a silent default instead of the path's own answer.
+    """
+    return {
+        "original_match_type":       match_type,
+        "original_match_confidence": confidence,
+        "rule_fired":                rule_fired,
+        "classify_llm_model":        classify_model,
+        "reasoning":                 reasoning,
+    }
+
+
 def _rule_classify_multi_original(title_r: str, abstract_r: str) -> "dict | None":
     """
     Return a classification dict if title or abstract contains unambiguous signals
@@ -316,12 +335,10 @@ def _rule_classify_multi_original(title_r: str, abstract_r: str) -> "dict | None
     a captured year such as "replication of 2019 findings" is NOT a study count.
     """
     if _MULTI_TITLE_RE.search(title_r):
-        return {
-            "original_match_type":       "multiple_original",
-            "original_match_confidence": "high",
-            "rule_fired":                True,
-            "reasoning": "Title matches a known multi-target replication project (Many Labs, RRR, etc).",
-        }
+        return _match_type_result(
+            "multiple_original", "high", rule_fired=True,
+            reasoning="Title matches a known multi-target replication project "
+                      "(Many Labs, RRR, etc).")
     m = _MULTI_TITLE_COUNT_RE.search(title_r)
     if m:
         try:
@@ -329,12 +346,9 @@ def _rule_classify_multi_original(title_r: str, abstract_r: str) -> "dict | None
         except (ValueError, TypeError):
             n = -1
         if _valid_multi_count(n):
-            return {
-                "original_match_type":       "multiple_original",
-                "original_match_confidence": "high",
-                "rule_fired":                True,
-                "reasoning": f"Title explicitly states replication of {n} studies.",
-            }
+            return _match_type_result(
+                "multiple_original", "high", rule_fired=True,
+                reasoning=f"Title explicitly states replication of {n} studies.")
     for pattern in _MULTI_ABSTRACT_RES:
         m = pattern.search(abstract_r)
         if not m:
@@ -344,12 +358,9 @@ def _rule_classify_multi_original(title_r: str, abstract_r: str) -> "dict | None
         except (IndexError, ValueError, TypeError):
             continue
         if _valid_multi_count(n):
-            return {
-                "original_match_type":       "multiple_original",
-                "original_match_confidence": "high",
-                "rule_fired":                True,
-                "reasoning": f"Abstract explicitly states replication of {n} studies.",
-            }
+            return _match_type_result(
+                "multiple_original", "high", rule_fired=True,
+                reasoning=f"Abstract explicitly states replication of {n} studies.")
     return None
 
 
@@ -427,8 +438,7 @@ def classify_match_type(row: dict, no_llm: bool = False) -> dict:
         return rule
 
     if no_llm:
-        return {"original_match_type": "single_original",
-                "original_match_confidence": "low", "rule_fired": False}
+        return _match_type_result("single_original", "low")
 
     try:
         year_r = int(year_r_str) if year_r_str else 2099
@@ -450,8 +460,7 @@ def classify_match_type(row: dict, no_llm: bool = False) -> dict:
     if len(distinct_pairs) < 2:
         log.debug("[%s] classify_match_type: %d distinct author-year pair(s) — "
                   "single_original without an LLM call", doi_r, len(distinct_pairs))
-        return {"original_match_type": "single_original",
-                "original_match_confidence": "low", "rule_fired": False}
+        return _match_type_result("single_original", "low")
 
     # Step 2: fetch OpenAlex referenced works and match against patterns
     try:
@@ -461,7 +470,7 @@ def classify_match_type(row: dict, no_llm: bool = False) -> dict:
     except Exception as e:
         log.warning("[%s] classify_match_type: OpenAlex failed: %s — defaulting to single_original",
                     doi_r, e)
-        return {"original_match_type": "single_original", "original_match_confidence": "low"}
+        return _match_type_result("single_original", "low")
 
     # Step 3: call LLM. The cache is read here rather than before the candidate
     # fetch, because the candidate list is in the prompt and so in the key; the
@@ -472,7 +481,10 @@ def classify_match_type(row: dict, no_llm: bool = False) -> dict:
                       ladder_fingerprint(GEMINI_HEAVY_MODEL), prompt)
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
-        return cached
+        return _match_type_result(
+            cached["original_match_type"], cached["original_match_confidence"],
+            classify_model=str(cached.get("classify_llm_model", "") or ""),
+            reasoning=str(cached.get("reasoning", "") or ""))
 
     result = _llm_classify_match_type(prompt, doi_r)
     # Only a real answer is cached. The failure default is single_original, so
@@ -482,8 +494,7 @@ def classify_match_type(row: dict, no_llm: bool = False) -> dict:
     if result is None:
         log.warning("[%s] classify_match_type: LLM failed — defaulting to single_original "
                     "for this run, not cached", doi_r)
-        return {"original_match_type": "single_original",
-                "original_match_confidence": "low", "classify_llm_model": ""}
+        return _match_type_result("single_original", "low")
     write_cache(LLM_CACHE_DIR, key, result)
     return result
 
@@ -500,12 +511,8 @@ def _llm_classify_match_type(prompt: str, doi_r: str) -> "dict | None":
         mtype = "single_original"
     if conf not in {"high", "medium", "low"}:
         conf = "low"
-    return {
-        "original_match_type":       mtype,
-        "original_match_confidence": conf,
-        "classify_llm_model":        model_used,
-        "reasoning":                 str(result.get("reasoning", "") or ""),
-    }
+    return _match_type_result(mtype, conf, classify_model=model_used,
+                              reasoning=str(result.get("reasoning", "") or ""))
 
 
 # ── Data adapters ─────────────────────────────────────────────────────────────
@@ -559,20 +566,74 @@ def _build_bibtex_r(row: "pd.Series | dict") -> str:
 
 # ── Row merge helpers ─────────────────────────────────────────────────────────
 
-def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
-               match_type: str, match_conf: str,
-               rank: int, n: int, classify_model: str = "") -> dict:
+def _record_type(filter_row: pd.Series, screen: "dict | None") -> str:
+    """The paper type, which decides the outcome vocabulary: a reproduction is coded
+    on the computation/robustness grid, not success/failure (see shared/schema.py).
+
+    The front-door screen decides it — that is the call that read the abstract and
+    said what the paper is. Stage 2's filter_status stands in when the screen
+    proceeded without a qualifying vote, and is the whole answer on a --no-llm run
+    where no screen ran at all.
+
+    When neither has decided, the field is left EMPTY rather than defaulted: a paper
+    nobody has classified is not a replication because replication is the commoner
+    answer. Such a row still resolves an original and is still outcome-coded (on the
+    replication vocabulary, the more general of the two grids), but it carries no
+    type into the CSV and csv_to_db leaves it for a human.
+    """
+    if screen and screen.get("record_type"):
+        return str(screen["record_type"])
+    status = str(filter_row.get("filter_status", "")).strip().lower()
+    if status in {"replication", "reproduction"}:
+        return status
+    return "" if screen else "replication"
+
+
+def _screen_categories(screen: "dict | None") -> str:
+    return "|".join((screen or {}).get("categories", []) or [])
+
+
+def _base_row(filter_row: pd.Series, match_type: str, match_conf: str,
+              classify_model: str, outcome: dict,
+              screen: "dict | None" = None) -> dict:
+    """The fields every written row carries, whichever producer built it.
+
+    The three producers differ only in how they name the original and the link; the
+    classification, the replication-side bibtex, the outcome block, the record type
+    and the rank/count defaults are the same row for all of them.
+    """
     row = filter_row.to_dict()
     # propagate study_r → title_r if title_r is absent (old seeded data uses study_r)
     if not row.get("title_r"):
         row["title_r"] = row.get("study_r", "")
-    doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
-    doi_o_clean = clean_doi(link.get("resolved_doi_o", "") or "")
     row.update({
-        "pair_id":           make_pair_id(doi_r_clean, doi_o_clean),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
         "classify_llm_model":        classify_model,
+        "bibtex_ref_r":      _build_bibtex_r(filter_row),
+        "outcome":             outcome.get("outcome",             "cannot_be_determined"),
+        "outcome_phrase":      outcome.get("outcome_phrase",      ""),
+        "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
+        "out_quote_source":    outcome.get("out_quote_source",    ""),
+        "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
+        "outcome_llm_model":   str(outcome.get("llm_model",       "") or ""),
+        "type":              _record_type(filter_row, screen),
+        "screen_categories": _screen_categories(screen),
+        "original_rank": 1,
+        "n_originals":   1,
+    })
+    return row
+
+
+def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
+               match_type: str, match_conf: str,
+               rank: int, n: int, classify_model: str = "",
+               screen: "dict | None" = None) -> dict:
+    row = _base_row(filter_row, match_type, match_conf, classify_model, outcome, screen)
+    doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
+    doi_o_clean = clean_doi(link.get("resolved_doi_o", "") or "")
+    row.update({
+        "pair_id":         make_pair_id(doi_r_clean, doi_o_clean),
         "doi_o":           doi_o_clean,
         "title_o":         str(link.get("resolved_title_o", "") or ""),
         "year_o":          str(link.get("resolved_year_o",  "") or ""),
@@ -582,20 +643,10 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
             str(link.get("resolved_year_o",   "") or ""),
             str(link.get("resolved_title_o",  "") or ""),
         ))),
-        "bibtex_ref_r":    _build_bibtex_r(filter_row),
         "link_method":     _map_method(link.get("resolution_method", "target_pending")),
         "link_evidence":   str(link.get("llm_evidence",     "") or ""),
         "link_confidence": _link_confidence(link),
         "link_llm_model":  str(link.get("llm_model",        "") or ""),
-        "outcome":             outcome.get("outcome",             "cannot_be_determined"),
-        "outcome_phrase":      outcome.get("outcome_phrase",      ""),
-        "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
-        "out_quote_source":    outcome.get("out_quote_source",    ""),
-        "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
-        "outcome_llm_model":   str(outcome.get("llm_model",       "") or ""),
-        "type":          "reproduction"
-                         if str(filter_row.get("filter_status", "")) == "reproduction"
-                         else "replication",
         "original_rank": rank,
         "n_originals":   n,
     })
@@ -606,10 +657,9 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
                      match_type: str, match_conf: str, n: int,
                      link_llm_model: str = "",
                      link_method: str = "llm_cited_candidates",
-                     classify_model: str = "") -> dict:
-    row = filter_row.to_dict()
-    if not row.get("title_r"):
-        row["title_r"] = row.get("study_r", "")
+                     classify_model: str = "",
+                     screen: "dict | None" = None) -> dict:
+    row = _base_row(filter_row, match_type, match_conf, classify_model, outcome, screen)
     conf_str = orig.get("confidence", "low")
     if conf_str not in {"high", "medium", "low"}:
         conf_str = "low"
@@ -617,12 +667,9 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
     doi_o_clean  = clean_doi(orig.get("doi", "") or "")
     title_o      = str(orig.get("title", "") or "")
     row.update({
-        "pair_id":           make_pair_id(doi_r_clean, doi_o_clean,
-                                          str(orig.get("openalex_id", "") or ""),
-                                          title_o),
-        "original_match_type":       match_type,
-        "original_match_confidence": match_conf,
-        "classify_llm_model":        classify_model,
+        "pair_id":         make_pair_id(doi_r_clean, doi_o_clean,
+                                        str(orig.get("openalex_id", "") or ""),
+                                        title_o),
         "doi_o":           doi_o_clean,
         "title_o":         title_o,
         "year_o":          str(orig.get("year",         "") or ""),
@@ -633,20 +680,10 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
             title_o,
         ))),
         "study_o":         str(orig.get("study_number", "") or ""),
-        "bibtex_ref_r":    _build_bibtex_r(filter_row),
         "link_method":     link_method,
         "link_evidence":   str(orig.get("evidence",     "") or ""),
         "link_confidence": conf_str,
         "link_llm_model":  link_llm_model,
-        "outcome":             outcome.get("outcome",             "cannot_be_determined"),
-        "outcome_phrase":      outcome.get("outcome_phrase",      ""),
-        "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
-        "out_quote_source":    outcome.get("out_quote_source",    ""),
-        "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
-        "outcome_llm_model":   str(outcome.get("llm_model",       "") or ""),
-        "type":          "reproduction"
-                         if str(filter_row.get("filter_status", "")) == "reproduction"
-                         else "replication",
         "original_rank": orig.get("rank", 1),
         "n_originals":   n,
     })
@@ -655,22 +692,19 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
 
 def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
                link_method: str = "api_error", classify_model: str = "") -> dict:
-    row = filter_row.to_dict()
     doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
     outcome = "api_error" if link_method == "api_error" else "pending"
+    row = _base_row(filter_row, match_type, match_conf, classify_model,
+                    {"outcome": outcome})
     row.update({
         "pair_id": make_pair_id(doi_r_clean, ""),
-        "original_match_type":       match_type,
-        "original_match_confidence": match_conf,
-        "classify_llm_model":        classify_model,
         "doi_o": "", "title_o": "", "year_o": "", "authors_o": "", "ref_o": "",
-        "bibtex_ref_o": "", "bibtex_ref_r": _build_bibtex_r(filter_row),
+        "bibtex_ref_o": "",
         "link_method": link_method, "link_evidence": "", "link_confidence": "low",
         "link_llm_model": "",
-        "outcome": outcome, "outcome_phrase": "",
-        "outcome_confidence": "low", "out_quote_source": "", "outcome_reasoning": "",
-        "outcome_llm_model": "",
-        "type": "", "original_rank": 1, "n_originals": 1,
+        # No screen is passed in: a row nobody classified carries no type, and the
+        # replication default _record_type falls back to would be a guess.
+        "type": "",
     })
     return row
 
@@ -806,7 +840,8 @@ def _apply_outcome(row: dict, outcome: dict) -> dict:
     return row
 
 
-def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -> dict:
+def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False,
+                 screen: "dict | None" = None) -> dict:
     abstract_r = str(row.get("abstract_r", ""))
     title_r    = str(row.get("title_r",    ""))
 
@@ -821,27 +856,18 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -
         # Fallback: GROBID sections that run_for_doi already extracted. The intro is
         # in here for want of anything better; it is the section that most often
         # discusses OTHER studies' replication failures, and the prompt says so.
-        fulltext = " ".join(filter(None, [
-            str(link.get("grobid_abstract", "") or ""),
-            str(link.get("grobid_intro",    "") or ""),
-            str(link.get("grobid_methods",  "") or ""),
-            str(link.get("html_text",       "") or ""),
-        ]))
+        fulltext = " ".join(filter(None, (
+            str(link.get(key) or "") for key in
+            ("grobid_abstract", "grobid_intro", "grobid_methods", "html_text"))))
         if fulltext:
             fulltext = f"[{_PROVENANCE_LABEL['sections']}]\n\n{fulltext}"
-
-    # filter_status decides the outcome vocabulary: a reproduction is coded on the
-    # computation/robustness grid, not success/failure (see shared/schema.py).
-    record_type = ("reproduction"
-                   if str(row.get("filter_status", "")).strip().lower() == "reproduction"
-                   else "replication")
 
     return extract_outcome(
         doi_r, abstract_r, fulltext, title_r, no_llm=no_llm,
         original_title=str(link.get("resolved_title_o",  "") or ""),
         original_authors=str(link.get("resolved_author_o", "") or ""),
         original_year=str(link.get("resolved_year_o",   "") or ""),
-        record_type=record_type,
+        record_type=_record_type(row, screen),
     )
 
 
@@ -1004,23 +1030,12 @@ def _collapse_same_paper_originals(originals: list[dict]) -> list[dict]:
 # ── Main orchestrator ─────────────────────────────────────────────────────────
 
 def _extract_row_key(row: "dict | pd.Series") -> str:
-    """Return a unique resume key for a row.
+    """Resume key for a row — the shared doi → openalex_id → url → title chain.
 
-    Fallback chain: doi_r → openalex_id_r → url_r → title_r.
     Prevents multiple no-DOI rows (e.g. from I4R / Replication Network) from
     collapsing to the same empty-string key and being skipped as already-processed.
     """
-    doi = clean_doi(str(row.get("doi_r", "") or ""))
-    if doi:
-        return doi
-    oa = str(row.get("openalex_id_r", "") or "").strip()
-    if oa:
-        return f"oa:{oa}"
-    url = str(row.get("url_r", "") or "").strip()
-    if url:
-        return f"url:{url}"
-    title = str(row.get("title_r", "") or "").lower().strip()
-    return f"title:{title}" if title else ""
+    return primary_key(row)
 
 
 # Verdicts the classification screen reaches on its own, without ever seeing full text.
@@ -1330,19 +1345,28 @@ def _append_row(out_path, result_row: dict, first: bool) -> None:
         raise
 
 
+# Read at call time, so a run picks up the keys config actually loaded.
+_SCREEN_KEYS = {
+    "GEMINI_API_KEY":     lambda: GEMINI_API_KEYS[0] if GEMINI_API_KEYS else "",
+    "OPENAI_API_KEY":     lambda: OPENAI_API_KEY,
+    "OPENROUTER_API_KEY": lambda: OPENROUTER_API_KEY,
+}
+
+
 def _check_screen_providers(no_llm: bool) -> None:
     """Refuse to start when the front-door screen cannot get its second vote.
 
     The screen decides whether a paper is a replication at all by voting two
-    providers against each other and acting only when they agree. With one
-    provider configured every screened row returns a single vote, which the
-    pipeline can only treat as an incomplete screen — the whole run would produce
-    target_pending rows and discard nothing.
+    providers against each other. With one provider configured every screened row
+    returns a single vote, which the pipeline can only treat as an incomplete
+    screen — the whole run would produce target_pending rows and discard nothing.
+
+    Which key each voter needs comes from screen_voters(), the single place the pair
+    is configured — so a changed voter changes the required key with it.
     """
     if no_llm:
         return
-    missing = [name for name, key in (("GEMINI_API_KEY", GEMINI_API_KEYS[0] if GEMINI_API_KEYS else ""),
-                                      ("OPENROUTER_API_KEY", OPENROUTER_API_KEY)) if not key]
+    missing = [env for _, _, env in screen_voters() if not _SCREEN_KEYS[env]()]
     if missing:
         raise RuntimeError(
             f"Stage 3 needs both reference-screen providers; missing: {', '.join(missing)}. "
@@ -1365,7 +1389,8 @@ def _resolve_and_code(doi_r: str, row: pd.Series, match_type: str, match_conf: s
     link = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                        no_llm=no_llm, no_pdf=no_pdf, classification=screen)
     result_row = _guard_original_link(
-        _merge_row(row, link, {}, match_type, match_conf, 1, 1, classify_model))
+        _merge_row(row, link, {}, match_type, match_conf, 1, 1, classify_model,
+                   screen=screen))
     link_method = str(result_row.get("link_method", ""))
     if resolved_only and link_method in _NO_LINK_METHODS:
         log.debug("[%s] --resolved-only: skipping %s row", doi_r, link_method)
@@ -1376,61 +1401,68 @@ def _resolve_and_code(doi_r: str, row: pd.Series, match_type: str, match_conf: s
         if (not no_pdf or recalibrate_outcomes) and _has_document(doi_r, link):
             _save_parse_cache(doi_r)
         outcome = _get_outcome(doi_r, row, link,
-                               no_llm=no_llm and not recalibrate_outcomes)
+                               no_llm=no_llm and not recalibrate_outcomes,
+                               screen=screen)
     return _apply_outcome(result_row, outcome)
 
 
 def _front_door_row(filter_row: pd.Series, screen: dict) -> "dict | None":
     """The row to write when the classification screen ends the paper, else None.
 
-    Three endings, with the semantics the screen used to reach from inside the ladder,
+    Two endings, with the semantics the screen used to reach from inside the ladder,
     after the match-type call and often a PDF had already been paid for:
 
-      incomplete   — one vote is not a verdict: target_pending so a re-run can decide
-                     the row once the provider is back; no votes at all is api_error.
-      confident no — both models agree, both at high confidence: not_a_replication.
-      disagreement — set aside for review, carrying who voted what.
+      incomplete — one vote is not a verdict: target_pending so a re-run can decide
+                   the row once the provider is back; no votes at all is api_error.
+      discard    — screen_gate() says the two votes settle it: not_a_replication.
 
-    Everything else ("yes", or a "no" the models were not both sure of) returns None
-    and goes down the ladder.
+    A gate "proceed" returns None and goes down the ladder. There is no
+    disagreement ending: a confident "none" against a confident qualifying answer
+    proceeds, because a false inclusion costs a ladder run and a false discard
+    costs the paper.
     """
     method = str(screen.get("resolution_method", ""))
     if method not in {"llm_refscreen_partial", "llm_refscreen_failed"}:
-        if (screen.get("is_replication") == "no" and screen.get("models_agree")
-                and screen.get("classification_confidence") == "high"):
-            method = "llm_not_a_replication"
-        elif not screen.get("models_agree"):
-            method = "llm_screen_disagreement"
-        else:
+        if screen.get("screen_verdict") != "discard":
             return None
+        method = "llm_not_a_replication"
 
     link = {**screen, "resolution_method": method}
-    if method == "llm_screen_disagreement":
-        # A row set aside for a human must record who said what — "the models
-        # disagreed" alone is not something a reviewer can act on.
-        verdicts = "; ".join(f"{v['provider']}={v['is_replication']}/{v['confidence']}"
-                             for v in screen.get("votes", []))
+    if method == "llm_not_a_replication":
+        # A discarded row must record who said what — the verdict alone is not
+        # something a reviewer can act on.
+        verdicts = "; ".join(
+            f"{v['provider']}={v['classification']}/"
+            f"{'confident' if v['confident'] else 'unconfident'}"
+            for v in screen.get("votes", []))
         link["llm_evidence"] = "; ".join(filter(None, [
-            f"screen disagreement: {verdicts}" if verdicts else "screen disagreement",
+            f"screen discard: {verdicts}" if verdicts else "screen discard",
             str(screen.get("llm_evidence", "") or ""),
         ]))
 
     link_method = _map_method(method)
     return _merge_row(filter_row, link,
                       _outcome_without_coding(link_method, link),
-                      "single_original", "low", 1, 1)
+                      "single_original", "low", 1, 1, screen=screen)
 
 
-def _apply_filters(df: pd.DataFrame,
+# filtered.csv reaches 4.9 GB in production, so Stage 3 reads it in chunks like
+# Stages 1 and 2 and never holds more than one chunk in memory.
+_CHUNK_ROWS = 50_000
+
+
+def _apply_filters(chunk: pd.DataFrame,
                    from_year:         "int | None"       = None,
                    to_year:           "int | None"       = None,
                    predicted_outcome: "str | None"       = None,
                    source:            "str | None"       = None,
                    doi_r_filter:      "list[str] | None" = None) -> pd.DataFrame:
-    """Apply the CLI row filters to the loaded filtered.csv frame.
+    """Apply the CLI row filters to one chunk of filtered.csv.
 
-    Pure dataframe work, and the only part of run_extract that touches no API and
-    writes no row — kept together so the run loop reads as the pipeline.
+    Every filter is a per-row predicate, so a chunk can be filtered on its own and
+    the run never needs the whole file. Pure dataframe work: no API call, no row
+    written, and no logging — the applied filters are reported once by the caller
+    rather than once per chunk.
     """
     if from_year is not None or to_year is not None:
         def _year_int(v: str) -> "int | None":
@@ -1438,44 +1470,246 @@ def _apply_filters(df: pd.DataFrame,
                 return int(v)
             except (ValueError, TypeError):
                 return None
-        years = df["year_r"].apply(_year_int)
-        mask = pd.Series(True, index=df.index)
+        years = chunk["year_r"].apply(_year_int)
+        mask = pd.Series(True, index=chunk.index)
         if from_year is not None:
             mask &= years.apply(lambda y: y is not None and y >= from_year)
         if to_year is not None:
             mask &= years.apply(lambda y: y is not None and y <= to_year)
-        before = len(df)
-        df = df[mask].reset_index(drop=True)
-        log.info("--year filter %s–%s: %d → %d rows",
-                 from_year or "any", to_year or "any", before, len(df))
+        chunk = chunk[mask]
 
     # "other" means any outcome that is not failure (success / mixed / descriptive /
     # cannot_be_determined). Keyword-only, on title + abstract — no LLM, no API calls,
     # and so a lexical sample rather than a sample of papers with that outcome.
-    if predicted_outcome:
-        want   = predicted_outcome.lower()
-        before = len(df)
+    if predicted_outcome and not chunk.empty:
+        want = predicted_outcome.lower()
         def _keep(row: pd.Series) -> bool:
             pred = predict_outcome_keyword(
                 str(row.get("title_r", "")), str(row.get("abstract_r", ""))
             )
             return pred != "failure" if want == "other" else pred == want
-        df = df[df.apply(_keep, axis=1)].reset_index(drop=True)
-        log.info("--predicted-outcome %r: %d → %d rows (keyword-selected, not a "
-                 "representative sample)", predicted_outcome, before, len(df))
+        chunk = chunk[chunk.apply(_keep, axis=1)]
 
     if source is not None:
-        before = len(df)
-        df = df[df["source"].str.lower() == source.lower()].reset_index(drop=True)
-        log.info("--source filter %r: %d → %d rows", source, before, len(df))
+        chunk = chunk[chunk["source"].str.lower() == source.lower()]
 
     if doi_r_filter:
         target_set = {clean_doi(d) for d in doi_r_filter}
-        before = len(df)
-        df = df[df["doi_r"].apply(clean_doi).isin(target_set)].reset_index(drop=True)
-        log.info("--doi-r filter: %d → %d rows", before, len(df))
+        chunk = chunk[chunk["doi_r"].apply(clean_doi).isin(target_set)]
 
-    return df
+    return chunk
+
+
+def _iter_filtered_rows(filtered_path,
+                        from_year:         "int | None"       = None,
+                        to_year:           "int | None"       = None,
+                        predicted_outcome: "str | None"       = None,
+                        source:            "str | None"       = None,
+                        doi_r_filter:      "list[str] | None" = None):
+    """Yield filtered.csv rows, abstract-bearing ones first, without loading the file.
+
+    Rows without an abstract are deferred to the end so they do not hold up the ones
+    the pipeline can actually work on. That ordering used to come from a concat of
+    two slices of the whole frame; here it is two passes over the same chunked read,
+    which costs a second scan of the file and no memory.
+    """
+    for line in (f"--year filter {from_year or 'any'}–{to_year or 'any'}" if
+                 (from_year is not None or to_year is not None) else "",
+                 f"--predicted-outcome {predicted_outcome!r} (keyword-selected, not a "
+                 "representative sample)" if predicted_outcome else "",
+                 f"--source filter {source!r}" if source is not None else "",
+                 "--doi-r filter" if doi_r_filter else ""):
+        if line:
+            log.info("%s applied during chunked read", line)
+
+    for with_abstract in (True, False):
+        n_read = n_yielded = 0
+        for chunk in pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig",
+                                 chunksize=_CHUNK_ROWS):
+            n_read += len(chunk)
+            chunk = _apply_filters(chunk.fillna(""), from_year, to_year,
+                                   predicted_outcome, source, doi_r_filter)
+            if chunk.empty:
+                continue
+            has_abstract = chunk["abstract_r"].astype(str).str.strip() != ""
+            chunk = chunk[has_abstract] if with_abstract else chunk[~has_abstract]
+            if not with_abstract and n_yielded == 0 and not chunk.empty:
+                log.info("Deferring candidates without abstracts — processing will "
+                         "continue but at lower priority")
+            n_yielded += len(chunk)
+            for _, row in chunk.iterrows():
+                yield row
+        if with_abstract:
+            log.info("Stage 3: %d rows in %s, %d with an abstract",
+                     n_read, Path(filtered_path).name, n_yielded)
+
+
+def _should_skip(row: pd.Series, row_key: str, doi_r_clean: str,
+                 flora_skip: "set[str]", resolved_rows: dict,
+                 resolved_main: dict, doi_r_targets: "set[str]",
+                 only_reproductions: bool) -> "str | None":
+    """Why this row is not processed, or None to process it.
+
+    Ordered by cost: the memory-set checks first, and --only-reproductions ahead of
+    the caller's --limit counter, so `--limit N` counts reproductions rather than
+    the replications it scanned past.
+    """
+    if doi_r_clean in flora_skip:
+        return "flora"
+    if row_key and row_key in resolved_rows:
+        return "resumed"
+    # --extracted-test: skip DOIs already resolved in the production extracted.csv.
+    # Exception: --doi-r targets are always processed (explicit re-run request).
+    if row_key and row_key in resolved_main and doi_r_clean not in doi_r_targets:
+        return "already in extracted.csv"
+    # False positives are excluded from Stage 3 — only replications and reproductions proceed.
+    if row.get("filter_status") == "false_positive":
+        return "false_positive"
+    if only_reproductions and str(row.get("filter_status", "")).strip().lower() != "reproduction":
+        return "not a reproduction"
+    return None
+
+
+def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
+                 no_multiple_originals: bool, no_reproductions: bool,
+                 resolved_only: bool, recalibrate_outcomes: bool) -> list[dict]:
+    """Every row the pipeline writes for one filtered.csv row.
+
+    Front door, then match type, then the single- or multi-original pipeline. An
+    empty list means the row is not written at all — either a flag suppressed it or
+    --resolved-only discarded it.
+    """
+    # Ahead of the front door: a run that is not coding reproductions should not pay
+    # to screen them either. The type this reads is Stage 2's, the only one there is
+    # before the screen speaks.
+    if no_reproductions and str(row.get("filter_status", "")) == "reproduction":
+        log.info("[%s] --no-reproductions: writing target_pending", doi_r)
+        return [_empty_row(row, "single_original", "low",
+                           link_method="target_pending")]
+
+    # ── Front door: is this a replication at all? ────────────────────────
+    # 58% of the rows that reach the classification screen are discarded there.
+    # Asking first costs nothing — the two votes were already being made — and
+    # spares those rows the heavy-model match-type call, the resolution ladder,
+    # PDF acquisition and outcome coding. The verdict is threaded into
+    # run_for_doi so Stage 4.5 picks a target without voting again.
+    screen = None
+    if not no_llm:
+        token_counter.set_stage("extract_refscreen")
+        screen = classify_replication(doi_r, str(row.get("title_r", "") or ""),
+                                      str(row.get("abstract_r", "")))
+        done = _front_door_row(row, screen)
+        if done is not None:
+            log.info("[%s] front-door screen: %s", doi_r, done["link_method"])
+            return [done]
+        # filter_status is the paper-type field (issue #93), so a screen that
+        # said what the paper is overwrites it. A gate that proceeded without a
+        # qualifying vote (unclear/unclear, or an unconfident none against an
+        # unconfident qualifying answer) said nothing, and the row keeps whatever
+        # Stage 2 left — a needs_review row stays needs_review, waits for a human
+        # on the check page, and is not imported by csv_to_db.
+        if screen.get("record_type"):
+            row["filter_status"] = screen["record_type"]
+            row["filter_method"] = "screen"   # the screen decided the type
+
+    match = classify_match_type(row.to_dict(), no_llm=no_llm)
+    match_type     = match["original_match_type"]
+    match_conf     = match["original_match_confidence"]
+    classify_model = match["classify_llm_model"]
+    log.info("[%s] match_type=%s conf=%s", doi_r, match_type, match_conf)
+
+    if no_multiple_originals and match_type == "multiple_original":
+        log.info("[%s] --no-multiple-originals: writing target_pending", doi_r)
+        return [_empty_row(row, "multiple_original", match_conf,
+                           link_method="target_pending",
+                           classify_model=classify_model)]
+
+    try:
+        if match_type == "multiple_original":
+            return _process_multi_original(row, doi_r, match, match_conf,
+                                           classify_model, screen, no_llm, no_pdf,
+                                           resolved_only, recalibrate_outcomes)
+        row_out = _resolve_and_code(
+            doi_r, row, match_type, match_conf, classify_model,
+            screen=screen, no_llm=no_llm, no_pdf=no_pdf,
+            resolved_only=resolved_only,
+            recalibrate_outcomes=recalibrate_outcomes)
+        return [row_out] if row_out is not None else []
+    except (OpenAlexQuotaExhausted, TokenBudgetExhausted):
+        # Not a per-row failure: the row was never examined, and writing it as
+        # api_error would bury the reason the rest of the run stops too.
+        raise
+    except Exception as e:
+        log.error("[%s] extraction failed: %s", doi_r, e)
+        return [_empty_row(row, match_type, match_conf,
+                           classify_model=classify_model)]
+
+
+def _process_multi_original(row: pd.Series, doi_r: str, match: dict, match_conf: str,
+                            classify_model: str, screen: "dict | None",
+                            no_llm: bool, no_pdf: bool, resolved_only: bool,
+                            recalibrate_outcomes: bool) -> list[dict]:
+    """One row per original study the multi-original pipeline found.
+
+    The LLM returning nothing is not a demotion to single_original when a
+    deterministic rule said the paper targets several studies — that would file a
+    Many Labs paper against one arbitrary original.
+    """
+    rule_fired = bool(match["rule_fired"])
+    result    = run_multi_original_for_doi(doi_r, _build_rep_df(row),
+                                           force_multi=rule_fired)
+    originals = _parse_originals(result)
+    if not originals:
+        if rule_fired:
+            log.warning(
+                "[%s] rule_fired=True but LLM returned no originals — "
+                "writing target_pending (NOT single_original)", doi_r
+            )
+            return [_empty_row(row, "multiple_original", match_conf,
+                               link_method="target_pending",
+                               classify_model=classify_model)]
+        row_out = _resolve_and_code(
+            doi_r, row, "single_original", match_conf, classify_model,
+            screen=screen, no_llm=no_llm, no_pdf=no_pdf,
+            resolved_only=resolved_only, recalibrate_outcomes=recalibrate_outcomes)
+        return [row_out] if row_out is not None else []
+
+    n_studies = len(originals)
+    originals = _collapse_same_paper_originals(originals)
+    if len(originals) < n_studies:
+        log.info("[%s] %d targeted studies → %d original paper(s) "
+                 "(FLoRA coding level: one row per reference pair)",
+                 doi_r, n_studies, len(originals))
+    multi_llm_model = str(result.get("llm_model", "") or "")
+    # Label truthfully: the multi pipeline feeds parsed full text / GROBID
+    # references into the prompt whenever a PDF was obtained, so those rows are
+    # llm_fulltext, not llm_cited_candidates.
+    multi_used_fulltext = (bool(result.get("pdf_ok"))
+                           or int(result.get("n_grobid_refs") or 0) > 0)
+    multi_link_method = ("llm_fulltext" if multi_used_fulltext
+                         else "llm_cited_candidates")
+
+    rows: list[dict] = []
+    for orig in originals:
+        raw_out = str(orig.get("outcome", "cannot_be_determined")
+                      or "cannot_be_determined").lower()
+        if raw_out not in _VALID_OUTCOMES:
+            raw_out = "cannot_be_determined"
+        outcome = {
+            "outcome":            raw_out,
+            "outcome_phrase":     str(orig.get("outcome_evidence", "") or ""),
+            "outcome_confidence": str(orig.get("confidence", "low") or "low"),
+            "out_quote_source":   "llm_multi",
+            "llm_model":          multi_llm_model,
+        }
+        rows.append(_guard_original_link(
+            _merge_multi_row(row, orig, outcome, "multiple_original", match_conf,
+                             len(originals), multi_llm_model,
+                             link_method=multi_link_method,
+                             classify_model=classify_model,
+                             screen=screen)
+        ))
+    return rows
 
 
 def run_extract(no_llm: bool = False,
@@ -1537,13 +1771,6 @@ def run_extract(no_llm: bool = False,
                 f"filtered.csv not found at {filtered_path}. Run Stage 2 first."
             )
 
-    df = pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig").fillna("")
-    log.info("Stage 3: loaded %d rows from %s", len(df), filtered_path.name)
-
-    df = _apply_filters(df, from_year=from_year, to_year=to_year,
-                        predicted_outcome=predicted_outcome, source=source,
-                        doi_r_filter=doi_r_filter)
-
     flora_skip: set[str] = set()
     if skip_flora_validated:
         flora_skip = _load_flora_skip_dois(
@@ -1572,7 +1799,6 @@ def run_extract(no_llm: bool = False,
         )
 
     resolved_rows: dict[str, list[dict]] = {}
-    pending_dois: set[str] = set()
     if resume:
         resolved_rows, pending_dois = _load_extracted_rows(out_path, rescreen=rescreen)
         n_resolved_rows = sum(len(v) for v in resolved_rows.values())
@@ -1591,66 +1817,28 @@ def run_extract(no_llm: bool = False,
         log.info("--resume: wrote %d resolved rows to %s (safe to interrupt)",
                  len(output_rows), out_path.name)
 
-    # Deprioritize candidates without abstracts — process abstract-bearing rows first,
-    # then defer the ones missing abstracts to the end so they don't block others.
-    has_abstract = df["abstract_r"].notna() & (df["abstract_r"].astype(str).str.strip() != "")
-    df = pd.concat([df[has_abstract], df[~has_abstract]], ignore_index=True)
-    n_with_abstract = sum(has_abstract)
-    n_without = len(df) - n_with_abstract
-    if n_without > 0:
-        log.info("Prioritization: processing %d with abstract, deferring %d without", n_with_abstract, n_without)
-
+    doi_r_targets = {clean_doi(d) for d in (doi_r_filter or [])}
     flora_skip_count = 0
 
-    for _, row in df.iterrows():
-        doi_r_check = clean_doi(str(row.get("doi_r", "")))
-        row_key     = _extract_row_key(row)
-
-        # Log when we reach candidates without abstracts (deferred to end)
-        abstract_r = str(row.get("abstract_r", "")).strip()
-        if not abstract_r and n_without > 0 and processed == n_with_abstract:
-            log.info("Deferring candidates without abstracts — processing will continue but at lower priority")
-
-        # Skip rows without abstract if in deferred section
-        if not abstract_r:
-            log.debug("[%s] Deferring — no abstract available", doi_r_check)
-
-        if doi_r_check in flora_skip:
-            log.debug("[%s] already validated in FLoRA — skipping", doi_r_check)
-            flora_skip_count += 1
-            continue
-
-        # --resume: skip rows already written above.
-        if resume and row_key and row_key in resolved_rows:
-            continue
-
-        # --extracted-test: skip DOIs already resolved in the production extracted.csv.
-        # Exception: --doi-r targets are always processed (explicit re-run request).
-        in_doi_r_filter = doi_r_filter and doi_r_check in {clean_doi(d) for d in doi_r_filter}
-        if test_mode and row_key and row_key in resolved_main and not in_doi_r_filter:
-            log.debug("[%s] --extracted-test: resolved in extracted.csv — skipping", doi_r_check)
-            continue
-
-        # False positives are excluded from Stage 3 — only replications and reproductions proceed.
-        if row.get("filter_status") == "false_positive":
-            log.debug("[%s] false_positive — skipping", clean_doi(str(row.get("doi_r", ""))))
-            continue
-
-        # --only-reproductions must be applied BEFORE the limit counter, otherwise
-        # --limit N counts scanned replications and the run yields no reproductions.
-        # Also placed ahead of URL->DOI resolution to avoid network calls on skipped rows.
-        if only_reproductions and str(row.get("filter_status", "")).strip().lower() != "reproduction":
+    for row in _iter_filtered_rows(filtered_path, from_year, to_year,
+                                   predicted_outcome, source, doi_r_filter):
+        doi_r_clean = clean_doi(str(row.get("doi_r", "")))
+        skip = _should_skip(row, _extract_row_key(row), doi_r_clean, flora_skip,
+                            resolved_rows, resolved_main, doi_r_targets,
+                            only_reproductions)
+        if skip is not None:
+            log.debug("[%s] skipping — %s", doi_r_clean, skip)
+            if skip == "flora":
+                flora_skip_count += 1
             continue
 
         if limit is not None and processed >= limit:
             break
         processed += 1
 
-        result_rows: list[dict] = []
-        doi_r = clean_doi(str(row.get("doi_r", "")))
-
         # If DOI is missing, try to resolve one from the URL before processing.
         # This lets I4R / Replication Network rows participate in the full pipeline.
+        doi_r = doi_r_clean
         if not doi_r:
             url_r = str(row.get("url_r", "") or "").strip()
             if url_r:
@@ -1664,132 +1852,11 @@ def run_extract(no_llm: bool = False,
                 else:
                     log.info("[url:%s] could not resolve DOI — will extract from URL/abstract only", url_r[:60])
 
-        # --no-reproductions: write reproduction rows as target_pending without processing
-        if no_reproductions and str(row.get("filter_status", "")) == "reproduction":
-            if not resolved_only:
-                log.info("[%s] --no-reproductions: writing target_pending", doi_r)
-                result_rows.append(_empty_row(row, "single_original", "low",
-                                              link_method="target_pending"))
-                for result_row in result_rows:
-                    _append_row(out_path, result_row, first=first_write)
-                    first_write = False
-                    output_rows.append(result_row)
-            continue
-
-        # ── Front door: is this a replication at all? ────────────────────────
-        # 58% of the rows that reach the classification screen are discarded there.
-        # Asking first costs nothing — the two votes were already being made — and
-        # spares those rows the heavy-model match-type call, the resolution ladder,
-        # PDF acquisition and outcome coding. The verdict is threaded into
-        # run_for_doi so Stage 4.5 picks a target without voting again.
-        screen = None
-        if not no_llm:
-            token_counter.set_stage("extract_refscreen")
-            screen = classify_replication(
-                doi_r, str(row.get("title_r", "") or row.get("study_r", "")), abstract_r)
-            done = _front_door_row(row, screen)
-            if done is not None:
-                log.info("[%s] front-door screen: %s", doi_r, done["link_method"])
-                if resolved_only and done["link_method"] in _NO_LINK_METHODS:
-                    continue
-                _append_row(out_path, done, first=first_write)
-                first_write = False
-                output_rows.append(done)
-                continue
-
-        match = classify_match_type(row.to_dict(), no_llm=no_llm)
-        match_type = match["original_match_type"]
-        match_conf = match["original_match_confidence"]
-        classify_model = str(match.get("classify_llm_model", "") or "")
-        log.info("[%s] match_type=%s conf=%s", doi_r, match_type, match_conf)
-
-        # --no-multiple-originals: write multiple_original rows as target_pending
-        if no_multiple_originals and match_type == "multiple_original":
-            if not resolved_only:
-                log.info("[%s] --no-multiple-originals: writing target_pending", doi_r)
-                result_rows.append(_empty_row(row, "multiple_original", match_conf,
-                                              link_method="target_pending",
-                                              classify_model=classify_model))
-                for result_row in result_rows:
-                    _append_row(out_path, result_row, first=first_write)
-                    first_write = False
-                    output_rows.append(result_row)
-            continue
-
-        try:
-            if match_type == "multiple_original":
-                rule_fired = bool(match.get("rule_fired", False))
-                result    = run_multi_original_for_doi(
-                    doi_r, _build_rep_df(row), force_multi=rule_fired
-                )
-                originals = _parse_originals(result)
-                if not originals:
-                    if rule_fired:
-                        log.warning(
-                            "[%s] rule_fired=True but LLM returned no originals — "
-                            "writing target_pending (NOT single_original)", doi_r
-                        )
-                        result_rows.append(_empty_row(row, "multiple_original", match_conf,
-                                                      link_method="target_pending",
-                                                      classify_model=classify_model))
-                    else:
-                        row_out = _resolve_and_code(
-                            doi_r, row, "single_original", match_conf, classify_model,
-                            screen=screen, no_llm=no_llm, no_pdf=no_pdf,
-                            resolved_only=resolved_only,
-                            recalibrate_outcomes=recalibrate_outcomes)
-                        if row_out is not None:
-                            result_rows.append(row_out)
-                else:
-                    n_studies = len(originals)
-                    originals = _collapse_same_paper_originals(originals)
-                    if len(originals) < n_studies:
-                        log.info("[%s] %d targeted studies → %d original paper(s) "
-                                 "(FLoRA coding level: one row per reference pair)",
-                                 doi_r, n_studies, len(originals))
-                    multi_llm_model = str(result.get("llm_model", "") or "")
-                    # Label truthfully: the multi pipeline feeds parsed full text /
-                    # GROBID references into the prompt whenever a PDF was obtained,
-                    # so those rows are llm_fulltext, not llm_cited_candidates.
-                    multi_used_fulltext = (
-                        bool(result.get("pdf_ok"))
-                        or int(result.get("n_grobid_refs") or 0) > 0
-                    )
-                    multi_link_method = (
-                        "llm_fulltext" if multi_used_fulltext else "llm_cited_candidates"
-                    )
-                    for orig in originals:
-                        raw_out = str(orig.get("outcome", "cannot_be_determined") or "cannot_be_determined").lower()
-                        if raw_out not in _VALID_OUTCOMES:
-                            raw_out = "cannot_be_determined"
-                        outcome = {
-                            "outcome":            raw_out,
-                            "outcome_phrase":     str(orig.get("outcome_evidence", "") or ""),
-                            "outcome_confidence": str(orig.get("confidence", "low") or "low"),
-                            "out_quote_source":   "llm_multi",
-                            "llm_model":          multi_llm_model,
-                        }
-                        result_rows.append(_guard_original_link(
-                            _merge_multi_row(row, orig, outcome, match_type, match_conf,
-                                             len(originals), multi_llm_model,
-                                             link_method=multi_link_method,
-                                             classify_model=classify_model)
-                        ))
-            else:
-                row_out = _resolve_and_code(
-                    doi_r, row, match_type, match_conf, classify_model,
-                    screen=screen, no_llm=no_llm, no_pdf=no_pdf,
-                    resolved_only=resolved_only,
-                    recalibrate_outcomes=recalibrate_outcomes)
-                if row_out is not None:
-                    result_rows.append(row_out)
-
-        except OpenAlexQuotaExhausted:
-            raise
-        except Exception as e:
-            log.error("[%s] extraction failed: %s", doi_r, e)
-            result_rows.append(_empty_row(row, match_type, match_conf,
-                                          classify_model=classify_model))
+        result_rows = _process_row(
+            row, doi_r, no_llm=no_llm, no_pdf=no_pdf,
+            no_multiple_originals=no_multiple_originals,
+            no_reproductions=no_reproductions, resolved_only=resolved_only,
+            recalibrate_outcomes=recalibrate_outcomes)
 
         # Self-links and unrecoverable doi_o are already rejected by
         # _guard_original_link at each producer, ahead of outcome coding.
@@ -1880,9 +1947,10 @@ def run_outcome_only(no_llm: bool = False,
             fulltext="",
             title_r=str(row.get("title_r", "")),
             no_llm=no_llm,
-            record_type=("reproduction"
-                 if str(row.get("filter_status", "")).strip().lower() == "reproduction"
-                 else "replication"),
+            record_type=(str(row.get("type", "")).strip().lower()
+                         or ("reproduction"
+                             if str(row.get("filter_status", "")).strip().lower()
+                             == "reproduction" else "replication")),
         )
         rows.append({
             "doi_r":              doi_r,
@@ -2048,7 +2116,7 @@ if __name__ == "__main__":
                 recalibrate_outcomes=args.recalibrate_outcomes,
                 rescreen=args.rescreen,
             )
-    except OpenAlexQuotaExhausted as exc:
+    except (OpenAlexQuotaExhausted, TokenBudgetExhausted) as exc:
         log.error("%s", exc)
         log.error("Rows written before the stop are intact; re-run with --resume to continue.")
     finally:

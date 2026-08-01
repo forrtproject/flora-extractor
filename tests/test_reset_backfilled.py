@@ -28,8 +28,7 @@ def paths(tmp_path, monkeypatch):
     index_path = cache_dir / "filtered_index.txt"
 
     monkeypatch.setattr(rb, "DATA_DIR", data_dir)
-    monkeypatch.setattr(rb, "_FILTERED_INDEX_PATH", index_path)
-    monkeypatch.setattr(rf, "_FILTERED_INDEX_PATH", index_path)
+    monkeypatch.setattr(rf.FILTERED_INDEX, "path", index_path)
 
     return {
         "data": data_dir,
@@ -64,7 +63,7 @@ def test_collect_keys_skips_abstracts_and_idless(paths):
     _standard_fixture(paths)
     keys, total = rb.collect_empty_abstract_keys(paths["filtered"])
     assert total == 4
-    # C has an abstract (excluded); D has no identifier (empty _row_key, skipped).
+    # C has an abstract (excluded); D has no identifier (empty primary_key, skipped).
     assert keys == {"10.1/a", "10.1/b"}
 
 
@@ -129,9 +128,6 @@ def test_followup_run_filter_reprocesses_only_reset_rows(paths, monkeypatch):
     from shared.schema import CANDIDATES_COLS
 
     monkeypatch.setattr(rf, "DATA_DIR", paths["data"])
-    # No live LLM: rows the rule filter can't decide stay as-is.
-    monkeypatch.setattr(rf, "_llm_classify", lambda title, abstract: None)
-
     cand_rows = [
         {"doi_r": "10.1/a", "title_r": "A", "abstract_r": ""},
         {"doi_r": "10.1/b", "title_r": "B", "abstract_r": ""},

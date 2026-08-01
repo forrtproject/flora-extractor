@@ -12,7 +12,8 @@ from search import openalex_search as oa
 from search import run_search as rs
 from search.semantic_scholar_search import fetch_semantic_scholar_candidates
 from search.external_lists import fetch_i4r
-from search.run_search import _row_keys, build_candidates_index, run_search
+from shared.row_key import row_keys as _row_keys
+from search.run_search import build_candidates_index, run_search
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +50,7 @@ def test_build_candidates_index_matches_row_keys_scoping(tmp_path, monkeypatch):
 
     # build_candidates_index() saves to the module-level index path unconditionally —
     # redirect it so this test cannot clobber the real cache/candidates_index.txt.
-    monkeypatch.setattr(rs, "_CANDIDATES_INDEX_PATH", tmp_path / "candidates_index.txt")
+    monkeypatch.setattr(rs.CANDIDATES_INDEX, "path", tmp_path / "candidates_index.txt")
 
     rows = [
         {**{c: "" for c in CANDIDATES_COLS}, "doi_r": "10.1/aaa",
@@ -434,3 +435,28 @@ def test_run_search_final_log_does_not_crash_on_void_merge(monkeypatch):
         df = fetch_i4r(from_year=2024, to_year=2024)
         titles = df["title_r"].str.lower().tolist()
         assert any("replication" in t or "comment" in t for t in titles)
+
+
+def test_get_page_rotates_key_on_budget_refusal(monkeypatch, tmp_path):
+    """Finding 4: Stage 1 used to send one key and die on a budget refusal while
+    other keys were still unspent. A 429 that means 'insufficient budget' must
+    rotate to the next key and retry, not back off."""
+    from shared import openalex_keys
+
+    monkeypatch.setattr(oa, "OA_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(openalex_keys, "OPENALEX_API_KEYS", ["k1", "k2"])
+    monkeypatch.setattr(openalex_keys, "_key_idx", 0)
+
+    seen_auth = []
+
+    class _Resp:
+        def __init__(self, status): self.status_code = status; self.headers = {}
+        def json(self): return {"message": "Insufficient budget"} if self.status_code == 429 else {"results": []}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        seen_auth.append(headers.get("Authorization"))
+        return _Resp(429 if len(seen_auth) == 1 else 200)
+
+    monkeypatch.setattr(oa.requests, "get", fake_get)
+    assert oa._get_page({"filter": "x"}) == {"results": []}
+    assert seen_auth == ["Bearer k1", "Bearer k2"]

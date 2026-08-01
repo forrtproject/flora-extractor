@@ -45,6 +45,7 @@ from shared.grobid import run_grobid
 from shared.llm_client import identify_all_originals_with_llm
 from shared.openalex_client import find_all_candidates
 from shared.pdf_sources import acquire_pdf
+from shared.token_usage import TokenBudgetExhausted
 from shared.utils import cache_key, clean_doi
 
 # Columns to pull from all_replications.csv
@@ -127,6 +128,8 @@ def run_multi_original_for_doi(doi_r:       str,
             html_text   = pdf.get("html_text", ""),
             force_multi = force_multi,
         )
+    except TokenBudgetExhausted:
+        raise   # a refused call is not an empty answer
     except Exception as exc:
         log.error("[multi/%s] LLM failed: %s — returning empty originals", doi_r, exc)
         llm = {
