@@ -71,6 +71,55 @@ def dedup_filtered_csv(dry_run: bool = False) -> tuple[int, int]:
     return dedup_csv(DATA_DIR / "filtered.csv", FILTERED_INDEX, dry_run=dry_run)
 
 
+def _load_resume_index(out_path) -> "tuple[set[str], bool]":
+    """Resume keys of rows already in filtered.csv, and whether to write a header.
+
+    The index file is the fast path; on the first run after this file was written by
+    hand (or by an older version) it is rebuilt from filtered.csv in chunks. A
+    rebuild that fails leaves nothing to resume from, so the run starts the file over
+    rather than appending to rows it cannot account for.
+    """
+    if FILTERED_INDEX.path.exists():
+        already_done = FILTERED_INDEX.load()
+        log.info("Stage 2: %d rows already in filtered index — skipping", len(already_done))
+        return already_done, not out_path.exists()
+    if out_path.exists():
+        try:
+            already_done = _build_filtered_index(out_path)
+            log.info("Stage 2: %d rows indexed from filtered.csv — skipping", len(already_done))
+            return already_done, False
+        except Exception as exc:
+            log.warning("Stage 2: could not build filtered index (%s) — starting fresh", exc)
+            return set(), True
+    return set(), True
+
+
+def _apply_year_source_filters(chunk, from_year, to_year, source):
+    """Drop rows outside the requested year range or from another source.
+
+    A row whose year_r will not parse is outside every year range — a year filter
+    the pipeline cannot evaluate must exclude, not silently include.
+    """
+    if from_year is not None or to_year is not None:
+        def _year_int(v: str) -> "int | None":
+            try:
+                return int(v)
+            except (ValueError, TypeError):
+                return None
+
+        years = chunk["year_r"].apply(_year_int)
+        mask = pd.Series(True, index=chunk.index)
+        if from_year is not None:
+            mask &= years.apply(lambda y: y is not None and y >= from_year)
+        if to_year is not None:
+            mask &= years.apply(lambda y: y is not None and y <= to_year)
+        chunk = chunk[mask]
+
+    if source is not None:
+        chunk = chunk[chunk["source"].str.lower() == source.lower()]
+    return chunk
+
+
 def run_filter(limit: "int | None" = None,
                offset: "int | None" = None,
                from_year: "int | None" = None,
@@ -102,31 +151,8 @@ def run_filter(limit: "int | None" = None,
     # loads the whole multi-GB file — the previous implementation concatenated
     # every surviving chunk into one DataFrame before classifying, defeating the
     # streaming design.
-    def _year_int(v: str) -> "int | None":
-        try:
-            return int(v)
-        except (ValueError, TypeError):
-            return None
-
     out_path = DATA_DIR / "filtered.csv"
-    first_write = not out_path.exists()
-
-    # Load already-processed keys from the index file (fast, avoids reading
-    # full filtered.csv). On first run the index is built from filtered.csv
-    # in 50k-row chunks, then cached for all future runs.
-    if FILTERED_INDEX.path.exists():
-        already_done = FILTERED_INDEX.load()
-        log.info("Stage 2: %d rows already in filtered index — skipping", len(already_done))
-    elif out_path.exists():
-        try:
-            already_done = _build_filtered_index(out_path)
-            log.info("Stage 2: %d rows indexed from filtered.csv — skipping", len(already_done))
-        except Exception as exc:
-            log.warning("Stage 2: could not build filtered index (%s) — starting fresh", exc)
-            already_done = set()
-            first_write = True
-    else:
-        already_done = set()
+    already_done, first_write = _load_resume_index(out_path)
 
     new_rows = 0
     skipped  = 0   # counts unprocessed rows skipped by --offset
@@ -162,19 +188,7 @@ def run_filter(limit: "int | None" = None,
         )
         bad_id_count += int((~has_id).sum())
 
-        # Year filter
-        if from_year is not None or to_year is not None:
-            years = chunk["year_r"].apply(_year_int)
-            mask = pd.Series(True, index=chunk.index)
-            if from_year is not None:
-                mask &= years.apply(lambda y: y is not None and y >= from_year)
-            if to_year is not None:
-                mask &= years.apply(lambda y: y is not None and y <= to_year)
-            chunk = chunk[mask]
-
-        # Source filter
-        if source is not None:
-            chunk = chunk[chunk["source"].str.lower() == source.lower()]
+        chunk = _apply_year_source_filters(chunk, from_year, to_year, source)
 
         if chunk.empty:
             continue
