@@ -198,7 +198,6 @@ def build_target_prompt(study_r:        str,
                         pdf_abstract:   str = "",
                         intro:          str = "",
                         methods:        str = "",
-                        html_text:      str = "",
                         validator_note: str = "") -> str:
     """Render the target-identification prompt.
 
@@ -222,8 +221,7 @@ def build_target_prompt(study_r:        str,
     tail = _abstract_tail(abstract_r, pdf_abstract)
     if tail:
         blocks.append("ABSTRACT CONTINUED (from the PDF, beyond what is above):\n" + tail)
-    body = ((intro or "")[:TARGET_INTRO_CHARS]
-            or (html_text or "")[:TARGET_INTRO_CHARS])
+    body = (intro or "")[:TARGET_INTRO_CHARS]
     if body:
         blocks.append("INTRODUCTION:\n" + body)
     if methods:

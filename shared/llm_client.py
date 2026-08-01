@@ -649,7 +649,6 @@ def identify_targets_with_llm(doi_r:          str,
                               pdf_abstract:   str = "",
                               intro:          str = "",
                               methods:        str = "",
-                              html_text:      str = "",
                               validator_note: str = "",
                               cache_prefix:   str = "llm",
                               abstract_only:  bool = False,
@@ -671,7 +670,7 @@ def identify_targets_with_llm(doi_r:          str,
     entries, key_map = assign_target_keys(candidates, references)
     prompt = build_target_prompt(study_r, abstract_r, entries,
                                  pdf_abstract=pdf_abstract, intro=intro,
-                                 methods=methods, html_text=html_text,
+                                 methods=methods,
                                  validator_note=validator_note)
     # The prompt shows the model a key, authors, a year and a title — but the answer
     # is converted to a link through the record that key maps to, and the DOI it

@@ -14,7 +14,6 @@ _ALL_TIERS = [
     "get_openalex_oa_url", "get_all_unpaywall_pdf_urls",
     "get_semanticscholar_pdf_url", "get_core_pdf_url", "get_europepmc_pdf_url",
     "scrape_pdf_from_landing_page", "get_serpapi_pdf_url",
-    "extract_html_text_as_fulltext",
 ]
 
 

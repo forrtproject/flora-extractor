@@ -391,10 +391,30 @@ def _base_row(filter_row: pd.Series, match_type: str, match_conf: str,
         **{col: outcome.get(col, "") for col in _OUTCOME_AXIS_COLS},
         "type":              _record_type(filter_row, screen),
         "screen_categories": _screen_categories(screen),
+        # Blank unless a producer with a link fills them in: a row written without a
+        # ladder result (front door, api_error) acquired and parsed nothing.
+        "pdf_source":    "",
+        "parse_method":  "",
         "original_rank": 1,
         "n_originals":   1,
     })
     return row
+
+
+def _provenance(link: dict) -> dict:
+    """The full-text provenance columns for a row built from *link*.
+
+    Which acquisition tier supplied the document and which of the six parsers won —
+    the two facts a reviewer needs to judge an `llm_fulltext` link and the two the
+    2026-07 audit had to reconstruct from cache timestamps. Both blank when the
+    ladder never got a document: "none" is the acquisition waterfall's word for a
+    failed attempt, and on the row the column names a document or says nothing.
+    """
+    source = str(link.get("pdf_source", "") or "")
+    return {
+        "pdf_source":   "" if source in {"none", "unknown"} else source,
+        "parse_method": str(link.get("parse_method", "") or ""),
+    }
 
 
 def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
@@ -426,6 +446,7 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
         "link_evidence":   str(link.get("llm_evidence",     "") or ""),
         "link_confidence": _link_confidence(link),
         "link_llm_model":  str(link.get("llm_model",        "") or ""),
+        **_provenance(link),
         "original_rank": rank,
         "n_originals":   n,
     })
@@ -663,7 +684,7 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False,
         # discusses OTHER studies' replication failures, and the prompt says so.
         fulltext = " ".join(filter(None, (
             str(link.get(key) or "") for key in
-            ("grobid_abstract", "grobid_intro", "grobid_methods", "html_text"))))
+            ("grobid_abstract", "grobid_intro", "grobid_methods"))))
         if fulltext:
             fulltext = f"[{_PROVENANCE_LABEL['sections']}]\n\n{fulltext}"
 
@@ -1318,9 +1339,12 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
                        else _map_method(str(link.get("target_stage") or "llm_fulltext")))
         entry = {**entry, "confidence": "low" if entry["provisional"] else "high"}
         result_row = _guard_original_link(
-            _merge_multi_row(row, entry, {}, match_type, "high", len(entries),
-                             link_model, link_method=link_method,
-                             classify_model="", screen=screen))
+            {**_merge_multi_row(row, entry, {}, match_type, "high", len(entries),
+                                link_model, link_method=link_method,
+                                classify_model="", screen=screen),
+             # Every row of the group read the same document, so the provenance is
+             # the paper's, not the target's.
+             **_provenance(link)})
         if shortfall:
             note = (f"identified {len(entries)} of {len(entries) + shortfall} targets; "
                     f"unidentified: {'; '.join(filter(None, missing)) or 'not named'}")

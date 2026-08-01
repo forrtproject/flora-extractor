@@ -44,7 +44,7 @@ from shared.prompts import (
     _abstract_tail, build_flora_anchor_note, rendered_reference_entries,
 )
 from shared.target_keys import assign_target_keys
-from shared.pdf_sources import acquire_pdf
+from shared.pdf_sources import acquire_pdf, openalex_xml_has_content
 from shared.utils import cache_key, clean_doi
 
 # ── Unified rule-based resolver (runs before any LLM call) ───────────────────
@@ -1039,6 +1039,18 @@ def run_for_doi(doi_r:              str,
     # XML there is no full text to parse, so running the six-parser stack yields
     # empty sections and the LLM is asked to name an original from nothing — which
     # is exactly how a confident, fabricated doi_o gets produced. Stop here instead.
+    #
+    # A content-free XML result is no document: every OpenAlex XML result cached
+    # before 2026-08 was an empty shell, and because a shell is truthy this guard
+    # waved it through and the row was stamped llm_fulltext with no full text behind
+    # it. openalex_xml_has_content() is what "we have a document" means here.
+    if oa_xml_content and not openalex_xml_has_content(oa_xml_content):
+        log.warning("[%s] OpenAlex XML is content-free (no sections, no references) "
+                    "— treating it as no document", doi_r)
+        oa_xml_content = None
+        if pdf.get("pdf_source") == "openalex_xml":
+            pdf = {**pdf, "pdf_source": "none"}
+
     if pdf_path is None and not oa_xml_content:
         log.info("[%s] no document acquired (%s) — writing target_pending",
                  doi_r, pdf.get("pdf_source", "none"))
@@ -1073,6 +1085,9 @@ def run_for_doi(doi_r:              str,
     sections["abstract_sent"] = _abstract_tail(abstract_r, sections["abstract"])
     grobid = {
         "grobid_status": f"parse_all:{best_src}",
+        # The winning parser, on its own so a row can say which method produced the
+        # text the LLM read without a reader parsing grobid_status apart.
+        "parse_method":  best_src,
         "n_refs_parsed": len(best_refs),
         "sections":      sections,
     }
@@ -1103,7 +1118,6 @@ def run_for_doi(doi_r:              str,
         pdf_abstract   = sections.get("abstract", ""),
         intro          = sections.get("intro",    ""),
         methods        = sections.get("methods",  ""),
-        html_text      = pdf.get("html_text", ""),
         validator_note = effective_note,
     )
     log.info("[%s] LLM: resolved=%s source=%s", doi_r,
@@ -1163,10 +1177,12 @@ def _build_output(doi_r:     str,
         "pdf_ok"                : bool(pdf.get("pdf_ok", False)),
         "pdf_url_tried"         : json.dumps(pdf.get("pdf_url_tried", []),
                                              ensure_ascii=False),
-        "html_text"             : pdf.get("html_text", ""),
 
         # ── GROBID ────────────────────────────────────────────────────────────
         "grobid_status"         : grobid.get("grobid_status", "not_attempted"),
+        # Which of the six parsers won best_parse_result() — blank on every exit
+        # that never parsed anything, which is what the row's parse_method records.
+        "parse_method"          : grobid.get("parse_method", ""),
         "n_grobid_refs"         : grobid.get("n_refs_parsed",  0),
         # Stored at the sizes build_target_prompt sends, so a reviewer reads exactly
         # what the model read. The PDF abstract reaches the model only as the part the

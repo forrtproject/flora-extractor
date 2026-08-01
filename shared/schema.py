@@ -90,6 +90,20 @@ EXTRACT_ADDED_COLS = [
                            #         multi-valued, so filter it by substring, never equality
     "doi_o_verification",  # str   — verified | corrected | mismatch | no_doi | not_found | no_metadata | api_error | skipped
 
+    # Full-text provenance. A row coded llm_fulltext asserts that a model read the
+    # paper; until these two columns existed nothing on the row said WHICH document
+    # it read, and an audit of the 2026-07 batch could only reconstruct it from cache
+    # timestamps — 105 of 138 llm_fulltext rows turned out to have no artifact at all.
+    # Both are blank on every row that never acquired or never parsed a document,
+    # which is the honest reading: no document, no provenance.
+    "pdf_source",          # str   — acquisition tier that supplied the document
+                           #         (arxiv | osf | openalex_oa | unpaywall_pdf |
+                           #          semanticscholar | core | europepmc | landing_* |
+                           #          serpapi | playwright | openalex_xml); blank when none
+    "parse_method",        # str   — winning parser from best_parse_result()
+                           #         (openalex_xml | pdfminer | grobid | docpluck |
+                           #          opendataloader | markitdown); blank when nothing parsed
+
     # Outcome
     "outcome",             # str   — success | failure | mixed | descriptive | cannot_be_determined | pending | api_error
                            #         For a reproduction this is DERIVED from the two axes below
