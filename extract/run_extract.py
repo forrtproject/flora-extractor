@@ -416,7 +416,12 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
             str(link.get("resolved_title_o",  "") or ""),
         ))),
         "study_o":         str(link.get("resolved_study_o", "") or ""),
-        "study_r":         str(link.get("resolved_study_r", "") or ""),
+        # Only on a link that actually resolved: study_r says which of this paper's
+        # studies re-tests THAT original, so on a row with no original it would be a
+        # study number attached to nothing. The ladder can carry a target list past an
+        # unresolved exit, and its study numbers belong to those targets' rows.
+        "study_r":         (str(link.get("resolved_study_r", "") or "")
+                            if link.get("resolved") else ""),
         "link_method":     _map_method(link.get("resolution_method", "target_pending")),
         "link_evidence":   str(link.get("llm_evidence",     "") or ""),
         "link_confidence": _link_confidence(link),
@@ -1008,11 +1013,13 @@ def _guard_original_link(row: dict) -> dict:
     def _reject(reason: str) -> dict:
         log.info("[%s] original-link rejected (%s) — writing target_pending", doi_r, reason)
         row["link_method"] = "target_pending"
-        row["doi_o"] = ""
-        # The original the study number and title described is gone, so they describe
+        # The original every one of these fields described is gone, so they describe
         # nothing — a rejected row carries the same empty original as _empty_row.
-        row["study_o"] = ""
-        row["title_o"] = ""
+        # study_r goes with them: "which of our studies re-tests it" has no referent
+        # once there is no "it".
+        for column in ("doi_o", "study_o", "study_r", "title_o", "year_o", "authors_o",
+                       "ref_o", "bibtex_ref_o", "oa_work_id_o"):
+            row[column] = ""
         row["doi_o_verification"] = "skipped"
         row["link_confidence"] = "low"
         prior = str(row.get("link_evidence", "") or "")
@@ -1222,6 +1229,46 @@ def _check_screen_providers(no_llm: bool) -> None:
         )
 
 
+def _merge_duplicate_originals(rows: list[dict], doi_r: str) -> list[dict]:
+    """Merge written rows that turned out to name the SAME original.
+
+    _collapse_same_paper_originals groups on what the model said; the guard then
+    recovers a DOI for a target that had none, so two entries that looked distinct —
+    a bare title and a keyed record, say — can arrive at one doi_o afterwards. Two
+    rows sharing a doi_o share a pair_id, the identifier every other system joins on.
+
+    This is the case _aggregate_outcomes exists for: the members were coded
+    separately, so their verdicts have to be reconciled by FLoRA's rule rather than
+    by taking the first. Rows without a doi_o are left alone — an empty DOI is not
+    evidence of identity.
+    """
+    groups: dict[str, list[dict]] = {}
+    order:  list[str] = []
+    for result_row in rows:
+        doi = clean_doi(str(result_row.get("doi_o", "") or ""))
+        key = doi or f"unkeyed:{len(order)}"
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(result_row)
+
+    merged: list[dict] = []
+    for key in order:
+        members = groups[key]
+        first   = members[0]
+        if len(members) > 1:
+            log.info("[%s] %d target rows resolved to the same original (%s) — "
+                     "merging into one", doi_r, len(members), key)
+            for column in ("study_o", "study_r"):
+                first[column] = ", ".join(dict.fromkeys(
+                    part for m in members
+                    for part in str(m.get(column, "") or "").split(", ") if part))
+            first["outcome"] = _aggregate_outcomes(
+                [str(m.get("outcome", "") or "") for m in members])
+        merged.append(first)
+    return merged
+
+
 def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | None",
                      no_llm: bool, no_pdf: bool, resolved_only: bool,
                      recalibrate_outcomes: bool) -> list[dict]:
@@ -1264,8 +1311,12 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
 
     rows: list[dict] = []
     for entry in entries:
+        # A DOI the pipeline had to search for is provisional at ~50% precision — the
+        # same rule _link_confidence applies on the single path, applied here rather
+        # than writing a constant "high" onto a link nobody confirmed.
         link_method = ("llm_title_search" if entry["provisional"]
                        else _map_method(str(link.get("target_stage") or "llm_fulltext")))
+        entry = {**entry, "confidence": "low" if entry["provisional"] else "high"}
         result_row = _guard_original_link(
             _merge_multi_row(row, entry, {}, match_type, "high", len(entries),
                              link_model, link_method=link_method,
@@ -1289,11 +1340,21 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
                                    multi_original=len(entries) > 1)
         rows.append(_apply_outcome(result_row, outcome))
 
-    # Renumber AFTER the drops: audit_extracted requires ranks 1..n over the rows that
-    # actually reach the CSV, with n_originals equal to the group size.
+    rows = _merge_duplicate_originals(rows, doi_r)
+
+    # Everything that describes the GROUP is settled here, after the guard's demotions
+    # and --resolved-only's drops: a paper whose second target was rejected is not a
+    # multiple_original paper, and a row demoted to target_pending is not a
+    # high-confidence match to anything. audit_extracted also requires ranks 1..n over
+    # the rows that actually reach the CSV, with n_originals equal to the group size.
     for i, result_row in enumerate(rows, 1):
         result_row["original_rank"] = i
         result_row["n_originals"]   = len(rows)
+        result_row["original_match_type"] = ("multiple_original" if len(rows) > 1
+                                             else "single_original")
+        result_row["original_match_confidence"] = (
+            "high" if str(result_row.get("link_method", "")) in RESOLVED_LINK_METHODS
+            else "low")
     return rows
 
 

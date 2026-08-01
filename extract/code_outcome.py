@@ -384,9 +384,11 @@ def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
     abstract, the original-study block and the fulltext the escalation would read.
 
     *multi_original* tells the model the paper also re-tests other originals coded on
-    their own rows — it changes the prompt, so it is part of the key. Without it a
-    single-original row and a per-target row for the same (doi_r, original) would
-    collide on one entry and the second would read back the other variant's answer.
+    their own rows — it changes the prompt, so it is part of the key, appended only
+    when set. Without it a single-original row and a per-target row for the same
+    (doi_r, original) would collide on one entry and the second would read back the
+    other variant's answer; with it always present, every existing single-original
+    entry would be orphaned instead.
     """
     abstract_snip = (abstract_r[:_ABSTRACT_CAP] + "…") if len(abstract_r) > _ABSTRACT_CAP else abstract_r
     text_snip     = (fulltext[:_FULLTEXT_CAP] + "…") if len(fulltext) > _FULLTEXT_CAP else fulltext
@@ -395,10 +397,15 @@ def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
     build = build_repro_outcome_prompt if is_repro else build_outcome_prompt
     version = prompt_version(
         "build_repro_outcome_prompt" if is_repro else "build_outcome_prompt")
+    # multi_original is APPENDED, and only when it is set: it names a prompt variant
+    # that did not exist before, and a key component that is always present would move
+    # every single-original key and orphan the outcome cache — the most expensive
+    # entries the pipeline holds, because they may carry a full-text escalation.
     key = content_key("outcome", doi_r, ladder_fingerprint(GEMINI_HEAVY_MODEL),
-                      version, record_type, multi_original,
+                      version, record_type,
                       title_r, abstract_snip,
-                      original_authors, original_year, original_title, text_snip)
+                      original_authors, original_year, original_title, text_snip,
+                      *(("multi_original",) if multi_original else ()))
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
         cached.setdefault("outcome_reasoning", "")
