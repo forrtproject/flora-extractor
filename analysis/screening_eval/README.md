@@ -23,9 +23,10 @@ so only it cannot be re-run from a clone.
 
 | File | Contents |
 | --- | --- |
-| `flora_coding_75_results.csv` | The human coder's raw returns: 75 rows, `case`, `block`, `ref`, `task`, `doi_r`, `your_verdict`, `your_confidence`, `your_note`. 73 rows carry a verdict (two rows of block D were left blank). Blocks: `A_calibration` (15), `B_discarded` (22), `C_disagreement` (23), `D_link_accuracy` (15). Verdicts across coded rows: 57 `no`, 10 `yes`, 6 `unclear`. |
+| `flora_coding_75_results.csv` | The human coder's raw returns: 75 rows, `case`, `block`, `ref`, `task`, `doi_r`, `your_verdict`, `your_confidence`, `your_note`, plus `revised_verdict`, `revised_reason`, `recoded` (see "Two labellings" below). 73 rows carry a verdict (two rows of block D were left blank). Blocks: `A_calibration` (15), `B_discarded` (22), `C_disagreement` (23), `D_link_accuracy` (15). First-pass verdicts across coded rows: 57 `no`, 10 `yes`, 6 `unclear`. |
 | `human_cases.json` | The 60 screening cases the coder saw for blocks A/B/C, as `{id, title, abstract, bucket}` with ids `HU01`–`HU60`. `bucket` repeats the block name. This is the input file the voter scripts prompt from. |
 | `human_truth.json` | `{"truth": {HU01…HU60: yes|no|unclear}}` — the coder's verdicts for those 60 cases, keyed by case number (`HU11` = case 11). Verified identical to the `your_verdict` column of the CSV: 56 `no`, 3 `yes`, 1 `unclear`. **These are the first-pass labels, before the coding-rule discussion recorded in `screening_prompt_proposal.md` §1–2.** |
+| `human_truth_revised.json` | Same shape, same 60 ids, carrying the `revised_verdict` labels settled in `screening_prompt_proposal.md` §1–2: 50 `no`, 10 `yes`. Generated from the CSV's `revised_verdict` column; seven ids differ from `human_truth.json` (HU11, HU37, HU50, HU52, HU55, HU56, HU57, all now `yes`). |
 | `heldout_cases.json` | 30 cases (`H001`–`H030`) drawn from the same gemma-vs-flash-lite benchmark as the adjudication set but sharing no source file with it (verified: zero overlap on the `file` key). Each carries `title`, `abstract`, the cache `file`, and the three benchmark verdicts `_flash_lite`, `_gemma`, `_ref`. |
 | `heldout_truth.json` | `{"truth": {H001…H030}}` — 24 `no`, 6 `yes`. Produced by the same three-judge panel procedure as `adjudicated.json`, from the `hojudge_b*_j*.json` vote files (the script that folded those votes into this file was not promoted, so this file cannot be regenerated here). |
 | `coding_sheet_75.csv` | The sheet the human coder worked from: the same 75 rows plus `title`, `abstract`, `context` and `panel_said` (the adjudication panel's verdict, which block A checks). `score_human.py` joins the returns to this on `case`. |
@@ -57,13 +58,39 @@ Panel-derived truth (`adjudicated.json`, and by construction `heldout_truth.json
 therefore an LLM proxy for human coding, not a substitute for it, and numbers computed
 against it should be reported as such.
 
-**Re-coding caveat.** `screening_prompt_proposal.md` §2 re-codes seven of the hand-coded
-cases under rules settled after the first pass, which changes the block totals it reports
-(block B becomes 21 `no` / 1 `yes`, block C becomes 17 / 6, positives rise from 3 to 10 of
-60). Those revised labels live only in that document's prose and tables — `human_truth.json`
-and the `_human` voter files below still carry the **pre-re-coding** labels, under which
-block B is 22/22 `no`. Any number quoted from this directory must say which labelling it
-uses.
+**Two labellings.** `screening_prompt_proposal.md` §2 re-codes seven of the hand-coded
+cases under the rules settled after the first pass (§1). All seven flip to `yes`: case 11
+(block A), case 37 (block B) and cases 50, 52, 55, 56, 57 (block C). Six of the seven were
+`no`; case 56 was `unclear`. Rule 3 — only the *initial* validation of a newly proposed
+instrument is excluded, re-validation of a published one counts — drives every change.
+
+Both labellings are now readable from data:
+
+| Artifact | Labelling |
+| --- | --- |
+| `flora_coding_75_results.csv` → `your_verdict` | first pass |
+| `flora_coding_75_results.csv` → `revised_verdict` | settled rules (repeats `your_verdict` where nothing changed, so it is directly usable as a truth column) |
+| `flora_coding_75_results.csv` → `revised_reason`, `recoded` | the driving rule, and a `TRUE`/`FALSE` flag on the seven changed rows |
+| `human_truth.json` | first pass — 56 `no`, 3 `yes`, 1 `unclear` |
+| `human_truth_revised.json` | settled rules — 50 `no`, 10 `yes`, 0 `unclear`; same `HU01`–`HU60` shape and ids |
+| the `_human` voter files below | scored against the **first-pass** labels |
+
+`score_human.py` takes `--revised` to score `revised_verdict`; without the flag its output
+is unchanged. Verified by running it both ways:
+
+| | first pass | revised |
+| --- | --- | --- |
+| block B wrongly discarded | 0/22 = 0% | **1/22 = 5%** (case 37, the Japanese ecSI-2.0 translation) |
+| block C genuine replications in the set-aside pile | 1/23 = 4% | 6/23 = 26% |
+| block A agreement with the panel | 11/15 = 73% | 10/15 = 67% (case 11 now also disagrees) |
+| positives across A/B/C | 3/60 | 10/60 |
+
+So the "21 of 22 hand-checked discards were genuine negatives" figure is the **revised**
+labelling, and it reproduces: 21 `no` / 1 `yes`. Under the first-pass labelling block B is
+22/22. Any number quoted from this directory must say which labelling it uses.
+
+§2 also records six cases that were discussed and *confirmed* unchanged (1, 2, 5, 12, 23,
+40); they are not marked `recoded`, since their verdict did not move.
 
 ---
 
@@ -197,7 +224,9 @@ panel verdicts in `coding_sheet_75.csv`, and reports: block A panel calibration
 (11/15 = 73% agreement), block B wrongly-discarded rate (0/22 under the first-pass labels),
 block C genuine replications in the set-aside pile (1/23), block D link accuracy
 (7/13 correct originals, on the 13 of 15 rows the coder returned), and an extrapolation of
-each rate to the full pool it was sampled from. It reads only; it writes nothing.
+each rate to the full pool it was sampled from. `--revised` re-runs the same report against
+the `revised_verdict` column (73% → 67%, 0/22 → 1/22, 1/23 → 6/23; block D is unaffected).
+It reads only; it writes nothing.
 
 **`screening_prompt_proposal.md`** — the write-up that sits on top of all of this: the
 settled coding rules, the seven re-coded cases and what they do to the headline numbers,

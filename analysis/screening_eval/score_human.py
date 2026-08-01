@@ -1,14 +1,24 @@
-"""Score the 75 human codings against the panel, the screen, and the pipeline."""
+"""Score the 75 human codings against the panel, the screen, and the pipeline.
+
+Pass --revised to score the labels settled after the coding-rule discussion
+(`revised_verdict`, see screening_prompt_proposal.md §1-2) instead of the
+first-pass `your_verdict` column, which is the default.
+"""
 import json
+import sys
 from collections import Counter
 from pathlib import Path
 
 import pandas as pd
 
 HERE = Path(__file__).resolve().parent
+REVISED = "--revised" in sys.argv
 
 H = pd.read_csv(HERE / "flora_coding_75_results.csv").fillna("")
 H["case"] = H["case"].astype(str).str.zfill(2)
+if REVISED:
+    H["your_verdict"] = H["revised_verdict"]
+print("labels:", "revised (post-rule-discussion)" if REVISED else "first pass")
 sheet = pd.read_csv(HERE / "coding_sheet_75.csv").fillna("")
 sheet["case"] = sheet["case"].astype(str).str.zfill(2)
 m = H.merge(sheet[["case", "panel_said", "doi_r", "title"]], on="case",
