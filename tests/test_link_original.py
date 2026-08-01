@@ -378,13 +378,46 @@ class TestMayStopAtARule:
             "We re-tested the effect reported by Smith (2009).", 2020) is True
 
 
+def _answer(**over) -> dict:
+    """What identify_targets_with_llm returns. target_stage is what tells an answer
+    apart from a provider failure, so it is on every answer and on no failure."""
+    base = {"resolved": False, "resolution_method": "llm_no_target",
+            "llm_source": "gemini", "llm_model": "gemini-heavy", "llm_error": "",
+            "target_stage": "llm_gemini", "targets": [], "multi_target": False,
+            "unidentified_count": 0, "resolved_study_r": "", "llm_evidence": "",
+            "llm_reasoning": "no second target"}
+    base.update(over)
+    return base
+
+
+def _failed_answer(error: str = "quota exhausted") -> dict:
+    """A provider failure: no target_stage, and an llm_error the row must keep."""
+    return {"resolved": False, "resolution_method": "llm_failed", "llm_source": "none",
+            "llm_model": "", "llm_error": error, "target_stage": "", "targets": [],
+            "multi_target": False, "llm_reasoning": ""}
+
+
+def _gate_target(doi: str, title: str, author: str = "Smith", year: int = 2010,
+                 **over) -> dict:
+    target = {"key": f"@{author.lower()}{year}", "match_certain": True,
+              "target_as_named": title, "study_numbers": "",
+              "replication_study_numbers": "", "evidence_quote": "q",
+              "record": {"doi": doi, "title": title, "first_author": author,
+                         "year": year, "openalex_id": ""}}
+    target.update(over)
+    return target
+
+
 def _run_gate(title_r: str, abstract_r: str, candidates: list,
               llm_answer: "dict | None" = None,
-              pdf_ok: bool = True) -> dict:
+              abstract_answer: "dict | None" = None,
+              screen: "dict | None" = None,
+              pdf_ok: bool = True, no_llm: bool = False, no_pdf: bool = False) -> dict:
     """Drive run_for_doi with the title-pattern rule able to fire.
 
-    *llm_answer* is what the full-text target call returns; pdf_ok=False stops the
-    ladder at the no-document exit instead.
+    *abstract_answer* is what the Stage 4 abstract call returns and *llm_answer* what
+    the Stage 7 full-text call returns; pdf_ok=False stops the ladder at the
+    no-document exit, and no_llm / no_pdf stop it earlier still.
     """
     cands_df = pd.DataFrame([{
         "doi_r": "10.1/rep", "study_r": title_r, "abstract_r": abstract_r,
@@ -395,59 +428,178 @@ def _run_gate(title_r: str, abstract_r: str, candidates: list,
             "pdf_url": "u", "pdf_ok": True, "pdf_url_tried": []} if pdf_ok else
            {"pdf_path": None, "openalex_xml": None, "pdf_source": "none",
             "pdf_url": "", "pdf_ok": False, "pdf_url_tried": []})
-    answer = llm_answer or {"resolved": False, "resolution_method": "llm_no_target",
-                            "llm_source": "gemini", "targets": [],
-                            "llm_reasoning": "no second target"}
+    answers = [abstract_answer if abstract_answer is not None else _answer(),
+               llm_answer if llm_answer is not None else _answer()]
+
+    def _identify(*a, **k):
+        return answers.pop(0) if len(answers) > 1 else answers[0]
+
     with patch.object(link_original, "find_all_candidates", return_value=candidates), \
          patch.object(link_original, "fetch_referenced_works_metadata", return_value=[]), \
          patch.object(link_original, "fetch_opencitations_references", return_value=[]), \
          patch.object(link_original, "screen_references_with_llm",
-                      return_value=_screen_result(screen_verdict="proceed",
-                                                  screen_classification="replication",
-                                                  record_type="replication")), \
+                      return_value=screen or _screen_result(
+                          screen_verdict="proceed",
+                          screen_classification="replication",
+                          record_type="replication")), \
          patch.object(link_original, "acquire_pdf", return_value=pdf), \
          patch.object(link_original, "_parse_all",
                       return_value={"grobid": {"source": "grobid", "abstract": "",
                                                "intro": "i", "references": []}}), \
          patch.object(link_original, "_write_parse_cache"), \
-         patch.object(link_original, "identify_targets_with_llm", return_value=answer):
-        return run_for_doi("10.1/rep", cands_df=cands_df)
+         patch.object(link_original, "identify_targets_with_llm", side_effect=_identify):
+        return run_for_doi("10.1/rep", cands_df=cands_df, no_llm=no_llm, no_pdf=no_pdf)
 
 
 _GATE_CANDS = [{"title": "Time flies from left to right", "year": 2010,
                 "first_author": "Smith", "all_authors": ["Smith"],
                 "doi": "10.9/orig", "openalex_id": "W9"}]
 
+_GATE_TITLE = "A replication of Time flies from left to right"
+_ONE_PAIR   = "We re-tested Smith (2010)."
+_TWO_PAIRS  = "We re-tested Smith (2010) and Jones (2011)."
+
 
 class TestGateInTheLadder:
     def test_an_ungated_title_pattern_hit_ends_the_row(self):
-        row = _run_gate("A replication of Time flies from left to right",
-                        "We re-tested Smith (2010).", _GATE_CANDS)
+        row = _run_gate(_GATE_TITLE, _ONE_PAIR, _GATE_CANDS)
         assert row["resolution_method"] == "title_pattern_match"
         assert row["resolved_doi_o"] == "10.9/orig"
 
-    def test_a_withheld_pick_is_restored_once_the_target_call_saw_one_target(self):
-        row = _run_gate("A replication of Time flies from left to right",
-                        "We re-tested Smith (2010) and Jones (2011).", _GATE_CANDS)
+    def test_a_withheld_pick_is_restored_when_the_target_call_names_nothing(self):
+        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS)
         assert row["resolution_method"] == "title_pattern_match"
-        assert row["llm_reasoning"] == "no second target"
+        assert "no second target" in row["llm_reasoning"]
 
-    def test_a_withheld_pick_is_not_restored_at_the_no_document_exit(self):
-        """Nothing enumerated the targets there, which is exactly what the pick was
-        being withheld for."""
-        row = _run_gate("A replication of Time flies from left to right",
-                        "We re-tested Smith (2010) and Jones (2011).", _GATE_CANDS,
-                        pdf_ok=False)
-        assert _map_method(row["resolution_method"]) == "target_pending"
+    def test_a_withheld_pick_is_restored_when_one_target_names_the_same_work(self):
+        """Agreement is on the mapped record's DOI — the call confirmed the rule."""
+        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS,
+                        llm_answer=_answer(targets=[_gate_target(
+                            "10.9/orig", "Time flies from left to right")]))
+        assert row["resolution_method"] == "title_pattern_match"
+        assert row["resolved_doi_o"] == "10.9/orig"
+
+    def test_a_withheld_pick_is_not_restored_when_the_one_target_is_another_work(self):
+        """The call the gate waited for named a DIFFERENT original. Restoring here
+        wrote the withheld pick at high confidence over the model's contradiction."""
+        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS,
+                        llm_answer=_answer(targets=[_gate_target(
+                            "10.9/other", "A different original", author="Jones",
+                            year=2011)]))
+        assert row["resolution_method"] != "title_pattern_match"
+        assert row["n_targets"] == 1
 
     def test_a_withheld_pick_is_not_restored_when_two_targets_were_found(self):
-        row = _run_gate(
-            "A replication of Time flies from left to right",
-            "We re-tested Smith (2010) and Jones (2011).", _GATE_CANDS,
-            llm_answer={"resolved": False, "resolution_method": "llm_multi_target",
-                        "llm_source": "gemini", "multi_target": True,
-                        "targets": [{"key": "@a"}, {"key": "@b"}]})
+        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS,
+                        llm_answer=_answer(
+                            resolution_method="llm_multi_target", multi_target=True,
+                            targets=[_gate_target("10.9/a", "A"),
+                                     _gate_target("10.9/b", "B", author="Jones",
+                                                  year=2011)]))
         assert row["resolution_method"] == "llm_multi_target"
+        assert row["n_targets"] == 2
+
+    def test_an_api_failure_is_not_an_answer_and_keeps_its_error(self):
+        """A 429 is not "the model saw no second target". Restoring on it would freeze
+        an unconfirmed rule pick into a resolved row a re-run never revisits, and the
+        emitted row must still carry the error."""
+        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS,
+                        llm_answer=_failed_answer("quota exhausted"))
+        assert row["resolution_method"] == "llm_failed"
+        assert row["llm_error"] == "quota exhausted"
+
+
+class TestGateRestoresWhenNothingEnumerates:
+    """The gate withholds a pick UNTIL something that can enumerate targets speaks.
+    When nothing ever does, the pick stands — every one of these exits returned it
+    before the gate existed, so dropping it is a lost resolution, not a caution."""
+
+    def test_the_no_document_exit_restores_it(self):
+        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS, pdf_ok=False,
+                        abstract_answer=_failed_answer())
+        assert row["resolution_method"] == "title_pattern_match"
+        assert row["resolved_doi_o"] == "10.9/orig"
+
+    def test_no_llm_mode_never_withholds_at_all(self):
+        """--no-llm runs no enumerating call, so withholding buys no information and
+        would cost a PDF download per rule-resolved row: the rule stops the ladder."""
+        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS, no_llm=True)
+        assert row["resolution_method"] == "title_pattern_match"
+        # Returned at the rule: every stage past it emits with the acquired pdf block.
+        assert row["pdf_source"] == "none"
+
+    def test_no_pdf_mode_restores_it(self):
+        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS, no_pdf=True,
+                        abstract_answer=_failed_answer())
+        assert row["resolution_method"] == "title_pattern_match"
+
+    def test_an_incomplete_screen_restores_it_and_keeps_the_error(self):
+        """One surviving vote is a provider outage. Turning it into a lost
+        deterministic resolution is exactly what the error-handling rule forbids."""
+        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS,
+                        abstract_answer=_failed_answer(),
+                        screen=_screen_result(
+                            resolution_method="llm_refscreen_partial",
+                            llm_error="classifier failed: openai"))
+        assert row["resolution_method"] == "title_pattern_match"
+        assert row["llm_error"] == "classifier failed: openai"
+
+    def test_a_screen_discard_still_wins_over_the_pick(self):
+        """A discard is a verdict about the paper, not a failure to look."""
+        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS,
+                        abstract_answer=_failed_answer(),
+                        screen=_screen_result(screen_verdict="discard",
+                                              screen_classification="none"))
+        assert row["resolution_method"] == "llm_not_a_replication"
+
+
+class TestTheRichestAnswerSurvives:
+    """Two rungs read different evidence, so the later one is not the newer truth —
+    it may simply have been shown a shorter reference list."""
+
+    def test_a_later_thinner_answer_does_not_replace_a_richer_one(self):
+        row = _run_gate(
+            "A study", _TWO_PAIRS, [],
+            abstract_answer=_answer(
+                resolution_method="llm_multi_target", multi_target=True,
+                target_stage="llm_cited_candidates_gemini",
+                targets=[_gate_target("10.9/a", "A"),
+                         _gate_target("10.9/b", "B", author="Jones", year=2011)]),
+            llm_answer=_answer(targets=[_gate_target("10.9/a", "A")]))
+        assert row["n_targets"] == 2
+        assert row["target_stage"] == "llm_cited_candidates_gemini"
+
+    def test_a_later_single_resolution_does_not_drop_the_earlier_originals(self):
+        """The reference rung settled on ONE original for a paper the abstract rung
+        already saw two in. Returning that link silently dropped the other."""
+        row = _run_gate(
+            "A study", _TWO_PAIRS, [],
+            abstract_answer=_answer(
+                resolution_method="llm_multi_target", multi_target=True,
+                targets=[_gate_target("10.9/a", "A"),
+                         _gate_target("10.9/b", "B", author="Jones", year=2011)]),
+            llm_answer=_answer(resolved=True, resolution_method="llm_gemini",
+                               resolved_doi_o="10.9/c", resolved_title_o="C",
+                               resolved_author_o="Kim", resolved_year_o=2012,
+                               targets=[_gate_target("10.9/c", "C", author="Kim",
+                                                     year=2012)]))
+        assert row["resolution_method"] == "llm_multi_target"
+        assert row["n_targets"] == 3
+        assert row["resolved_doi_o"] == ""
+
+    def test_the_union_does_not_write_one_original_twice(self):
+        """The same work reached through two rungs carries two keys — the namespaces
+        are per call — and two rows for it would share one pair_id."""
+        row = _run_gate(
+            "A study", _TWO_PAIRS, [],
+            abstract_answer=_answer(
+                resolution_method="llm_multi_target", multi_target=True,
+                targets=[_gate_target("10.9/a", "A"),
+                         _gate_target("10.9/b", "B", author="Jones", year=2011)]),
+            llm_answer=_answer(resolved=True, resolution_method="llm_gemini",
+                               resolved_doi_o="10.9/a", resolved_title_o="A",
+                               targets=[_gate_target("10.9/a", "A",
+                                                     key="@smith2010_again")]))
         assert row["n_targets"] == 2
 
 

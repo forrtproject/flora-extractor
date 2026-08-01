@@ -632,9 +632,92 @@ def _search_title_for_original(doi_r: str, target_desc: str,
 # What a target-identifying stage produced, as it has to survive to the row. Three
 # ladder stages can enumerate targets and then fail to resolve a single link; without
 # this the list died with the stage and the row was written target_pending with no
-# record that anything had been found.
+# record that anything had been found. The three attribution fields travel with the
+# list: a row whose originals came from a stage the ladder later left behind still has
+# to name the model that found them, or it cannot be reviewed.
 _TARGET_KEYS = ("targets", "multi_target", "unidentified_count", "target_stage",
-                "resolved_study_r")
+                "resolved_study_r", "llm_model", "llm_source", "llm_evidence")
+
+
+def _enumerated(answer: dict) -> bool:
+    """Whether a target-identifying call actually answered, as opposed to failing.
+
+    target_stage is set by identify_targets_with_llm before it decides anything, so
+    it is present on every answer — including a decline — and absent on a provider
+    failure and on a rung whose target call never ran at all. That distinction is what
+    the gate turns on: a withheld rule pick may only be overruled by a call that spoke.
+    """
+    return bool(answer.get("target_stage"))
+
+
+def _certain_targets(answer: dict) -> list[dict]:
+    """The targets an answer matched to a record and stands behind."""
+    return [t for t in (answer.get("targets") or [])
+            if t.get("match_certain") and t.get("record")]
+
+
+def _norm(text) -> str:
+    """A title/name reduced to comparable form: lowercase, single-spaced, no padding."""
+    return " ".join(str(text or "").lower().split())
+
+
+def _agrees_with_held(target: dict, held: dict) -> bool:
+    """Whether a single enumerated target names the same work the gate withheld.
+
+    Compared on the DOI when both have one; a reference parsed out of a PDF often has
+    none, so the fallback is the identity the deterministic rule matched on — title,
+    year and first author together, never the title alone.
+    """
+    record   = target.get("record") or {}
+    doi      = clean_doi(str(record.get("doi") or ""))
+    held_doi = clean_doi(str(held.get("resolved_doi_o") or ""))
+    if doi and held_doi:
+        return doi == held_doi
+    title = _norm(record.get("title"))
+    return bool(title) and (
+        title == _norm(held.get("resolved_title_o"))
+        and str(record.get("year") or "") == str(held.get("resolved_year_o") or "")
+        and _norm(record.get("first_author")) == _norm(held.get("resolved_author_o")))
+
+
+def _union_targets(*lists: list) -> list[dict]:
+    """Every distinct target across several answers, in the order first seen.
+
+    Deduplicated by @key first and by the mapped record's DOI second: the same work
+    reached through two rungs carries two keys (the namespaces are per call), and
+    writing it twice would give two rows one pair_id.
+    """
+    seen_keys: set = set()
+    seen_dois: set = set()
+    merged: list[dict] = []
+    for target in [t for group in lists for t in (group or [])]:
+        key = target.get("key")
+        doi = clean_doi(str((target.get("record") or {}).get("doi") or ""))
+        if (key and key in seen_keys) or (doi and doi in seen_dois):
+            continue
+        if key:
+            seen_keys.add(key)
+        if doi:
+            seen_dois.add(doi)
+        merged.append(target)
+    return merged
+
+
+def _as_target(resolution: dict) -> dict:
+    """An accepted single link expressed as a target entry, so it can join a list."""
+    return {
+        "key":             None,
+        "match_certain":   True,
+        "target_as_named": str(resolution.get("resolved_title_o") or ""),
+        "study_numbers":   str(resolution.get("resolved_study_o") or ""),
+        "replication_study_numbers": str(resolution.get("resolved_study_r") or ""),
+        "evidence_quote":  str(resolution.get("llm_evidence") or ""),
+        "record": {"doi":          str(resolution.get("resolved_doi_o") or ""),
+                   "title":        str(resolution.get("resolved_title_o") or ""),
+                   "first_author": str(resolution.get("resolved_author_o") or ""),
+                   "year":         resolution.get("resolved_year_o"),
+                   "openalex_id":  ""},
+    }
 
 
 def run_for_doi(doi_r:              str,
@@ -731,11 +814,87 @@ def run_for_doi(doi_r:              str,
     emit = partial(_build_output, doi_r, flora, cands_row, candidates)
 
     # A deterministic stage may only END the row when the paper's own text rules out a
-    # second target; otherwise its pick is withheld until a call that can enumerate
-    # targets has spoken (see may_stop_at_a_rule and the restore after Stage 7).
-    may_stop = may_stop_at_a_rule(study_r, abstract_r, year_r)
+    # second target; otherwise its pick is WITHHELD — until a call that can enumerate
+    # targets has spoken. If none ever does, nothing has contradicted the rule and the
+    # pick stands: every exit below goes through _exit(), which restores it.
+    # --no-llm has nothing that could ever enumerate, so withholding there buys no
+    # information and costs a PDF download per rule-resolved row: the rule may stop.
+    may_stop = no_llm or may_stop_at_a_rule(study_r, abstract_r, year_r)
     held: dict = {}          # a deterministic pick the gate withheld
-    seen_targets: dict = {}  # the richest target answer any stage produced
+    seen: dict = {}          # the richest target answer any stage produced
+    seen_certain = 0         # how many targets that answer matched and stands behind
+
+    def _keep(answer: dict) -> None:
+        """Record an enumerating answer, keeping the one that named the most originals.
+
+        Replacing it with whatever spoke last dropped a rung's two certain targets the
+        moment a later rung answered about one — the reference lists the rungs read are
+        not the same list, and the shorter answer is not the newer truth.
+        """
+        nonlocal seen, seen_certain
+        certain = len(_certain_targets(answer))
+        if answer.get("targets") and certain >= seen_certain:
+            seen = {k: v for k, v in answer.items() if k in _TARGET_KEYS}
+            seen_certain = certain
+
+    def _uncontradicted() -> bool:
+        """Whether the withheld pick still stands against everything that enumerated.
+
+        It stands when nothing enumerated at all, and when the one thing that did named
+        at most one original and that original is the same work. It does NOT stand
+        against two targets, nor against one target that names a different work — those
+        are the answers the gate was waiting for.
+        """
+        if not seen:
+            return True
+        certain = _certain_targets(seen)
+        return (len(seen.get("targets") or []) <= 1
+                and (not certain or _agrees_with_held(certain[0], held)))
+
+    def _exit(resolution: dict, pdf: dict = {}, grobid: dict = {},
+              sections: dict = {}) -> dict:
+        """An exit with no accepted link — restoring a withheld pick if nothing enumerated.
+
+        --no-llm, --no-pdf, no document, no context and an incomplete screen all end the
+        row without any call that could have found a second target. Before the gate they
+        were unreachable for a rule-resolved paper, because the rule had already
+        returned. Dropping the pick here would turn a provider outage into a lost
+        resolution, which the error-handling rule forbids; whatever the exit had to
+        report travels with the restored row.
+        """
+        if held and _uncontradicted():
+            log.info("[%s] gate: restoring the withheld %s pick — nothing that could "
+                     "enumerate targets contradicted it (%s)", doi_r,
+                     held["resolution_method"], resolution.get("resolution_method"))
+            return emit({**held,
+                         "llm_error": str(resolution.get("llm_error", "") or ""),
+                         "llm_reasoning": " | ".join(filter(None, [
+                             str(held.get("llm_reasoning", "") or ""),
+                             str(resolution.get("llm_reasoning", "") or "")])),
+                         }, pdf, grobid, sections)
+        return emit({**resolution, **seen}, pdf, grobid, sections)
+
+    def _exit_resolved(resolution: dict, pdf: dict = {}, grobid: dict = {},
+                       sections: dict = {}) -> dict:
+        """An exit with one accepted link — unless an earlier call saw more originals.
+
+        A later rung reads a different evidence block, so it can settle on ONE original
+        for a paper an earlier successful call already saw two in. Returning that single
+        link drops the other; the row is emitted unresolved with the union instead, and
+        the per-target adapter writes every original including this one.
+        """
+        if seen_certain >= 2:
+            merged = _union_targets(seen.get("targets"),
+                                    _certain_targets(resolution) or [_as_target(resolution)])
+            log.info("[%s] %s resolved one original, but an earlier call named %d — "
+                     "writing every target instead", doi_r,
+                     resolution.get("resolution_method"), seen_certain)
+            return emit({**_unresolved("llm_multi_target"), **seen,
+                         "targets":      merged,
+                         "multi_target": True,
+                         "llm_reasoning": resolution.get("llm_reasoning", ""),
+                         }, pdf, grobid, sections)
+        return emit(resolution, pdf, grobid, sections)
 
     # ── Stage 2.5: Title-pattern resolver ─────────────────────────────────────
     # Runs before citation scoring and before any LLM call.
@@ -775,12 +934,11 @@ def run_for_doi(doi_r:              str,
                 validator_note=effective_note,
                 abstract_only=True,
             )
-            if llm4.get("targets"):
-                seen_targets = {k: v for k, v in llm4.items() if k in _TARGET_KEYS}
+            _keep(llm4)
             if llm4["resolved"]:
                 log.info("[%s] Resolved by abstract LLM: %s", doi_r,
                          llm4["resolved_title_o"])
-                return emit(llm4, {}, {}, {})
+                return _exit_resolved(llm4)
 
     # ── Stage 4.5: Reference-list target pick ────────────────────────────────
     # Stage 3/4 can only fire when the abstract carries a parseable "(Author, Year)"
@@ -803,8 +961,7 @@ def run_for_doi(doi_r:              str,
         # The evidence of this rung IS the reference list, so it has to reach
         # _build_output; the screen dict carries the verdict, not the input.
         ref_sections = {"references": refs}
-        if screen.get("targets"):
-            seen_targets = {k: v for k, v in screen.items() if k in _TARGET_KEYS}
+        _keep(screen)
 
         # A screen that did not get both votes is an API failure, not a verdict, and
         # must be caught before the gate below — a lone surviving vote is not a
@@ -813,7 +970,7 @@ def run_for_doi(doi_r:              str,
         if screen["resolution_method"] in {"llm_refscreen_partial", "llm_refscreen_failed"}:
             log.warning("[%s] Reference screen incomplete (%s): %s", doi_r,
                         screen["resolution_method"], screen.get("llm_error", ""))
-            return emit(screen, {}, {}, ref_sections)
+            return _exit(screen, {}, {}, ref_sections)
 
         # The gate is screen_gate(), defined once in shared/llm_client.py. The full
         # screen dict is the resolution so the discarded row still carries the models
@@ -837,7 +994,7 @@ def run_for_doi(doi_r:              str,
         if screen["resolved"]:
             log.info("[%s] Resolved from reference list: %s", doi_r,
                      screen["resolved_title_o"])
-            return emit(screen, {}, {}, ref_sections)
+            return _exit_resolved(screen, {}, {}, ref_sections)
 
         # ── Stage 4.6: Title search on a named-but-unmatched target ──────────
         # The screen can recognise the target in the abstract yet fail to match it
@@ -863,13 +1020,13 @@ def run_for_doi(doi_r:              str,
             if hit:
                 log.info("[%s] Resolved by pre-PDF title search: %s", doi_r,
                          hit["resolved_title_o"])
-                return emit(hit, {}, {}, ref_sections)
+                return _exit_resolved(hit, {}, {}, ref_sections)
 
     # ── Stage 5: PDF acquisition ─────────────────────────────────────────────
     if no_pdf:
         # Stages 2.5/3/4 didn't resolve — bail out without fulltext.
         log.info("[%s] no_pdf mode — abstract/rules insufficient, writing target_pending", doi_r)
-        return emit({**_unresolved("needs_fulltext"), **seen_targets}, {}, {}, {})
+        return _exit(_unresolved("needs_fulltext"))
 
     pdf = acquire_pdf(doi_r, study_r, openalex_id=oa_id_r)
     log.info("[%s] PDF: %s (%s)", doi_r, pdf["pdf_source"], pdf["pdf_url"])
@@ -885,8 +1042,7 @@ def run_for_doi(doi_r:              str,
     if pdf_path is None and not oa_xml_content:
         log.info("[%s] no document acquired (%s) — writing target_pending",
                  doi_r, pdf.get("pdf_source", "none"))
-        return emit({**_unresolved("no_fulltext_available"), **seen_targets},
-                    pdf, {}, {})
+        return _exit(_unresolved("no_fulltext_available"), pdf)
 
     # ── Stage 6: Parse all — pick richest result to send to LLM ─────────────
     parse_results  = _parse_all(doi_r, pdf_path, oa_xml=oa_xml_content, no_llm=no_llm)
@@ -924,8 +1080,8 @@ def run_for_doi(doi_r:              str,
     # ── Stage 7: LLM identification ──────────────────────────────────────────
     if no_llm:
         log.info("[%s] no_llm mode — skipping LLM, writing target_pending", doi_r)
-        return emit({**_unresolved("none", llm_error="no_llm mode"), **seen_targets},
-                    pdf, grobid, sections)
+        return _exit(_unresolved("none", llm_error="no_llm mode"),
+                     pdf, grobid, sections)
 
     # Guard: refuse to call the LLM when it would have nothing to reason from.
     _has_context = (
@@ -936,10 +1092,10 @@ def run_for_doi(doi_r:              str,
     )
     if not _has_context:
         log.warning("[%s] No context — skipping LLM, writing target_pending", doi_r)
-        return emit({**_unresolved(
+        return _exit(_unresolved(
             "no_context",
             llm_error="no_context: abstract missing, PDF unavailable, no refs"),
-            **seen_targets}, pdf, grobid, sections)
+            pdf, grobid, sections)
 
     token_counter.set_stage("extract_fulltext")
     llm = identify_targets_with_llm(
@@ -952,19 +1108,25 @@ def run_for_doi(doi_r:              str,
     )
     log.info("[%s] LLM: resolved=%s source=%s", doi_r,
              llm["resolved"], llm["llm_source"])
-    if llm.get("targets"):
-        seen_targets = {k: v for k, v in llm.items() if k in _TARGET_KEYS}
+    _keep(llm)
 
-    if held and not llm["resolved"] and len(llm["targets"]) <= 1:
-        # The enumerating call ran and saw no second target, which is what the gate
-        # was withholding the rule for. Anything cheaper never enumerated, so those
-        # exits stay target_pending.
-        log.info("[%s] gate: restoring the withheld %s pick — the target prompt found "
-                 "≤1 target", doi_r, held["resolution_method"])
-        return emit({**held, "llm_reasoning": llm.get("llm_reasoning", "")},
-                    pdf, grobid, sections)
+    if held and not llm["resolved"] and _enumerated(llm) and _uncontradicted():
+        # The call the gate was waiting for ran, and it did not contradict the rule:
+        # it named nothing, or it named the same work. A provider failure is NOT that
+        # answer — it goes out as llm_failed so a re-run can ask again, rather than
+        # freezing an unconfirmed rule pick into a resolved row.
+        log.info("[%s] gate: restoring the withheld %s pick — the target prompt did "
+                 "not contradict it", doi_r, held["resolution_method"])
+        return emit({**held,
+                     "llm_error":     str(llm.get("llm_error", "") or ""),
+                     "llm_reasoning": " | ".join(filter(None, [
+                         str(held.get("llm_reasoning", "") or ""),
+                         str(llm.get("llm_reasoning", "") or "")])),
+                     }, pdf, grobid, sections)
 
-    return emit(llm, pdf, grobid, sections)
+    if llm["resolved"]:
+        return _exit_resolved(llm, pdf, grobid, sections)
+    return emit({**llm, **seen}, pdf, grobid, sections)
 
 
 # ── Output builder ────────────────────────────────────────────────────────────
