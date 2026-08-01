@@ -338,20 +338,45 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
 # exchange for queueing. Flex is an account-level tier rather than a per-key one, so
 # OPENAI_USE_FLEX alone decides it.
 
-_OPENAI_FLEX_REFUSED = re.compile(
-    r"service_tier|resource[_ ]unavailable|flex", re.IGNORECASE)
+_SERVICE_TIER_TEXT = re.compile(r"service[_ ]?tier", re.IGNORECASE)
 
 
 def _openai_flex_refused(exc: Exception) -> bool:
     """Whether *exc* means "not at flex tier" rather than "the call failed".
 
-    Two shapes count: the API rejecting the tier outright (a 400 naming
-    service_tier, or a model that does not offer flex) and the queue failing to
-    produce capacity — a 429 `resource_unavailable`, or the request timing out
-    while queued. Both are answerable at standard tier; nothing else is.
+    Read off the SDK's structured error fields, never off free text: only two
+    shapes say the tier itself was unavailable, and both are answerable by an
+    immediate standard-tier call because neither was served or billed.
+
+      * 429 with error code `resource_unavailable` — the flex queue has no
+        capacity.
+      * 400 naming `service_tier` as the offending parameter — flex is not
+        offered for this model or account.
+
+    Everything else is a failed call, not a refused tier. A client-side timeout
+    in particular is NOT a refusal: a flex request can be served and billed
+    close to OPENAI_FLEX_TIMEOUT with the response lost in transit, so resending
+    it immediately would double-bill and record only the second call's usage. It
+    goes to the ordinary retry loop like any other transient failure.
     """
-    return (type(exc).__name__.endswith("TimeoutError")
-            or bool(_OPENAI_FLEX_REFUSED.search(str(exc))))
+    status = getattr(exc, "status_code", None)
+    if status not in (400, 429):
+        return False
+
+    body = getattr(exc, "body", None)
+    err = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(err, dict):
+        err = {}
+    code = getattr(exc, "code", None) or err.get("code")
+    param = getattr(exc, "param", None) or err.get("param")
+
+    if status == 429:
+        return code == "resource_unavailable"
+    # 400: the param field is the authority; the message is a secondary guard for
+    # the same shape, where the SDK could not populate param.
+    return (param == "service_tier"
+            or (not param
+                and bool(_SERVICE_TIER_TEXT.search(str(err.get("message") or "")))))
 
 
 def call_openai(prompt: str, model: str = OPENAI_MODEL,
@@ -397,16 +422,25 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL,
             **extra,
         )
 
+    # Once a flex request has failed for any reason, the retries run at standard
+    # tier: a refused tier will refuse again, and after a timeout a second 900s
+    # queue wait is the worst way to find out whether the call went through.
+    use_flex = OPENAI_USE_FLEX
     for attempt in range(3):
         try:
             _throttle("openai")
             try:
-                response = _create(OPENAI_USE_FLEX)
+                response = _create(use_flex)
             except Exception as flex_exc:
+                if not use_flex:
+                    raise
+                use_flex = False
                 # The standard-tier call replaces the refused flex call within this
                 # attempt rather than consuming one of the three: a tier that was
                 # never served is not a transient outage, and nothing was billed.
-                if not OPENAI_USE_FLEX or not _openai_flex_refused(flex_exc):
+                # Anything else — a timeout above all — may already have been
+                # billed, so it takes the retry loop instead.
+                if not _openai_flex_refused(flex_exc):
                     raise
                 log.warning("OpenAI would not serve service_tier=flex (%s) — "
                             "retrying at standard tier", flex_exc)

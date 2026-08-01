@@ -550,18 +550,38 @@ def test_openai_flex_is_sent_with_the_long_timeout(monkeypatch):
     assert calls[0]["timeout"] == 900   # flex calls queue — not the client default
 
 
-def test_openai_flex_refusal_falls_back_to_standard_within_the_attempt(monkeypatch):
-    _openai_flex_env(monkeypatch)
-    calls: list = []
+def _api_error(status: int, *, code: str = "", param: str = "", message: str = ""):
+    """A real OpenAI SDK error with the structured fields the detector reads."""
+    import httpx
+    import openai
 
+    body = {"message": message, "type": "invalid_request_error",
+            "code": code or None, "param": param or None}
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    response = httpx.Response(status, request=request)
+    cls = {400: openai.BadRequestError, 401: openai.AuthenticationError,
+           429: openai.RateLimitError}[status]
+    return cls(message, response=response, body=body)
+
+
+def _flex_then_standard(calls: list, flex_exc: Exception):
+    """A create() that fails the flex request and serves the standard one."""
     def create(**kwargs):
         calls.append(kwargs)
         if "service_tier" in kwargs:
-            raise RuntimeError("400: service_tier 'flex' is not supported for this model")
+            raise flex_exc
         return _resp('{"ok": true}')
+    return create
 
+
+def test_openai_flex_capacity_refusal_falls_back_within_the_attempt(monkeypatch):
+    # 429 + resource_unavailable: the flex queue has nothing, standard will serve.
+    _openai_flex_env(monkeypatch)
+    calls: list = []
+    exc = _api_error(429, code="resource_unavailable",
+                     message="Service tier capacity exceeded for this model")
     fake_client = MagicMock()
-    fake_client.chat.completions.create.side_effect = create
+    fake_client.chat.completions.create.side_effect = _flex_then_standard(calls, exc)
     with patch("openai.OpenAI", return_value=fake_client):
         assert llm.call_openai("prompt")[0] == {"ok": True}
 
@@ -569,6 +589,130 @@ def test_openai_flex_refusal_falls_back_to_standard_within_the_attempt(monkeypat
     # api_error budget, and the standard call carries no flex timeout.
     assert len(calls) == 2
     assert "service_tier" not in calls[1] and "timeout" not in calls[1]
+
+
+def test_openai_flex_unsupported_param_falls_back_within_the_attempt(monkeypatch):
+    # 400 naming service_tier: flex is not offered for this model/account.
+    _openai_flex_env(monkeypatch)
+    calls: list = []
+    exc = _api_error(400, param="service_tier",
+                     message="Invalid value for 'service_tier'")
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.side_effect = _flex_then_standard(calls, exc)
+    with patch("openai.OpenAI", return_value=fake_client):
+        assert llm.call_openai("prompt")[0] == {"ok": True}
+
+    assert len(calls) == 2
+    assert "service_tier" not in calls[1]
+
+
+@pytest.mark.parametrize("exc, label", [
+    (_api_error(401, code="invalid_api_key",
+                message="Incorrect API key provided (flex project key)"), "401"),
+    (_api_error(400, code="model_not_found",
+                message="The model does not exist (flex)"), "400-flex-in-message"),
+])
+def test_openai_non_tier_errors_do_not_trigger_the_standard_fallback(monkeypatch, exc, label):
+    # A message merely mentioning flex is not a tier refusal: these must reach the
+    # retry loop, so the run sees three flex-tier attempts and no standard call.
+    _openai_flex_env(monkeypatch)
+    calls: list = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        raise exc
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.side_effect = create
+    with patch("openai.OpenAI", return_value=fake_client):
+        result, err = llm.call_openai("prompt")
+
+    assert result is None and "exception" in err
+    assert len(calls) == 3                              # the ordinary retry loop
+    assert "service_tier" in calls[0]                   # first attempt was flex
+    assert all("service_tier" not in c for c in calls[1:])   # retries stay standard
+
+
+def test_openai_flex_timeout_is_not_a_refusal(monkeypatch):
+    # A flex call can be billed and its response lost near the 900s deadline;
+    # resending immediately would double-bill. It takes the retry loop instead.
+    import httpx
+    import openai
+    _openai_flex_env(monkeypatch)
+    calls: list = []
+    timeout = openai.APITimeoutError(
+        request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"))
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise timeout
+        return _resp('{"ok": true}')
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.side_effect = create
+    with patch("openai.OpenAI", return_value=fake_client):
+        assert llm.call_openai("prompt")[0] == {"ok": True}
+
+    assert len(calls) == 2
+    assert "service_tier" in calls[0]        # attempt 1, flex — timed out
+    assert "service_tier" not in calls[1]    # attempt 2 of the retry loop, standard
+
+
+def test_openai_flex_fallback_records_one_call_of_usage(monkeypatch):
+    # The refused flex request was never served: exactly one usage record and one
+    # budget check may result from the pair.
+    _openai_flex_env(monkeypatch)
+    recorded: list = []
+    checks: list = []
+    monkeypatch.setattr(llm, "_record_tokens",
+                        lambda *a: recorded.append(a))
+    monkeypatch.setattr(llm.token_usage, "check_openai_budget",
+                        lambda: checks.append(1))
+    monkeypatch.setattr(llm.token_usage, "spent", lambda p: 0)
+
+    calls: list = []
+    exc = _api_error(429, code="resource_unavailable", message="no flex capacity")
+    served = _resp('{"ok": true}')
+    served.usage = MagicMock(prompt_tokens=100, completion_tokens=20, total_tokens=120)
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        if "service_tier" in kwargs:
+            raise exc
+        return served
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.side_effect = create
+    with patch("openai.OpenAI", return_value=fake_client):
+        assert llm.call_openai("prompt")[0] == {"ok": True}
+
+    assert len(calls) == 2
+    assert recorded == [("openai", llm.OPENAI_MODEL, 100, 20)]
+    assert len(checks) == 1
+
+
+def test_openai_standard_fallback_failure_enters_the_retry_loop(monkeypatch):
+    # Flex refused, standard failed: that is one attempt gone, two retries left,
+    # and the retries run at standard tier.
+    _openai_flex_env(monkeypatch)
+    calls: list = []
+    refusal = _api_error(429, code="resource_unavailable", message="no flex capacity")
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        if "service_tier" in kwargs:
+            raise refusal
+        raise RuntimeError("transient 503")
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.side_effect = create
+    with patch("openai.OpenAI", return_value=fake_client):
+        result, err = llm.call_openai("prompt")
+
+    assert result is None and "transient 503" in err
+    assert len(calls) == 4          # flex + standard, then two standard retries
+    assert sum("service_tier" in c for c in calls) == 1
 
 
 def test_openai_flex_off_by_default(monkeypatch):
