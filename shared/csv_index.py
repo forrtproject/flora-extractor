@@ -85,8 +85,9 @@ class KeyIndex:
 def dedup_csv(csv_path: Path, index: KeyIndex, dry_run: bool = False) -> tuple[int, int]:
     """Remove duplicate rows from *csv_path* in place, keeping the first occurrence.
 
-    A row is a duplicate when its strongest key has already been seen; rows with no
-    identifier at all are always kept. Output is streamed to a temp file and moved
+    A row is a duplicate when ANY of its keys has already been seen — the same rule
+    the incremental merge applies, so a rebuild and an append can never disagree
+    about which rows are duplicates. Rows with no identifier at all are always kept. Output is streamed to a temp file and moved
     over the original only after the whole file has been read, so an interrupted run
     leaves the original intact. The index is rebuilt afterwards because the row set
     it describes has changed.
@@ -110,10 +111,9 @@ def dedup_csv(csv_path: Path, index: KeyIndex, dry_run: bool = False) -> tuple[i
 
         keep_mask: list[bool] = []
         for row in chunk.to_dict("records"):
-            keys = index.key_fn(row)
-            primary = keys[0] if keys else ""
-            if not primary or primary not in seen_keys:
-                seen_keys.update(k for k in keys if k)
+            keys = [k for k in index.key_fn(row) if k]
+            if not keys or not any(k in seen_keys for k in keys):
+                seen_keys.update(keys)
                 keep_mask.append(True)
                 rows_after += 1
             else:

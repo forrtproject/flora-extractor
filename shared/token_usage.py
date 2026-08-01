@@ -28,6 +28,7 @@ import os
 from datetime import date
 
 from .config import CACHE_DIR, OPENAI_DAILY_TOKEN_BUDGET, log
+from .utils import csv_lock
 
 USAGE_STATE_PATH = CACHE_DIR / "token_usage.json"
 
@@ -69,13 +70,17 @@ def record(provider: str, model: str,
     """Add one call's reported usage to the day's record."""
     if input_tokens <= 0 and output_tokens <= 0:
         return                    # the provider reported nothing; do not invent it
-    day    = day or _today()
-    state  = _read_all()
-    bucket = state.setdefault(day, {}).setdefault(provider, {}).setdefault(
-        model or "unknown", {"in": 0, "out": 0})
-    bucket["in"]  += max(input_tokens, 0)
-    bucket["out"] += max(output_tokens, 0)
-    _write_all(state)
+    day = day or _today()
+    USAGE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # The read-modify-write must be atomic across processes, or two concurrent runs
+    # each replay the other's starting state and spend disappears from the record.
+    with csv_lock(USAGE_STATE_PATH):
+        state  = _read_all()
+        bucket = state.setdefault(day, {}).setdefault(provider, {}).setdefault(
+            model or "unknown", {"in": 0, "out": 0})
+        bucket["in"]  += max(input_tokens, 0)
+        bucket["out"] += max(output_tokens, 0)
+        _write_all(state)
 
 
 def usage(day: str = "") -> dict:

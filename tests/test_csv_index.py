@@ -44,3 +44,19 @@ def test_dedup_csv_dry_run_leaves_the_file_alone(tmp_path):
     assert (before, after) == (2, 1)
     assert csv_path.read_bytes() == original
     assert not (tmp_path / "index.txt").exists()
+
+
+def test_dedup_csv_catches_a_collision_on_any_key_not_just_the_primary(tmp_path):
+    # A later row with a NEW doi but an already-seen OpenAlex id is the same paper;
+    # the incremental merge rejects it on any key, so the rebuild must too.
+    csv_path = tmp_path / "rows.csv"
+    pd.DataFrame([
+        {"doi_r": "", "openalex_id_r": "W1", "url_r": "", "title_r": "First"},
+        {"doi_r": "10.1/new", "openalex_id_r": "W1", "url_r": "", "title_r": "Same paper, DOI added"},
+    ]).to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+    before, after = dedup_csv(csv_path, _index(tmp_path))
+
+    assert (before, after) == (2, 1)
+    kept = pd.read_csv(csv_path, dtype=str, encoding="utf-8-sig").fillna("")
+    assert kept["title_r"].tolist() == ["First"]

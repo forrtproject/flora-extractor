@@ -268,10 +268,11 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
                                 model, key_label)
                     return None, last_error
 
-                text   = body["candidates"][0]["content"]["parts"][0]["text"]
+                text = body["candidates"][0]["content"]["parts"][0]["text"]
+                # Recorded before parsing: a non-JSON response was still billed.
+                _record_tokens("gemini", model, *_gemini_usage(body))
                 result = _parse_llm_json(text)
                 if result is not None:
-                    _record_tokens("gemini", model, *_gemini_usage(body))
                     if key_idx > 0:
                         log.info("Gemini succeeded on %s", key_label)
                     return result, ""
@@ -390,11 +391,11 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
                         "the truncated JSON will fail to parse (model=%s)",
                         JSON_MAX_OUTPUT_TOKENS, use_model)
             return None, "response truncated at max_tokens"
-        result = _parse_llm_json(response.choices[0].message.content)
-        if result and response.usage:
+        if response.usage:
             _record_tokens("openrouter", use_model,
                            response.usage.prompt_tokens,
                            response.usage.completion_tokens)
+        result = _parse_llm_json(response.choices[0].message.content)
         return result, ("" if result else "response was not valid JSON")
     except Exception as e:
         log.warning("OpenRouter call failed (model=%s): %s", use_model, e)
