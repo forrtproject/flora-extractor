@@ -126,6 +126,9 @@ See `.env.example` for the full list with descriptions. Key variables:
 | `GROBID_URL` | No | PDF reference extraction (default: localhost:8070) |
 | `GEMINI_MODEL` | No | Override Gemini model name |
 | `GEMINI_HEAVY_MODEL` | No | Override for DOI resolution (defaults to GEMINI_MODEL) |
+| `GEMINI_THINKING_LEVEL` | No | `minimal`/`high` on the heavy model; unset keeps the model default. Changes answers — it is part of the cache key |
+| `GEMINI_USE_FLEX` / `GEMINI_FLEX_TIMEOUT` | No | 50% cheaper Gemini calls on paid keys, at the price of queueing |
+| `OPENAI_USE_FLEX` / `OPENAI_FLEX_TIMEOUT` | No | Same trade on OpenAI; a request flex will not serve falls back to standard tier |
 
 ## Cache
 

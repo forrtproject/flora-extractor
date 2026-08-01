@@ -21,8 +21,10 @@ import requests
 from .config import (
     GEMINI_API_KEYS, GEMINI_MODEL, GEMINI_LIGHT_MODEL, GEMINI_HEAVY_MODEL,
     GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT, GEMINI_PAID_KEYS, GEMINI_RATE_SEC,
+    GEMINI_THINKING_LEVEL,
     LLM_CACHE_DIR,
     OPENAI_API_KEY, OPENAI_MODEL, OPENAI_RATE_SEC,
+    OPENAI_USE_FLEX, OPENAI_FLEX_TIMEOUT,
     OPENROUTER_API_KEY, OPENROUTER_HEAVY_MODEL, OPENROUTER_RATE_SEC,
     SCREEN_VOTER2_MODEL,
     log,
@@ -179,6 +181,35 @@ def _gemini_post(url: str, payload: dict, key_idx: int, base_timeout: int):
     return r
 
 
+# ── Gemini thinking level ─────────────────────────────────────────────────────
+# thinkingLevel is a spend lever on the heavy model — thinking tokens are billed as
+# output — but unlike flex it changes the answer, so it cannot be switched on
+# silently over a cache full of answers produced without it. Two functions keep the
+# request and the cache key in step: thinking_level() decides what is sent, and
+# cache_model_id() is the ONLY way a Gemini model string enters a cache key. Fold it
+# in one place and no call site can forget it.
+
+def thinking_level(model: str) -> str:
+    """The thinkingLevel to send for *model* — set only for the heavy model.
+
+    The heavy model is where the thinking bill is, and the only Gemini model whose
+    answers are keyed by ladder_fingerprint(). The PDF and image calls do not consult
+    this at all: they are cached by GROBID filenames that name the bare model string,
+    so a level applied there would not be named by the key that stores the answer.
+    """
+    return GEMINI_THINKING_LEVEL if (GEMINI_THINKING_LEVEL and model == GEMINI_HEAVY_MODEL) else ""
+
+
+def cache_model_id(model: str) -> str:
+    """The model string as a cache key names it — with any active thinking level.
+
+    An answer produced at thinking_level=minimal is a different answer from one
+    produced at the model's default, so the two must not share a cache entry.
+    """
+    level = thinking_level(model)
+    return f"{model}@thinking={level}" if level else model
+
+
 # ── Gemini (primary) ──────────────────────────────────────────────────────────
 
 def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict], str]:
@@ -211,6 +242,12 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
             # OpenAI.  Letting the model use its default thinking mode fixes this.
         },
     }
+
+    level = thinking_level(model)
+    if level:
+        # thinkingLevel (gemini-3): "minimal" buys back most of the output bill on
+        # the heavy model. Safe alongside responseMimeType, unlike thinkingBudget:0.
+        payload["generationConfig"]["thinkingLevel"] = level
 
     if GEMINI_USE_FLEX:
         log.debug("Gemini flex inference enabled on paid keys %s (timeout=%ds)",
@@ -297,6 +334,50 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
 
 
 # ── OpenAI (fallback) ─────────────────────────────────────────────────────────
+# Flex inference, the mirror of the Gemini path above: 50% off standard pricing in
+# exchange for queueing. Flex is an account-level tier rather than a per-key one, so
+# OPENAI_USE_FLEX alone decides it.
+
+_SERVICE_TIER_TEXT = re.compile(r"service[_ ]?tier", re.IGNORECASE)
+
+
+def _openai_flex_refused(exc: Exception) -> bool:
+    """Whether *exc* means "not at flex tier" rather than "the call failed".
+
+    Read off the SDK's structured error fields, never off free text: only two
+    shapes say the tier itself was unavailable, and both are answerable by an
+    immediate standard-tier call because neither was served or billed.
+
+      * 429 with error code `resource_unavailable` — the flex queue has no
+        capacity.
+      * 400 naming `service_tier` as the offending parameter — flex is not
+        offered for this model or account.
+
+    Everything else is a failed call, not a refused tier. A client-side timeout
+    in particular is NOT a refusal: a flex request can be served and billed
+    close to OPENAI_FLEX_TIMEOUT with the response lost in transit, so resending
+    it immediately would double-bill and record only the second call's usage. It
+    goes to the ordinary retry loop like any other transient failure.
+    """
+    status = getattr(exc, "status_code", None)
+    if status not in (400, 429):
+        return False
+
+    body = getattr(exc, "body", None)
+    err = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(err, dict):
+        err = {}
+    code = getattr(exc, "code", None) or err.get("code")
+    param = getattr(exc, "param", None) or err.get("param")
+
+    if status == 429:
+        return code == "resource_unavailable"
+    # 400: the param field is the authority; the message is a secondary guard for
+    # the same shape, where the SDK could not populate param.
+    return (param == "service_tier"
+            or (not param
+                and bool(_SERVICE_TIER_TEXT.search(str(err.get("message") or "")))))
+
 
 def call_openai(prompt: str, model: str = OPENAI_MODEL,
                 reasoning_effort: str = "") -> tuple[Optional[dict], str]:
@@ -323,20 +404,47 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL,
     # transient outage does not immediately poison a row after a single failure. call_gemini
     # already retries; this brings the OpenAI fallback to the same contract.
     last_error = "no attempts made"
+    extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
+
+    def _create(flex: bool):
+        """One request, at flex tier or standard. Flex calls queue, so they get
+        OPENAI_FLEX_TIMEOUT instead of the client default."""
+        tier = ({"service_tier": "flex", "timeout": OPENAI_FLEX_TIMEOUT} if flex else {})
+        return client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": JSON_SYSTEM_MESSAGE},
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            max_completion_tokens=JSON_MAX_OUTPUT_TOKENS,
+            **tier,
+            **extra,
+        )
+
+    # Once a flex request has failed for any reason, the retries run at standard
+    # tier: a refused tier will refuse again, and after a timeout a second 900s
+    # queue wait is the worst way to find out whether the call went through.
+    use_flex = OPENAI_USE_FLEX
     for attempt in range(3):
         try:
             _throttle("openai")
-            extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": JSON_SYSTEM_MESSAGE},
-                    {"role": "user", "content": prompt},
-                ],
-                response_format={"type": "json_object"},
-                max_completion_tokens=JSON_MAX_OUTPUT_TOKENS,
-                **extra,
-            )
+            try:
+                response = _create(use_flex)
+            except Exception as flex_exc:
+                if not use_flex:
+                    raise
+                use_flex = False
+                # The standard-tier call replaces the refused flex call within this
+                # attempt rather than consuming one of the three: a tier that was
+                # never served is not a transient outage, and nothing was billed.
+                # Anything else — a timeout above all — may already have been
+                # billed, so it takes the retry loop instead.
+                if not _openai_flex_refused(flex_exc):
+                    raise
+                log.warning("OpenAI would not serve service_tier=flex (%s) — "
+                            "retrying at standard tier", flex_exc)
+                response = _create(False)
             if response.usage:
                 _record_tokens("openai", model,
                                response.usage.prompt_tokens,
@@ -414,11 +522,13 @@ def ladder_fingerprint(gemini_model: str = "", openai_model: str = "",
 
     Belongs in a cache key: the ladder falls through to OpenAI and OpenRouter, so
     a key naming only the Gemini model would let one model's answer be replayed as
-    another's the next time Gemini is down.
+    another's the next time Gemini is down. The Gemini model goes through
+    cache_model_id(), which is where an active thinking level enters the key — every
+    heavy-model cache key in the pipeline is built from this fingerprint.
     """
     from .config import GEMINI_LIGHT_MODEL as _LIGHT
 
-    models = [gemini_model or _LIGHT, openai_model or OPENAI_MODEL]
+    models = [cache_model_id(gemini_model or _LIGHT), openai_model or OPENAI_MODEL]
     if openrouter:
         models.append(OPENROUTER_HEAVY_MODEL)
     return "|".join(models)
@@ -1113,7 +1223,7 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
     # models are in the key alongside the prompt version and the text they see.
     key = content_key("classify", doi_r or study_r,
                       prompt_version("build_classify_prompt"),
-                      "+".join(model for _, model, _ in voters),
+                      "+".join(cache_model_id(model) for _, model, _ in voters),
                       cls_prompt)
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
