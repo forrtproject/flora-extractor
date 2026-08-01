@@ -62,9 +62,44 @@ _QUOTE_FUZZ_THRESHOLD = 85  # rapidfuzz partial_ratio; below this the quote is n
 _YEAR_TOLERANCE = 1         # original may be up to 1 year after replication (in-press ordering)
 
 
+# Every quote column and the column naming where it was copied from. The two
+# reproduction axes each carry their own pair — one quote asked to justify two
+# independent judgments is exactly what splitting the axes was for.
+_QUOTE_COLUMNS = (
+    ("outcome_phrase",               "out_quote_source"),
+    ("outcome_computational_quote",  "out_quote_computational_source"),
+    ("outcome_robustness_quote",     "out_quote_robust_source"),
+)
+
+_QUOTE_JOIN = " | "
+
+
 def _norm(text: str) -> str:
     """Lowercase and collapse whitespace for containment comparison."""
     return re.sub(r"\s+", " ", str(text or "").strip().lower())
+
+
+def _abstract_quote_miss(quote: str, sources: str, abstract: str) -> "float | None":
+    """The worst partial_ratio of a passage claimed to come from the abstract but not
+    found there, or None when every such passage checks out.
+
+    A quote may span two sections, joined by " | " with its sources listed in the same
+    order. Testing the joined string against the abstract flagged every one of those
+    as missing, because half of it was never in the abstract to begin with — so each
+    passage is checked against the source named in its own position.
+    """
+    quotes = [q.strip() for q in str(quote or "").split(_QUOTE_JOIN)]
+    named = [s.strip() for s in str(sources or "").split(_QUOTE_JOIN)]
+    na = _norm(abstract)
+    worst: "float | None" = None
+    for passage, source in zip(quotes, named):
+        if not passage or source != "abstract":
+            continue
+        nq = _norm(passage)
+        fuzzy = fuzz.partial_ratio(nq, na) if nq and na else 0.0
+        if nq not in na and fuzzy < _QUOTE_FUZZ_THRESHOLD:
+            worst = fuzzy if worst is None else min(worst, fuzzy)
+    return worst
 
 
 def _as_int(val) -> "int | None":
@@ -123,15 +158,13 @@ def _row_checks(row: pd.Series) -> list[tuple[str, str, str]]:
     if outcome and outcome not in OUTCOME_VALUES:
         out.append(("outcome_not_canonical", WARNING, f"outcome={outcome}"))
 
-    quote = str(row.get("outcome_phrase", "") or "").strip()
-    if quote and str(row.get("out_quote_source", "") or "") == "abstract":
-        abstract = str(row.get("abstract_r", "") or "")
-        nq, na = _norm(quote), _norm(abstract)
-        contained = bool(nq) and nq in na
-        fuzzy = fuzz.partial_ratio(nq, na) if nq and na else 0.0
-        if not contained and fuzzy < _QUOTE_FUZZ_THRESHOLD:
+    abstract = str(row.get("abstract_r", "") or "")
+    for quote_col, source_col in _QUOTE_COLUMNS:
+        fuzzy = _abstract_quote_miss(str(row.get(quote_col, "") or ""),
+                                     str(row.get(source_col, "") or ""), abstract)
+        if fuzzy is not None:
             out.append(("quote_not_in_abstract", WARNING,
-                        f"outcome_phrase not found in abstract_r (partial_ratio={fuzzy:.0f})"))
+                        f"{quote_col} not found in abstract_r (partial_ratio={fuzzy:.0f})"))
 
     if str(row.get("link_confidence", "") or "") == "low":
         out.append(("low_link_confidence", WARNING, "link_confidence=low"))
