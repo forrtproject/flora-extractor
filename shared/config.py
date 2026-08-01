@@ -51,10 +51,6 @@ FILTERED_CSV_PATH   = DATA_DIR / "multiple_match_candidates.csv"
 FINAL_OUTPUT_PATH   = DATA_DIR / "multiple_match_resolved.csv"
 REVIEW_CSV_PATH     = DATA_DIR / "multiple_match_resolved_review.csv"
 
-# Multiple Originals pipeline
-MULTI_ORIG_CANDS_PATH    = DATA_DIR / "multi_original_candidates.csv"
-MULTI_ORIG_RESOLVED_PATH = DATA_DIR / "multi_original_resolved.csv"
-
 # ── API keys ──────────────────────────────────────────────────────────────────
 OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY",    "")
 OPENALEX_API_KEY  = os.getenv("OPENALEX_API_KEY",  "")  # optional: Bearer token for content.openalex.org + polite-pool upgrade

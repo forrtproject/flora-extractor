@@ -19,16 +19,16 @@ from typing import Optional
 import pandas as pd
 
 from shared.config import (
-    BASE_DIR, DATA_DIR, GEMINI_API_KEYS, GEMINI_HEAVY_MODEL, LLM_CACHE_DIR,
+    BASE_DIR, DATA_DIR, GEMINI_API_KEYS,
     OA_XML_CACHE_DIR, OPENAI_API_KEY, OPENROUTER_API_KEY, PARSE_CACHE_DIR,
     PDF_CACHE_DIR, log,
 )
 from shared import token_counter
 from shared.llm_client import (
-    call_llm, classify_replication, ladder_fingerprint, screen_voters,
+    _clean_study_numbers, classify_replication, screen_voters,
 )
 from shared.token_usage import TokenBudgetExhausted
-from shared.openalex_client import OpenAlexQuotaExhausted, extract_author_year_patterns, find_all_candidates
+from shared.openalex_client import OpenAlexQuotaExhausted
 from shared.openalex_client import fetch_openalex_by_doi as _oa_by_doi
 from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
 from shared.openalex_client import _search_crossref_by_title, _search_openalex_by_title
@@ -39,8 +39,6 @@ from shared.pdf_parsing import (
     parse_result_is_empty,
     score_parse_result,
 )
-from shared.cache import content_key, read_cache, write_cache
-from shared.prompts import build_match_type_prompt, prompt_version
 from shared.row_key import primary_key
 from shared.doi_verify import keeps_no_doi, verify_and_correct
 from shared.schema import (
@@ -57,7 +55,6 @@ from shared.flora_skip import (
     load_flora_skip_dois as _load_flora_skip_dois,
 )
 from extract.link_original import run_for_doi
-from extract.multi_original import run_multi_original_for_doi
 from extract.code_outcome import extract_outcome, predict_outcome_keyword
 
 def build_bibtex(
@@ -247,7 +244,6 @@ _METHOD_MAP = {
     "llm_none":                       "target_pending",
 }
 
-_VALID_MATCH_TYPES = {"single_original", "multiple_match", "multiple_original"}
 _VALID_OUTCOMES    = OUTCOME_CATEGORIES
 
 # The reproduction outcome axes, carried through every row producer alongside the
@@ -257,124 +253,6 @@ _OUTCOME_AXIS_COLS = (
     "out_quote_computational_source",
     "outcome_robustness", "outcome_robustness_quote", "out_quote_robust_source",
 )
-
-# ── Rule-based multi-original detection ──────────────────────────────────────
-# These patterns catch papers whose title or abstract unambiguously declares
-# that N independent original studies are being replicated (Many Labs, RRR, etc).
-# They run BEFORE the LLM and BEFORE the cache so they cannot be overridden by
-# a stale cached single_original result.
-
-# Known multi-target project names — always fire regardless of any number.
-# Registered Replication Reports are deliberately NOT here: an RRR is many labs
-# replicating ONE original, so firing multiple_original on the title routed
-# single-target papers into the multi pipeline and expanded them into N rows.
-_MULTI_TITLE_RE = re.compile(
-    r"\bmany\s+labs\b"
-    r"|\bmany\s+analysts\b",
-    re.IGNORECASE,
-)
-
-# The counted noun must be a STUDY-like unit. "experiments" is excluded on
-# purpose: "replications of 5 experiments from Smith (2009)" is five experiments
-# of ONE original, which the count patterns used to read as five originals.
-_MULTI_COUNT_ADJ = (
-    r"(?:\s+(?:original|independent|published|classic|contemporary|distinct|previous|key|prior)"
-    r"(?:\s+and\s+\w+)?)*"
-)
-_MULTI_COUNT_NOUN = r"(?:studi(?:es)?|findings?|papers?)"
-
-# "replication of N studies" in a title — N is captured so the numeric bound below
-# can reject years ("Replication of 2019 findings") that are not study counts.
-_MULTI_TITLE_COUNT_RE = re.compile(
-    rf"\breplicat(?:ion|ions?)\s+of\s+(\d+){_MULTI_COUNT_ADJ}\s+{_MULTI_COUNT_NOUN}\b",
-    re.IGNORECASE,
-)
-
-# Each pattern must capture the count of studies in group 1.
-_MULTI_ABSTRACT_RES: list[re.Pattern] = [
-    # "replications of 28 classic studies"  /  "replication of 10 studies"
-    re.compile(
-        rf"\breplicat(?:ion|ions?)\s+of\s+(\d+){_MULTI_COUNT_ADJ}\s+{_MULTI_COUNT_NOUN}\b",
-        re.IGNORECASE,
-    ),
-    # "replicated 28 original findings"  /  "replicating 10 classic studies"
-    re.compile(
-        rf"\b(?:replicated?|replicating)\s+(?:a\s+total\s+of\s+)?(\d+){_MULTI_COUNT_ADJ}"
-        rf"\s+{_MULTI_COUNT_NOUN}\b",
-        re.IGNORECASE,
-    ),
-    # "28 classic and contemporary findings"  /  "27 independent studies"
-    re.compile(
-        rf"\b(\d+)\s+(?:original|independent|published|classic|contemporary|distinct)"
-        rf"(?:\s+and\s+\w+(?:\s+\w+)?)?\s+{_MULTI_COUNT_NOUN}\b",
-        re.IGNORECASE,
-    ),
-]
-
-_MULTI_N_MIN = 3     # counts < 3 might be multiple_match, not multiple_original
-_MULTI_N_MAX = 1900  # maintainer-approved bound: numbers ≥ 1900 are years, not study counts
-
-
-def _valid_multi_count(n: int) -> bool:
-    """True when n is a plausible study count (3 ≤ n < 1900), not a year."""
-    return _MULTI_N_MIN <= n < _MULTI_N_MAX
-
-
-def _match_type_result(match_type: str, confidence: str, rule_fired: bool = False,
-                       classify_model: str = "", reasoning: str = "") -> dict:
-    """The one shape classify_match_type returns, whichever path decided it.
-
-    Every caller reads rule_fired and classify_llm_model; a path that omitted them
-    (an OpenAlex failure, or a result cached before the key existed) was answered
-    with a silent default instead of the path's own answer.
-    """
-    return {
-        "original_match_type":       match_type,
-        "original_match_confidence": confidence,
-        "rule_fired":                rule_fired,
-        "classify_llm_model":        classify_model,
-        "reasoning":                 reasoning,
-    }
-
-
-def _rule_classify_multi_original(title_r: str, abstract_r: str) -> "dict | None":
-    """
-    Return a classification dict if title or abstract contains unambiguous signals
-    that the paper replicates N ≥ 3 independent original studies. Returns None
-    when no rule fires (caller should fall through to LLM).
-
-    "replication of N" only fires when N is a plausible study count (3 ≤ N < 1900):
-    a captured year such as "replication of 2019 findings" is NOT a study count.
-    """
-    if _MULTI_TITLE_RE.search(title_r):
-        return _match_type_result(
-            "multiple_original", "high", rule_fired=True,
-            reasoning="Title matches a known multi-target replication project "
-                      "(Many Labs, RRR, etc).")
-    m = _MULTI_TITLE_COUNT_RE.search(title_r)
-    if m:
-        try:
-            n = int(m.group(1))
-        except (ValueError, TypeError):
-            n = -1
-        if _valid_multi_count(n):
-            return _match_type_result(
-                "multiple_original", "high", rule_fired=True,
-                reasoning=f"Title explicitly states replication of {n} studies.")
-    for pattern in _MULTI_ABSTRACT_RES:
-        m = pattern.search(abstract_r)
-        if not m:
-            continue
-        try:
-            n = int(m.group(1))
-        except (IndexError, ValueError, TypeError):
-            continue
-        if _valid_multi_count(n):
-            return _match_type_result(
-                "multiple_original", "high", rule_fired=True,
-                reasoning=f"Abstract explicitly states replication of {n} studies.")
-    return None
-
 
 def _map_method(method: str) -> str:
     if method in _METHOD_MAP:
@@ -417,116 +295,6 @@ def _link_confidence(link: dict) -> str:
     return conf
 
 
-# ── Match-type classification (Issue 8) ──────────────────────────────────────
-
-def classify_match_type(row: dict, no_llm: bool = False) -> dict:
-    """
-    Classify original_match_type for a filtered.csv row.
-
-    Steps:
-      0. Rule-based pre-screening (title/abstract patterns) — fires before cache
-      1. Extract author-year citation patterns from abstract_r
-      2. Fetch referenced works from OpenAlex, match against patterns
-      3. Call LLM with: title, abstract, matched candidates, count of distinct patterns
-      4. Return {"original_match_type": ..., "original_match_confidence": ...}
-
-    no_llm=True: rules only; returns single_original default when no rule fires.
-    Rules run BEFORE the cache so a stale single_original result from a prior LLM
-    call cannot override a deterministic rule match (e.g. Many Labs, RRR papers).
-    LLM results are cached as cache_key(doi_r + "_match_type"). On OpenAlex failure,
-    defaults to single_original (logs a warning, does not crash).
-    """
-    doi_r      = clean_doi(str(row.get("doi_r", "")))
-    title_r    = str(row.get("title_r",    ""))
-    abstract_r = str(row.get("abstract_r", ""))
-    oa_id_r    = str(row.get("openalex_id_r", ""))
-    year_r_str = str(row.get("year_r", ""))
-
-    # Step 0: deterministic rules — catch Many Labs / RRR / "replications of N" papers
-    # without an LLM call and without being overridden by a cached LLM result.
-    rule = _rule_classify_multi_original(title_r, abstract_r)
-    if rule:
-        log.info("[%s] classify_match_type: rule fired → %s", doi_r, rule["original_match_type"])
-        return rule
-
-    if no_llm:
-        return _match_type_result("single_original", "low")
-
-    try:
-        year_r = int(year_r_str) if year_r_str else 2099
-    except (ValueError, TypeError):
-        year_r = 2099
-
-    # Step 1: extract author-year citation patterns from abstract and title
-    # extract_author_year_patterns() always returns a list, so we can concatenate results immediately.
-    # This steps repeats in find_all_candidates, but we need the patterns here to feed into the LLM prompt
-    patterns = extract_author_year_patterns(title_r, max_year=year_r) + extract_author_year_patterns(abstract_r, max_year=year_r)
-    distinct_pairs = {(p["surname"], p["year"]) for p in patterns}
-
-    # Step 1b: the LLM is being asked whether the paper targets several DIFFERENT
-    # originals, and the abstract's only evidence for that is distinct author-year
-    # citations. With fewer than two there is nothing for it to tell apart, and it
-    # duly answered single_original for 94% of rows (567/601 cached results) — at
-    # heavy-model price, to confirm the default. The deterministic multi-title and
-    # count rules above still run; only the LLM call is gated.
-    if len(distinct_pairs) < 2:
-        log.debug("[%s] classify_match_type: %d distinct author-year pair(s) — "
-                  "single_original without an LLM call", doi_r, len(distinct_pairs))
-        return _match_type_result("single_original", "low")
-
-    # Step 2: fetch OpenAlex referenced works and match against patterns
-    try:
-        candidates = find_all_candidates(doi_r, oa_id_r, title_r, abstract_r, year_r, "")
-    except OpenAlexQuotaExhausted:
-        raise
-    except Exception as e:
-        log.warning("[%s] classify_match_type: OpenAlex failed: %s — defaulting to single_original",
-                    doi_r, e)
-        return _match_type_result("single_original", "low")
-
-    # Step 3: call LLM. The cache is read here rather than before the candidate
-    # fetch, because the candidate list is in the prompt and so in the key; the
-    # fetch it delays is itself cached on disk.
-    prompt = build_match_type_prompt(title_r, abstract_r, distinct_pairs, candidates)
-    key = content_key("match_type", doi_r,
-                      prompt_version("build_match_type_prompt"),
-                      ladder_fingerprint(GEMINI_HEAVY_MODEL), prompt)
-    cached = read_cache(LLM_CACHE_DIR, key)
-    if cached is not None:
-        return _match_type_result(
-            cached["original_match_type"], cached["original_match_confidence"],
-            classify_model=str(cached.get("classify_llm_model", "") or ""),
-            reasoning=str(cached.get("reasoning", "") or ""))
-
-    result = _llm_classify_match_type(prompt, doi_r)
-    # Only a real answer is cached. The failure default is single_original, so
-    # caching it would freeze one 429 into a permanent verdict — a Many Labs paper
-    # whose title does not trip the rule would be routed to the single-original
-    # pipeline on every future run, with no way short of clearing the cache to fix it.
-    if result is None:
-        log.warning("[%s] classify_match_type: LLM failed — defaulting to single_original "
-                    "for this run, not cached", doi_r)
-        return _match_type_result("single_original", "low")
-    write_cache(LLM_CACHE_DIR, key, result)
-    return result
-
-
-def _llm_classify_match_type(prompt: str, doi_r: str) -> "dict | None":
-    """LLM call to classify original_match_type. None when every provider failed."""
-    token_counter.set_stage("extract_classify")
-    result, model_used, _ = call_llm(prompt, gemini_model=GEMINI_HEAVY_MODEL)
-    if not result:
-        return None
-    mtype = result.get("original_match_type", "single_original")
-    conf  = result.get("confidence", "low")
-    if mtype not in _VALID_MATCH_TYPES:
-        mtype = "single_original"
-    if conf not in {"high", "medium", "low"}:
-        conf = "low"
-    return _match_type_result(mtype, conf, classify_model=model_used,
-                              reasoning=str(result.get("reasoning", "") or ""))
-
-
 # ── Data adapters ─────────────────────────────────────────────────────────────
 
 def _build_cands_df(row: pd.Series) -> pd.DataFrame:
@@ -538,19 +306,6 @@ def _build_cands_df(row: pd.Series) -> pd.DataFrame:
         "year_r":                str(row.get("year_r",    "")),
         "openalex_id_r":         str(row.get("openalex_id_r", "")),
         "url_r":                 str(row.get("url_r",    "")),
-        "author_year_pattern_r": "",
-    }])
-
-
-def _build_rep_df(row: pd.Series) -> pd.DataFrame:
-    """Build a minimal all_rep_df for multi_original.run_multi_original_for_doi."""
-    return pd.DataFrame([{
-        "doi_r":                 str(row.get("doi_r", "")),
-        "study_r":               str(row.get("title_r", row.get("study_r", ""))),
-        "abstract_r":            str(row.get("abstract_r", "")),
-        "year_r":                str(row.get("year_r",    "")),
-        "url_r":                 str(row.get("url_r",    "")),
-        "openalex_id_r":         str(row.get("openalex_id_r", "")),
         "author_year_pattern_r": "",
     }])
 
@@ -619,6 +374,10 @@ def _base_row(filter_row: pd.Series, match_type: str, match_conf: str,
     if not row.get("title_r"):
         row["title_r"] = row.get("study_r", "")
     row.update({
+        # The legacy seeded columns used study_r for a TITLE. Every producer sets the
+        # real value explicitly below, so blanking it here is what stops a title
+        # surviving into the study identifier.
+        "study_r": "",
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
         "classify_llm_model":        classify_model,
@@ -657,6 +416,7 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
             str(link.get("resolved_title_o",  "") or ""),
         ))),
         "study_o":         str(link.get("resolved_study_o", "") or ""),
+        "study_r":         str(link.get("resolved_study_r", "") or ""),
         "link_method":     _map_method(link.get("resolution_method", "target_pending")),
         "link_evidence":   str(link.get("llm_evidence",     "") or ""),
         "link_confidence": _link_confidence(link),
@@ -674,8 +434,10 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
                      classify_model: str = "",
                      screen: "dict | None" = None) -> dict:
     row = _base_row(filter_row, match_type, match_conf, classify_model, outcome, screen)
+    # Binary on the write side: "medium" was a value only the retired multi-original
+    # writer produced. It stays legal in stored data and on every read path.
     conf_str = orig.get("confidence", "low")
-    if conf_str not in {"high", "medium", "low"}:
+    if conf_str not in {"high", "low"}:
         conf_str = "low"
     doi_r_clean  = clean_doi(str(filter_row.get("doi_r", "")))
     doi_o_clean  = clean_doi(orig.get("doi", "") or "")
@@ -694,6 +456,7 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
             title_o,
         ))),
         "study_o":         str(orig.get("study_number", "") or ""),
+        "study_r":         str(orig.get("study_r",       "") or ""),
         "link_method":     link_method,
         "link_evidence":   str(orig.get("evidence",     "") or ""),
         "link_confidence": conf_str,
@@ -870,7 +633,15 @@ def _apply_outcome(row: dict, outcome: dict) -> dict:
 
 
 def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False,
-                 screen: "dict | None" = None) -> dict:
+                 screen: "dict | None" = None, *, original: "dict | None" = None,
+                 multi_original: bool = False) -> dict:
+    """The outcome for one (replication, original) pair.
+
+    *original* names the original this call is about — the per-target adapter passes
+    one entry per row, where the link carries a whole list; without it the link's own
+    resolved_* fields are the original, as on the single-link path. *multi_original*
+    tells the outcome prompt that the other originals are coded on their own rows.
+    """
     abstract_r = str(row.get("abstract_r", ""))
     title_r    = str(row.get("title_r",    ""))
 
@@ -891,12 +662,16 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False,
         if fulltext:
             fulltext = f"[{_PROVENANCE_LABEL['sections']}]\n\n{fulltext}"
 
+    orig = original or {"title":        link.get("resolved_title_o"),
+                        "first_author": link.get("resolved_author_o"),
+                        "year":         link.get("resolved_year_o")}
     return extract_outcome(
         doi_r, abstract_r, fulltext, title_r, no_llm=no_llm,
-        original_title=str(link.get("resolved_title_o",  "") or ""),
-        original_authors=str(link.get("resolved_author_o", "") or ""),
-        original_year=str(link.get("resolved_year_o",   "") or ""),
+        original_title=str(orig.get("title") or ""),
+        original_authors=str(orig.get("first_author") or ""),
+        original_year=str(orig.get("year") or ""),
         record_type=_record_type(row, screen),
+        multi_original=multi_original,
     )
 
 
@@ -947,20 +722,6 @@ def _best_fulltext_from_cache(doi_r: str) -> tuple[str, str]:
     return (joined, "sections") if joined else ("", "none")
 
 
-def _parse_originals(result: dict) -> list[dict]:
-    """Extract originals list from run_multi_original_for_doi result."""
-    raw = result.get("originals")
-    if isinstance(raw, list) and raw:
-        return raw
-    json_str = result.get("originals_json", "[]")
-    if isinstance(json_str, str):
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError:
-            return []
-    return []
-
-
 # Verdicts that say something about the replication result. cannot_be_determined,
 # uninformative, descriptive and not_a_replication do not, so they never outvote a
 # study that reached a verdict when several studies are aggregated onto one row.
@@ -970,6 +731,12 @@ _SUBSTANTIVE_OUTCOMES = {"success", "failure", "mixed",
 
 def _aggregate_outcomes(outcomes: list[str]) -> str:
     """One outcome for several studies replicated from the SAME original paper.
+
+    A safety net rather than a normal path: the target prompt already returns one
+    entry per original PAPER with the study numbers joined, and outcome coding runs
+    AFTER the collapse and once per original — so entries reaching here carrying two
+    different verdicts is a shape only a future producer could create. The rule stays
+    implemented because FLoRA's is a rule about the database, not about this pipeline.
 
     FLoRA aggregates: "A replication study can have multiple studies but their results
     are aggregated … conflicting results, which we consider as mixed" (FLoRA FAQ,
@@ -987,6 +754,48 @@ def _aggregate_outcomes(outcomes: list[str]) -> str:
         if fallback in outcomes:
             return fallback
     return "cannot_be_determined"
+
+
+def _target_entry(target: dict, doi_r: str) -> "dict | None":
+    """One confirmed target as the entry shape _collapse_same_paper_originals() and
+    _merge_multi_row() read.
+
+    None when the model could see a target but could not match it to a keyed record:
+    there is no published record to write a row about, and the shortfall is reported
+    on the rows that were written (see _per_target_rows).
+
+    The DOI comes from the mapped record, never from the model. A reference parsed out
+    of a PDF carries no DOI, so it is searched for once — the resulting link is
+    provisional, at roughly 50% precision, exactly as on the single-link path.
+    """
+    record = target.get("record")
+    if not (target.get("match_certain") and record):
+        return None
+
+    doi = clean_doi(str(record.get("doi") or ""))
+    provisional = False
+    if not doi and record.get("title"):
+        from shared.doi_verify import resolve_doi_by_metadata
+        hit = resolve_doi_by_metadata(record["title"], record.get("first_author", ""),
+                                      record.get("year"), exclude_doi=doi_r)
+        if hit:
+            doi = clean_doi(str(hit.get("doi", "") or ""))
+            provisional = bool(doi)
+
+    return {
+        "rank":         0,     # renumbered over the written rows, after every drop
+        "doi":          doi,
+        "title":        str(record.get("title") or ""),
+        "year":         record.get("year"),
+        "first_author": str(record.get("first_author") or ""),
+        "openalex_id":  str(record.get("openalex_id") or ""),
+        "study_number": _clean_study_numbers(target.get("study_numbers", "")),
+        "study_r":      _clean_study_numbers(target.get("replication_study_numbers", "")),
+        "evidence":     str(target.get("evidence_quote") or ""),
+        # match_certain IS the acceptance gate, so a written row is a confident one.
+        "confidence":   "high",
+        "provisional":  provisional,
+    }
 
 
 def _collapse_same_paper_originals(originals: list[dict]) -> list[dict]:
@@ -1407,11 +1216,85 @@ def _check_screen_providers(no_llm: bool) -> None:
         )
 
 
-def _resolve_and_code(doi_r: str, row: pd.Series, match_type: str, match_conf: str,
-                      classify_model: str, screen: "dict | None",
+def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | None",
+                     no_llm: bool, no_pdf: bool, resolved_only: bool,
+                     recalibrate_outcomes: bool) -> list[dict]:
+    """One row per original PAPER the merged target prompt named.
+
+    The order is the single-original path's: resolve, merge, guard, --resolved-only,
+    and only THEN the outcome — the guard can demote a target to target_pending, and
+    coding it first would spend an LLM call on a row about to be dropped. Several
+    studies of ONE original are one row (FLoRA's coding level), so the collapse runs
+    before any outcome call rather than after.
+
+    Targets the model saw but could not match to a keyed record get no row: there is
+    no published record to write one about. The shortfall is reported in the
+    link_evidence of every row that WAS written, so it cannot vanish silently.
+    """
+    targets = link.get("targets") or []
+    entries = [e for e in (_target_entry(t, doi_r) for t in targets) if e]
+    missing = [str(t.get("target_as_named", "") or "") for t in targets
+               if not (t.get("match_certain") and t.get("record"))]
+    shortfall = len(missing) + int(link.get("unidentified_count") or 0)
+    if not entries:
+        return []
+
+    n_studies = len(entries)
+    entries   = _collapse_same_paper_originals(entries)
+    if len(entries) < n_studies:
+        log.info("[%s] %d targeted studies → %d original paper(s) "
+                 "(FLoRA coding level: one row per reference pair)",
+                 doi_r, n_studies, len(entries))
+
+    # Once for the paper, not once per target: the outcome escalation reads the parse
+    # cache, and the retired multi path never populated it — which is why its rows
+    # were coded from the abstract alone however much full text had been acquired.
+    if (not no_pdf or recalibrate_outcomes) and _has_document(doi_r, link):
+        _save_parse_cache(doi_r)
+
+    # An observation, not a prediction: the row count IS the match type.
+    match_type = "multiple_original" if len(entries) > 1 else "single_original"
+    link_model = str(link.get("llm_model", "") or "")
+
+    rows: list[dict] = []
+    for entry in entries:
+        link_method = ("llm_title_search" if entry["provisional"]
+                       else _map_method(str(link.get("target_stage") or "llm_fulltext")))
+        result_row = _guard_original_link(
+            _merge_multi_row(row, entry, {}, match_type, "high", len(entries),
+                             link_model, link_method=link_method,
+                             classify_model="", screen=screen))
+        if shortfall:
+            note = (f"identified {len(entries)} of {len(entries) + shortfall} targets; "
+                    f"unidentified: {'; '.join(filter(None, missing)) or 'not named'}")
+            prior = str(result_row.get("link_evidence", "") or "")
+            result_row["link_evidence"] = f"{prior} | {note}" if prior else note
+
+        method = str(result_row["link_method"])
+        if resolved_only and method in _NO_LINK_METHODS:
+            log.debug("[%s] --resolved-only: skipping %s target row", doi_r, method)
+            continue
+
+        outcome = _outcome_without_coding(method, link)
+        if outcome is None:
+            outcome = _get_outcome(doi_r, row, link,
+                                   no_llm=no_llm and not recalibrate_outcomes,
+                                   screen=screen, original=entry,
+                                   multi_original=len(entries) > 1)
+        rows.append(_apply_outcome(result_row, outcome))
+
+    # Renumber AFTER the drops: audit_extracted requires ranks 1..n over the rows that
+    # actually reach the CSV, with n_originals equal to the group size.
+    for i, result_row in enumerate(rows, 1):
+        result_row["original_rank"] = i
+        result_row["n_originals"]   = len(rows)
+    return rows
+
+
+def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
                       no_llm: bool, no_pdf: bool, resolved_only: bool,
                       recalibrate_outcomes: bool) -> list[dict]:
-    """Run the resolution ladder for one single-original row and code its outcome.
+    """Run the resolution ladder for one row and code the outcome of what it found.
 
     The order is deliberate: resolve, merge, guard, --resolved-only, and only THEN
     the outcome. The guard can demote a link to target_pending (self-link, no usable
@@ -1419,31 +1302,35 @@ def _resolve_and_code(doi_r: str, row: pd.Series, match_type: str, match_conf: s
     LLM before either would spend the pipeline's last call on a row that is about to
     be dropped. Returns [] when nothing is to be written.
 
-    A row the merged target prompt read as targeting several originals is rerouted
-    through the multi-original pipeline: the router that sent it here classified from
-    the abstract alone, and accepting one link for a paper the resolver saw N targets
-    in would silently drop N-1 originals.
+    A ladder that named targets without accepting one of them goes to the per-target
+    adapter: that is a paper the target prompt read as re-testing several originals
+    (or one it declined to link), and keeping a single link for it would silently drop
+    N-1 originals. A resolved single link takes the merge path below unchanged.
     """
     link = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                        no_llm=no_llm, no_pdf=no_pdf, classification=screen)
 
-    if link.get("multi_target"):
+    if link.get("targets") and not link.get("resolved"):
         n_targets = int(link.get("n_targets") or 0)
-        log.info("[%s] target prompt saw %d originals — rerouting to the multi path",
-                 doi_r, n_targets)
-        rows = _multi_original_rows(row, doi_r, match_conf, classify_model, screen,
-                                    force_multi=True)
+        log.info("[%s] target prompt named %d original(s) without a single accepted "
+                 "link — writing one row per target", doi_r, n_targets)
+        rows = _per_target_rows(row, doi_r, link, screen, no_llm, no_pdf,
+                                resolved_only, recalibrate_outcomes)
         if rows:
             return rows
-        pending = _empty_row(row, "multiple_original", match_conf,
-                             link_method="target_pending",
-                             classify_model=classify_model, screen=screen)
-        pending["link_evidence"] = (f"target prompt identified {n_targets} originals; "
-                                    "the multi-original pass resolved none")
-        return [] if resolved_only else [pending]
+        if link.get("multi_target"):
+            pending = _empty_row(row, "multiple_original", "high",
+                                 link_method="target_pending", screen=screen)
+            pending["link_evidence"] = (f"target prompt named {n_targets} originals; "
+                                        "none could be matched to a record")
+            return [] if resolved_only else [pending]
 
+    # original_match_confidence is now an observation about the answer, not a
+    # prediction made before it: high when the ladder settled on one original, low
+    # when the row is written without one.
     result_row = _guard_original_link(
-        _merge_row(row, link, {}, match_type, match_conf, 1, 1, classify_model,
+        _merge_row(row, link, {}, "single_original",
+                   "high" if link.get("resolved") else "low", 1, 1, "",
                    screen=screen))
     link_method = str(result_row.get("link_method", ""))
     if resolved_only and link_method in _NO_LINK_METHODS:
@@ -1625,13 +1512,15 @@ def _should_skip(row: pd.Series, row_key: str, doi_r_clean: str,
 
 
 def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
-                 no_multiple_originals: bool, no_reproductions: bool,
+                 no_reproductions: bool,
                  resolved_only: bool, recalibrate_outcomes: bool) -> list[dict]:
     """Every row the pipeline writes for one filtered.csv row.
 
-    Front door, then match type, then the single- or multi-original pipeline. An
-    empty list means the row is not written at all — either a flag suppressed it or
-    --resolved-only discarded it.
+    Front door, then the resolution ladder — there is no router in front of it any
+    more: how many originals a paper targets is what the target prompt answers, not
+    something a cheaper call predicts from the abstract. An empty list means the row
+    is not written at all — either a flag suppressed it or --resolved-only discarded
+    it.
     """
     # Ahead of the front door: a run that is not coding reproductions should not pay
     # to screen them either. The type this reads is Stage 2's, the only one there is
@@ -1666,26 +1555,9 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
             row["filter_status"] = screen["record_type"]
             row["filter_method"] = "screen"   # the screen decided the type
 
-    match = classify_match_type(row.to_dict(), no_llm=no_llm)
-    match_type     = match["original_match_type"]
-    match_conf     = match["original_match_confidence"]
-    classify_model = match["classify_llm_model"]
-    log.info("[%s] match_type=%s conf=%s", doi_r, match_type, match_conf)
-
-    if no_multiple_originals and match_type == "multiple_original":
-        log.info("[%s] --no-multiple-originals: writing target_pending", doi_r)
-        return [_empty_row(row, "multiple_original", match_conf,
-                           link_method="target_pending",
-                           classify_model=classify_model)]
-
     try:
-        if match_type == "multiple_original":
-            return _process_multi_original(row, doi_r, match, match_conf,
-                                           classify_model, screen, no_llm, no_pdf,
-                                           resolved_only, recalibrate_outcomes)
         return _resolve_and_code(
-            doi_r, row, match_type, match_conf, classify_model,
-            screen=screen, no_llm=no_llm, no_pdf=no_pdf,
+            doi_r, row, screen=screen, no_llm=no_llm, no_pdf=no_pdf,
             resolved_only=resolved_only,
             recalibrate_outcomes=recalibrate_outcomes)
     except (OpenAlexQuotaExhausted, TokenBudgetExhausted):
@@ -1694,91 +1566,12 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
         raise
     except Exception as e:
         log.error("[%s] extraction failed: %s", doi_r, e)
-        return [_empty_row(row, match_type, match_conf,
-                           classify_model=classify_model)]
-
-
-def _process_multi_original(row: pd.Series, doi_r: str, match: dict, match_conf: str,
-                            classify_model: str, screen: "dict | None",
-                            no_llm: bool, no_pdf: bool, resolved_only: bool,
-                            recalibrate_outcomes: bool) -> list[dict]:
-    """One row per original study the multi-original pipeline found.
-
-    The LLM returning nothing is not a demotion to single_original when a
-    deterministic rule said the paper targets several studies — that would file a
-    Many Labs paper against one arbitrary original.
-    """
-    rule_fired = bool(match["rule_fired"])
-    rows = _multi_original_rows(row, doi_r, match_conf, classify_model, screen,
-                                force_multi=rule_fired)
-    if rows:
-        return rows
-    if rule_fired:
-        log.warning(
-            "[%s] rule_fired=True but LLM returned no originals — "
-            "writing target_pending (NOT single_original)", doi_r
-        )
-        return [_empty_row(row, "multiple_original", match_conf,
-                           link_method="target_pending",
-                           classify_model=classify_model)]
-    return _resolve_and_code(
-        doi_r, row, "single_original", match_conf, classify_model,
-        screen=screen, no_llm=no_llm, no_pdf=no_pdf,
-        resolved_only=resolved_only, recalibrate_outcomes=recalibrate_outcomes)
-
-
-def _multi_original_rows(row: pd.Series, doi_r: str, match_conf: str,
-                         classify_model: str, screen: "dict | None",
-                         force_multi: bool) -> list[dict]:
-    """Run the multi-original pipeline for one row; [] when it finds no originals."""
-    result    = run_multi_original_for_doi(doi_r, _build_rep_df(row),
-                                           force_multi=force_multi)
-    originals = _parse_originals(result)
-    if not originals:
-        return []
-
-    n_studies = len(originals)
-    originals = _collapse_same_paper_originals(originals)
-    if len(originals) < n_studies:
-        log.info("[%s] %d targeted studies → %d original paper(s) "
-                 "(FLoRA coding level: one row per reference pair)",
-                 doi_r, n_studies, len(originals))
-    multi_llm_model = str(result.get("llm_model", "") or "")
-    # Label truthfully: the multi pipeline feeds parsed full text / GROBID
-    # references into the prompt whenever a PDF was obtained, so those rows are
-    # llm_fulltext, not llm_cited_candidates.
-    multi_used_fulltext = (bool(result.get("pdf_ok"))
-                           or int(result.get("n_grobid_refs") or 0) > 0)
-    multi_link_method = ("llm_fulltext" if multi_used_fulltext
-                         else "llm_cited_candidates")
-
-    rows: list[dict] = []
-    for orig in originals:
-        raw_out = str(orig.get("outcome", "cannot_be_determined")
-                      or "cannot_be_determined").lower()
-        if raw_out not in _VALID_OUTCOMES:
-            raw_out = "cannot_be_determined"
-        outcome = {
-            "outcome":            raw_out,
-            "outcome_phrase":     str(orig.get("outcome_evidence", "") or ""),
-            "outcome_confidence": str(orig.get("confidence", "low") or "low"),
-            "out_quote_source":   "llm_multi",
-            "llm_model":          multi_llm_model,
-        }
-        rows.append(_guard_original_link(
-            _merge_multi_row(row, orig, outcome, "multiple_original", match_conf,
-                             len(originals), multi_llm_model,
-                             link_method=multi_link_method,
-                             classify_model=classify_model,
-                             screen=screen)
-        ))
-    return rows
+        return [_empty_row(row, "single_original", "low")]
 
 
 def run_extract(no_llm: bool = False,
                 limit: "int | None" = None,
                 no_pdf: bool = False,
-                no_multiple_originals: bool = False,
                 no_reproductions: bool = False,
                 only_reproductions: bool = False,
                 skip_flora_validated: bool = True,
@@ -1798,7 +1591,6 @@ def run_extract(no_llm: bool = False,
     no_llm              — skip all LLM calls (rule-based only).
     limit               — process only the first N non-false-positive rows.
     no_pdf              — skip PDF download; abstract-only LLM resolution only.
-    no_multiple_originals — write multiple_original rows as target_pending instead of running LLM.
     no_reproductions    — skip rows with filter_status=reproduction (write as target_pending).
     only_reproductions  — process ONLY filter_status=reproduction rows; others are
                           skipped entirely (not written at all).
@@ -1917,7 +1709,6 @@ def run_extract(no_llm: bool = False,
 
         result_rows = _process_row(
             row, doi_r, no_llm=no_llm, no_pdf=no_pdf,
-            no_multiple_originals=no_multiple_originals,
             no_reproductions=no_reproductions, resolved_only=resolved_only,
             recalibrate_outcomes=recalibrate_outcomes)
 
@@ -1950,41 +1741,6 @@ def run_extract(no_llm: bool = False,
 
     out_df = pd.DataFrame(output_rows)
     return out_df.reindex(columns=EXTRACTED_COLS, fill_value="")
-
-
-def run_match_type_only(no_llm: bool = False,
-                        limit: "int | None" = None) -> pd.DataFrame:
-    """
-    Read filtered.csv, classify match type per row, write data/match_type_only.csv.
-    Useful for evaluating match-type classification in isolation.
-    """
-    filtered_path = DATA_DIR / "filtered.csv"
-    if not filtered_path.exists():
-        filtered_path = BASE_DIR / "misc" / "sample_filtered.csv"
-    df = pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig").fillna("")
-    eligible = df[df["filter_status"] != "false_positive"]
-    if limit is not None:
-        eligible = eligible.head(limit)
-
-    rows = []
-    for _, row in eligible.iterrows():
-        doi_r = clean_doi(str(row.get("doi_r", "")))
-        match = classify_match_type(row.to_dict(), no_llm=no_llm)
-        rows.append({
-            "doi_r":         doi_r,
-            "title_r":       str(row.get("title_r", "")),
-            "filter_status": str(row.get("filter_status", "")),
-            "match_type":    match["original_match_type"],
-            "match_conf":    match["original_match_confidence"],
-            "rule_fired":    str(match.get("rule_fired", False)),
-            "reasoning":     str(match.get("reasoning", "")),
-        })
-
-    out = pd.DataFrame(rows)
-    out_path = DATA_DIR / "match_type_only.csv"
-    out.to_csv(out_path, index=False, encoding="utf-8-sig")
-    log.info("match-type-only: %d rows → %s", len(out), out_path)
-    return out
 
 
 def run_outcome_only(no_llm: bool = False,
@@ -2039,12 +1795,7 @@ if __name__ == "__main__":
         "--no-llm", action="store_true",
         help="Skip all LLM calls. Rule-based only.",
     )
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--match-type-only", action="store_true",
-        help="Classify match type only -> data/match_type_only.csv",
-    )
-    group.add_argument(
+    parser.add_argument(
         "--outcome-only", action="store_true",
         help="Classify outcome only -> data/outcome_only.csv",
     )
@@ -2055,10 +1806,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--no-pdf", action="store_true",
         help="Skip PDF download; use abstract-only for LLM resolution.",
-    )
-    parser.add_argument(
-        "--no-multiple-originals", action="store_true",
-        help="Write multiple_original rows as target_pending instead of running LLM.",
     )
     parser.add_argument(
         "--no-reproductions", action="store_true",
@@ -2151,9 +1898,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     try:
-        if args.match_type_only:
-            run_match_type_only(no_llm=args.no_llm, limit=args.limit)
-        elif args.outcome_only:
+        if args.outcome_only:
             run_outcome_only(no_llm=args.no_llm, limit=args.limit)
         else:
             doi_r_list = (
@@ -2164,7 +1909,6 @@ if __name__ == "__main__":
                 no_llm=args.no_llm,
                 limit=args.limit,
                 no_pdf=args.no_pdf,
-                no_multiple_originals=args.no_multiple_originals,
                 no_reproductions=args.no_reproductions,
                 only_reproductions=args.only_reproductions,
                 skip_flora_validated=args.skip_flora_validated,
@@ -2185,8 +1929,8 @@ if __name__ == "__main__":
     finally:
         token_counter.print_summary()
         # Sanity pass over whatever was written — runs on normal completion AND on
-        # Ctrl-C. Skipped for the match-type/outcome-only modes (different output file).
-        if not args.match_type_only and not args.outcome_only:
+        # Ctrl-C. Skipped for the outcome-only mode (different output file).
+        if not args.outcome_only:
             from extract.sanity_check import run_sanity_check
             run_sanity_check(DATA_DIR / ("extracted-test.csv" if args.extracted_test
                                          else "extracted.csv"))

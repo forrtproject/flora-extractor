@@ -16,7 +16,7 @@ needs `title_r` and `title_o` columns. `study_r` / `study_o` are study identifie
 which study inside the paper is meant — and were carrying paper titles instead, so
 one column name meant a study number in FLoRA's codebook and a title in the DB, and
 the real study numbers had nowhere to go. This script now sends titles as titles and
-`study_o` as the number extracted.csv holds. Until those two columns exist, every
+`study_r` / `study_o` as the numbers extracted.csv holds. Until those two columns exist, every
 insert fails with a PostgREST "column does not exist" error; nothing is written and
 nothing is corrupted.
 
@@ -126,11 +126,12 @@ def _build_unvalidated_row(record_id: str, row: pd.Series) -> dict:
         # column name mean a study number in FLoRA's codebook and a title in the DB,
         # and left the actual study numbers with nowhere to go.
         #
-        # The pipeline does not code a study number for the replication itself, so
-        # study_r is empty until it does; study_o comes from extracted.csv. The titles
-        # move to title_r / title_o, which the validation DB needs columns for — see
-        # issue #103.
-        "study_r":          "",
+        # Both now come from extracted.csv: the target prompt reports which study of
+        # the ORIGINAL is targeted and which study of the REPLICATION re-tests it. The
+        # titles move to title_r / title_o, which the validation DB needs columns for
+        # — see issue #103. No new DB column is needed for study_r: the column already
+        # exists and only its value changes.
+        "study_r":          _s(row.get("study_r")),
         "title_r":          _s(row.get("title_r")),
         "year_r":           _s(row.get("year_r")),
         "url_r":            _s(row.get("url_r")),
