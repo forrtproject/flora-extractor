@@ -566,6 +566,24 @@ def test_target_key_follows_the_reference_list(monkeypatch, tmp_path):
     assert len(list(tmp_path.glob("reftarget_*.json"))) == 2
 
 
+def test_reference_pick_carries_the_study_numbers(monkeypatch, tmp_path):
+    """The wrapper copies an explicit list of resolved_* fields off the pick, so a
+    field missing from that list is silently dropped: llm_references rows wrote an
+    empty study_o however precisely the model named the study."""
+    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    answer = {**_TARGET_ANSWER,
+              "targets": [dict(_TARGET_ANSWER["targets"][0], study_numbers="Study 2")]}
+    monkeypatch.setattr(llm, "call_gemini", lambda prompt, model=None: (dict(answer), None))
+
+    out = llm.screen_references_with_llm("10.1/x", "T", "A",
+                                         [_ref("10.1/orig", "Original")],
+                                         classification=dict(_VERDICT_YES))
+
+    assert out["resolved_doi_o"] == "10.1/orig"
+    assert out["resolved_study_o"] == "2"
+
+
 def test_classify_key_follows_the_voter_models(monkeypatch, tmp_path):
     """PR #97's precedent: the voter pair is part of the verdict, so a swapped voter
     must not read back the previous pair's answer."""

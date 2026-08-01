@@ -1194,6 +1194,10 @@ def _guard_original_link(row: dict) -> dict:
         log.info("[%s] original-link rejected (%s) — writing target_pending", doi_r, reason)
         row["link_method"] = "target_pending"
         row["doi_o"] = ""
+        # The original the study number and title described is gone, so they describe
+        # nothing — a rejected row carries the same empty original as _empty_row.
+        row["study_o"] = ""
+        row["title_o"] = ""
         row["doi_o_verification"] = "skipped"
         row["link_confidence"] = "low"
         prior = str(row.get("link_evidence", "") or "")

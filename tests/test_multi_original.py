@@ -358,3 +358,20 @@ class TestStudyNumberCleaning:
         from shared.llm_client import _clean_study_number
         assert _clean_study_number(None) == ""
         assert _clean_study_number("the main study") == ""
+
+    def test_every_named_study_survives_the_answer(self):
+        """Splitting on commas alone kept the first number and dropped the rest, so a
+        target of two studies was recorded as a target of one."""
+        from shared.llm_client import _clean_study_numbers
+        assert _clean_study_numbers("Study 1; Study 4") == "1, 4"
+        assert _clean_study_numbers("2 and 3")          == "2, 3"
+        assert _clean_study_numbers("1 & 2")            == "1, 2"
+        assert _clean_study_numbers("Studies 1-3")      == "1, 2, 3"
+        assert _clean_study_numbers("Studies 1–3")      == "1, 2, 3"
+
+    def test_repeats_collapse_and_prose_still_reduces(self):
+        from shared.llm_client import _clean_study_numbers
+        assert _clean_study_numbers("Study 1, Experiment 1") == "1"
+        assert _clean_study_numbers("Experiment 3a, 3b")     == "3a, 3b"
+        assert _clean_study_numbers("the main study")        == ""
+        assert _clean_study_numbers("")                      == ""

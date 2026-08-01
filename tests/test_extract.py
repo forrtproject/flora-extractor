@@ -1760,6 +1760,15 @@ class TestGuardOriginalLink:
         assert out["outcome_confidence"] == "low"
         assert out["out_quote_source"] == ""
 
+    def test_demotion_clears_the_rejected_original(self):
+        """study_o and title_o described the original the guard just threw out; left
+        behind, they name a study inside a paper the row no longer links to."""
+        out = run_extract._guard_original_link(
+            self._row(doi_o="10.1/repl", study_o="1, 2"))
+        assert out["link_method"] == "target_pending"
+        assert out["study_o"] == ""
+        assert out["title_o"] == ""
+
     def test_good_link_untouched(self):
         out = run_extract._guard_original_link(self._row())
         assert out["link_method"] == "llm_fulltext"
