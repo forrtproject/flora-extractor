@@ -103,6 +103,72 @@ _TITLE_PATS: list[re.Pattern] = [
 _TITLE_TARGET_MIN_LEN = 8   # shorter targets are noise (e.g. "Revisiting X" or "Trust")
 
 
+# ── The may-not-short-circuit gate (replaces classify_match_type) ─────────────
+# run_for_doi is a first-success ladder, so a paper with one conspicuous target can
+# resolve at a rule and terminate before anything enumerates the rest. No rule asserts
+# multiple_original any more — a rule may only WITHHOLD the cheap path. A false
+# positive costs one LLM call; a false negative silently drops N-1 originals.
+#
+# The counted noun must be a STUDY-like unit. "experiments" is excluded on purpose:
+# "replications of 5 experiments from Smith (2009)" is five experiments of ONE
+# original. There is no project-name pattern (Many Labs replicates one original across
+# many labs), only a stated count.
+_COUNT_ADJ  = (r"(?:\s+(?:original|independent|published|classic|contemporary|distinct"
+               r"|previous|key|prior)(?:\s+and\s+\w+)?)*")
+_COUNT_NOUN = r"(?:studi(?:es)?|findings?|papers?)"
+
+# Each pattern must capture the count of studies in group 1.
+_STUDY_COUNT_RES: tuple[re.Pattern, ...] = (
+    # "replications of 28 classic studies"  /  "replication of 10 studies"
+    re.compile(
+        rf"\breplicat(?:ion|ions?)\s+of\s+(\d+){_COUNT_ADJ}\s+{_COUNT_NOUN}\b",
+        re.IGNORECASE,
+    ),
+    # "replicated 28 original findings"  /  "replicating 10 classic studies"
+    re.compile(
+        rf"\b(?:replicated?|replicating)\s+(?:a\s+total\s+of\s+)?(\d+){_COUNT_ADJ}"
+        rf"\s+{_COUNT_NOUN}\b",
+        re.IGNORECASE,
+    ),
+    # "28 classic and contemporary findings"  /  "27 independent studies"
+    re.compile(
+        rf"\b(\d+)\s+(?:original|independent|published|classic|contemporary|distinct)"
+        rf"(?:\s+and\s+\w+(?:\s+\w+)?)?\s+{_COUNT_NOUN}\b",
+        re.IGNORECASE,
+    ),
+)
+
+_COUNT_N_MIN, _COUNT_N_MAX = 3, 1900   # ≥1900 is a year, not a study count
+
+
+def _study_count_stated(title_r: str, abstract_r: str) -> bool:
+    """True when the title or abstract states a plausible study count (3 ≤ N < 1900)."""
+    for text in (title_r or "", abstract_r or ""):
+        for pattern in _STUDY_COUNT_RES:
+            m = pattern.search(text)
+            if not m:
+                continue
+            try:
+                n = int(m.group(1))
+            except (IndexError, ValueError, TypeError):
+                continue
+            if _COUNT_N_MIN <= n < _COUNT_N_MAX:
+                return True
+    return False
+
+
+def may_stop_at_a_rule(title_r: str, abstract_r: str, year_r: int) -> bool:
+    """Whether a deterministic ladder stage may END the row.
+
+    Exactly one distinct author-year pair across title and abstract, and no stated
+    study count. Anything else must reach a call that can enumerate targets.
+    """
+    pairs = {(p["surname"], p["year"])
+             for p in extract_author_year_patterns(title_r,    max_year=year_r)
+                    + extract_author_year_patterns(abstract_r, max_year=year_r)}
+    return len(pairs) == 1 and not _study_count_stated(title_r, abstract_r)
+
+
 def _extract_title_target(title_r: str) -> "str | None":
     """
     Extract the original study target from a replication paper's title.
@@ -563,6 +629,14 @@ def _search_title_for_original(doi_r: str, target_desc: str,
     return None
 
 
+# What a target-identifying stage produced, as it has to survive to the row. Three
+# ladder stages can enumerate targets and then fail to resolve a single link; without
+# this the list died with the stage and the row was written target_pending with no
+# record that anything had been found.
+_TARGET_KEYS = ("targets", "multi_target", "unidentified_count", "target_stage",
+                "resolved_study_r")
+
+
 def run_for_doi(doi_r:              str,
                 flora_df:           Optional[pd.DataFrame] = None,
                 cands_df:           Optional[pd.DataFrame] = None,
@@ -656,17 +730,32 @@ def run_for_doi(doi_r:              str,
     # differ, so bind the four constant arguments once.
     emit = partial(_build_output, doi_r, flora, cands_row, candidates)
 
+    # A deterministic stage may only END the row when the paper's own text rules out a
+    # second target; otherwise its pick is withheld until a call that can enumerate
+    # targets has spoken (see may_stop_at_a_rule and the restore after Stage 7).
+    may_stop = may_stop_at_a_rule(study_r, abstract_r, year_r)
+    held: dict = {}          # a deterministic pick the gate withheld
+    seen_targets: dict = {}  # the richest target answer any stage produced
+
     # ── Stage 2.5: Title-pattern resolver ─────────────────────────────────────
     # Runs before citation scoring and before any LLM call.
     title_pat = _resolve_by_title_pattern(doi_r, study_r, candidates)
     if title_pat and title_pat.get("resolved"):
-        return emit(title_pat, {}, {}, {})
+        if may_stop:
+            return emit(title_pat, {}, {}, {})
+        held = held or title_pat
+        log.info("[%s] gate: %s withheld — the paper's text does not rule out a second "
+                 "target", doi_r, title_pat["resolution_method"])
     # ── Stage 3: Rule-based resolver (citation-context + same-author/year) ──────
     stage3 = _resolve_rule_based(doi_r, abstract_r, candidates, year_r, study_r)
     if stage3["resolved"]:
         log.info("[%s] Resolved rule-based (%s): %s", doi_r,
                  stage3["resolution_method"], stage3["resolved_title_o"])
-        return emit(stage3, {}, {}, {})
+        if may_stop:
+            return emit(stage3, {}, {}, {})
+        held = held or stage3
+        log.info("[%s] gate: %s withheld — the paper's text does not rule out a second "
+                 "target", doi_r, stage3["resolution_method"])
 
     # ── Stage 4: Abstract-level LLM ──────────────────────────────────────────
     if not no_llm:
@@ -686,6 +775,8 @@ def run_for_doi(doi_r:              str,
                 validator_note=effective_note,
                 abstract_only=True,
             )
+            if llm4.get("targets"):
+                seen_targets = {k: v for k, v in llm4.items() if k in _TARGET_KEYS}
             if llm4["resolved"]:
                 log.info("[%s] Resolved by abstract LLM: %s", doi_r,
                          llm4["resolved_title_o"])
@@ -712,6 +803,8 @@ def run_for_doi(doi_r:              str,
         # The evidence of this rung IS the reference list, so it has to reach
         # _build_output; the screen dict carries the verdict, not the input.
         ref_sections = {"references": refs}
+        if screen.get("targets"):
+            seen_targets = {k: v for k, v in screen.items() if k in _TARGET_KEYS}
 
         # A screen that did not get both votes is an API failure, not a verdict, and
         # must be caught before the gate below — a lone surviving vote is not a
@@ -776,7 +869,7 @@ def run_for_doi(doi_r:              str,
     if no_pdf:
         # Stages 2.5/3/4 didn't resolve — bail out without fulltext.
         log.info("[%s] no_pdf mode — abstract/rules insufficient, writing target_pending", doi_r)
-        return emit(_unresolved("needs_fulltext"), {}, {}, {})
+        return emit({**_unresolved("needs_fulltext"), **seen_targets}, {}, {}, {})
 
     pdf = acquire_pdf(doi_r, study_r, openalex_id=oa_id_r)
     log.info("[%s] PDF: %s (%s)", doi_r, pdf["pdf_source"], pdf["pdf_url"])
@@ -792,7 +885,8 @@ def run_for_doi(doi_r:              str,
     if pdf_path is None and not oa_xml_content:
         log.info("[%s] no document acquired (%s) — writing target_pending",
                  doi_r, pdf.get("pdf_source", "none"))
-        return emit(_unresolved("no_fulltext_available"), pdf, {}, {})
+        return emit({**_unresolved("no_fulltext_available"), **seen_targets},
+                    pdf, {}, {})
 
     # ── Stage 6: Parse all — pick richest result to send to LLM ─────────────
     parse_results  = _parse_all(doi_r, pdf_path, oa_xml=oa_xml_content, no_llm=no_llm)
@@ -830,7 +924,7 @@ def run_for_doi(doi_r:              str,
     # ── Stage 7: LLM identification ──────────────────────────────────────────
     if no_llm:
         log.info("[%s] no_llm mode — skipping LLM, writing target_pending", doi_r)
-        return emit(_unresolved("none", llm_error="no_llm mode"),
+        return emit({**_unresolved("none", llm_error="no_llm mode"), **seen_targets},
                     pdf, grobid, sections)
 
     # Guard: refuse to call the LLM when it would have nothing to reason from.
@@ -842,10 +936,10 @@ def run_for_doi(doi_r:              str,
     )
     if not _has_context:
         log.warning("[%s] No context — skipping LLM, writing target_pending", doi_r)
-        return emit(_unresolved(
+        return emit({**_unresolved(
             "no_context",
             llm_error="no_context: abstract missing, PDF unavailable, no refs"),
-            pdf, grobid, sections)
+            **seen_targets}, pdf, grobid, sections)
 
     token_counter.set_stage("extract_fulltext")
     llm = identify_targets_with_llm(
@@ -858,6 +952,17 @@ def run_for_doi(doi_r:              str,
     )
     log.info("[%s] LLM: resolved=%s source=%s", doi_r,
              llm["resolved"], llm["llm_source"])
+    if llm.get("targets"):
+        seen_targets = {k: v for k, v in llm.items() if k in _TARGET_KEYS}
+
+    if held and not llm["resolved"] and len(llm["targets"]) <= 1:
+        # The enumerating call ran and saw no second target, which is what the gate
+        # was withholding the rule for. Anything cheaper never enumerated, so those
+        # exits stay target_pending.
+        log.info("[%s] gate: restoring the withheld %s pick — the target prompt found "
+                 "≤1 target", doi_r, held["resolution_method"])
+        return emit({**held, "llm_reasoning": llm.get("llm_reasoning", "")},
+                    pdf, grobid, sections)
 
     return emit(llm, pdf, grobid, sections)
 
@@ -935,8 +1040,16 @@ def _build_output(doi_r:     str,
         "resolved_year_o"       : resolution.get("resolved_year_o"),
         "resolved_author_o"     : resolution.get("resolved_author_o", ""),
         "resolved_study_o"      : resolution.get("resolved_study_o",  ""),
-        # The merged target prompt can see several originals where the router said
-        # one; run_extract reroutes such a row rather than keeping a single link.
+        "resolved_study_r"      : resolution.get("resolved_study_r",  ""),
+        # Whether this row carries a single accepted link. run_extract routes on it:
+        # a stage that named targets without accepting one of them is what the
+        # per-target adapter exists for.
+        "resolved"              : bool(resolution.get("resolved", False)),
+        # The whole target answer, records included, so run_extract can write one row
+        # per original rather than discarding everything past the first.
+        "targets"               : resolution.get("targets", []) or [],
+        "target_stage"          : resolution.get("target_stage", ""),
+        "unidentified_count"    : int(resolution.get("unidentified_count") or 0),
         "multi_target"          : bool(resolution.get("multi_target", False)),
         "n_targets"             : len(resolution.get("targets", []) or []),
 
