@@ -4,6 +4,7 @@ Per the api_error contract in CLAUDE.md, transient LLM failures must retry with
 exponential backoff before giving up — a single exception must not immediately
 poison a row. call_openai previously had a bare try/except (no retry).
 """
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,7 +21,7 @@ def _resp(content: str):
 
 def test_call_openai_retries_then_succeeds(monkeypatch):
     monkeypatch.setattr(llm, "OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(llm, "_openai_disabled", False)
+    llm._TOKEN_GUARDS["openai"]["disabled"] = False
     sleeps: list = []
     monkeypatch.setattr(llm.time, "sleep", lambda s: sleeps.append(s))
 
@@ -44,7 +45,7 @@ def test_call_openai_retries_then_succeeds(monkeypatch):
 
 def test_call_openai_returns_none_after_three_failures(monkeypatch):
     monkeypatch.setattr(llm, "OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(llm, "_openai_disabled", False)
+    llm._TOKEN_GUARDS["openai"]["disabled"] = False
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
 
     fake_client = MagicMock()
@@ -55,6 +56,50 @@ def test_call_openai_returns_none_after_three_failures(monkeypatch):
     assert result is None
     assert "service down" in err
     assert fake_client.chat.completions.create.call_count == 3
+
+
+# ── Session token guardrails ─────────────────────────────────────────────────
+
+def _guard(monkeypatch, name: str, threshold: int, isatty: bool):
+    guard = dict(llm._TOKEN_GUARDS[name],
+                 threshold=threshold, used=0, prompted=False, disabled=False)
+    monkeypatch.setitem(llm._TOKEN_GUARDS, name, guard)
+    monkeypatch.setattr(llm.sys, "stdin", SimpleNamespace(isatty=lambda: isatty))
+    return guard
+
+
+@pytest.mark.parametrize("name", ["openai", "gemini_key0"])
+def test_threshold_crossing_off_a_tty_does_not_disable_the_provider(monkeypatch, name):
+    """Under nohup/cron/CI input() raises EOFError at once. Reading that as "no"
+    would disable a provider nobody declined — and with voter 2 on OpenAI, every
+    subsequent screen would come back as a one-vote partial."""
+    guard = _guard(monkeypatch, name, threshold=1000, isatty=False)
+    monkeypatch.setattr("builtins.input", lambda *a: (_ for _ in ()).throw(
+        AssertionError("must not prompt when stdin is not a terminal")))
+
+    llm._track_tokens(name, 5000)
+
+    assert guard["disabled"] is False
+    assert llm._guard_disabled(name) is False
+
+
+def test_declining_at_a_tty_still_disables_the_provider(monkeypatch):
+    guard = _guard(monkeypatch, "openai", threshold=1000, isatty=True)
+    monkeypatch.setattr("builtins.input", lambda *a: "n")
+
+    llm._track_tokens("openai", 5000)
+
+    assert guard["disabled"] is True and llm._guard_disabled("openai") is True
+
+
+def test_a_zero_threshold_never_prompts(monkeypatch):
+    guard = _guard(monkeypatch, "gemini_key0", threshold=0, isatty=True)
+    monkeypatch.setattr("builtins.input", lambda *a: (_ for _ in ()).throw(
+        AssertionError("a disabled guardrail must not prompt")))
+
+    llm._track_tokens("gemini_key0", 10_000_000)
+
+    assert guard["used"] == 0 and guard["disabled"] is False
 
 
 # ── Stage 4.5 reference screen ───────────────────────────────────────────────

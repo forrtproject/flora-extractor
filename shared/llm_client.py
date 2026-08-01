@@ -13,6 +13,7 @@ import base64
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -53,83 +54,80 @@ JSON_MAX_OUTPUT_TOKENS = 4096
 # consequence: Gemini and OpenRouter now sample at their defaults rather than
 # greedily, so repeat runs are less deterministic than before.
 
-# ── OpenAI session-level token guardrail ─────────────────────────────────────
-# Tracks tokens consumed via call_openai() within the current process.
-# When usage crosses OPENAI_WARN_TOKENS, the pipeline pauses and asks the user
-# whether to continue.  Override the threshold via env var (in tokens):
-#   OPENAI_WARN_TOKENS=9000000
-_openai_tokens_session: int = 0
-_openai_limit_prompted: bool = False   # ensure we only prompt once
-_openai_disabled:       bool = False   # set to True when user answers N
-_OPENAI_WARN_THRESHOLD: int = int(os.getenv("OPENAI_WARN_TOKENS", "8000000"))
+# ── Session-level token guardrails ───────────────────────────────────────────
+# Two budgets, one mechanism: tokens spent through call_openai(), and tokens spent
+# on Gemini key 0 (the paid one; keys 1+ are free-tier and unaffected). Crossing a
+# threshold asks whether to keep spending, and "no" disables that provider for the
+# rest of the process.
+#
+# The question is only asked on a terminal. Under nohup, cron or CI, input() raises
+# EOFError immediately, and reading that as "no" would silently disable a provider
+# that nobody declined — with voter 2 on OpenAI that turns every subsequent screen
+# into a one-vote partial. Off a TTY the guardrail therefore logs and continues:
+# a budget warning must not become an unattended shutdown.
+#
+# Thresholds are in tokens, via env: OPENAI_WARN_TOKENS (default 8M),
+# GEMINI_WARN_TOKENS (default 0 = off).
+
+_TOKEN_GUARDS: dict[str, dict] = {
+    "openai": {
+        "label":     "OpenAI token guardrail",
+        "on_stop":   "OpenAI disabled. Remaining rows will use Gemini only.",
+        "yes_hint":  "Continue using OpenAI for remaining rows?",
+        "choice":    "Y = keep going   N = disable OpenAI (Gemini-only for rest of run)",
+        "threshold": int(os.getenv("OPENAI_WARN_TOKENS", "8000000")),
+        "used": 0, "prompted": False, "disabled": False,
+    },
+    "gemini_key0": {
+        "label":     "Gemini key-0 guardrail",
+        "on_stop":   "Gemini key-0 disabled. Remaining rows will use free-tier keys only.",
+        "yes_hint":  "Continue using Gemini key-0 (paid) for remaining rows?",
+        "choice":    "Y = keep going   N = skip key-0 (free-tier keys only for rest of run)",
+        "threshold": int(os.getenv("GEMINI_WARN_TOKENS", "0")),
+        "used": 0, "prompted": False, "disabled": False,
+    },
+}
 
 
-def _track_openai_tokens(n_tokens: int) -> None:
-    """Add n_tokens to the session counter and prompt the user if the threshold is crossed."""
-    global _openai_tokens_session, _openai_limit_prompted, _openai_disabled
-    _openai_tokens_session += n_tokens
-    if _openai_limit_prompted or _openai_tokens_session < _OPENAI_WARN_THRESHOLD:
+def _track_tokens(guard_name: str, n_tokens: int) -> None:
+    """Add n_tokens to a guard's session counter; prompt once when it crosses."""
+    g = _TOKEN_GUARDS[guard_name]
+    if not g["threshold"]:
         return
-    _openai_limit_prompted = True
-    used_m     = _openai_tokens_session / 1_000_000
-    thresh_m   = _OPENAI_WARN_THRESHOLD  / 1_000_000
+    g["used"] += n_tokens
+    if g["prompted"] or g["used"] < g["threshold"]:
+        return
+    g["prompted"] = True
+    used_m   = g["used"] / 1_000_000
+    thresh_m = g["threshold"] / 1_000_000
+
+    if not sys.stdin.isatty():
+        log.warning("%s: %.1fM tokens used this session (threshold %.0fM). "
+                    "Not a terminal, so continuing without asking.",
+                    g["label"], used_m, thresh_m)
+        return
+
     print(f"\n{'=' * 62}")
-    print(f"  OpenAI token guardrail: {used_m:.1f}M tokens used this session")
-    print(f"  (threshold: {thresh_m:.0f}M — set OPENAI_WARN_TOKENS to change)")
-    print(f"  Continue using OpenAI for remaining rows?")
-    print(f"  Y = keep going   N = disable OpenAI (Gemini-only for rest of run)")
+    print(f"  {g['label']}: {used_m:.1f}M tokens used this session")
+    print(f"  (threshold: {thresh_m:.0f}M — set the *_WARN_TOKENS env var to change)")
+    print(f"  {g['yes_hint']}")
+    print(f"  {g['choice']}")
     print(f"{'=' * 62}")
     try:
         answer = input("  Your choice [Y/n]: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         answer = "n"
     if answer in ("n", "no"):
-        _openai_disabled = True
-        log.info("OpenAI disabled by user at %.1fM tokens", used_m)
-        print("  OpenAI disabled. Remaining rows will use Gemini only.\n")
+        g["disabled"] = True
+        log.info("%s: disabled by user at %.1fM tokens", g["label"], used_m)
+        print(f"  {g['on_stop']}\n")
     else:
-        log.info("User confirmed continuing OpenAI at %.1fM tokens", used_m)
-        print("  Continuing with OpenAI.\n")
+        log.info("%s: user confirmed continuing at %.1fM tokens", g["label"], used_m)
+        print("  Continuing.\n")
 
 
-# ── Gemini key-0 (paid) session-level token guardrail ────────────────────────
-# Only active when GEMINI_WARN_TOKENS is set to a positive integer (default: 0 = off).
-# Tracks tokens on key 0 only (the paid key). Keys 1+ are free-tier and unaffected.
-# When usage crosses the threshold the pipeline pauses and asks whether to continue.
-_gemini_key0_tokens_session: int  = 0
-_gemini_key0_limit_prompted: bool = False
-_gemini_key0_disabled:       bool = False
-_GEMINI_WARN_THRESHOLD: int = int(os.getenv("GEMINI_WARN_TOKENS", "0"))
-
-
-def _track_gemini_key0_tokens(n_tokens: int) -> None:
-    """Add n_tokens for key-0 and prompt the user if the threshold is crossed."""
-    global _gemini_key0_tokens_session, _gemini_key0_limit_prompted, _gemini_key0_disabled
-    if not _GEMINI_WARN_THRESHOLD:
-        return
-    _gemini_key0_tokens_session += n_tokens
-    if _gemini_key0_limit_prompted or _gemini_key0_tokens_session < _GEMINI_WARN_THRESHOLD:
-        return
-    _gemini_key0_limit_prompted = True
-    used_m   = _gemini_key0_tokens_session / 1_000_000
-    thresh_m = _GEMINI_WARN_THRESHOLD / 1_000_000
-    print(f"\n{'=' * 62}")
-    print(f"  Gemini key-0 guardrail: {used_m:.1f}M tokens used this session")
-    print(f"  (threshold: {thresh_m:.0f}M — set GEMINI_WARN_TOKENS to change)")
-    print(f"  Continue using Gemini key-0 (paid) for remaining rows?")
-    print(f"  Y = keep going   N = skip key-0 (free-tier keys only for rest of run)")
-    print(f"{'=' * 62}")
-    try:
-        answer = input("  Your choice [Y/n]: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        answer = "n"
-    if answer in ("n", "no"):
-        _gemini_key0_disabled = True
-        log.info("Gemini key-0 disabled by user at %.1fM tokens", used_m)
-        print("  Gemini key-0 disabled. Remaining rows will use free-tier keys only.\n")
-    else:
-        log.info("User confirmed continuing Gemini key-0 at %.1fM tokens", used_m)
-        print("  Continuing with Gemini key-0.\n")
+def _guard_disabled(guard_name: str) -> bool:
+    return _TOKEN_GUARDS[guard_name]["disabled"]
 
 
 # ── Per-provider rate limiting ────────────────────────────────────────────────
@@ -266,7 +264,7 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
 
     last_error = "all keys exhausted"
     for key_idx, api_key in enumerate(GEMINI_API_KEYS):
-        if key_idx == 0 and _gemini_key0_disabled:
+        if key_idx == 0 and _guard_disabled("gemini_key0"):
             log.debug("Gemini key-0 disabled by guardrail — skipping to free-tier keys")
             continue
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
@@ -329,7 +327,7 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
                     n_tok = int((body.get("usageMetadata") or {}).get("totalTokenCount", 0))
                     token_counter.record("gemini", n_tok)
                     if key_idx == 0:
-                        _track_gemini_key0_tokens(n_tok)
+                        _track_tokens("gemini_key0", n_tok)
                     if key_idx > 0:
                         log.info("Gemini succeeded on %s", key_label)
                     return result, ""
@@ -367,7 +365,7 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL,
         log.warning("OPENAI_API_KEY not set — skipping OpenAI")
         return None, "OPENAI_API_KEY not configured"
 
-    if _openai_disabled:
+    if _guard_disabled("openai"):
         return None, "OpenAI disabled — token limit reached and user declined to continue"
 
     import openai
@@ -392,10 +390,10 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL,
                 **extra,
             )
             if response.usage:
-                _track_openai_tokens(response.usage.total_tokens)
+                _track_tokens("openai", response.usage.total_tokens)
                 token_counter.record("openai", response.usage.total_tokens)
                 log.debug("OpenAI usage: +%d tokens (session total: %d)",
-                          response.usage.total_tokens, _openai_tokens_session)
+                          response.usage.total_tokens, _TOKEN_GUARDS["openai"]["used"])
             if response.choices[0].finish_reason == "length":
                 log.warning("OpenAI response hit the %d-token cap and was cut off — "
                             "the truncated JSON will fail to parse (model=%s)",
