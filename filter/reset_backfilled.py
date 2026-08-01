@@ -43,11 +43,8 @@ from pathlib import Path
 import pandas as pd
 
 from shared.config import DATA_DIR, log
-from filter.run_filter import (
-    _FILTERED_INDEX_PATH,
-    _build_filtered_index,
-    _row_key,
-)
+from shared.row_key import primary_key
+from filter.run_filter import FILTERED_INDEX, _build_filtered_index
 
 _CHUNK = 50_000
 
@@ -55,7 +52,7 @@ _CHUNK = 50_000
 def collect_empty_abstract_keys(filtered_path: Path) -> tuple[set[str], int]:
     """Pass A. Stream filtered.csv; return (S, total_rows_scanned).
 
-    S = resume keys of rows whose abstract_r is blank. Rows with an empty _row_key
+    S = resume keys of rows whose abstract_r is blank. Rows with an empty primary_key
     (identifier-less; their resume key is an idx:<pos> fallback that this tool never
     touches) are skipped — they can neither be matched to candidates nor backfilled.
     """
@@ -68,7 +65,7 @@ def collect_empty_abstract_keys(filtered_path: Path) -> tuple[set[str], int]:
         for _, row in chunk.iterrows():
             if str(row.get("abstract_r", "")).strip():
                 continue
-            key = _row_key(row)
+            key = primary_key(row)
             if key:
                 keys.add(key)
     return keys, total
@@ -84,7 +81,7 @@ def collect_reset_keys(candidates_path: Path, empty_keys: set[str]) -> set[str]:
         for _, row in chunk.iterrows():
             if not str(row.get("abstract_r", "")).strip():
                 continue
-            key = _row_key(row)
+            key = primary_key(row)
             if key in empty_keys:
                 reset.add(key)
     return reset
@@ -105,7 +102,7 @@ def _rewrite_dropping(filtered_path: Path, reset_keys: set[str]) -> int:
         chunk = chunk.fillna("")
         keep_mask: list[bool] = []
         for _, row in chunk.iterrows():
-            drop = _row_key(row) in reset_keys
+            drop = primary_key(row) in reset_keys
             keep_mask.append(not drop)
             if drop:
                 dropped += 1
@@ -181,9 +178,9 @@ def reset_backfilled(apply: bool = False) -> dict:
 
 
 def _read_index_lines() -> list[str]:
-    if not _FILTERED_INDEX_PATH.exists():
+    if not FILTERED_INDEX.path.exists():
         return []
-    with open(_FILTERED_INDEX_PATH, "r", encoding="utf-8") as f:
+    with open(FILTERED_INDEX.path, "r", encoding="utf-8") as f:
         return [ln for ln in (line.strip() for line in f) if ln]
 
 

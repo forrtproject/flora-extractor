@@ -14,86 +14,25 @@ import pandas as pd
 
 from shared.config import CACHE_DIR, DATA_DIR, log
 from shared import token_counter
+from shared.csv_index import KeyIndex, dedup_csv
+from shared.row_key import primary_key
 from shared.schema import CANDIDATES_COLS, FILTERED_COLS
-from shared.utils import clean_doi
 from filter.rule_filter import classify_row as _rule_classify
 
 # ---------------------------------------------------------------------------
 # Filtered index — avoids loading the full filtered.csv to build already_done
 # ---------------------------------------------------------------------------
 
-_FILTERED_INDEX_PATH = CACHE_DIR / "filtered_index.txt"
-
-
-def _row_key(r: "pd.Series | dict") -> str:
-    """Single identifying key for a row, used as resume key in filtered index.
-    Priority: doi → openalex_id → url → title. Returns '' if none available."""
-    doi = clean_doi(str(r.get("doi_r", "") or ""))
-    if doi:
-        return doi
-    oa = str(r.get("openalex_id_r", "") or "").strip()
-    if oa:
-        return f"oa:{oa}"
-    url = str(r.get("url_r", "") or "").strip()
-    if url:
-        return f"url:{url}"
-    title = str(r.get("title_r", "") or "").lower().strip()
-    return f"title:{title}" if title else ""
-
-
-def _load_filtered_index() -> set[str]:
-    """Load filtered index from disk, streaming to avoid loading entire file in memory.
-
-    With 100k+ entries, reading all at once can cause MemoryError.
-    This reads line-by-line instead, keeping memory usage bounded.
-    """
-    if not _FILTERED_INDEX_PATH.exists():
-        return set()
-
-    index = set()
-    try:
-        with open(_FILTERED_INDEX_PATH, "r", encoding="utf-8") as f:
-            for line in f:
-                key = line.strip()
-                if key:  # Skip empty lines
-                    index.add(key)
-        log.info("Filtered index loaded: %d keys from disk", len(index))
-    except MemoryError:
-        log.error("MemoryError loading filtered index — file may be too large (%s)",
-                  _FILTERED_INDEX_PATH.stat().st_size / (1024**2) if _FILTERED_INDEX_PATH.exists() else "unknown")
-        raise
-    except Exception as e:
-        log.error("Failed to load filtered index: %s", e)
-        raise
-
-    return index
-
-
-def _save_filtered_index(index: set[str]) -> None:
-    tmp = _FILTERED_INDEX_PATH.with_suffix(".tmp")
-    tmp.write_text("\n".join(sorted(index)), encoding="utf-8")
-    tmp.replace(_FILTERED_INDEX_PATH)
+# One key per row: resuming only needs to recognise a row by its strongest
+# identifier, and it is the same row that wrote the key.
+FILTERED_INDEX = KeyIndex(
+    CACHE_DIR / "filtered_index.txt", lambda r: [primary_key(r)], "Filtered")
 
 
 def _build_filtered_index(csv_path) -> set[str]:
-    """Build filtered index from filtered.csv in 50k-row chunks. One-time migration."""
-    log.info("Building filtered index from %s (reading in chunks)...", csv_path)
-    index: set[str] = set()
-    for chunk in pd.read_csv(csv_path, dtype=str, encoding="utf-8-sig", chunksize=50_000):
-        chunk = chunk.fillna("")
-        for _, row in chunk.iterrows():
-            k = _row_key(row)
-            if k:
-                index.add(k)
-    log.info("Filtered index built: %d keys — saving to disk", len(index))
-    _save_filtered_index(index)
-    return index
-
-
-def _append_key_to_filtered_index(key: str) -> None:
-    """Append a single key to the filtered index file (fast incremental update)."""
-    with open(_FILTERED_INDEX_PATH, "a", encoding="utf-8") as f:
-        f.write(key + "\n")
+    """Rebuild cache/filtered_index.txt from *csv_path* (one-time migration, or
+    after filtered.csv is edited outside the pipeline)."""
+    return FILTERED_INDEX.build(csv_path)
 
 
 def _append_row(out_path, row_dict: dict, first: bool) -> None:
@@ -128,70 +67,8 @@ def _append_row(out_path, row_dict: dict, first: bool) -> None:
 
 
 def dedup_filtered_csv(dry_run: bool = False) -> tuple[int, int]:
-    """Remove duplicate rows from filtered.csv in-place.
-
-    Reads in 50k-row chunks, keeping the first occurrence of each unique
-    identifier (doi > oa_id > url > title).  Writes to a temp file then
-    atomically replaces the original; rebuilds the filtered index afterwards.
-
-    Returns
-    -------
-    (rows_before, rows_after)
-    """
-    path = DATA_DIR / "filtered.csv"
-    if not path.exists():
-        raise FileNotFoundError(f"filtered.csv not found at {path}")
-
-    seen_keys: set[str] = set()
-    rows_before = 0
-    rows_after = 0
-    tmp_path = path.with_suffix(".dedup.tmp")
-    first_write = True
-
-    for chunk in pd.read_csv(
-        path, encoding="utf-8-sig", dtype=str, chunksize=50_000,
-        on_bad_lines="skip", low_memory=False,
-    ):
-        chunk = chunk.fillna("")
-        rows_before += len(chunk)
-
-        keep_mask: list[bool] = []
-        for _, row in chunk.iterrows():
-            key = _row_key(row)
-            if not key or key not in seen_keys:
-                if key:
-                    seen_keys.add(key)
-                keep_mask.append(True)
-                rows_after += 1
-            else:
-                keep_mask.append(False)
-
-        if not dry_run:
-            kept = chunk[keep_mask]
-            if not kept.empty:
-                kept.to_csv(
-                    tmp_path,
-                    mode="w" if first_write else "a",
-                    index=False,
-                    encoding="utf-8-sig" if first_write else "utf-8",
-                    header=first_write,
-                )
-                first_write = False
-
-    removed = rows_before - rows_after
-    log.info(
-        "dedup_filtered_csv: %d -> %d rows (%d duplicates%s)",
-        rows_before, rows_after, removed,
-        " -- dry run, no changes written" if dry_run else "",
-    )
-
-    if not dry_run and not first_write:
-        tmp_path.replace(path)
-        log.info("filtered.csv replaced -- rebuilding filtered index...")
-        _build_filtered_index(path)
-        log.info("Filtered index rebuilt.")
-
-    return rows_before, rows_after
+    """Remove duplicate rows from filtered.csv in-place; rebuild the index."""
+    return dedup_csv(DATA_DIR / "filtered.csv", FILTERED_INDEX, dry_run=dry_run)
 
 
 def run_filter(limit: "int | None" = None,
@@ -237,8 +114,8 @@ def run_filter(limit: "int | None" = None,
     # Load already-processed keys from the index file (fast, avoids reading
     # full filtered.csv). On first run the index is built from filtered.csv
     # in 50k-row chunks, then cached for all future runs.
-    if _FILTERED_INDEX_PATH.exists():
-        already_done = _load_filtered_index()
+    if FILTERED_INDEX.path.exists():
+        already_done = FILTERED_INDEX.load()
         log.info("Stage 2: %d rows already in filtered index — skipping", len(already_done))
     elif out_path.exists():
         try:
@@ -305,7 +182,7 @@ def run_filter(limit: "int | None" = None,
         survived += len(chunk)
 
         for _, row in chunk.iterrows():
-            key = _row_key(row)
+            key = primary_key(row)
             if not key:
                 # Fallback: position among surviving rows — matches the old
                 # pd.concat(ignore_index=True) index for stable resume keys.
@@ -343,7 +220,7 @@ def run_filter(limit: "int | None" = None,
             # Update the index immediately so resume works even after a crash.
             if key not in already_done:
                 already_done.add(key)
-                _append_key_to_filtered_index(key)
+                FILTERED_INDEX.append([key])
 
             log.info("[%s] filter_status=%s — streamed (%d new so far)",
                      doi_r, row_dict.get("filter_status"), new_rows)
@@ -421,7 +298,7 @@ if __name__ == "__main__":
         out_path = DATA_DIR / "filtered.csv"
         if out_path.exists():
             idx = _build_filtered_index(out_path)
-            print(f"Rebuilt filtered index: {len(idx)} keys → {_FILTERED_INDEX_PATH}")
+            print(f"Rebuilt filtered index: {len(idx)} keys → {FILTERED_INDEX.path}")
         else:
             print("filtered.csv not found — nothing to rebuild.")
         raise SystemExit(0)
@@ -433,7 +310,7 @@ if __name__ == "__main__":
             print(f"DRY RUN -- would remove {removed:,} duplicates: {before:,} -> {after:,} rows")
         else:
             print(f"Done -- removed {removed:,} duplicates: {before:,} -> {after:,} rows")
-            print(f"filtered.csv and {_FILTERED_INDEX_PATH} updated.")
+            print(f"filtered.csv and {FILTERED_INDEX.path} updated.")
         raise SystemExit(0)
     else:
         try:

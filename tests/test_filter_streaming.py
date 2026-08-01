@@ -16,6 +16,7 @@ from unittest.mock import patch
 import pandas as pd
 
 import filter.run_filter as rf
+from shared.row_key import primary_key
 from shared.schema import CANDIDATES_COLS
 
 
@@ -36,7 +37,7 @@ def _expected_keys_old_style(candidates_path, from_year=None, to_year=None,
                              source=None) -> list[str]:
     """Reproduce the pre-refactor key computation: read in chunks, apply the
     year/source filters, concat with ignore_index=True, then key each row by
-    _row_key() or idx:<concat_index>.  Returns keys in write order."""
+    primary_key() or idx:<concat_index>.  Returns keys in write order."""
     def _year_int(v):
         try:
             return int(v)
@@ -63,7 +64,7 @@ def _expected_keys_old_style(candidates_path, from_year=None, to_year=None,
     df = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame(columns=CANDIDATES_COLS)
     keys = []
     for row_idx, row in df.iterrows():
-        key = rf._row_key(row)
+        key = primary_key(row)
         if not key:
             key = f"idx:{row_idx}"
         keys.append(key)
@@ -72,7 +73,7 @@ def _expected_keys_old_style(candidates_path, from_year=None, to_year=None,
 
 def _patch_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(rf, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(rf, "_FILTERED_INDEX_PATH", tmp_path / "filtered_index.txt")
+    monkeypatch.setattr(rf.FILTERED_INDEX, "path", tmp_path / "filtered_index.txt")
 
 
 def _read_index(tmp_path) -> list[str]:
@@ -83,7 +84,7 @@ def _read_index(tmp_path) -> list[str]:
 
 
 # Rows: a mix of doi-bearing, oa-only, url-only, title-only, and fully id-less
-# rows so every _row_key branch AND the idx:<n> fallback are exercised.
+# rows so every primary_key branch AND the idx:<n> fallback are exercised.
 _ROWS = [
     _blank_row(doi_r="10.1/aaa", title_r="Replication of Foo"),
     _blank_row(openalex_id_r="W123", title_r="Repro of Bar"),

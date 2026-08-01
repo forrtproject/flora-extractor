@@ -12,7 +12,8 @@ from search import openalex_search as oa
 from search import run_search as rs
 from search.semantic_scholar_search import fetch_semantic_scholar_candidates
 from search.external_lists import fetch_i4r
-from search.run_search import _row_keys, build_candidates_index, run_search
+from shared.row_key import row_keys as _row_keys
+from search.run_search import build_candidates_index, run_search
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +50,7 @@ def test_build_candidates_index_matches_row_keys_scoping(tmp_path, monkeypatch):
 
     # build_candidates_index() saves to the module-level index path unconditionally —
     # redirect it so this test cannot clobber the real cache/candidates_index.txt.
-    monkeypatch.setattr(rs, "_CANDIDATES_INDEX_PATH", tmp_path / "candidates_index.txt")
+    monkeypatch.setattr(rs.CANDIDATES_INDEX, "path", tmp_path / "candidates_index.txt")
 
     rows = [
         {**{c: "" for c in CANDIDATES_COLS}, "doi_r": "10.1/aaa",

@@ -39,6 +39,7 @@ from shared.pdf_parsing import (
 )
 from shared.cache import content_key, read_cache, write_cache
 from shared.prompts import build_match_type_prompt, prompt_version
+from shared.row_key import primary_key
 from shared.doi_verify import keeps_no_doi, verify_and_correct
 from shared.schema import (
     EXTRACTED_COLS,
@@ -1025,23 +1026,12 @@ def _collapse_same_paper_originals(originals: list[dict]) -> list[dict]:
 # ── Main orchestrator ─────────────────────────────────────────────────────────
 
 def _extract_row_key(row: "dict | pd.Series") -> str:
-    """Return a unique resume key for a row.
+    """Resume key for a row — the shared doi → openalex_id → url → title chain.
 
-    Fallback chain: doi_r → openalex_id_r → url_r → title_r.
     Prevents multiple no-DOI rows (e.g. from I4R / Replication Network) from
     collapsing to the same empty-string key and being skipped as already-processed.
     """
-    doi = clean_doi(str(row.get("doi_r", "") or ""))
-    if doi:
-        return doi
-    oa = str(row.get("openalex_id_r", "") or "").strip()
-    if oa:
-        return f"oa:{oa}"
-    url = str(row.get("url_r", "") or "").strip()
-    if url:
-        return f"url:{url}"
-    title = str(row.get("title_r", "") or "").lower().strip()
-    return f"title:{title}" if title else ""
+    return primary_key(row)
 
 
 # Verdicts the classification screen reaches on its own, without ever seeing full text.
