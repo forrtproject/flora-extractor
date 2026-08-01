@@ -656,6 +656,7 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
             str(link.get("resolved_year_o",   "") or ""),
             str(link.get("resolved_title_o",  "") or ""),
         ))),
+        "study_o":         str(link.get("resolved_study_o", "") or ""),
         "link_method":     _map_method(link.get("resolution_method", "target_pending")),
         "link_evidence":   str(link.get("llm_evidence",     "") or ""),
         "link_confidence": _link_confidence(link),
@@ -1193,6 +1194,10 @@ def _guard_original_link(row: dict) -> dict:
         log.info("[%s] original-link rejected (%s) — writing target_pending", doi_r, reason)
         row["link_method"] = "target_pending"
         row["doi_o"] = ""
+        # The original the study number and title described is gone, so they describe
+        # nothing — a rejected row carries the same empty original as _empty_row.
+        row["study_o"] = ""
+        row["title_o"] = ""
         row["doi_o_verification"] = "skipped"
         row["link_confidence"] = "low"
         prior = str(row.get("link_evidence", "") or "")

@@ -68,7 +68,7 @@ All `filtered.csv` columns, plus:
 | `oa_work_id_o` | string | OpenAlex work ID of the original study, bare form. Normally resolved from `doi_o` *after* DOI verification, so it always describes the DOI actually written. For a DOI-less original (`doi_o_verification = no_doi`) it is the only identifier the row has: it carries the record identity, drives `pair_id`, and becomes the `url_o` validators click. Blank when there is neither a `doi_o` nor a known OpenAlex record |
 | `doi_o` | string | DOI of the original (target) study |
 | `title_o` | string | Title of the original study |
-| `study_o` | string | FLoRA's `study_o`: which study **inside** the original paper is targeted, as a number — several numbers (`1, 2`) when one replication targets several studies from the same paper. Blank when the original reports a single study or the replication does not say. Only the multi-original path fills it. A study identifier, never a title (issue #103) |
+| `study_o` | string | FLoRA's `study_o`: which study **inside** the original paper is targeted, as a number — several numbers (`1, 2`) when one replication targets several studies from the same paper. Blank when the original reports a single study or the replication does not say. Filled from the target prompt's `study_numbers` on the single-original path and from the multi-original answer on the multi path; blank on rungs that resolve without an LLM. A study identifier, never a title (issue #103) |
 | `year_o` | int | Publication year of the original study |
 | `authors_o` | string | Authors of the original study (semicolon-separated surnames) |
 | `ref_o` | string | Formatted reference string for the original study |

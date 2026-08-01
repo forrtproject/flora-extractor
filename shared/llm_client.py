@@ -701,6 +701,7 @@ def identify_targets_with_llm(doi_r:          str,
         "resolved_title_o"  : "",
         "resolved_year_o"   : None,
         "resolved_author_o" : "",
+        "resolved_study_o"  : "",
         "resolution_score"  : 0.0,
         "llm_source"        : "none",
         "llm_model"         : "",
@@ -781,6 +782,10 @@ def identify_targets_with_llm(doi_r:          str,
         "resolved_title_o"  : str(record.get("title") or "") if record else "",
         "resolved_year_o"   : record.get("year") if record else None,
         "resolved_author_o" : str(record.get("first_author") or "") if record else "",
+        # Which study inside the accepted original is targeted, in the codebook's
+        # "1, 2" form — the same field the multi-original path fills from its own answer.
+        "resolved_study_o"  : _clean_study_numbers(
+            single["study_numbers"] if record else ""),
         "resolution_score"  : 1.0 if resolved else 0.0,
         "llm_source"        : llm_source,
         "llm_model"         : llm_model,
@@ -936,6 +941,36 @@ def _clean_study_number(value) -> str:
         return ""
     m = re.search(r"\d+[a-z]?", text, re.IGNORECASE)
     return m.group(0).lower() if m else ""
+
+
+# How an answer names several studies: "1, 2", "Study 1; Study 4", "2 and 3", "1 & 2".
+_STUDY_SPLIT_RE = re.compile(r"[,;&]|\band\b", re.IGNORECASE)
+# A range, once the leading word is gone: "1-3", "1–3". Two digits at most, so a year
+# or a page range cannot be expanded into a hundred studies.
+_STUDY_RANGE_RE = re.compile(r"^(\d{1,2})\s*[-–—]\s*(\d{1,2})$")
+_STUDY_WORD_RE  = re.compile(r"^(stud(y|ies)|experiments?|exp\.?)\s*", re.IGNORECASE)
+
+
+def _clean_study_numbers(value) -> str:
+    """FLoRA `study_o` for one target: every study the answer names, as "1, 2".
+
+    The prompt asks for numbers and models answer in prose — "Study 1; Study 4",
+    "2 and 3", "Studies 1-3". Splitting on commas alone kept the first number and
+    silently dropped the rest, so a two-study target was recorded as a one-study one.
+    Duplicates collapse in encounter order, matching the multi-original path.
+    """
+    numbers: list[str] = []
+    for part in _STUDY_SPLIT_RE.split(str(value or "")):
+        bare  = _STUDY_WORD_RE.sub("", part.strip())
+        span  = _STUDY_RANGE_RE.match(bare)
+        if span and int(span.group(1)) < int(span.group(2)):
+            numbers.extend(str(n) for n in range(int(span.group(1)),
+                                                 int(span.group(2)) + 1))
+            continue
+        number = _clean_study_number(part)
+        if number:
+            numbers.append(number)
+    return ", ".join(dict.fromkeys(numbers))
 
 
 def identify_all_originals_with_llm(doi_r:        str,
@@ -1278,7 +1313,7 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
 _UNPICKED_TARGET = {
     "resolved": False, "resolution_method": "llm_refscreen_declined",
     "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
-    "resolved_author_o": "", "resolution_score": 0.0,
+    "resolved_author_o": "", "resolved_study_o": "", "resolution_score": 0.0,
     "llm_confidence": "", "target_description": "",
     "targets": [], "multi_target": False,
 }
@@ -1337,6 +1372,7 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
                 "resolved_title_o":  pick["resolved_title_o"],
                 "resolved_year_o":   pick["resolved_year_o"],
                 "resolved_author_o": pick["resolved_author_o"],
+                "resolved_study_o":  pick["resolved_study_o"],
                 "resolution_score":  pick["resolution_score"],
                 "llm_source":        pick["llm_source"],
                 "llm_model":         pick["llm_model"],

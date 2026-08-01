@@ -55,9 +55,9 @@ EXTRACT_ADDED_COLS = [
     # the same paper ("1, 2"). Blank when the original reports a single study or the
     # replication does not say. It is what makes FLoRA's coding level representable —
     # one row per pair of REFERENCES, so several studies within one original paper
-    # stay one row, while several original PAPERS are several rows. Only the
-    # multi-original path fills it — see _collapse_same_paper_originals() in
-    # extract/run_extract.py, which does the grouping.
+    # stay one row, while several original PAPERS are several rows. Both link paths
+    # fill it from the LLM's study_numbers — the multi path additionally groups on it,
+    # see _collapse_same_paper_originals() in extract/run_extract.py.
     # NOT the same field as the validation DB's `study_o`, which holds a title —
     # see extract/csv_to_db.py.
     "study_o",             # str   — target study number(s) within the original paper

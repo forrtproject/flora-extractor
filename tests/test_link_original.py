@@ -1,5 +1,6 @@
 """Tests for citation-context extraction and Stage 4.5 screen routing in
 extract/link_original.py."""
+import json
 from unittest.mock import patch
 
 import pandas as pd
@@ -7,6 +8,7 @@ import pandas as pd
 import extract.link_original as link_original
 from extract.link_original import _extract_cit_contexts, run_for_doi
 from extract.run_extract import _map_method
+from shared.prompts import TARGET_INTRO_CHARS, build_target_prompt
 
 
 class TestExtractCitContexts:
@@ -273,3 +275,75 @@ class TestAbstractStageExcludeDoi:
 
         assert llm.called
         assert llm.call_args_list[0].args[0] == "10.1/rep"
+
+
+def _run_to_fulltext(abstract_r: str, parsed: dict) -> tuple[dict, dict]:
+    """Drive run_for_doi to the full-text rung and return (row, LLM kwargs).
+
+    The parsers' output is *parsed*; the returned kwargs are what run_for_doi handed
+    to identify_targets_with_llm, which passes them straight to build_target_prompt —
+    so a test can render the prompt the model actually got.
+    """
+    cands_df = pd.DataFrame([{
+        "doi_r": "10.1/rep", "study_r": "A study", "abstract_r": abstract_r,
+        "year_r": "2020", "openalex_id_r": "W1", "url_r": "",
+        "author_year_pattern_r": "",
+    }])
+    with patch.object(link_original, "find_all_candidates", return_value=[]), \
+         patch.object(link_original, "fetch_referenced_works_metadata", return_value=[]), \
+         patch.object(link_original, "fetch_opencitations_references", return_value=[]), \
+         patch.object(link_original, "screen_references_with_llm",
+                      return_value=_screen_result(screen_verdict="proceed",
+                                                  screen_classification="replication",
+                                                  record_type="replication")), \
+         patch.object(link_original, "acquire_pdf",
+                      return_value={"pdf_path": "/tmp/x.pdf", "openalex_xml": None,
+                                    "pdf_source": "unpaywall", "pdf_url": "u",
+                                    "pdf_ok": True, "pdf_url_tried": []}), \
+         patch.object(link_original, "_parse_all", return_value={"grobid": parsed}), \
+         patch.object(link_original, "_write_parse_cache"), \
+         patch.object(link_original, "identify_targets_with_llm",
+                      return_value={"resolved": False,
+                                    "resolution_method": "llm_no_target",
+                                    "llm_source": "gemini"}) as llm:
+        row = run_for_doi("10.1/rep", cands_df=cands_df)
+    return row, llm.call_args.kwargs
+
+
+class TestStoredEvidenceMatchesThePrompt:
+    """The row is what a reviewer reads instead of the paper. Storing more than the
+    model was sent claimed an abstract the answer cannot rest on, and storing less
+    hid the evidence behind it."""
+
+    _PARSED = {"source": "grobid", "abstract": "PDF abstract. Extra sentence.",
+               "intro": "i" * 5000, "references": []}
+
+    def test_sections_are_stored_as_the_prompt_carries_them(self):
+        row, kwargs = _run_to_fulltext("OpenAlex abstract.", self._PARSED)
+        prompt = build_target_prompt("A study", "OpenAlex abstract.", [], **kwargs)
+        assert len(row["grobid_intro"]) == TARGET_INTRO_CHARS
+        # Not just the right length — the same text the prompt carries. The abstract
+        # is stored as the tail _abstract_tail sends, not as the section it came from.
+        assert row["grobid_intro"] in prompt
+        assert row["grobid_abstract"]
+        assert row["grobid_abstract"] in prompt
+
+    def test_an_abstract_the_model_never_saw_is_not_stored(self):
+        """The PDF abstract is sent only where it goes beyond the OpenAlex one. When
+        they agree the model reads none of it, and the row must say so."""
+        parsed = dict(self._PARSED, abstract="OpenAlex abstract.")
+        row, _ = _run_to_fulltext("OpenAlex abstract.", parsed)
+        assert row["grobid_abstract"] == ""
+
+    def test_reference_count_records_what_the_prompt_renders(self):
+        """assign_target_keys drops what the reference block cannot show: an entry
+        with neither title nor DOI, and a work already listed as a candidate."""
+        refs = ([{"title": f"Ref {i}", "year": 2000, "authors": ["A"]}
+                 for i in range(40)]
+                + [{"title": "", "doi": "", "year": 2001, "authors": ["B"]}])
+        candidates = [{"doi": "10.5/c", "title": "Ref 0", "year": 2000,
+                       "first_author": "A"}]
+        out = link_original._build_output(
+            "10.1/rep", {}, {}, candidates, {}, {}, {}, {"references": refs})
+        assert len(json.loads(out["grobid_refs_json"])) == 25
+        assert out["n_references_sent"] == 39

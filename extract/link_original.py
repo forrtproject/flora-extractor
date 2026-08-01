@@ -39,7 +39,11 @@ from shared.pdf_parsing import (
     parse_result_is_empty,
 )
 from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_openalex_by_doi, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
-from shared.prompts import build_flora_anchor_note
+from shared.prompts import (
+    TARGET_INTRO_CHARS, TARGET_METHODS_CHARS,
+    _abstract_tail, build_flora_anchor_note, rendered_reference_entries,
+)
+from shared.target_keys import assign_target_keys
 from shared.pdf_sources import acquire_pdf
 from shared.utils import cache_key, clean_doi
 
@@ -514,6 +518,7 @@ def _unresolved(method: str, **extra) -> dict:
         "resolved_title_o":  "",
         "resolved_year_o":   None,
         "resolved_author_o": "",
+        "resolved_study_o":  "",
         "resolution_score":  0.0,
         **extra,
     }
@@ -704,6 +709,9 @@ def run_for_doi(doi_r:              str,
         screen = screen_references_with_llm(doi_r, study_r, abstract_r, refs,
                                             classification=classification,
                                             candidates=candidates)
+        # The evidence of this rung IS the reference list, so it has to reach
+        # _build_output; the screen dict carries the verdict, not the input.
+        ref_sections = {"references": refs}
 
         # A screen that did not get both votes is an API failure, not a verdict, and
         # must be caught before the gate below — a lone surviving vote is not a
@@ -712,7 +720,7 @@ def run_for_doi(doi_r:              str,
         if screen["resolution_method"] in {"llm_refscreen_partial", "llm_refscreen_failed"}:
             log.warning("[%s] Reference screen incomplete (%s): %s", doi_r,
                         screen["resolution_method"], screen.get("llm_error", ""))
-            return emit(screen, {}, {}, screen)
+            return emit(screen, {}, {}, ref_sections)
 
         # The gate is screen_gate(), defined once in shared/llm_client.py. The full
         # screen dict is the resolution so the discarded row still carries the models
@@ -725,7 +733,7 @@ def run_for_doi(doi_r:              str,
                 for v in screen.get("votes", []))
             log.info("[%s] Reference screen: discard (%s) — skipping PDF", doi_r, verdicts)
             discard = emit({**screen, "resolution_method": "llm_not_a_replication"},
-                           {}, {}, screen)
+                           {}, {}, ref_sections)
             # _merge_row reads the row's link_evidence from llm_evidence, so set that.
             discard["llm_evidence"] = "; ".join(filter(None, [
                 f"screen discard: {verdicts}" if verdicts else "screen discard",
@@ -736,7 +744,7 @@ def run_for_doi(doi_r:              str,
         if screen["resolved"]:
             log.info("[%s] Resolved from reference list: %s", doi_r,
                      screen["resolved_title_o"])
-            return emit(screen, {}, {}, screen)
+            return emit(screen, {}, {}, ref_sections)
 
         # ── Stage 4.6: Title search on a named-but-unmatched target ──────────
         # The screen can recognise the target in the abstract yet fail to match it
@@ -762,7 +770,7 @@ def run_for_doi(doi_r:              str,
             if hit:
                 log.info("[%s] Resolved by pre-PDF title search: %s", doi_r,
                          hit["resolved_title_o"])
-                return emit(hit, {}, {}, screen)
+                return emit(hit, {}, {}, ref_sections)
 
     # ── Stage 5: PDF acquisition ─────────────────────────────────────────────
     if no_pdf:
@@ -809,6 +817,10 @@ def run_for_doi(doi_r:              str,
         "methods":    "",
         "references": best_refs,
     }
+    # build_target_prompt sends the PDF abstract only as the tail the OpenAlex abstract
+    # does not already carry — often "" when the two agree. Record that tail so the row
+    # shows the evidence the model was given rather than the section it came from.
+    sections["abstract_sent"] = _abstract_tail(abstract_r, sections["abstract"])
     grobid = {
         "grobid_status": f"parse_all:{best_src}",
         "n_refs_parsed": len(best_refs),
@@ -889,12 +901,29 @@ def _build_output(doi_r:     str,
         # ── GROBID ────────────────────────────────────────────────────────────
         "grobid_status"         : grobid.get("grobid_status", "not_attempted"),
         "n_grobid_refs"         : grobid.get("n_refs_parsed",  0),
-        "grobid_abstract"       : (sections.get("abstract", "") or "")[:1500],
-        "grobid_intro"          : (sections.get("intro",    "") or "")[:1000],
-        "grobid_methods"        : (sections.get("methods",  "") or "")[:700],
+        # Stored at the sizes build_target_prompt sends, so a reviewer reads exactly
+        # what the model read. The PDF abstract reaches the model only as the part the
+        # OpenAlex abstract does not already carry, which is often nothing at all —
+        # run_for_doi puts that tail in "abstract_sent". The reference list is sent
+        # whole but stored truncated (full lists run to hundreds of entries);
+        # n_references_sent keeps the dashboard honest about how much was left out.
+        "grobid_abstract"       : sections.get("abstract_sent", "") or "",
+        "grobid_intro"          : (sections.get("intro",    "")
+                                   or "")[:TARGET_INTRO_CHARS],
+        # run_for_doi never populates methods today (the parsers do not split it out),
+        # so this slice is a contract for a section nothing currently supplies.
+        "grobid_methods"        : (sections.get("methods",  "")
+                                   or "")[:TARGET_METHODS_CHARS],
         "grobid_refs_json"      : json.dumps(
                                       (sections.get("references", []) or [])[:25],
                                       ensure_ascii=False),
+        # What the prompt renders, not what the parser returned: a reference that is
+        # also a candidate is shown once, in the candidate block, and one with neither
+        # a title nor a DOI is dropped before the list is written.
+        "n_references_sent"     : len(rendered_reference_entries(
+                                      assign_target_keys(
+                                          candidates,
+                                          sections.get("references", []) or [])[0])),
 
         # ── Resolution ────────────────────────────────────────────────────────
         "resolution_method"     : resolution.get("resolution_method", "none"),
@@ -905,6 +934,7 @@ def _build_output(doi_r:     str,
         "resolved_title_o"      : resolution.get("resolved_title_o", ""),
         "resolved_year_o"       : resolution.get("resolved_year_o"),
         "resolved_author_o"     : resolution.get("resolved_author_o", ""),
+        "resolved_study_o"      : resolution.get("resolved_study_o",  ""),
         # The merged target prompt can see several originals where the router said
         # one; run_extract reroutes such a row rather than keeping a single link.
         "multi_target"          : bool(resolution.get("multi_target", False)),
