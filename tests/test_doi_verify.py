@@ -123,6 +123,35 @@ class TestFetchDoiMetadata:
             meta = fetch_doi_metadata("10.1111/psyp.13449")
         assert meta is None
 
+    def test_crossref_type_is_returned(self):
+        from shared.doi_verify import fetch_doi_metadata
+        work = {"message": {**CROSSREF_WORK["message"], "type": "dataset"}}
+        with patch("shared.doi_verify.requests.get", return_value=_resp(200, work)):
+            meta = fetch_doi_metadata("10.7910/dvn/abcdef")
+        assert meta["type"] == "dataset"
+
+    def test_openalex_type_is_returned(self):
+        from shared.doi_verify import fetch_doi_metadata
+        oa = {"results": [{
+            "title": "Author response: Some eLife paper",
+            "publication_year": 2021,
+            "authorships": [{"author": {"display_name": "Ada Lovelace"}}],
+            "type": "peer-review",
+        }]}
+        def fake_get(url, **kw):
+            return _resp(404) if "crossref.org" in url else _resp(200, oa)
+        with patch("shared.doi_verify.requests.get", side_effect=fake_get) as g:
+            meta = fetch_doi_metadata("10.7554/elife.12345.041")
+        assert meta["type"] == "peer-review"
+        oa_call = [c for c in g.call_args_list if "openalex.org" in c.args[0]][0]
+        assert "type" in oa_call.kwargs["params"]["select"].split(",")
+
+    def test_type_is_empty_when_source_reports_none(self):
+        from shared.doi_verify import fetch_doi_metadata
+        with patch("shared.doi_verify.requests.get", return_value=_resp(200, CROSSREF_WORK)):
+            meta = fetch_doi_metadata("10.1111/psyp.13449")
+        assert meta["type"] == ""
+
     def test_result_is_cached(self):
         from shared.doi_verify import fetch_doi_metadata
         with patch("shared.doi_verify.requests.get", return_value=_resp(200, CROSSREF_WORK)) as g:

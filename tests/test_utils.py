@@ -1,5 +1,30 @@
 """Tests for shared/utils.py helpers."""
-from shared.utils import bare_work_id, sentence_spans
+from shared.utils import bare_work_id, non_article_type, sentence_spans
+
+
+class TestNonArticleType:
+    def test_excluded_types_return_a_reason(self):
+        for t in ("dataset", "database", "software", "peer-review",
+                  "supplementary-materials", "component", "paratext", "libguides",
+                  "grant", "standard"):
+            assert non_article_type(t), t
+
+    def test_peer_review_reason_matches_non_article_doi(self):
+        """Downstream buckets key off the reason string; keep the two guards aligned."""
+        assert non_article_type("peer-review") == "peer_review_object"
+
+    def test_normalises_case_whitespace_and_separators(self):
+        assert non_article_type("  DataSet ") == "dataset_record"
+        assert non_article_type("supplementary_materials") == "supplementary_material"
+        assert non_article_type("PEER_REVIEW") == "peer_review_object"
+
+    def test_missing_or_unknown_types_are_kept(self):
+        """Exclude-only: the type field is patchily populated, so anything not
+        affirmatively a non-study must pass."""
+        for t in ("", None, "   ", "journal-article", "article", "preprint",
+                  "book-chapter", "posted-content", "other", "data-paper",
+                  "software-paper", "gibberish"):
+            assert non_article_type(t) == "", t
 
 
 class TestBareWorkId:

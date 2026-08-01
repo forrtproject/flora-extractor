@@ -15,7 +15,11 @@ CSV (the same files the dashboard's "set-aside" tab reads), one bucket per probl
     screen_disagreement→ screen_disagreement.csv   the two Q1 classifiers disagreed
     not_a_replication  → not_a_replication.csv     outcome == not_a_replication
     non_article        → not_a_replication.csv     doi_r is a figshare data record
-                                                   or a peer-review object
+                                                   or a peer-review object (DOI pattern)
+    non_article_type   → not_a_replication.csv     the registry types doi_r as a
+                                                   non-study object (dataset, software,
+                                                   peer-review, supplementary ...)
+                                                   (only with --deep: metadata lookup)
     self_link          → unresolved_self_links.csv doi_o == doi_r
     doi_mismatch       → unresolved_doi_mismatch.csv doi_o_verification == mismatch
     title_search_provisional → provisional_title_search.csv  link_method ==
@@ -35,7 +39,9 @@ reported too but not moved — the right fix depends on diagnosis (see audit_doi
 
 "Is doi_o real / the right article" is decided per row during extraction and stored in
 doi_o_verification; this pass acts on that column without re-hitting the network, except
-under --deep. To re-verify/fix flagged DOIs run `python -m extract.audit_dois --apply`.
+under --deep, which additionally resolves doi_o registration and looks up the work type
+of every surviving doi_r. To re-verify/fix flagged DOIs run
+`python -m extract.audit_dois --apply`.
 """
 from __future__ import annotations
 
@@ -48,7 +54,8 @@ import requests
 
 from shared.config import DATA_DIR, RESEARCHER_EMAIL
 from shared.schema import EXTRACTED_COLS
-from shared.utils import bare_work_id, clean_doi, csv_lock, non_article_doi
+from shared.doi_verify import fetch_doi_metadata
+from shared.utils import bare_work_id, clean_doi, csv_lock, non_article_doi, non_article_type
 
 
 def _norm(df: pd.DataFrame) -> pd.DataFrame:
@@ -100,6 +107,16 @@ def _doi_is_registered(doi: str) -> bool:
         return True  # network error ≠ proof of fabrication; keep the row
 
 
+def _doi_r_non_study_type(doi: str) -> str:
+    """Reason string if the registry types *doi* as a non-study object, else "".
+    Network call (cached per DOI); used only under --deep."""
+    doi = clean_doi(doi)
+    if not doi:
+        return ""
+    meta = fetch_doi_metadata(doi)
+    return non_article_type(meta.get("type", "")) if meta else ""
+
+
 def run_sanity_check(path: "str | Path" = None, move: bool = True,
                      deep: bool = False) -> dict:
     """Quarantine problematic rows into set-aside CSVs, report the rest."""
@@ -143,9 +160,23 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
         moved[name] = _quarantine(df, mask, DATA_DIR / fname) if move else int(mask.sum())
         claimed |= mask
 
-    # Fabricated doi_o: registered-looking but resolves nowhere. Needs a network check,
-    # so only under --deep; candidates are the "unregistered" verification outcomes.
     if deep:
+        # doi_r that the registry types as a dataset/software deposit, a peer-review
+        # object or supplementary material: the pipeline happily links such a record to
+        # the paper it belongs to, producing a plausible but bogus replication (23 of 50
+        # hand-checked provisional links). The DOI patterns above catch none of these,
+        # so the type has to be fetched — network, hence --deep only.
+        by_type = pd.Series(False, index=df.index)
+        for i in df.index[(doi_r != "") & ~claimed]:
+            if _doi_r_non_study_type(df.at[i, "doi_r"]):
+                by_type.at[i] = True
+            time.sleep(0.2)
+        moved["non_article_type"] = _quarantine(df, by_type, DATA_DIR / "not_a_replication.csv") \
+            if move else int(by_type.sum())
+        claimed |= by_type
+
+        # Fabricated doi_o: registered-looking but resolves nowhere; candidates are the
+        # "unregistered" verification outcomes.
         cand = df.index[(doi_o != "") & df["doi_o_verification"].isin(["no_metadata"]) & ~claimed]
         fab = pd.Series(False, index=df.index)
         for i in cand:
@@ -184,6 +215,7 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
     print("  -- moved to set-aside CSVs --")
     dest = {"screen_disagreement": "screen_disagreement.csv",
             "not_a_replication": "not_a_replication.csv", "non_article": "not_a_replication.csv",
+            "non_article_type": "not_a_replication.csv",
             "self_link": "unresolved_self_links.csv",
             "doi_mismatch": "unresolved_doi_mismatch.csv",
             "title_search_provisional": "provisional_title_search.csv",
@@ -195,6 +227,8 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
     if not deep:
         print(f"  fabricated_doi_o     (skipped -- pass --deep to network-check "
               f"{unregistered} unregistered doi_o)")
+        print("  non_article_type     (skipped -- pass --deep to look up the work type "
+              "of each doi_r)")
     print("  -- reported, not moved --")
     print(f"  cannot_be_determined (kept in extracted.csv): {cbd}")
     print(f"  chronology errors (year_o > year_r):          {chronology}")
@@ -213,6 +247,8 @@ if __name__ == "__main__":
     p.add_argument("--report-only", action="store_true",
                    help="Report only; move nothing.")
     p.add_argument("--deep", action="store_true",
-                   help="Also doi.org-verify unregistered doi_o and quarantine fabricated ones.")
+                   help="Network checks: doi.org-verify unregistered doi_o and quarantine "
+                        "fabricated ones; look up each doi_r's work type and quarantine "
+                        "dataset/software/peer-review/supplementary records.")
     a = p.parse_args()
     run_sanity_check(a.input, move=not a.report_only, deep=a.deep)
