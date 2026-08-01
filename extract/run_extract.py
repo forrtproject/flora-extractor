@@ -227,8 +227,8 @@ _METHOD_MAP = {
     # Distinct from llm_failed (API errors) and llm_fulltext (original found).
     "llm_no_target":                  "no_original_found",
     # The merged target prompt saw several originals, so no single link may be
-    # written; the row is rerouted through the multi-original path (see
-    # _resolve_and_code) and only reaches this value when that path finds nothing.
+    # written; the row goes to the per-target adapter (see _resolve_and_code) and
+    # only reaches this value when none of the targets could be matched to a record.
     "llm_multi_target":               "target_pending",
     "llm_failed":                     "target_pending",
     "llm_refscreen_declined":         "target_pending",
@@ -845,6 +845,12 @@ def _collapse_same_paper_originals(originals: list[dict]) -> list[dict]:
             # would claim the replication targeted studies it never mentioned.
             merged["study_number"] = (", ".join(dict.fromkeys(numbers))
                                       if len(numbers) == len(members) else "")
+            # study_r is a union, not a claim about every member: it says which studies
+            # of THIS paper re-test the merged original, and a member that named none
+            # does not make the ones that did untrue.
+            merged["study_r"] = ", ".join(dict.fromkeys(
+                part for m in members
+                for part in str(m.get("study_r", "") or "").split(", ") if part))
             merged["outcome"] = _aggregate_outcomes(
                 [str(m.get("outcome", "") or "") for m in members])
             merged["evidence"] = " ".join(

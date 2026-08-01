@@ -2728,6 +2728,137 @@ class TestOutcomeReadsTheDiscussion:
         assert "Our replication succeeded" in captured["fulltext"]
 
 
+# ── FLoRA's coding level: one row per pair of REFERENCES ─────────────────────
+
+class TestSamePaperStudiesCollapse:
+    """FLoRA's coding level: one row per pair of REFERENCES.
+
+    Several studies replicated from the same original paper are one entry with their
+    numbers in study_o; several original papers are several entries. Before this, every
+    targeted study became its own row — and rows sharing a doi_o also shared a pair_id,
+    which is the key every other system joins on.
+    """
+
+    @staticmethod
+    def _orig(rank, doi, study_number="", outcome="success", title="T", conf="high"):
+        return {"rank": rank, "doi": doi, "title": title, "first_author": "Smith",
+                "year": 2010, "study_number": study_number, "outcome": outcome,
+                "evidence": f"ev{rank}", "outcome_evidence": f"oev{rank}",
+                "confidence": conf}
+
+    def test_same_doi_collapses_and_joins_study_numbers(self):
+        out = run_extract._collapse_same_paper_originals([
+            self._orig(1, "10.1000/a", "1"),
+            self._orig(2, "10.1000/a", "2"),
+            self._orig(3, "10.1000/b", ""),
+        ])
+        assert len(out) == 2
+        assert out[0]["study_number"] == "1, 2"
+        assert [o["rank"] for o in out] == [1, 2]
+        assert out[1]["doi"] == "10.1000/b"
+
+    def test_distinct_papers_are_not_collapsed(self):
+        out = run_extract._collapse_same_paper_originals([
+            self._orig(1, "10.1000/a", "1"),
+            self._orig(2, "10.1000/b", "1"),
+        ])
+        assert len(out) == 2
+        assert [o["study_number"] for o in out] == ["1", "1"]
+
+    def test_conflicting_outcomes_aggregate_to_mixed(self):
+        out = run_extract._collapse_same_paper_originals([
+            self._orig(1, "10.1000/a", "1", outcome="success"),
+            self._orig(2, "10.1000/a", "2", outcome="failure"),
+        ])
+        assert out[0]["outcome"] == "mixed"
+
+    def test_silent_study_does_not_outvote_a_verdict(self):
+        out = run_extract._collapse_same_paper_originals([
+            self._orig(1, "10.1000/a", "1", outcome="failure"),
+            self._orig(2, "10.1000/a", "2", outcome="cannot_be_determined"),
+        ])
+        assert out[0]["outcome"] == "failure"
+
+    def test_partial_study_numbers_are_dropped_not_guessed(self):
+        """Claiming "1" when a second study went unnumbered would assert the
+        replication targeted a study it never named."""
+        out = run_extract._collapse_same_paper_originals([
+            self._orig(1, "10.1000/a", "1"),
+            self._orig(2, "10.1000/a", ""),
+        ])
+        assert out[0]["study_number"] == ""
+
+    def test_collapsed_row_takes_the_weakest_confidence(self):
+        out = run_extract._collapse_same_paper_originals([
+            self._orig(1, "10.1000/a", "1", conf="high"),
+            self._orig(2, "10.1000/a", "2", conf="low"),
+        ])
+        assert out[0]["confidence"] == "low"
+
+    def test_doi_less_entries_group_by_title(self):
+        out = run_extract._collapse_same_paper_originals([
+            self._orig(1, "", "1", title="The  Same Paper"),
+            self._orig(2, "", "2", title="the same paper"),
+            self._orig(3, "", "1", title="A Different Paper"),
+        ])
+        assert len(out) == 2
+        assert out[0]["study_number"] == "1, 2"
+
+    def test_doi_less_entries_with_the_same_title_but_different_years_stay_apart(self):
+        """Generic titles repeat across the literature — the title alone is not an
+        identity, so a DOI-less entry is keyed on year and first author too."""
+        a = self._orig(1, "", "1", title="Experiment 1")
+        b = self._orig(2, "", "1", title="Experiment 1")
+        b["year"] = 1998
+        out = run_extract._collapse_same_paper_originals([a, b])
+        assert len(out) == 2
+        assert [o["rank"] for o in out] == [1, 2]
+
+    def test_doi_less_entries_with_the_same_title_but_different_authors_stay_apart(self):
+        a = self._orig(1, "", "1", title="Experiment 1")
+        b = self._orig(2, "", "1", title="Experiment 1")
+        b["first_author"] = "Jones"
+        out = run_extract._collapse_same_paper_originals([a, b])
+        assert len(out) == 2
+
+    def test_study_o_reaches_the_row(self):
+        row = _merge_multi_row(
+            pd.Series({"doi_r": "10.9/r", "title_r": "R", "filter_status": "replication"}),
+            self._orig(1, "10.1000/a", "1, 2"),
+            {"outcome": "success"}, "multiple_original", "high", 1,
+        )
+        assert row["study_o"] == "1, 2"
+
+    def test_study_r_is_a_union_over_the_merged_studies(self):
+        """study_o says which studies of the ORIGINAL are targeted and needs every
+        member to have named one; study_r says which of THIS paper's studies re-test
+        it, and a member that named none does not unsay the ones that did."""
+        a = self._orig(1, "10.1000/a", "1"); a["study_r"] = "1"
+        b = self._orig(2, "10.1000/a", "2"); b["study_r"] = "2"
+        out = run_extract._collapse_same_paper_originals([a, b])
+        assert out[0]["study_r"] == "1, 2"
+
+    def test_study_r_reaches_the_row(self):
+        row = _merge_multi_row(
+            pd.Series({"doi_r": "10.9/r", "title_r": "R", "filter_status": "replication"}),
+            dict(self._orig(1, "10.1000/a", "1, 2"), study_r="3"),
+            {"outcome": "success"}, "multiple_original", "high", 1,
+        )
+        assert row["study_o"] == "1, 2"
+        assert row["study_r"] == "3"
+
+    def test_a_legacy_study_r_title_never_survives_into_the_column(self):
+        """The seeded columns used study_r for a TITLE. _base_row blanks it, so only a
+        producer that sets a real number can fill it."""
+        row = _merge_multi_row(
+            pd.Series({"doi_r": "10.9/r", "title_r": "R", "study_r": "A Paper Title",
+                       "filter_status": "replication"}),
+            self._orig(1, "10.1000/a", "1"),
+            {"outcome": "success"}, "single_original", "high", 1,
+        )
+        assert row["study_r"] == ""
+
+
 # ── The per-target adapter (WP1) ─────────────────────────────────────────────
 # identify_targets_with_llm answers "which originals does this paper re-test?" over
 # a keyed namespace. When it names targets without accepting one of them as THE
