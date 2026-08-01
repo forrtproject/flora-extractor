@@ -33,10 +33,9 @@ from . import token_counter, token_usage
 from .cache import content_key, read_cache, write_cache
 from .prompts import (
     JSON_SYSTEM_MESSAGE,
-    build_classify_prompt, build_multi_original_prompt, build_target_prompt,
+    build_classify_prompt, build_target_prompt,
     prompt_version,
 )
-from .schema import OUTCOME_CATEGORIES
 from .target_keys import assign_target_keys
 from .utils import clean_doi
 
@@ -633,6 +632,8 @@ def _validate_targets(raw: list, key_map: dict[str, dict],
             "match_certain":   certain,
             "target_as_named": str(item.get("target_as_named", "") or "").strip(),
             "study_numbers":   str(item.get("study_numbers", "") or "").strip(),
+            "replication_study_numbers":
+                               str(item.get("replication_study_numbers", "") or "").strip(),
             "evidence_quote":  quote,
             "record":          key_map.get(key) if key else None,
         })
@@ -689,6 +690,16 @@ def identify_targets_with_llm(doi_r:          str,
         cached.setdefault("llm_source", "cache")
         cached.setdefault("llm_prompt", "")
         cached.setdefault("llm_error",  "")
+        cached.setdefault("target_stage", "")
+        cached.setdefault("resolved_study_r", "")
+        # Entries written before the mapped record was kept on the target resolve
+        # their keys here instead. The key namespace is a pure function of
+        # (candidates, references), so this call rebuilt the same map; without the
+        # repair a cached multi-target answer reaches the adapter record-less and
+        # every one of its targets is dropped as unmatched.
+        for t in cached.get("targets") or []:
+            if t.get("key") and not t.get("record"):
+                t["record"] = key_map.get(t["key"])
         return cached
 
     result, llm_source, llm_model, llm_error = call_llm_ladder(
@@ -702,6 +713,7 @@ def identify_targets_with_llm(doi_r:          str,
         "resolved_year_o"   : None,
         "resolved_author_o" : "",
         "resolved_study_o"  : "",
+        "resolved_study_r"  : "",
         "resolution_score"  : 0.0,
         "llm_source"        : "none",
         "llm_model"         : "",
@@ -711,6 +723,7 @@ def identify_targets_with_llm(doi_r:          str,
         "llm_prompt"        : prompt,
         "llm_error"         : llm_error,
         "targets"           : [],
+        "target_stage"      : "",
         "unidentified_count": 0,
         "stated_count"      : None,
         "stated_count_unit" : "",
@@ -763,16 +776,19 @@ def identify_targets_with_llm(doi_r:          str,
 
     resolved = bool(record) and bool(resolved_doi or record.get("title"))
 
+    # The rung is named whether or not it resolved: a multi-target answer takes its
+    # resolution_method from the target count, and the per-target adapter still has to
+    # know which stage produced the list to write an honest link_method for the rows.
+    stage = ("llm_references"                          if cache_prefix == "reftarget"
+             else f"llm_cited_candidates_{llm_source}" if abstract_only
+             else f"llm_{llm_source}")
+
     if not resolved:
         method = "llm_multi_target" if len(targets) > 1 else "llm_no_target"
     elif doi_from_title_search:
         method = f"llm_title_search_{llm_source}"
-    elif cache_prefix == "reftarget":
-        method = "llm_references"
-    elif abstract_only:
-        method = f"llm_cited_candidates_{llm_source}"
     else:
-        method = f"llm_{llm_source}"
+        method = stage
 
     output = {
         **base,
@@ -786,6 +802,10 @@ def identify_targets_with_llm(doi_r:          str,
         # "1, 2" form — the same field the multi-original path fills from its own answer.
         "resolved_study_o"  : _clean_study_numbers(
             single["study_numbers"] if record else ""),
+        # And which study of the REPLICATION re-tests it — FLoRA's study_r, the
+        # counterpart of study_o. Same cleaner: models answer "Study 1, Experiment 2".
+        "resolved_study_r"  : _clean_study_numbers(
+            single["replication_study_numbers"] if record else ""),
         "resolution_score"  : 1.0 if resolved else 0.0,
         "llm_source"        : llm_source,
         "llm_model"         : llm_model,
@@ -797,8 +817,13 @@ def identify_targets_with_llm(doi_r:          str,
         "llm_reasoning"     : " | ".join(filter(None, [
             str(result.get("reasoning", "") or ""), *notes])),
         "llm_error"         : "",
-        "targets"           : [{k: v for k, v in t.items() if k != "record"}
-                               for t in targets],
+        # The mapped record stays ON the target: a @key is only meaningful against the
+        # key_map of the call that offered it, and the per-target adapter in
+        # run_extract has neither the candidates nor the parsed references to rebuild
+        # one. Records are plain JSON dicts (shared/target_keys._normalise), so the
+        # cache is unaffected.
+        "targets"           : targets,
+        "target_stage"      : stage,
         "unidentified_count": unidentified,
         "stated_count"      : stated,
         "stated_count_unit" : unit,
@@ -926,7 +951,7 @@ def call_gemini_with_pdf(prompt: str,
     return None
 
 
-# ── Multi-original dispatcher ─────────────────────────────────────────────────
+# ── Study-number cleaning ─────────────────────────────────────────────────────
 
 def _clean_study_number(value) -> str:
     """FLoRA `study_o` for one targeted study: a bare number, or "" if there is none.
@@ -973,126 +998,6 @@ def _clean_study_numbers(value) -> str:
     return ", ".join(dict.fromkeys(numbers))
 
 
-def identify_all_originals_with_llm(doi_r:        str,
-                                      study_r:      str,
-                                      abstract_r:   str,
-                                      candidates:   list[dict],
-                                      sections:     dict,
-                                      html_text:    str = "",
-                                      force_multi:  bool = False) -> dict:
-    """
-    Identify ALL original studies in a multi-target replication paper.
-
-    Returns:
-        {
-          "resolved": bool,
-          "is_false_positive": bool,
-          "n_originals": int,
-          "originals": [{"rank", "title", "doi", "first_author", "year",
-                          "evidence", "confidence", "candidate_number"}],
-          "llm_source": str,
-          "llm_reasoning": str,
-        }
-    """
-    prompt = build_multi_original_prompt(study_r, abstract_r, candidates,
-                                          sections,
-                                          html_text=html_text,
-                                          force_multi=force_multi)
-    # force_multi reaches the model through the prompt, so it separates the two
-    # variants' entries by itself — no cache bypass needed.
-    key = content_key("multi", doi_r,
-                      prompt_version("build_multi_original_prompt"),
-                      ladder_fingerprint(GEMINI_HEAVY_MODEL), prompt)
-    cached = read_cache(LLM_CACHE_DIR, key)
-    if cached is not None:
-        cached.setdefault("llm_source", "cache")
-        return cached
-
-    _empty = {
-        "resolved"         : False,
-        "is_false_positive": False,
-        "n_originals"      : 0,
-        "originals"        : [],
-        "llm_source"       : "none",
-        "llm_reasoning"    : "",
-    }
-
-    result, llm_source, llm_model, _err = call_llm_ladder(
-        prompt, gemini_model=GEMINI_HEAVY_MODEL)
-    if not result:
-        return _empty
-
-    raw_originals = result.get("originals", [])
-    originals = []
-    for o in raw_originals:
-        if not isinstance(o, dict):
-            continue
-        # If candidate_number given, fill missing fields from candidate list.
-        cand_num = o.get("candidate_number")
-        cand_doi = ""
-        if cand_num is not None:
-            try:
-                idx = int(cand_num) - 1
-                if 0 <= idx < len(candidates):
-                    c = candidates[idx]
-                    cand_doi = c.get("doi", "") or ""
-                    o.setdefault("title", c.get("title",        ""))
-                    o.setdefault("year",  c.get("year"))
-                    o.setdefault("first_author_surname", c.get("first_author", ""))
-            except (ValueError, TypeError):
-                pass
-        # Never trust a DOI the LLM emitted (the prompt no longer asks for one).
-        # Use the selected candidate's verified OpenAlex DOI when there was one;
-        # otherwise resolve from title+author+year via CrossRef/OpenAlex. This
-        # mirrors the single-original path in identify_targets_with_llm().
-        title_o  = str(o.get("title", "") or "")
-        author_o = str(o.get("first_author_surname", "") or "")
-        year_o   = o.get("year")
-        resolved_doi = cand_doi
-        if not resolved_doi and title_o:
-            from shared.doi_verify import resolve_doi_by_metadata
-            hit = resolve_doi_by_metadata(title_o, author_o, year_o, exclude_doi=doi_r)
-            if hit:
-                resolved_doi = hit.get("doi", "") or ""
-        raw_outcome = str(o.get("outcome", "cannot_be_determined") or "cannot_be_determined").lower()
-        if raw_outcome not in OUTCOME_CATEGORIES:
-            raw_outcome = "cannot_be_determined"
-        originals.append({
-            "rank"             : o.get("rank", len(originals) + 1),
-            "title"            : title_o,
-            "doi"              : str(resolved_doi or ""),
-            "first_author"     : author_o,
-            "year"             : o.get("year"),
-            "evidence"         : str(o.get("evidence",        "") or ""),
-            "confidence"       : str(o.get("confidence", "low") or "low"),
-            "candidate_number" : cand_num,
-            "study_number"     : _clean_study_number(o.get("study_number")),
-            "outcome"          : raw_outcome,
-            "outcome_evidence" : str(o.get("outcome_evidence", "") or ""),
-        })
-
-    n_originals = len(originals)
-    # When force_multi=True the rule already confirmed this is multi-target;
-    # never trust is_false_positive from the LLM in that case.
-    if force_multi:
-        is_false_positive = False
-    else:
-        is_false_positive = bool(result.get("is_false_positive", n_originals <= 1))
-
-    output = {
-        "resolved"         : n_originals > 0,
-        "is_false_positive": is_false_positive,
-        "n_originals"      : n_originals,
-        "originals"        : originals,
-        "llm_source"       : llm_source,
-        "llm_model"        : llm_model,
-        "llm_reasoning"    : str(result.get("reasoning", "") or ""),
-    }
-
-    # A run that found no originals is cached too: it is the model's answer, not a
-    # failure, and re-asking it every run costs a heavy-model call per paper.
-    write_cache(LLM_CACHE_DIR, key, output)
-    return output
 
 
 
@@ -1313,9 +1218,11 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
 _UNPICKED_TARGET = {
     "resolved": False, "resolution_method": "llm_refscreen_declined",
     "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
-    "resolved_author_o": "", "resolved_study_o": "", "resolution_score": 0.0,
+    "resolved_author_o": "", "resolved_study_o": "", "resolved_study_r": "",
+    "resolution_score": 0.0,
     "llm_confidence": "", "target_description": "",
-    "targets": [], "multi_target": False,
+    "targets": [], "multi_target": False, "target_stage": "",
+    "unidentified_count": 0,
 }
 
 
@@ -1361,6 +1268,12 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
             "target_description": pick["target_as_named"],
             "targets":            pick["targets"],
             "multi_target":       pick["multi_target"],
+            # The list survives this rung even when the pick declined a single link:
+            # the adapter writes one row per target, and the stage names the rung so
+            # those rows carry the link_method they were actually resolved at.
+            "target_stage":       pick["target_stage"],
+            "unidentified_count": pick["unidentified_count"],
+            "resolved_study_r":   pick["resolved_study_r"],
         })
         if pick["resolved"]:
             # The link is this call's decision, not Q1's, so the row is attributed to
