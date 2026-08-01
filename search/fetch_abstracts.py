@@ -332,6 +332,58 @@ def _retry_after_seconds(resp) -> float:
         return 0.0
 
 
+def _request_with_retry(label: str, send, *, backoff=None, stop_on=None,
+                        attempts: int = 3) -> "tuple[Optional[requests.Response], str]":
+    """Send a request, retrying transient failures. Returns (response, "ok") or
+    (None, "transient").
+
+    Transient means a network exception, a 429, a 5xx, or a 2xx whose body is not
+    JSON (seen live from CrossRef after ~12k good calls, and a real anomaly rather
+    than a miss). Each is retried up to *attempts* times, waiting the longer of the
+    server's Retry-After header and *backoff(attempt)* — 1s/2s/4s unless a caller
+    passes its own schedule.
+
+    Everything else, 4xx included, comes back as (response, "ok"): only the caller
+    knows whether a 404 means "no abstract here" or "this request failed".
+    *stop_on* is checked first and short-circuits the retries when a response
+    already settles the matter (Scopus's spent-quota 429).
+
+    (None, "transient") is the contract every phase must honour by NOT
+    checkpointing the identifiers in this request. A throttled host must never
+    turn a row into a permanent miss.
+    """
+    for attempt in range(attempts):
+        try:
+            resp = send()
+        except Exception as exc:
+            log.warning("%s network error (attempt %d/%d): %s", label, attempt + 1, attempts, exc)
+            time.sleep(2 ** attempt)
+            continue
+
+        if stop_on is not None and stop_on(resp):
+            return resp, "ok"
+
+        if resp.status_code == 429 or resp.status_code >= 500:
+            wait = backoff(attempt) if backoff else 2 ** attempt
+            log.warning("%s HTTP %s (attempt %d/%d) — backing off.",
+                        label, resp.status_code, attempt + 1, attempts)
+            time.sleep(max(_retry_after_seconds(resp), wait))
+            continue
+
+        if resp.status_code < 400:
+            try:
+                resp.json()
+            except ValueError:
+                log.warning("%s returned a non-JSON body (attempt %d/%d) — backing off.",
+                            label, attempt + 1, attempts)
+                time.sleep(2 ** attempt)
+                continue
+
+        return resp, "ok"
+
+    return None, "transient"
+
+
 # ---------------------------------------------------------------------------
 # Source 2: Europe PMC by DOI, batched (phase 2)
 # ---------------------------------------------------------------------------
@@ -362,41 +414,28 @@ def _fetch_epmc_batch(dois: list[str]) -> Optional[dict[str, Optional[str]]]:
         # cannot push a distinct DOI's only record off the first page.
         "pageSize": min(len(dois) * 2, 100),
     }
-    for attempt in range(3):
-        try:
-            resp = _SESSION.get(
-                "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
-                params=params, timeout=40,
-            )
-        except Exception as exc:
-            log.warning("EuropePMC batch network error (attempt %d/3): %s", attempt + 1, exc)
-            time.sleep(2 ** attempt)
-            continue
-        if resp.status_code == 429 or resp.status_code >= 500:
-            retry_after = _retry_after_seconds(resp)
-            log.warning("EuropePMC batch %s (attempt %d/3) — backing off.",
-                        resp.status_code, attempt + 1)
-            time.sleep(max(retry_after, EPMC_RATE_SEC * (attempt + 1)))
-            continue
-        if resp.status_code >= 400:
-            log.warning("EuropePMC batch error (batch not checkpointed): HTTP %d — %s",
-                        resp.status_code, resp.text[:200])
-            return None
-        try:
-            data = resp.json()
-        except ValueError:
-            log.warning("EuropePMC batch bad JSON (attempt %d/3) — backing off.", attempt + 1)
-            time.sleep(2 ** attempt)
-            continue
+    resp, status = _request_with_retry(
+        "EuropePMC batch",
+        lambda: _SESSION.get(
+            "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
+            params=params, timeout=40,
+        ),
+        backoff=lambda attempt: EPMC_RATE_SEC * (attempt + 1),
+    )
+    if status == "transient":
+        return None
+    if resp.status_code >= 400:
+        log.warning("EuropePMC batch error (batch not checkpointed): HTTP %d — %s",
+                    resp.status_code, resp.text[:200])
+        return None
 
-        result: dict[str, Optional[str]] = {d: None for d in dois}
-        for record in ((data.get("resultList") or {}).get("result") or []):
-            doi = str(record.get("doi") or "").strip().lower()
-            abstract = record.get("abstractText") or None
-            if doi in result and abstract and not result[doi]:
-                result[doi] = _JATS_RE.sub("", abstract).strip() or None
-        return result
-    return None
+    result: dict[str, Optional[str]] = {d: None for d in dois}
+    for record in ((resp.json().get("resultList") or {}).get("result") or []):
+        doi = str(record.get("doi") or "").strip().lower()
+        abstract = record.get("abstractText") or None
+        if doi in result and abstract and not result[doi]:
+            result[doi] = _JATS_RE.sub("", abstract).strip() or None
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -416,36 +455,15 @@ def _fetch_crossref_abstract(doi: str) -> tuple[Optional[str], str]:
     retry 3× with 1s/2s/4s backoff, honouring a 429 Retry-After header when present.
     """
     url = f"https://api.crossref.org/works/{doi}?mailto={RESEARCHER_EMAIL}"
-    for attempt in range(3):
-        try:
-            resp = _SESSION.get(url, timeout=20)
-        except Exception as exc:
-            log.warning("CrossRef network error for %s (attempt %d/3): %s", doi, attempt + 1, exc)
-            time.sleep(2 ** attempt)
-            continue
-        if resp.status_code == 404:
-            return None, "empty"
-        if resp.status_code == 429 or resp.status_code >= 500:
-            retry_after = _retry_after_seconds(resp)
-            log.warning("CrossRef %s for %s (attempt %d/3) — backing off.",
-                        resp.status_code, doi, attempt + 1)
-            time.sleep(max(retry_after, 2 ** attempt))
-            continue
-        if resp.status_code >= 400:
-            return None, "empty"
-        try:
-            raw = resp.json().get("message", {}).get("abstract", "")
-        except ValueError:
-            # A 2xx with a non-JSON body (seen live: an empty body after ~12k
-            # successful calls) is a transient CrossRef/CDN anomaly, not a
-            # real miss — retry rather than crash the whole run on it.
-            log.warning("CrossRef bad JSON for %s (attempt %d/3) — backing off.",
-                        doi, attempt + 1)
-            time.sleep(2 ** attempt)
-            continue
-        cleaned = _JATS_RE.sub("", raw).strip() if raw else ""
-        return (cleaned, "ok") if cleaned else (None, "empty")
-    return None, "transient"
+    resp, status = _request_with_retry(
+        f"CrossRef {doi}", lambda: _SESSION.get(url, timeout=20))
+    if status == "transient":
+        return None, "transient"
+    if resp.status_code >= 400:
+        return None, "empty"
+    raw = resp.json().get("message", {}).get("abstract", "")
+    cleaned = _JATS_RE.sub("", raw).strip() if raw else ""
+    return (cleaned, "ok") if cleaned else (None, "empty")
 
 
 # ---------------------------------------------------------------------------
@@ -462,32 +480,14 @@ def _fetch_s2_abstract(doi: str, s2_key: str) -> tuple[Optional[str], str]:
     """
     url = f"https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}?fields=abstract"
     headers = {"x-api-key": s2_key} if s2_key else {}
-    for attempt in range(3):
-        try:
-            resp = _SESSION.get(url, timeout=20, headers=headers)
-        except Exception as exc:
-            log.warning("S2 network error for %s (attempt %d/3): %s", doi, attempt + 1, exc)
-            time.sleep(2 ** attempt)
-            continue
-        if resp.status_code == 404:
-            return None, "empty"
-        if resp.status_code == 429 or resp.status_code >= 500:
-            retry_after = _retry_after_seconds(resp)
-            log.warning("S2 %s for %s (attempt %d/3) — backing off.",
-                        resp.status_code, doi, attempt + 1)
-            time.sleep(max(retry_after, 2 ** attempt))
-            continue
-        if resp.status_code >= 400:
-            return None, "empty"
-        try:
-            abstract = resp.json().get("abstract") or None
-        except ValueError:
-            log.warning("S2 bad JSON for %s (attempt %d/3) — backing off.",
-                        doi, attempt + 1)
-            time.sleep(2 ** attempt)
-            continue
-        return (abstract, "ok") if abstract else (None, "empty")
-    return None, "transient"
+    resp, status = _request_with_retry(
+        f"S2 {doi}", lambda: _SESSION.get(url, timeout=20, headers=headers))
+    if status == "transient":
+        return None, "transient"
+    if resp.status_code >= 400:
+        return None, "empty"
+    abstract = resp.json().get("abstract") or None
+    return (abstract, "ok") if abstract else (None, "empty")
 
 
 def _fetch_s2_batch(dois: list[str], s2_key: str) -> Optional[dict[str, Optional[str]]]:
@@ -505,36 +505,22 @@ def _fetch_s2_batch(dois: list[str], s2_key: str) -> Optional[dict[str, Optional
     url = "https://api.semanticscholar.org/graph/v1/paper/batch"
     headers = {"x-api-key": s2_key} if s2_key else {}
     payload = {"ids": [f"DOI:{d}" for d in dois]}
-    for attempt in range(3):
-        try:
-            resp = _SESSION.post(url, params={"fields": "abstract"}, json=payload,
-                                 headers=headers, timeout=60)
-        except Exception as exc:
-            log.warning("S2 batch network error (attempt %d/3): %s", attempt + 1, exc)
-            time.sleep(2 ** attempt)
-            continue
-        if resp.status_code == 429 or resp.status_code >= 500:
-            retry_after = _retry_after_seconds(resp)
-            log.warning("S2 batch %s (attempt %d/3) — backing off.",
-                        resp.status_code, attempt + 1)
-            time.sleep(max(retry_after, S2_BATCH_RATE_SEC * (attempt + 1)))
-            continue
-        if resp.status_code >= 400:
-            log.warning("S2 batch error (batch not checkpointed): HTTP %d — %s",
-                        resp.status_code, resp.text[:200])
-            return None
-        try:
-            data = resp.json()
-        except Exception as exc:
-            log.warning("S2 batch: could not parse response (attempt %d/3): %s",
-                        attempt + 1, exc)
-            time.sleep(2 ** attempt)
-            continue
-        return {
-            doi: ((entry or {}).get("abstract") or None)
-            for doi, entry in zip(dois, data)
-        }
-    return None
+    resp, status = _request_with_retry(
+        "S2 batch",
+        lambda: _SESSION.post(url, params={"fields": "abstract"}, json=payload,
+                              headers=headers, timeout=60),
+        backoff=lambda attempt: S2_BATCH_RATE_SEC * (attempt + 1),
+    )
+    if status == "transient":
+        return None
+    if resp.status_code >= 400:
+        log.warning("S2 batch error (batch not checkpointed): HTTP %d — %s",
+                    resp.status_code, resp.text[:200])
+        return None
+    return {
+        doi: ((entry or {}).get("abstract") or None)
+        for doi, entry in zip(dois, resp.json())
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -568,46 +554,39 @@ def _fetch_scopus_abstract(doi: str, api_key: str) -> tuple[Optional[str], bool]
     """
     url = f"https://api.elsevier.com/content/abstract/doi/{doi}"
     headers = {"X-ELS-APIKey": api_key, "Accept": "application/json"}
+    if ELSEVIER_INSTTOKEN:
+        headers["X-ELS-Insttoken"] = ELSEVIER_INSTTOKEN
     # view=META_ABS is REQUIRED: the endpoint's default view (META) omits
     # dc:description entirely, so without this the tier returns HTTP 200 and no
     # abstract for every DOI — silently recovering nothing.
     params = {"view": "META_ABS"}
-    if ELSEVIER_INSTTOKEN:
-        headers["X-ELS-Insttoken"] = ELSEVIER_INSTTOKEN
-    for attempt in range(3):
-        try:
-            resp = _SESSION.get(url, timeout=20, headers=headers, params=params)
-        except Exception as exc:
-            log.warning("Scopus error for %s: %s", doi, exc)
-            time.sleep(2 ** attempt)
-            continue
-        if resp.status_code == 429:
-            if resp.headers.get("X-RateLimit-Remaining", "").strip() == "0":
-                return None, True
-            time.sleep(2 ** attempt)
-            continue
-        if resp.status_code in (400, 404):
-            return None, False
-        if resp.status_code in (401, 403):
-            # AUTHORIZATION_ERROR — the key is valid but not entitled to the
-            # abstract view. Retrying cannot help, and it is NOT a spent quota.
-            log.warning(
-                "Scopus not entitled to the abstract view for %s (HTTP %d). "
-                "Elsevier entitlement is IP-bound: run from the subscribing "
-                "network/VPN, or set ELSEVIER_INSTTOKEN.", doi, resp.status_code)
-            return None, False
-        if resp.status_code >= 400:
-            time.sleep(2 ** attempt)
-            continue
-        try:
-            return _parse_scopus_abstract(resp.json()), False
-        except ValueError:
-            log.warning("Scopus bad JSON for %s (attempt %d/3) — backing off.",
-                        doi, attempt + 1)
-            time.sleep(2 ** attempt)
-            continue
-    # Exhausted retries still hitting errors/429 — assume the quota is gone.
-    return None, True
+
+    def _quota_spent(resp) -> bool:
+        return (resp.status_code == 429
+                and resp.headers.get("X-RateLimit-Remaining", "").strip() == "0")
+
+    resp, status = _request_with_retry(
+        f"Scopus {doi}",
+        lambda: _SESSION.get(url, timeout=20, headers=headers, params=params),
+        stop_on=_quota_spent,
+    )
+    # Retries exhausted on 429/5xx — assume the weekly quota is gone rather than
+    # keep spending calls to find out.
+    if status == "transient" or _quota_spent(resp):
+        return None, True
+    if resp.status_code in (400, 404):
+        return None, False
+    if resp.status_code in (401, 403):
+        # AUTHORIZATION_ERROR — the key is valid but not entitled to the abstract
+        # view. Retrying cannot help, and it is NOT a spent quota.
+        log.warning(
+            "Scopus not entitled to the abstract view for %s (HTTP %d). "
+            "Elsevier entitlement is IP-bound: run from the subscribing "
+            "network/VPN, or set ELSEVIER_INSTTOKEN.", doi, resp.status_code)
+        return None, False
+    if resp.status_code >= 400:
+        return None, True
+    return _parse_scopus_abstract(resp.json()), False
 
 
 # ---------------------------------------------------------------------------

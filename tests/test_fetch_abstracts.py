@@ -1195,3 +1195,26 @@ def test_enrich_abstracts_batches_epmc_first_and_skips_dataset_dois(monkeypatch,
 
     # CrossRef only saw the DOI Europe PMC missed.
     assert crossref_dois == ["10.1/cr"]
+
+
+# ---------------------------------------------------------------------------
+# _request_with_retry — the one retry/Retry-After block behind all five sources
+# ---------------------------------------------------------------------------
+
+def test_request_with_retry_gives_up_as_transient_but_hands_back_4xx(monkeypatch):
+    """Transient (429/5xx/network/non-JSON-2xx) must end as (None, "transient") so the
+    caller declines to checkpoint; a 4xx is the caller's to interpret, not a retry."""
+    monkeypatch.setattr(fa.time, "sleep", lambda s: None)
+
+    calls = {"n": 0}
+
+    def send_429():
+        calls["n"] += 1
+        return DummyResponse({}, status_code=429)
+
+    resp, status = fa._request_with_retry("test", send_429)
+    assert (resp, status) == (None, "transient")
+    assert calls["n"] == 3
+
+    not_found = DummyResponse({}, status_code=404)
+    assert fa._request_with_retry("test", lambda: not_found) == (not_found, "ok")
