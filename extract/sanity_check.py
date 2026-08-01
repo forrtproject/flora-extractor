@@ -160,14 +160,12 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
         moved[name] = _quarantine(df, mask, DATA_DIR / fname) if move else int(mask.sum())
         claimed |= mask
 
-    # Fabricated doi_o: registered-looking but resolves nowhere. Needs a network check,
-    # so only under --deep; candidates are the "unregistered" verification outcomes.
-    # doi_r that the registry types as a dataset/software deposit, a peer-review object
-    # or supplementary material: the pipeline happily links such a record to the paper it
-    # belongs to, producing a plausible but bogus replication (23 of 50 hand-checked
-    # provisional links). The DOI patterns above catch none of these, so the type has to
-    # be fetched — network, hence --deep only.
     if deep:
+        # doi_r that the registry types as a dataset/software deposit, a peer-review
+        # object or supplementary material: the pipeline happily links such a record to
+        # the paper it belongs to, producing a plausible but bogus replication (23 of 50
+        # hand-checked provisional links). The DOI patterns above catch none of these,
+        # so the type has to be fetched — network, hence --deep only.
         by_type = pd.Series(False, index=df.index)
         for i in df.index[(doi_r != "") & ~claimed]:
             if _doi_r_non_study_type(df.at[i, "doi_r"]):
@@ -177,7 +175,8 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
             if move else int(by_type.sum())
         claimed |= by_type
 
-    if deep:
+        # Fabricated doi_o: registered-looking but resolves nowhere; candidates are the
+        # "unregistered" verification outcomes.
         cand = df.index[(doi_o != "") & df["doi_o_verification"].isin(["no_metadata"]) & ~claimed]
         fab = pd.Series(False, index=df.index)
         for i in cand:
