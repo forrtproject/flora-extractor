@@ -847,7 +847,9 @@ _MOCK_MULTI = {
     ],
     "originals_json": "[]",
 }
-_MOCK_MATCH = {"original_match_type": "single_original", "original_match_confidence": "high"}
+# classify_match_type's one shape (_match_type_result): callers read every key.
+_MOCK_MATCH = {"original_match_type": "single_original", "original_match_confidence": "high",
+               "rule_fired": False, "classify_llm_model": "", "reasoning": ""}
 
 # Stage 3's front door: both classifiers agree the paper is a replication, so the
 # row goes down the ladder exactly as it did before the screen moved to the front.
@@ -994,8 +996,8 @@ class TestRunExtract:
         )
         result = self._run(csv,
                            mock_multi=_MOCK_MULTI,
-                           mock_match={"original_match_type": "multiple_original",
-                                       "original_match_confidence": "high"})
+                           mock_match=dict(_MOCK_MATCH,
+                                           original_match_type="multiple_original"))
         assert len(result) == 2
         assert list(result["original_rank"].astype(int)) == [1, 2]
         assert list(result["n_originals"].astype(int)) == [2, 2]
@@ -1023,6 +1025,22 @@ class TestRunExtract:
         assert types["10.1000/rep"] == "replication"
         assert types["10.1000/repro"] == "reproduction"
         assert set(result["screen_categories"]) == {""}
+
+    def test_rows_are_streamed_in_chunks_abstract_bearing_ones_first(self, monkeypatch):
+        """filtered.csv is read in chunks, so the abstract-first ordering and the
+        --limit count must hold across chunk boundaries, not just within one."""
+        monkeypatch.setattr(run_extract, "_CHUNK_ROWS", 2)
+        header = ("doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
+                  "openalex_id_r,source,filter_status,filter_method,filter_evidence,"
+                  "filter_confidence\n")
+        rows = "".join(
+            f"10.1000/r{i},Paper {i},{'Abstract' if i % 2 else ''},2020,Smith,"
+            f"J. Psych,,W{i},openalex,replication,rule_based,direct replication,high\n"
+            for i in range(6))
+        result = self._run(header + rows, limit=4)
+        # Four rows processed, and the three with an abstract came first.
+        assert list(result["doi_r"]) == ["10.1000/r1", "10.1000/r3", "10.1000/r5",
+                                         "10.1000/r0"]
 
     def test_classify_not_called_for_false_positives(self):
         """Routing test: false_positive must bypass classify_match_type entirely."""

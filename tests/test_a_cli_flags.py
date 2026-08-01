@@ -131,7 +131,9 @@ class TestExtractedTestFlag:
              patch.object(rex, "LLM_CACHE_DIR", tmp_path / "llm"), \
              patch("extract.run_extract.classify_match_type",
                    return_value={"original_match_type": "single_original",
-                                 "original_match_confidence": "low"}), \
+                                 "original_match_confidence": "low",
+                                 "rule_fired": False, "classify_llm_model": "",
+                                 "reasoning": ""}), \
              patch("extract.run_extract.run_for_doi", return_value=_EMPTY_LINK), \
              patch("extract.run_extract._get_outcome", return_value=_EMPTY_OUTCOME), \
              patch("extract.run_extract._save_parse_cache"), \
