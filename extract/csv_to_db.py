@@ -54,7 +54,7 @@ _DISPLAY_COLS = {
 from shared.schema import RESOLVED_LINK_METHODS as _SCHEMA_RESOLVED_METHODS
 # Same skip list Stage 3 uses, so extraction and validation agree.
 from shared.flora_skip import default_flora_skip_dois
-from shared.utils import clean_doi
+from shared.utils import bare_work_id, clean_doi
 
 _RESOLVED_METHODS = _SCHEMA_RESOLVED_METHODS | {"author_year_match_legacy"}
 _RESOLVED_STATUSES = {"replication", "reproduction"}
@@ -81,8 +81,9 @@ def _derive_url_o(row) -> str:
         the wrong original is worse than no link, because it looks authoritative;
       * originals with no registered DOI (preprints, old papers, book chapters)
         previously produced an empty cell, leaving the validator nothing to click.
-    In both cases fall back to an OpenAlex title search, which is resolvable and
-    honest about being a lookup rather than a canonical identifier.
+    Without a trustworthy DOI, the canonical OpenAlex work URL is used when the row
+    carries an oa_work_id_o — it names one specific record, unlike the title search
+    below it, which is only a lookup that happens to be resolvable.
     """
     if isinstance(row, str):          # tolerate the old str signature
         row = {"doi_o": row, "doi_o_verification": "verified"}
@@ -92,6 +93,9 @@ def _derive_url_o(row) -> str:
 
     if doi_o and verification in _TRUSTED_DOI_VERIFICATION:
         return f"https://doi.org/{doi_o}"
+    work_id = bare_work_id(str(row.get("oa_work_id_o", "") or ""))
+    if work_id:
+        return f"https://openalex.org/{work_id}"
     if title_o:
         from urllib.parse import quote_plus
         return f"https://openalex.org/works?search={quote_plus(title_o)}"

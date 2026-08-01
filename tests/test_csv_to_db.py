@@ -289,6 +289,26 @@ def test_url_o_falls_back_to_search_when_no_doi():
     assert "Titled" in url
 
 
+def test_url_o_uses_openalex_work_url_when_no_doi():
+    """A DOI-less original (book, chapter, pre-DOI paper) has one canonical record:
+    its OpenAlex work. That beats a title search, which is only a lookup."""
+    row = {"doi_o": "", "doi_o_verification": "no_doi",
+           "title_o": "Gender Advertisements", "oa_work_id_o": "W2003152982"}
+    assert csv_to_db._derive_url_o(row) == "https://openalex.org/W2003152982"
+
+
+def test_url_o_normalises_openalex_url_form():
+    row = {"doi_o": "", "doi_o_verification": "no_doi", "title_o": "T",
+           "oa_work_id_o": "https://openalex.org/W2003152982"}
+    assert csv_to_db._derive_url_o(row) == "https://openalex.org/W2003152982"
+
+
+def test_url_o_prefers_work_url_over_untrusted_doi():
+    row = {"doi_o": "10.2/wrong", "doi_o_verification": "mismatch",
+           "title_o": "The Original Work", "oa_work_id_o": "W123"}
+    assert csv_to_db._derive_url_o(row) == "https://openalex.org/W123"
+
+
 def test_url_o_empty_when_nothing_to_point_at():
     assert csv_to_db._derive_url_o({"doi_o": "", "doi_o_verification": "", "title_o": ""}) == ""
 

@@ -6,7 +6,10 @@ validators, and reports per-row problems at two severities:
 
   BLOCKER — the row should not reach a validator (unverified doi_o, self-link,
             duplicate pair_id, an unfinished pipeline stage, or a missing display
-            field a validator needs to judge the record).
+            field a validator needs to judge the record). An original with no
+            registered DOI (doi_o_verification=no_doi) is NOT a blocker as long as
+            oa_work_id_o identifies it — books, chapters and pre-DOI-era papers are
+            legitimate targets that no DOI check can ever confirm.
   WARNING — the row can go to validators but is flagged (original postdates the
             replication, non-canonical outcome, an outcome quote not actually in
             the abstract, low confidence, or an inconsistent multi-original group).
@@ -34,7 +37,7 @@ from rapidfuzz import fuzz
 
 from shared.config import DATA_DIR, log
 from shared.schema import OUTCOME_VALUES
-from shared.utils import clean_doi
+from shared.utils import bare_work_id, clean_doi
 
 _INPUT_PATH  = DATA_DIR / "extracted.csv"
 _REPORT_PATH = DATA_DIR / "pre_validation_audit.csv"
@@ -45,8 +48,11 @@ WARNING = "WARNING"
 _REPORT_COLS = ["pair_id", "doi_r", "check", "severity", "detail"]
 
 # doi_o_verification values that mean the original DOI is trustworthy enough to
-# show a validator. Everything else (mismatch/not_found/no_metadata/no_doi/
-# api_error/skipped/empty) is a blocker.
+# show a validator. Everything else (mismatch/not_found/no_metadata/api_error/
+# skipped/empty) is a blocker. no_doi is the one conditional case: books, chapters
+# and pre-DOI-era papers have no DOI to verify, so the row is fine to validate as
+# long as it carries an oa_work_id_o to identify (and link to) the original —
+# without one there is nothing identifiable to show a validator.
 _VERIFIED_OK = {"verified", "corrected"}
 
 _UNRESOLVED_OUTCOMES = {"pending", "api_error"}
@@ -78,12 +84,22 @@ def _row_checks(row: pd.Series) -> list[tuple[str, str, str]]:
 
     # ── BLOCKER ──────────────────────────────────────────────────────────────
     verification = str(row.get("doi_o_verification", "") or "")
-    if verification not in _VERIFIED_OK:
+    oa_work_id_o = bare_work_id(str(row.get("oa_work_id_o", "") or ""))
+    if verification not in _VERIFIED_OK and not (verification == "no_doi" and oa_work_id_o):
         out.append(("doi_o_unverified", BLOCKER,
-                    f"doi_o_verification={verification or 'empty'}"))
+                    f"doi_o_verification={verification or 'empty'}"
+                    + (", no oa_work_id_o" if verification == "no_doi" else "")))
 
     if doi_o and doi_o == doi_r:
         out.append(("self_link", BLOCKER, f"doi_o == doi_r ({doi_o})"))
+
+    # A no_doi row's identity is its work id, so a self-link there is invisible to the
+    # DOI comparison above — the row would reach a validator pointing at itself.
+    oa_work_id_r = bare_work_id(str(row.get("oa_work_id_r", "")
+                                    or row.get("openalex_id_r", "") or ""))
+    if oa_work_id_o and oa_work_id_o == oa_work_id_r:
+        out.append(("self_link", BLOCKER,
+                    f"oa_work_id_o == oa_work_id_r ({oa_work_id_o})"))
 
     outcome = str(row.get("outcome", "") or "")
     link_method = str(row.get("link_method", "") or "")

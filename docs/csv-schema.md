@@ -51,12 +51,12 @@ All `filtered.csv` columns, plus:
 
 | Column | Type | Description |
 | ------ | ---- | ----------- |
-| `pair_id` | string | Hash of `(doi_r, doi_o)` — unique row key; recomputed if `doi_o` is corrected |
+| `pair_id` | string | MD5 of `doi_r` + the original's identifier — unique row key; recomputed if `doi_o` is corrected. The identifier is `doi_o` when it is set, else `oa:<oa_work_id_o>`, else `t:<normalised title_o>`, so DOI-less originals of the same replication stay distinct instead of all hashing to the same value. The hash for any row with a `doi_o` is unchanged from before that fallback existed |
 | `original_match_type` | string | `single_original` \| `multiple_match` \| `multiple_original` |
 | `original_match_confidence` | string | `high` \| `medium` \| `low` |
 | `classify_llm_model` | string | Model that classified `original_match_type`; blank when a rule fired, when `--no-llm` was set, or when the classifier LLM failed |
 | `oa_work_id_r` | string | OpenAlex work ID of the replication paper, **bare** form (`W2884670852`). Derived from `openalex_id_r`, which stores the URL form; falls back to a DOI lookup |
-| `oa_work_id_o` | string | OpenAlex work ID of the original study, bare form. Resolved from `doi_o` *after* DOI verification, so it always describes the DOI actually written. Blank when `doi_o` is blank or unindexed in OpenAlex |
+| `oa_work_id_o` | string | OpenAlex work ID of the original study, bare form. Normally resolved from `doi_o` *after* DOI verification, so it always describes the DOI actually written. For a DOI-less original (`doi_o_verification = no_doi`) it is the only identifier the row has: it carries the record identity, drives `pair_id`, and becomes the `url_o` validators click. Blank when there is neither a `doi_o` nor a known OpenAlex record |
 | `doi_o` | string | DOI of the original (target) study |
 | `title_o` | string | Title of the original study |
 | `study_o` | string | FLoRA's `study_o`: which study **inside** the original paper is targeted, as a number — several numbers (`1, 2`) when one replication targets several studies from the same paper. Blank when the original reports a single study or the replication does not say. Only the multi-original path fills it. A study identifier, never a title (issue #103) |
@@ -123,7 +123,7 @@ summarises the design.
 | `verified` | CrossRef/OpenAlex metadata matches expected title/year |
 | `corrected` | DOI was wrong or blank; a confident replacement was found and substituted |
 | `mismatch` | Metadata disagrees with expected; no confident replacement; `link_confidence` → `low` |
-| `no_doi` | Original found in OpenAlex but has no registered DOI |
+| `no_doi` | Original has no registered DOI — a book, a chapter, or a pre-DOI-era paper. `doi_o` stays blank and identity hangs off `oa_work_id_o`: `pair_id` is hashed from it and `url_o` becomes `https://openalex.org/<W…>`. Such a row **is** importable for validation when `oa_work_id_o` is set; with `oa_work_id_o` blank there is nothing identifiable to show a validator and `audit_extracted` blocks it |
 | `not_found` | DOI was blank and no match could be found anywhere |
 | `no_metadata` | DOI is registered but returned no usable metadata |
 | `api_error` | CrossRef and OpenAlex both failed after retries |

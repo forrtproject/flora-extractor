@@ -14,6 +14,7 @@ Usage:
 import json
 import re
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
@@ -36,7 +37,7 @@ from shared.pdf_parsing import (
 )
 from shared.cache import content_key, read_cache, write_cache
 from shared.prompts import build_match_type_prompt, prompt_version
-from shared.doi_verify import verify_and_correct
+from shared.doi_verify import keeps_no_doi, verify_and_correct
 from shared.schema import (
     EXTRACTED_COLS,
     LINK_METHOD_VALUES,
@@ -614,15 +615,11 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
         conf_str = "low"
     doi_r_clean  = clean_doi(str(filter_row.get("doi_r", "")))
     doi_o_clean  = clean_doi(orig.get("doi", "") or "")
-    rank         = orig.get("rank", 1)
     title_o      = str(orig.get("title", "") or "")
-    # pair_id is the cross-system row key. make_pair_id(doi_r, "") collides for every
-    # unresolved original of the same paper, so when doi_o is empty seed the hash with
-    # a stable disambiguator (rank + title) instead of "". Done here at the call site,
-    # not in shared.schema.make_pair_id, to keep that helper a pure DOI-pair hash.
-    pair_seed    = doi_o_clean or f"rank:{rank}:{title_o[:120]}"
     row.update({
-        "pair_id":           make_pair_id(doi_r_clean, pair_seed),
+        "pair_id":           make_pair_id(doi_r_clean, doi_o_clean,
+                                          str(orig.get("openalex_id", "") or ""),
+                                          title_o),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
         "classify_llm_model":        classify_model,
@@ -1133,6 +1130,9 @@ def _guard_original_link(row: dict) -> dict:
        set doi_o_verification="no_doi". Plenty of genuine originals (old papers,
        book chapters, working papers) have no registered DOI; dropping them would
        discard valid links. Marked explicitly so it is never mistaken for verified.
+       If the title search did return a work that OpenAlex indexes without a DOI,
+       its work id becomes oa_work_id_o — that id is the row's only identity, and
+       without it audit_extracted blocks the row.
     4. No DOI and no usable title → target_pending; there is nothing to validate.
     """
     # not_a_replication has no original by design — the reference screen concluded
@@ -1158,9 +1158,14 @@ def _guard_original_link(row: dict) -> dict:
         # demoted row would otherwise keep a coded outcome on an unresolved link.
         return _apply_outcome(row, _outcome_without_coding("target_pending", row) or {})
 
-    def _is_self(cand_doi: str) -> str:
+    work_id_r = bare_work_id(str(row.get("oa_work_id_r", "")
+                                 or row.get("openalex_id_r", "") or ""))
+
+    def _is_self(cand_doi: str, cand_work_id: str = "") -> str:
         if cand_doi and doi_r and cand_doi == doi_r:
             return "resolved original is the replication itself (same DOI)"
+        if cand_work_id and work_id_r and cand_work_id == work_id_r:
+            return "resolved original is the replication itself (same OpenAlex work)"
         if title_o and title_r and _norm_title(title_o) == _norm_title(title_r):
             return "resolved original has the same title as the replication"
         return ""
@@ -1170,6 +1175,7 @@ def _guard_original_link(row: dict) -> dict:
         return _reject(reason)
 
     # 2. best-effort DOI recovery from the title
+    meta: Optional[dict] = None
     if not doi_o and len(_norm_title(title_o)) >= _MIN_USABLE_TITLE:
         year_o = str(row.get("year_o", "") or "")
         try:
@@ -1180,7 +1186,10 @@ def _guard_original_link(row: dict) -> dict:
             log.debug("[%s] doi_o title-recovery failed: %s", doi_r, exc)
         found = clean_doi(str((meta or {}).get("doi", "") or ""))
         if found:
-            reason = _is_self(found)
+            # The work id has to be compared too: OpenAlex can return the replication's
+            # own work under a DOI that differs textually from doi_r (alternate or
+            # canonical form), which the DOI comparison alone would wave through.
+            reason = _is_self(found, bare_work_id(str((meta or {}).get("openalex_id", "") or "")))
             if reason:
                 return _reject(f"recovered DOI is a self-link — {reason}")
             log.info("[%s] recovered doi_o=%s from title search", doi_r, found)
@@ -1190,10 +1199,22 @@ def _guard_original_link(row: dict) -> dict:
 
     # 3/4. no DOI: keep only if the title is a usable, distinct original
     if not doi_o:
-        if len(_norm_title(title_o)) >= _MIN_USABLE_TITLE:
-            row["doi_o_verification"] = "no_doi"
-            return row
-        return _reject("no doi_o and no usable title_o")
+        if len(_norm_title(title_o)) < _MIN_USABLE_TITLE:
+            return _reject("no doi_o and no usable title_o")
+        row["doi_o_verification"] = "no_doi"
+        work_id_o = bare_work_id(str((meta or {}).get("openalex_id", "") or ""))
+        if work_id_o:
+            reason = _is_self("", work_id_o)
+            if reason:
+                return _reject(f"title-search hit is a self-link — {reason}")
+            log.info("[%s] DOI-less original identified as %s", doi_r, work_id_o)
+            # pair_id deliberately NOT recomputed: this is the single-original path,
+            # where the oa: fallback buys no collision protection (one original per
+            # row, and different replications already differ by doi_r) but would
+            # re-key the existing DOI-less rows the validation DB holds under
+            # md5("doi_r|") — a duplicate import. Only multi-original needs it.
+            row["oa_work_id_o"] = work_id_o
+        return row
 
     return row
 
@@ -1215,10 +1236,17 @@ def _verify_row(row: dict) -> dict:
                            exclude_doi=clean_doi(str(row.get("doi_r", ""))),
                            exclude_title=str(row.get("title_r", "")
                                              or row.get("study_r", "") or ""))
-    row["doi_o_verification"] = v["doi_o_verification"]
+    if not keeps_no_doi(v["doi_o_verification"], str(row.get("doi_o_verification", "") or ""),
+                        str(row.get("oa_work_id_o", "") or "")):
+        row["doi_o_verification"] = v["doi_o_verification"]
     if v["doi_o"] != old_doi:
         row["doi_o"]   = v["doi_o"]
         row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), v["doi_o"])
+        if v["doi_o"]:
+            # The old work id was resolved from the old DOI (or from a title search
+            # that produced it) and may describe a different work; _fill_work_ids
+            # refills it from the corrected DOI, but only if the column is blank.
+            row["oa_work_id_o"] = ""
         new_ref, new_authors, new_bibtex = _build_ref_o(v["doi_o"],
                                             str(row.get("authors_o", "") or ""),
                                             str(row.get("year_o",    "") or ""),
@@ -1234,6 +1262,10 @@ def _verify_row(row: dict) -> dict:
         # title/author/year claim is retained so the row can still be reviewed.
         row["doi_o"] = ""
         row["bibtex_ref_o"] = ""
+        # Any oa_work_id_o on a row that had a doi_o was resolved from that DOI, which
+        # has just been shown to describe a different paper — so it goes too, and the
+        # pair_id keys on the DOI pair alone rather than on a discredited work id.
+        row["oa_work_id_o"] = ""
         row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), "")
         row["link_confidence"] = "low"
     if v["evidence_note"]:
