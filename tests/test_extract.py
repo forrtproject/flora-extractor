@@ -1195,6 +1195,20 @@ class TestGranularLinkMethods:
                              "single_original", "high", 1, 1)
         assert row["link_method"] == method
 
+    def test_merge_row_carries_the_target_study_numbers(self):
+        """The resolved link names which study inside the original was targeted;
+        before this the column was written only by the multi-original path."""
+        link = {"resolution_method": "llm_fulltext", "resolved_doi_o": "10.1/orig",
+                "resolved_title_o": "Original", "resolved_year_o": 2000,
+                "resolved_author_o": "Smith", "resolved_study_o": "1, 2",
+                "resolution_score": 1.0, "llm_confidence": "high"}
+        filter_row = pd.Series({"doi_r": "10.1/rep", "title_r": "Rep",
+                                "filter_status": "replication"})
+        with patch("extract.run_extract._build_ref_o", return_value=("ref", "auth")):
+            row = _merge_row(filter_row, link, _MOCK_OUTCOME,
+                             "single_original", "high", 1, 1)
+        assert row["study_o"] == "1, 2"
+
 
 # ── pair_id identity: stability for DOI rows, distinctness without a DOI ──────
 

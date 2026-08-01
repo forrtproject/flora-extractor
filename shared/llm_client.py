@@ -591,6 +591,7 @@ def identify_targets_with_llm(doi_r:          str,
         "resolved_title_o"  : "",
         "resolved_year_o"   : None,
         "resolved_author_o" : "",
+        "resolved_study_o"  : "",
         "resolution_score"  : 0.0,
         "llm_source"        : "none",
         "llm_model"         : "",
@@ -671,6 +672,11 @@ def identify_targets_with_llm(doi_r:          str,
         "resolved_title_o"  : str(record.get("title") or "") if record else "",
         "resolved_year_o"   : record.get("year") if record else None,
         "resolved_author_o" : str(record.get("first_author") or "") if record else "",
+        # Which study inside the accepted original is targeted, in the codebook's
+        # "1, 2" form — the same field the multi-original path fills from its own answer.
+        "resolved_study_o"  : ", ".join(filter(None, (
+            _clean_study_number(part)
+            for part in (single["study_numbers"] if record else "").split(",")))),
         "resolution_score"  : 1.0 if resolved else 0.0,
         "llm_source"        : llm_source,
         "llm_model"         : llm_model,

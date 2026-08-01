@@ -1,5 +1,6 @@
 """Tests for citation-context extraction and Stage 4.5 screen routing in
 extract/link_original.py."""
+import json
 from unittest.mock import patch
 
 import pandas as pd
@@ -7,6 +8,10 @@ import pandas as pd
 import extract.link_original as link_original
 from extract.link_original import _extract_cit_contexts, run_for_doi
 from extract.run_extract import _map_method
+from shared.prompts import (
+    TARGET_ABSTRACT_CHARS, TARGET_INTRO_CHARS, TARGET_METHODS_CHARS,
+    build_target_prompt,
+)
 
 
 class TestExtractCitContexts:
@@ -273,3 +278,33 @@ class TestAbstractStageExcludeDoi:
 
         assert llm.called
         assert llm.call_args_list[0].args[0] == "10.1/rep"
+
+
+class TestStoredEvidenceMatchesThePrompt:
+    """The row is what a reviewer reads instead of the paper. Storing less than the
+    model was sent showed a shorter abstract than the answer rests on, and labelled a
+    truncated reference list as the whole one."""
+
+    def _output(self, sections: dict) -> dict:
+        return link_original._build_output(
+            "10.1/rep", {}, {}, [], {}, {}, {}, sections)
+
+    def test_sections_are_stored_at_the_sizes_sent(self):
+        sections = {"abstract": "a" * 5000, "intro": "i" * 5000,
+                    "methods": "m" * 5000, "references": []}
+        out = self._output(sections)
+        prompt = build_target_prompt("Title", "", [], intro=sections["intro"],
+                                     methods=sections["methods"])
+        assert len(out["grobid_abstract"]) == TARGET_ABSTRACT_CHARS
+        assert len(out["grobid_intro"])    == TARGET_INTRO_CHARS
+        assert len(out["grobid_methods"])  == TARGET_METHODS_CHARS
+        # Not just the same length — the same text the prompt carries.
+        assert out["grobid_intro"]   in prompt
+        assert out["grobid_methods"] in prompt
+
+    def test_reference_count_records_what_was_sent(self):
+        refs = [{"title": f"Ref {i}", "year": 2000, "authors": ["A"]}
+                for i in range(40)]
+        out = self._output({"references": refs})
+        assert len(json.loads(out["grobid_refs_json"])) == 25
+        assert out["n_references_sent"] == 40

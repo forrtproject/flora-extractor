@@ -195,6 +195,13 @@ key is the JSON value null, not the text "null":
 
 _WS_RE = re.compile(r"\s+")
 
+# How much of each evidence block build_target_prompt sends. link_original stores the
+# same slices on the row, so the dashboard shows exactly what the model was given —
+# import these rather than repeating the numbers.
+TARGET_ABSTRACT_CHARS = 3000
+TARGET_INTRO_CHARS    = 1200
+TARGET_METHODS_CHARS  = 800
+
 
 def _target_line(entry: dict) -> str:
     """One keyed work, in the form both lists use: `@key  Authors (year). Title.`"""
@@ -249,15 +256,16 @@ def build_target_prompt(study_r:        str,
     if study_r:
         blocks.append(f"TITLE: {study_r}")
     if abstract_r:
-        blocks.append(f"ABSTRACT: {abstract_r[:3000]}")
+        blocks.append(f"ABSTRACT: {abstract_r[:TARGET_ABSTRACT_CHARS]}")
     tail = _abstract_tail(abstract_r, pdf_abstract)
     if tail:
         blocks.append("ABSTRACT CONTINUED (from the PDF, beyond what is above):\n" + tail)
-    body = (intro or "")[:1200] or (html_text or "")[:1200]
+    body = ((intro or "")[:TARGET_INTRO_CHARS]
+            or (html_text or "")[:TARGET_INTRO_CHARS])
     if body:
         blocks.append("INTRODUCTION:\n" + body)
     if methods:
-        blocks.append("METHODS:\n" + methods[:800])
+        blocks.append("METHODS:\n" + methods[:TARGET_METHODS_CHARS])
 
     cited = [_target_line(e) for e in entries if e.get("in_candidates")]
     if cited:
@@ -999,8 +1007,12 @@ def _canonical_source(fn: FunctionType) -> str:
 
 
 def _collect(fn: FunctionType, parts: dict[str, str]) -> None:
-    """Record *fn*'s canonical source and, transitively, every module-level string
-    constant and helper function it references."""
+    """Record *fn*'s canonical source and, transitively, every module-level string or
+    int constant and helper function it references.
+
+    Ints count because a truncation cap changes what the model is sent just as surely
+    as a re-worded sentence does.
+    """
     tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)):
@@ -1009,7 +1021,9 @@ def _collect(fn: FunctionType, parts: dict[str, str]) -> None:
         if name in parts or not hasattr(_MODULE, name):
             continue
         value = getattr(_MODULE, name)
-        if isinstance(value, str):
+        if isinstance(value, int) and not isinstance(value, bool):
+            parts[name] = repr(value)
+        elif isinstance(value, str):
             # The value, not the expression that built it: REPRO_JSON and friends
             # are assembled at import from helpers, and the assembled text is what
             # reaches the model.

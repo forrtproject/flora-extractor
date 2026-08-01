@@ -104,7 +104,13 @@ function renderResults(data) {
   const pdf_url      = data.pdf_url       || '';
   const pdf_serve    = data.pdf_serve_url || '';
   const grobid_stat  = data.grobid_status || '';
-  const refs         = data.grobid_refs   || [];
+  // run_for_doi hands over the stored (truncated) list as JSON; n_references_sent is
+  // how many the model actually saw, and is absent on results cached before it existed.
+  let refs = data.grobid_refs || [];
+  if (!refs.length && data.grobid_refs_json) {
+    try { refs = JSON.parse(data.grobid_refs_json) || []; } catch (_) { refs = []; }
+  }
+  const nRefsSent    = Number(data.n_references_sent) || 0;
   const grobid_abs   = data.grobid_abstract || '';
   const grobid_intro = data.grobid_intro  || '';
   const candidates   = data.candidates    || [];
@@ -216,7 +222,7 @@ function renderResults(data) {
   if (grobid_stat || grobid_abs || grobid_intro || refs.length > 0) {
     let gContent = grid('repeat(3,1fr)', [
       `<div>${field('Status', '')}${pill(grobid_stat, grobid_stat==='success'?'background:#dcfce7;color:#166534':'background:#fef3c7;color:#92400e')}</div>`,
-      field('References parsed', String(refs.length)),
+      field('References parsed', String(nRefsSent || refs.length)),
       '',
     ]);
 
@@ -232,7 +238,7 @@ function renderResults(data) {
       </tr>`).join('');
       gContent += `
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#94a3b8;margin:8px 0 4px">
-          Reference List (first ${Math.min(refs.length, 30)} of ${refs.length})</div>
+          Reference List (first ${Math.min(refs.length, 30)} of ${nRefsSent || refs.length} sent to the model)</div>
         <table style="width:100%;border-collapse:collapse;font-size:11px">
           <thead><tr style="background:#f8fafc">
             <th style="padding:3px 8px;text-align:left;font-size:9px;color:#64748b">#</th>

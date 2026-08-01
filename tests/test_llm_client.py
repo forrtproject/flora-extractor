@@ -623,6 +623,18 @@ def test_identification_declines_are_cached(monkeypatch, tmp_path):
     assert len(list(tmp_path.glob("llm_*.json"))) == 1
 
 
+def test_identification_reports_the_target_study_numbers(monkeypatch, tmp_path):
+    """The single-original path had no way to reach study_o: the model answered
+    study_numbers and only the multi path wrote the column."""
+    calls: list = []
+    answer = {"targets": [dict(_PICK["targets"][0], study_numbers="Study 1, Exp 2")],
+              "unidentified_count": 0, "reasoning": "r"}
+    _identify(monkeypatch, tmp_path, answer, calls)
+    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+    assert out["resolved_doi_o"] == "10.1/orig"
+    assert out["resolved_study_o"] == "1, 2"
+
+
 def test_identification_key_follows_the_candidates(monkeypatch, tmp_path):
     calls: list = []
     _identify(monkeypatch, tmp_path, _PICK, calls)
