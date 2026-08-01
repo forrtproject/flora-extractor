@@ -129,9 +129,6 @@ def test_followup_run_filter_reprocesses_only_reset_rows(paths, monkeypatch):
     from shared.schema import CANDIDATES_COLS
 
     monkeypatch.setattr(rf, "DATA_DIR", paths["data"])
-    # No live LLM: rows the rule filter can't decide stay as-is.
-    monkeypatch.setattr(rf, "_llm_classify", lambda title, abstract: None)
-
     cand_rows = [
         {"doi_r": "10.1/a", "title_r": "A", "abstract_r": ""},
         {"doi_r": "10.1/b", "title_r": "B", "abstract_r": ""},

@@ -850,15 +850,21 @@ _MOCK_MATCH = {"original_match_type": "single_original", "original_match_confide
 # Stage 3's front door: both classifiers agree the paper is a replication, so the
 # row goes down the ladder exactly as it did before the screen moved to the front.
 _YES_SCREEN = {
-    "resolution_method": "llm_refscreen_declined", "is_replication": "yes",
-    "models_agree": True, "classification_confidence": "high",
-    "votes": [{"provider": "gemini", "is_replication": "yes",
-               "confidence": "high", "reasoning": "r"},
-              {"provider": "openrouter", "is_replication": "yes",
-               "confidence": "high", "reasoning": "r"}],
-    "llm_source": "gemini+openrouter", "llm_model": "flash-lite+ministral",
+    "resolution_method": "llm_refscreen_declined", "screen_verdict": "proceed",
+    "screen_classification": "replication", "record_type": "replication",
+    "categories": ["clearly_declared", "context_transfer"],
+    "votes": [{"provider": "gemini", "classification": "replication",
+               "confident": True, "categories": ["clearly_declared"], "reasoning": "r"},
+              {"provider": "openai", "classification": "replication",
+               "confident": True, "categories": ["context_transfer"], "reasoning": "r"}],
+    "llm_source": "gemini+openai", "llm_model": "flash-lite+gpt-5.4-mini",
     "llm_evidence": "", "llm_reasoning": "", "llm_prompt": "", "llm_error": "",
 }
+
+
+def _vote(provider, classification, confident=True, categories=()):
+    return {"provider": provider, "classification": classification,
+            "confident": confident, "categories": list(categories), "reasoning": "r"}
 
 
 class TestRunExtract:
@@ -869,14 +875,16 @@ class TestRunExtract:
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["test-key"])
         monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "test-key")
 
-    def _run(self, filtered_csv: str, mock_multi=None, mock_match=None):
+    def _run(self, filtered_csv: str, mock_multi=None, mock_match=None, screen=None,
+             **run_kwargs):
         """Helper: write a temp CSV, run extract with mocked APIs, return result DataFrame."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv",
                                         delete=False, encoding="utf-8-sig") as f:
             f.write(filtered_csv)
             tmp = Path(f.name)
 
-        with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
+        with patch("extract.run_extract.classify_replication",
+                   return_value=screen or _YES_SCREEN), \
              patch("extract.run_extract.classify_match_type",
                    return_value=mock_match or _MOCK_MATCH), \
              patch("extract.run_extract.run_for_doi", return_value=_MOCK_LINK), \
@@ -897,7 +905,7 @@ class TestRunExtract:
                 filtered_path.write_text(tmp.read_text(encoding="utf-8-sig"),
                                          encoding="utf-8-sig")
             from extract.run_extract import run_extract
-            result = run_extract()
+            result = run_extract(**run_kwargs)
 
         tmp.unlink(missing_ok=True)
         (tmp.parent / "filtered.csv").unlink(missing_ok=True)
@@ -990,19 +998,29 @@ class TestRunExtract:
         assert list(result["original_rank"].astype(int)) == [1, 2]
         assert list(result["n_originals"].astype(int)) == [2, 2]
 
-    def test_type_column_set_from_filter_status(self):
-        csv = (
-            "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
-            "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
-            "10.1000/rep,Rep Paper,Abstract,2020,Smith,J. Psych,,W1,openalex,"
-            "replication,rule_based,direct replication,high\n"
-            "10.1000/repro,Repro Paper,Abstract,2020,Jones,J. Psych,,W2,openalex,"
-            "reproduction,rule_based,reproduction study,high\n"
-        )
-        result = self._run(csv)
+    _TYPE_CSV = (
+        "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
+        "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
+        "10.1000/rep,Rep Paper,Abstract,2020,Smith,J. Psych,,W1,openalex,"
+        "replication,rule_based,direct replication,high\n"
+        "10.1000/repro,Repro Paper,Abstract,2020,Jones,J. Psych,,W2,openalex,"
+        "reproduction,rule_based,reproduction study,high\n"
+    )
+
+    def test_type_column_comes_from_the_screen_not_filter_status(self):
+        """The screen read the abstract and said what the paper is, so its verdict
+        overrides Stage 2's guess for both rows."""
+        result = self._run(self._TYPE_CSV,
+                           screen={**_YES_SCREEN, "record_type": "reproduction"})
+        assert set(result["type"]) == {"reproduction"}
+
+    def test_type_column_falls_back_to_filter_status_without_an_llm(self):
+        """--no-llm runs no screen, so Stage 2's filter_status is all there is."""
+        result = self._run(self._TYPE_CSV, no_llm=True)
         types = dict(zip(result["doi_r"], result["type"]))
         assert types["10.1000/rep"] == "replication"
         assert types["10.1000/repro"] == "reproduction"
+        assert set(result["screen_categories"]) == {""}
 
     def test_classify_not_called_for_false_positives(self):
         """Routing test: false_positive must bypass classify_match_type entirely."""
@@ -1059,7 +1077,8 @@ class TestRunExtract:
             f.write(csv)
             tmp = Path(f.name)
 
-        with patch("extract.run_extract.classify_match_type", return_value=_MOCK_MATCH), \
+        with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
+             patch("extract.run_extract.classify_match_type", return_value=_MOCK_MATCH), \
              patch("extract.run_extract.run_for_doi", side_effect=Exception("API timeout")), \
              patch("extract.run_extract.run_multi_original_for_doi",
                    return_value={"is_false_positive": False, "n_originals": 0,
@@ -2044,29 +2063,41 @@ class TestResumeReadsTheScreenSetAsides:
 
 
 class TestScreenProviderPrecheck:
-    """The Stage 4.5 screen needs two providers to have anything to agree about,
-    so a run configured with one must fail at startup, not 2,000 rows in."""
+    """The front-door screen needs two providers to have anything to weigh against
+    each other, so a run configured with one must fail at startup, not 2,000 rows
+    in. Which second key it needs follows SCREEN_VOTER2_MODEL."""
 
-    def test_missing_openrouter_key_raises(self, monkeypatch):
-        """Voter 2 runs on OpenRouter, so an OpenAI key no longer satisfies the screen."""
+    def test_a_slashless_voter_needs_the_openai_key(self, monkeypatch):
+        monkeypatch.setattr(run_extract, "SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["k"])
+        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "")
+        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "k")
+        with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
+            run_extract._check_screen_providers(no_llm=False)
+
+    def test_a_slashed_voter_needs_the_openrouter_key(self, monkeypatch):
+        monkeypatch.setattr(run_extract, "SCREEN_VOTER2_MODEL", "mistralai/ministral-14b-2512")
+        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["k"])
+        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "k")
         monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "")
         with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
             run_extract._check_screen_providers(no_llm=False)
 
     def test_missing_gemini_key_raises(self, monkeypatch):
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", [])
-        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "k")
+        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "k")
         with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
             run_extract._check_screen_providers(no_llm=False)
 
     def test_both_keys_present_passes(self, monkeypatch):
+        monkeypatch.setattr(run_extract, "SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["k"])
-        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "k")
+        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "k")
         run_extract._check_screen_providers(no_llm=False)
 
     def test_no_llm_skips_the_check(self, monkeypatch):
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", [])
+        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "")
         monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "")
         run_extract._check_screen_providers(no_llm=True)
 
@@ -2126,7 +2157,7 @@ class TestFrontDoorScreen:
         assert that the heavy calls after the front door were never made.
         """
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["test-key"])
-        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "test-key")
+        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "test-key")
         (tmp_path / "filtered.csv").write_text(_FILTERED_CSV, encoding="utf-8-sig")
         m_match = MagicMock(return_value=_MOCK_MATCH)
         m_link  = MagicMock(return_value=_MOCK_LINK)
@@ -2145,51 +2176,68 @@ class TestFrontDoorScreen:
             result = run_extract.run_extract()
         return result, m_match, m_link, m_out
 
-    def test_a_confident_no_is_written_without_any_further_call(self, tmp_path, monkeypatch):
+    def test_agreed_none_is_written_without_any_further_call(self, tmp_path, monkeypatch):
         result, m_match, m_link, m_out = self._run(
-            _screen(is_replication="no", llm_reasoning="gemini: unrelated"),
+            _screen(screen_verdict="discard", screen_classification="none",
+                    record_type="", categories=["terminology_only"],
+                    llm_reasoning="gemini: unrelated",
+                    votes=[_vote("gemini", "none"), _vote("openai", "none")]),
             tmp_path, monkeypatch)
 
         assert list(result["link_method"]) == ["not_a_replication"]
         assert list(result["outcome"]) == ["not_a_replication"]
+        assert "gemini=none/confident" in result.iloc[0]["link_evidence"]
+        assert result.iloc[0]["screen_categories"] == "terminology_only"
         m_match.assert_not_called()
         m_link.assert_not_called()
         m_out.assert_not_called()
 
-    def test_a_disagreement_skips_every_downstream_call(self, tmp_path, monkeypatch):
-        """audit B6: a disagreement row used to run an outcome call, whose
-        not_a_replication answer then leaked it into not_a_replication.csv."""
-        result, m_match, m_link, m_out = self._run(
-            _screen(is_replication="unclear", models_agree=False,
-                    classification_confidence="",
-                    votes=[{"provider": "gemini", "is_replication": "yes",
-                            "confidence": "high", "reasoning": "y"},
-                           {"provider": "openrouter", "is_replication": "no",
-                            "confidence": "high", "reasoning": "n"}]),
+    def test_unconfident_agreed_none_is_still_a_discard(self, tmp_path, monkeypatch):
+        """G-softqual discards two "none" votes at any confidence."""
+        result, _, m_link, _ = self._run(
+            _screen(screen_verdict="discard", screen_classification="none",
+                    record_type="",
+                    votes=[_vote("gemini", "none", confident=False),
+                           _vote("openai", "none", confident=False)]),
             tmp_path, monkeypatch)
 
-        assert list(result["link_method"]) == ["screen_disagreement"]
-        assert list(result["outcome"]) == ["pending"]
-        assert "gemini=yes/high" in result.iloc[0]["link_evidence"]
-        assert "openrouter=no/high" in result.iloc[0]["link_evidence"]
-        m_match.assert_not_called()
+        assert list(result["link_method"]) == ["not_a_replication"]
+        m_link.assert_not_called()
+
+    @pytest.mark.parametrize("partner", ["unclear", "replication"])
+    def test_confident_none_plus_an_unconfident_partner_is_a_discard(
+            self, tmp_path, monkeypatch, partner):
+        """The softqual clause: an answer the other voter would not stake anything
+        on does not outweigh a confident none."""
+        result, _, m_link, m_out = self._run(
+            _screen(screen_verdict="discard", screen_classification="none",
+                    record_type="",
+                    votes=[_vote("gemini", "none"),
+                           _vote("openai", partner, confident=False)]),
+            tmp_path, monkeypatch)
+
+        assert list(result["link_method"]) == ["not_a_replication"]
         m_link.assert_not_called()
         m_out.assert_not_called()
 
-    def test_an_unsure_no_still_goes_down_the_ladder(self, tmp_path, monkeypatch):
-        """Discarding a paper takes two confident models; a hedged no is not enough."""
+    def test_a_confident_split_proceeds_down_the_ladder(self, tmp_path, monkeypatch):
+        """Was screen_disagreement. A false inclusion costs a ladder run; a false
+        discard costs the paper, so a real split escalates instead of terminating."""
         result, m_match, m_link, _ = self._run(
-            _screen(is_replication="no", classification_confidence="medium"),
+            _screen(screen_verdict="proceed", screen_classification="replication",
+                    record_type="replication",
+                    votes=[_vote("gemini", "replication"), _vote("openai", "none")]),
             tmp_path, monkeypatch)
 
+        assert "screen_disagreement" not in set(result["link_method"])
         assert result.iloc[0]["link_method"] == "same_author_year_title_overlap"
         m_match.assert_called_once()
         m_link.assert_called_once()
 
     def test_one_vote_is_target_pending_not_a_verdict(self, tmp_path, monkeypatch):
         result, m_match, m_link, m_out = self._run(
-            _screen(resolution_method="llm_refscreen_partial", models_agree=False,
-                    is_replication="unclear", llm_error="classifier failed: openrouter"),
+            _screen(resolution_method="llm_refscreen_partial", screen_verdict="",
+                    record_type="", llm_error="classifier failed: openai"),
             tmp_path, monkeypatch)
 
         assert list(result["link_method"]) == ["target_pending"]
@@ -2199,8 +2247,8 @@ class TestFrontDoorScreen:
 
     def test_no_votes_is_an_api_error(self, tmp_path, monkeypatch):
         result, _, m_link, _ = self._run(
-            _screen(resolution_method="llm_refscreen_failed", models_agree=False,
-                    is_replication="unclear", llm_error="classifier failed: gemini, openrouter"),
+            _screen(resolution_method="llm_refscreen_failed", screen_verdict="",
+                    record_type="", llm_error="classifier failed: gemini, openai"),
             tmp_path, monkeypatch)
 
         assert list(result["link_method"]) == ["api_error"]
@@ -2211,6 +2259,19 @@ class TestFrontDoorScreen:
         _, _, m_link, _ = self._run(_YES_SCREEN, tmp_path, monkeypatch)
 
         assert m_link.call_args[1]["classification"] == _YES_SCREEN
+
+    def test_the_screen_decides_record_type_and_categories(self, tmp_path, monkeypatch):
+        """The screen read the abstract and said what the paper is, so its verdict
+        reaches the outcome call, the `type` column and filter_status."""
+        result, _, _, m_out = self._run(
+            _screen(record_type="reproduction", screen_classification="reproduction"),
+            tmp_path, monkeypatch)
+
+        assert m_out.call_args[1]["record_type"] == "reproduction"
+        assert result.iloc[0]["type"] == "reproduction"
+        assert result.iloc[0]["filter_status"] == "reproduction"
+        assert result.iloc[0]["filter_method"] == "screen"
+        assert result.iloc[0]["screen_categories"] == "clearly_declared|context_transfer"
 
 
 class TestMatchTypeLLMGate:

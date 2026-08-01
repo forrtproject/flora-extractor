@@ -66,9 +66,9 @@ def _screen_result(**over) -> dict:
         "resolved": False, "resolution_method": "llm_refscreen_declined",
         "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
         "resolved_author_o": "", "resolution_score": 0.0,
-        "is_replication": "unclear", "models_agree": False, "votes": [],
-        "llm_confidence": "", "classification_confidence": "",
-        "target_description": "",
+        "screen_verdict": "proceed", "screen_classification": "unclear",
+        "record_type": "", "categories": [], "votes": [],
+        "llm_confidence": "", "target_description": "",
         "llm_source": "", "llm_model": "", "llm_evidence": "",
         "llm_reasoning": "", "llm_prompt": "", "llm_error": "",
     }
@@ -104,8 +104,9 @@ class TestScreenRouting:
             resolution_method="llm_refscreen_partial",
             llm_error="classifier failed: openai",
             llm_model="gemini-light",
-            votes=[{"provider": "gemini", "is_replication": "no",
-                    "confidence": "high", "reasoning": "r"}]))
+            screen_verdict="",
+            votes=[{"provider": "gemini", "classification": "none",
+                    "confident": True, "categories": [], "reasoning": "r"}]))
 
         assert row["resolution_method"] == "llm_refscreen_partial"
         assert _map_method(row["resolution_method"]) == "target_pending"
@@ -124,36 +125,36 @@ class TestScreenRouting:
         """not_a_replication rows are quarantined for review, so they must record
         which models decided it, on what evidence, with what reasoning."""
         row = _run_to_screen(_screen_result(
-            is_replication="no", models_agree=True, classification_confidence="high",
+            screen_verdict="discard", screen_classification="none",
             llm_model="gemini-light+gpt-mini", llm_source="gemini+openai",
             llm_evidence="not a replication of anything",
             llm_reasoning="gemini: unrelated | openai: unrelated",
-            votes=[{"provider": "gemini", "is_replication": "no",
-                    "confidence": "high", "reasoning": "unrelated"},
-                   {"provider": "openai", "is_replication": "no",
-                    "confidence": "high", "reasoning": "unrelated"}]))
+            votes=[{"provider": "gemini", "classification": "none",
+                    "confident": True, "categories": [], "reasoning": "unrelated"},
+                   {"provider": "openai", "classification": "none",
+                    "confident": True, "categories": [], "reasoning": "unrelated"}]))
 
         assert _map_method(row["resolution_method"]) == "not_a_replication"
         assert row["llm_model"] == "gemini-light+gpt-mini"
-        assert row["llm_evidence"] == "not a replication of anything"
+        assert "gemini=none/confident" in row["llm_evidence"]
+        assert "openai=none/confident" in row["llm_evidence"]
+        assert "not a replication of anything" in row["llm_evidence"]
         assert "gemini: unrelated" in row["llm_reasoning"]
 
-    def test_disagreement_row_carries_the_screen_attribution(self):
-        row = _run_to_screen(_screen_result(
-            is_replication="unclear", models_agree=False,
-            llm_model="gemini-light+gpt-mini", llm_source="gemini+openai",
-            llm_evidence="the abstract says replication",
-            llm_reasoning="gemini: yes | openai: no",
-            votes=[{"provider": "gemini", "is_replication": "yes",
-                    "confidence": "high", "reasoning": "yes"},
-                   {"provider": "openai", "is_replication": "no",
-                    "confidence": "high", "reasoning": "no"}]))
+    def test_a_confident_split_proceeds_instead_of_being_set_aside(self):
+        """There is no screen_disagreement terminal state any more: a confident
+        none against a confident qualifying answer goes down the ladder."""
+        row, _ = _run_to_title_search(_screen_result(
+            screen_verdict="proceed", screen_classification="replication",
+            record_type="replication",
+            votes=[{"provider": "gemini", "classification": "replication",
+                    "confident": True, "categories": [], "reasoning": "yes"},
+                   {"provider": "openai", "classification": "none",
+                    "confident": True, "categories": [], "reasoning": "no"}]))
 
-        assert _map_method(row["resolution_method"]) == "screen_disagreement"
-        assert row["llm_model"] == "gemini-light+gpt-mini"
-        assert "gemini=yes/high" in row["llm_evidence"]
-        assert "openai=no/high" in row["llm_evidence"]
-        assert "the abstract says replication" in row["llm_evidence"]
+        # It escalated past the screen instead of terminating there.
+        assert _map_method(row["resolution_method"]) != "screen_disagreement"
+        assert _map_method(row["resolution_method"]) == "target_pending"
 
 
 # ── Stage 4.6 title-search gate (audit D2) ───────────────────────────────────
@@ -182,15 +183,16 @@ def _run_to_title_search(screen: dict, hit: "dict | None" = None) -> tuple[dict,
         return run_for_doi("10.1/rep", cands_df=cands_df), search
 
 
-def _yes_screen(confidence: str) -> dict:
+def _yes_screen(v1_confident: bool = True, v2_confident: bool = True,
+                v2_class: str = "replication") -> dict:
     return _screen_result(
-        is_replication="yes", models_agree=True,
-        classification_confidence=confidence,
+        screen_verdict="proceed", screen_classification="replication",
+        record_type="replication",
         target_description="Smith (2010), Time flies from left to right",
-        votes=[{"provider": "gemini", "is_replication": "yes",
-                "confidence": confidence, "reasoning": "r"},
-               {"provider": "openai", "is_replication": "yes",
-                "confidence": confidence, "reasoning": "r"}])
+        votes=[{"provider": "gemini", "classification": "replication",
+                "confident": v1_confident, "categories": [], "reasoning": "r"},
+               {"provider": "openai", "classification": v2_class,
+                "confident": v2_confident, "categories": [], "reasoning": "r"}])
 
 
 _HIT = {
@@ -203,26 +205,31 @@ _HIT = {
 class TestTitleSearchGate:
     """The title search is the one resolver that matches against the whole
     literature rather than a supplied candidate list, at ~50% measured precision.
-    It may only spend its two searches on a screen both models called high."""
+    It may only spend its two searches when BOTH voters gave a qualifying answer
+    and BOTH stood behind it."""
 
-    def test_high_confidence_screen_runs_the_search(self):
-        row, search = _run_to_title_search(_yes_screen("high"), hit=_HIT)
+    def test_both_voters_qualifying_and_confident_runs_the_search(self):
+        row, search = _run_to_title_search(_yes_screen(), hit=_HIT)
         assert search.called
         assert row["resolution_method"] == "llm_title_search_prepdf"
         assert row["resolved_doi_o"] == "10.9/orig"
 
-    def test_medium_confidence_screen_does_not_search(self):
-        row, search = _run_to_title_search(_yes_screen("medium"), hit=_HIT)
+    def test_an_unconfident_voter_does_not_search(self):
+        row, search = _run_to_title_search(_yes_screen(v2_confident=False), hit=_HIT)
         assert not search.called
         assert row["resolved_doi_o"] == ""
         assert _map_method(row["resolution_method"]) == "target_pending"
 
-    def test_low_confidence_screen_does_not_search(self):
-        _, search = _run_to_title_search(_yes_screen("low"), hit=_HIT)
+    def test_an_unconfident_first_voter_does_not_search(self):
+        _, search = _run_to_title_search(_yes_screen(v1_confident=False), hit=_HIT)
+        assert not search.called
+
+    def test_a_non_qualifying_voter_does_not_search(self):
+        _, search = _run_to_title_search(_yes_screen(v2_class="unclear"), hit=_HIT)
         assert not search.called
 
     def test_missing_target_description_does_not_search(self):
-        screen = _yes_screen("high")
+        screen = _yes_screen()
         screen["target_description"] = ""
         _, search = _run_to_title_search(screen, hit=_HIT)
         assert not search.called

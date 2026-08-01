@@ -360,3 +360,21 @@ def test_missing_study_o_is_empty_not_a_title():
     out = csv_to_db._build_unvalidated_row(
         "rec-2", pd.Series({"doi_r": "10.1/r", "title_o": "Some Title"}))
     assert out["study_o"] == ""
+
+
+def test_metadata_row_carries_the_screen_categories():
+    """The screen's category labels are per-record metadata, and multi-valued —
+    they must reach record_metadata as the pipe-joined string, unsplit."""
+    import pandas as pd
+    from extract import csv_to_db
+    out = csv_to_db._build_metadata_row("rec-3", pd.Series({
+        "pair_id": "abc", "screen_categories": "clearly_declared|context_transfer"}))
+    assert out["screen_categories"] == "clearly_declared|context_transfer"
+
+
+def test_metadata_row_screen_categories_defaults_to_empty():
+    """Legacy rows and --no-llm rows have no screen verdict to record."""
+    import pandas as pd
+    from extract import csv_to_db
+    out = csv_to_db._build_metadata_row("rec-4", pd.Series({"pair_id": "abc"}))
+    assert out["screen_categories"] == ""

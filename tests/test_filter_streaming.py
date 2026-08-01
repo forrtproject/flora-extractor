@@ -70,12 +70,6 @@ def _expected_keys_old_style(candidates_path, from_year=None, to_year=None,
     return keys
 
 
-# A successful LLM verdict. These tests are about key ordering and resume, so the LLM
-# must succeed — a None return now means "every model failed" and defers the row (#45).
-_LLM_OK = {"filter_status": "false_positive", "filter_confidence": "high",
-           "filter_evidence": "stub"}
-
-
 def _patch_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(rf, "DATA_DIR", tmp_path)
     monkeypatch.setattr(rf, "_FILTERED_INDEX_PATH", tmp_path / "filtered_index.txt")
@@ -109,8 +103,7 @@ def test_streamed_keys_match_old_concat_default(tmp_path, monkeypatch):
 
     expected = _expected_keys_old_style(tmp_path / "candidates.csv")
     # Force small chunks so the multi-chunk path is exercised on a tiny file.
-    with patch.object(rf.pd, "read_csv", _chunked_read(3)), \
-         patch.object(rf, "_llm_classify", return_value=_LLM_OK):
+    with patch.object(rf.pd, "read_csv", _chunked_read(3)):
         rf.run_filter()
 
     assert _read_index(tmp_path) == expected
@@ -125,8 +118,7 @@ def test_streamed_keys_match_old_concat_with_year_filter(tmp_path, monkeypatch):
     _write_candidates(tmp_path / "candidates.csv", _ROWS)
 
     expected = _expected_keys_old_style(tmp_path / "candidates.csv", from_year=2000)
-    with patch.object(rf.pd, "read_csv", _chunked_read(3)), \
-         patch.object(rf, "_llm_classify", return_value=_LLM_OK):
+    with patch.object(rf.pd, "read_csv", _chunked_read(3)):
         rf.run_filter(from_year=2000)
 
     assert _read_index(tmp_path) == expected
@@ -141,11 +133,10 @@ def test_resume_no_reprocess_no_duplicate(tmp_path, monkeypatch):
     _patch_paths(monkeypatch, tmp_path)
     _write_candidates(tmp_path / "candidates.csv", _ROWS)
 
-    with patch.object(rf, "_llm_classify", return_value=_LLM_OK):
-        first = rf.run_filter()                  # returns count of new rows written
-        index_after_first = _read_index(tmp_path)
-        second = rf.run_filter()
-        index_after_second = _read_index(tmp_path)
+    first = rf.run_filter()                  # returns count of new rows written
+    index_after_first = _read_index(tmp_path)
+    second = rf.run_filter()
+    index_after_second = _read_index(tmp_path)
 
     assert first == len(_ROWS)
     assert second == 0                           # nothing reprocessed
@@ -160,42 +151,31 @@ def test_resume_after_limit_continues_cleanly(tmp_path, monkeypatch):
     _write_candidates(tmp_path / "candidates.csv", _ROWS)
 
     expected = _expected_keys_old_style(tmp_path / "candidates.csv")
-    with patch.object(rf, "_llm_classify", return_value=_LLM_OK):
-        rf.run_filter(limit=3)
-        after_limit = _read_index(tmp_path)
-        rf.run_filter()
-        final = _read_index(tmp_path)
+    rf.run_filter(limit=3)
+    after_limit = _read_index(tmp_path)
+    rf.run_filter()
+    final = _read_index(tmp_path)
 
     assert after_limit == expected[:3]
     assert final == expected
     assert len(final) == len(set(final))
 
 
-def test_total_llm_failure_defers_the_row_for_retry(tmp_path, monkeypatch):
-    """#45: a row whose LLM call failed on every model must not be written as
-    `needs_review` (indistinguishable from real uncertainty) nor added to the index
-    (which would retire it forever). It must be retried on the next run."""
+def test_needs_review_rows_are_written_through(tmp_path, monkeypatch):
+    """Stage 2 no longer escalates undecidable rows to an LLM. A `needs_review`
+    verdict is written and indexed like any other, and Stage 3's front-door screen
+    is what decides it."""
     _patch_paths(monkeypatch, tmp_path)
     _write_candidates(tmp_path / "candidates.csv", _ROWS)
 
-    with patch.object(rf, "_llm_classify", return_value=None):
-        wrote = rf.run_filter()
-    index_after_failure = _read_index(tmp_path)
+    wrote = rf.run_filter()
     out = pd.read_csv(tmp_path / "filtered.csv", dtype=str).fillna("")
 
-    assert "needs_review" not in set(out["filter_status"]), \
-        "a failed LLM call must not masquerade as genuine uncertainty"
-    assert "10.1/aaa" not in index_after_failure, \
-        "the deferred row's key must stay out of the index so resume retries it"
-
-    # Second run with a working LLM picks the deferred row up.
-    with patch.object(rf, "_llm_classify", return_value=_LLM_OK):
-        wrote2 = rf.run_filter()
-
-    assert wrote2 >= 1
-    assert "10.1/aaa" in _read_index(tmp_path)
-    final = _read_index(tmp_path)
-    assert len(final) == len(set(final)), "the retry must not duplicate the row"
+    assert wrote == len(_ROWS)
+    assert set(out["filter_method"]) == {"rule_based"}
+    assert len(_read_index(tmp_path)) == len(_ROWS)
+    # A second run reprocesses nothing: every row, needs_review included, is indexed.
+    assert rf.run_filter() == 0
 
 
 def _chunked_read(chunksize: int):
