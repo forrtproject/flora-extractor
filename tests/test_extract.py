@@ -22,6 +22,7 @@ from shared.schema import (
 from shared.cache import content_key, read_cache
 import extract.code_outcome as code_outcome
 import extract.run_extract as run_extract
+import shared.llm_client as llm_client
 from extract.code_outcome import extract_outcome, _keyword_scan, _expand_to_sentences
 from extract.run_extract import (
     classify_match_type,
@@ -2069,7 +2070,7 @@ class TestScreenProviderPrecheck:
     in. Which second key it needs follows SCREEN_VOTER2_MODEL."""
 
     def test_a_slashless_voter_needs_the_openai_key(self, monkeypatch):
-        monkeypatch.setattr(run_extract, "SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
+        monkeypatch.setattr(llm_client, "SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["k"])
         monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "")
         monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "k")
@@ -2077,7 +2078,7 @@ class TestScreenProviderPrecheck:
             run_extract._check_screen_providers(no_llm=False)
 
     def test_a_slashed_voter_needs_the_openrouter_key(self, monkeypatch):
-        monkeypatch.setattr(run_extract, "SCREEN_VOTER2_MODEL", "mistralai/ministral-14b-2512")
+        monkeypatch.setattr(llm_client, "SCREEN_VOTER2_MODEL", "mistralai/ministral-14b-2512")
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["k"])
         monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "k")
         monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "")
@@ -2091,7 +2092,7 @@ class TestScreenProviderPrecheck:
             run_extract._check_screen_providers(no_llm=False)
 
     def test_both_keys_present_passes(self, monkeypatch):
-        monkeypatch.setattr(run_extract, "SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
+        monkeypatch.setattr(llm_client, "SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["k"])
         monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "k")
         run_extract._check_screen_providers(no_llm=False)

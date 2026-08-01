@@ -900,27 +900,30 @@ SCREEN_CATEGORIES = (
 )
 
 
-def _voter2_provider() -> str:
-    return "openrouter" if "/" in SCREEN_VOTER2_MODEL else "openai"
+def screen_voters() -> list[tuple[str, str, str]]:
+    """Q1's voters in call order, as (provider, model, env var holding its key).
+
+    The one place the voter pair is configured: it drives the per-vote dispatch, the
+    "+".join fingerprint the classification cache is keyed on, and run_extract's
+    startup key check. Swapping SCREEN_VOTER2_MODEL therefore reroutes the call, the
+    cache key and the required key together — a model id containing "/" is an
+    OpenRouter id, anything else is called on OpenAI direct.
+    """
+    if "/" in SCREEN_VOTER2_MODEL:
+        voter2 = ("openrouter", SCREEN_VOTER2_MODEL, "OPENROUTER_API_KEY")
+    else:
+        voter2 = ("openai", SCREEN_VOTER2_MODEL, "OPENAI_API_KEY")
+    return [("gemini", GEMINI_LIGHT_MODEL, "GEMINI_API_KEY"), voter2]
 
 
-def _screen_providers() -> tuple[str, str]:
-    return ("gemini", _voter2_provider())
-
-
-def _screen_model(provider: str) -> str:
-    return GEMINI_LIGHT_MODEL if provider == "gemini" else SCREEN_VOTER2_MODEL
-
-
-def _classify_once(prompt: str, provider: str) -> "dict | None":
+def _classify_once(prompt: str, provider: str, model: str) -> "dict | None":
     """One classification vote on the v3.2 five-field schema."""
     if provider == "gemini":
-        result, _ = call_gemini(prompt, model=GEMINI_LIGHT_MODEL)
+        result, _ = call_gemini(prompt, model=model)
     elif provider == "openrouter":
-        result, _ = call_openrouter(prompt, model=SCREEN_VOTER2_MODEL)
+        result, _ = call_openrouter(prompt, model=model)
     else:
-        result, _ = call_openai(prompt, model=SCREEN_VOTER2_MODEL,
-                                reasoning_effort="low")
+        result, _ = call_openai(prompt, model=model, reasoning_effort="low")
     if not result:
         return None
 
@@ -943,6 +946,7 @@ def _classify_once(prompt: str, provider: str) -> "dict | None":
         "evidence":       str(result.get("evidence_quote", "") or ""),
         "reasoning":      str(result.get("reasoning", "") or ""),
         "provider":       provider,
+        "model":          model,
     }
 
 
@@ -1017,14 +1021,14 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
                             screen is an API failure, not a verdict, so it is
                             returned uncached — a re-run must be able to succeed.
     """
-    providers  = _screen_providers()
+    voters     = screen_voters()
     cls_prompt = build_classify_prompt(study_r, abstract_r)
     # The voter pair is part of the verdict — the two models disagree often enough
     # that this is the question the audit measured a model effect on — so both
     # models are in the key alongside the prompt version and the text they see.
     key = content_key("classify", doi_r or study_r,
                       prompt_version("build_classify_prompt"),
-                      "+".join(_screen_model(p) for p in providers),
+                      "+".join(model for _, model, _ in voters),
                       cls_prompt)
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
@@ -1039,7 +1043,7 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
     }
 
     out["llm_prompt"] = cls_prompt
-    votes = [v for v in (_classify_once(cls_prompt, p) for p in providers) if v]
+    votes = [v for v in (_classify_once(cls_prompt, p, m) for p, m, _ in voters) if v]
 
     # Keep the individual votes: the gate's decision is not reviewable without
     # knowing who said what.
@@ -1047,7 +1051,7 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
                      ("provider", "classification", "confident", "categories", "reasoning")}
                     for v in votes]
     out["llm_source"] = "+".join(v["provider"] for v in votes)
-    out["llm_model"]  = "+".join(_screen_model(v["provider"]) for v in votes)
+    out["llm_model"]  = "+".join(v["model"] for v in votes)
     out["llm_evidence"]  = votes[0]["evidence"] if votes else ""
     out["llm_reasoning"] = " | ".join(f"{v['provider']}: {v['reasoning']}" for v in votes)
 
@@ -1060,7 +1064,7 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
         out["resolution_method"] = ("llm_refscreen_partial" if votes
                                     else "llm_refscreen_failed")
         out["llm_error"] = "classifier failed: " + ", ".join(
-            p for p in providers if p not in answered)
+            p for p, _, _ in voters if p not in answered)
         return out
 
     out["screen_verdict"] = screen_gate(votes)

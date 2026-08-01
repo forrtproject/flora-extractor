@@ -21,10 +21,12 @@ import pandas as pd
 from shared.config import (
     BASE_DIR, DATA_DIR, GEMINI_API_KEYS, GEMINI_HEAVY_MODEL, LLM_CACHE_DIR,
     OA_XML_CACHE_DIR, OPENAI_API_KEY, OPENROUTER_API_KEY, PARSE_CACHE_DIR,
-    PDF_CACHE_DIR, SCREEN_VOTER2_MODEL, log,
+    PDF_CACHE_DIR, log,
 )
 from shared import token_counter
-from shared.llm_client import call_llm, classify_replication, ladder_fingerprint
+from shared.llm_client import (
+    call_llm, classify_replication, ladder_fingerprint, screen_voters,
+)
 from shared.token_usage import TokenBudgetExhausted
 from shared.openalex_client import OpenAlexQuotaExhausted, extract_author_year_patterns, find_all_candidates
 from shared.openalex_client import fetch_openalex_by_doi as _oa_by_doi
@@ -1341,6 +1343,14 @@ def _append_row(out_path, result_row: dict, first: bool) -> None:
         raise
 
 
+# Read at call time, so a run picks up the keys config actually loaded.
+_SCREEN_KEYS = {
+    "GEMINI_API_KEY":     lambda: GEMINI_API_KEYS[0] if GEMINI_API_KEYS else "",
+    "OPENAI_API_KEY":     lambda: OPENAI_API_KEY,
+    "OPENROUTER_API_KEY": lambda: OPENROUTER_API_KEY,
+}
+
+
 def _check_screen_providers(no_llm: bool) -> None:
     """Refuse to start when the front-door screen cannot get its second vote.
 
@@ -1349,15 +1359,12 @@ def _check_screen_providers(no_llm: bool) -> None:
     returns a single vote, which the pipeline can only treat as an incomplete
     screen — the whole run would produce target_pending rows and discard nothing.
 
-    Which key voter 2 needs follows SCREEN_VOTER2_MODEL: an OpenRouter model id
-    contains "/", anything else is called on OpenAI direct.
+    Which key each voter needs comes from screen_voters(), the single place the pair
+    is configured — so a changed voter changes the required key with it.
     """
     if no_llm:
         return
-    voter2 = (("OPENROUTER_API_KEY", OPENROUTER_API_KEY) if "/" in SCREEN_VOTER2_MODEL
-              else ("OPENAI_API_KEY", OPENAI_API_KEY))
-    missing = [name for name, key in (("GEMINI_API_KEY", GEMINI_API_KEYS[0] if GEMINI_API_KEYS else ""),
-                                      voter2) if not key]
+    missing = [env for _, _, env in screen_voters() if not _SCREEN_KEYS[env]()]
     if missing:
         raise RuntimeError(
             f"Stage 3 needs both reference-screen providers; missing: {', '.join(missing)}. "

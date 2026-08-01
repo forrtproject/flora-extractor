@@ -128,7 +128,7 @@ def test_a_classification_outside_the_enum_becomes_unclear(monkeypatch):
                         lambda p, model=None: ({"classification": "maybe",
                                                 "confident": True,
                                                 "categories": ["clearly_declared"]}, None))
-    assert llm._classify_once("p", "gemini")["classification"] == "unclear"
+    assert llm._classify_once("p", "gemini", "flash-lite")["classification"] == "unclear"
 
 
 @pytest.mark.parametrize("raw,expected", [
@@ -139,7 +139,7 @@ def test_confident_is_coerced_to_a_bool(monkeypatch, raw, expected):
     monkeypatch.setattr(llm, "call_gemini",
                         lambda p, model=None: ({"classification": "replication",
                                                 "confident": raw, "categories": []}, None))
-    vote = llm._classify_once("p", "gemini")
+    vote = llm._classify_once("p", "gemini", "flash-lite")
     assert vote["confident"] is expected
 
 
@@ -147,7 +147,7 @@ def test_categories_keep_enum_values_in_order_and_drop_the_rest(monkeypatch):
     monkeypatch.setattr(llm, "call_gemini", lambda p, model=None: (
         {"classification": "replication", "confident": True,
          "categories": ["context_transfer", "not_a_category", "clearly_declared"]}, None))
-    vote = llm._classify_once("p", "gemini")
+    vote = llm._classify_once("p", "gemini", "flash-lite")
     assert vote["categories"] == ["context_transfer", "clearly_declared"]
 
 
@@ -172,8 +172,8 @@ def test_a_slashless_voter_id_calls_openai_not_openrouter(monkeypatch):
     monkeypatch.setattr(llm, "call_openrouter", lambda *a, **k: (_ for _ in ()).throw(
         AssertionError("an OpenAI voter id must not reach OpenRouter")))
 
-    assert llm._screen_providers() == ("gemini", "openai")
-    vote = llm._classify_once("p", "openai")
+    assert [v[0] for v in llm.screen_voters()] == ["gemini", "openai"]
+    vote = llm._classify_once("p", "openai", "gpt-5.4-mini")
     assert vote["provider"] == "openai"
     assert seen == {"model": "gpt-5.4-mini", "reasoning_effort": "low"}
 
@@ -186,8 +186,8 @@ def test_a_slashed_voter_id_calls_openrouter(monkeypatch):
     monkeypatch.setattr(llm, "call_openai", lambda *a, **k: (_ for _ in ()).throw(
         AssertionError("an OpenRouter voter id must not reach OpenAI")))
 
-    assert llm._screen_providers() == ("gemini", "openrouter")
-    assert llm._classify_once("p", "openrouter")["provider"] == "openrouter"
+    assert [v[0] for v in llm.screen_voters()] == ["gemini", "openrouter"]
+    assert llm._classify_once("p", "openrouter", "mistralai/ministral-14b-2512")["provider"] == "openrouter"
     assert seen["model"] == "mistralai/ministral-14b-2512"
 
 
