@@ -58,11 +58,11 @@ class TestChangeDetection:
 
     def test_template_edit_changes_its_own_version(self, monkeypatch):
         before = self._versions()
-        monkeypatch.setattr(prompts, "_IDENT_TEMPLATE",
-                            prompts._IDENT_TEMPLATE + "\nEXTRA RULE")
+        monkeypatch.setattr(prompts, "_TARGET_PROMPT",
+                            prompts._TARGET_PROMPT + "\nEXTRA RULE")
         prompt_version.cache_clear()
         after = self._versions()
-        assert after["build_identification_prompt"] != before["build_identification_prompt"]
+        assert after["build_target_prompt"] != before["build_target_prompt"]
         assert after["build_classify_prompt"] == before["build_classify_prompt"]
 
     def test_shared_fragment_edit_changes_every_user(self, monkeypatch):
@@ -74,13 +74,14 @@ class TestChangeDetection:
         after = self._versions()
         changed = {n for n in PROMPT_NAMES if after[n] != before[n]}
         for name in ("build_match_type_prompt",
-                     "build_identification_prompt", "build_multi_original_prompt",
-                     "build_target_prompt",
+                     "build_multi_original_prompt", "build_target_prompt",
                      "build_outcome_abstract_prompt", "build_outcome_fulltext_prompt",
                      "build_repro_abstract_prompt", "build_repro_fulltext_prompt"):
             assert name in changed, f"{name} did not follow EVIDENCE_POLICY"
-        # A prompt that does not splice it in is untouched.
+        # Prompts that do not splice it in are untouched — the front-door screen
+        # prompt states its own policy, so it is one of them.
         assert "PDF_REFERENCES_PROMPT" not in changed
+        assert "build_classify_prompt" not in changed
 
     def test_outcome_rules_edit_reaches_outcome_prompts_only(self, monkeypatch):
         before = self._versions()
@@ -127,10 +128,10 @@ class TestChangeDetection:
     def test_docstrings_are_not_part_of_the_version(self):
         """Canonicalisation strips docstrings and comments: only text that can reach
         the model moves a version."""
-        src = prompts._canonical_source(prompts.build_identification_prompt)
-        assert "Build the LLM identification prompt" not in src
-        assert "html_text — extracted landing-page text" not in src
-        assert "_IDENT_TEMPLATE.format" in src
+        src = prompts._canonical_source(prompts.build_target_prompt)
+        assert "Render the target-identification prompt" not in src
+        assert "only meaningful against the key_map" not in src
+        assert "_TARGET_PROMPT" in src
 
     def test_prompt_versions_joins_and_follows_each(self, monkeypatch):
         pair = ("build_outcome_abstract_prompt", "build_outcome_fulltext_prompt")

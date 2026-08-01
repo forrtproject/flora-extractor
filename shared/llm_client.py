@@ -1,13 +1,13 @@
 """
-llm_client.py — the pipeline's LLM calls: provider ladder, original-study
-identification, and the two-model replication screen.
+llm_client.py — the pipeline's LLM calls: provider ladder, target identification,
+and the two-model replication screen.
 
 Provider ladder: Gemini → OpenAI → OpenRouter, in call_llm_ladder(). Each provider
 is rate-limited against its own last-call timestamp.
 
 Public API:
-    identify_original_with_llm(doi_r, study_r, abstract_r, pattern,
-                                candidates, sections) → dict
+    identify_targets_with_llm(doi_r, study_r, abstract_r, candidates,
+                              references, …) → dict
 """
 import base64
 import json
@@ -31,10 +31,11 @@ from . import token_counter, token_usage
 from .cache import content_key, read_cache, write_cache
 from .prompts import (
     JSON_SYSTEM_MESSAGE,
-    build_classify_prompt, build_identification_prompt,
-    build_multi_original_prompt, build_target_prompt, prompt_version,
+    build_classify_prompt, build_multi_original_prompt, build_target_prompt,
+    prompt_version,
 )
 from .schema import OUTCOME_CATEGORIES
+from .target_keys import assign_target_keys
 from .utils import clean_doi
 
 # Output cap for the JSON-returning chat calls. It was 1024, which on a reasoning
@@ -106,6 +107,9 @@ def _throttle(provider: str) -> None:
 
 
 # ── JSON parsing (handles markdown-fenced output) ─────────────────────────────
+
+_WS_RE = re.compile(r"\s+")
+
 
 def _parse_llm_json(text: str) -> Optional[dict]:
     """
@@ -480,40 +484,96 @@ def call_llm(prompt: str, gemini_model: str = "", openai_model: str = "",
 
 # ── Main dispatcher ───────────────────────────────────────────────────────────
 
-def identify_original_with_llm(doi_r:          str,
-                                 study_r:        str,
-                                 abstract_r:     str,
-                                 pattern:        str,
-                                 candidates:     list[dict],
-                                 sections:       dict,
-                                 html_text:      str = "",
-                                 validator_note: str = "",
-                                 abstract_only:  bool = False) -> dict:
+def _validate_targets(raw: list, key_map: dict[str, dict],
+                      prompt: str) -> tuple[list[dict], list[str]]:
+    """Check every target the model returned against this call's key namespace.
+
+    Nothing the model says about a key is trusted: an invented key is demoted to an
+    unmatched target rather than dropped (the paper may still re-test something), a
+    repeated key keeps only the first entry, and a quote that is not in the text we
+    sent is recorded but not grounds for rejection — parsers reflow whitespace and
+    ligatures, so a strict quote gate would discard correct picks.
     """
-    Identify the original study via LLM.
+    sent  = _WS_RE.sub(" ", prompt)
+    seen: set[str] = set()
+    targets: list[dict] = []
+    notes:   list[str]  = []
 
-    html_text — extracted landing-page text as full-text substitute.
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("key") or "").strip()
+        certain = item.get("match_certain")
+        certain = certain is True or str(certain).strip().lower() == "true"
+        if key and key not in key_map:
+            notes.append(f"invented key {key!r} — target kept as unmatched")
+            key, certain = "", False
+        if key and key in seen:
+            notes.append(f"duplicate key {key!r} — kept the first entry")
+            continue
+        if key:
+            seen.add(key)
+        else:
+            certain = False
+        quote = str(item.get("evidence_quote", "") or "").strip()
+        if quote and _WS_RE.sub(" ", quote) not in sent:
+            notes.append(f"evidence_quote not found verbatim in the text sent: {quote[:80]!r}")
+        targets.append({
+            "key":             key or None,
+            "match_certain":   certain,
+            "target_as_named": str(item.get("target_as_named", "") or "").strip(),
+            "study_numbers":   str(item.get("study_numbers", "") or "").strip(),
+            "evidence_quote":  quote,
+            "record":          key_map.get(key) if key else None,
+        })
+    return targets, notes
 
-    Order: the shared ladder — Gemini → OpenAI → OpenRouter, the last skipped
-    without an OPENROUTER_API_KEY.
 
-    The cache key is the rendered prompt — the candidates, the parsed sections and
-    the validator note all reach the model through it — plus the prompt version and
-    the model that will answer. Keying on the DOI alone, as this did, meant the
-    abstract-stage call and the full-text call collided, and a paper whose PDF had
-    since been parsed replayed the answer given when only the abstract was known.
+def identify_targets_with_llm(doi_r:          str,
+                              study_r:        str,
+                              abstract_r:     str,
+                              candidates:     list[dict],
+                              references:     list[dict],
+                              *,
+                              pdf_abstract:   str = "",
+                              intro:          str = "",
+                              methods:        str = "",
+                              html_text:      str = "",
+                              validator_note: str = "",
+                              cache_prefix:   str = "llm",
+                              abstract_only:  bool = False,
+                              openrouter:     bool = True) -> dict:
+    """Ask which previously published study or studies this paper re-tests.
 
-    Every answer the model gives is cached, including "no identifiable original":
-    a decline is a result, and caching only successes made every declined full-text
-    call repay its API cost on every re-run. API failures are still not cached.
+    One function for all three LLM stages of the resolution ladder; what differs is
+    the evidence passed in, not the question. Acceptance is `match_certain` on a key
+    that exists in THIS call's namespace — the DOI always comes from the mapped
+    record, never from the model.
+
+    cache_prefix names the stage as well as the cache: the abstract stage and the
+    full-text stage share "llm" and are told apart by abstract_only, the reference
+    screen uses "reftarget". Two stages rendering the same prompt for the same paper
+    therefore still cache — and are answerable — separately.
+
+    Every parsed answer is cached, a decline included; provider failures are not.
     """
-    prompt     = build_identification_prompt(study_r, abstract_r, pattern,
-                                             candidates, sections,
-                                             html_text=html_text,
-                                             validator_note=validator_note)
-    key = content_key("llm", doi_r,
-                      prompt_version("build_identification_prompt"),
-                      ladder_fingerprint(GEMINI_HEAVY_MODEL), abstract_only, prompt)
+    entries, key_map = assign_target_keys(candidates, references)
+    prompt = build_target_prompt(study_r, abstract_r, entries,
+                                 pdf_abstract=pdf_abstract, intro=intro,
+                                 methods=methods, html_text=html_text,
+                                 validator_note=validator_note)
+    # The prompt shows the model a key, authors, a year and a title — but the answer
+    # is converted to a link through the record that key maps to, and the DOI it
+    # carries is not on the page. Two runs whose lists render identically can still
+    # map the same key to different records (a DOI backfilled into OpenAlex, a work
+    # merged into another id), so the identities go into the key on their own account
+    # or the cache replays a stale DOI under a prompt that still looks right.
+    identities = "|".join(f"{e['key']}:{e.get('doi') or e.get('openalex_id') or ''}"
+                          for e in entries)
+    key = content_key(cache_prefix, doi_r or study_r,
+                      prompt_version("build_target_prompt"),
+                      ladder_fingerprint(GEMINI_HEAVY_MODEL, openrouter=openrouter),
+                      abstract_only, identities, prompt)
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
         cached.setdefault("llm_source", "cache")
@@ -522,9 +582,9 @@ def identify_original_with_llm(doi_r:          str,
         return cached
 
     result, llm_source, llm_model, llm_error = call_llm_ladder(
-        prompt, gemini_model=GEMINI_HEAVY_MODEL)
+        prompt, gemini_model=GEMINI_HEAVY_MODEL, openrouter=openrouter)
 
-    _empty = {
+    base = {
         "resolved"          : False,
         "resolution_method" : "llm_failed",
         "resolved_doi_o"    : "",
@@ -539,72 +599,96 @@ def identify_original_with_llm(doi_r:          str,
         "llm_reasoning"     : "",
         "llm_prompt"        : prompt,
         "llm_error"         : llm_error,
+        "targets"           : [],
+        "unidentified_count": 0,
+        "stated_count"      : None,
+        "stated_count_unit" : "",
+        "multi_target"      : False,
+        "target_as_named"   : "",
     }
-
     if not result:
-        return _empty
+        return base
 
-    cand_num       = result.get("selected_candidate_number")
-    resolved_doi   = ""
-    resolved_title = (result.get("selected_title")        or "").strip()
-    resolved_year  = result.get("selected_year")
-    resolved_auth  = (result.get("selected_first_author") or "").strip()
+    targets, notes = _validate_targets(result.get("targets"), key_map, prompt)
 
-    if cand_num is not None:
-        try:
-            idx = int(cand_num) - 1
-            if 0 <= idx < len(candidates):
-                c = candidates[idx]
-                resolved_doi   = c.get("doi", "")
-                resolved_title = resolved_title or c.get("title",        "")
-                resolved_year  = resolved_year  or c.get("year")
-                resolved_auth  = resolved_auth  or c.get("first_author", "")
-        except (ValueError, TypeError):
-            pass
+    try:
+        unidentified = max(0, int(result.get("unidentified_count") or 0))
+    except (TypeError, ValueError):
+        notes.append(f"unidentified_count not a number: {result.get('unidentified_count')!r}")
+        unidentified = 0
 
-    # When the original is not in the candidate list, resolve DOI from title+author
-    # via CrossRef/OpenAlex rather than trusting any DOI the LLM may have fabricated.
+    try:
+        stated = int(result.get("stated_count")) if result.get("stated_count") is not None else None
+    except (TypeError, ValueError):
+        stated = None
+    unit = str(result.get("stated_count_unit") or "").strip().lower()
+
+    evidence_notes: list[str] = []
+    if unidentified:
+        evidence_notes.append(f"unidentified={unidentified}")
+    # Only papers/studies can be reconciled against an entry count: a paper stating
+    # 28 findings or 36 sites may still be re-testing one original.
+    if stated is not None and unit in {"papers", "studies"}:
+        if stated != len(targets) + unidentified:
+            evidence_notes.append(
+                f"stated_count={stated} {unit}, identified={len(targets)}, "
+                f"unidentified={unidentified} — does not reconcile")
+
+    first  = targets[0] if targets else None
+    single = targets[0] if len(targets) == 1 else None
+    record = single["record"] if single and single["match_certain"] else None
+
+    resolved_doi = clean_doi(str(record.get("doi") or "")) if record else ""
     doi_from_title_search = False
-    if not resolved_doi and resolved_title:
+    if record and not resolved_doi and record.get("title"):
+        # A parsed-PDF reference carries no DOI. Search for it rather than let the
+        # model supply one; the pick is then provisional, at ~50% precision.
         from shared.doi_verify import resolve_doi_by_metadata
-        hit = resolve_doi_by_metadata(
-            resolved_title, resolved_auth, resolved_year,
-            exclude_doi=doi_r,
-        )
+        hit = resolve_doi_by_metadata(record["title"], record.get("first_author", ""),
+                                      record.get("year"), exclude_doi=doi_r)
         if hit:
-            resolved_doi = hit.get("doi", "")
-            # Provenance matters: this DOI was NOT taken from the reference list, it
-            # was searched for by title. Every doi_o mismatch in the 2026-07 audit came
-            # from here, so downstream must be able to tell these apart.
+            resolved_doi = clean_doi(hit.get("doi", "") or "")
             doi_from_title_search = bool(resolved_doi)
 
-    resolved = bool(resolved_title)
+    resolved = bool(record) and bool(resolved_doi or record.get("title"))
 
-    confidence_map = {"high": 1.0, "medium": 0.6, "low": 0.3}
-    conf_str   = result.get("confidence", "low")
-    conf_score = confidence_map.get(conf_str, 0.3)
+    if not resolved:
+        method = "llm_multi_target" if len(targets) > 1 else "llm_no_target"
+    elif doi_from_title_search:
+        method = f"llm_title_search_{llm_source}"
+    elif cache_prefix == "reftarget":
+        method = "llm_references"
+    elif abstract_only:
+        method = f"llm_cited_candidates_{llm_source}"
+    else:
+        method = f"llm_{llm_source}"
 
     output = {
+        **base,
         "resolved"          : resolved,
-        # llm_no_target: LLM ran successfully but concluded no identifiable original exists.
-        # Distinct from llm_failed (all API calls errored) and llm_fulltext (original found).
-        "resolution_method" : (
-            f"llm_title_search_{llm_source}" if (resolved and doi_from_title_search) else
-            (f"llm_cited_candidates_{llm_source}" if abstract_only else f"llm_{llm_source}")
-        ) if resolved else "llm_no_target",
+        "resolution_method" : method,
         "resolved_doi_o"    : resolved_doi,
-        "resolved_title_o"  : resolved_title,
-        "resolved_year_o"   : resolved_year,
-        "resolved_author_o" : resolved_auth,
-        "resolution_score"  : conf_score,
+        "resolved_title_o"  : str(record.get("title") or "") if record else "",
+        "resolved_year_o"   : record.get("year") if record else None,
+        "resolved_author_o" : str(record.get("first_author") or "") if record else "",
+        "resolution_score"  : 1.0 if resolved else 0.0,
         "llm_source"        : llm_source,
         "llm_model"         : llm_model,
-        "llm_confidence"    : conf_str,
-        "llm_evidence"      : result.get("evidence",  ""),
-        "llm_reasoning"     : result.get("reasoning", ""),
-        "llm_prompt"        : prompt,
-        "llm_response"      : json.dumps(result, ensure_ascii=False) if result else "",
+        # The acceptance gate is match_certain; llm_confidence exists so
+        # run_extract._link_confidence keeps reading one field for every producer.
+        "llm_confidence"    : "high" if resolved else "low",
+        "llm_evidence"      : "; ".join(filter(None, [
+            first["evidence_quote"] if first else "", *evidence_notes])),
+        "llm_reasoning"     : " | ".join(filter(None, [
+            str(result.get("reasoning", "") or ""), *notes])),
         "llm_error"         : "",
+        "targets"           : [{k: v for k, v in t.items() if k != "record"}
+                               for t in targets],
+        "unidentified_count": unidentified,
+        "stated_count"      : stated,
+        "stated_count_unit" : unit,
+        "multi_target"      : len(targets) > 1,
+        "target_as_named"   : first["target_as_named"] if first else "",
     }
 
     write_cache(LLM_CACHE_DIR, key, output)
@@ -815,7 +899,7 @@ def identify_all_originals_with_llm(doi_r:        str,
         # Never trust a DOI the LLM emitted (the prompt no longer asks for one).
         # Use the selected candidate's verified OpenAlex DOI when there was one;
         # otherwise resolve from title+author+year via CrossRef/OpenAlex. This
-        # mirrors the single-original path in identify_original_with_llm().
+        # mirrors the single-original path in identify_targets_with_llm().
         title_o  = str(o.get("title", "") or "")
         author_o = str(o.get("first_author_surname", "") or "")
         year_o   = o.get("year")
@@ -1086,12 +1170,14 @@ _UNPICKED_TARGET = {
     "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
     "resolved_author_o": "", "resolution_score": 0.0,
     "llm_confidence": "", "target_description": "",
+    "targets": [], "multi_target": False,
 }
 
 
 def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
                                refs: list[dict],
-                               classification: "dict | None" = None) -> dict:
+                               classification: "dict | None" = None,
+                               candidates: "list[dict] | None" = None) -> dict:
     """Identify the paper's target among its references, given the Q1 verdict.
 
     classification — the verdict from classify_replication(). Stage 3 runs the
@@ -1099,14 +1185,19 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
     votes are made once per paper. When it is absent (a caller that has no verdict
     yet, e.g. the batch tools) the classification runs here.
 
+    candidates and refs go into ONE keyed namespace: a work the author-year matcher
+    already found is usually in the reference list too, and offering it twice under
+    two numbers made "the third one" ambiguous.
+
     The return value is the union of two contracts, in this order: the target
     pick's keys (_UNPICKED_TARGET below) and, over them, every key
     classify_replication() returns. The classification wins on the one key they
     share, resolution_method, so an incomplete screen is reported as incomplete
     rather than as a target this function declined to pick.
 
-    llm_confidence is the TARGET call's confidence, empty when no target call was
-    made. A reference is accepted as the target only at confidence == "high".
+    A reference is accepted as the target only when the model marks it
+    match_certain; llm_confidence mirrors that gate for run_extract, which reads one
+    confidence field for every producer.
     """
     out = {**_UNPICKED_TARGET,
            **(classification or classify_replication(doi_r, study_r, abstract_r))}
@@ -1115,55 +1206,35 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
         # The pick is cached separately from the classification: the two halves are
         # now decided at different points in the pipeline, and one cache holding
         # both would be written before the second half had run.
-        # The reference list is in the key via the rendered prompt: a re-fetched
-        # or re-parsed list changes which numbered reference the pick refers to,
-        # so replaying the previous pick would point at a different paper.
-        tgt_prompt = build_target_prompt(study_r, abstract_r, refs)
-        tgt_key = content_key("reftarget", doi_r or study_r,
-                              prompt_version("build_target_prompt"),
-                              ladder_fingerprint(GEMINI_HEAVY_MODEL, openrouter=False),
-                              tgt_prompt)
-        cached = read_cache(LLM_CACHE_DIR, tgt_key)
-        if cached is not None:
-            result, tgt_source, tgt_model = cached["result"], cached["source"], cached["model"]
-        else:
-            # No OpenRouter rung: a wrong original is worse than an unresolved
-            # one, so this pick stops at the two strong providers.
-            result, tgt_source, tgt_model, _ = call_llm_ladder(
-                tgt_prompt, gemini_model=GEMINI_HEAVY_MODEL, openrouter=False)
-            if result:
-                write_cache(LLM_CACHE_DIR, tgt_key,
-                            {"result": result, "source": tgt_source,
-                             "model": tgt_model})
-        if result:
-            out["llm_confidence"]     = str(result.get("confidence", "")).strip().lower()
-            out["target_description"] = str(result.get("target_description", "") or "").strip()
-            num = result.get("target_number")
-            if num is not None and out["llm_confidence"] == "high":
-                try:
-                    ref = refs[int(num) - 1]
-                except (ValueError, TypeError, IndexError):
-                    ref = None
-                if ref is not None:
-                    # The link is this call's decision, not Q1's, so the row is
-                    # attributed to the model that picked the reference and
-                    # carries the quote that justifies the pick.
-                    out.update({
-                        "resolved":          True,
-                        "resolution_method": "llm_references",
-                        "resolved_doi_o":    clean_doi(ref.get("doi", "") or ""),
-                        "resolved_title_o":  ref.get("title", "") or "",
-                        "resolved_year_o":   ref.get("publication_year") or ref.get("year"),
-                        "resolved_author_o": ref.get("first_author", "") or "",
-                        "resolution_score":  1.0,
-                        "llm_source":        tgt_source,
-                        "llm_model":         tgt_model,
-                        "llm_evidence":      (str(result.get("evidence_quote", "") or "").strip()
-                                              or out["llm_evidence"]),
-                        "llm_reasoning":     " | ".join(filter(None, [
-                            out["llm_reasoning"],
-                            f"target ({tgt_source}): {result.get('reasoning', '') or ''}".strip(),
-                        ])),
-                    })
+        # No OpenRouter rung: a wrong original is worse than an unresolved one, so
+        # this pick stops at the two strong providers.
+        pick = identify_targets_with_llm(doi_r, study_r, abstract_r,
+                                         candidates or [], refs,
+                                         cache_prefix="reftarget", openrouter=False)
+        out.update({
+            "llm_confidence":     pick["llm_confidence"],
+            "target_description": pick["target_as_named"],
+            "targets":            pick["targets"],
+            "multi_target":       pick["multi_target"],
+        })
+        if pick["resolved"]:
+            # The link is this call's decision, not Q1's, so the row is attributed to
+            # the model that picked the reference and carries its justifying quote.
+            out.update({
+                "resolved":          True,
+                "resolution_method": pick["resolution_method"],
+                "resolved_doi_o":    pick["resolved_doi_o"],
+                "resolved_title_o":  pick["resolved_title_o"],
+                "resolved_year_o":   pick["resolved_year_o"],
+                "resolved_author_o": pick["resolved_author_o"],
+                "resolution_score":  pick["resolution_score"],
+                "llm_source":        pick["llm_source"],
+                "llm_model":         pick["llm_model"],
+                "llm_evidence":      pick["llm_evidence"] or out["llm_evidence"],
+                "llm_reasoning":     " | ".join(filter(None, [
+                    out["llm_reasoning"],
+                    f"target ({pick['llm_source']}): {pick['llm_reasoning']}".strip(),
+                ])),
+            })
 
     return out

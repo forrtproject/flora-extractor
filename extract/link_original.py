@@ -31,7 +31,7 @@ from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_C
 from shared.disambiguation import is_umbrella_paper, jaccard_similarity
 from shared import token_counter
 from shared.llm_client import (
-    SCREEN_QUALIFYING, identify_original_with_llm, screen_references_with_llm,
+    SCREEN_QUALIFYING, identify_targets_with_llm, screen_references_with_llm,
 )
 from shared.pdf_parsing import (
     parse_all as _parse_all,
@@ -257,7 +257,7 @@ def _resolve_rule_based(
     """
     Unified pre-LLM resolver covering both citation-context and same-author/year cases.
 
-    Returns the same shape dict as identify_original_with_llm().
+    Returns the same shape dict as identify_targets_with_llm().
     """
     base: dict = _unresolved("needs_fulltext")
 
@@ -671,14 +671,13 @@ def run_for_doi(doi_r:              str,
         if abstract_r and distinct_pairs:
             log.info("[%s] Abstract has %d author-year patterns — early abstract LLM", doi_r, len(distinct_pairs))
             token_counter.set_stage("extract_abstract")
-            # The real doi_r goes in: identify_original_with_llm uses it as the
+            # The real doi_r goes in: identify_targets_with_llm uses it as the
             # exclude_doi for its title search, and a suffixed one never matches the
             # paper's own DOI, so the "never link a paper to itself" guard could not
             # fire on this path. abstract_only is already part of the cache key, so
             # the abstract-stage and full-text answers stay separate without it.
-            llm4 = identify_original_with_llm(
-                doi_r,
-                study_r, abstract_r, pattern_r, candidates, {},
+            llm4 = identify_targets_with_llm(
+                doi_r, study_r, abstract_r, candidates, [],
                 validator_note=effective_note,
                 abstract_only=True,
             )
@@ -703,7 +702,8 @@ def run_for_doi(doi_r:              str,
             refs = fetch_opencitations_references(doi_r)
         token_counter.set_stage("extract_refscreen")
         screen = screen_references_with_llm(doi_r, study_r, abstract_r, refs,
-                                            classification=classification)
+                                            classification=classification,
+                                            candidates=candidates)
 
         # A screen that did not get both votes is an API failure, not a verdict, and
         # must be caught before the gate below — a lone surviving vote is not a
@@ -836,8 +836,11 @@ def run_for_doi(doi_r:              str,
             pdf, grobid, sections)
 
     token_counter.set_stage("extract_fulltext")
-    llm = identify_original_with_llm(
-        doi_r, study_r, abstract_r, pattern_r, candidates, sections,
+    llm = identify_targets_with_llm(
+        doi_r, study_r, abstract_r, candidates, sections.get("references") or [],
+        pdf_abstract   = sections.get("abstract", ""),
+        intro          = sections.get("intro",    ""),
+        methods        = sections.get("methods",  ""),
         html_text      = pdf.get("html_text", ""),
         validator_note = effective_note,
     )
@@ -902,6 +905,10 @@ def _build_output(doi_r:     str,
         "resolved_title_o"      : resolution.get("resolved_title_o", ""),
         "resolved_year_o"       : resolution.get("resolved_year_o"),
         "resolved_author_o"     : resolution.get("resolved_author_o", ""),
+        # The merged target prompt can see several originals where the router said
+        # one; run_extract reroutes such a row rather than keeping a single link.
+        "multi_target"          : bool(resolution.get("multi_target", False)),
+        "n_targets"             : len(resolution.get("targets", []) or []),
 
         # ── LLM ───────────────────────────────────────────────────────────────
         "llm_source"            : resolution.get("llm_source",     ""),

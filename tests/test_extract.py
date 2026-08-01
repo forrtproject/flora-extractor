@@ -2496,13 +2496,14 @@ class TestOutcomeGate:
         with patch.object(run_extract, "run_for_doi", return_value=self_link), \
              patch.object(run_extract, "extract_outcome",
                           side_effect=AssertionError("must not code an outcome")):
-            out = run_extract._resolve_and_code(
+            rows = run_extract._resolve_and_code(
                 "10.1/rep", row, "single_original", "high", "", screen=None,
                 no_llm=False, no_pdf=True, resolved_only=False,
                 recalibrate_outcomes=False)
 
-        assert out["link_method"] == "target_pending"
-        assert out["outcome"] == "pending"
+        assert len(rows) == 1
+        assert rows[0]["link_method"] == "target_pending"
+        assert rows[0]["outcome"] == "pending"
 
     def test_resolved_only_drops_the_row_before_the_outcome_call(self):
         row = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
@@ -2513,12 +2514,12 @@ class TestOutcomeGate:
         with patch.object(run_extract, "run_for_doi", return_value=pending), \
              patch.object(run_extract, "extract_outcome",
                           side_effect=AssertionError("must not code an outcome")):
-            out = run_extract._resolve_and_code(
+            rows = run_extract._resolve_and_code(
                 "10.1/rep", row, "single_original", "high", "", screen=None,
                 no_llm=False, no_pdf=True, resolved_only=True,
                 recalibrate_outcomes=False)
 
-        assert out is None
+        assert rows == []
 
 
 # ── Empty parse caches must not poison later runs (audit B4) ────────────────
@@ -2704,3 +2705,62 @@ class TestOutcomeReadsTheDiscussion:
         )
         assert captured["fulltext"].startswith("[SOURCE: discussion / conclusion")
         assert "Our replication succeeded" in captured["fulltext"]
+
+
+# ── Multi-target safety net (§8.2) ───────────────────────────────────────────
+# The match-type router classifies from the abstract alone; the merged target prompt
+# reads the references and the full text. When the resolver sees several originals in
+# a row the router sent down the single path, accepting one link would silently drop
+# the rest — so the row is rerouted through the multi-original pipeline.
+
+class TestMultiTargetReroute:
+    _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
+                      "filter_status": "replication"})
+
+    _SCREEN = {"screen_verdict": "proceed", "screen_classification": "reproduction",
+               "record_type": "reproduction",
+               "categories": ["clearly_declared", "self_retest"],
+               "resolution_method": "llm_refscreen_declined", "votes": []}
+
+    def _run(self, multi_result, screen=None):
+        link = dict(_MOCK_LINK, multi_target=True, n_targets=3, resolved=False)
+        with patch.object(run_extract, "run_for_doi", return_value=link), \
+             patch.object(run_extract, "run_multi_original_for_doi",
+                          return_value=multi_result) as multi, \
+             patch.object(run_extract, "extract_outcome",
+                          side_effect=AssertionError("the single path must not code")):
+            rows = run_extract._resolve_and_code(
+                "10.1/rep", self._ROW, "single_original", "high", "", screen=screen,
+                no_llm=False, no_pdf=True, resolved_only=False,
+                recalibrate_outcomes=False)
+        return rows, multi
+
+    def test_the_row_goes_through_the_multi_original_pipeline(self):
+        rows, multi = self._run({"originals": [
+            {"rank": 1, "title": "First original", "doi": "10.1/a",
+             "first_author": "Smith", "year": 2009, "outcome": "success"},
+            {"rank": 2, "title": "Second original", "doi": "10.1/b",
+             "first_author": "Jones", "year": 2011, "outcome": "failure"},
+        ]})
+
+        assert multi.called
+        assert multi.call_args.kwargs["force_multi"] is True
+        assert [r["doi_o"] for r in rows] == ["10.1/a", "10.1/b"]
+        assert all(r["original_match_type"] == "multiple_original" for r in rows)
+        assert all(r["n_originals"] == 2 for r in rows)
+
+    def test_a_multi_pass_that_finds_nothing_writes_target_pending(self):
+        rows, _ = self._run({"originals": []})
+
+        assert len(rows) == 1
+        assert rows[0]["link_method"] == "target_pending"
+        assert "3 originals" in rows[0]["link_evidence"]
+
+    def test_an_unresolved_rerouted_row_keeps_what_the_screen_decided(self):
+        """The screen ran and classified the paper; the ladder finding no original
+        does not undo that, and a pending row stripped of its categories and type
+        reads as a paper nobody looked at."""
+        rows, _ = self._run({"originals": []}, screen=self._SCREEN)
+
+        assert rows[0]["screen_categories"] == "clearly_declared|self_retest"
+        assert rows[0]["type"] == "reproduction"

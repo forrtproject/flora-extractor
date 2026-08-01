@@ -229,6 +229,10 @@ _METHOD_MAP = {
     # LLM ran successfully but concluded no identifiable original study exists.
     # Distinct from llm_failed (API errors) and llm_fulltext (original found).
     "llm_no_target":                  "no_original_found",
+    # The merged target prompt saw several originals, so no single link may be
+    # written; the row is rerouted through the multi-original path (see
+    # _resolve_and_code) and only reaches this value when that path finds nothing.
+    "llm_multi_target":               "target_pending",
     "llm_failed":                     "target_pending",
     "llm_refscreen_declined":         "target_pending",
     # Only one of the two Q1 classifiers answered — no agreement can be read from a
@@ -691,21 +695,27 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
 
 
 def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
-               link_method: str = "api_error", classify_model: str = "") -> dict:
+               link_method: str = "api_error", classify_model: str = "",
+               screen: "dict | None" = None) -> dict:
+    """A row with no link. It still carries whatever the front door already decided:
+    a paper the screen classified and categorised does not stop being categorised
+    because the ladder found no original, and a reviewer reading the pending row
+    needs the same evidence as one reading a resolved one."""
     doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
     outcome = "api_error" if link_method == "api_error" else "pending"
     row = _base_row(filter_row, match_type, match_conf, classify_model,
-                    {"outcome": outcome})
+                    {"outcome": outcome}, screen)
     row.update({
         "pair_id": make_pair_id(doi_r_clean, ""),
         "doi_o": "", "title_o": "", "year_o": "", "authors_o": "", "ref_o": "",
         "bibtex_ref_o": "",
         "link_method": link_method, "link_evidence": "", "link_confidence": "low",
         "link_llm_model": "",
-        # No screen is passed in: a row nobody classified carries no type, and the
-        # replication default _record_type falls back to would be a guess.
-        "type": "",
     })
+    if screen is None:
+        # Nobody classified this row, and the replication default _record_type falls
+        # back to would be a guess.
+        row["type"] = ""
     return row
 
 
@@ -1377,24 +1387,45 @@ def _check_screen_providers(no_llm: bool) -> None:
 def _resolve_and_code(doi_r: str, row: pd.Series, match_type: str, match_conf: str,
                       classify_model: str, screen: "dict | None",
                       no_llm: bool, no_pdf: bool, resolved_only: bool,
-                      recalibrate_outcomes: bool) -> "dict | None":
+                      recalibrate_outcomes: bool) -> list[dict]:
     """Run the resolution ladder for one single-original row and code its outcome.
 
     The order is deliberate: resolve, merge, guard, --resolved-only, and only THEN
     the outcome. The guard can demote a link to target_pending (self-link, no usable
     original), and --resolved-only discards the row outright — running the outcome
     LLM before either would spend the pipeline's last call on a row that is about to
-    be dropped. Returns None when the row is not to be written.
+    be dropped. Returns [] when nothing is to be written.
+
+    A row the merged target prompt read as targeting several originals is rerouted
+    through the multi-original pipeline: the router that sent it here classified from
+    the abstract alone, and accepting one link for a paper the resolver saw N targets
+    in would silently drop N-1 originals.
     """
     link = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                        no_llm=no_llm, no_pdf=no_pdf, classification=screen)
+
+    if link.get("multi_target"):
+        n_targets = int(link.get("n_targets") or 0)
+        log.info("[%s] target prompt saw %d originals — rerouting to the multi path",
+                 doi_r, n_targets)
+        rows = _multi_original_rows(row, doi_r, match_conf, classify_model, screen,
+                                    force_multi=True)
+        if rows:
+            return rows
+        pending = _empty_row(row, "multiple_original", match_conf,
+                             link_method="target_pending",
+                             classify_model=classify_model, screen=screen)
+        pending["link_evidence"] = (f"target prompt identified {n_targets} originals; "
+                                    "the multi-original pass resolved none")
+        return [] if resolved_only else [pending]
+
     result_row = _guard_original_link(
         _merge_row(row, link, {}, match_type, match_conf, 1, 1, classify_model,
                    screen=screen))
     link_method = str(result_row.get("link_method", ""))
     if resolved_only and link_method in _NO_LINK_METHODS:
         log.debug("[%s] --resolved-only: skipping %s row", doi_r, link_method)
-        return None
+        return []
 
     outcome = _outcome_without_coding(link_method, link)
     if outcome is None:
@@ -1403,7 +1434,7 @@ def _resolve_and_code(doi_r: str, row: pd.Series, match_type: str, match_conf: s
         outcome = _get_outcome(doi_r, row, link,
                                no_llm=no_llm and not recalibrate_outcomes,
                                screen=screen)
-    return _apply_outcome(result_row, outcome)
+    return [_apply_outcome(result_row, outcome)]
 
 
 def _front_door_row(filter_row: pd.Series, screen: dict) -> "dict | None":
@@ -1629,12 +1660,11 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
             return _process_multi_original(row, doi_r, match, match_conf,
                                            classify_model, screen, no_llm, no_pdf,
                                            resolved_only, recalibrate_outcomes)
-        row_out = _resolve_and_code(
+        return _resolve_and_code(
             doi_r, row, match_type, match_conf, classify_model,
             screen=screen, no_llm=no_llm, no_pdf=no_pdf,
             resolved_only=resolved_only,
             recalibrate_outcomes=recalibrate_outcomes)
-        return [row_out] if row_out is not None else []
     except (OpenAlexQuotaExhausted, TokenBudgetExhausted):
         # Not a per-row failure: the row was never examined, and writing it as
         # api_error would bury the reason the rest of the run stops too.
@@ -1656,23 +1686,33 @@ def _process_multi_original(row: pd.Series, doi_r: str, match: dict, match_conf:
     Many Labs paper against one arbitrary original.
     """
     rule_fired = bool(match["rule_fired"])
+    rows = _multi_original_rows(row, doi_r, match_conf, classify_model, screen,
+                                force_multi=rule_fired)
+    if rows:
+        return rows
+    if rule_fired:
+        log.warning(
+            "[%s] rule_fired=True but LLM returned no originals — "
+            "writing target_pending (NOT single_original)", doi_r
+        )
+        return [_empty_row(row, "multiple_original", match_conf,
+                           link_method="target_pending",
+                           classify_model=classify_model)]
+    return _resolve_and_code(
+        doi_r, row, "single_original", match_conf, classify_model,
+        screen=screen, no_llm=no_llm, no_pdf=no_pdf,
+        resolved_only=resolved_only, recalibrate_outcomes=recalibrate_outcomes)
+
+
+def _multi_original_rows(row: pd.Series, doi_r: str, match_conf: str,
+                         classify_model: str, screen: "dict | None",
+                         force_multi: bool) -> list[dict]:
+    """Run the multi-original pipeline for one row; [] when it finds no originals."""
     result    = run_multi_original_for_doi(doi_r, _build_rep_df(row),
-                                           force_multi=rule_fired)
+                                           force_multi=force_multi)
     originals = _parse_originals(result)
     if not originals:
-        if rule_fired:
-            log.warning(
-                "[%s] rule_fired=True but LLM returned no originals — "
-                "writing target_pending (NOT single_original)", doi_r
-            )
-            return [_empty_row(row, "multiple_original", match_conf,
-                               link_method="target_pending",
-                               classify_model=classify_model)]
-        row_out = _resolve_and_code(
-            doi_r, row, "single_original", match_conf, classify_model,
-            screen=screen, no_llm=no_llm, no_pdf=no_pdf,
-            resolved_only=resolved_only, recalibrate_outcomes=recalibrate_outcomes)
-        return [row_out] if row_out is not None else []
+        return []
 
     n_studies = len(originals)
     originals = _collapse_same_paper_originals(originals)
