@@ -458,42 +458,31 @@ def _extract_row(work: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def fetch_phrase(
-    phrase: str,
-    from_year: Optional[int] = None,
-    to_year: Optional[int] = None,
-    max_records: Optional[int] = None,
+def _fetch_cursor_job(
+    job_key: str,
+    base_filter: str,
+    source_tag: str,
+    label: str,
+    from_year: Optional[int],
+    to_year: Optional[int],
+    max_records: Optional[int],
 ) -> list[dict]:
-    """Fetch OpenAlex works matching *phrase* with resumable cursor persistence.
+    """Page one OpenAlex job to exhaustion (or *max_records*), checkpointing as it goes.
 
-    The cursor is checkpointed twice per page: once *before* the request
-    (so a crash during the request retries that page on resume) and once
-    *after* (advancing the bookmark to the next page).  Completed phrases
-    write ``completed: true`` and are skipped on subsequent calls.
+    A job is a (filter, year-range) pair — a search phrase or a concept id. The
+    cursor is checkpointed twice per page: once *before* the request (so a crash
+    during the request retries that page on resume) and once *after* (advancing the
+    bookmark past it). Completed jobs write ``completed: true`` and are skipped on
+    later calls.
 
-    Parameters
-    ----------
-    phrase : str
-        Exact-phrase search string applied against title and abstract.
-    from_year, to_year : int, optional
-        Publication year bounds (inclusive).  Together with *phrase* these
-        form the job identity — a different year range is an independent job
-        with its own cursor file.
-    max_records : int, optional
-        Stop returning rows after this count *for this call* without losing
-        the cursor position.  The next call resumes from the same page
-        boundary.  ``None`` runs until the phrase result set is exhausted.
-
-    Returns
-    -------
-    list[dict]
-        Candidate rows in the shared schema defined by ``CANDIDATES_COLS``.
+    *job_key* identifies the cursor file, *label* is how the job is named in the log,
+    and *source_tag* is written to each row's ``source`` column.
     """
-    cursor_path = _cursor_path(phrase, from_year, to_year)
+    cursor_path = _cursor_path(job_key, from_year, to_year)
     state = _load_cursor_state(cursor_path)
 
     if state["completed"]:
-        log.info("OpenAlex phrase=%r already fully fetched — skipping", phrase)
+        log.info("OpenAlex %s already fully fetched — skipping", label)
         return []
 
     cursor = state["cursor"] or _CURSOR_START
@@ -502,16 +491,10 @@ def fetch_phrase(
     rows: list[dict] = []
 
     yr_filt = _year_filter(from_year, to_year)
-    base_filter = f'title_and_abstract.search:"{phrase}"'
     oa_filter = f"{base_filter},{yr_filt}" if yr_filt else base_filter
 
-    log.info(
-        "OpenAlex phrase=%r  years=%s–%s  prev_fetched=%d",
-        phrase,
-        from_year or "any",
-        to_year or "any",
-        total_fetched,
-    )
+    log.info("OpenAlex %s  years=%s–%s  prev_fetched=%d",
+             label, from_year or "any", to_year or "any", total_fetched)
 
     while cursor:
         params = {
@@ -529,7 +512,7 @@ def fetch_phrase(
         try:
             data = _get_page(params)
         except StopIteration as exc:
-            log.warning("  Stopping phrase=%r: %s (%d rows kept)", phrase, exc, len(rows))
+            log.warning("  Stopping %s: %s (%d rows kept)", label, exc, len(rows))
             break
 
         api_total = (data.get("meta") or {}).get("count", api_total)
@@ -542,39 +525,56 @@ def fetch_phrase(
             cursor = None
             break
 
-        rows.extend(_extract_row(w) for w in results)
+        for w in results:
+            row = _extract_row(w)
+            row["source"] = source_tag
+            rows.append(row)
         total_fetched += len(results)
 
         next_cursor = (data.get("meta") or {}).get("next_cursor")
-        log.info(
-            "  phrase=%r  page_rows=%d  run_rows=%d  api_total=%s",
-            phrase,
-            len(results),
-            len(rows),
-            api_total,
-        )
+        log.info("  %s  page_rows=%d  run_rows=%d  api_total=%s",
+                 label, len(results), len(rows), api_total)
 
-        cursor = next_cursor  # None → phrase fully exhausted
+        cursor = next_cursor  # None → job fully exhausted
 
         # Checkpoint the next cursor, advancing the bookmark past this page.
         _save_cursor_state(cursor_path, cursor, total_fetched, not cursor, api_total)
 
         if not cursor:
-            log.info("  phrase=%r fully exhausted", phrase)
+            log.info("  %s fully exhausted", label)
             break
 
         if max_records is not None and len(rows) >= max_records:
-            log.info(
-                "  phrase=%r  reached max_records=%d for this run — cursor saved at page boundary",
-                phrase,
-                max_records,
-            )
+            log.info("  %s  reached max_records=%d for this run — cursor saved at page boundary",
+                     label, max_records)
             break
 
         time.sleep(OPENALEX_RATE_SEC)
 
-    log.info("Done — %d rows for phrase=%r", len(rows), phrase)
+    log.info("Done — %d rows for %s", len(rows), label)
     return rows
+
+
+def fetch_phrase(
+    phrase: str,
+    from_year: Optional[int] = None,
+    to_year: Optional[int] = None,
+    max_records: Optional[int] = None,
+) -> list[dict]:
+    """Fetch OpenAlex works whose title or abstract matches *phrase*, resumably.
+
+    *phrase* and the year range together form the job identity — a different year
+    range is an independent job with its own cursor file. *max_records* stops
+    returning rows after that count for THIS call without losing the cursor
+    position; the next call resumes from the same page boundary.
+    """
+    return _fetch_cursor_job(
+        job_key=phrase,
+        base_filter=f'title_and_abstract.search:"{phrase}"',
+        source_tag=SOURCE_TAG,
+        label=f"phrase={phrase!r}",
+        from_year=from_year, to_year=to_year, max_records=max_records,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -642,101 +642,22 @@ def fetch_concept(
     to_year: Optional[int] = None,
     max_records: Optional[int] = None,
 ) -> list[dict]:
-    """Fetch OpenAlex works tagged with *concept_id* with resumable cursor.
+    """Fetch OpenAlex works tagged with *concept_id*, resumably.
 
-    Uses the same cursor-checkpoint pattern as ``fetch_phrase`` but filters by
-    ``concepts.id`` instead of ``title_and_abstract.search``.  This catches
-    papers classified as being about replication/reproducibility by OpenAlex's
-    own ML even when the paper has no abstract stored or uses atypical wording.
-
-    Parameters
-    ----------
-    concept_id : str
-        OpenAlex concept ID, e.g. ``"C2911965"``.  The full URL form
-        ``"https://openalex.org/C2911965"`` is also accepted.
-    from_year, to_year : int, optional
-        Publication year bounds (inclusive).
-    max_records : int, optional
-        Stop after this many rows for this call; cursor is saved at the page
-        boundary so the next call continues from there.
+    Filters by ``concepts.id`` instead of a search phrase, which catches papers
+    OpenAlex's own ML classifies as being about replication/reproducibility even
+    when the paper has no abstract stored or uses atypical wording. The full URL
+    form ``"https://openalex.org/C2911965"`` is accepted as well as the bare id.
     """
     # Normalise to bare ID so the cursor path is stable regardless of format.
     cid = concept_id.replace("https://openalex.org/", "").strip()
-    cursor_path = _cursor_path(f"concept:{cid}", from_year, to_year)
-    state = _load_cursor_state(cursor_path)
-
-    if state["completed"]:
-        log.info("OpenAlex concept=%r already fully fetched — skipping", cid)
-        return []
-
-    cursor = state["cursor"] or _CURSOR_START
-    total_fetched = state["total_fetched"]
-    api_total = state.get("api_total")
-    rows: list[dict] = []
-
-    yr_filt = _year_filter(from_year, to_year)
-    base_filter = f"concepts.id:{cid}"
-    oa_filter = f"{base_filter},{yr_filt}" if yr_filt else base_filter
-
-    log.info(
-        "OpenAlex concept=%r  years=%s–%s  prev_fetched=%d",
-        cid, from_year or "any", to_year or "any", total_fetched,
+    return _fetch_cursor_job(
+        job_key=f"concept:{cid}",
+        base_filter=f"concepts.id:{cid}",
+        source_tag=SOURCE_TAG_CONCEPT,
+        label=f"concept={cid!r}",
+        from_year=from_year, to_year=to_year, max_records=max_records,
     )
-
-    while cursor:
-        params = {
-            "filter": oa_filter,
-            "per-page": _PER_PAGE,
-            "cursor": cursor,
-            "mailto": RESEARCHER_EMAIL,
-            "select": _SELECT,
-        }
-        _save_cursor_state(cursor_path, cursor, total_fetched, False, api_total)
-
-        try:
-            data = _get_page(params)
-        except StopIteration as exc:
-            log.warning("  Stopping concept=%r: %s (%d rows kept)", cid, exc, len(rows))
-            break
-
-        api_total = (data.get("meta") or {}).get("count", api_total)
-        results = data.get("results") or []
-        if not results:
-            # See fetch_phrase: a genuinely empty job must checkpoint as complete.
-            _save_cursor_state(cursor_path, None, total_fetched, True, api_total)
-            cursor = None
-            break
-
-        for w in results:
-            row = _extract_row(w)
-            row["source"] = SOURCE_TAG_CONCEPT  # distinguish from phrase-search rows
-            rows.append(row)
-        total_fetched += len(results)
-
-        next_cursor = (data.get("meta") or {}).get("next_cursor")
-        log.info(
-            "  concept=%r  page_rows=%d  run_rows=%d  api_total=%s",
-            cid, len(results), len(rows), api_total,
-        )
-
-        cursor = next_cursor
-        _save_cursor_state(cursor_path, cursor, total_fetched, not cursor, api_total)
-
-        if not cursor:
-            log.info("  concept=%r fully exhausted", cid)
-            break
-
-        if max_records is not None and len(rows) >= max_records:
-            log.info(
-                "  concept=%r  reached max_records=%d — cursor saved at page boundary",
-                cid, max_records,
-            )
-            break
-
-        time.sleep(OPENALEX_RATE_SEC)
-
-    log.info("Done — %d rows for concept=%r", len(rows), cid)
-    return rows
 
 
 def fetch_openalex_concept_candidates(
