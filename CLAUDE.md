@@ -118,20 +118,19 @@ registered.
 | File                     | Purpose                                                                        |
 | ------------------------ | ------------------------------------------------------------------------------ |
 | `filter/rule_filter.py`  | Rule-based classifier: keyword patterns, author-year check                     |
-| `filter/llm_filter.py`   | LLM classifier for uncertain cases only                                        |
-| `filter/run_filter.py`   | Orchestrator: reads candidates.csv in 50k-row chunks, streams to filtered.csv  |
+| `filter/run_filter.py`   | Orchestrator: reads candidates.csv in 50k-row chunks, streams to filtered.csv. Deterministic — no LLM. Rows the rules cannot decide are written through as `needs_review` and settled by Stage 3's front-door screen |
 
 ### `extract/` — Stage 3
 
 | File                       | Purpose                                                                      |
 | -------------------------- | ---------------------------------------------------------------------------- |
-| `extract/run_extract.py`   | Orchestrator: screens each row at the front door (`_front_door_row()`), then classifies match type and routes to single or multi-original; `_resolve_and_code()` runs the ladder, guard and outcome gate for one row; supports `--extracted-test` flag; `_best_fulltext_from_cache()` feeds the best-scoring parse result to the outcome LLM; `_fill_work_ids()` stamps `oa_work_id_r`/`oa_work_id_o` on every row after DOI verification |
+| `extract/run_extract.py`   | Orchestrator: screens each row at the front door (`_front_door_row()`, gated by `screen_gate()`; `_record_type()` and `_screen_categories()` carry the screen's verdict into the row), then classifies match type and routes to single or multi-original; `_resolve_and_code()` runs the ladder, guard and outcome gate for one row; supports `--extracted-test` flag; `_best_fulltext_from_cache()` feeds the best-scoring parse result to the outcome LLM; `_fill_work_ids()` stamps `oa_work_id_r`/`oa_work_id_o` on every row after DOI verification |
 | `extract/link_original.py` | Single-original pipeline. `run_for_doi()` escalates through the resolution ladder below and only reaches the PDF when every cheaper stage declines; runs `parse_all()` on the PDF, scores all methods, uses the winner's text for the DOI-resolution LLM via shared `best_parse_result()` |
 | `extract/multi_original.py`| Multi-original pipeline — finds all target studies (needs improvement)       |
 | `extract/code_outcome.py`  | Outcome coding. `extract_outcome()` reads the abstract with an LLM and escalates to a second, fulltext-based call when the abstract cannot settle it (`OUTCOME_FULLTEXT_ESCALATION`); that call also applies the `is_genuine_attempt` veto that yields `outcome = not_a_replication`. The keyword patterns are the `--no-llm` fallback and the engine behind `predict_outcome_keyword()` / `--predicted-outcome`. Reproductions are coded on the 3×3 computation/robustness grid |
 | `extract/promote_test.py`  | CLI + library: merge rows from extracted-test.csv into extracted.csv; `--all`, `--doi`, `--dry-run`, `--force` |
 | `extract/audit_dois.py`    | CLI: retroactive DOI verification of extracted.csv; dry-run by default, `--apply` writes corrections; `--doi`, `--extracted-test` |
-| `extract/sanity_check.py`  | Post-extraction quarantine pass; runs automatically at the end of `run_extract` (completion AND Ctrl-C). First-match-wins routing of problem rows to set-aside CSVs: `screen_disagreement` → `screen_disagreement.csv` (**before** the outcome rule, so a disagreement never lands in the agreed-no file), `not_a_replication`/non-article DOIs → `not_a_replication.csv`, self-links → `unresolved_self_links.csv`, `doi_o_verification==mismatch` → `unresolved_doi_mismatch.csv`, `llm_title_search` (provisional links) → `provisional_title_search.csv`, `target_pending` → `target_pending.csv`, and (with `--deep`) `doi_r` whose registry work type is a non-study object (dataset, software, peer-review, supplementary-materials) → `not_a_replication.csv` and fabricated `doi_o` → `fabricated_original_doi.csv`. `cannot_be_determined` is kept in extracted.csv. Standalone: `python -m extract.sanity_check [--input …] [--deep] [--report-only]` |
+| `extract/sanity_check.py`  | Post-extraction quarantine pass; runs automatically at the end of `run_extract` (completion AND Ctrl-C). First-match-wins routing of problem rows to set-aside CSVs: `screen_disagreement` → `screen_disagreement.csv` (historical rows only — the front door no longer emits it; kept **before** the outcome rule so an old disagreement never lands in the agreed-no file), `not_a_replication`/non-article DOIs → `not_a_replication.csv`, self-links → `unresolved_self_links.csv`, `doi_o_verification==mismatch` → `unresolved_doi_mismatch.csv`, `llm_title_search` (provisional links) → `provisional_title_search.csv`, `target_pending` → `target_pending.csv`, and (with `--deep`) `doi_r` whose registry work type is a non-study object (dataset, software, peer-review, supplementary-materials) → `not_a_replication.csv` and fabricated `doi_o` → `fabricated_original_doi.csv`. `cannot_be_determined` is kept in extracted.csv. Standalone: `python -m extract.sanity_check [--input …] [--deep] [--report-only]` |
 | `extract/clean_parse_cache.py` | CLI: delete all-empty parse caches from `cache/parse/` (written by pre-B4 runs that never fetched a PDF and then masked the real parse). Dry run by default, `--apply` deletes |
 | `extract/csv_to_db.py`     | CLI: push resolved extracted.csv rows into the Supabase validation DB (creates 1 `unvalidated` + 1 `record_metadata` + 3 `validation_queue` rows per record; slots `human_1`/`human_2`/`llm`); `--input`, `--dry-run` |
 
@@ -195,9 +194,10 @@ classification, the resolution ladder, PDF acquisition or outcome coding.
 # run_extract.py, per row:
 
 screen = classify_replication(doi_r, title_r, abstract_r)
-# confident agreed "no"  → write not_a_replication and continue
-# models disagree        → write screen_disagreement and continue
-# one vote / no votes    → write target_pending / api_error and continue
+# screen_gate() == "discard" → write not_a_replication and continue
+# one vote / no votes        → write target_pending / api_error and continue
+# otherwise: the screen's record_type becomes the row's `type` and filter_status,
+# and its categories become screen_categories
 
 original_match_type = classify_match_type(row)   # Stage 3's own classification
 
@@ -220,7 +220,7 @@ of N studies" rules run regardless, so Many Labs-style papers still route correc
 **Outcome coding runs only on a resolved link.** `_outcome_without_coding()` in
 `run_extract.py` is the single gate, derived from `RESOLVED_LINK_METHODS`: a row whose
 `link_method` is not in that set (`target_pending`, `api_error`, `no_original_found`,
-`screen_disagreement`, `not_a_replication`, `llm_title_search`) has no confirmed original
+`not_a_replication`, `llm_title_search`, and the historical `screen_disagreement`) has no confirmed original
 to code against, so no outcome LLM runs and the row is written `pending` — except
 `not_a_replication`, where the screen's verdict *is* the outcome. The order per row is
 resolve → merge → `_guard_original_link` → `--resolved-only` → outcome, so a row the
@@ -240,7 +240,7 @@ last resort rather than the normal path.
 | 3 | Rule-based resolver | the abstract carries an author-year citation matching a candidate, or exactly one candidate came back | `citation_context_match`, `same_author_year_title_overlap`, `single_candidate_after_requery` |
 | 4 | Abstract LLM | the abstract carries author-year patterns, with candidates to choose from | `llm_cited_candidates` |
 | 4.5 | **Reference-list target pick** | there are referenced works (regardless of citation patterns) | `llm_references` |
-| 4.6 | Title search on a named-but-unmatched target | the screen agreed at high confidence that this is a replication and named a target it could not match to a reference | `llm_title_search` (**provisional** — see below) |
+| 4.6 | Title search on a named-but-unmatched target | both voters gave a qualifying answer, both stood behind it, and the screen named a target it could not match to a reference | `llm_title_search` (**provisional** — see below) |
 | 5 | PDF acquisition + full-text LLM | everything above declined | `llm_fulltext`, `llm_title_search` (**provisional**) |
 
 `llm_title_search` is the one link method whose answer is not chosen from a bounded
@@ -258,11 +258,13 @@ stages cannot fire at all for them.
 functions in `shared/llm_client.py` because they are now decided at different points
 in the pipeline:
 
-1. *Is this a replication or reproduction at all?* — `classify_replication()`, run at
-   Stage 3's front door (above). A confident agreed **no** ends the row there:
-   `outcome = not_a_replication`, no match-type call, no ladder, no PDF, no outcome
-   LLM, and `sanity_check` routes the row to `data/not_a_replication.csv`. Cached at
-   `cache/llm/classify_{key}.json`.
+1. *Is this the kind of study the database collects?* — `classify_replication()`, run
+   at Stage 3's front door (above). Each voter answers the validated **v3.2** schema:
+   `classification` ∈ {`replication`, `reproduction`, `both`, `none`, `unclear`}, a
+   boolean `confident`, an array of `categories` from an 11-value enum, an
+   `evidence_quote` and one sentence of `reasoning`. The prompt text lives in
+   `shared/prompts.py` as `_CLASSIFY_PROMPT`, with the evaluated copy kept at
+   `analysis/screening_eval/prompt_v32.txt`. Cached at `cache/llm/classify_{key}.json`.
 2. *Which reference is the target?* — `screen_references_with_llm()`, here at Stage
    4.5, where the reference list has been fetched. It takes the front door's verdict
    as its `classification` argument rather than voting again (a caller without a
@@ -272,28 +274,58 @@ in the pipeline:
    abstracts do not name their target and that declining is the expected answer.
    Cached separately at `cache/llm/reftarget_{key}.json`.
 
+### The gate — `screen_gate()`, defined once
+
+The two votes become one decision in `screen_gate()` in `shared/llm_client.py`. It is
+**G-softqual** from the v3.2 gate sweep (89% of adjudicated hard negatives discarded,
+zero settled misses), and both the front door and the batch-tools path in
+`extract/link_original.py` call it rather than re-implementing it:
+
+- **discard** when every vote is `none` at any confidence, or when at least one voter
+  said `none` confidently and every other vote is a qualifying-or-`unclear` answer the
+  voter explicitly declined to stand behind (`confident: false`).
+- **proceed** otherwise. There is **no `screen_disagreement` terminal state**: a
+  confident `none` against a confident qualifying answer proceeds down the ladder,
+  because a false inclusion costs a ladder run while a false discard costs the paper.
+  `screen_disagreement` survives in `LINK_METHOD_VALUES` and in `sanity_check` routing
+  only because rows on disk still carry it; the front door never emits it.
+- **no decision** when fewer than two voters answered — an incomplete screen is an API
+  failure, not a verdict.
+
+### What the screen decides beyond discard/proceed
+
+- **`record_type`** (the `type` column, and the outcome vocabulary). Both voters
+  agreeing on a qualifying label wins; a `both` answer or a replication-vs-reproduction
+  split falls back to the first qualifying voter in call order (Gemini), and `both` maps
+  to `replication` because such a paper collects new data. Stage 2's `filter_status` is
+  now only the `--no-llm` fallback. On a passed row `run_extract` also overwrites
+  `filter_status` with this value and sets `filter_method` to `screen`.
+- **`screen_categories`** — the deduplicated union of both voters' `categories`, joined
+  with `|` in enum order, written on every screened row (discards included). It is
+  multi-valued: filter it by substring or by splitting on `|`, never by equality.
+
 **Two providers are required.** Question 1 is voted on by Gemini (`GEMINI_LIGHT_MODEL`)
-*and* OpenRouter (`SCREEN_VOTER2_MODEL`, default `mistralai/ministral-14b-2512`), and the
-screen acts only when both answer and agree, so `GEMINI_API_KEY` and `OPENROUTER_API_KEY`
-must both be set — `extract.run_extract` refuses to start otherwise (unless `--no-llm`).
-Voter 2 is deliberately outside the Google lineage: on adjudicated hard cases this pair
-correctly discards 89% of true negatives (gpt-5-mini's pair managed 25%) while still
-losing no genuine replication. Changing either voter changes the cache key by itself —
-both voters' model names are folded into it — so one pair's verdicts can never be
-replayed as another's. An incomplete screen is reported as such rather than as a verdict, and is
-never cached:
+*and* a second voter (`SCREEN_VOTER2_MODEL`, default `gpt-5.4-mini`). The voter id
+decides the route: an id containing `/` goes to OpenRouter, anything else to OpenAI
+direct. So `GEMINI_API_KEY` plus whichever of `OPENAI_API_KEY` / `OPENROUTER_API_KEY`
+that model needs must be set — `extract.run_extract` refuses to start otherwise (unless
+`--no-llm`). Voter 2 is deliberately outside the Google lineage: on the v3.2 gate sweep
+this pair discards 89% of adjudicated hard negatives with zero settled misses, against
+73% for Ministral via OpenRouter on the same gate. Changing either voter changes the
+cache key by itself — both voters' model names are folded into it — so one pair's
+verdicts can never be replayed as another's. An incomplete screen is reported as such
+rather than as a verdict, and is never cached:
 
 | Votes | `resolution_method` | `link_method` |
 | ----- | ------------------- | ------------- |
-| 2 | agreement/disagreement as above | resolved, `not_a_replication`, or `screen_disagreement` |
-| 1 | `llm_refscreen_partial` | `target_pending` — one vote is not a disagreement; the row waits for a re-run |
+| 2 | gate decision as above | resolved or `not_a_replication` |
+| 1 | `llm_refscreen_partial` | `target_pending` — one vote is not a verdict; the row waits for a re-run |
 | 0 | `llm_refscreen_failed` | `api_error` |
 
-Rows the screen sets aside (`not_a_replication`, `screen_disagreement`) carry the
-screen's models in `link_llm_model` and its verdicts/evidence in `link_evidence`, so a
-reviewer can see what decided them. On a resolved `llm_references` row those fields
-instead name the model that picked the reference — that call, not the Q1 vote, made the
-link.
+Rows the screen discards carry the screen's models in `link_llm_model` and its
+per-voter verdicts and evidence in `link_evidence`, so a reviewer can see what decided
+them. On a resolved `llm_references` row those fields instead name the model that
+picked the reference — that call, not the Q1 vote, made the link.
 
 ---
 
@@ -495,15 +527,14 @@ Key variables:
 RESEARCHER_EMAIL=you@example.com      # required for OpenAlex/Crossref politeness headers
 GEMINI_API_KEY=...                    # required for LLM calls
 GEMINI_API_KEY_2=...                  # optional: failover key (does NOT raise quota — see below)
-OPENAI_API_KEY=...                    # optional fallback LLM
-OPENROUTER_API_KEY=...                # required for Stage 3 (screen voter 2)
+OPENAI_API_KEY=...                    # required for Stage 3 with the default screen voter 2
+OPENROUTER_API_KEY=...                # required for Stage 3 only if SCREEN_VOTER2_MODEL has a "/"
 S2_API_KEY=...                        # optional: Semantic Scholar API key (Stage 1)
 GROBID_URL=http://localhost:8070      # default; override if GROBID runs elsewhere
 GEMINI_MODEL=gemini-3-flash-preview   # primary Gemini model
 GEMINI_HEAVY_MODEL=gemini-3-flash-preview  # used for DOI resolution (defaults to GEMINI_MODEL)
 OPENAI_MODEL=gpt-5-mini               # OpenAI fallback
-SCREEN_VOTER2_MODEL=mistralai/ministral-14b-2512  # Stage 4.5 screen, voter 2 (OpenRouter)
-FILTER_OPENAI_MODEL=gpt-5-mini        # Stage 2 filter primary model
+SCREEN_VOTER2_MODEL=gpt-5.4-mini      # front-door screen, voter 2 ("/" in the id → OpenRouter)
 GEMINI_USE_FLEX=true                  # 50% cost reduction; paid keys only
 GEMINI_PAID_KEYS=1                    # 1-based key slots that are paid; flex applies to these
 ```
