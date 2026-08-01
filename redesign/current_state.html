@@ -47,14 +47,15 @@ details.prompt[open] summary { border-bottom:1px solid var(--rule); margin-botto
 <main>
 
 <h1>FLoRA Extractor — Current State &amp; Way Forward</h1>
-<p class="subtitle">The pipeline as it stands on <code>main</code> (<code>798ac15</code>, 2026-08-01),
+<p class="subtitle">The pipeline as it stands on <code>main</code> (<code>f026ea4</code>, 2026-08-01),
 what can be trusted, and what to do next. Companion to the screening audit, which holds the
-historical record and evidence trails.</p>
+historical record and evidence trails. §8.1 and §8.2 are merged as of this commit
+(PRs&nbsp;#116 and&nbsp;#117); §6.2 records the post-merge architecture review.</p>
 
 <div class="box">
 <p><strong>In one paragraph.</strong> The extraction pipeline is in its best-verified state to
-date: 732 tests pass, three independent code reviews found no open blocking defects, and the
-screening design is grounded in 75 hand-coded cases. The two constraints that dominate
+date: 863 tests pass, three independent code reviews found no open blocking defects, and the
+validated v3.2 screen (§8.1) and the merged target prompt (§8.2) are on <code>main</code>. The two constraints that dominate
 everything else are upstream and downstream of the code: <strong>Stage&nbsp;2 sends the pipeline
 roughly twice as many papers as it should</strong> (about half of what reaches Stage&nbsp;3 is not
 a replication), and <strong>the Supabase import is blocked</strong> until the validation repo adds
@@ -191,7 +192,7 @@ and several schema items, and none can be settled by implementation alone.</p>
 <tr><td>Overlapping observations</td><td>FLoRA allows a replication to share observations with the original; the filter prompt forbids it</td><td>align the filter to FLoRA</td></tr>
 <tr><td>Report types</td><td>registrations, non-persistent blogs, Google Docs are named exclusions with no implementation, and the two source documents contradict each other on blogs</td><td>settle the list, implement as a cheap URL/DOI rule</td></tr>
 <tr><td><code>study_r</code></td><td>the validation DB has the column, FLoRA's codebook explicitly does not</td><td>drop it (part of the #103 migration)</td></tr>
-<tr><td>Reproduction grid</td><td>the codebook has 5×4 levels with two quotes; the pipeline emits a 3×3 grid with one joined string — only 17 reproductions exist so far (14 with empty outcomes), so recoding is still cheap</td><td>adopt the codebook grid before reproductions scale</td></tr>
+<tr><td>Reproduction grid <span class="tag t-ops">settled</span></td><td>the pipeline emits a 3×3 grid joined into one string with one shared quote; the codebook's grid is 4×3 in two separately coded fields, each with its own quote and quote source</td><td><strong>decided:</strong> <code>outcome_computation</code> (computationally reproducible · computational issues · technical failure · not checked) × <code>outcome_robustness</code> (robust · robustness challenges · not checked), each with its own quote and source — drafted in <a href="#outcomeprompts">§8.3</a>. Only 17 reproductions exist (14 with empty outcomes), so recoding is cheap</td></tr>
 </table></div>
 
 <p><strong>Then the one measurement that settles the rest.</strong> A replacement screening
@@ -265,7 +266,8 @@ or validate; either way make pipeline reporting reflect what was actually sent.<
 prompt already.</li>
 </ul>
 
-<p><strong>Outcome prompts</strong></p>
+<p><strong>Outcome prompts</strong> — both items below are now drafted in
+<a href="#outcomeprompts">§8.3</a>, which folds the four outcome prompts into two.</p>
 <ul>
 <li>Move <code>GENUINE_ATTEMPT_RULE</code> above the outcome rules — it is still appended
 after them (<code>shared/prompts.py:631</code>) — with the ~50-row before/after spot-check
@@ -300,6 +302,76 @@ where behaviour changed. Treat "re-run everything vs re-run affected slices" as 
 choice at that point — the affected-slice list falls out of the link-method and outcome tables
 in §1.</p>
 
+<h3 id="postmerge">6.2 · Post-merge architecture review (2026-08-01)</h3>
+
+<p>After the §8.1/§8.2 merges, two independent whole-pipeline reviews (codex and Claude
+Fable, both read-only, run separately) were asked for refactor opportunities rather than
+bugs. Their top findings agree almost exactly. Ranked, merged, with effort (S/M/L):</p>
+
+<div class="box"><table>
+<tr><th>#</th><th>Finding (both reviews unless noted)</th><th>Effort</th></tr>
+<tr><td>1</td><td><strong>Land the per-target adapter; retire <code>multi_original.py</code>'s
+parallel machinery.</strong> The multi path still runs its own prompt with positional
+<code>candidate_number</code>s (exactly the renumbering hazard <code>target_keys.py</code>
+kills), GROBID-only parsing instead of <code>parse_all</code>, its own inline DOI resolution,
+<em>outcome coding inside the link call</em> — bypassing <code>extract_outcome</code>'s
+escalation, the <code>is_genuine_attempt</code> veto and the reproduction grid — and no screen
+threading. The §8.2 reroute currently discards a validated <code>targets</code> list to re-run
+this older pipeline. Adapter: consume <code>identify_targets_with_llm</code>'s targets
+directly, resolve + guard + <code>extract_outcome</code> per target, then delete
+<code>identify_all_originals_with_llm</code>, the multi template and most of
+<code>multi_original.py</code>; the match-type router deletion follows as planned</td>
+<td>L</td></tr>
+<tr><td>2</td><td><strong>Split <code>extract/run_extract.py</code></strong> (2,172 lines):
+mechanical extraction of reference builders, match-type classifier (isolating it makes its
+planned deletion a file removal), row assembly, and the guard/verify/append write chain —
+with re-export shims so the ~860 tests' patch targets keep resolving</td><td>M</td></tr>
+<tr><td>3</td><td><strong>Move Stage-3 policy out of <code>shared/llm_client.py</code></strong>
+(1,240 lines): screen gate, target validation and acceptance are Stage-3 policy living in a
+module all stages import; keep provider transport in <code>shared/</code>, move policy to
+<code>extract/</code>. Do this before&nbsp;#1, which grows exactly that code</td><td>M–L</td></tr>
+<tr><td>4</td><td><strong>Stop minting provider-suffixed <code>link_method</code> strings</strong>
+(<code>llm_title_search_gemini</code> → <code>_METHOD_MAP</code> → public value): a forgotten
+provider row falls through the <code>startswith("llm_")</code> catch-all to
+<code>llm_fulltext</code> — a <em>resolved</em> method — promoting a ~50%-precision provisional
+link. Return the public method directly; keep the map read-only for cached legacy
+values</td><td>S–M</td></tr>
+<tr><td>5</td><td><strong>Centralise the cached-LLM-call pattern</strong> — five call sites
+hand-assemble key/read/call/cache-only-answers, with invisible variation
+(<code>reasoning_effort</code> is not in the classify key); the per-target adapter would copy a
+sixth. One helper, built around the <em>existing</em> key tuples so no cache moves</td><td>M</td></tr>
+<tr><td>6</td><td><strong>Finish retiring <code>screen_disagreement</code></strong>: it is a
+legacy on-disk value, but two unreachable write-side branches still sit in live decision
+functions. A <code>LEGACY_LINK_METHODS</code> set separates read-side compatibility from dead
+policy</td><td>S</td></tr>
+<tr><td>7</td><td><strong>Deduplicate screen-exit handling</strong> between the front door and
+Stage&nbsp;4.5 — the partial/failed checks and the vote-evidence string are implemented twice,
+already subtly divergent</td><td>S</td></tr>
+<tr><td>8</td><td><strong>Retire <code>run_for_doi</code>'s DataFrame interface</strong>:
+<code>run_extract</code> wraps one row into a one-row DataFrame that <code>link_original</code>
+filters back out; <code>flora_df</code> is never passed by the orchestrator. Take a plain
+paper dict; keep a thin wrapper for the batch tools</td><td>M</td></tr>
+<tr><td>9</td><td>Smaller seams: one definition of the six outcome fields (currently four
+copies), one home for the parse-cache read/write policy (the B4 empty-cache rule is fixed
+twice with different overwrite semantics)</td><td>S</td></tr>
+<tr><td>10</td><td>Codex-only, larger bets: schema validation is header-only (no types, enums
+or invariants — typed row models per boundary would catch what
+<code>validate_csv_columns</code> cannot); row identity differs between resume, quarantine
+and pair-id; and the batch page's write routes contradict the documented read-only dashboard —
+mostly PR&nbsp;#114's territory. Codex also recommends characterization tests around the
+public seams <em>before</em> the restructuring above, since the current suite pins
+implementation shape more than contracts</td><td>M–L each</td></tr>
+</table></div>
+
+<p><strong>Explicitly not worth doing</strong> (Fable review, endorsed): polishing
+<code>classify_match_type</code> or the match-type prompt (scheduled demolition once #1
+proves out); turning <code>shared/prompts.py</code> into data files (the AST-based
+<code>prompt_version</code> machinery is exactly right and any templating layer would break
+every cache key); de-pandas-ing the row plumbing; unifying the three provider retry loops
+(they genuinely differ — key rotation, budget check, single-shot — and the validated screen
+behaviour depends on those semantics); renumbering the ladder stages (load-bearing across
+docs and years of comments).</p>
+
 <h2 id="seq">7 · Suggested sequence</h2>
 
 <ol>
@@ -311,7 +383,9 @@ entire import path and is independent of everything else.</li>
 <li><strong>One decision session</strong> on the §5 table, recording each choice in the
 codebook or FAQ so prompts and code cite a single source.</li>
 <li><strong>Implement the new screen prompt + <code>review_flag</code>, run the evaluation
-grid.</strong> Adopt the winner; then <code>--rescreen</code> the set-asides.</li>
+grid.</strong> <span class="tag t-ops">done in part</span> — the evaluation ran, the winner
+(v3.2, softened gate) is merged (§8.1.1); the <code>--rescreen</code> of the set-asides and
+<code>review_flag</code> remain.</li>
 <li><strong>Stage-2 precision investigation</strong>, tested against the same benchmark.</li>
 <li><strong>Re-run decision</strong> (§6), then the remaining build items alongside it.</li>
 </ol>
@@ -324,9 +398,13 @@ evidence from the 75 hand-coded cases; open items tracked in issues #103, #94, #
 
 <h2 id="proposed">8 · Proposed prompts — live work</h2>
 
-<p>Two prompt replacements are drafted and ready to evaluate. They are independent of each
-other: the first decides which papers enter the pipeline, the second decides what each
-surviving paper is linked to.</p>
+<p>Three prompt replacements follow the pipeline in order: the first decides which papers
+enter it, the second decides what each surviving paper is linked to, and the third decides
+what the paper found. <strong>The first two are merged into <code>main</code></strong>
+(PR&nbsp;#116 for §8.1 with the Stage&nbsp;1–3 refactor pass, PR&nbsp;#117 reworked on top of
+it for §8.2; 863 tests pass); the third is drafted below.
+Adopted together they supersede seventeen of the twenty prompt blocks in §9, leaving the two
+PDF-extraction prompts and the provider system message.</p>
 
 <h3 id="screenprompt">8.1 · The front-door screening prompt</h3>
 
@@ -492,6 +570,20 @@ re-validation, fixed once for all voters.</p>
 
 <h3 id="screen-impl">8.1.1 · Implementation checklist — after final review</h3>
 
+<p><span class="tag t-ops">done</span> All seven items are implemented and merged
+(PR&nbsp;#116, 2026-08-01). Three implementation choices worth recording: the gate landed as
+the recommended <strong>softened</strong> variant with <em>no</em>
+<code>screen_disagreement</code> terminal — a confident split proceeds down the ladder, so the
+gate either discards or proceeds; voter&nbsp;2 defaults to <strong>gpt-5.4-mini</strong>
+(OpenAI direct), the pairing the 89% figure was measured with; and the CSV/DB column landed as
+<code>screen_categories</code> rather than <code>categories</code>, matching the sibling
+screen columns (the Supabase migration is
+<code>alter table record_metadata add column screen_categories text</code>). PR&nbsp;#114
+(item&nbsp;7's companion) is still open, marked do-not-merge by its author, and now needs a
+rebase: the identification prompt it edits was replaced by the §8.2 merged target prompt, so
+its real remaining decision is whether FLoRA-anchor notes survive as an evidence block in the
+merged prompt.</p>
+
 <p>Everything the screen swap requires, in dependency order. Items 1–4 are the swap itself;
 5–7 are consequences that will silently misbehave if skipped.</p>
 
@@ -557,6 +649,17 @@ but does not change any decision here.</p>
 Merging them into a fixed core plus dynamic evidence blocks leaves one prompt to review and
 optimise, and collapses items&nbsp;2, 3 and 5 of the §9.0 triage list into a single review.
 Draft: <code>scratch_integrated_target_prompt.py</code>, revised twice against codex review.</p>
+
+<p><span class="tag t-ops">done</span> Merged (PR&nbsp;#117, 2026-08-01, reworked on top of
+PR&nbsp;#116's refactored Stage&nbsp;3): <code>shared/target_keys.py</code> provides the
+deduplicated <code>@smith2009</code> key namespace, <code>build_target_prompt</code> serves
+ladder stages 4, 4.5 and 7 (the old identification and reference-target prompts are deleted),
+and <code>identify_targets_with_llm</code> enforces <code>match_certain</code> acceptance with
+every key resolved against the call's own key map. A single-routed row whose resolver saw
+N&nbsp;targets is rerouted through the multi-original pipeline rather than keeping one link.
+Per the sequencing above, <code>classify_match_type</code> and <code>multi_original.py</code>
+are untouched — and the §6.2 review confirms that per-target adapter is now the highest-value
+piece of remaining work, because the reroute currently re-enters the old multi machinery.</p>
 
 <p><strong>Counting stops being a prediction.</strong> The pre-ladder match-type call spends a
 heavy-model call asking how many originals a paper targets, and the next call names them from
@@ -749,6 +852,515 @@ cache prefixes (<code>llm</code>, <code>reftarget</code>, <code>multi</code>) an
 <code>abstract_only</code> marker: two stages can render an identical prompt for the same DOI and
 model, and their cached answers have different shapes and different acceptance policies.</p>
 
+
+<h3 id="outcomeprompts">8.3 · The outcome prompts — four collapse to two</h3>
+
+<p>Outcome coding runs four prompt builders today:
+<code>build_outcome_abstract_prompt</code>, <code>build_outcome_fulltext_prompt</code>,
+<code>build_repro_abstract_prompt</code> and <code>build_repro_fulltext_prompt</code> — a 2×2
+grid over two questions (which vocabulary: replication or reproduction) and two passes
+(abstract-only, or the full-text escalation that fires when the abstract cannot settle it).
+Only one of those two axes justifies a separate prompt. The vocabularies are genuinely
+different documents: one codes a verdict on a finding, the other codes two axes of a
+re-analysis. The passes differ by a handful of lines — which evidence is present and which
+quote sources are legal — and those lines were being maintained as two divergent copies of a
+two-hundred-line rule block. Below, the pass becomes a parameter and the four builders become
+two.</p>
+
+<p><strong>The evidence is described, not encoded.</strong> The pass is not announced with a
+marker for the model to interpret; the builder simply writes what the model is holding
+(<em>"You have the paper's title and abstract"</em> versus <em>"…and a passage of the paper's
+full text"</em>) and omits the full-text block entirely when there is none. Quote-source
+legality follows from that sentence. Both variants are constant within a pass, so cross-row
+prefix caching is unaffected.</p>
+
+<p><strong><code>is_genuine_attempt</code> is retired from the abstract pass, and replaced on
+the full-text pass.</strong> Every row that reaches outcome coding has already passed the
+front-door screen (<code>run_extract.py:1688</code>): two voters, validated against hand-coded
+cases, on title and abstract. On the abstract pass the outcome LLM sees exactly that evidence
+again — so its genuineness verdict is one model re-deciding a validated two-model question,
+and because <code>_normalise()</code> turns a <code>false</code> into
+<code>outcome = not_a_replication</code>, which is terminal and never escalates, that single
+model can end the row. The full-text pass is different in kind: it is the first call in the
+pipeline to see the methods. So the field is dropped on the abstract pass and replaced there
+by <code>record_type_check</code> (<code>replication | reproduction | neither | unclear</code>).
+<code>neither</code> carries the veto, now earned by evidence the screen never had; and an
+answer naming the <em>other</em> vocabulary is the more valuable signal, because
+<code>record_type</code> will come from the screen (§8.1.1, item 5), which cannot see whether a
+paper re-analysed the original's data. That row is re-coded once in the right vocabulary
+rather than silently coded in the wrong one.</p>
+
+<p><strong>The reproduction grid becomes 4×3 in two fields.</strong> Following the §5 decision
+and the codebook update that went with it, <code>outcome_computation</code> takes
+<code>computationally reproducible</code> · <code>computational issues</code> ·
+<code>technical failure</code> · <code>not checked</code>, and
+<code>outcome_robustness</code> takes <code>robust</code> · <code>robustness challenges</code>
+· <code>not checked</code>, each with <code>cannot_be_determined</code> as its own escape and
+each carrying its own quote and quote source (<code>outcome_computational_quote</code> /
+<code>out_quote_computational_source</code>, <code>outcome_robustness_quote</code> /
+<code>out_quote_robust_source</code>). That closes audit findings R1 and R2 together: a
+validator no longer sees one quote asked to justify two independent judgments, and no
+downstream analysis has to re-split a joined string to read one axis.</p>
+
+<p><strong><code>technical failure</code> is the value that changes the most rows.</strong> It
+is the case where the reproduction was defeated by the materials — no data, no code, an
+unrunnable workflow — which is the most common real reproduction outcome in economics and had
+no representation at all in the 3×3 grid. Without it, such a paper had to be recorded either
+as <code>computational issues</code>, asserting a numerical disagreement that was never
+observed, or as <code>cannot_be_determined</code>, asserting that we could not read the paper.
+Because the new value sits next to three others that all sound like failure, axis 1 is written
+as an ordered decision tree, and the boundary is made concrete: <em>did comparable numerical
+output exist at all?</em> If it did and disagreed, that is <code>computational issues</code>;
+if it never did, that is <code>technical failure</code>. The codebook also settles a question
+the drafting raised — <em>"we only care about numbers and rounding; as long as the same
+numbers appeared (regardless of what it took)"</em> — so a reproduction that needed a corrected
+script or a note to the authors before the numbers came out is still
+<code>computationally reproducible</code>, not an issue.</p>
+
+<p><strong><code>not checked</code> is read off what the paper did, not only off what it
+says.</strong> The draft treated it as a claim needing an explicit statement, with silence
+falling to <code>cannot_be_determined</code>. That is too strict in the common case: a paper
+reporting only alternative specifications has told you it did not set out to reproduce the
+original numbers, without ever saying so. Both axes now accept that inference — a
+<code>not checked</code> verdict may rest on what the paper describes doing — while
+<code>cannot_be_determined</code> keeps the cases where the paper says too little to tell what
+it did. The axis-2 wording goes further and names the pattern outright, because it is the one
+that recurs: the paper considered robustness only, or reproducibility only.</p>
+
+<p><strong>Two axes make escalation a per-axis question.</strong> Today
+<code>_llm_outcome()</code> escalates when the single joined <code>outcome</code> comes back
+<code>cannot_be_determined</code>. With two fields it must escalate when <em>either</em> axis
+is unresolved, and the escalation call re-codes both from the fuller evidence rather than
+patching one in. A settled computation verdict beside an unresolved robustness verdict is the
+common case, and treating it as settled would silently record "not checked" as though the
+paper had been read to the end.</p>
+
+<p><strong>An unresolved abstract verdict is not cheap.</strong> The first draft told the model
+that <code>cannot_be_determined</code> merely bought a second look. For many papers no PDF can
+be acquired, so the abstract verdict is the only reading the paper ever gets. Neither prompt
+now says anything about what happens next — pipeline mechanics are not something the model can
+act on — and both state the two failure modes side by side instead: do not guess an outcome the
+evidence does not support, and do not withhold one it does state, or strongly imply with a
+sentence that can be quoted.</p>
+
+<p><strong>Multi-original papers use these same two prompts, once per target.</strong> Today
+they take a third route — <code>build_multi_original_prompt</code> identifies every target
+<em>and</em> codes a per-target outcome in one call, after which
+<code>_collapse_same_paper_originals()</code> merges studies belonging to one original paper
+and <code>_aggregate_outcomes()</code> applies FLoRA's mixed-if-conflicting rule
+(<code>run_extract.py:916</code>). That makes the least-reviewed wording the one handling the
+hardest papers. The outcome half of that prompt is deleted and each confirmed target is coded
+by the prompt below, its target block naming the original this call is about. The aggregation
+rule stays in code for several studies from one original paper, and is now also stated in the
+prompt so the model's own verdict agrees with it. The cost is N calls where there was one,
+which is currently free: <code>extracted.csv</code> contains <strong>no</strong> rows with
+<code>n_originals &gt; 1</code>, so nothing in production is re-coded by this change.</p>
+
+<p><strong>Smaller changes carried through both drafts.</strong> Static instructions and the
+response schema come first and per-row inputs last, for prefix caching and instruction
+adherence (the §6.1 all-prompts item). The genuine-attempt rule no longer trails the outcome
+rules — the other §6.1 outcome item. The three-level <code>confidence</code> becomes the binary
+<code>confident</code>, on the §8.1 finding that the three-level scale was a constant in
+practice. Quotes are 1-4 complete sentences, the shortest passage that stands on its own, and
+may span two sections joined by <code>&nbsp;|&nbsp;</code> with their sources listed in the
+same order. Quote provenance is described honestly — the full-text block is whatever the parse
+waterfall supplied, not reliably "the discussion section". What was a paragraph of JSON
+discipline is now one line: the prompt polices field names and category spellings, and the
+parser repairs what a parser should repair (<code>"true"</code> → <code>true</code>,
+<code>null</code> → <code>""</code>, trailing commas), rather than spending model attention on
+it.</p>
+
+<p>Both drafts were revised against a codex review of the merged wording and then against
+reviewer comments on this section. Draft source: <code>scratch_outcome_prompts.md</code>.</p>
+
+<details class="prompt"><summary><strong>build_outcome_prompt (proposed)</strong> — replication outcome, one prompt for both passes <code class="small">replaces build_outcome_abstract_prompt + build_outcome_fulltext_prompt</code></summary><pre>You are coding the outcome of a replication study for a database of replication studies.
+
+⟨EVIDENCE LINE — the builder writes one of:
+  &quot;You have the paper&#x27;s title and abstract, and the original study it has been linked to.&quot;
+  &quot;You have the paper&#x27;s title and abstract, the original study it has been linked to, and a
+   passage of the paper&#x27;s full text.&quot;⟩
+
+Decide what the paper concludes about the original finding.
+
+Return one valid JSON object only. Include the required &quot;outcome_reasoning&quot; field inside the
+object, but add no prose, commentary, markdown, or code fences outside it.
+
+Return exactly five fields:  ⟨six on the full-text pass — record_type_check is added⟩
+
+- &quot;outcome&quot;: one of &quot;success&quot;, &quot;failure&quot;, &quot;mixed&quot;, &quot;descriptive&quot;,
+  &quot;statistically_successful_but_flawed&quot;, &quot;uninformative&quot;, &quot;cannot_be_determined&quot;
+- &quot;outcome_phrase&quot;: the verbatim passage that proves the outcome, or &quot;&quot;
+- &quot;out_quote_source&quot;: where that passage was copied from
+- &quot;confident&quot;: true or false
+- &quot;outcome_reasoning&quot;: one sentence
+⟨full-text pass only:⟩
+- &quot;record_type_check&quot;: one of &quot;replication&quot;, &quot;reproduction&quot;, &quot;neither&quot;, &quot;unclear&quot;
+
+Use these field names, and match every categorical value exactly as listed.
+
+Field meanings:
+
+- &quot;outcome&quot; — the paper&#x27;s verdict on the original finding, from the categories below.
+- &quot;outcome_phrase&quot; — copied word for word from the evidence supplied. Quote 1-4 complete
+  consecutive sentences: the shortest verbatim passage that makes the verdict self-contained
+  to someone who has not read the paper. If the only evidence is the title, quote the title.
+  A passage from one section is usually enough; where the verdict genuinely needs two, join
+  them with &quot; | &quot; and list both sources in the same order.
+- &quot;out_quote_source&quot; — &quot;title&quot;, &quot;abstract&quot; or &quot;fulltext&quot; (or two of them joined by &quot; | &quot;,
+  matching the quote), or &quot;&quot; when there is no quote. Name only a section you were given.
+- &quot;confident&quot; — whether you would stake the verdict on the evidence as written. Answer true
+  only when the text states the conclusion plainly; answer false when your answer rests on
+  inference, or when a different reading of the same sentences would change it.
+- &quot;outcome_reasoning&quot; — one sentence saying why this category and not the nearest alternative.
+⟨full-text pass only:⟩
+- &quot;record_type_check&quot; — what the full text shows this paper actually did: &quot;replication&quot; if it
+  collected new data or used a different sample to re-test the finding, &quot;reproduction&quot; if it
+  re-analysed the original study&#x27;s own data, &quot;neither&quot; if it does not check the named original
+  at all, &quot;unclear&quot; if the text does not say. Answer it from the methods, independently of the
+  outcome fields.
+
+Example of the required JSON structure:
+
+{
+  &quot;outcome&quot;: &quot;mixed&quot;,
+  &quot;outcome_phrase&quot;: &quot;We replicated the main effect of construal level on donation intentions, with an effect size about half that reported originally. The predicted interaction with social distance did not emerge in either sample.&quot;,
+  &quot;out_quote_source&quot;: &quot;fulltext&quot;,
+  &quot;confident&quot;: true,
+  &quot;outcome_reasoning&quot;: &quot;The authors themselves report one target effect as replicated and another as absent, which is the mixed category rather than a reduced-effect success.&quot;
+}
+
+WHEN YOU CANNOT TELL
+
+Answer &quot;cannot_be_determined&quot; when the evidence in front of you does not state the outcome.
+Do not guess an outcome the evidence does not support, and do not withhold one it does state
+(or strongly imply, with a citable sentence that shows this).
+
+OUTCOME CATEGORIES
+
+- &quot;success&quot; — the authors conclude the original finding was confirmed, replicated or
+  supported. A finding the authors treat as supported is success even when the effect is
+  smaller or weaker than the original: effect size alone does not make it mixed.
+- &quot;failure&quot; — the authors conclude the original finding was not supported, was contradicted,
+  or failed to replicate.
+- &quot;mixed&quot; — the authors themselves present their evidence as partly supporting and partly not,
+  for example when some of several tested findings replicated and others did not. Use mixed
+  only when the paper frames its own result that way; do not infer it from a reduced effect
+  size, or because you would have judged the evidence differently. If this paper re-tests
+  several studies from the original paper named below and they came out differently, that is
+  mixed.
+- &quot;descriptive&quot; — the authors describe their study as a replication and reuse the original&#x27;s
+  methods in a new context or population, but never compare their results against the original
+  finding. If the paper does compare its results to the original&#x27;s — even in a new population —
+  code another outcome instead.
+- &quot;statistically_successful_but_flawed&quot; — the authors obtained the original effect but argue
+  that their own or the original&#x27;s method does not validly test the hypothesis, for example
+  &quot;we replicated the effect using the original materials, but show that they are not a valid
+  test of the claim&quot;. Use this only when that critique is the paper&#x27;s main message; a
+  replication that merely notes minor limitations is success.
+- &quot;uninformative&quot; — the authors themselves state that a defect or limitation of this attempt
+  prevents it from providing a meaningful test of the original claim: it was underpowered, or
+  the design failed. Their substantive verdict is that this particular attempt can support
+  neither confirmation nor contradiction. Do not use uninformative merely because an estimate
+  is imprecise, nonsignificant, mixed, or described cautiously.
+- &quot;cannot_be_determined&quot; — we cannot tell from the evidence supplied. The paper may well state
+  an outcome somewhere we were not shown. Use this for missing evidence on our side, never for
+  a paper that reports its own attempt as incapable of adjudicating: that is uninformative.
+
+Remember: &quot;uninformative&quot; is the authors&#x27; verdict about their study; &quot;cannot_be_determined&quot; is
+our verdict about our evidence.
+
+Examples:
+
+1. &quot;Study x used method A to study reasons for 911 calls in city 1. Here, we replicate this
+   method to understand 911 calls in city 2.&quot; — descriptive: the methods are reused, the
+   original claim is never tested.
+2. &quot;We replicated the main effect but not the interaction.&quot; — mixed.
+3. &quot;Our findings confirm Smith et al. (2015).&quot; — success.
+4. &quot;Our sample was too small to provide a meaningful test of the original effect.&quot; —
+   uninformative: this is the authors&#x27; own verdict.
+5. &quot;We obtained the original effect, but demonstrate that it can be explained by mere
+   regression to the mean.&quot; — statistically_successful_but_flawed.
+
+Judge the outcome of this paper&#x27;s own replication, not outcomes it reports for other studies
+in its background or literature review. Base every judgment only on the evidence below.
+
+THIS PAPER REPLICATES: ⟨original authors⟩ (⟨original year⟩). ⟨original title⟩
+⟨on a multi-original paper: &quot;This call is about that original only. Ignore any other study the
+paper also replicates — each is coded separately.&quot;⟩
+
+TITLE: ⟨title_r⟩
+
+ABSTRACT: ⟨abstract_r⟩
+
+⟨full-text pass only:⟩
+PAPER TEXT (the full-text passage supplied by the extraction pipeline; treat it as &quot;fulltext&quot;
+and do not infer a more specific section):
+⟨parsed full text, best-scoring parse, ~7600 chars⟩
+
+Respond with the JSON object only.</pre></details>
+
+<details class="prompt"><summary><strong>build_repro_outcome_prompt (proposed)</strong> — reproduction outcome, 4×3 grid in two coded fields <code class="small">replaces build_repro_abstract_prompt + build_repro_fulltext_prompt</code></summary><pre>You are coding the outcome of a reproduction study for a database of reproduction studies.
+
+A reproduction re-analyses the original study&#x27;s own data or code; it does not collect new
+data. The outcome is coded on two independent axes: whether re-running the analysis produced the original numbers, and
+whether the finding survives alternative reasonable specifications of that same analysis.
+
+⟨EVIDENCE LINE — the builder writes one of:
+  &quot;You have the paper&#x27;s title and abstract, and the original study it has been linked to.&quot;
+  &quot;You have the paper&#x27;s title and abstract, the original study it has been linked to, and a
+   passage of the paper&#x27;s full text.&quot;⟩
+
+Return one valid JSON object only. Include the required &quot;outcome_reasoning&quot; field inside the
+object, but add no prose, commentary, markdown, or code fences outside it.
+
+Return exactly eight fields:  ⟨nine on the full-text pass — record_type_check is added⟩
+
+- &quot;outcome_computation&quot;: one of &quot;computationally reproducible&quot;, &quot;computational issues&quot;,
+  &quot;technical failure&quot;, &quot;not checked&quot;, &quot;cannot_be_determined&quot;
+- &quot;outcome_computational_quote&quot;: the verbatim passage that proves the computation verdict, or &quot;&quot;
+- &quot;out_quote_computational_source&quot;: where that passage was copied from
+- &quot;outcome_robustness&quot;: one of &quot;robust&quot;, &quot;robustness challenges&quot;, &quot;not checked&quot;,
+  &quot;cannot_be_determined&quot;
+- &quot;outcome_robustness_quote&quot;: the verbatim passage that proves the robustness verdict, or &quot;&quot;
+- &quot;out_quote_robust_source&quot;: where that passage was copied from
+- &quot;confident&quot;: true or false — whether you would stake both verdicts on the evidence as
+  written. Answer false when either verdict rests on inference, or when a different reading of
+  the same sentences would change it.
+- &quot;outcome_reasoning&quot;: one sentence naming both verdicts
+⟨full-text pass only:⟩
+- &quot;record_type_check&quot;: one of &quot;reproduction&quot;, &quot;replication&quot;, &quot;neither&quot;, &quot;unclear&quot; — what the
+  full text shows this paper actually did: &quot;reproduction&quot; if it re-analysed the original
+  study&#x27;s own data, &quot;replication&quot; if it collected new data or used a different sample,
+  &quot;neither&quot; if it does not check the named original at all, &quot;unclear&quot; if the text does not say.
+
+Use these field names, and match every categorical value exactly as listed.
+
+Each axis carries its own quote, and the two quotes are usually different sentences. Quote 1-4
+complete consecutive sentences per axis: the shortest verbatim passage that makes that verdict
+self-contained to someone who has not read the paper. Copy word for word from the evidence
+supplied. A source is &quot;title&quot;, &quot;abstract&quot; or &quot;fulltext&quot;; where a verdict genuinely needs two
+passages, join them with &quot; | &quot; and list both sources in the same order. Use &quot;&quot; for both the
+quote and its source when no supplied passage supports that axis verdict. A &quot;not checked&quot;
+verdict can rest on what the paper describes doing — a paper reporting only alternative
+specifications implies it did not set out to reproduce the original numbers — as well as on an
+explicit statement; where the paper says too little to tell what it did, the verdict is
+&quot;cannot_be_determined&quot;.
+
+Example of the required JSON structure:
+
+{
+  &quot;outcome_computation&quot;: &quot;computational issues&quot;,
+  &quot;outcome_computational_quote&quot;: &quot;Running the authors&#x27; Stata code on the deposited data returned a coefficient of 0.21 rather than the 0.34 reported in Table 3, and we were unable to recover the published figure under any reading of the codebook.&quot;,
+  &quot;out_quote_computational_source&quot;: &quot;fulltext&quot;,
+  &quot;outcome_robustness&quot;: &quot;robust&quot;,
+  &quot;outcome_robustness_quote&quot;: &quot;Across the twelve alternative specifications we estimated, including clustering at the district level and dropping the imputed covariates, the sign and significance of the main effect were unchanged.&quot;,
+  &quot;out_quote_robust_source&quot;: &quot;fulltext&quot;,
+  &quot;confident&quot;: true,
+  &quot;outcome_reasoning&quot;: &quot;The reported number could not be obtained from the deposited code, but the finding survived every alternative specification the authors tried.&quot;
+}
+
+WHEN YOU CANNOT TELL
+
+Use &quot;cannot_be_determined&quot; on an axis the evidence in front of you does not settle. Do not
+guess a verdict the evidence does not support, and do not withhold one it does state (or
+strongly imply, with a citable sentence that shows this). The axes are settled separately —
+one may be clear while the other is not.
+
+AXIS 1 — outcome_computation: did re-running the analysis produce the original numbers?
+
+Only the numbers matter here, not the effort: if the reported numbers were obtained in the
+end, that is a reproducible computation regardless of what it took to get there. Work through
+these in order and stop at the first that fits:
+
+1. &quot;not checked&quot; — the supplied text states or implies that reproducing the original reported
+   numbers was outside this paper&#x27;s analysis plan: it went straight to alternative
+   specifications, or examined the original by other means.
+2. &quot;technical failure&quot; — the reproduction could not be attempted or completed at all, because
+   the code, the data or the documentation was missing or unusable, or the workflow could not
+   be run. No comparable numbers came out.
+3. &quot;computational issues&quot; — the analysis ran and produced numbers, but the reported numbers
+   were not obtained: coefficients differed, results could not be recovered, or the paper
+   reports discrepancies it treats as substantive.
+4. &quot;computationally reproducible&quot; — the reported numbers were obtained again. Rounding and
+   negligible numerical differences are compatible with this value, and so is a reproduction
+   that needed correspondence with the authors, a corrected script or a reconstructed step to
+   get there.
+5. &quot;cannot_be_determined&quot; — the supplied evidence does not establish whether a reproduction
+   was attempted, or which of the four results above occurred.
+
+The boundary that matters most is whether comparable numerical output exists at all:
+&quot;computational issues&quot; means numbers came out and disagreed, &quot;technical failure&quot; means no
+numbers came out.
+
+AXIS 2 — outcome_robustness: does the finding survive alternative specifications?
+
+- &quot;robust&quot; — in re-analyses of the original data, the substantive finding remains supported
+  across the reasonable alternative specifications, variable constructions, inclusion rules,
+  estimators or sensitivity analyses actually tested.
+- &quot;robustness challenges&quot; — at least one reasonable alternative analysis materially weakens,
+  reverses, removes or substantively qualifies the original finding. Do not use this for
+  trivial numerical variation that leaves the substantive conclusion unchanged; where the
+  authors state explicitly how they read the variation, trust their judgement.
+- &quot;not checked&quot; — the supplied text suggests that the paper only considered computational
+  reproducibility and did not conduct robustness checks.
+- &quot;cannot_be_determined&quot; — the evidence does not say whether robustness was examined, or does
+  not reveal how it came out.
+
+Rules that apply to both axes:
+
+- The axes are independent and each is coded on its own evidence. A reproduction can fail
+  computationally and still find the conclusion robust, and it can reproduce every number and
+  still overturn the finding under a better specification.
+- A &quot;technical failure&quot; on axis 1 does not settle axis 2. The authors may still have examined
+  the finding by other means, so code axis 2 independently.
+- Both axes concern re-analysis of the original data. New data collected in a fresh sample is
+  a replication, not a robustness check, and does not belong on axis 2.
+
+Judge this paper&#x27;s own reproduction attempt, not results it reports for other studies in its
+background or literature review. Base every judgment only on the evidence below.
+
+THIS PAPER REPRODUCES: ⟨original authors⟩ (⟨original year⟩). ⟨original title⟩
+⟨on a multi-original paper: &quot;This call is about that original only. Ignore any other study the
+paper also reproduces — each is coded separately.&quot;⟩
+
+TITLE: ⟨title_r⟩
+
+ABSTRACT: ⟨abstract_r⟩
+
+⟨full-text pass only:⟩
+PAPER TEXT (the full-text passage supplied by the extraction pipeline; treat it as &quot;fulltext&quot;
+and do not infer a more specific section):
+⟨parsed full text, best-scoring parse, ~7600 chars⟩
+
+Respond with the JSON object only.</pre></details>
+
+<h3 id="outcome-impl">8.3.1 · Implementation checklist</h3>
+
+<p>Everything the two prompts require, in dependency order, with the decisions a builder would
+otherwise have to invent. The prompt merge is the small half: the grid change touches the
+schema and everything downstream of it, and none of that is optional — a response field with
+nowhere to land is silently discarded by <code>_normalise()</code>
+(<code>extract/code_outcome.py:240</code>), which reads <code>result["outcome"]</code> and
+coerces anything unrecognised to <code>cannot_be_determined</code>.</p>
+
+<p><strong>Reading the prompt bodies above.</strong> Text in <code>⟨…⟩</code> is never sent
+literally. Three kinds appear: <em>substitutions</em> the builder fills
+(<code>⟨title_r⟩</code>, <code>⟨abstract_r⟩</code>, the original-study line, the parsed
+full text); <em>conditional segments</em> marked "full-text pass only", which the abstract pass
+omits entirely rather than rendering empty; and the <em>evidence line</em>, where the builder
+picks one of the two sentences shown. Fill them with <code>.replace()</code>, never
+<code>str.format()</code> — both bodies contain literal JSON braces.</p>
+
+<ol>
+<li><strong>Replace the four builders with two.</strong>
+<code>build_outcome_abstract_prompt</code>, <code>build_outcome_fulltext_prompt</code>,
+<code>build_repro_abstract_prompt</code> and <code>build_repro_fulltext_prompt</code>
+(<code>shared/prompts.py:651–733</code>) become <code>build_outcome_prompt(...)</code> and
+<code>build_repro_outcome_prompt(...)</code>, each taking the pass as an argument. The
+fragments <code>REPRO_OUTCOME_RULES</code>, <code>_repro_json()</code>,
+<code>REPRO_JSON_ABSTRACT</code>, <code>REPRO_JSON</code> and <code>CONFIDENCE_FIELD</code> die
+with them. <strong>Keep <code>OUTCOME_ENUM</code></strong> — <code>build_multi_original_prompt</code>
+still splices it (<code>prompts.py:453</code>) until item 8 lands. <code>GENUINE_ATTEMPT_RULE</code>
+is deleted once no builder references it.</li>
+
+<li><strong>Update the cache key to the new builder names.</strong>
+<code>code_outcome.py:291–293</code> lists the old pair in <code>prompt_versions(...)</code>;
+one name per vocabulary now. <code>record_type</code> is already in the key and must stay —
+the two vocabularies produce different response shapes. Nothing needs purging: a prompt's
+version is the hash of its own text, so every stored outcome verdict invalidates on its own.
+Leave the input caps alone (<code>_ABSTRACT_CAP = 3000</code>,
+<code>_FULLTEXT_CAP = 8000</code>, <code>_OUTCOME_TEXT_CHARS = 7600</code>).</li>
+
+<li><strong>Escalate per axis.</strong> Today <code>_llm_outcome()</code>
+(<code>code_outcome.py:266</code>) escalates when the single <code>outcome</code> comes back
+<code>cannot_be_determined</code> or the abstract is empty. For a reproduction the condition
+becomes <code>outcome_computation == "cannot_be_determined"</code> <em>or</em>
+<code>outcome_robustness == "cannot_be_determined"</code> or the abstract is empty, and the
+escalation response replaces <em>both</em> axes — never merge one axis from the abstract call
+with the other from the full-text call. The existing rule that a failed escalation returns the
+abstract verdict <em>uncached</em> is unchanged.</li>
+
+<li><strong>Retire <code>is_genuine_attempt</code>; add <code>record_type_check</code>.</strong>
+The <code>false → outcome = "not_a_replication"</code> mapping at
+<code>code_outcome.py:251</code> is replaced by <code>record_type_check == "neither"</code>,
+<strong>full-text pass only</strong> — the abstract pass no longer returns the field at all, so
+its absence must not be read as a verdict. When <code>record_type_check</code> names the
+<em>other</em> vocabulary, re-code the row once with the other prompt and update the
+<code>type</code> column; a re-coded row is never re-checked a second time (one hop, no loop).
+<code>unclear</code> and a matching value change nothing.</li>
+
+<li><strong>Decide the stored shape.</strong> Six new columns in
+<code>EXTRACT_ADDED_COLS</code> (<code>shared/schema.py:77–85</code>):
+<code>outcome_computation</code>, <code>outcome_computational_quote</code>,
+<code>out_quote_computational_source</code>, <code>outcome_robustness</code>,
+<code>outcome_robustness_quote</code>, <code>out_quote_robust_source</code>. The existing
+<code>outcome</code> column stays populated for both record types, derived for reproductions:
+<ul>
+<li>both axes settled → the two values joined with <code>", "</code>, computation first
+(<code>"computationally reproducible, robust"</code>);</li>
+<li>either axis <code>cannot_be_determined</code> → <code>outcome = cannot_be_determined</code>
+(the axis fields still carry whatever was settled);</li>
+<li><code>record_type_check == "neither"</code> → <code>outcome = not_a_replication</code>, both
+axis fields empty.</li>
+</ul>
+<code>REPRODUCTION_OUTCOME_CATEGORIES</code> becomes two axis vocabularies plus the derived
+join set that <code>OUTCOME_VALUES</code> needs, since
+<code>extract/audit_extracted.py:123</code> validates stored <code>outcome</code> strings
+against it. <code>confident</code> maps to the existing <code>outcome_confidence</code> column
+as <code>high</code>/<code>low</code> — <code>medium</code> is no longer emitted by any outcome
+call.</li>
+
+<li><strong>Make the parser repair what the prompt stopped policing:</strong>
+<code>"true"</code>/<code>"True"</code> → <code>true</code>, <code>null</code> →
+<code>""</code>, and a trailing comma before the closing brace stripped before parsing (the
+only malformed-response mode observed in the §8.1 validation).</li>
+
+<li><strong>Carry the fields through.</strong> <code>_apply_outcome()</code>,
+<code>_merge_row()</code>, <code>_merge_multi_row()</code> and <code>_empty_row()</code> in
+<code>run_extract.py</code> all enumerate the four outcome fields explicitly and need the six.
+<code>extract/csv_to_db.py</code> writes <code>outcome</code> / <code>outcome_quote</code> /
+<code>out_quote_source</code> into <code>unvalidated</code> (line 146) and
+<code>outcome_confidence</code> into <code>record_metadata</code> (line 167) — the axis fields
+belong in the same two tables, and the receiving side is
+<a href="https://github.com/forrtproject/flora-validation/issues/3">flora-validation#3</a>,
+which must land first or the import will reject them. The Check page's Outcome column group
+(<code>validate/templates/check.html:562</code>) and the dashboard column reference
+(<code>dashboard.html:1203–1207</code>) list the columns by name.</li>
+
+<li><strong>Multi-original: one call per target.</strong> Delete the outcome half of
+<code>build_multi_original_prompt</code> (identification is already moving to §8.2) and call
+the prompt above once per confirmed target, with the target block naming that original. Keep
+<code>_aggregate_outcomes()</code> and <code>_collapse_same_paper_originals()</code>
+(<code>run_extract.py:916–995</code>): they apply FLoRA's mixed-if-conflicting rule to several
+studies from <em>one</em> original paper, which is a different question from several original
+papers. No production row is re-coded — <code>extracted.csv</code> has no rows with
+<code>n_originals &gt; 1</code>.</li>
+
+<li><strong>Extend the quote audit.</strong> <code>audit_extracted.py:126–134</code> checks
+that <code>outcome_phrase</code> is really in <code>abstract_r</code> when
+<code>out_quote_source == "abstract"</code>. It needs the same check for both axis quotes, and
+both checks must handle a <code>&nbsp;|&nbsp;</code>-joined quote by testing each passage
+against the source named in the same position.</li>
+
+<li><strong>Tests that will fail until updated:</strong>
+<code>tests/test_prompt_versions.py:79–136</code> (the four builder names, and the fragment
+propagation cases for <code>QUOTE_INSTRUCTION</code> / <code>REPRO_JSON_ABSTRACT</code> /
+<code>REPRO_OUTCOME_RULES</code>), <code>tests/test_extract.py:1374–1384</code> and
+<code>:1832</code> (grid membership via <code>outcome_categories_for()</code>), and
+<code>:1440–1443</code> (a smoke test that instantiates both abstract builders).</li>
+
+<li><strong>Recode the existing reproductions.</strong> 17 rows, 14 with empty outcomes.
+Re-running them under the new prompts is the whole migration, and it is free today.</li>
+</ol>
+
+<p class="small">Status: drafted, reviewed against codex and against two rounds of comments on
+this document, not implemented. The FLoRA codebook was updated to this grid on 2026-08-01 (the
+<code>outcome_computational</code> / <code>outcome_robustness</code> rows carry the 4×3 values
+and their dataset names, plus two new rows for the quote sources), so the codebook, this
+section and <a href="https://github.com/forrtproject/flora-validation/issues/3">the validation
+issue</a> agree. Items 1–6 are one work package; 7–9 can follow; 8 belongs with the §8.2
+multi-original rework if that lands first.</p>
+
 <h2 id="prompts">9 · Appendix — every prompt as it runs today</h2>
 
 <p>Rendered fresh from <code>shared/prompts.py</code> on <code>main</code> @
@@ -758,12 +1370,13 @@ first 10 characters of its current version hash (the sha256 of the prompt's own 
 every fragment it splices in — the same value that keys the LLM caches). Click to expand.</p>
 
 <p>A ⚠ badge on a block means it does not need reviewing in its current form: it is superseded by
-one of the §8 proposals, retired, or reachable only from the <code>/batch</code> page. Thirteen of
+one of the §8 proposals, retired, or reachable only from the <code>/batch</code> page. Seventeen of
 the twenty blocks below now carry one: eight resolution prompts absorbed by
 <a href="#targetprompt">§8.2</a>, two screening prompts absorbed by
-<a href="#screenprompt">§8.1</a>, and three that fire only from the batch page. That leaves seven
-prompts whose current wording is still what the pipeline will run, sorted by the triage in
-§9.0.</p>
+<a href="#screenprompt">§8.1</a>, four outcome prompts absorbed by
+<a href="#outcomeprompts">§8.3</a>, and three that fire only from the batch page. That leaves
+three — the two PDF-extraction prompts and the provider system message — whose current wording
+is still what the pipeline will run.</p>
 
 <h3 id="triage">9.0 · Review triage — which prompts still need review</h3>
 
@@ -827,9 +1440,10 @@ rule-uncertain rows flow to the front door; <code>record_type</code> comes from 
 own replication/reproduction classification (today it comes solely from Stage 2's
 <code>filter_status</code> — Stage 3 never re-decides it), with the reproduction-phrase
 heuristic in <code>rule_filter.py</code> staying as the <code>--no-llm</code> fallback.</li>
-<li>The four outcome prompts — live, but the reproduction pair changes anyway for the 4×3
-grid decided in the backlog (§6.1); review together with that change, not before. The batched
-multi-target outcome call from §8.2 lands here rather than in the identification review.</li>
+<li>The four outcome prompts — <strong>now drafted as two</strong> in
+<a href="#outcomeprompts">§8.3</a>, with the reproduction pair rebuilt on the 4×3 two-field
+grid settled in §5. Review them there; the current four wordings are superseded. The batched
+multi-target outcome call from §8.2 lands on top of that pair.</li>
 </ol>
 
 <p><strong>Low priority:</strong>
@@ -1495,7 +2109,7 @@ Respond with ONLY this JSON — no prose outside the braces:
   ]
 }</pre></details>
 <h3>Stage 3 — outcome coding</h3>
-<details class="prompt"><summary><strong>build_outcome_abstract_prompt</strong> — replication outcome from the abstract (first pass) <code class="small">extract/code_outcome.py:313 (_llm_outcome)</code> · <code>v 948cb489f9</code></summary><pre>Apply the coding rules below to the supplied paper text. Base every judgment only on the supplied evidence. When the evidence does not determine a category, return the specified uncertainty value rather than inferring or guessing.
+<details class="prompt"><summary><strong>build_outcome_abstract_prompt</strong> — ⚠ SUPERSEDED by the §8.3 merged outcome prompt (pass becomes a parameter) — replication outcome from the abstract (first pass) <code class="small">extract/code_outcome.py:313 (_llm_outcome)</code> · <code>v 948cb489f9</code></summary><pre>Apply the coding rules below to the supplied paper text. Base every judgment only on the supplied evidence. When the evidence does not determine a category, return the specified uncertainty value rather than inferring or guessing.
 
 Classify the replication outcome based on what the paper&#x27;s abstract states.
 
@@ -1527,7 +2141,7 @@ This is an abstract-only pass. If the abstract does not state the outcome, retur
 
 Respond with ONLY this JSON — no prose outside the braces:
 {&quot;is_genuine_attempt&quot;: &lt;true|false&gt;, &quot;outcome&quot;: &quot;&lt;success|failure|mixed|descriptive|statistically_successful_but_flawed|uninformative|cannot_be_determined&gt;&quot;, &quot;outcome_phrase&quot;: &quot;&lt;the FULL verbatim passage that proves the outcome. Quote 3-6 COMPLETE sentences (up to ~1200 characters), including the surrounding sentences needed to make the verdict self-evident to someone who has not read the paper. Never truncate mid-sentence or mid-argument&gt;&quot;, &quot;confidence&quot;: &quot;&lt;high|medium|low&gt;&quot;, &quot;out_quote_source&quot;: &quot;&lt;abstract|title&gt;&quot;, &quot;outcome_reasoning&quot;: &quot;&lt;one sentence explaining the classification choice&gt;&quot;}</pre></details>
-<details class="prompt"><summary><strong>build_outcome_fulltext_prompt</strong> — replication outcome from full text (escalation when the abstract returns cannot_be_determined) <code class="small">extract/code_outcome.py:327 (_llm_outcome)</code> · <code>v c077609023</code></summary><pre>Apply the coding rules below to the supplied paper text. Base every judgment only on the supplied evidence. When the evidence does not determine a category, return the specified uncertainty value rather than inferring or guessing.
+<details class="prompt"><summary><strong>build_outcome_fulltext_prompt</strong> — ⚠ SUPERSEDED by the §8.3 merged outcome prompt (pass becomes a parameter) — replication outcome from full text (escalation when the abstract returns cannot_be_determined) <code class="small">extract/code_outcome.py:327 (_llm_outcome)</code> · <code>v c077609023</code></summary><pre>Apply the coding rules below to the supplied paper text. Base every judgment only on the supplied evidence. When the evidence does not determine a category, return the specified uncertainty value rather than inferring or guessing.
 
 The abstract alone could not settle the replication outcome. Classify it using the paper&#x27;s full text.
 
@@ -1564,7 +2178,7 @@ You are reading the full text — output &#x27;cannot_be_determined&#x27; only w
 
 Respond with ONLY this JSON — no prose outside the braces:
 {&quot;is_genuine_attempt&quot;: &lt;true|false&gt;, &quot;outcome&quot;: &quot;&lt;success|failure|mixed|descriptive|statistically_successful_but_flawed|uninformative|cannot_be_determined&gt;&quot;, &quot;outcome_phrase&quot;: &quot;&lt;the FULL verbatim passage that proves the outcome. Quote 3-6 COMPLETE sentences (up to ~1200 characters), including the surrounding sentences needed to make the verdict self-evident to someone who has not read the paper. Never truncate mid-sentence or mid-argument&gt;&quot;, &quot;confidence&quot;: &quot;&lt;high|medium|low&gt;&quot;, &quot;out_quote_source&quot;: &quot;&lt;abstract|title|fulltext&gt;&quot;, &quot;outcome_reasoning&quot;: &quot;&lt;one sentence explaining the classification choice&gt;&quot;}</pre></details>
-<details class="prompt"><summary><strong>build_repro_abstract_prompt</strong> — reproduction outcome from the abstract — 3×3 computation/robustness grid <code class="small">extract/code_outcome.py:312 (_llm_outcome, record_type == reproduction)</code> · <code>v 9d0f02a8d7</code></summary><pre>Apply the coding rules below to the supplied paper text. Base every judgment only on the supplied evidence. When the evidence does not determine a category, return the specified uncertainty value rather than inferring or guessing.
+<details class="prompt"><summary><strong>build_repro_abstract_prompt</strong> — ⚠ SUPERSEDED by the §8.3 reproduction prompt, which recodes this on the settled 4×3 two-field grid — reproduction outcome from the abstract — 3×3 computation/robustness grid <code class="small">extract/code_outcome.py:312 (_llm_outcome, record_type == reproduction)</code> · <code>v 9d0f02a8d7</code></summary><pre>Apply the coding rules below to the supplied paper text. Base every judgment only on the supplied evidence. When the evidence does not determine a category, return the specified uncertainty value rather than inferring or guessing.
 
 Classify the REPRODUCTION outcome based on what the paper&#x27;s abstract states.
 
@@ -1604,7 +2218,7 @@ This is an abstract-only pass. If the abstract does not make clear whether compu
 
 Respond with ONLY this JSON — no prose outside the braces:
 {&quot;is_genuine_attempt&quot;: &lt;true|false&gt;, &quot;outcome&quot;: &quot;&lt;one of the nine strings above, or cannot_be_determined&gt;&quot;, &quot;outcome_phrase&quot;: &quot;&lt;the FULL verbatim passage that proves the outcome. Quote 3-6 COMPLETE sentences (up to ~1200 characters), including the surrounding sentences needed to make the verdict self-evident to someone who has not read the paper. Never truncate mid-sentence or mid-argument&gt;&quot;, &quot;confidence&quot;: &quot;&lt;high|medium|low&gt;&quot;, &quot;out_quote_source&quot;: &quot;&lt;abstract|title&gt;&quot;, &quot;outcome_reasoning&quot;: &quot;&lt;one sentence naming the computation verdict and the robustness verdict&gt;&quot;}</pre></details>
-<details class="prompt"><summary><strong>build_repro_fulltext_prompt</strong> — reproduction outcome from full text (escalation) <code class="small">extract/code_outcome.py:325 (_llm_outcome, record_type == reproduction)</code> · <code>v dc993ff192</code></summary><pre>Apply the coding rules below to the supplied paper text. Base every judgment only on the supplied evidence. When the evidence does not determine a category, return the specified uncertainty value rather than inferring or guessing.
+<details class="prompt"><summary><strong>build_repro_fulltext_prompt</strong> — ⚠ SUPERSEDED by the §8.3 reproduction prompt, which recodes this on the settled 4×3 two-field grid — reproduction outcome from full text (escalation) <code class="small">extract/code_outcome.py:325 (_llm_outcome, record_type == reproduction)</code> · <code>v dc993ff192</code></summary><pre>Apply the coding rules below to the supplied paper text. Base every judgment only on the supplied evidence. When the evidence does not determine a category, return the specified uncertainty value rather than inferring or guessing.
 
 The abstract alone could not settle the REPRODUCTION outcome. Classify it using the paper&#x27;s full text.
 
