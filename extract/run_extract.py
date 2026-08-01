@@ -557,9 +557,29 @@ def _build_bibtex_r(row: "pd.Series | dict") -> str:
 
 # ── Row merge helpers ─────────────────────────────────────────────────────────
 
+def _record_type(filter_row: pd.Series, screen: "dict | None") -> str:
+    """The paper type, which decides the outcome vocabulary: a reproduction is coded
+    on the computation/robustness grid, not success/failure (see shared/schema.py).
+
+    The front-door screen decides it — that is the call that read the abstract and
+    said what the paper is. Stage 2's filter_status is only the --no-llm fallback,
+    where no screen ran.
+    """
+    if screen and screen.get("record_type"):
+        return str(screen["record_type"])
+    return ("reproduction"
+            if str(filter_row.get("filter_status", "")).strip().lower() == "reproduction"
+            else "replication")
+
+
+def _screen_categories(screen: "dict | None") -> str:
+    return "|".join((screen or {}).get("categories", []) or [])
+
+
 def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
                match_type: str, match_conf: str,
-               rank: int, n: int, classify_model: str = "") -> dict:
+               rank: int, n: int, classify_model: str = "",
+               screen: "dict | None" = None) -> dict:
     row = filter_row.to_dict()
     # propagate study_r → title_r if title_r is absent (old seeded data uses study_r)
     if not row.get("title_r"):
@@ -591,9 +611,8 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
         "out_quote_source":    outcome.get("out_quote_source",    ""),
         "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
         "outcome_llm_model":   str(outcome.get("llm_model",       "") or ""),
-        "type":          "reproduction"
-                         if str(filter_row.get("filter_status", "")) == "reproduction"
-                         else "replication",
+        "type":              _record_type(filter_row, screen),
+        "screen_categories": _screen_categories(screen),
         "original_rank": rank,
         "n_originals":   n,
     })
@@ -604,7 +623,8 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
                      match_type: str, match_conf: str, n: int,
                      link_llm_model: str = "",
                      link_method: str = "llm_cited_candidates",
-                     classify_model: str = "") -> dict:
+                     classify_model: str = "",
+                     screen: "dict | None" = None) -> dict:
     row = filter_row.to_dict()
     if not row.get("title_r"):
         row["title_r"] = row.get("study_r", "")
@@ -642,9 +662,8 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
         "out_quote_source":    outcome.get("out_quote_source",    ""),
         "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
         "outcome_llm_model":   str(outcome.get("llm_model",       "") or ""),
-        "type":          "reproduction"
-                         if str(filter_row.get("filter_status", "")) == "reproduction"
-                         else "replication",
+        "type":              _record_type(filter_row, screen),
+        "screen_categories": _screen_categories(screen),
         "original_rank": orig.get("rank", 1),
         "n_originals":   n,
     })
@@ -804,7 +823,8 @@ def _apply_outcome(row: dict, outcome: dict) -> dict:
     return row
 
 
-def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -> dict:
+def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False,
+                 screen: "dict | None" = None) -> dict:
     abstract_r = str(row.get("abstract_r", ""))
     title_r    = str(row.get("title_r",    ""))
 
@@ -828,18 +848,12 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False) -
         if fulltext:
             fulltext = f"[{_PROVENANCE_LABEL['sections']}]\n\n{fulltext}"
 
-    # filter_status decides the outcome vocabulary: a reproduction is coded on the
-    # computation/robustness grid, not success/failure (see shared/schema.py).
-    record_type = ("reproduction"
-                   if str(row.get("filter_status", "")).strip().lower() == "reproduction"
-                   else "replication")
-
     return extract_outcome(
         doi_r, abstract_r, fulltext, title_r, no_llm=no_llm,
         original_title=str(link.get("resolved_title_o",  "") or ""),
         original_authors=str(link.get("resolved_author_o", "") or ""),
         original_year=str(link.get("resolved_year_o",   "") or ""),
-        record_type=record_type,
+        record_type=_record_type(row, screen),
     )
 
 
@@ -1367,7 +1381,8 @@ def _resolve_and_code(doi_r: str, row: pd.Series, match_type: str, match_conf: s
     link = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                        no_llm=no_llm, no_pdf=no_pdf, classification=screen)
     result_row = _guard_original_link(
-        _merge_row(row, link, {}, match_type, match_conf, 1, 1, classify_model))
+        _merge_row(row, link, {}, match_type, match_conf, 1, 1, classify_model,
+                   screen=screen))
     link_method = str(result_row.get("link_method", ""))
     if resolved_only and link_method in _NO_LINK_METHODS:
         log.debug("[%s] --resolved-only: skipping %s row", doi_r, link_method)
@@ -1378,7 +1393,8 @@ def _resolve_and_code(doi_r: str, row: pd.Series, match_type: str, match_conf: s
         if (not no_pdf or recalibrate_outcomes) and _has_document(doi_r, link):
             _save_parse_cache(doi_r)
         outcome = _get_outcome(doi_r, row, link,
-                               no_llm=no_llm and not recalibrate_outcomes)
+                               no_llm=no_llm and not recalibrate_outcomes,
+                               screen=screen)
     return _apply_outcome(result_row, outcome)
 
 
@@ -1419,7 +1435,7 @@ def _front_door_row(filter_row: pd.Series, screen: dict) -> "dict | None":
     link_method = _map_method(method)
     return _merge_row(filter_row, link,
                       _outcome_without_coding(link_method, link),
-                      "single_original", "low", 1, 1)
+                      "single_original", "low", 1, 1, screen=screen)
 
 
 def _apply_filters(df: pd.DataFrame,
@@ -1774,7 +1790,8 @@ def run_extract(no_llm: bool = False,
                             _merge_multi_row(row, orig, outcome, match_type, match_conf,
                                              len(originals), multi_llm_model,
                                              link_method=multi_link_method,
-                                             classify_model=classify_model)
+                                             classify_model=classify_model,
+                                             screen=screen)
                         ))
             else:
                 row_out = _resolve_and_code(
@@ -1881,9 +1898,10 @@ def run_outcome_only(no_llm: bool = False,
             fulltext="",
             title_r=str(row.get("title_r", "")),
             no_llm=no_llm,
-            record_type=("reproduction"
-                 if str(row.get("filter_status", "")).strip().lower() == "reproduction"
-                 else "replication"),
+            record_type=(str(row.get("type", "")).strip().lower()
+                         or ("reproduction"
+                             if str(row.get("filter_status", "")).strip().lower()
+                             == "reproduction" else "replication")),
         )
         rows.append({
             "doi_r":              doi_r,

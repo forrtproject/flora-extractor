@@ -55,7 +55,12 @@ Completed validation records with per-validator and LLM check results.
 
 ### `record_metadata`
 
-Per-record metadata. Not currently used by the monitoring dashboard.
+Per-record metadata. Not currently used by the monitoring dashboard. Written by
+`extract/csv_to_db.py::_build_metadata_row` — the filter, link and outcome method /
+confidence / model fields, the author, journal and OpenAlex id fields, the
+original rank and count, and `screen_categories` (text, `|`-joined; see
+[`csv-schema.md`](csv-schema.md)). A column added there needs a matching
+`alter table record_metadata add column …` before the next import.
 
 ## Dashboard endpoints
 

@@ -68,7 +68,8 @@ All `filtered.csv` columns, plus:
 | `link_method` | string | How the original was found — see below |
 | `link_evidence` | string | Quote or description supporting the link |
 | `link_confidence` | string | `high` \| `medium` \| `low`; downgraded to `low` on DOI mismatch |
-| `link_llm_model` | string | Model that decided the link; blank for rule-based rows. On `llm_references` rows this is the model that picked the reference, not the two classifiers that screened the paper. On `not_a_replication` and `screen_disagreement` rows it is the pair of front-door classifiers, joined with `+` (`GEMINI_LIGHT_MODEL+SCREEN_VOTER2_MODEL`) |
+| `link_llm_model` | string | Model that decided the link; blank for rule-based rows. On `llm_references` rows this is the model that picked the reference, not the two classifiers that screened the paper. On `not_a_replication` rows it is the pair of front-door classifiers, joined with `+` (`GEMINI_LIGHT_MODEL+SCREEN_VOTER2_MODEL`) |
+| `screen_categories` | string | **Multi-valued.** The `\|`-joined union of both front-door voters' category labels, in the prompt's enum order: `clearly_declared`, `self_retest`, `measurement_validation`, `context_transfer`, `incidental_finding`, `initial_validation`, `tool_benchmark`, `builds_on_literature`, `terminology_only`, `about_replication`, `other`. Filter it by substring or by splitting on `\|` — never by equality, since most rows carry two or more values. Written on every screened row, discards included; blank on `--no-llm` rows and on rows written before the v3.2 screen |
 | `doi_o_verification` | string | DOI verification status — see below |
 | `outcome` | string | Replication outcome — see below |
 | `outcome_phrase` | string | Verbatim phrase from paper describing outcome |
@@ -76,7 +77,7 @@ All `filtered.csv` columns, plus:
 | `out_quote_source` | string | Where the outcome quote came from: `abstract` \| `title` \| `fulltext`. `fulltext` appears only on results escalated to the fulltext LLM pass. |
 | `outcome_reasoning` | string | LLM chain-of-thought for the outcome decision |
 | `outcome_llm_model` | string | Model that coded the outcome. Can differ from `link_llm_model` within one run — the outcome step fails over to another provider when the primary's quota runs out. `keyword` on `--no-llm` rule-based rows; blank when no outcome verdict was made (`pending`, `api_error`) |
-| `type` | string | `replication` \| `reproduction` |
+| `type` | string | `replication` \| `reproduction`. Decided by the front-door screen (a `both` classification is recorded as `replication`, since such a paper collects new data); falls back to Stage 2's `filter_status` only on `--no-llm` rows, where no screen ran. Also selects the outcome vocabulary — a reproduction is coded on the computation/robustness grid |
 | `original_rank` | int | 1 for single-original; 1, 2, 3… for multi-original |
 | `n_originals` | int | Total number of originals for this paper |
 
@@ -94,10 +95,10 @@ sharply, so a consumer has to be able to tell them apart.
 | `grobid_ref_match` | Rule-based: a GROBID-parsed reference matched a candidate by DOI or author+year. The resolver behind it (`shared/disambiguation.resolve_by_grobid_refs`) is not wired into `run_for_doi`, so only stored rows carry this value |
 | `llm_cited_candidates` | LLM chose the original from candidates found by matching an author-year citation in the abstract against the paper's references |
 | `llm_references` | LLM picked the original from the paper's full OpenAlex reference list, accepted only at high confidence (Stage 4.5 screen) |
-| `not_a_replication` | Stage 3's front-door screen concluded at high confidence that the paper does not replicate or reproduce anything; no original exists to link and no PDF was fetched |
+| `not_a_replication` | Stage 3's front-door gate discarded the paper: both voters answered `none`, or one answered `none` confidently and the other gave a qualifying-or-unclear answer it declined to stand behind. No original exists to link and no PDF was fetched |
 | `llm_fulltext` | LLM resolved the original from full PDF text (also multi-original rows when a PDF/GROBID fed the prompt) |
 | `llm_title_search` | **Provisional, not resolved.** The LLM named an original that was **not** in the candidate/reference list, so the DOI came from a CrossRef/OpenAlex title search against the whole literature. Two points in the ladder search this way and both record this one value: the pre-PDF search on a target the screen named but could not match to a reference (gated on both voters calling the paper a replication at high confidence), and the search after the full-text LLM names a title that is in no candidate list. A hand-check of the 2026-07-28 batch put precision near 50%, and the errors are invisible to `doi_o_verification` (the DOI does resolve to the named title; the named title is simply not the paper's target). `link_confidence` is forced to `low`, no outcome is coded, and `sanity_check` quarantines the row to `data/provisional_title_search.csv` for human confirmation |
-| `screen_disagreement` | The two front-door "is this a replication?" classifiers disagreed; the row is set aside for review rather than processed further, and `sanity_check` quarantines it to `data/screen_disagreement.csv` |
+| `screen_disagreement` | **Historical, no longer emitted.** The front door's gate (`screen_gate()` in `shared/llm_client.py`) has no disagreement terminal state: a confident split now proceeds down the ladder. Rows written before the v3.2 screen still carry the value, `sanity_check` still quarantines them to `data/screen_disagreement.csv`, and `--rescreen` still reopens them |
 | `author_year_match_legacy` | Legacy row written before the split; the specific rule-based method cannot be recovered retroactively (see `tools/migrate_link_methods.py`) |
 | `no_original_found` | Pipeline could not identify an original study |
 | `target_pending` | Original DOI must be supplied manually. Also written when only one of the two front-door classifiers answered — a single vote carries no agreement signal, so the row waits for a re-run instead of being filed as a disagreement |

@@ -72,6 +72,9 @@ EXTRACT_ADDED_COLS = [
     "link_evidence",       # str   — quote or pattern used for linking
     "link_confidence",     # str   — high | medium | low
     "link_llm_model",      # str   — exact model used for DOI resolution (e.g. gemini-2.0-flash)
+    "screen_categories",   # str   — |-joined union of the front-door screen's category
+                           #         labels (SCREEN_CATEGORIES in shared/llm_client.py);
+                           #         multi-valued, so filter it by substring, never equality
     "doi_o_verification",  # str   — verified | corrected | mismatch | no_doi | not_found | no_metadata | api_error | skipped
 
     # Outcome
