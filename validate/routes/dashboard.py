@@ -205,7 +205,7 @@ SET_FILES: dict[str, dict] = {
     "not_a_replication": {
         "title": "Not a Replication",
         "file": "not_a_replication.csv",
-        "why": "The outcome classifier judged is_genuine_attempt=false — the text does not "
+        "why": "The full-text outcome pass answered record_type_check=neither — the text does not "
                "describe a real attempt to replicate or reproduce the named original. These are "
                "Stage 2 false positives that survived the phrase gate.",
         "action": "Spot-check for classifier over-rejection; genuine misses should be promoted back.",

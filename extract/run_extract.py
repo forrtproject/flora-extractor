@@ -250,6 +250,14 @@ _METHOD_MAP = {
 _VALID_MATCH_TYPES = {"single_original", "multiple_match", "multiple_original"}
 _VALID_OUTCOMES    = OUTCOME_CATEGORIES
 
+# The reproduction outcome axes, carried through every row producer alongside the
+# shared outcome block. Empty on a replication row.
+_OUTCOME_AXIS_COLS = (
+    "outcome_computation", "outcome_computational_quote",
+    "out_quote_computational_source",
+    "outcome_robustness", "outcome_robustness_quote", "out_quote_robust_source",
+)
+
 # ── Rule-based multi-original detection ──────────────────────────────────────
 # These patterns catch papers whose title or abstract unambiguously declares
 # that N independent original studies are being replicated (Many Labs, RRR, etc).
@@ -621,6 +629,7 @@ def _base_row(filter_row: pd.Series, match_type: str, match_conf: str,
         "out_quote_source":    outcome.get("out_quote_source",    ""),
         "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
         "outcome_llm_model":   str(outcome.get("llm_model",       "") or ""),
+        **{col: outcome.get(col, "") for col in _OUTCOME_AXIS_COLS},
         "type":              _record_type(filter_row, screen),
         "screen_categories": _screen_categories(screen),
         "original_rank": 1,
@@ -838,7 +847,13 @@ def _outcome_without_coding(link_method: str, link: dict) -> "dict | None":
 
 
 def _apply_outcome(row: dict, outcome: dict) -> dict:
-    """Write the outcome fields onto an already-merged result row."""
+    """Write the outcome fields onto an already-merged result row.
+
+    The outcome step is also the first look the pipeline gets at the methods, so it
+    can correct `type`: when the full-text pass reports the other vocabulary the row
+    is re-coded under it, and the record type it was actually coded in is the one the
+    row must carry.
+    """
     row.update({
         "outcome":            outcome.get("outcome",            "cannot_be_determined"),
         "outcome_phrase":     outcome.get("outcome_phrase",     ""),
@@ -846,7 +861,10 @@ def _apply_outcome(row: dict, outcome: dict) -> dict:
         "out_quote_source":   outcome.get("out_quote_source",   ""),
         "outcome_reasoning":  outcome.get("outcome_reasoning",  ""),
         "outcome_llm_model":  str(outcome.get("llm_model",      "") or ""),
+        **{col: outcome.get(col, "") for col in _OUTCOME_AXIS_COLS},
     })
+    if outcome.get("record_type"):
+        row["type"] = str(outcome["record_type"])
     return row
 
 

@@ -146,6 +146,15 @@ def _build_unvalidated_row(record_id: str, row: pd.Series) -> dict:
         "outcome":          _s(row.get("outcome")),
         "outcome_quote":    _s(row.get("outcome_phrase")),
         "out_quote_source": _s(row.get("out_quote_source")),
+        # Reproduction axes — empty on a replication row. `outcome` above carries the
+        # two joined, but a validator judging one axis needs the quote for that axis,
+        # not one quote asked to justify both.
+        "outcome_computation":            _s(row.get("outcome_computation")),
+        "outcome_computational_quote":    _s(row.get("outcome_computational_quote")),
+        "out_quote_computational_source": _s(row.get("out_quote_computational_source")),
+        "outcome_robustness":             _s(row.get("outcome_robustness")),
+        "outcome_robustness_quote":       _s(row.get("outcome_robustness_quote")),
+        "out_quote_robust_source":        _s(row.get("out_quote_robust_source")),
         "validation_status": "unvalidated",
     }
 
