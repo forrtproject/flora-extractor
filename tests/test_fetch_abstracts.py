@@ -183,8 +183,8 @@ def test_phase4_stops_on_quota_and_leaves_rows_retryable(monkeypatch, tmp_path):
     monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
     monkeypatch.setattr(fa, "_parquet_path", lambda name: tmp_path / "missing.parquet")
     monkeypatch.setattr(fa, "_dc_refresh", lambda name: None)
-    monkeypatch.setenv("ELSEVIER_API_KEY", "KEY")
-    monkeypatch.setenv("S2_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "KEY")
+    monkeypatch.setattr(fa, "S2_API_KEY", "")
 
     df = pd.DataFrame({
         "abstract_r": ["", ""],
@@ -247,8 +247,8 @@ def test_phase4_priority_file_reorders_quota(monkeypatch, tmp_path):
     monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
     monkeypatch.setattr(fa, "_parquet_path", lambda name: tmp_path / "missing.parquet")
     monkeypatch.setattr(fa, "_dc_refresh", lambda name: None)
-    monkeypatch.setenv("ELSEVIER_API_KEY", "KEY")
-    monkeypatch.setenv("S2_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "KEY")
+    monkeypatch.setattr(fa, "S2_API_KEY", "")
 
     df = pd.DataFrame({
         "abstract_r": ["", "", ""],
@@ -382,8 +382,8 @@ def test_crossref_phase_checkpoints_empty_not_transient(monkeypatch, tmp_path):
     un-checkpointed so a later run retries it."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setenv("S2_API_KEY", "")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "S2_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
     monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
@@ -417,8 +417,8 @@ def test_crossref_circuit_breaker_stops_phase(monkeypatch, tmp_path):
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
     monkeypatch.setattr(fa, "TRANSIENT_BREAKER_LIMIT", 3)
-    monkeypatch.setenv("S2_API_KEY", "")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "S2_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
     monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     dois = [f"10.1/{c}" for c in "abcde"]
@@ -454,8 +454,8 @@ def test_openalex_whole_batch_failure_not_checkpointed(monkeypatch, tmp_path):
     batch's ids are cached or checkpointed, so they all retry next run."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setenv("S2_API_KEY", "")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "S2_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
     monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
@@ -479,8 +479,8 @@ def test_openalex_successful_batch_missing_id_is_checkpointed(monkeypatch, tmp_p
     DEFINITIVE miss for that id — it must be checkpointed (unlike a batch failure)."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setenv("S2_API_KEY", "")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "S2_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
     monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
@@ -527,8 +527,8 @@ def test_s2_batch_phase_transient_falls_through_to_crossref(monkeypatch, tmp_pat
     miss and checkpoints it there instead."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setenv("S2_API_KEY", "KEY")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "S2_API_KEY", "KEY")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
     monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
@@ -591,8 +591,8 @@ def test_s2_batch_phase_whole_batch_failure_not_checkpointed(monkeypatch, tmp_pa
     batch are cached or checkpointed, so they all retry next run."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setenv("S2_API_KEY", "KEY")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "S2_API_KEY", "KEY")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
     monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
@@ -622,8 +622,8 @@ def test_s2_batch_phase_successful_batch_null_entry_is_definitive_miss(monkeypat
     so it does not repeat the S2 call, but still falls through to CrossRef (Phase 3)."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setenv("S2_API_KEY", "KEY")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "S2_API_KEY", "KEY")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
     monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
@@ -662,8 +662,8 @@ def test_s2_runs_before_crossref_skips_crossref_call_on_s2_hit(monkeypatch, tmp_
     never be called for it at all — not just that it isn't needed."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setenv("S2_API_KEY", "KEY")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "S2_API_KEY", "KEY")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
     monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
@@ -702,8 +702,7 @@ def test_run_fills_from_cache_by_key_priority(monkeypatch, tmp_path):
     cached '__none__' stays empty. Column order + utf-8-sig BOM header preserved."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setenv("S2_API_KEY", "KEY")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "KEY")
+    monkeypatch.setattr(fa, "S2_API_KEY", "KEY")
     monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "KEY")
 
     # Five rows exercising each key type + a definitive miss. Column order is
@@ -780,8 +779,8 @@ def test_run_respects_cache_key_priority_over_lower_tiers(monkeypatch, tmp_path)
     """When more than one key is cached for a row, the oa key wins over doi."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setenv("S2_API_KEY", "")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "S2_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
     monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
@@ -814,8 +813,8 @@ def test_skip_openalex_makes_no_openalex_call_but_still_tries_crossref(monkeypat
     of Phase 1 having run."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setenv("S2_API_KEY", "")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "S2_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
     monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
@@ -843,8 +842,8 @@ def test_candidates_csv_is_never_read_whole(monkeypatch, tmp_path):
     pass a chunksize (streamed), never an unchunked full-file read."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setenv("S2_API_KEY", "")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "S2_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
     monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
@@ -906,8 +905,8 @@ def test_dry_run_writes_nothing_but_reports_counts(monkeypatch, tmp_path, caplog
     import logging
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setenv("S2_API_KEY", "")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "S2_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
     monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
@@ -942,8 +941,8 @@ def test_limit_caps_processing(monkeypatch, tmp_path):
     identifiers are fetched/checkpointed."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setenv("S2_API_KEY", "")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "S2_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
     monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
@@ -1048,8 +1047,8 @@ def test_epmc_phase_whole_batch_failure_not_checkpointed(monkeypatch, tmp_path):
     un-checkpointed, so a later run retries them."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setenv("S2_API_KEY", "")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "S2_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
     monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     pd.DataFrame({
@@ -1074,8 +1073,8 @@ def test_epmc_hit_skips_s2_and_crossref_entirely(monkeypatch, tmp_path):
     the S2 batch endpoint or CrossRef at all — not merely be unaffected by them."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setenv("S2_API_KEY", "KEY")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "S2_API_KEY", "KEY")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
     monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     pd.DataFrame({
@@ -1119,8 +1118,8 @@ def test_dataset_dois_are_excluded_from_every_phase(monkeypatch, tmp_path):
     so they must never reach a fetch phase. They still count as missing."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setenv("S2_API_KEY", "")
-    monkeypatch.setenv("ELSEVIER_API_KEY", "")
+    monkeypatch.setattr(fa, "S2_API_KEY", "")
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
     monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     pd.DataFrame({
@@ -1163,7 +1162,7 @@ def test_enrich_abstracts_batches_epmc_first_and_skips_dataset_dois(monkeypatch,
     fa.ABSTRACT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(fa, "FOUND_INDEX_PATH", tmp_path / "found.txt")
     monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
-    monkeypatch.setenv("S2_API_KEY", "")
+    monkeypatch.setattr(fa, "S2_API_KEY", "")
 
     df = pd.DataFrame({
         "abstract_r": ["", "", "", "keep me"],

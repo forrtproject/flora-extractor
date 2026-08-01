@@ -10,12 +10,11 @@ is off and there is no ``OPENALEX_API_KEY``, the engine is skipped silently
 to avoid surprise calls.
 """
 
-import os
 from pathlib import Path
 
 import pandas as pd
 
-from shared.config import log
+from shared.config import FLORA_USE_ENGINE, OPENALEX_API_KEYS, log
 from shared.schema import CANDIDATES_COLS
 from shared.utils import clean_doi
 
@@ -56,7 +55,7 @@ def fetch_engine_candidates(
     spec_dir = spec_dir or Path(__file__).parent / "spec"
     requested = sources or DEFAULT_SOURCES
 
-    if not os.getenv("OPENALEX_API_KEY") and "openalex" in requested:
+    if not OPENALEX_API_KEYS and "openalex" in requested:
         log.warning(
             "OPENALEX_API_KEY not set — OpenAlex requires it since Feb 13, 2026. "
             "Skipping OpenAlex in the engine source."
@@ -109,5 +108,4 @@ def fetch_engine_candidates(
 
 def is_engine_enabled() -> bool:
     """Env-var gate: ``FLORA_USE_ENGINE=1`` (or true/yes/on) to opt in."""
-    val = os.getenv("FLORA_USE_ENGINE", "").strip().lower()
-    return val in {"1", "true", "yes", "on"}
+    return FLORA_USE_ENGINE

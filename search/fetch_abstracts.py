@@ -89,7 +89,10 @@ from typing import Optional
 import requests
 
 from shared.config import (
-    CACHE_DIR, DATA_DIR, ELSEVIER_API_KEY, EPMC_RATE_SEC, RESEARCHER_EMAIL, log,
+    CACHE_DIR, CROSSREF_RATE_SEC, DATA_DIR, ELSEVIER_API_KEY, ELSEVIER_INSTTOKEN,
+    EPMC_BATCH_SIZE, EPMC_RATE_SEC, OA_BATCH_SIZE, OPENALEX_RATE_SEC, RESEARCHER_EMAIL,
+    S2_API_KEY, S2_BATCH_RATE_SEC, S2_BATCH_SIZE, S2_RATE_SEC, SCOPUS_DEFAULT_LIMIT,
+    SCOPUS_RATE_SEC, log,
 )
 from shared.openalex_keys import headers as oa_headers, is_budget_refusal, rotate_key
 from shared.utils import clean_doi, cache_key
@@ -110,35 +113,6 @@ CHECKPOINT_PATH    = CACHE_DIR / "fetch_abstracts_done.txt"
 # huge flat directory, not disk speed. This index lets that check happen in memory.
 FOUND_INDEX_PATH   = CACHE_DIR / "fetch_abstracts_found.txt"
 ABSTRACT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-OA_BATCH_SIZE      = 50    # OpenAlex filter= supports up to 50 pipe-separated IDs
-OA_RATE_SEC        = 0.1
-CROSSREF_RATE_SEC  = 0.15
-S2_RATE_SEC        = 0.5
-# S2's /graph/v1/paper/batch endpoint accepts up to 500 ids per call — a single
-# request measurably outperforms the single-item endpoint on both fronts. Verified
-# 2026-07-27/28 on a full production run over this corpus's entire 494,406-row S2
-# target list (not a short isolated test): ~49.8 DOIs/sec sustained vs ~3/sec for
-# CrossRef one-at-a-time, and a 14.5% hit rate (71,900 found) vs CrossRef's ~0.6% on
-# the rows it was tried on (Semantic Scholar's corpus covers far more of this
-# dataset than CrossRef's bibliographic-metadata-only abstract field does). An
-# earlier ~9,900-row sample had suggested ~41/sec at ~31% hit rate — the full run
-# confirmed the throughput but showed the hit rate isn't uniform across the corpus
-# (it ranged batch-to-batch from ~10% to ~50%), so don't trust a small sample there.
-# Rate: at 5.0s between batches, whole-batch failures (all 3 retries exhausted) were
-# clustered in the first ~10 minutes (5 failures) then dropped to near-zero for the
-# rest of the ~2h45m run (~2.4% of ~550 batches overall) — a real improvement over
-# 3.0s's ~20% failure rate. Do not re-tune this by hammering the live API in quick
-# isolated bursts — cumulative load on the key from repeated testing appears to
-# matter, not just the gap between the two calls in front of you.
-S2_BATCH_SIZE      = 500
-S2_BATCH_RATE_SEC  = 5.0
-# Europe PMC's search endpoint takes a boolean query, so a batch is
-# 'DOI:"a" OR DOI:"b" ...' in one GET. 25 keeps the URL near 1.3 kB, well inside
-# what the endpoint accepts. The interval is EPMC_RATE_SEC in shared/config.py.
-EPMC_BATCH_SIZE    = 25
-SCOPUS_RATE_SEC    = 1.0   # Elsevier Scopus: ~1 req/sec
-SCOPUS_DEFAULT_LIMIT = 9000  # keep a run under the ~10k/week Scopus quota
 
 # DOI prefixes belonging to data repositories, not journals. Their records are
 # datasets, so there is no abstract anywhere to recover — 10.7910 (Harvard
@@ -598,11 +572,8 @@ def _fetch_scopus_abstract(doi: str, api_key: str) -> tuple[Optional[str], bool]
     # dc:description entirely, so without this the tier returns HTTP 200 and no
     # abstract for every DOI — silently recovering nothing.
     params = {"view": "META_ABS"}
-    # An institutional token grants entitlement off the subscribing network;
-    # without it Elsevier entitlement is IP-bound (campus network / VPN).
-    inst_token = os.getenv("ELSEVIER_INSTTOKEN", "").strip()
-    if inst_token:
-        headers["X-ELS-Insttoken"] = inst_token
+    if ELSEVIER_INSTTOKEN:
+        headers["X-ELS-Insttoken"] = ELSEVIER_INSTTOKEN
     for attempt in range(3):
         try:
             resp = _SESSION.get(url, timeout=20, headers=headers, params=params)
@@ -692,10 +663,9 @@ def enrich_abstracts(df: "pd.DataFrame") -> "pd.DataFrame":
     Modifies df in-place and returns it. Uses the same cache as the standalone
     fetch_abstracts run command, so results are shared across both code paths.
     """
-    import os
     import pandas as pd
 
-    s2_key = os.getenv("S2_API_KEY", "")
+    s2_key = S2_API_KEY
     missing_mask = df["abstract_r"].fillna("").str.strip() == ""
     if not missing_mask.any():
         return df
@@ -856,7 +826,6 @@ def _merge_abstracts_into_csv():
     later chunk is appended utf-8 to avoid a mid-file BOM. Returns (filled,
     still_missing).
     """
-    import os
     import pandas as pd
 
     tmp_path = CANDIDATES_PATH.parent / (CANDIDATES_PATH.name + ".tmp")
@@ -913,8 +882,8 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
     if not CANDIDATES_PATH.exists():
         sys.exit(f"ERROR: {CANDIDATES_PATH} not found.")
 
-    s2_key = os.getenv("S2_API_KEY", "")
-    elsevier_key = os.getenv("ELSEVIER_API_KEY", "") or ELSEVIER_API_KEY
+    s2_key = S2_API_KEY
+    elsevier_key = ELSEVIER_API_KEY
 
     # ------------------------------------------------------------------
     # Build the worklist by streaming — never load the whole file (issue #65)
@@ -989,7 +958,7 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
             # definitive miss for that id (cached + checkpointed below).
             batch_transient = False
             if uncached_ids:
-                time.sleep(OA_RATE_SEC)
+                time.sleep(OPENALEX_RATE_SEC)
                 fetched = _fetch_openalex_batch(uncached_ids)
                 if fetched is None:
                     batch_transient = True

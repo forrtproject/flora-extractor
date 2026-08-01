@@ -16,6 +16,8 @@ from typing import Callable, Iterable, Optional
 
 import yaml
 
+from shared.config import RESEARCHER_EMAIL, S2_API_KEY
+
 from .candidate_normalizer import merge_candidates, normalize_candidate
 from .candidate_ranker import RankingWeights, compute_search_score, load_ranking_weights
 from .exclusion_filter import (
@@ -93,6 +95,9 @@ def build_default_adapters(
     requested = set(sources) if sources else {"openalex", "crossref", "semantic_scholar"}
     adapters: dict[SourceId, SourceAdapter] = {}
 
+    # The remaining os.getenv calls read env-var NAMES supplied by the source spec
+    # YAML — the spec, not this module, decides which variable holds each key, so
+    # these cannot become config constants without breaking that contract.
     if "openalex" in requested and "openalex" in cfg:
         oa = cfg["openalex"]
         oa_api = os.getenv(oa.get("auth", {}).get("api_key_env", ""), "") or None
@@ -111,7 +116,7 @@ def build_default_adapters(
 
     if "crossref" in requested and "crossref" in cfg:
         cr = cfg["crossref"]
-        cr_email = os.getenv(cr.get("auth", {}).get("polite_pool_mailto_env", ""), "") or os.getenv("RESEARCHER_EMAIL", "")
+        cr_email = os.getenv(cr.get("auth", {}).get("polite_pool_mailto_env", ""), "") or RESEARCHER_EMAIL
         if not cr_email:
             # Polite pool requires a contact email; skip Crossref rather than be impolite.
             pass
@@ -129,7 +134,7 @@ def build_default_adapters(
 
     if "semantic_scholar" in requested and "semantic_scholar" in cfg:
         s2 = cfg["semantic_scholar"]
-        s2_api = os.getenv(s2.get("auth", {}).get("api_key_env", ""), "") or os.getenv("S2_API_KEY", "") or None
+        s2_api = os.getenv(s2.get("auth", {}).get("api_key_env", ""), "") or S2_API_KEY or None
         adapters["semantic_scholar"] = SemanticScholarSourceAdapter(
             verified_at=_parse_verified_at(s2["rate_limit"]["verified_at"]),
             rate_per_sec=float(s2["rate_limit"]["requests_per_second"]),
