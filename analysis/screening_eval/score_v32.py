@@ -2,7 +2,7 @@
 
 v3.2 keeps every v3.1 rule fix and replaces the three-level `"confidence"` field with a
 binary `"confident": true|false`. Both prompts are scored against the same corrected
-labels (`human_truth_v31.json`, `heldout_truth_v31.json`, FLoRA positives all yes), so
+labels (`human_truth_v32.json`, `heldout_truth_v32.json`, FLoRA positives all yes), so
 the v3 numbers here are not the ones in `report_v3.md`.
 
 The discard gate is the same idea under both schemas: every voter answers `none` and
@@ -28,8 +28,8 @@ MAP = {"replication": "yes", "reproduction": "yes", "both": "yes",
 
 SETS = {
     "flora": ("flora_positive_cases.json", None, "flora_positive"),
-    "human": ("human_cases.json", "human_truth_v31.json", "human"),
-    "heldout": ("heldout_cases.json", "heldout_truth_v31.json", "heldout"),
+    "human": ("human_cases.json", "human_truth_v32.json", "human"),
+    "heldout": ("heldout_cases.json", "heldout_truth_v32.json", "heldout"),
 }
 
 PENDING = {"F140"}
@@ -125,8 +125,8 @@ def main() -> None:
              "`\"confident\": true|false` carrying an explicit definition.")
     L.append("")
     L.append("**Both prompts are scored against the corrected labels** from the "
-             "instrument-boundary ruling (`truth_flips_v31.md`): `human_truth_v31.json` "
-             "(60 cases: 47 `no`, 13 `yes`), `heldout_truth_v31.json` (30: 20 `no`, 10 "
+             "instrument-boundary ruling (`truth_flips.md`): `human_truth_v32.json` "
+             "(60 cases: 47 `no`, 13 `yes`), `heldout_truth_v32.json` (30: 20 `no`, 10 "
              "`yes`) and the 300 FLoRA entries in `flora_positive_cases.json` (all `yes`). "
              "The v3 numbers therefore differ from `report_v3.md`, which used the pre-ruling "
              "labels.")
@@ -411,7 +411,7 @@ def main() -> None:
     # ---------------------------------------------------------------- 5. flipped 7
     L += ["## 5. The 7 flipped cases — does v32 call them qualifying?", "",
           "These are the cases the instrument-boundary ruling moved from `no` to `yes` "
-          "(`truth_flips_v31.md`). The v3.1/v3.2 rule changes exist to make the models call "
+          "(`truth_flips.md`). The v3.1/v3.2 rule changes exist to make the models call "
           "them qualifying. Cell format: `classification`@`confidence field`.", "",
           "| id | set | " + " | ".join(f"{SHORT[m]} v3 | {SHORT[m]} v32" for m in MODELS)
           + " | G-strict discard v3 -> v32 (FL+GPT / FL+MIN) |",

@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FLoRA — 4 held-out instrument cases</title>
+<style>
+ :root{--ink:#1c2333;--muted:#5b6478;--rule:#e3e6ee;--bg:#fdfdfc;--panel:#f4f6fa;
+       --yes:#2f7d4f;--rep:#1f6f6f;--no:#b3261e;--unc:#9a6a00;--accent:#1a5fb4;--code:#f0f2f7}
+ *{box-sizing:border-box}
+ body{margin:0;background:var(--bg);color:var(--ink);
+      font:16px/1.6 "Avenir Next","Segoe UI",system-ui,sans-serif}
+ header{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--rule);
+        padding:.7rem 1.2rem;display:flex;gap:1rem;align-items:center;flex-wrap:wrap;z-index:10}
+ .bar{flex:1;height:8px;background:var(--rule);border-radius:99px;overflow:hidden;min-width:120px}
+ .bar>i{display:block;height:100%;background:var(--accent);width:0}
+ main{max-width:820px;margin:0 auto;padding:1.4rem 1.2rem 7rem}
+ .help{background:var(--panel);border-left:4px solid var(--accent);padding:.6rem .9rem;
+       border-radius:0 8px 8px 0;font-size:.92rem;margin:1rem 0}
+ .help p{margin:.35rem 0}
+ details{margin-top:.6rem}
+ summary{cursor:pointer;font-weight:600;font-size:.88rem}
+ details ul{margin:.5rem 0 .2rem;padding-left:1.1rem;font-size:.88rem}
+ details li{margin:.25rem 0}
+ h2{font-size:1.15rem;line-height:1.35;margin:1.2rem 0 .3rem}
+ .doi{font-size:.82rem;color:var(--muted);font-family:ui-monospace,Menlo,monospace}
+ .abs{white-space:pre-wrap;background:#fff;border:1px solid var(--rule);border-radius:10px;
+      padding:.9rem 1.1rem;margin:.9rem 0;font-size:.95rem}
+ .row{display:flex;gap:.5rem;flex-wrap:wrap;margin:.9rem 0}
+ button{font:inherit;padding:.55rem 1rem;border-radius:9px;border:1px solid var(--rule);
+        background:#fff;cursor:pointer}
+ button:hover{border-color:var(--accent)}
+ button.sel{color:#fff;border-color:transparent}
+ #vy.sel{background:var(--yes)} #vr.sel{background:var(--rep)}
+ #vn.sel{background:var(--no)} #vu.sel{background:var(--unc)}
+ .conf button.sel{background:var(--accent)}
+ kbd{font:inherit;font-size:.72rem;background:var(--code);border:1px solid var(--rule);
+     border-radius:4px;padding:0 .3em;color:var(--muted)}
+ textarea{width:100%;min-height:3.2rem;font:inherit;padding:.5rem .7rem;border-radius:9px;
+          border:1px solid var(--rule);resize:vertical}
+ footer{position:fixed;bottom:0;left:0;right:0;background:var(--bg);
+        border-top:1px solid var(--rule);padding:.6rem 1.2rem;display:flex;gap:.6rem;
+        align-items:center;flex-wrap:wrap}
+ .sp{flex:1}
+ .muted{color:var(--muted);font-size:.85rem}
+ .done{text-align:center;padding:3rem 1rem}
+ table{border-collapse:collapse;width:100%;font-size:.9rem;margin:1rem 0}
+ th,td{border:1px solid var(--rule);padding:.4rem .6rem;text-align:left}
+ th{background:var(--panel)}
+ @media(max-width:600px){main{padding:1rem .8rem 8rem}}
+</style></head><body>
+<header>
+  <strong id="pos">1 / 4</strong>
+  <div class="bar"><i id="fill"></i></div>
+  <span class="muted" id="savedmsg">autosaved</span>
+</header>
+<main id="app"></main>
+<footer>
+  <button id="prev">← back <kbd>&larr;</kbd></button>
+  <button id="skip">skip <kbd>s</kbd></button>
+  <span class="sp"></span>
+  <span class="muted" id="count"></span>
+  <button id="dl">download CSV</button>
+  <button id="reset" title="clear all your answers">reset</button>
+</footer>
+<script>
+const CASES = [{"case": "H003", "doi": "", "title": "Psychometric Properties of the Persian Version of Dizziness Handicap Inventory.", "abstract": "INTRODUCTION: The present study was designed to investigate the psychometric properties of the Persian version of the Dizziness Handicap Inventory (P-DHI). In addition, this research was targeted toward assessing the association of P-DHI with Medical Outcome Study 36-Item Short Form Health Survey (SF-36) and Hospital Anxiety and Depression Scale (HADS). The current study also involved a comparison of the scores of patients and healthy participants and implementation of a factor analysis. MATERIALS AND METHODS: This cross-sectional study was conducted on 113 patients with dizziness and 30 healthy individuals referring to tertiary centers for otolaryngology and neurology, affiliated to Guilan University of Medical Sciences, Rasht, Iran. The mean age of the patients was 44.5±13.6 years. All patients re-completed the P-DHI after 2 weeks. Internal consistency and reproducibility of the inventory were evaluated using the Cronbach's alpha coefficient, Bland-Altman limits of agreement, and intraclass correlation coefficients. In addition, the relationships of the P-DHI with SF-36 and HADS were evaluated using the Spearman correlation coefficient. An exploratory factor analysis was also run to determine the factor structure of the questionnaire. RESULTS: The Cronbach's alpha coefficient of P-DHI scale was obtained as 0.86. In addition, the functional, physical, and emotional subscales of this instrument had the Cronbach's alpha coefficients of 0.76, 0.52, and 0.80, respectively. The limits of agreement were 16 points for the total scale, and the range of intraclass correlation coefficients was 0.90-0.96. The P-DHI showed a fair correlation with vertigo severity which assesses functional disability subscale. This scale also demonstrated a moderate correlation with SF-36 and HADS. Factor analysis revealed a 2-factor solution which was different from the factor structure of the original DHI. CONCLUSION: As the findings indicated, the P-DHI had good psychometric properties; therefore, it could serve as a useful tool for measuring disability in patients with dizziness and unsteadiness."}, {"case": "H006", "doi": "", "title": "Adaptación psicométrica preliminar del Child Abuse Potential Inventory en Venezuela", "abstract": "This investigation was aimed to adapt and validate the Child Abuse Potential Inventory (CAPI) in Venezuelan population. Two samples were used: one of 348 parents from the general population and other of 35 confirmed child aggressors. Both samples were equivalent in age. For the 77 items Abuse Scale we found a greater discriminative power using the unweighted scoring system. The simple sum of the 77 items defined a consistent scale (α = 0.876) which allows an optimal classification of the subjects (85.3%) and has a structure of 8 factors similar to those of the original scale. We recommend a replication of the study in other regions of the country, using a larger sample, paired demographically and equivalent in terms of their proportion of aggressors and people from the general population."}, {"case": "H014", "doi": "", "title": "Cattle gastrointestinal nematode egg-spiked faecal samples: high recovery rates using the Mini-FLOTAC technique", "abstract": "BACKGROUND: Faecal egg count (FEC) techniques are commonly used to detect gastrointestinal nematodes (GINs) in cattle and to determine anthelmintic efficacy/resistance through the faecal egg count reduction test (FECRT). Mini-FLOTAC is one of the techniques recommended for a standardised FEC/FECRT of helminth eggs in cattle. However, only one paper evaluated the recovery rate of GIN eggs by Mini-FLOTAC (compared to McMaster and modified-Wisconsin method) in cattle, using only a level of contamination of 200 eggs per gram (EPG) of faeces and using GIN eggs collected from goat faeces to spike faecal samples from cattle. To further study the recovery rate of GIN eggs from cattle faeces, this study was conducted in two laboratories, one in Belgium and one in Italy to evaluate the sensitivity, accuracy, precision and reproducibility of the Mini-FLOTAC and McMaster techniques (at two reading levels: grids and chambers) for the detection of GIN eggs in spiked bovine faecal samples. METHODS: In both countries, spiked cattle faecal samples with five different levels of egg contamination (10, 50, 100, 200 and 500 EPG) of GINs were used. The study was performed in both laboratories by the same expert operator and using the same standard operating procedures (SOPs) for the Mini-FLOTAC and McMaster techniques. Sensitivity, accuracy and precision were calculated for each technique and for each level of contamination. Statistical analyses were performed to evaluate differences in performance between the two techniques. RESULTS: Mini-FLOTAC had a higher sensitivity (100% at all EPG levels for Mini-FLOTAC vs 0-66.6% for McMaster chambers and grids at levels< 100 EPG), a higher accuracy (98.1% mean value for Mini-FLOTAC vs 83.2% for McMaster grids and 63.8% for McMaster chambers) and a lower coefficient of variation (10.0% for Mini-FLOTAC vs 47.5% for McMaster grids and 69.4% for McMaster chambers) than McMaster. There was no significant difference in the recovery of GIN eggs between the two studies performed in Belgium and in Italy. CONCLUSIONS: The high GIN egg recovery rate detected by Mini-FLOTAC and the similar results obtained in Belgium and in Italy indicated that the diagnostic performance of a FEC technique was not dependent on the laboratory environment."}, {"case": "H026", "doi": "", "title": "Applicability of the Greulich–Pyle Method in Assessing the Skeletal Maturity of Children in the Eastern Utter Pradesh (UP) Region: A Pilot Study", "abstract": "Background In forensic proficiency, the distinct model applied for age estimation includes physical examination, i.e., evaluation of somatic maturity and post pubescence peculiarities, dental development, and radiological assessment of skeletal maturity usually of the hand and wrist. The Greulich and Pyle (GP) method of skeletal age (SA) determination is considered quicker and easier with a lower error percentage of prediction. The specificity and applicability of the GP atlas have been recapitulated in many studies. This study aims to assess the applicability and reproducibility of the GP atlas on a sample of the eastern Utter Pradesh (UP) population. Results Considering the whole study population, the SA of the male subjects was retarded by 0.89 years or 9.03 months, whereas the SA of females were retarded by 0.36 years or 4.33 months than the chronological age, respectively. Conclusion According to this study, it is concluded that the GP atlas may not be applicable for both males and females in the eastern Uttar Pradesh region. The factors responsible for delayed skeletal growth and maturation may vary depending on demographics, ethnicity, and genetics. Further, a detailed study will be conclusive on a greater population size assessing more accurate and precise insights on the applicability and reproducibility of GP atlas."}];
+const HELP = "<p><strong>Every paper below was DISCARDED by the screening step as\n&ldquo;not a replication or reproduction&rdquo;.</strong> Judge from the title and\nabstract alone whether that discard was right.</p>\n<p><strong>replication</strong> = the paper sets out to collect <em>new data</em> to\nre-test a finding from an earlier published study.\n<strong>reproduction</strong> = it sets out to <em>re-analyse an earlier study's data</em>\nto check the reported result.</p>\n<details><summary>coding rules (click to expand)</summary><ul>\n<li>Checking a specific earlier finding must be a <strong>stated aim</strong> of the paper,\nnot something that merely happens along the way.</li>\n<li>A new context, language, population or setting <strong>still counts</strong>.</li>\n<li><strong>Conceptual</strong> replications count &mdash; different methods testing the same claim.</li>\n<li>Re-validating an <strong>already published instrument</strong> counts; only the\n<em>first</em> validation of a brand-new instrument does not.</li>\n<li>Re-testing the authors' <strong>own earlier published finding</strong> counts.</li>\n<li>Comments or letters that carry <strong>their own re-analysis</strong> count as reproductions.</li>\n<li>Does <strong>not</strong> count: incidental agreement with prior work; testing\nestablished background knowledge; benchmarking a tool or model; &ldquo;replication&rdquo; in the\nDNA/biological sense; papers <em>about</em> replication as a topic.</li>\n<li>Does <strong>not</strong> count: internal replication, i.e. Study 2 replicating Study 1\ninside the same paper.</li>\n</ul></details>";
+const KEY = "flora-coding-heldout4";
+let store = {};
+try { store = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch(e) { store = {}; }
+let i = 0;
+const firstUnanswered = () => {
+  const k = CASES.findIndex(c => !store[c.case] || !store[c.case].verdict);
+  return k < 0 ? CASES.length - 1 : k;
+};
+i = firstUnanswered();
+
+const save = () => {
+  localStorage.setItem(KEY, JSON.stringify(store));
+  const m = document.getElementById("savedmsg");
+  m.textContent = "saved " + new Date().toLocaleTimeString();
+};
+const rec = c => (store[c.case] = store[c.case] || {verdict:"", conf:"high", note:""});
+
+function render(){
+  const c = CASES[i], r = rec(c);
+  document.getElementById("pos").textContent = (i+1) + " / " + CASES.length;
+  const answered = CASES.filter(x => store[x.case] && store[x.case].verdict).length;
+  document.getElementById("fill").style.width = (100*answered/CASES.length) + "%";
+  document.getElementById("count").textContent = answered + " of " + CASES.length + " coded";
+  document.getElementById("app").innerHTML = `
+    <div class="help">${HELP}</div>
+    <h2>${c.title ? esc(c.title) : "(no title in source record)"}</h2>
+    ${c.doi ? `<div class="doi">${esc(c.doi)}</div>` : ""}
+    <div class="abs">${esc(c.abstract)}</div>
+    <div class="row">
+      <button id="vy" class="${r.verdict==="yes_replication"?"sel":""}">yes — replication <kbd>y</kbd></button>
+      <button id="vr" class="${r.verdict==="yes_reproduction"?"sel":""}">yes — reproduction <kbd>r</kbd></button>
+      <button id="vn" class="${r.verdict==="no"?"sel":""}">no <kbd>n</kbd></button>
+      <button id="vu" class="${r.verdict==="unclear"?"sel":""}">unclear <kbd>u</kbd></button>
+    </div>
+    <div class="row conf">
+      <span class="muted" style="align-self:center">confidence</span>
+      ${["high","medium","low"].map((x,k)=>
+        `<button data-c="${x}" class="${r.conf===x?"sel":""}">${x} <kbd>${k+1}</kbd></button>`).join("")}
+    </div>
+    <textarea id="note" placeholder="note (optional) — especially useful when you disagree with the screen">${esc(r.note)}</textarea>
+    <div class="row"><button id="next">next → <kbd>Enter</kbd></button></div>`;
+  const set = v => { r.verdict = v; save(); render(); };
+  document.getElementById("vy").onclick = () => set("yes_replication");
+  document.getElementById("vr").onclick = () => set("yes_reproduction");
+  document.getElementById("vn").onclick = () => set("no");
+  document.getElementById("vu").onclick = () => set("unclear");
+  document.querySelectorAll(".conf button").forEach(b =>
+    b.onclick = () => { r.conf = b.dataset.c; save(); render(); });
+  const nt = document.getElementById("note");
+  nt.oninput = () => { r.note = nt.value; save(); };
+  document.getElementById("next").onclick = next;
+}
+function esc(s){ const d=document.createElement("div"); d.textContent=s==null?"":s; return d.innerHTML; }
+function next(){ if(i < CASES.length-1){ i++; render(); } else { finish(); } }
+function prev(){ if(i > 0){ i--; render(); } }
+
+function finish(){
+  const answered = CASES.filter(x => store[x.case] && store[x.case].verdict);
+  const tally = {};
+  CASES.forEach(c => {
+    const v = (store[c.case] && store[c.case].verdict) || "(not coded)";
+    tally[v] = (tally[v] || 0) + 1;
+  });
+  document.getElementById("app").innerHTML = `<div class="done">
+    <h2>${answered.length} of ${CASES.length} coded</h2>
+    <table><tr><th>verdict</th><th>n</th></tr>${
+      Object.entries(tally).map(([v,n]) =>
+        `<tr><td>${v.replace(/_/g," ")}</td><td>${n}</td></tr>`).join("")}
+    </table>
+    <p class="muted">Download the CSV and hand it back for scoring. Your answers stay in this
+    browser until you do.</p>
+    <div class="row" style="justify-content:center">
+      <button onclick="i=0;render()">review from the start</button>
+      <button onclick="dl()">download CSV</button>
+    </div></div>`;
+}
+
+function dl(){
+  const hdr = ["case_id","doi_r","your_verdict","your_confidence","your_note"];
+  const q = s => '"' + String(s==null?"":s).replace(/"/g,'""') + '"';
+  const lines = [hdr.join(",")].concat(CASES.map(c => {
+    const r = store[c.case] || {};
+    return [c.case,c.doi,r.verdict||"",r.conf||"",r.note||""].map(q).join(",");
+  }));
+  const blob = new Blob(["\ufeff" + lines.join("\n")], {type:"text/csv;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "flora_coding_heldout4_results.csv";
+  a.click();
+}
+
+document.getElementById("prev").onclick = prev;
+document.getElementById("skip").onclick = next;
+document.getElementById("dl").onclick = dl;
+document.getElementById("reset").onclick = () => {
+  if (confirm("Clear all your answers?")) { store = {}; save(); i = 0; render(); }
+};
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "TEXTAREA") { if (e.key === "Escape") e.target.blur(); return; }
+  const c = CASES[i], r = rec(c);
+  const k = e.key.toLowerCase();
+  if (k === "y") { r.verdict = "yes_replication"; save(); render(); }
+  else if (k === "r") { r.verdict = "yes_reproduction"; save(); render(); }
+  else if (k === "n") { r.verdict = "no"; save(); render(); }
+  else if (k === "u") { r.verdict = "unclear"; save(); render(); }
+  else if (k === "1") { r.conf = "high"; save(); render(); }
+  else if (k === "2") { r.conf = "medium"; save(); render(); }
+  else if (k === "3") { r.conf = "low"; save(); render(); }
+  else if (k === "s" || e.key === "ArrowRight") next();
+  else if (e.key === "ArrowLeft") prev();
+  else if (e.key === "Enter") next();
+  else return;
+  e.preventDefault();
+});
+render();
+</script></body></html>
