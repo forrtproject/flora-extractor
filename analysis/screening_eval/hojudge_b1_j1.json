@@ -1,0 +1,17 @@
+[
+  {"id": "H023", "verdict": "no", "confidence": "high", "reason": "Molecular/viral RNA replication and co-evolution study, not a study replication."},
+  {"id": "H015", "verdict": "no", "confidence": "high", "reason": "Duplicate of the same enterovirus RNA replication/co-evolution abstract; biological sense only."},
+  {"id": "H010", "verdict": "yes", "confidence": "medium", "reason": "Paper is explicitly described as a replication of earlier research testing the same regional finance relationships with new data."},
+  {"id": "H006", "verdict": "no", "confidence": "high", "reason": "Psychometric adaptation/validation of the CAPI instrument in a new population, not a re-test of a substantive finding."},
+  {"id": "H021", "verdict": "no", "confidence": "medium", "reason": "Development and internal reproducibility check of the authors' own prognostic model, i.e. method validation rather than replication of a prior finding."},
+  {"id": "H001", "verdict": "no", "confidence": "high", "reason": "Comparison/validation of NGS vs Sanger sequencing assay performance, a method evaluation."},
+  {"id": "H008", "verdict": "no", "confidence": "high", "reason": "Round-robin measurement reproducibility comparison of CPX trailers, a technical reproducibility study."},
+  {"id": "H024", "verdict": "no", "confidence": "high", "reason": "Museum repatriation and heritage study unrelated to replication."},
+  {"id": "H009", "verdict": "yes", "confidence": "high", "reason": "Online replication of an in-lab vowel recall experiment, collecting new data to re-test the original finding."},
+  {"id": "H030", "verdict": "yes", "confidence": "high", "reason": "Explicitly a replication, with new data, of an earlier Australian classroom simulation study."},
+  {"id": "H029", "verdict": "yes", "confidence": "high", "reason": "Explicit replication with new data of the 1981 Wohlfarth color/light classroom study."},
+  {"id": "H012", "verdict": "no", "confidence": "medium", "reason": "Standard GWAS discovery-plus-replication-cohort design within a single new study, not a re-test of an earlier published finding."},
+  {"id": "H019", "verdict": "no", "confidence": "high", "reason": "Duplicate of the same enterovirus RNA replication/co-evolution abstract; biological sense only."},
+  {"id": "H026", "verdict": "no", "confidence": "high", "reason": "Assessing applicability/reproducibility of the Greulich-Pyle skeletal-age method in a new population is instrument validation."},
+  {"id": "H005", "verdict": "no", "confidence": "medium", "reason": "Standard GWAS discovery-plus-replication-sample design within one new study, not re-testing a separately published finding."}
+]

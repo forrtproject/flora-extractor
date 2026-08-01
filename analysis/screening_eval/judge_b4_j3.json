@@ -1,0 +1,13 @@
+[
+  {"id": "C045", "verdict": "yes", "confidence": "high", "reason": "Abstract states 'In a replication of Mintzberg's study, the authors found support for the planning literature's position' — new observational data collected to re-test a prior published finding."},
+  {"id": "C012", "verdict": "no", "confidence": "high", "reason": "This evaluates the reproducibility/performance of the ICH-score prediction instrument in a new patient subgroup, which is validating a measurement instrument, not re-testing a study's finding."},
+  {"id": "C047", "verdict": "no", "confidence": "medium", "reason": "The 'replication of CBF increases' is cited as prior background evidence; the study itself is a proof-of-concept diagnostic-biomarker performance evaluation, i.e. validating a measurement approach."},
+  {"id": "C022", "verdict": "no", "confidence": "high", "reason": "This is a scientific reply about gene recombination/contamination artifacts; 'replication' here refers to biological/technical replication of a lab procedure, not a study replication."},
+  {"id": "C004", "verdict": "no", "confidence": "medium", "reason": "The study develops a new VR/haptic apparatus to 'reproduce the effect of prism adaptation' as a new experimental method/procedure, not to re-test a specific prior published study's finding."},
+  {"id": "C034", "verdict": "no", "confidence": "high", "reason": "Concerns viral genome replication (biological sense), not a replication/reproduction study."},
+  {"id": "C019", "verdict": "no", "confidence": "medium", "reason": "The 'replication of one another' describes two internal experiments assessing and validating use-case quality metrics, i.e. evaluating a measurement method, not re-testing an external prior finding."},
+  {"id": "C028", "verdict": "no", "confidence": "high", "reason": "Aims to 'confirm the reproducibility of manual graft preparation' using curvilinear forceps — evaluating a surgical procedure's reliability, not re-testing a published finding."},
+  {"id": "C033", "verdict": "unclear", "confidence": "low", "reason": "The 'replication of these combinations' across gender/context/time groups appears to be an internal robustness check within the same dissertation rather than re-testing a separately published study."},
+  {"id": "C003", "verdict": "no", "confidence": "high", "reason": "'Replicating previous evidence of executive dysfunction in HD' is a passing remark noting consistency with prior literature, not a stated aim of the study."},
+  {"id": "C046", "verdict": "no", "confidence": "high", "reason": "Evaluates the diagnostic performance of the 'Ogata score' in a new (Latin American) population, i.e. validating a diagnostic instrument, not re-testing a published finding."}
+]

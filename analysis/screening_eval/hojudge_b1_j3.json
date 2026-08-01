@@ -1,0 +1,17 @@
+[
+  {"id": "H023", "verdict": "no", "confidence": "high", "reason": "Biological replication of viral RNA elements, not a study replication."},
+  {"id": "H015", "verdict": "no", "confidence": "high", "reason": "Biological replication of viral RNA elements, not a study replication."},
+  {"id": "H010", "verdict": "yes", "confidence": "medium", "reason": "New regional data collected to retest an earlier study's findings on budget determinants, though the abstract doesn't name the original study."},
+  {"id": "H006", "verdict": "no", "confidence": "high", "reason": "This is a psychometric adaptation/validation of an instrument in a new population, not a replication of a finding; it only recommends future replication."},
+  {"id": "H021", "verdict": "no", "confidence": "medium", "reason": "Confirms reproducibility of the authors' own prognostic model on new cases, i.e. model validation rather than re-testing a previously published finding."},
+  {"id": "H001", "verdict": "no", "confidence": "high", "reason": "Assay reproducibility/proficiency testing for a sequencing method, not a replication study."},
+  {"id": "H008", "verdict": "no", "confidence": "high", "reason": "Inter-trailer method reproducibility comparison, not a replication of a published finding."},
+  {"id": "H024", "verdict": "no", "confidence": "high", "reason": "Refers to physical replication of artefacts in a repatriation process, unrelated sense of the word."},
+  {"id": "H009", "verdict": "yes", "confidence": "high", "reason": "New data collected online to re-test an earlier in-lab vowel recall experiment."},
+  {"id": "H030", "verdict": "yes", "confidence": "high", "reason": "New data collected in the US to re-test a prior Australian study's simulation-based teaching intervention."},
+  {"id": "H029", "verdict": "yes", "confidence": "high", "reason": "New data collected to re-test Wohlfarth's 1981 findings on classroom color/light effects."},
+  {"id": "H012", "verdict": "no", "confidence": "medium", "reason": "Stage 2 is an internal replication of the same paper's own discovery-stage GWAS signals, not a re-test of a previously published external finding."},
+  {"id": "H019", "verdict": "no", "confidence": "high", "reason": "Biological replication of viral RNA elements, not a study replication."},
+  {"id": "H026", "verdict": "no", "confidence": "high", "reason": "Assesses applicability/reproducibility of a skeletal age-estimation method in a new population, i.e. instrument validation."},
+  {"id": "H005", "verdict": "no", "confidence": "medium", "reason": "Internal discovery-plus-replication GWAS design within the same paper, not a re-test of a previously published external finding."}
+]

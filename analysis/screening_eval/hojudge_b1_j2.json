@@ -1,0 +1,17 @@
+[
+  {"id":"H023","verdict":"no","confidence":"high","reason":"Biological/molecular replication of viral RNA, not a study replication."},
+  {"id":"H015","verdict":"no","confidence":"high","reason":"Biological/molecular replication of viral RNA, not a study replication."},
+  {"id":"H010","verdict":"yes","confidence":"medium","reason":"New data collected for districts/cities to re-test the same regression model as an earlier study, described as a replication of that earlier research."},
+  {"id":"H006","verdict":"no","confidence":"high","reason":"Psychometric adaptation/validation of an instrument (CAPI) in a new population, and the replication mentioned is only recommended for future work, not conducted here."},
+  {"id":"H021","verdict":"no","confidence":"high","reason":"Reproducibility here refers to internal consistency/confirmation of the authors' own prognostic model, i.e. measurement reproducibility, not a re-test of a prior published finding."},
+  {"id":"H001","verdict":"no","confidence":"high","reason":"Assay proficiency testing/reproducibility evaluation of a sequencing method, not a replication of a study finding."},
+  {"id":"H008","verdict":"no","confidence":"high","reason":"Inter-instrument reproducibility/round-robin comparison of a measurement method (CPX), not a replication of a study finding."},
+  {"id":"H024","verdict":"no","confidence":"high","reason":"Refers to replication of physical museum objects/artefacts, an unrelated ordinary-language sense."},
+  {"id":"H009","verdict":"yes","confidence":"medium","reason":"New online data collected to re-test findings from an earlier in-lab vowel recall experiment."},
+  {"id":"H030","verdict":"yes","confidence":"high","reason":"New data collected in a new setting/population to re-test a simulation pedagogy study that originated in Australia."},
+  {"id":"H029","verdict":"yes","confidence":"high","reason":"New data collected to re-test the 1981 original study on classroom color/light effects."},
+  {"id":"H012","verdict":"no","confidence":"medium","reason":"GWAS discovery-replication design is an internal two-stage validation within the same study, not a re-test of a separately published prior finding."},
+  {"id":"H019","verdict":"no","confidence":"high","reason":"Biological/molecular replication of viral RNA, not a study replication."},
+  {"id":"H026","verdict":"no","confidence":"high","reason":"Assessing applicability/reproducibility of an age-estimation method (Greulich-Pyle atlas) in a new population, i.e. method validation."},
+  {"id":"H005","verdict":"no","confidence":"medium","reason":"GWAS discovery-plus-replication-sample design within the same study, an internal statistical validation rather than a re-test of a separately published finding."}
+]

@@ -1,0 +1,272 @@
+[
+  {
+    "id": "H001",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"evaluation of NGS-based testing. These challenges include a proper assessment of assay accuracy and the reprodu"
+  },
+  {
+    "id": "H002",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"yes\", \"classification_confidence\": \"high\", \"evidence_quote\": \"Contrary to the previous data showing a 27-month diagnostic delay in Saskatchewan, our study which included a "
+  },
+  {
+    "id": "H003",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The present study was designed to investigate the psychometric properties of the Persian version of the Dizziness Handi"
+  },
+  {
+    "id": "H004",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"yes\", \"classification_confidence\": \"high\", \"evidence_quote\": \"This objective will serve as a replication of past research to provide additional validation of their findings"
+  },
+  {
+    "id": "H005",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"carrying out genome-wide association study (GWAS) analysis... with replication of promising signals in an indep"
+  },
+  {
+    "id": "H006",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"This investigation was aimed to adapt and validate the Child Abuse Potential Inventory (CAPI) in Venezuelan pop"
+  },
+  {
+    "id": "H007",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication. Th"
+  },
+  {
+    "id": "H008",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"the reproducibility of the CPX method is still not well known.\", \"reasoning\": \"The study evaluates measurement "
+  },
+  {
+    "id": "H009",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"yes\", \"classification_confidence\": \"high\", \"evidence_quote\": \"online replication of an in-lab vowel recall experiment\", \"reasoning\": \"The abstract explicitly states that the study "
+  },
+  {
+    "id": "H010",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"yes\", \"classification_confidence\": \"high\", \"evidence_quote\": \"This research is a kind of causal research and is a replication of the earlier research.\", \"reasoning\": \"The a"
+  },
+  {
+    "id": "H011",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The MI was validated using targeted bisulphite sequencing in the Generations Study... and replicated in a meta-analysis"
+  },
+  {
+    "id": "H012",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"To identify novel WM susceptibility loci we conducted a two-stage genome-wide association study (GWAS)... Eleve"
+  },
+  {
+    "id": "H013",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"Our objectives were to estimate detection probabilities for three marsh songbirds... as a function of weather c"
+  },
+  {
+    "id": "H014",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"evaluate the sensitivity, accuracy, precision and reproducibility of the Mini-FLOTAC and McMaster techniques\", \"reasoni"
+  },
+  {
+    "id": "H015",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\", \"reasoni"
+  },
+  {
+    "id": "H016",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds replicative element oriL to initiate replication.\", \"rea"
+  },
+  {
+    "id": "H017",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"Using mixed methods to pinpoint the success of Ethiopia in reducing under-5 mortality, Jenny Ruducha and colleagues hav"
+  },
+  {
+    "id": "H018",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"Enterovirus protein 3C ... binds replicative element oriL to initiate replication.\", \"reasoning\": \"The abstract"
+  },
+  {
+    "id": "H019",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\", \"reasoni"
+  },
+  {
+    "id": "H020",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\", \"reasoni"
+  },
+  {
+    "id": "H021",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"Reproducibility of prognostic results was confirmed for new ACS cases\", \"reasoning\": \"The paper validates a new prognos"
+  },
+  {
+    "id": "H022",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The aim of the study was to establish whether a dedicated hip fracture unit... could improve clinical outcomes\""
+  },
+  {
+    "id": "H023",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds replicative element oriL to initiate replication.\", \"rea"
+  },
+  {
+    "id": "H024",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"\", \"reasoning\": \"The paper discusses the cultural repatriation and curation of S\u00e1mi artefacts, using the word '"
+  },
+  {
+    "id": "H025",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds replicative element oriL to initiate replication.\", \"reasoning\":"
+  },
+  {
+    "id": "H026",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"This study aims to assess the applicability and reproducibility of the GP atlas on a sample of the eastern Utter Prades"
+  },
+  {
+    "id": "H027",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"yes\", \"classification_confidence\": \"high\", \"evidence_quote\": \"revisiting the seismic-based type locality: the Mississippi Fan, in the central Gulf of Mexico. By independent"
+  },
+  {
+    "id": "H028",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"This study investigated the association between genetic variants in cell adhesion pathways and the prognosis of"
+  },
+  {
+    "id": "H029",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"yes\", \"classification_confidence\": \"high\", \"evidence_quote\": \"This research was a replication of original research conducted in 1981 by Dr. H. Wohlfarth\", \"reasoning\": \"The"
+  },
+  {
+    "id": "H030",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"yes\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The purpose of this pilot study, a replication of a study that originated in Australia for large classroom siz"
+  }
+]

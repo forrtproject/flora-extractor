@@ -1,0 +1,14 @@
+[
+  {"id": "C036", "verdict": "no", "confidence": "high", "reason": "Abstract concerns molecular/viral replication (oriL, 3C protein) of enterovirus genomes, the biological sense excluded by the criteria."},
+  {"id": "C010", "verdict": "no", "confidence": "high", "reason": "Engineering study on shock-wave modelling from a methane-air explosion; 'reproducibility' refers to consistency of experimental/theoretical results, not re-testing a prior published finding."},
+  {"id": "C011", "verdict": "no", "confidence": "high", "reason": "New experiments on graphene quantum Hall devices investigating sample-to-sample reproducibility of device performance, not a re-test of a specific prior published finding."},
+  {"id": "C040", "verdict": "no", "confidence": "high", "reason": "Translation and psychometric validation of the Champion Health Belief Model Scale, i.e. instrument validation, explicitly excluded by the criteria."},
+  {"id": "C025", "verdict": "yes", "confidence": "medium", "reason": "The note states GPC A performs 'a pure replication of the KiGGS results' using new data (GCP wave 2), collecting/using new data to re-test the earlier KiGGS finding."},
+  {"id": "C009", "verdict": "no", "confidence": "high", "reason": "New primary study assessing performance/reproducibility (inter-reader agreement) of a radiological biomarker, not a re-test of a specific prior published finding."},
+  {"id": "C041", "verdict": "no", "confidence": "high", "reason": "Duplicate of C036: concerns molecular/viral replication of enterovirus genomes, the biological sense excluded by the criteria."},
+  {"id": "C015", "verdict": "yes", "confidence": "medium", "reason": "Authors use a new independent public EEG dataset to test the robustness/generalizability of an LRTC finding they had previously demonstrated in their own work."},
+  {"id": "C024", "verdict": "no", "confidence": "high", "reason": "New primary DTI study on alcohol dependence and CST segments; only calls for future work to test reproducibility, does not itself replicate a prior published finding."},
+  {"id": "C001", "verdict": "no", "confidence": "high", "reason": "New primary genetic association study in a Zulu HIV cohort; no indication it re-tests a specific earlier published finding with new data."},
+  {"id": "C018", "verdict": "no", "confidence": "high", "reason": "Study assesses reproducibility (inter-rater reliability) of a tumour budding scoring method, i.e. evaluating a scoring procedure, excluded by the criteria."},
+  {"id": "C037", "verdict": "no", "confidence": "medium", "reason": "Single paper with an internal discovery (ADNI-1) and replication (ADNI-GO-2) cohort design for a novel finding, not a study replicating a separately published prior result."}
+]

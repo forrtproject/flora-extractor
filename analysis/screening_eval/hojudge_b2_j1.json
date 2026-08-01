@@ -1,0 +1,16 @@
+[
+  {"id":"H007","verdict":"no","confidence":"high","reason":"Biological/molecular sequence-replication of virus genome, not a study replication."},
+  {"id":"H011","verdict":"no","confidence":"medium","reason":"Internal discovery-and-validation EWAS across own cohorts, not a re-test of an external previously published finding."},
+  {"id":"H028","verdict":"no","confidence":"medium","reason":"Standard discovery + internal replication-set GWAS design within one study, not a re-test of a previously published external finding."},
+  {"id":"H004","verdict":"yes","confidence":"high","reason":"Explicitly designed as a replication of past research with new survey data collected to validate prior findings."},
+  {"id":"H013","verdict":"no","confidence":"high","reason":"Original detection-probability field study, not a re-test of a specific prior published finding."},
+  {"id":"H022","verdict":"no","confidence":"high","reason":"Retrospective case series on a service model, not a replication of a prior study's finding."},
+  {"id":"H016","verdict":"no","confidence":"high","reason":"Biological/molecular sequence-replication of virus genome, not a study replication."},
+  {"id":"H003","verdict":"no","confidence":"high","reason":"Psychometric validation/adaptation of a scale in a new population, excluded by instrument-validation criterion."},
+  {"id":"H025","verdict":"no","confidence":"high","reason":"Biological/molecular sequence-replication of virus genome, not a study replication."},
+  {"id":"H020","verdict":"no","confidence":"high","reason":"Biological/molecular sequence-replication of virus genome, not a study replication."},
+  {"id":"H002","verdict":"yes","confidence":"medium","reason":"New retrospective chart-review data collected to re-test a specific prior Canadian study's diagnostic-delay finding in Saskatchewan."},
+  {"id":"H014","verdict":"no","confidence":"high","reason":"Assessment of technique sensitivity/accuracy/reproducibility across labs, a measurement-reproducibility/method-comparison study excluded by criteria."},
+  {"id":"H027","verdict":"no","confidence":"high","reason":"Original testing of sequence-stratigraphic assumptions at a new locality, not a re-test of a specific prior published finding; framed only in terms of general reproducibility."},
+  {"id":"H017","verdict":"no","confidence":"high","reason":"Commentary/case-study summary about replicating a policy success, not an empirical replication study."}
+]

@@ -1,0 +1,542 @@
+[
+  {
+    "id": "HU01",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"medium\",\n  \"evidence_quote\": \"\\\"we reproduced findings from rodent neurons by demonstrating that recombinant progranulin (rPGRN) me"
+  },
+  {
+    "id": "HU02",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"investigate the sample-to-sample reproducibility of the electronic properties and device performance\",\n "
+  },
+  {
+    "id": "HU03",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"We sought to investigate whether calcium derangement was a specific feature of COVID-19 that distinguish"
+  },
+  {
+    "id": "HU04",
+    "bucket": "A_calibration",
+    "truth": "yes",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"We now provide 10 different examples that support APP gencDNA insertion within eight chromosomes...\\\"\""
+  },
+  {
+    "id": "HU05",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"medium\",\n  \"evidence_quote\": \"a replication of one another, to evaluate the significance and relevance of the use case quality asse"
+  },
+  {
+    "id": "HU06",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"Previous studies have reported inconsistent findings regarding corticospinal tract (CST) changes in alco"
+  },
+  {
+    "id": "HU07",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"This paper extended the least squares approach to reproduce the results of perturbation studies.\\\"\",\n "
+  },
+  {
+    "id": "HU08",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"medium\",\n  \"evidence_quote\": \"\\\"our second objective pertains to the replication of these combinations\\\"\",\n  \"reasoning\": \"The abst"
+  },
+  {
+    "id": "HU09",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"demonstrate the anti-fibrotic **reproducibility** of the efficacious nintedanib dose\\\"\",\n  \"reasoning\""
+  },
+  {
+    "id": "HU10",
+    "bucket": "A_calibration",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"The present study is a partial replication of the intensive tact instruction tactic\\\"\",\n  \"reasoning\""
+  },
+  {
+    "id": "HU11",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"We validated fPDRPNS in rs-fMRI scans of PD patients... acquired in Cologne, Germany... and compared "
+  },
+  {
+    "id": "HU12",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"Here, in an independent dataset... we identified two dynamic connectivity states (DCS) linked to arou"
+  },
+  {
+    "id": "HU13",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"The aim of this work was to understand co-evolution patterns of two interacting replication machinery el"
+  },
+  {
+    "id": "HU14",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"In vitro replication of traumatic spinal cord injury is necessary to understand its biomechanics and to "
+  },
+  {
+    "id": "HU15",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"The aim of this work was to understand co-evolution patterns of two interacting replication machinery el"
+  },
+  {
+    "id": "HU16",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The abstract describes an engineering case study of well completion and ESP system fa"
+  },
+  {
+    "id": "HU17",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"The authors tested the OECD methodology No. 202 [...] on the crustacean culture Ceriodaphnia affinis\",\n "
+  },
+  {
+    "id": "HU18",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"Here, we report a comparative study of Zn-Sn-Ti-O thin films materials using high-throughput experimen"
+  },
+  {
+    "id": "HU19",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"examine Bob Dylan\u2019s unique status in the history of rock... and the manner in which he influenced othe"
+  },
+  {
+    "id": "HU20",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The abstract discusses the evolution and potential of mHealth but does not mention re"
+  },
+  {
+    "id": "HU21",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"An analogy is early genomics studies of complex traits, wherein a move to large, multi-site samples and "
+  },
+  {
+    "id": "HU22",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"future studies must be performed to confirm the etiology of this outbreak\\\"\",\n  \"reasoning\": \"The stud"
+  },
+  {
+    "id": "HU23",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"evaluating its reliability is paramount prior to clinical use\\\"\",\n  \"reasoning\": \"The study assesses t"
+  },
+  {
+    "id": "HU24",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The abstract discusses policy frameworks, opportunities, and gaps in late-life learni"
+  },
+  {
+    "id": "HU25",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"reproducing FE-SPL prepared masters by NIL and etching\\\"\",\n  \"reasoning\": \"The paper describes a manuf"
+  },
+  {
+    "id": "HU26",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The paper analyzes existing social media discourse and applies theoretical frameworks"
+  },
+  {
+    "id": "HU27",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"replication of the top SNPs in an additional set of 185 patients\\\"\",\n  \"reasoning\": \"The study explic"
+  },
+  {
+    "id": "HU28",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"we perform a number of Monte Carlo experiments to test the effectiveness of Carr and Lee\u2019s immunizati"
+  },
+  {
+    "id": "HU29",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The paper introduces a conceptual framework (inheritance system) and analyzes new dat"
+  },
+  {
+    "id": "HU30",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"Analysis of data from point counts... to evaluate temporal variability in detection probability\",\n  \"rea"
+  },
+  {
+    "id": "HU31",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The abstract describes statistical design optimality and construction, not re-testing"
+  },
+  {
+    "id": "HU32",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"Tujuan dari penelitian ini untuk mengetahui hasil pemeriksaan kadar hemoglobin pada pasien HIV dengan pe"
+  },
+  {
+    "id": "HU33",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"assess how the evolution of European traffic influences the fatigue assessment of bridges\\\"\",\n  \"reaso"
+  },
+  {
+    "id": "HU34",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"A replication of Study 2 (Study 6) was conducted to test whether priming preference accounted for thes"
+  },
+  {
+    "id": "HU35",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"we conclude that the initial trigger of gene expression response to microgravity requires less than 1 "
+  },
+  {
+    "id": "HU36",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The study is an original experimental investigation of rice varieties under stress co"
+  },
+  {
+    "id": "HU37",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"To verify the reliability and validity of a Japanese translation of the Satter eating competence Invento"
+  },
+  {
+    "id": "HU38",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"Biomarker discovery to predict disease outcomes is a key focus in Inflammatory Bowel Disease (IBD). We h"
+  },
+  {
+    "id": "HU39",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"We developed a new set-up... to reproduce the effect of prism adaptation in a more ecologically valid,"
+  },
+  {
+    "id": "HU40",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"The study is designed for future implementation of the TSR to the current TNM guidelines, using routin"
+  },
+  {
+    "id": "HU41",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"To test for independent replication of the RIL eQTL, we used introgression lines (ILs). Both populati"
+  },
+  {
+    "id": "HU42",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"To determine whether known monogenic POLG1 polymorphisms could be linked with the unexpectedly high inci"
+  },
+  {
+    "id": "HU43",
+    "bucket": "C_disagreement",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"We report results from a replication of Price's N-rays analysis\\\"\",\n  \"reasoning\": \"The abstract expl"
+  },
+  {
+    "id": "HU44",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"Using qualitative methods and using 16 elements of replication of Ramirez and Gordillo's research\",\n  \"r"
+  },
+  {
+    "id": "HU45",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"replicating previous evidence of executive dysfunction in HD\\\"\",\n  \"reasoning\": \"The study only *repli"
+  },
+  {
+    "id": "HU46",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"This contribution describes results from several long-term test programs and inter-laboratory studies "
+  },
+  {
+    "id": "HU47",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"Experimental results are replicated and investigated using the finite-discrete element method\\\"\",\n  \"r"
+  },
+  {
+    "id": "HU48",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"allowing the replication of already reported experimental findings\\\"\",\n  \"reasoning\": \"The paper descr"
+  },
+  {
+    "id": "HU49",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"The inclusion of the new series into ARAB8 significantly improves the **replication** of this master c"
+  },
+  {
+    "id": "HU50",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"We aim to **evaluate the accuracy and reproducibility** of the test for the diagnosis of NSTI.\",\n  \"reas"
+  },
+  {
+    "id": "HU51",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"replicate association identified in the discovery WES sample\\\"\",\n  \"reasoning\": \"The abstract explici"
+  },
+  {
+    "id": "HU52",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"evaluate the rigor of the SWAT test in terms of (1) reproducibility of the evaluation, (2) transferabi"
+  },
+  {
+    "id": "HU53",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"A technique for evaluation of shock wave impulse after a methane-air mixture explosion is elaborated.\",\n"
+  },
+  {
+    "id": "HU54",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"To reinforce the importance of the R349 gene in the MIMIVIRE system, we developed and presented, for the"
+  },
+  {
+    "id": "HU55",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"We sought to evaluate the **reproducibility** of this technique\\\"\",\n  \"reasoning\": \"The study evaluate"
+  },
+  {
+    "id": "HU56",
+    "bucket": "C_disagreement",
+    "truth": "unclear",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"validation of the method regarding reliability and reproducibility of results under realistic settings a"
+  },
+  {
+    "id": "HU57",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"To validate the reproducibility of the AI between shoulder MRI and standard X-ray and to verify whether "
+  },
+  {
+    "id": "HU58",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"examine the reliability and validity of ultrasound technology (via the MuscleSound system) to non-invasi"
+  },
+  {
+    "id": "HU59",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"we revisit this problem by examining the drag at the base of the lithosphere... in 2D models with a fr"
+  },
+  {
+    "id": "HU60",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"The simulations reproduced results from the literature at a significantly reduced cost.\\\"\",\n  \"reasoni"
+  }
+]

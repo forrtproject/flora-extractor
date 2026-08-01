@@ -1,0 +1,14 @@
+[
+  {"id": "C006", "verdict": "no", "confidence": "high", "reason": "This is a technical follow-up evaluating sources of image distortion in a scanning technology (a device/method evaluation), not a re-test of a previously published scientific finding."},
+  {"id": "C026", "verdict": "yes", "confidence": "high", "reason": "The GWAS finding was explicitly re-tested with new data in independent cohorts (BIOS, KORA, GENOA), succeeding in one and failing in two others."},
+  {"id": "C005", "verdict": "no", "confidence": "medium", "reason": "Reproducing literature results is used to benchmark a new computational method, not to re-test a previously published empirical finding as a study aim."},
+  {"id": "C042", "verdict": "yes", "confidence": "high", "reason": "New resting-state fMRI data were collected from an independent sample specifically to re-test previously identified dynamic connectivity states linked to arousal."},
+  {"id": "C043", "verdict": "unclear", "confidence": "low", "reason": "The study re-tests a previously identified brain pattern (fPDRPNS) in a new site/sample, but it is framed as validating a biomarker/pattern rather than clearly re-testing a scientific finding."},
+  {"id": "C016", "verdict": "yes", "confidence": "medium", "reason": "Within a broader characterization study, the authors explicitly reproduced a specific previously reported rodent finding (rPGRN-mediated neuroprotection) using new data from human iPSC neurons."},
+  {"id": "C032", "verdict": "no", "confidence": "high", "reason": "This concerns internal reproducibility of the researchers' own dosing/efficacy results across their own studies, not re-testing an external previously published finding."},
+  {"id": "C038", "verdict": "no", "confidence": "high", "reason": "This is a reliability/validity study of a translated measurement instrument (BDS Checklist), explicitly excluded by the criteria."},
+  {"id": "C031", "verdict": "no", "confidence": "medium", "reason": "Reproducing prior results serves to validate a new coarse-grained simulation method's accuracy, not to re-test a published finding as the study's aim."},
+  {"id": "C007", "verdict": "yes", "confidence": "high", "reason": "Experiment 1 is explicitly described as 'a replication of previously reported rapid categorization effects' using newly collected data."},
+  {"id": "C023", "verdict": "no", "confidence": "medium", "reason": "Reproducing reported experimental findings here validates a new simulation model of nerve stimulation, not a re-test of a published finding as the study's aim."},
+  {"id": "C030", "verdict": "yes", "confidence": "high", "reason": "The authors explicitly sought replication of a DNAm-adiposity association in an independent cohort using new data."}
+]

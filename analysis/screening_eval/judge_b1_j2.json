@@ -1,0 +1,14 @@
+[
+  {"id": "C036", "verdict": "no", "confidence": "high", "reason": "Concerns viral RNA replication machinery (biological sense), not a study re-testing a published finding."},
+  {"id": "C010", "verdict": "no", "confidence": "high", "reason": "Reports reproducibility of a shock-wave measurement technique in laboratory testing, not a re-test of a previously published study's finding."},
+  {"id": "C011", "verdict": "no", "confidence": "high", "reason": "Assesses sample-to-sample reproducibility of device fabrication/electronic properties, not a replication of a published research finding."},
+  {"id": "C040", "verdict": "no", "confidence": "high", "reason": "Translates and validates a measurement scale (CHBMS) for a new population, which is explicitly excluded as instrument validation."},
+  {"id": "C025", "verdict": "yes", "confidence": "high", "reason": "Explicitly states 'we perform a pure replication of the KiGGS results' using new GCP data."},
+  {"id": "C009", "verdict": "no", "confidence": "high", "reason": "Assesses inter-reader reproducibility of a biomarker measurement, not a re-test of a prior study's reported finding."},
+  {"id": "C041", "verdict": "no", "confidence": "high", "reason": "Duplicate of C036 abstract; concerns viral RNA replication machinery (biological sense), not a study replication."},
+  {"id": "C015", "verdict": "no", "confidence": "medium", "reason": "Investigates and validates a novel neural correlate's generalizability across two datasets, reading as method/measure validation rather than re-testing a specific prior published finding."},
+  {"id": "C024", "verdict": "no", "confidence": "high", "reason": "Reports a new primary DTI finding and only suggests future work should test its reproducibility; it is not itself a replication study."},
+  {"id": "C001", "verdict": "no", "confidence": "high", "reason": "A new primary genetic association study in a Zulu population; 'replication' here refers to mtDNA polymerase biology, not a re-test of a prior published study."},
+  {"id": "C018", "verdict": "no", "confidence": "medium", "reason": "Assesses inter-observer reproducibility of a tumour-budding scoring method and its prognostic association as a new primary study, not a re-test of a specific prior published finding."},
+  {"id": "C037", "verdict": "no", "confidence": "medium", "reason": "Uses an internal discovery/replication split within the same ADNI study rather than re-testing a finding from a separate previously published study."}
+]

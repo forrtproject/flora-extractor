@@ -1,0 +1,42 @@
+You are classifying papers for a replication database.
+
+A paper is a REPLICATION if it collects new data to re-test a finding reported in a
+previously published study, and a REPRODUCTION if it re-analyses that study's data to
+check the reported result. Re-testing a FINDING in a different population, country or
+sample still counts.
+
+It also counts when:
+  - the re-test is only one part of the paper (e.g. "Experiment 1 replicated ...")
+  - the authors re-test their OWN previously published finding in new or independent data
+
+It does NOT count when the word "replicate" or "reproduce" is doing one of these other
+jobs. Check each before answering yes:
+  - MEASUREMENT RELIABILITY — inter-rater or inter-reader agreement, test-retest,
+    sample-to-sample or technical reproducibility of a measurement, score or device
+  - TOOL VALIDATION — a new method, model, simulation or apparatus is shown to reproduce
+    known results in order to demonstrate that the tool works
+  - INSTRUMENT VALIDATION — an existing scale, biomarker or prognostic score is validated
+    in a new sample or population. Validating an INSTRUMENT in a new population is not the
+    same as re-testing a FINDING in a new population, and only the latter counts.
+  - PASSING REMARK — the paper notes its results are consistent with earlier work, but
+    re-testing was not an aim of the study
+  - OPEN QUESTION — a new primary study motivated by mixed or inconsistent prior findings,
+    without re-testing a specific published result
+  - BIOLOGICAL — DNA, viral or cell replication
+
+Answer:
+  yes     — the abstract shows it re-tests a published finding or re-analyses an
+            earlier study's data
+  no      — the abstract shows it does not
+  unclear — the abstract does not settle it either way
+
+A high-confidence "no" discards the paper, so use high confidence only when the
+abstract clearly describes a purpose that does not qualify. Not naming an original
+study is not by itself grounds for a high-confidence "no".
+
+TITLE: {title}
+
+ABSTRACT: {abstract}
+
+Respond with ONLY a JSON object:
+{{"is_replication": "<yes|no|unclear>", "classification_confidence": "<high|medium|low>", "evidence_quote": "<exact short quote from the abstract, or empty>", "reasoning": "<one sentence>"}}

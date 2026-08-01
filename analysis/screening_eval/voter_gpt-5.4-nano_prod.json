@@ -1,0 +1,425 @@
+[
+  {
+    "id": "C001",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"To determine whether known monogenic POLG1 polymorphisms could be linked with the unexpectedly high incidence of"
+  },
+  {
+    "id": "C002",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"We conducted a single centre retrospective study of albumin-corrected serum calcium on adult patients with COVID"
+  },
+  {
+    "id": "C003",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"medium\",\n  \"evidence_quote\": \"Performance in tests of working memory, executive function, social cognition and movement was also assessed, "
+  },
+  {
+    "id": "C004",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"to reproduce the effect of prism adaptation in a more ecologically valid, yet experimentally controlled context\",\"reasoning"
+  },
+  {
+    "id": "C005",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"The simulations reproduced results from the literature at a significantly reduced cost.\",\n  \"reasoning\": \"The p"
+  },
+  {
+    "id": "C006",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"medium\",\n  \"evidence_quote\": \"In our paper \\\"Image distortion in biplanar slot scanning: part 1 patient-specific factors\\\" we found that th"
+  },
+  {
+    "id": "C007",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"medium\",\n  \"evidence_quote\": \"These results are a replication of previously reported rapid categorization effects\",\n  \"reasoning\": \"The abs"
+  },
+  {
+    "id": "C008",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"medium\",\n  \"evidence_quote\": \"We recently described novel central-positive complexes (CPCs), which were observed during ECT-induced seizure"
+  },
+  {
+    "id": "C009",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"medium\",\n  \"evidence_quote\": \"Tumor growth rate (TGR), percentage of change in tumor volume/month, has been previously identified as an ear"
+  },
+  {
+    "id": "C010",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"The numerical model developed in previous studies has been verified in the laboratory by using laser initiation of explosive"
+  },
+  {
+    "id": "C011",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "no",
+    "verdict": "unclear",
+    "conf": "low",
+    "error": null,
+    "raw": "{\"is_replication\":\"unclear\",\"classification_confidence\":\"low\",\"evidence_quote\":\"This paper describes supplementary quantum transport experiments performed on a significant number of graphene based qua"
+  },
+  {
+    "id": "C012",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"We evaluated the reproducibility of the ICH-score in ICH patients undergoing fibrinolytic therapy.\",\"reasoning\":\"The study "
+  },
+  {
+    "id": "C013",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "no",
+    "verdict": "unclear",
+    "conf": "low",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"unclear\",\n  \"classification_confidence\": \"low\",\n  \"evidence_quote\": \"We follow a procedure developed and validated in a previous study, in which a sliding window protocol is use"
+  },
+  {
+    "id": "C014",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"medium\",\"evidence_quote\":\"Each tractography technique successfully reproduced the animal tracing model with a mean accuracy of 72%\",\"reasoning\":\"Th"
+  },
+  {
+    "id": "C015",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"medium\",\n  \"evidence_quote\": \"We have previously demonstrated that broadband arrhythmic EEG contains both short- and long-range temporal co"
+  },
+  {
+    "id": "C016",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"medium\",\n  \"evidence_quote\": \"We reproduced findings from rodent neurons by demonstrating that recombinant progranulin (rPGRN) mediated neu"
+  },
+  {
+    "id": "C017",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "no",
+    "verdict": "unclear",
+    "conf": "low",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"unclear\",\n  \"classification_confidence\": \"low\",\n  \"evidence_quote\": \"demonstrate replication of results of the innovation to different locations\",\n  \"reasoning\": \"The abstract m"
+  },
+  {
+    "id": "C018",
+    "bucket": "A_flashlite_no_ref_yes",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"medium\",\n  \"evidence_quote\": \"To establish the significance of reporting tumour budding routinely in CRC and assess the reproducibility of "
+  },
+  {
+    "id": "C019",
+    "bucket": "B_gemma_yes_flashlite_no",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"In this paper, we report the results of two separate experimental studies conducted, a replication of one another, to evalua"
+  },
+  {
+    "id": "C020",
+    "bucket": "B_gemma_yes_flashlite_no",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The abstract describes evaluating and discussing the appropriateness of existing Eurocode fat"
+  },
+  {
+    "id": "C021",
+    "bucket": "B_gemma_yes_flashlite_no",
+    "truth": "no",
+    "verdict": "unclear",
+    "conf": "low",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"unclear\",\n  \"classification_confidence\": \"low\",\n  \"evidence_quote\": \"To determine if maternal plasma CRH and preterm birth history were associated with recurrent preterm birth r"
+  },
+  {
+    "id": "C022",
+    "bucket": "B_gemma_yes_flashlite_no",
+    "truth": "no",
+    "verdict": "unclear",
+    "conf": "low",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"unclear\",\n  \"classification_confidence\": \"low\",\n  \"evidence_quote\": \"We now provide 10 different examples that support APP gencDNA insertion within eight chromosomes beyond wild"
+  },
+  {
+    "id": "C023",
+    "bucket": "B_gemma_yes_flashlite_no",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"medium\",\n  \"evidence_quote\": \"allowing the replication of already reported experimental findings\",\n  \"reasoning\": \"The abstract explicitly "
+  },
+  {
+    "id": "C024",
+    "bucket": "B_gemma_yes_flashlite_no",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"Here, we aimed to clarify this issue by examining the micro-structural integrity differences of distinct CST segments betwee"
+  },
+  {
+    "id": "C025",
+    "bucket": "C_other_disagreement",
+    "truth": "yes",
+    "verdict": "unclear",
+    "conf": "low",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"unclear\",\n  \"classification_confidence\": \"low\",\n  \"evidence_quote\": \"In GPC A we perform a pure replication of the KiGGS results where we use only the second wave of the GCP for"
+  },
+  {
+    "id": "C026",
+    "bucket": "C_other_disagreement",
+    "truth": "yes",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The abstract describes a primary genome-wide association study of a trait in the 1000 Genomes"
+  },
+  {
+    "id": "C027",
+    "bucket": "C_other_disagreement",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"In a main study and a preregistered replication, participants read jokes and nonfunny controls\",\n  \"reasoning\":"
+  },
+  {
+    "id": "C028",
+    "bucket": "C_other_disagreement",
+    "truth": "no",
+    "verdict": "unclear",
+    "conf": "low",
+    "error": null,
+    "raw": "{\"is_replication\":\"unclear\",\"classification_confidence\":\"low\",\"evidence_quote\":\"PURPOSE: To confirm the reproducibility of manual graft preparation using curvilinear forceps\",\"reasoning\":\"The abstract"
+  },
+  {
+    "id": "C029",
+    "bucket": "C_other_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"This paper extended the least squares approach to reproduce the results of perturbation studies.\",\n  \"reasoning"
+  },
+  {
+    "id": "C030",
+    "bucket": "C_other_disagreement",
+    "truth": "yes",
+    "verdict": "unclear",
+    "conf": "low",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"unclear\",\n  \"classification_confidence\": \"low\",\n  \"evidence_quote\": \"We sought replication of DNAm association with child adiposity in an independent cohort.\",\n  \"reasoning\": \"T"
+  },
+  {
+    "id": "C031",
+    "bucket": "C_other_disagreement",
+    "truth": "no",
+    "verdict": "unclear",
+    "conf": "low",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"unclear\",\n  \"classification_confidence\": \"low\",\n  \"evidence_quote\": \"In this study, we constructed a coarse-grained potential for the natural rubber (NR) by the energy renormali"
+  },
+  {
+    "id": "C032",
+    "bucket": "C_other_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"medium\",\"evidence_quote\":\"then demonstrate the anti-fibrotic reproducibility of the efficacious nintedanib dose\",\"reasoning\":\"The abstract indicate"
+  },
+  {
+    "id": "C033",
+    "bucket": "C_other_disagreement",
+    "truth": "unclear",
+    "verdict": "unclear",
+    "conf": "low",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"unclear\",\n  \"classification_confidence\": \"low\",\n  \"evidence_quote\": \"our second objective pertains to the replication of these combinations and the investigation of similarities"
+  },
+  {
+    "id": "C034",
+    "bucket": "D_control_all_no",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The abstract describes an original bioinformatic analysis of sequence variability and co-evol"
+  },
+  {
+    "id": "C035",
+    "bucket": "D_control_all_no",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"an instrumented physical spinal cord surrogate is presented and validated\",\n  \"reasoning\": \"The abstract describ"
+  },
+  {
+    "id": "C036",
+    "bucket": "D_control_all_no",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enteroviru"
+  },
+  {
+    "id": "C037",
+    "bucket": "D_control_all_no",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"medium\",\n  \"evidence_quote\": \"For a ratio GCDCA:CDCA profile, higher levels were associated with more structural atrophy\",\n  \"reasoning\": \"T"
+  },
+  {
+    "id": "C038",
+    "bucket": "D_control_all_no",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"To test the reliability and validity of Chinese version of Bodily Distress Syndrome Checklist (BDS Checklist) in"
+  },
+  {
+    "id": "C039",
+    "bucket": "D_control_all_no",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enteroviru"
+  },
+  {
+    "id": "C040",
+    "bucket": "D_control_all_no",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"This study aimed to translate and validate an adapted version of the United States (US) Champion Health Belief M"
+  },
+  {
+    "id": "C041",
+    "bucket": "D_control_all_no",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The abstract describes a comparative bioinformatics analysis of sequences from NCBI rather th"
+  },
+  {
+    "id": "C042",
+    "bucket": "D_control_all_yes",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"Here, in an independent dataset, 32 healthy participants underwent two sets of resting-state functional magnetic resonance "
+  },
+  {
+    "id": "C043",
+    "bucket": "D_control_all_yes",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"In this study, we validated fPDRPNS in rs-fMRI scans of PD patients ... acquired in Cologne, Germany.\",\"reasoning\":\"The pap"
+  },
+  {
+    "id": "C044",
+    "bucket": "D_control_all_yes",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"The present study is a partial replication of the intensive tact instruction tactic\",\n  \"reasoning\": \"The abstr"
+  },
+  {
+    "id": "C045",
+    "bucket": "D_control_all_yes",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"In a replication of Mintzberg's study, the authors found support for the planning literature's position.\",\"reasoning\":\"The "
+  },
+  {
+    "id": "C046",
+    "bucket": "D_control_all_yes",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"We aimed to study the feasibility and the utility of the \\\"Ogata score\\\" for the diagnosis of MDS among Latin America (LA) "
+  },
+  {
+    "id": "C047",
+    "bucket": "D_control_all_yes",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"medium\",\"evidence_quote\":\"In this proof-of-concept study... reliable measurement values of CBF in 9 PC and 26 non-PC patients\",\"reasoning\":\"The stu"
+  }
+]

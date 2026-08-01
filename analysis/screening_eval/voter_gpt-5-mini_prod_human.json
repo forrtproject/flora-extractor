@@ -1,0 +1,542 @@
+[
+  {
+    "id": "HU01",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU02",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU03",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU04",
+    "bucket": "A_calibration",
+    "truth": "yes",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU05",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU06",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU07",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU08",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU09",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU10",
+    "bucket": "A_calibration",
+    "truth": "yes",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU11",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU12",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU13",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU14",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU15",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU16",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU17",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU18",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU19",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU20",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU21",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU22",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU23",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU24",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU25",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU26",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU27",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU28",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU29",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU30",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU31",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU32",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU33",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU34",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU35",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU36",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU37",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU38",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU39",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU40",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU41",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU42",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU43",
+    "bucket": "C_disagreement",
+    "truth": "yes",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU44",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU45",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU46",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU47",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU48",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU49",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU50",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU51",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU52",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU53",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU54",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU55",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU56",
+    "bucket": "C_disagreement",
+    "truth": "unclear",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU57",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU58",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU59",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  },
+  {
+    "id": "HU60",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": null,
+    "conf": null,
+    "error": "HTTP 429: {\n    \"error\": {\n        \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n        \"type\": \"insufficient",
+    "raw": ""
+  }
+]
