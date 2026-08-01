@@ -69,7 +69,7 @@ with all stage teams.
 | ----- | ----- |
 | `search/` | `run_search.py` (orchestrator; index-based merge/append), `openalex_search.py` (cursor-paginated phrase/concept harvest), `external_lists.py`, `deduplicate.py`, `fetch_abstracts.py` (abstract backfill: OpenAlex → EPMC → S2 → CrossRef → Scopus as uniform checkpointed phases) |
 | `filter/` | `rule_filter.py` (deterministic classifier), `run_filter.py` (chunked orchestrator). No LLM: rule-undecidable rows are written through as `needs_review` and settled by Stage 3's screen |
-| `extract/` | `run_extract.py` (orchestrator: chunked read, front-door screen, match type, single/multi routing), `link_original.py` (resolution ladder), `multi_original.py`, `code_outcome.py` (outcome coding; reproductions use the 3×3 computation/robustness grid), `sanity_check.py` (post-run quarantine to set-aside CSVs; runs on completion and Ctrl-C), `promote_test.py`, `audit_dois.py`, `csv_to_db.py`, `clean_parse_cache.py` |
+| `extract/` | `run_extract.py` (orchestrator: chunked read, front-door screen, match type, single/multi routing), `link_original.py` (resolution ladder), `multi_original.py`, `code_outcome.py` (outcome coding; reproductions use the computation/robustness axes), `sanity_check.py` (post-run quarantine to set-aside CSVs; runs on completion and Ctrl-C), `promote_test.py`, `audit_dois.py`, `csv_to_db.py`, `clean_parse_cache.py` |
 | `validate/` | Read-only Flask dashboard: `app.py` registers `dashboard`, `check`, `batch`, `multi_originals` blueprints only |
 | `misc/` | Reference examples and 20-row sample CSVs — do not import |
 
@@ -135,6 +135,18 @@ first), takes `doi_o` from the mapped record rather than from the model, and rep
 is accepted only when the model marks it `match_certain`. When the call returns two or
 more targets, `_resolve_and_code()` refuses the single link and reroutes the row
 through the multi-original pipeline.
+
+**Two outcome prompts, one per vocabulary.** `build_outcome_prompt()` (replication)
+and `build_repro_outcome_prompt()` (reproduction) each serve both passes: supplying the
+full-text passage selects the full-text pass, which adds the PAPER TEXT block and asks
+for `record_type_check`. A reproduction is coded on two independent axes —
+`outcome_computation` (computationally reproducible · computational issues · technical
+failure · not checked) and `outcome_robustness` (robust · robustness challenges · not
+checked), each with `cannot_be_determined` as its own escape and its own quote and
+quote source — and its `outcome` is the two settled values joined. Escalation is
+per axis: either axis unresolved reads the full text, and that call replaces both.
+`record_type_check == "neither"` sets `not_a_replication`; naming the other vocabulary
+re-codes the row once under the other prompt and corrects `type`.
 
 **Outcome coding runs only on a resolved link** (`_outcome_without_coding()` gates on
 `RESOLVED_LINK_METHODS`); unresolved rows are written `pending`, except
