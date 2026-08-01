@@ -1,0 +1,607 @@
+<a id="L1"></a><section class="prompt">
+<h3><span class="callid">L1</span> Stage 2 filter</h3>
+<ul class='meta'><li><strong>File:</strong> <code>filter/llm_filter.py:30-73</code> (<code>_build_prompt</code>)</li><li><strong>Model:</strong> OpenAI <code>gpt-5-mini</code> (<code>FILTER_OPENAI_MODEL</code>) primary; on failure Gemini <code>gemini-3-flash-preview</code> (<code>GEMINI_MODEL</code>). System message S1 applies on the OpenAI call.</li><li><strong>Fires when:</strong> Stage 2 rule filter leaves a row at <code>filter_status == &quot;needs_review&quot;</code>. Cached by <code>cache_key(&quot;filter|{title}|{abstract}&quot;)</code>.</li><li><strong>Truncation:</strong> none. <code>title</code> and <code>abstract</code> are interpolated with Python <code>repr()</code> (<code>{title!r}</code>), so they appear in the prompt wrapped in quotes with escapes.</li></ul>
+<pre class='prompt-text'><code>You are an expert in scientific replication and reproducibility.
+
+Classify the paper into EXACTLY ONE label:
+
+replication
+- Uses NEW data/samples/populations to test whether a prior study&#x27;s findings hold.
+- Must intentionally replicate a specific prior study or experiment.
+- Can be direct/close or conceptual.
+- Replication must be an explicit study aim, not merely a discussion point or side result.
+- Includes secondary-data replications using different data.
+- Key criterion: different data from the original study.
+
+reproduction
+- Reanalyzes the SAME original data/results from a prior study.
+- Focuses on computational reproducibility or robustness of reported findings.
+- Key criterion: same original dataset/data source.
+
+false_positive
+- NOT actually a replication or reproduction despite similar language.
+- Includes:
+  - meta-analyses or systematic reviews
+  - papers about the replication crisis/research methodology
+  - data/code release papers
+  - biological replication (cells, DNA, organisms, viruses)
+  - robustness/sensitivity checks within the original paper
+  - papers mentioning &#x27;replication&#x27; casually without conducting one
+
+Decision rules:
+1. If authors explicitly describe the study as a replication, classify as replication unless clearly false_positive.
+2. If authors explicitly describe using the original data for reproducibility, classify as reproduction unless clearly false_positive.
+3. New data → replication.
+4. Same original data → reproduction.
+5. false_positive overrides whenever the paper only superficially resembles replication/reproduction.
+
+PAPER TO CLASSIFY
+
+Title:
+{title!r}
+
+Abstract:
+{abstract!r}
+
+Return ONLY valid JSON:
+
+{
+  &quot;filter_status&quot;: &quot;replication&quot; | &quot;reproduction&quot; | &quot;false_positive&quot;,
+  &quot;filter_confidence&quot;: &quot;high&quot; | &quot;medium&quot; | &quot;low&quot;,
+  &quot;filter_evidence&quot;: &quot;&lt;short verbatim supporting phrase ≤120 chars&gt;&quot;,
+  &quot;filter_sort&quot;: &quot;&lt;one-sentence explanation&gt;&quot;
+}</code></pre>
+</section>
+
+<a id="L2"></a><section class="prompt">
+<h3><span class="callid">L2</span> Match-type classification</h3>
+<ul class='meta'><li><strong>File:</strong> <code>extract/run_extract.py:442-468</code> (<code>_llm_classify_match_type</code>)</li><li><strong>Model:</strong> <code>call_llm(prompt, gemini_model=GEMINI_HEAVY_MODEL)</code> → Gemini <code>gemini-3-flash-preview</code>, then OpenAI <code>gpt-5-mini</code> (S1), then OpenRouter <code>qwen/qwen3.5-35b-a3b</code> (S2).</li><li><strong>Fires when:</strong> Stage 3&#x27;s first routing step, <code>classify_match_type()</code>, for every row not already cached; runs after author-year pattern extraction and <code>find_all_candidates()</code>.</li><li><strong>Truncation:</strong> <code>abstract_r[:800]</code> with a trailing <code>…</code> when longer; candidate list truncated to <code>candidates[:15]</code>.</li></ul>
+<pre class='prompt-text'><code>Classify how many original studies this replication paper targets.
+
+TITLE: {title_r}
+ABSTRACT: {abstract_snip or &#x27;(not available)&#x27;}
+
+CITED AUTHOR-YEAR PATTERNS IN ABSTRACT ({len(distinct_pairs)} distinct):
+{pattern_lines}
+
+CANDIDATE ORIGINALS FROM OPENALEX ({len(candidates)} found):
+{cand_lines}
+
+Classify as ONE of:
+- single_original: paper targets one specific original study
+- multiple_match: 2–5 candidates share the SAME author/year; paper targets ONE original but disambiguation is needed (e.g. two papers by Smith 2005)
+- multiple_original: paper explicitly replicates SEVERAL INDEPENDENT original studies as its stated goal (will produce N output rows, one per original)
+
+Key rules:
+1. Merely citing many background studies is NOT multiple_original.
+2. A large candidate list from OpenAlex does NOT mean multiple_original — it may just reflect many citations.
+3. STRONG signals for multiple_original: explicit count in abstract (e.g. &#x27;replications of 28 studies&#x27;), project names like Many Labs or Registered Replication Report, a table of target studies each with its own protocol.
+4. multiple_match applies when ONE study is targeted but there are 2–5 candidates with the identical author/year — not when there are many different author/year pairs.
+
+Respond with ONLY this JSON:
+{&quot;original_match_type&quot;: &quot;&lt;single_original|multiple_match|multiple_original&gt;&quot;, &quot;original_match_confidence&quot;: &quot;&lt;high|medium|low&gt;&quot;, &quot;reasoning&quot;: &quot;&lt;brief&gt;&quot;}</code></pre>
+<p>Sub-blocks:</p>
+<pre class='prompt-text'><code>{pattern_lines}  — one line per distinct (surname, year) pair, sorted:
+- {surname} ({year})
+…or the literal &quot;(none found)&quot; when empty.
+
+{cand_lines}     — one line per candidate, numbered from 1, first 15 only:
+{i}. &quot;{title}&quot; ({year}) — {first_author}
+…or the literal &quot;(none found)&quot; when empty.</code></pre>
+</section>
+
+<a id="L3"></a><a id="L6"></a><section class="prompt">
+<h3><span class="callid">L3 / L6</span> Identification prompt (<code>build_identification_prompt</code>)</h3>
+<ul class='meta'><li><strong>File:</strong> <code>shared/llm_client.py:407-533</code>; dispatched by <code>identify_original_with_llm</code> at <code>shared/llm_client.py:538-695</code>.</li><li><strong>Model:</strong> Gemini <code>gemini-3-flash-preview</code> (<code>GEMINI_HEAVY_MODEL</code>) → OpenAI <code>gpt-5-mini</code> (S1) → OpenRouter <code>qwen/qwen3.5-35b-a3b</code> (S2). Cached at <code>cache/llm/llm_{cache_key}.json</code>.</li><li><strong>L3 (Stage 4, abstract-only) fires when:</strong> <code>extract/link_original.py:646-658</code> — no <code>--no-llm</code>, the abstract exists AND yields at least one author-year pattern. Called with <code>sections={}</code> (so intro/methods/references render as &quot;(not available)&quot; / &quot;(no references extracted)&quot;), <code>abstract_only=True</code>, and cache key <code>doi_r + &quot;_abstract&quot;</code>.</li><li><strong>L6 (Stage 5, fulltext) fires when:</strong> <code>extract/link_original.py:843-848</code> — every cheaper stage declined, a PDF or OpenAlex XML was acquired and parsed, and there is at least some context (abstract, candidates, intro, or refs). Called with the winning parse result&#x27;s <code>sections</code>, plus <code>pdf_url</code> when the download failed and <code>html_text</code> as a landing-page substitute.</li><li><strong>Truncation:</strong> <code>abstract_r[:700]</code> + <code>…</code> when longer; <code>sections[&quot;intro&quot;][:600]</code>; <code>sections[&quot;methods&quot;][:400]</code> <strong>only when</strong> <code>len(intro_snip) &lt; 300</code>; <code>html_text[:1000]</code> + <code>…</code> <strong>only when</strong> there is no intro; references <code>sections[&quot;references&quot;][:30]</code> (note: the header text says &quot;up to 50 entries&quot; — the code caps at 30).</li></ul>
+<pre class='prompt-text'><code>{validator_block}Identify the ORIGINAL STUDY that the replication paper below directly replicates.
+
+TITLE: {study_r}
+ABSTRACT: {abstract_snip or &quot;(not available)&quot;}
+CITED PATTERN: {pattern or &quot;(not available)&quot;}
+
+CANDIDATES:
+{cand_text}
+
+INTRODUCTION (from PDF):
+{intro_snip or html_snip or &quot;(not available)&quot;}
+{METHODS_BLOCK}
+REFERENCE LIST (up to 50 entries):
+{ref_text}
+{pdf_url_block}
+TASK: {cand_instruction}
+
+KEY RULES:
+- Find the study named with phrases like &quot;we replicated&quot;, &quot;direct replication of&quot;,
+  &quot;we aimed to replicate&quot; — NOT background citations.
+- Umbrella project papers (#EEGManyLabs, ManyLabs, PSA, StudySwap) are NEVER the
+  original — find the specific experiment they ran.
+- When selecting a candidate number, leave selected_doi EMPTY — the candidate&#x27;s
+  verified DOI will be used.
+- NEVER invent or guess a DOI. DOIs will be resolved from title and author automatically.
+  An invented DOI is worse than no DOI — it silently corrupts the database.
+
+Respond with ONLY this JSON:
+{
+  &quot;selected_candidate_number&quot;: &lt;integer or null&gt;,
+  &quot;selected_title&quot;: &quot;&lt;exact published title — copy from reference list if available&gt;&quot;,
+  &quot;selected_year&quot;: &lt;year or null&gt;,
+  &quot;selected_first_author&quot;: &quot;&lt;surname&gt;&quot;,
+  &quot;confidence&quot;: &quot;&lt;high|medium|low&gt;&quot;,
+  &quot;evidence&quot;: &quot;&lt;1-2 sentence quote from the paper&gt;&quot;,
+  &quot;reasoning&quot;: &quot;&lt;why other candidates were ruled out&gt;&quot;
+}</code></pre>
+<p>Conditional sub-blocks, verbatim:</p>
+<pre class='prompt-text'><code>{METHODS_BLOCK}  — rendered only when methods_snip is non-empty (i.e. intro &lt; 300 chars
+                   and sections[&quot;methods&quot;] is non-empty); otherwise an empty line:
+METHODS:
+{methods_snip}</code></pre>
+<pre class='prompt-text'><code>{cand_text} WHEN candidates exist — one entry per candidate, numbered from 1:
+{i}. &quot;{title}&quot; ({year}, authors: {all_authors joined by &quot;, &quot; — or the single
+   first_author, or &quot;unknown&quot;})
+   DOI: {doi or &#x27;unknown&#x27;}  |  OpenAlex: {openalex_id}
+
+{cand_text} WHEN no candidates:
+(No candidates pre-identified — use reference list below.)</code></pre>
+<pre class='prompt-text'><code>{cand_instruction} WHEN candidates exist:
+Select the candidate number (1–{N}) that is the ORIGINAL STUDY being replicated.
+If none is correct, set selected_candidate_number to null and fill selected_doi/selected_title from the reference list below.
+
+{cand_instruction} WHEN no candidates:
+No candidates were pre-identified. Use the reference list and full-text excerpts to find the original study. Set selected_candidate_number to null.</code></pre>
+<pre class='prompt-text'><code>{ref_text} — one line per reference, first 30 only:
+- {first two authors joined by &quot;; &quot;}{&quot; et al.&quot; if &gt;2 authors} ({year or &#x27;?&#x27;}). {title}
+…or the literal &quot;(no references extracted)&quot; when empty.</code></pre>
+<pre class='prompt-text'><code>{pdf_url_block} — rendered only when pdf_url is non-empty (PDF download failed but a
+URL is known). Note the leading indentation is present in the raw string but
+textwrap.dedent() strips the common prefix from the assembled prompt:
+
+---
+
+## Paper URL
+The full text could not be downloaded, but the paper may be available at:
+{pdf_url}
+If you can access this URL, use it to help identify the original study.</code></pre>
+<p><code>{validator_block}</code> is F1/F2/F3 — see below. Empty string when no note is supplied.</p>
+</section>
+
+<a id="L4"></a><section class="prompt">
+<h3><span class="callid">L4</span> Stage 4.5 Q1: replication classification</h3>
+<ul class='meta'><li><strong>File:</strong> <code>shared/llm_client.py:1115-1142</code> (<code>_CLASSIFY_PROMPT</code>), rendered by <code>build_classify_prompt</code> at <code>1167-1171</code>.</li><li><strong>Model:</strong> run TWICE, once per provider, as independent votes (<code>_classify_once</code>, <code>shared/llm_client.py:1187-1202</code>): Gemini <code>gemini-3.5-flash-lite</code> (<code>GEMINI_LIGHT_MODEL</code>) and OpenAI <code>gpt-5-mini</code> (<code>OPENAI_MODEL</code>, with system message S1). No fallback chain — a failed vote simply drops out.</li><li><strong>Fires when:</strong> <code>extract/link_original.py:671-678</code> — Stages 2.5/3/4 all declined, <code>--no-llm</code> is off, and there is an abstract or a title. Runs regardless of whether references were found. Prompt version <code>2026-07-28-split-calls-v4</code>; cached at <code>cache/llm/refscreen_{cache_key(doi_r + version + str(bool(refs)))}.json</code>.</li><li><strong>Action on result:</strong> a <code>no</code> verdict discards the row only when both models agree AND the weaker confidence is <code>high</code>. Disagreement sets the row aside for human review rather than escalating.</li><li><strong>Truncation:</strong> <code>abstract[:4000]</code>; empty title/abstract render as <code>(not available)</code>.</li></ul>
+<pre class='prompt-text'><code>You are classifying papers for a replication database.
+
+A paper is a REPLICATION if it collects new data to re-test a finding reported in a
+previously published study, and a REPRODUCTION if it re-analyses that study&#x27;s data to
+check the reported result. Re-testing in a different population, country or sample
+still counts.
+
+Using the words &quot;replicate&quot; or &quot;reproduce&quot; does not make a paper either one. It must
+re-test a published finding. Evaluating, adapting or comparing a measurement
+instrument, method or procedure does not count, and neither do the ordinary-language
+and biological senses of the words.
+
+Answer:
+  yes     — the abstract shows it re-tests a published finding or re-analyses an
+            earlier study&#x27;s data
+  no      — the abstract shows it does not
+  unclear — the abstract does not settle it either way
+
+A high-confidence &quot;no&quot; discards the paper, so use high confidence only when the
+abstract clearly describes a purpose that does not qualify. Not naming an original
+study is not by itself grounds for a high-confidence &quot;no&quot;.
+
+TITLE: {title}
+
+ABSTRACT: {abstract}
+
+Respond with ONLY a JSON object:
+{&quot;is_replication&quot;: &quot;&lt;yes|no|unclear&gt;&quot;, &quot;classification_confidence&quot;: &quot;&lt;high|medium|low&gt;&quot;, &quot;evidence_quote&quot;: &quot;&lt;exact short quote from the abstract, or empty&gt;&quot;, &quot;reasoning&quot;: &quot;&lt;one sentence&gt;&quot;}</code></pre>
+</section>
+
+<a id="L5"></a><section class="prompt">
+<h3><span class="callid">L5</span> Stage 4.5 Q2: target identification</h3>
+<ul class='meta'><li><strong>File:</strong> <code>shared/llm_client.py:1145-1164</code> (<code>_TARGET_PROMPT</code>), rendered by <code>build_target_prompt</code> at <code>1174-1184</code>.</li><li><strong>Model:</strong> Gemini <code>gemini-3-flash-preview</code> (<code>GEMINI_HEAVY_MODEL</code>) → OpenAI <code>gpt-5-mini</code> (S1). Single call, no vote.</li><li><strong>Fires when:</strong> <code>shared/llm_client.py:1261</code> — the two Q1 votes agreed on <code>yes</code> AND the paper has references. The picked reference is accepted only at <code>target_confidence == &quot;high&quot;</code>; otherwise the row escalates.</li><li><strong>Truncation:</strong> <code>abstract[:4000]</code>. The reference list is <strong>not</strong> truncated here — every entry in <code>refs</code> is numbered.</li></ul>
+<pre class='prompt-text'><code>This paper has been classified as a replication or reproduction.
+Identify the previously published study whose finding it re-tests.
+
+Pick a numbered reference only when the abstract explicitly connects that study to the
+re-test. Do not pick one merely because it is topically similar. Use high confidence
+only when the abstract&#x27;s identifying information matches exactly one reference;
+otherwise return null.
+
+If the abstract identifies the target but no reference matches it safely, copy the
+identifying wording into target_description — the study can still be looked up.
+
+TITLE: {title}
+
+ABSTRACT: {abstract}
+
+REFERENCES:
+{references}
+
+Respond with ONLY a JSON object:
+{&quot;target_number&quot;: &lt;number or null&gt;, &quot;target_confidence&quot;: &quot;&lt;high|medium|low&gt;&quot;, &quot;target_description&quot;: &quot;&lt;authors, year, title or finding as the abstract states it, or empty&gt;&quot;, &quot;evidence_quote&quot;: &quot;&lt;exact short quote linking the paper to the target, or empty&gt;&quot;, &quot;reasoning&quot;: &quot;&lt;one sentence&gt;&quot;}</code></pre>
+<pre class='prompt-text'><code>{references} — one line per reference, numbered from 1, all entries:
+{i}. {first_author} ({publication_year or year}). {title}
+…or the literal &quot;(none available)&quot; when empty.</code></pre>
+</section>
+
+<a id="L7"></a><section class="prompt">
+<h3><span class="callid">L7</span> Multi-original identification</h3>
+<ul class='meta'><li><strong>File:</strong> <code>shared/llm_client.py:814-946</code> (<code>build_multi_original_prompt</code>); dispatched by <code>identify_all_originals_with_llm</code> at <code>949-1092</code>.</li><li><strong>Model:</strong> Gemini <code>gemini-3-flash-preview</code> (<code>GEMINI_HEAVY_MODEL</code>) → OpenAI <code>gpt-5-mini</code> (S1) → OpenRouter <code>qwen/qwen3.5-35b-a3b</code> (S2). Cached at <code>cache/llm/multi_{cache_key}.json</code> (cache bypassed when <code>force_multi=True</code>).</li><li><strong>Fires when:</strong> Stage 3 routing classified the row as <code>multiple_original</code> and <code>run_multi_original</code> runs.</li><li><strong>Truncation:</strong> <code>abstract_r[:2000]</code> + <code>…</code>; <code>sections[&quot;intro&quot;][:1200]</code>; <code>sections[&quot;methods&quot;][:800]</code>; <code>sections[&quot;abstract&quot;][:700]</code>; <code>html_text[:2000]</code> + <code>…</code> (only when there is no intro); references <code>sections[&quot;references&quot;][:100]</code>.</li></ul>
+<pre class='prompt-text'><code>You are an expert in research methodology identifying ALL original studies
+that are replicated or reproduced in a scientific paper.
+
+This paper has been classified as potentially targeting MULTIPLE original studies.
+Your task: determine if this classification is correct (true multi-target) or a
+false positive (only 1 original), and list ALL originals found.
+{force_multi_directive}
+
+## Replication paper
+**Title:** {study_r}
+
+**Abstract:**
+{abstract_snip or &quot;(not available)&quot;}
+
+---
+
+## Pre-identified candidate original studies (from OpenAlex)
+{cand_text}
+
+---
+
+## Full-text excerpts
+
+**Abstract (from PDF):**
+{sections[&quot;abstract&quot;][:700] or &quot;(not available)&quot;}
+
+**Introduction:**
+{intro_snip or html_snip or &quot;(not available)&quot;}
+
+**Methods:**
+{methods_snip or &quot;(not available)&quot;}
+
+**Reference list (up to 100 entries):**
+{ref_text}
+{pdf_url_block}
+---
+
+## Task
+
+Identify ALL distinct original studies that this paper directly replicates or reproduces,
+and for each one determine the replication outcome.
+
+Rules:
+- A study is being replicated if the paper explicitly runs the same procedure again
+- Do NOT include studies that are merely cited for context or background
+- If you find only 1 original, set is_false_positive to true
+- For each candidate number used, reference it in candidate_number (or null if not in list)
+- For outcome: look for the result for THAT SPECIFIC study (e.g. in a results table or
+  per-study section), NOT the overall aggregate across all studies
+- outcome values: success (effect confirmed), failure (effect not found), mixed
+  (partial), descriptive (methods reused in a new context without testing the
+  original claim), cannot_be_determined (the text does not state an outcome)
+
+Respond with **only** this JSON (no prose outside the braces):
+{
+  &quot;is_false_positive&quot;: &lt;true if only 1 original found&gt;,
+  &quot;reasoning&quot;: &quot;&lt;brief explanation of why this is/is not multi-target&gt;&quot;,
+  &quot;originals&quot;: [
+    {
+      &quot;rank&quot;: 1,
+      &quot;candidate_number&quot;: &lt;integer from candidate list or null&gt;,
+      &quot;title&quot;: &quot;&lt;full title of the original study&gt;&quot;,
+      &quot;first_author_surname&quot;: &quot;&lt;surname of first author&gt;&quot;,
+      &quot;year&quot;: &lt;4-digit year or null&gt;,
+      &quot;evidence&quot;: &quot;&lt;1-2 sentence quote from the paper showing this study is replicated&gt;&quot;,
+      &quot;confidence&quot;: &quot;&lt;high|medium|low&gt;&quot;,
+      &quot;outcome&quot;: &quot;&lt;success|failure|mixed|descriptive|cannot_be_determined&gt;&quot;,
+      &quot;outcome_evidence&quot;: &quot;&lt;1-2 sentence quote showing the outcome for THIS specific study, or empty if not found&gt;&quot;
+    }
+  ]
+}</code></pre>
+<p>Conditional sub-blocks:</p>
+<pre class='prompt-text'><code>{force_multi_directive} — rendered only when force_multi=True; otherwise empty string:
+
+⚠ CONFIRMED MULTI-TARGET: Automated rules have definitively identified this paper
+as a large-scale multi-target replication (e.g., Many Labs, Registered Replication
+Report). You MUST set is_false_positive to false. Every study listed in the reference
+list that the paper explicitly replicates is an original — list ALL of them. If the
+abstract says &quot;replications of N studies&quot;, aim to find N originals.</code></pre>
+<pre class='prompt-text'><code>{cand_text} WHEN candidates exist — numbered from 1:
+{i}. &quot;{title}&quot; ({year}, authors: {all_authors joined by &quot;, &quot; — or first_author, or &quot;unknown&quot;})
+   DOI: {doi or &#x27;unknown&#x27;}  |  OpenAlex: {openalex_id}
+
+{cand_text} WHEN no candidates:
+(No candidates pre-identified — use reference list and full text below.)</code></pre>
+<pre class='prompt-text'><code>{ref_text} — one line per reference, first 100 only (note: 3 authors here, not 2):
+- {first three authors joined by &quot;; &quot;}{&quot; et al.&quot; if &gt;3 authors} ({year or &#x27;?&#x27;}). {title}
+…or the literal &quot;(no references extracted)&quot; when empty.</code></pre>
+<pre class='prompt-text'><code>{pdf_url_block} — rendered only when pdf_url is non-empty:
+
+## Paper URL
+Full text may be available at: {pdf_url}
+Use it if you can access it to identify all replicated originals.</code></pre>
+<p>## Shared outcome fragments</p>
+<p>These are string constants concatenated into L8–L11 exactly as shown.</p>
+<h4><code>_OUTCOME_RULES</code> — <code>extract/code_outcome.py:157-181</code> (used by L8, L9)</h4>
+<pre class='prompt-text'><code>Outcome classification rules:
+- success: authors explicitly state the original finding was confirmed, replicated, or supported
+- failure: authors explicitly state the original finding was NOT found, contradicted, or failed to replicate
+- mixed: authors state that SOME but not all aspects of the original finding were confirmed
+- descriptive: authors adapted or extended methods in a different context/population WITHOUT directly testing the original claim
+- cannot_be_determined: the text lacks sufficient detail to classify the outcome (not when authors say it&#x27;s unclear, but when WE cannot tell)
+
+Few-shot examples:
+1. DESCRIPTIVE (methods reused, original claim not tested): &#x27;This conceptual replication extends the theory but does not directly test the original hypothesis.&#x27;
+2. CANNOT_BE_DETERMINED (insufficient detail): &#x27;We conducted a replication study in a different population.&#x27; (no mention of success or failure)
+3. MIXED (partial success): &#x27;We replicated the main effect but not the interaction.&#x27;
+4. SUCCESS (confirmation): &#x27;Our findings confirm Smith et al. (2015)&#x27;
+
+CRITICAL: Only output &#x27;cannot_be_determined&#x27; when the text genuinely lacks detail.
+
+Before classifying the outcome, first judge: does this text describe a genuine attempt to replicate OR reproduce the specific original study named above (or discussed in the abstract)? Both replications (new data/sample testing whether the finding holds) and reproductions (re-analysis of the same original data) count as genuine attempts — this judgment does not distinguish between them, that classification happens elsewhere in the pipeline. Answer false only when the text does not engage with verifying that specific original at all — e.g. &#x27;replicate&#x27;/&#x27;reproduce&#x27; is used in an unrelated biological or technical sense (DNA replication, code reproduction), or metaphorically/colloquially (e.g. &#x27;a replication of prior interests and positions&#x27;), or the text is simply unrelated to the named original study.
+</code></pre>
+<h4><code>_QUOTE_INSTRUCTION</code> — <code>extract/code_outcome.py:226-231</code> (used by L8–L11)</h4>
+<pre class='prompt-text'><code>&quot;outcome_phrase&quot;: &quot;&lt;the FULL verbatim passage that proves the outcome. Quote 3-6 COMPLETE sentences (up to ~1200 characters), including the surrounding sentences needed to make the verdict self-evident to someone who has not read the paper. Never truncate mid-sentence or mid-argument&gt;&quot;, </code></pre>
+<h4><code>_REPRO_OUTCOME_RULES</code> — <code>extract/code_outcome.py:236-261</code> (used by L10, L11)</h4>
+<pre class='prompt-text'><code>A REPRODUCTION re-analyses the ORIGINAL study&#x27;s own data/code; it does not collect new data. Code the outcome on TWO independent axes and join them with a comma.
+
+Axis 1 - did the computation reproduce the original numbers?
+- computationally successful: the reported numbers/results were obtained again
+- computational issues: the numbers could not be obtained or differed (errors, missing data/code, discrepancies)
+- computation not checked: the paper did not attempt to re-run the original analysis
+
+Axis 2 - does the finding survive alternative reasonable specifications?
+- robust: it holds up under the alternative specifications tested
+- robustness challenges: alternative specifications weaken, overturn or qualify it
+- robustness not checked: no robustness/sensitivity analysis was attempted
+
+Valid outcome values are EXACTLY these nine strings:
+  computationally successful, robust
+  computationally successful, robustness challenges
+  computationally successful, robustness not checked
+  computational issues, robust
+  computational issues, robustness challenges
+  computational issues, robustness not checked
+  computation not checked, robust
+  computation not checked, robustness challenges
+  computation not checked, robustness not checked
+
+The axes are INDEPENDENT: a reproduction can fail computationally yet still find the conclusion robust, and vice versa. Use cannot_be_determined ONLY when the text does not let you place BOTH axes.
+</code></pre>
+<h4><code>_REPRO_JSON</code> — <code>extract/code_outcome.py:263-270</code> (used by L10, L11)</h4>
+<pre class='prompt-text'><code>{&quot;is_genuine_attempt&quot;: &lt;true|false&gt;, &quot;outcome&quot;: &quot;&lt;one of the nine strings above, or cannot_be_determined&gt;&quot;, &quot;outcome_phrase&quot;: &quot;&lt;the FULL verbatim passage that proves the outcome. Quote 3-6 COMPLETE sentences (up to ~1200 characters), including the surrounding sentences needed to make the verdict self-evident to someone who has not read the paper. Never truncate mid-sentence or mid-argument&gt;&quot;, &quot;outcome_confidence&quot;: &quot;&lt;high|medium|low&gt;&quot;, &quot;out_quote_source&quot;: &quot;&lt;abstract|title|fulltext&gt;&quot;, &quot;outcome_reasoning&quot;: &quot;&lt;one sentence naming the computation verdict and the robustness verdict&gt;&quot;}</code></pre>
+<h4><code>{original_block}</code> — <code>extract/code_outcome.py:372-376</code> (used by L8–L11)</h4>
+<p>Rendered only when an original title is known; otherwise an empty string.</p>
+<pre class='prompt-text'><code>This paper replicates: {original_authors} ({original_year}). {original_title}
+</code></pre>
+</section>
+
+<a id="L8"></a><section class="prompt">
+<h3><span class="callid">L8</span> Outcome: replication, abstract</h3>
+<ul class='meta'><li><strong>File:</strong> <code>extract/code_outcome.py:184-198</code> (<code>_abstract_prompt</code>)</li><li><strong>Model:</strong> <code>call_llm(..., gemini_model=GEMINI_HEAVY_MODEL, prefer_openai=True)</code> — OpenAI <code>gpt-5-mini</code> FIRST (S1), then Gemini <code>gemini-3-flash-preview</code>, then OpenRouter <code>qwen/qwen3.5-35b-a3b</code> (S2). 3 retries with 1s/2s/4s backoff.</li><li><strong>Fires when:</strong> <code>extract_outcome()</code> runs with <code>record_type != &quot;reproduction&quot;</code> and <code>no_llm=False</code> — i.e. the default outcome pass for every replication row. The keyword scan is a no-LLM fallback only and does not short-circuit this call.</li><li><strong>Truncation:</strong> <code>abstract_r[:3000]</code> + <code>…</code> when longer (<code>_ABSTRACT_CAP</code>). Prompt version <code>2026-07-22-repro-grid-long-quotes</code>.</li></ul>
+<pre class='prompt-text'><code>You are a research methodology expert. Classify the replication outcome based on what the paper&#x27;s abstract states.
+
+{original_block}TITLE: {title_r}
+ABSTRACT: {abstract_snip or &#x27;(not available)&#x27;}
+
+Outcome classification rules:
+- success: authors explicitly state the original finding was confirmed, replicated, or supported
+- failure: authors explicitly state the original finding was NOT found, contradicted, or failed to replicate
+- mixed: authors state that SOME but not all aspects of the original finding were confirmed
+- descriptive: authors adapted or extended methods in a different context/population WITHOUT directly testing the original claim
+- cannot_be_determined: the text lacks sufficient detail to classify the outcome (not when authors say it&#x27;s unclear, but when WE cannot tell)
+
+Few-shot examples:
+1. DESCRIPTIVE (methods reused, original claim not tested): &#x27;This conceptual replication extends the theory but does not directly test the original hypothesis.&#x27;
+2. CANNOT_BE_DETERMINED (insufficient detail): &#x27;We conducted a replication study in a different population.&#x27; (no mention of success or failure)
+3. MIXED (partial success): &#x27;We replicated the main effect but not the interaction.&#x27;
+4. SUCCESS (confirmation): &#x27;Our findings confirm Smith et al. (2015)&#x27;
+
+CRITICAL: Only output &#x27;cannot_be_determined&#x27; when the text genuinely lacks detail.
+
+Before classifying the outcome, first judge: does this text describe a genuine attempt to replicate OR reproduce the specific original study named above (or discussed in the abstract)? Both replications (new data/sample testing whether the finding holds) and reproductions (re-analysis of the same original data) count as genuine attempts — this judgment does not distinguish between them, that classification happens elsewhere in the pipeline. Answer false only when the text does not engage with verifying that specific original at all — e.g. &#x27;replicate&#x27;/&#x27;reproduce&#x27; is used in an unrelated biological or technical sense (DNA replication, code reproduction), or metaphorically/colloquially (e.g. &#x27;a replication of prior interests and positions&#x27;), or the text is simply unrelated to the named original study.
+
+Respond with ONLY this JSON:
+{&quot;is_genuine_attempt&quot;: &lt;true|false&gt;, &quot;outcome&quot;: &quot;&lt;success|failure|mixed|descriptive|cannot_be_determined&gt;&quot;, &quot;outcome_phrase&quot;: &quot;&lt;the FULL verbatim passage that proves the outcome. Quote 3-6 COMPLETE sentences (up to ~1200 characters), including the surrounding sentences needed to make the verdict self-evident to someone who has not read the paper. Never truncate mid-sentence or mid-argument&gt;&quot;, &quot;outcome_confidence&quot;: &quot;&lt;high|medium|low&gt;&quot;, &quot;out_quote_source&quot;: &quot;&lt;abstract|title&gt;&quot;, &quot;outcome_reasoning&quot;: &quot;&lt;one sentence explaining the classification choice&gt;&quot;}</code></pre>
+</section>
+
+<a id="L9"></a><section class="prompt">
+<h3><span class="callid">L9</span> Outcome: replication, fulltext escalation</h3>
+<ul class='meta'><li><strong>File:</strong> <code>extract/code_outcome.py:201-220</code> (<code>_fulltext_prompt</code>)</li><li><strong>Model:</strong> same chain as L8 — OpenAI <code>gpt-5-mini</code> first, then Gemini <code>gemini-3-flash-preview</code>, then OpenRouter qwen.</li><li><strong>Fires when:</strong> <code>extract/code_outcome.py:395-397</code> — <code>OUTCOME_FULLTEXT_ESCALATION</code> is on (default), parsed fulltext is available, AND the L8 result was <code>cannot_be_determined</code> OR the abstract was empty.</li><li><strong>Truncation:</strong> <code>abstract_r[:3000]</code>, <code>fulltext[:8000]</code> + <code>…</code> (<code>_FULLTEXT_CAP</code>).</li></ul>
+<pre class='prompt-text'><code>You are a research methodology expert. The abstract alone could not settle the replication outcome. Classify it using the paper&#x27;s full text.
+
+{original_block}TITLE: {title_r}
+ABSTRACT: {abstract_snip or &#x27;(not available)&#x27;}
+PARSED FULLTEXT: {text_snip or &#x27;(not available)&#x27;}
+
+Outcome classification rules:
+- success: authors explicitly state the original finding was confirmed, replicated, or supported
+- failure: authors explicitly state the original finding was NOT found, contradicted, or failed to replicate
+- mixed: authors state that SOME but not all aspects of the original finding were confirmed
+- descriptive: authors adapted or extended methods in a different context/population WITHOUT directly testing the original claim
+- cannot_be_determined: the text lacks sufficient detail to classify the outcome (not when authors say it&#x27;s unclear, but when WE cannot tell)
+
+Few-shot examples:
+1. DESCRIPTIVE (methods reused, original claim not tested): &#x27;This conceptual replication extends the theory but does not directly test the original hypothesis.&#x27;
+2. CANNOT_BE_DETERMINED (insufficient detail): &#x27;We conducted a replication study in a different population.&#x27; (no mention of success or failure)
+3. MIXED (partial success): &#x27;We replicated the main effect but not the interaction.&#x27;
+4. SUCCESS (confirmation): &#x27;Our findings confirm Smith et al. (2015)&#x27;
+
+CRITICAL: Only output &#x27;cannot_be_determined&#x27; when the text genuinely lacks detail.
+
+Before classifying the outcome, first judge: does this text describe a genuine attempt to replicate OR reproduce the specific original study named above (or discussed in the abstract)? Both replications (new data/sample testing whether the finding holds) and reproductions (re-analysis of the same original data) count as genuine attempts — this judgment does not distinguish between them, that classification happens elsewhere in the pipeline. Answer false only when the text does not engage with verifying that specific original at all — e.g. &#x27;replicate&#x27;/&#x27;reproduce&#x27; is used in an unrelated biological or technical sense (DNA replication, code reproduction), or metaphorically/colloquially (e.g. &#x27;a replication of prior interests and positions&#x27;), or the text is simply unrelated to the named original study.
+
+Judge the outcome of THIS paper&#x27;s own replication, not outcomes it reports for other studies in its background or literature review.
+
+Respond with ONLY this JSON:
+{&quot;is_genuine_attempt&quot;: &lt;true|false&gt;, &quot;outcome&quot;: &quot;&lt;success|failure|mixed|descriptive|cannot_be_determined&gt;&quot;, &quot;outcome_phrase&quot;: &quot;&lt;the FULL verbatim passage that proves the outcome. Quote 3-6 COMPLETE sentences (up to ~1200 characters), including the surrounding sentences needed to make the verdict self-evident to someone who has not read the paper. Never truncate mid-sentence or mid-argument&gt;&quot;, &quot;outcome_confidence&quot;: &quot;&lt;high|medium|low&gt;&quot;, &quot;out_quote_source&quot;: &quot;&lt;abstract|title|fulltext&gt;&quot;, &quot;outcome_reasoning&quot;: &quot;&lt;one sentence explaining the classification choice&gt;&quot;}</code></pre>
+</section>
+
+<a id="L10"></a><section class="prompt">
+<h3><span class="callid">L10</span> Outcome: reproduction, abstract</h3>
+<ul class='meta'><li><strong>File:</strong> <code>extract/code_outcome.py:273-282</code> (<code>_repro_abstract_prompt</code>)</li><li><strong>Model:</strong> same chain as L8 — OpenAI <code>gpt-5-mini</code> first, then Gemini <code>gemini-3-flash-preview</code>, then OpenRouter qwen.</li><li><strong>Fires when:</strong> <code>extract_outcome()</code> is called with <code>record_type == &quot;reproduction&quot;</code> and <code>no_llm=False</code>. Reproductions skip the keyword scan entirely and go straight here.</li><li><strong>Truncation:</strong> <code>abstract_r[:3000]</code> + <code>…</code>.</li></ul>
+<pre class='prompt-text'><code>You are a research methodology expert. Classify the REPRODUCTION outcome based on what the paper&#x27;s abstract states.
+
+{original_block}TITLE: {title_r}
+ABSTRACT: {abstract_snip or &#x27;(not available)&#x27;}
+
+A REPRODUCTION re-analyses the ORIGINAL study&#x27;s own data/code; it does not collect new data. Code the outcome on TWO independent axes and join them with a comma.
+
+Axis 1 - did the computation reproduce the original numbers?
+- computationally successful: the reported numbers/results were obtained again
+- computational issues: the numbers could not be obtained or differed (errors, missing data/code, discrepancies)
+- computation not checked: the paper did not attempt to re-run the original analysis
+
+Axis 2 - does the finding survive alternative reasonable specifications?
+- robust: it holds up under the alternative specifications tested
+- robustness challenges: alternative specifications weaken, overturn or qualify it
+- robustness not checked: no robustness/sensitivity analysis was attempted
+
+Valid outcome values are EXACTLY these nine strings:
+  computationally successful, robust
+  computationally successful, robustness challenges
+  computationally successful, robustness not checked
+  computational issues, robust
+  computational issues, robustness challenges
+  computational issues, robustness not checked
+  computation not checked, robust
+  computation not checked, robustness challenges
+  computation not checked, robustness not checked
+
+The axes are INDEPENDENT: a reproduction can fail computationally yet still find the conclusion robust, and vice versa. Use cannot_be_determined ONLY when the text does not let you place BOTH axes.
+
+Respond with ONLY this JSON:
+{&quot;is_genuine_attempt&quot;: &lt;true|false&gt;, &quot;outcome&quot;: &quot;&lt;one of the nine strings above, or cannot_be_determined&gt;&quot;, &quot;outcome_phrase&quot;: &quot;&lt;the FULL verbatim passage that proves the outcome. Quote 3-6 COMPLETE sentences (up to ~1200 characters), including the surrounding sentences needed to make the verdict self-evident to someone who has not read the paper. Never truncate mid-sentence or mid-argument&gt;&quot;, &quot;outcome_confidence&quot;: &quot;&lt;high|medium|low&gt;&quot;, &quot;out_quote_source&quot;: &quot;&lt;abstract|title|fulltext&gt;&quot;, &quot;outcome_reasoning&quot;: &quot;&lt;one sentence naming the computation verdict and the robustness verdict&gt;&quot;}</code></pre>
+</section>
+
+<a id="L11"></a><section class="prompt">
+<h3><span class="callid">L11</span> Outcome: reproduction, fulltext escalation</h3>
+<ul class='meta'><li><strong>File:</strong> <code>extract/code_outcome.py:285-298</code> (<code>_repro_fulltext_prompt</code>)</li><li><strong>Model:</strong> same chain as L8.</li><li><strong>Fires when:</strong> as L9, but for <code>record_type == &quot;reproduction&quot;</code> — escalation is triggered when L10 returned <code>cannot_be_determined</code> or the abstract was empty, and fulltext is available.</li><li><strong>Truncation:</strong> <code>abstract_r[:3000]</code>, <code>fulltext[:8000]</code> + <code>…</code>.</li></ul>
+<pre class='prompt-text'><code>You are a research methodology expert. The abstract alone could not settle the REPRODUCTION outcome. Classify it using the paper&#x27;s full text.
+
+{original_block}TITLE: {title_r}
+ABSTRACT: {abstract_snip or &#x27;(not available)&#x27;}
+PARSED FULLTEXT: {text_snip or &#x27;(not available)&#x27;}
+
+A REPRODUCTION re-analyses the ORIGINAL study&#x27;s own data/code; it does not collect new data. Code the outcome on TWO independent axes and join them with a comma.
+
+Axis 1 - did the computation reproduce the original numbers?
+- computationally successful: the reported numbers/results were obtained again
+- computational issues: the numbers could not be obtained or differed (errors, missing data/code, discrepancies)
+- computation not checked: the paper did not attempt to re-run the original analysis
+
+Axis 2 - does the finding survive alternative reasonable specifications?
+- robust: it holds up under the alternative specifications tested
+- robustness challenges: alternative specifications weaken, overturn or qualify it
+- robustness not checked: no robustness/sensitivity analysis was attempted
+
+Valid outcome values are EXACTLY these nine strings:
+  computationally successful, robust
+  computationally successful, robustness challenges
+  computationally successful, robustness not checked
+  computational issues, robust
+  computational issues, robustness challenges
+  computational issues, robustness not checked
+  computation not checked, robust
+  computation not checked, robustness challenges
+  computation not checked, robustness not checked
+
+The axes are INDEPENDENT: a reproduction can fail computationally yet still find the conclusion robust, and vice versa. Use cannot_be_determined ONLY when the text does not let you place BOTH axes.
+
+Judge THIS paper&#x27;s own reproduction attempt, not results it reports for other studies in its background or literature review.
+
+Respond with ONLY this JSON:
+{&quot;is_genuine_attempt&quot;: &lt;true|false&gt;, &quot;outcome&quot;: &quot;&lt;one of the nine strings above, or cannot_be_determined&gt;&quot;, &quot;outcome_phrase&quot;: &quot;&lt;the FULL verbatim passage that proves the outcome. Quote 3-6 COMPLETE sentences (up to ~1200 characters), including the surrounding sentences needed to make the verdict self-evident to someone who has not read the paper. Never truncate mid-sentence or mid-argument&gt;&quot;, &quot;outcome_confidence&quot;: &quot;&lt;high|medium|low&gt;&quot;, &quot;out_quote_source&quot;: &quot;&lt;abstract|title|fulltext&gt;&quot;, &quot;outcome_reasoning&quot;: &quot;&lt;one sentence naming the computation verdict and the robustness verdict&gt;&quot;}</code></pre>
+</section>
+
+<a id="L12"></a><section class="prompt">
+<h3><span class="callid">L12</span> Reference extraction from the PDF directly</h3>
+<ul class='meta'><li><strong>File:</strong> <code>shared/grobid.py:287-304</code> (in <code>_extract_refs_via_pdf_direct</code>)</li><li><strong>Model:</strong> Gemini <code>gemini-3-flash-preview</code> via <code>call_gemini_with_pdf(prompt, pdf_bytes)</code> — default <code>model=GEMINI_MODEL</code> (<code>shared/llm_client.py:749-751</code>), <code>MEDIA_RESOLUTION_LOW</code>, temperature 0.</li><li><strong>Fires when:</strong> <code>shared/grobid.py:491-504</code> — pdfminer parsed the PDF but found 0 references, the GROBID fallback also returned nothing, and <code>--no-llm</code> is off. Skipped silently if the PDF exceeds 45 MB. Cached at <code>cache/grobid/{pdf_stem}_direct_refs.json</code>.</li><li><strong>Attachment:</strong> the whole PDF is sent inline; no text truncation.</li></ul>
+<pre class='prompt-text'><code>The attached PDF is an academic paper. Extract every entry from its
+References / Bibliography section.
+
+For each reference return:
+- &quot;authors&quot;: list of author strings, e.g. [&quot;Smith, J.&quot;, &quot;Jones, A.&quot;]
+- &quot;year&quot;: publication year as an integer, or null if not found
+- &quot;title&quot;: full title of the referenced work (empty string if unreadable)
+
+Include only entries where you can determine at least a year OR a title.
+Return ONLY this JSON — no prose outside the braces:
+{
+  &quot;references&quot;: [
+    {&quot;authors&quot;: [&quot;Surname, I.&quot;], &quot;year&quot;: 2020, &quot;title&quot;: &quot;Paper title&quot;},
+    ...
+  ]
+}</code></pre>
+</section>
+
+<a id="L13"></a><section class="prompt">
+<h3><span class="callid">L13</span> Reference extraction from rendered page images</h3>
+<ul class='meta'><li><strong>File:</strong> <code>shared/grobid.py:391-410</code> (in <code>_extract_refs_via_pdf_images</code>)</li><li><strong>Model:</strong> Gemini <code>gemini-3-flash-preview</code> via <code>call_gemini_with_images(prompt, images)</code> — default <code>model=GEMINI_MODEL</code> (<code>shared/llm_client.py:700-702</code>), temperature 0, <code>maxOutputTokens=4096</code>.</li><li><strong>Fires when:</strong> <code>shared/grobid.py:505-511</code> — last-resort fallback after L12 also returned nothing. Requires PyMuPDF; returns <code>[]</code> silently otherwise. Cached at <code>cache/grobid/{pdf_stem}_img_refs.json</code>.</li><li><strong>Attachment:</strong> the last <code>min(6, max(1, round(n_pages * 0.20)))</code> pages, rendered at 1.5× zoom in greyscale PNG.</li></ul>
+<pre class='prompt-text'><code>The attached images show page(s) from an academic paper — likely the
+References / Bibliography section.
+
+Extract EVERY reference entry you can clearly read.
+
+For each reference return:
+- &quot;authors&quot;: list of author strings, e.g. [&quot;Smith, J.&quot;, &quot;Jones, A.&quot;]
+- &quot;year&quot;: publication year as an integer, or null if not visible
+- &quot;title&quot;: full title of the referenced work (empty string if unreadable)
+
+Include only entries where you can read at least a year OR a title.
+Return ONLY this JSON — no prose outside the braces:
+{
+  &quot;references&quot;: [
+    {&quot;authors&quot;: [&quot;Surname, I.&quot;], &quot;year&quot;: 2020, &quot;title&quot;: &quot;Paper title&quot;},
+    ...
+  ]
+}</code></pre>
+</section>
+
+<a id="S1"></a><section class="prompt">
+<h3><span class="callid">S1</span> OpenAI system message</h3>
+<ul class='meta'><li><strong>File:</strong> <code>shared/llm_client.py:290-293</code> (inside <code>call_openai</code>)</li><li><strong>Model:</strong> whatever <code>call_openai</code> is invoked with — <code>gpt-5-mini</code> for every current caller (<code>OPENAI_MODEL</code>, or <code>FILTER_OPENAI_MODEL</code> for L1).</li><li><strong>Fires when:</strong> every OpenAI call in the pipeline — L1 (primary), L4 (one of the two votes), and the OpenAI fallback leg of L2, L3, L5, L6, L7, L8–L11. Sent as the <code>system</code> role, with the task prompt as <code>user</code>. <code>response_format={&quot;type&quot;: &quot;json_object&quot;}</code>, <code>max_completion_tokens=1024</code>.</li><li><strong>Note:</strong> the wording mentions only original-study identification, but it is applied unchanged to filtering and outcome-coding calls.</li></ul>
+<pre class='prompt-text'><code>You are a research methodology expert that identifies original studies from replication papers. Always respond with valid JSON only.</code></pre>
+<p>(Assembled from three adjacent literals: <code>&quot;You are a research methodology expert that identifies &quot;</code> + <code>&quot;original studies from replication papers. &quot;</code> + <code>&quot;Always respond with valid JSON only.&quot;</code>)</p>
+</section>
+
+<a id="S2"></a><section class="prompt">
+<h3><span class="callid">S2</span> OpenRouter system message</h3>
+<ul class='meta'><li><strong>File:</strong> <code>shared/llm_client.py:339-342</code> (inside <code>call_openrouter</code>)</li><li><strong>Model:</strong> <code>OPENROUTER_HEAVY_MODEL</code> = <code>qwen/qwen3.5-35b-a3b</code> by default.</li><li><strong>Fires when:</strong> the OpenRouter last-resort leg of L2, L3, L6, L7 and L8–L11 — only when <code>OPENROUTER_API_KEY</code> is configured and both Gemini and OpenAI failed. <code>response_format={&quot;type&quot;: &quot;json_object&quot;}</code>, <code>max_tokens=1024</code>, <code>temperature=0.0</code>.</li><li><strong>Text:</strong> byte-identical to S1.</li></ul>
+<pre class='prompt-text'><code>You are a research methodology expert that identifies original studies from replication papers. Always respond with valid JSON only.</code></pre>
+</section>
+
+<a id="F1"></a><section class="prompt">
+<h3><span class="callid">F1</span> FLoRA anchor note</h3>
+<ul class='meta'><li><strong>File:</strong> <code>extract/link_original.py:611-617</code> (<code>anchor_note</code>)</li><li><strong>Injected into:</strong> L3 and L6 as <code>validator_note</code>, via <code>effective_note</code> (<code>extract/link_original.py:620</code>, <code>647-658</code>, <code>843-848</code>).</li><li><strong>Fires when:</strong> the row&#x27;s FLoRA metadata has <code>flora_validation_status</code> containing <code>&quot;validated - changed&quot;</code> or <code>&quot;validated - unchanged&quot;</code> AND a non-empty <code>flora_doi_o</code>. The anchored original is also injected as candidate #1 when it is not already in the candidate pool.</li><li><strong>Special handling:</strong> because this string starts with <code>⚠ FLoRA ANCHOR</code>, F3 passes it through <strong>without</strong> the validator-feedback framing — see F3.</li></ul>
+<pre class='prompt-text'><code>⚠ FLoRA ANCHOR: The FLoRA database has manually verified the original study for this replication as DOI: {flora_doi_o} (&quot;{flora_study_o}&quot;). Evaluate this against the evidence — confirm it if supported, override only if you find strong contradicting evidence.</code></pre>
+</section>
+
+<a id="F2"></a><section class="prompt">
+<h3><span class="callid">F2</span> Title-pattern hint</h3>
+<ul class='meta'><li><strong>File:</strong> <code>extract/link_original.py:629-634</code> (<code>hint_note</code>)</li><li><strong>Injected into:</strong> L3 and L6 as part of <code>effective_note</code> (appended after F1 / any user comment, joined by <code>&quot;\n\n&quot;</code>).</li><li><strong>Fires when:</strong> Stage 2.5&#x27;s <code>_resolve_by_title_pattern</code> did NOT resolve outright but returned a <code>title_pattern_hint</code> — i.e. the replication&#x27;s title matches a &quot;A Replication of X&quot; pattern and some candidates partially match by title.</li><li><strong>Note:</strong> this string does NOT start with <code>⚠ FLoRA ANCHOR</code>, so when it is the whole note it gets wrapped by F3&#x27;s validator-feedback framing (see F3 caveat).</li></ul>
+<pre class='prompt-text'><code>TITLE PATTERN HINT: The replication paper&#x27;s title contains a pattern suggesting the original is &quot;{title_pattern_target}&quot;. Top candidate matches by title: &quot;{hint_1}&quot;, &quot;{hint_2}&quot;, …</code></pre>
+<p>(The trailing list is <code>&quot;, &quot;.join(f&#x27;&quot;{t}&quot;&#x27; for t in title_pattern_hint)</code>.)</p>
+</section>
+
+<a id="F3"></a><section class="prompt">
+<h3><span class="callid">F3</span> Validator-feedback wrapper</h3>
+<ul class='meta'><li><strong>File:</strong> <code>shared/llm_client.py:481-491</code> (inside <code>build_identification_prompt</code>)</li><li><strong>Applies to:</strong> L3 and L6 only — it produces the <code>{validator_block}</code> that opens those prompts.</li><li><strong>Fires when:</strong> <code>validator_note</code> is non-empty after stripping. Two branches:</li></ul>
+<p>  - If the note <strong>starts with</strong> <code>⚠ FLoRA ANCHOR</code> (i.e. F1, possibly with F2/user comments appended after it), it is emitted as-is followed by <code>\n\n---\n\n</code>.</p>
+<p>  - Otherwise (F2 alone, or a human validator comment) it is wrapped in the INCORRECT-answer framing below.</p>
+<ul class='meta'><li><strong>Audit caveat:</strong> the branch test is on the *combined* note. A bare title-pattern hint (F2), or any user comment, is therefore presented to the model as &quot;a human reviewer marked the previous answer as INCORRECT&quot; even when no previous answer exists.</li></ul>
+<p>Anchor branch:</p>
+<pre class='prompt-text'><code>{note}
+
+---
+</code></pre>
+<p>Feedback branch:</p>
+<pre class='prompt-text'><code>⚠️ VALIDATOR FEEDBACK — A human reviewer marked the previous answer as INCORRECT:
+{note}
+Use this feedback to correct your selection. The previous candidate was wrong.
+
+---
+</code></pre>
+<p>Both are prefixed directly onto <code>Identify the ORIGINAL STUDY that the replication paper below directly replicates.</code> with no separator.</p>
+</section>

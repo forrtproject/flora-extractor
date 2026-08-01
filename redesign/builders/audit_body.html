@@ -1,0 +1,1483 @@
+<h1>FLoRA Extractor — Screening Pipeline Audit</h1>
+<p class="subtitle">Behaviour, LLM call inventory, intent-vs-code divergences, bugs, and proposed fixes.
+Branch <code>fix/track-decision-models</code> @ <code>2d5b635</code> · audited 2026-07-28 ·
+select any text to comment or suggest an edit.</p>
+
+<div class="tldr" id="tldr">
+<p><strong>TL;DR.</strong> The pipeline works broadly as designed, and the Stage-4.5 reference
+screen does most of the filtering work. But the screen is also where the design has drifted
+furthest from its documentation, and it sits downstream of a Stage-2 filter that admits roughly
+half non-replications.</p>
+<p><strong>Five confirmed bugs:</strong> Stage-4.5 successes never reach the validation DB
+(<a href="#b1">B1</a>); any LLM failure during the screen is recorded as a "model disagreement"
+(<a href="#b2">B2</a>); the 285 discarded and 125 set-aside rows carry no model attribution or
+evidence (<a href="#b3">B3</a>); empty parse caches poison later fulltext outcome coding
+(<a href="#b4">B4</a>); outcome-LLM exhaustion is laundered into <code>cannot_be_determined</code>
+(<a href="#b5">B5</a>).</p>
+<p><strong>Two design concerns:</strong> the screen makes three LLM calls where two would do more
+work with better coverage (<a href="#d1">D1</a>), and the Stage-4.6 title search writes resolved
+links at roughly 50% precision with systematic, not random, errors (<a href="#d2">D2</a>).</p>
+<p><strong>One efficiency win that is essentially free:</strong> the screen's "is this a
+replication?" question fires <em>fifth</em> in the ladder, after two heavy-model calls have
+already been spent on rows that are then discarded (<a href="#e1">E1</a>).</p>
+<p><strong>Root cause under both design concerns:</strong> Stage 2 admits an estimated
+<span class="stat">47–58%</span> non-replications into Stage 3 (<a href="#root">§5</a>), and both
+D1 and D2 are downstream compensation for that. The estimate's weak point is that it rests on a
+classifier validated against eight hand-checked cases — which is why hand-coding the 125
+set-aside disagreement rows is the highest-value next measurement.</p>
+</div>
+
+<nav class="toc" id="toc">
+<strong>Contents</strong>
+<ol>
+  <li><a href="#pipeline">The pipeline, step by step</a></li>
+  <li><a href="#callmap">The LLM call map (L1–L13)</a></li>
+  <li><a href="#bugs">Bugs &amp; proposed fixes (B1–B10)</a></li>
+  <li><a href="#design">Design concerns (D1–D2)</a></li>
+  <li><a href="#root">The shared root cause</a></li>
+  <li><a href="#quota">Rate limits, model choice, and cost</a></li>
+  <li><a href="#intent">Intent vs code — documentation drift</a></li>
+  <li><a href="#efficiency">Efficiency &amp; accuracy improvements</a></li>
+  <li><a href="#complexity">Complexity reduction</a></li>
+  <li><a href="#prompts-design">Prompt/code separation</a></li>
+  <li><a href="#plan">Proposed order of work</a></li>
+  <li><a href="#flora-rules">FLoRA coding rules vs the pipeline (R1–R16)</a></li>
+  <li><a href="#shipped">The shipped dataset vs the spec (S1–S7)</a></li>
+  <li><a href="#appendix">Appendix — every prompt, verbatim</a></li>
+</ol>
+</nav>
+
+<h2 id="pipeline">1 · The pipeline, step by step (as the code actually behaves)</h2>
+<p class="pathnote">LLM calls are numbered <span class="callid">L1</span>–<span class="callid">L13</span>
+throughout; each number links to its literal prompt in the <a href="#appendix">appendix</a>.</p>
+
+<h3 id="stage2">Stage 2 — filter</h3>
+<p><span class="loc">filter/run_filter.py · filter/rule_filter.py:44–138 · filter/llm_filter.py</span></p>
+<p><code>candidates.csv</code> is read in 50k-row chunks. The rule gate is first-match-wins:</p>
+<ol>
+  <li>Non-article DOI (figshare, <code>/reviews/</code>, <code>/decisions/</code>) →
+      <code>false_positive</code>, high.</li>
+  <li>Exclusion pattern fires → the #44 rescue: if a replication phrase plus <em>any</em>
+      author-year cite exists → <code>needs_review</code>, medium; otherwise
+      <code>false_positive</code>, high.</li>
+  <li>No replication phrase → <code>false_positive</code>, high (the ~2.17M-row bucket in
+      <code>docs/limitations.md</code>).</li>
+  <li>Phrase without a same-sentence cite → <code>needs_review</code>, medium.</li>
+  <li>Phrase + same-sentence cite → <code>replication</code> / <code>reproduction</code>, high.</li>
+</ol>
+<p>Only <code>needs_review</code> rows reach <a href="#L1" class="callref">L1</a>, whose verdict
+overwrites the rule status and confidence (<code>filter_method="both"</code>). On LLM failure the
+row is deliberately not written, so the next run retries it (#45).</p>
+
+<h3 id="stage3-entry">Stage 3 entry — match-type routing</h3>
+<p><span class="loc">extract/run_extract.py:1259, :358–489</span></p>
+<p>Per row, <code>classify_match_type</code> runs first: rule-based multi-original patterns
+(Many Labs, RRR, "replications of N"), then <a href="#L2" class="callref">L2</a>, cached at
+<code>cache/llm/match_type_{key}.json</code>. <code>multiple_original</code> rows go to the multi
+pipeline (<a href="#L7" class="callref">L7</a>), which <strong>never touches the reference screen
+at all</strong>. Everything else goes to <code>run_for_doi()</code>.</p>
+
+<h3 id="ladder">The resolution ladder</h3>
+<p><span class="loc">extract/link_original.py:541–853</span> — cheapest first, returning at the first resolver:</p>
+<div class="tablewrap">
+<table class="ladder">
+  <tr><th>Stage</th><th>Fires when</th><th>LLM</th><th>Result on success</th></tr>
+  <tr><td>2 · OpenAlex re-query</td><td>always; the candidate pool is empty unless title/abstract
+      has a parseable <code>(Author, Year)</code> citation. FLoRA-validated DOIs get an anchor
+      candidate plus prompt note <a href="#F1" class="callref">F1</a>.</td><td>—</td><td>— (pool only)</td></tr>
+  <tr><td>2.5 · Title pattern</td><td>title matches "A Replication of X", best Jaccard ≥ 0.4 and
+      ≥ 1.5× runner-up; otherwise emits hint <a href="#F2" class="callref">F2</a></td><td>—</td>
+      <td><code>title_pattern_match</code></td></tr>
+  <tr><td>3 · Rule-based</td><td>citation-context score ≥ 4.0 with gap ≥ 2.0, same-author/year
+      overlap, or a single candidate</td><td>—</td><td><code>citation_context_match</code> etc.</td></tr>
+  <tr><td>4 · Abstract LLM</td><td>abstract has ≥ 1 author-year pattern</td>
+      <td><a href="#L3" class="callref">L3</a></td><td><code>llm_cited_candidates</code></td></tr>
+  <tr><td>4.5 · Reference screen</td><td><code>abstract_r or study_r</code> exists —
+      <strong>references are optional</strong> (OpenAlex refs, falling back to OpenCitations)</td>
+      <td><a href="#L4" class="callref">L4</a>×2, then <a href="#L5" class="callref">L5</a></td>
+      <td><code>llm_references</code> · <code>not_a_replication</code> · <code>screen_disagreement</code></td></tr>
+  <tr><td>4.6 · Pre-PDF title search</td><td>screen said yes with a named-but-unmatched target</td>
+      <td>— (CrossRef/OpenAlex search)</td><td><code>llm_title_search_prepdf</code></td></tr>
+  <tr><td>5 · PDF + fulltext LLM</td><td>everything above declined; PDF parsed, optionally via
+      <a href="#L12" class="callref">L12</a>/<a href="#L13" class="callref">L13</a></td>
+      <td><a href="#L6" class="callref">L6</a></td>
+      <td><code>llm_fulltext</code>, <code>llm_title_search</code>; early exits
+      <code>needs_fulltext</code> / <code>no_fulltext_available</code></td></tr>
+</table>
+</div>
+
+<h3 id="stage45">Stage 4.5 in detail</h3>
+<p><span class="loc">shared/llm_client.py:1205–1290 · extract/link_original.py:665–739</span></p>
+<ul>
+  <li><strong>Q1 (classify) — <a href="#L4" class="callref">L4</a>, run twice:</strong> the same
+      prompt (title + abstract, no references) goes to <em>two</em> models —
+      <code>gemini-3.5-flash-lite</code> and <code>gpt-5-mini</code>. Agreement requires
+      <strong>both calls to succeed and return the same label</strong>; the <em>weaker</em>
+      confidence governs.</li>
+  <li><strong>Discard:</strong> agreed <code>no</code> at high confidence →
+      <code>not_a_replication</code>; no PDF, no outcome call.</li>
+  <li><strong>Q2 (target) — <a href="#L5" class="callref">L5</a>:</strong> on agreed
+      <code>yes</code> with references, one call to <code>gemini-3-flash-preview</code> picks a
+      numbered reference; accepted only at <code>target_confidence == "high"</code> →
+      <code>llm_references</code>.</li>
+  <li><strong>Disagreement:</strong> row set aside as <code>screen_disagreement</code>, not escalated.</li>
+  <li>Everything else (agreed <code>unclear</code>, medium/low <code>no</code>, <code>yes</code>
+      with no target) falls through to the PDF stage.</li>
+</ul>
+
+<h3 id="exits">Exit plumbing</h3>
+<p><code>_get_outcome</code> (<a href="#L8" class="callref">L8</a>–<a href="#L11" class="callref">L11</a>)
+short-circuits only for <code>not_a_replication</code>; every other row — including
+<code>screen_disagreement</code> — runs an outcome call. <code>sanity_check</code> then routes
+first-match-wins: <code>outcome == not_a_replication</code> → <code>not_a_replication.csv</code>;
+non-article DOI; self-link; DOI mismatch; <code>screen_disagreement</code> →
+<code>screen_disagreement.csv</code>; <code>target_pending</code>.</p>
+
+<p><strong>Live distribution</strong> (489 cached screen results, verified directly):
+<span class="stat">58%</span> agreed-no/high (discarded) · <span class="stat">22%</span>
+disagreement (set aside) · <span class="stat">19%</span> agreed-yes/high · &lt;1% other.
+All cached results have two votes, so both providers were up during past runs.</p>
+
+<h2 id="callmap">2 · The LLM call map</h2>
+<p>Thirteen distinct prompts, plus two system messages and three injected fragments. Every prompt
+is reproduced verbatim in the <a href="#appendix">appendix</a>. Model names resolve from the
+shipped defaults (<code>GEMINI_MODEL=gemini-3-flash-preview</code>,
+<code>GEMINI_LIGHT_MODEL=gemini-3.5-flash-lite</code>, <code>OPENAI_MODEL=gpt-5-mini</code>).</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>#</th><th>Call</th><th>Stage</th><th>Model chain</th><th>Fires for</th></tr>
+<tr><td><a href="#L1" class="callref">L1</a></td><td>Filter classification</td><td>2</td>
+    <td>gpt-5-mini → gemini-3-flash-preview</td><td><code>needs_review</code> rows only</td></tr>
+<tr><td><a href="#L2" class="callref">L2</a></td><td>Match-type</td><td>3 entry</td>
+    <td>gemini-3-flash-preview → gpt-5-mini → qwen</td><td>every Stage-3 row
+    <span class="warn">answers <code>single_original</code> 94% of the time</span></td></tr>
+<tr><td><a href="#L3" class="callref">L3</a></td><td>Abstract identification</td><td>4</td>
+    <td>gemini-3-flash-preview → gpt-5-mini → qwen</td><td>abstract has an author-year pattern</td></tr>
+<tr><td><a href="#L4" class="callref">L4</a></td><td>Screen Q1 — is this a replication?</td><td>4.5</td>
+    <td>gemini-3.5-flash-lite <strong>AND</strong> gpt-5-mini (two votes)</td>
+    <td>81% of Stage-3 rows <span class="warn">the decisive filter — discards 58% of what it sees</span></td></tr>
+<tr><td><a href="#L5" class="callref">L5</a></td><td>Screen Q2 — which reference is the target?</td><td>4.5</td>
+    <td>gemini-3-flash-preview → gpt-5-mini</td><td>agreed-yes rows with references (~19%)</td></tr>
+<tr><td><a href="#L6" class="callref">L6</a></td><td>Fulltext identification</td><td>5</td>
+    <td>gemini-3-flash-preview → gpt-5-mini → qwen</td><td>everything cheaper declined + a PDF exists</td></tr>
+<tr><td><a href="#L7" class="callref">L7</a></td><td>Multi-original identification</td><td>3 (multi)</td>
+    <td>gemini-3-flash-preview → gpt-5-mini → qwen</td><td><code>multiple_original</code> rows —
+    <span class="warn">bypasses the screen entirely</span></td></tr>
+<tr><td><a href="#L8" class="callref">L8</a></td><td>Outcome — replication, abstract</td><td>3</td>
+    <td>gpt-5-mini → gemini-3-flash-preview → qwen</td><td>every non-discarded row</td></tr>
+<tr><td><a href="#L9" class="callref">L9</a></td><td>Outcome — replication, fulltext</td><td>3</td>
+    <td>gpt-5-mini → gemini-3-flash-preview → qwen</td><td>escalation when the abstract was
+    undecidable <span class="warn">8,000-char payload — the single most expensive call</span></td></tr>
+<tr><td><a href="#L10" class="callref">L10</a></td><td>Outcome — reproduction, abstract</td><td>3</td>
+    <td>gpt-5-mini → gemini-3-flash-preview → qwen</td><td><code>filter_status == reproduction</code></td></tr>
+<tr><td><a href="#L11" class="callref">L11</a></td><td>Outcome — reproduction, fulltext</td><td>3</td>
+    <td>gpt-5-mini → gemini-3-flash-preview → qwen</td><td>as L9, reproduction vocabulary</td></tr>
+<tr><td><a href="#L12" class="callref">L12</a></td><td>References from PDF</td><td>parse</td>
+    <td>gemini-3-flash-preview</td><td>GROBID reference extraction fallback</td></tr>
+<tr><td><a href="#L13" class="callref">L13</a></td><td>References from page images</td><td>parse</td>
+    <td>gemini-3-flash-preview</td><td>as L12, when inline PDF parsing fails</td></tr>
+<tr><td><a href="#S1" class="callref">S1</a></td><td>OpenAI system message</td><td>all</td>
+    <td>—</td><td>every OpenAI call <span class="warn">wording is identification-specific but is
+    applied to filter and outcome calls too</span></td></tr>
+<tr><td><a href="#S2" class="callref">S2</a></td><td>OpenRouter system message</td><td>all</td>
+    <td>—</td><td>byte-identical to S1</td></tr>
+<tr><td><a href="#F1" class="callref">F1</a></td><td>FLoRA anchor note</td><td>2→4/5</td>
+    <td>—</td><td>injected into L3/L6 for validated DOIs</td></tr>
+<tr><td><a href="#F2" class="callref">F2</a></td><td>Title-pattern hint</td><td>2.5→4/5</td>
+    <td>—</td><td>injected into L3/L6 when 2.5 near-missed</td></tr>
+<tr><td><a href="#F3" class="callref">F3</a></td><td>Validator-feedback wrapper</td><td>4/5</td>
+    <td>—</td><td>wraps F1/F2/user comments
+    <span class="warn">mislabels a bare hint as "a human reviewer marked the previous answer as
+    INCORRECT" on first pass</span></td></tr>
+</table>
+</div>
+
+<p><strong>Calls per row.</strong> A typical row that reaches the screen and resolves there costs
+<strong>five</strong> LLM calls: L2 + L4×2 + L5 + L8. A row discarded by the screen still costs
+<strong>three</strong> (L2 + L4×2) — and <a href="#e1">E1</a> shows two of those are avoidable
+ordering waste. A row that falls through to full text costs six or more.</p>
+
+<h2 id="bugs">3 · Bugs &amp; proposed fixes</h2>
+<p>Ranked by severity. "Verified" = checked directly against code or on-disk data during this
+audit, not merely reported by a review agent.</p>
+
+<div class="finding" id="b1">
+<h3>B1 — Stage-4.5 resolutions never reach the validation DB
+  <span class="sev sev-high">severe</span><span class="verified">verified</span></h3>
+<p><span class="loc">shared/schema.py:110–123 · extract/csv_to_db.py:208–209</span></p>
+<p><code>llm_references</code> is missing from <code>RESOLVED_LINK_METHODS</code>, and
+<code>csv_to_db</code> filters imports on that set. In <code>data/extracted-test.csv</code>,
+43 of 172 rows (25%) are <code>llm_references</code> — all <code>link_confidence=high</code>,
+mostly <code>doi_o_verification=verified</code> — and all would be silently dropped.
+<code>LINK_METHOD_VALUES</code> is likewise missing <code>llm_references</code>,
+<code>not_a_replication</code>, and <code>screen_disagreement</code>, so the schema enum no longer
+covers what the pipeline emits.</p>
+<div class="fix"><strong>Fix:</strong> add <code>llm_references</code> to
+<code>RESOLVED_LINK_METHODS</code>; add the two set-aside values to <code>LINK_METHOD_VALUES</code>;
+document all three in <code>docs/csv-schema.md</code>. Add a schema test asserting every
+<code>link_method</code> the pipeline can emit is in <code>LINK_METHOD_VALUES</code>, so the next
+new method cannot silently fall outside the enum.</div>
+</div>
+
+<div class="finding" id="b2">
+<h3>B2 — LLM failure masquerades as model disagreement
+  <span class="sev sev-high">severe</span><span class="verified">verified</span></h3>
+<p><span class="loc">shared/llm_client.py:1233–1250 · extract/link_original.py:704</span></p>
+<p>One provider failing leaves a single vote; <code>models_agree</code> requires
+<code>len(votes) == 2</code>, so the row becomes <code>screen_disagreement</code> — even when the
+surviving vote was a high-confidence <code>no</code>. <em>Both</em> providers failing returns
+<code>llm_refscreen_failed</code>, which also has <code>models_agree=False</code> and is caught by
+the same branch — the <code>target_pending</code> mapping for it is unreachable. Single-vote
+results are cached and replayed on <code>--resume</code>. With no <code>OPENAI_API_KEY</code> (as
+<code>.env.example</code> ships), <strong>every</strong> screened row becomes a disagreement and
+nothing is ever discarded. The current cache shows 0 single-vote artifacts, so past runs are
+clean — but this is one outage away, and it would contaminate the agreement statistics the
+2000-row brief asks to report.</p>
+<div class="fix"><strong>Fix:</strong> distinguish three states: (a) both voted → real
+agreement/disagreement; (b) one vote → <code>llm_refscreen_partial</code>, do <em>not</em> cache,
+route to <code>target_pending</code>; (c) zero votes → <code>llm_refscreen_failed</code>, handled
+<em>before</em> the disagreement branch so it maps to <code>api_error</code> as documented. Fail
+fast at startup if only one screen provider is configured, and state the two-provider requirement
+in <code>.env.example</code> and CLAUDE.md.</div>
+</div>
+
+<div class="finding" id="b3">
+<h3>B3 — Set-aside rows are unreviewable; decision models misattributed
+  <span class="sev sev-high">high</span><span class="verified">verified</span></h3>
+<p><span class="loc">extract/link_original.py:685–693 · shared/llm_client.py:1245, 1266–1285</span></p>
+<p>All 285 <code>not_a_replication</code> rows and all 125 <code>screen_disagreement</code> rows
+have empty <code>link_llm_model</code>; the discard path drops the screen's evidence and reasoning
+entirely. This directly defeats commit <code>2d5b635</code>'s goal ("every row answers 'what
+decided this?'"). Additionally, <code>llm_references</code> rows record the <em>classifier pair</em>
+(<a href="#L4" class="callref">L4</a>) as <code>link_llm_model</code>, but the model that actually
+picked the original was <a href="#L5" class="callref">L5</a>'s — and L5's
+<code>evidence_quote</code>, the one quote that justifies the link, is requested in the prompt and
+then discarded.</p>
+<div class="fix"><strong>Fix:</strong> pass the full <code>screen</code> dict (not a minimal
+literal) through <code>_build_output</code> on the discard path. After L5 resolves, overwrite
+<code>llm_model</code> with the target-picker model and <code>llm_evidence</code> with L5's
+<code>evidence_quote</code>. Also persist <code>classify_llm_model</code> from
+<a href="#L2" class="callref">L2</a> — currently computed and thrown away, making routing the one
+decision with no attribution at all.</div>
+</div>
+
+<div class="finding" id="b4">
+<h3>B4 — Empty parse caches poison later fulltext outcome coding
+  <span class="sev sev-high">high</span><span class="verified">verified</span></h3>
+<p><span class="loc">extract/run_extract.py:657–683, :1331</span></p>
+<p><code>_save_parse_cache</code> is called for every non-multi row — including screen exits with
+no PDF — writing a parse cache of six empty results. It early-returns if the file exists, so if
+that DOI later <em>does</em> get a PDF, <a href="#L9" class="callref">L9</a> still reads the stale
+empty cache and codes from the abstract only. 276 of 300 sampled
+<code>cache/parse/*.json</code> files contain no text in any method.</p>
+<div class="fix"><strong>Fix:</strong> only call <code>_save_parse_cache</code> when the row
+actually reached the PDF stage, and treat an all-empty cached result as a miss. A one-off script
+should delete the existing empty parse caches.</div>
+</div>
+
+<div class="finding" id="b5">
+<h3>B5 — Outcome API exhaustion laundered into <code>cannot_be_determined</code>
+  <span class="sev sev-high">high</span></h3>
+<p><span class="loc">extract/code_outcome.py:301–319, :380–390</span></p>
+<p>After all retries fail, the outcome is recorded as <code>cannot_be_determined</code>/low with
+<code>llm_model=""</code> — indistinguishable from a genuine verdict, kept in
+<code>extracted.csv</code>, contradicting the CLAUDE.md <code>api_error</code> contract. The retry
+loop's exponential backoff is also dead code: <code>call_llm</code> never raises, so failure means
+~9+ provider attempts with zero delay between outer retries.</p>
+<div class="fix"><strong>Fix:</strong> return <code>outcome = "api_error"</code> when
+<code>call_llm</code> reports failure on all attempts, and sleep on the <code>None</code>-result
+path, not only in <code>except</code>.</div>
+</div>
+
+<div class="finding" id="b6">
+<h3>B6 — Disagreement rows leak into <code>not_a_replication.csv</code>
+  <span class="sev sev-med">medium</span><span class="verified">verified</span></h3>
+<p><span class="loc">extract/run_extract.py:693 · extract/sanity_check.py:113,119</span></p>
+<p><code>screen_disagreement</code> rows still run an outcome call, which can return
+<code>not_a_replication</code>; the sanity-check outcome rule wins over the disagreement rule.
+3 such rows are in <code>data/not_a_replication.csv</code> now — so "both models agreed it isn't a
+replication" is not quite true of that file, and hand-validation precision computed over it is
+biased.</p>
+<div class="fix"><strong>Fix:</strong> solved for free by <a href="#e2">E2</a>. Independently,
+move the <code>screen_disagreement</code> rule ahead of the outcome rule in
+<code>sanity_check</code> and re-route the 3 existing rows.</div>
+</div>
+
+<div class="finding" id="b7">
+<h3>B7 — <code>_FAILURE</code> keywords misfire on successful replications
+  <span class="sev sev-med">medium</span></h3>
+<p><span class="loc">extract/code_outcome.py:78–88, :134–138, :412–429</span></p>
+<p>"No evidence" / "no significant difference" are checked first and coded
+<code>failure</code>/high — but they are common phrasings in <em>successful</em> replications
+("no significant difference between our estimate and the original"). This affects
+<code>--no-llm</code> runs and, worse, <code>predict_outcome_keyword</code>, which pre-filters
+<em>which rows get processed at all</em> under <code>--predicted-outcome</code>, silently biasing
+the sample.</p>
+<div class="fix"><strong>Fix:</strong> require failure keywords not to co-occur with a success
+keyword in the same sentence, or drop the keyword pre-filter for sampling and use
+<a href="#L4" class="callref">L4</a>'s output instead.</div>
+</div>
+
+<div class="finding" id="b8">
+<h3>B8 — Match-type LLM failure cached permanently as <code>single_original</code>
+  <span class="sev sev-med">medium</span></h3>
+<p><span class="loc">extract/run_extract.py:419–422, :487–489</span></p>
+<p>The <a href="#L2" class="callref">L2</a> cache is written unconditionally, and the failure
+default is <code>{single_original, low}</code>. A Many Labs paper hitting a 429 (whose title
+doesn't trip the rule) is frozen as <code>single_original</code> for all future runs.</p>
+<div class="fix"><strong>Fix:</strong> cache only on LLM success, as <code>llm_filter</code> and
+<code>_llm_outcome</code> already do.</div>
+</div>
+
+<div class="finding" id="b9">
+<h3>B9 — Stage-4 abstract LLM defeats its own self-link guard
+  <span class="sev sev-med">medium</span></h3>
+<p><span class="loc">extract/link_original.py:653 · shared/llm_client.py:653</span></p>
+<p><code>doi_r + "_abstract"</code> is passed as both cache key and <code>exclude_doi</code>, so
+the "never link a paper to itself" exclusion never matches a real DOI on the
+<a href="#L3" class="callref">L3</a> path. <code>_guard_original_link</code> catches it
+downstream, but the row is then downgraded to <code>target_pending</code> instead of resolved
+correctly.</p>
+<div class="fix"><strong>Fix:</strong> separate the two parameters — pass the real
+<code>doi_r</code> as <code>exclude_doi</code> and a distinct cache-key suffix.</div>
+</div>
+
+<div class="finding" id="b10">
+<h3>B10 — Set-asides are frozen; multi-original rows mislabelled
+  <span class="sev sev-low">low</span></h3>
+<p><span class="loc">extract/run_extract.py:818–830, :628, :1315</span></p>
+<p><code>--resume</code> never revisits <code>not_a_replication</code> /
+<code>screen_disagreement</code> rows, so fixes to B2/B3 will not reprocess them without manual
+CSV surgery. Separately, multi-original reproductions get hardcoded <code>type="replication"</code>
+and are validated against the wrong outcome vocabulary; they also never record an outcome model
+even though it is known.</p>
+<div class="fix"><strong>Fix:</strong> add the set-aside methods to the stale-artifact rescue in
+<code>_load_extracted_rows</code> (or add a <code>--rescreen</code> flag); honour
+<code>filter_status</code> in <code>_merge_multi_row</code>.</div>
+</div>
+
+<h2 id="design">4 · Design concerns</h2>
+<p>These are not defects in the sense that the code fails to do what it was written to do. They
+are places where the design itself is worth revisiting — one about cost and coverage, one about
+precision.</p>
+
+<div class="finding" id="d1">
+<h3>D1 — The screen's call structure buys agreement on the cheap question only
+  <span class="sev sev-med">design</span></h3>
+<p><span class="loc">shared/llm_client.py:1205–1290 · commit 3f21862 (PR #82)</span></p>
+<p>The screen was a single combined call until PR #82 split it into
+<a href="#L4" class="callref">L4</a> (Q1, run on <code>gemini-3.5-flash-lite</code>
+<em>and</em> <code>gpt-5-mini</code>) plus <a href="#L5" class="callref">L5</a> (Q2, one call to
+<code>gemini-3-flash-preview</code>), with the outcome
+(<a href="#L8" class="callref">L8</a>) as a separate downstream call as it always was.</p>
+
+<p><strong>What the split actually costs, measured on the 489 cached screen results:</strong></p>
+<div class="tablewrap">
+<table>
+<tr><th>Screen outcome</th><th>N</th><th>% of screened</th><th>Calls</th></tr>
+<tr><td>Agreed "no" (discard)</td><td class="stat">286</td><td class="stat">58.5%</td><td>2 (L4×2)</td></tr>
+<tr><td>Disagreement (set aside)</td><td class="stat">107</td><td class="stat">21.9%</td><td>2 (L4×2)</td></tr>
+<tr><td>Agreed "yes"</td><td class="stat">96</td><td class="stat">19.6%</td><td>2, +1 if refs exist</td></tr>
+<tr><td><strong>Q2 actually fired</strong></td><td class="stat">68</td><td class="stat">13.9%</td><td>3</td></tr>
+<tr><td>Q2 resolved a target at high confidence</td><td class="stat">43</td><td class="stat">8.8%</td><td>—</td></tr>
+</table>
+</div>
+<p class="correction"><strong>Correction to the framing:</strong> "three calls per positive row"
+holds for only <span class="stat">14%</span> of screened rows. The dominant cost of the split is
+not Q2 — it is that the <em>second Q1 vote runs on 100% of screened rows</em>. Average is ~2.1
+calls per screened row, not 3.</p>
+
+<p>The split's stated reasons, assessed:</p>
+<ul>
+  <li><strong>The shared confidence field was a real defect</strong> — the commit message
+      documents it clearly (a high-confidence negative was "barely expressible" while the discard
+      path required exactly that). But it is fixed by returning two confidence fields, not by
+      making two calls.</li>
+  <li><strong>Contamination of Q1 by an attractive candidate reference is the only argument that
+      genuinely requires separation</strong> — and it was never measured. PR #82 shipped on
+      <strong>eight hand-checked cases</strong>.</li>
+  <li><strong>Not sending reference lists to obvious negatives is a genuine and larger saving than
+      it sounds</strong>: references are now withheld from the 86% of rows that never reach Q2,
+      not merely from the ~45% that are clear negatives.</li>
+</ul>
+
+<p><strong>What is genuinely missing today:</strong> the two-model agreement rule applies
+<em>only</em> to Q1. The target pick (L5) and the outcome (L8) are both single-model decisions
+with no second opinion — and those are the two that <em>write</em> a database record, whereas Q1
+merely discards.</p>
+
+<div class="fix"><strong>Proposed:</strong> one combined call asking (1) replication / reproduction
+/ neither, (2) the target, (3) the reported outcome where the abstract states it — run on
+<em>both</em> models. Two calls per row, flat; the "two models must agree to discard" property is
+preserved; and the target and outcome each gain the second opinion they currently lack. Keep
+<code>classification_confidence</code> and <code>target_confidence</code> separate, since the
+discard threshold and the write threshold are different bets.
+<br><br><strong>Honest counter-argument:</strong> this is close to call-neutral (~2.1 → 2.0) and
+is a <em>token increase</em>, because the reference list would go to 100% of rows instead of 14%.
+The case for it rests on <em>coverage</em> — getting a second model onto the two write decisions —
+not on cost. Judge it on that basis.
+<br><br><strong>Measure first:</strong> run combined vs split on a few hundred rows and compare Q1
+verdicts. That tests the contamination claim PR #82 asserted but never validated, and it is the
+one result that would justify keeping the calls separate.</div>
+<p class="correction"><strong>One supporting claim did not survive checking.</strong> The proposal
+was partly motivated by abstract-only outcome coding on title-declared replications reportedly
+yielding 14% success / 57% mixed / 29% failure with <code>descriptive</code> at zero. The actual
+distribution over all 556 such rows (<code>title_r</code> matching <code>/replicat/i</code>,
+<code>out_quote_source == "abstract"</code>) is <strong>44.8% success · 19.1% failure ·
+17.1% mixed · 14.6% cannot_be_determined · 3.8% descriptive</strong>. No subsetting I tried
+reproduced the quoted figures. The real distribution is <em>success-heavy</em>, which is a reason
+for caution about abstract-only outcome coding rather than reassurance — and it connects directly
+to the success-over-calling concern in <a href="#d2">D2</a>.</p>
+</div>
+
+<div class="finding" id="d2">
+<h3>D2 — Stage 4.6 title search: ~50% precision, with systematic errors
+  <span class="sev sev-high">design · accuracy</span></h3>
+<p><span class="loc">extract/link_original.py:508–538 · shared/schema.py (llm_title_search note)</span></p>
+<p>When the screen names a target it cannot match to a reference, the pipeline searches
+CrossRef/OpenAlex for that title and writes the result as a <em>resolved</em> link
+(<code>link_method = llm_title_search</code>). This is <strong>the one resolved link method where
+the target is not selected from a supplied enumerated list</strong> — there is no bounded
+candidate set constraining the answer, so a plausible-sounding title can be matched against the
+whole literature.</p>
+
+<p class="correction"><strong>Precision of characterisation:</strong> "the LLM invents the
+reference from memory" is fair for the <em>post-PDF</em> path
+(<code>llm_title_search_gemini/_openai</code>, <span class="loc">shared/llm_client.py:646–660</span>),
+where the model emits a free-text title when the target is absent from the candidate list. It is
+<em>not</em> fair for Stage 4.6 itself: <a href="#L5" class="callref">L5</a> instructs the model to
+"copy the identifying wording into <code>target_description</code> … as the abstract states it", so
+that string is a transcription from the abstract, and the DOI comes from a real search. The
+substantive risk — an unbounded match — is identical either way.</p>
+
+<p><strong>Hand-check of all 13 such rows from the 2026-07-28 batch: 6 correct, 5 wrong,
+2 borderline.</strong> An independent re-read during this audit gave roughly 4–5 clearly correct,
+3 clearly wrong, and 4–5 borderline — consistent in magnitude ("roughly half right"), though not
+with the exact 6/5/2 split. The correct ones are genuinely valuable and nothing else in the
+pipeline would catch them: a mental-timeline replication was linked to <em>Time (also) flies from
+left to right</em>, and a foreign-aid replication to its exact target. But the errors are
+systematic rather than random — a paper that is <em>not</em> a replication gets confidently linked
+to a landmark it merely cites: an ABCA7 expression conference abstract to a 74,046-person
+Alzheimer's GWAS meta-analysis, a hamster challenge experiment to a population-level SARS-CoV-2
+transmissibility estimate, an AML transplant analysis to a JCO commentary its
+<code>target_description</code> did not describe. An outcome is then coded against that pairing,
+feeding the success-over-calling problem.</p>
+
+<p><strong>The DOI-verification safety net cannot catch this.</strong> All 13 rows carry
+<code>doi_o_verification == "verified"</code>, and 7 of 13 carry <code>link_confidence = high</code>
+— including two of the questionable ones. Verification confirms that the DOI resolves to the
+<em>named</em> title; it has no way to detect that the named title is the wrong <em>target</em>.
+This failure mode is structurally invisible to every automated check currently in the pipeline.</p>
+
+<p>Yield across the 601 rows Stage 3 processed in this batch: <strong>13 links produced
+(2.2% gross), of which roughly 6 are correct (~1% net)</strong>. Note that
+<code>data/extracted.csv</code> holds a further 50 <code>llm_title_search</code> rows from the
+older post-PDF path, which have never been hand-checked.</p>
+
+<p class="correction"><strong>One sub-claim needs restating.</strong> One of the correct catches
+does have an "A Replication of X" title that matches Stage 2.5's patterns — but Stage 2.5 could
+not structurally have caught it: <code>_resolve_by_title_pattern</code> needs a candidate pool to
+match against, and that row's pool was empty. That is an argument for giving Stage 2.5 a
+title-search fallback for its own extracted target, not evidence that Stage 4.6 is redundant.</p>
+
+<div class="fix"><strong>Proposed:</strong> don't delete the step, gate it. Run it only when the
+screen returns high confidence, and record the result as <em>provisional</em> — requiring human
+confirmation rather than writing it as a resolved link with an outcome attached. That retains the
+genuine catches and stops the step manufacturing links for papers that should never have reached
+it. <br><br>This interacts with <a href="#b1">B1</a> in a way worth stating plainly:
+<code>llm_title_search</code> <em>is</em> in <code>RESOLVED_LINK_METHODS</code> and therefore
+imported into the validation DB at ~50% precision, while the better-evidenced
+<code>llm_references</code> is not imported at all. The two are exactly backwards.</div>
+<p class="correction"><strong>Provenance note on the in-code claim</strong> that every
+<code>doi_o</code> mismatch in the 2026-07 audit came from this path
+(<span class="loc">shared/schema.py:119–122</span>): the audit found 43 mismatches, all labelled
+<code>link_method=llm_fulltext</code> at the time — <code>llm_title_search</code> was created by
+that same commit to separate the sub-path out. The attribution is a root-cause inference, not a
+measured per-row breakdown, and <code>data/doi_audit_report.csv</code> has no
+<code>link_method</code> column to re-derive it. The mechanism is well argued; the phrasing should
+be "the audit's 43 mismatches were all <code>llm_fulltext</code> rows, and the root cause was
+traced to the title-search branch."</p>
+</div>
+
+<h2 id="root">5 · The shared root cause</h2>
+<p>D1 and D2 are both downstream compensation for the same upstream problem: <strong>Stage 2
+admits a large fraction of non-replications into Stage 3.</strong> The screen exists to catch
+them, and the title search exists to rescue targets the screen could not match — neither would
+carry so much weight if the input were cleaner.</p>
+
+<p>Quantifying it, with the selection effect handled explicitly. The headline "58% of screened
+rows are discarded" is measured on a biased subsample: only rows that failed stages 2.5–4 reach
+the screen, and rows resolving early are disproportionately genuine replications. Correcting for
+that:</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>Quantity</th><th>Value</th><th>Source</th></tr>
+<tr><td>Rows processed by Stage 3</td><td class="stat">601</td><td><code>cache/llm/match_type_*.json</code></td></tr>
+<tr><td>Rows reaching the screen</td><td class="stat">489 (81.4%)</td><td><code>cache/llm/refscreen_*.json</code></td></tr>
+<tr><td>Rows resolved <em>before</em> the screen</td><td class="stat">112 (18.6%)</td><td>difference</td></tr>
+<tr><td>Agreed-"no" as share of screened rows</td><td class="stat">58.3%</td><td>the headline figure</td></tr>
+<tr><td><strong>Agreed-"no" as share of all Stage-3 rows</strong></td><td class="stat">47.4%</td><td>selection-corrected floor</td></tr>
+<tr><td>Disagreements (true status unknown)</td><td class="stat">17.8%</td><td>upper-bound contribution</td></tr>
+</table>
+</div>
+
+<p>So Stage 2's false-positive rate among rows reaching Stage 3 is bounded below by
+<strong>47.4%</strong> and plausibly sits near <strong>56%</strong> (counting half the
+disagreements as negatives), with 65% as the ceiling. A "~45–55%" estimate is well supported;
+<strong>58% is not the right point estimate to quote</strong> — it is the rate within the screened
+subset only.</p>
+
+<p>The selection worry turns out to be <em>smaller</em> than it first appears, for a structural
+reason: stages 2.5–4 all require <code>find_all_candidates()</code> to return something, which
+requires a parseable <code>(Author, Year)</code> citation. In this batch those stages fired on
+<strong>nothing at all</strong> — there are zero <code>title_pattern_match</code>,
+<code>citation_context_match</code>, <code>same_author_year_title_overlap</code>, and
+<code>single_candidate_after_requery</code> rows. Only Stage 4 resolved anything early (74 rows).
+So the screened subset is 81% of the batch and is only mildly enriched; the worst-case gap between
+the two rates is 11 points.</p>
+
+<p class="correction"><strong>The real weakness in this estimate is not selection bias — it is the
+instrument.</strong> The 285 discards are an LLM verdict, and <a href="#L4" class="callref">L4</a>
+was validated on <strong>eight hand-checked cases</strong> (PR #82). A headline "Stage 2 admits
+half non-replications" currently rests on that. Two further caveats: this batch comes from
+<code>--extracted-test</code>, which skips DOIs already resolved in <code>extracted.csv</code>, so
+it is drawn from a harder residue and the rate is likely biased <em>upward</em>; and the 107
+disagreements are the genuinely informative cases and sit unadjudicated.</p>
+
+<div class="fix"><strong>Implication for triage:</strong> neither the D1 restructure nor the D2
+gate removes the need to address Stage 2 precision directly — every LLM call in the ladder is
+spent at roughly 2× the necessary volume because half the input should not be there.
+<br><br><strong>The single highest-value next measurement</strong> is to hand-code a sample of
+<code>data/screen_disagreement.csv</code> (125 rows). It would tighten the 47–58% range more than
+anything else available <em>and</em> give <a href="#L4" class="callref">L4</a> the validation it
+currently lacks — one exercise resolving both weaknesses. <code>docs/limitations.md</code> covers
+the <em>opposite</em> error (phrase-gate false negatives); the precision side has no equivalent
+write-up and should get one.</div>
+
+<h2 id="quota">6 · Rate limits, model choice, and cost</h2>
+<p>Measured on 2026-07-29 from the account's own AI Studio dashboard (Google no longer publishes
+static limit tables — the <a href="https://ai.google.dev/gemini-api/docs/rate-limits">docs page</a>
+defers to a per-project view). Third-party sites quoting "1,500 RPD" for the free tier are wrong
+by roughly two orders of magnitude.</p>
+
+<div class="finding" id="q1">
+<h3>Q1 — The free tier cannot run this pipeline
+  <span class="sev sev-high">blocking</span><span class="verified">verified</span></h3>
+<div class="tablewrap">
+<table>
+<tr><th>Model</th><th>Pipeline role</th><th>RPM</th><th>TPM</th><th>RPD (free)</th><th>RPD (Tier 1)</th></tr>
+<tr><td>Gemini 3 Flash</td><td><code>GEMINI_MODEL</code> / <code>HEAVY</code> — L2, L3, L5, L6, L7, L12, L13</td>
+    <td class="stat">5</td><td class="stat">250K</td><td class="stat"><strong>20</strong></td><td class="stat">10,000</td></tr>
+<tr><td>Gemini 3.5 Flash-Lite</td><td><code>GEMINI_LIGHT_MODEL</code> — L4 vote A</td>
+    <td class="stat">15</td><td class="stat">250K</td><td class="stat">500</td><td class="stat">150,000</td></tr>
+<tr><td>Gemini 3.6 Flash</td><td>proposed heavy model (Q2)</td>
+    <td class="stat">5</td><td class="stat">250K</td><td class="stat">20</td><td class="stat">10,000</td></tr>
+<tr><td>Gemini 3.1 Pro</td><td>—</td><td class="stat">0</td><td class="stat">0</td>
+    <td class="stat">0 (unavailable)</td><td class="stat">250</td></tr>
+<tr><td>Gemma 4 26B / 31B</td><td>candidate for L4 (see Q3)</td>
+    <td class="stat">30</td><td class="stat">16K</td><td class="stat">14,400</td><td>n/a — free only</td></tr>
+</table>
+</div>
+<p><strong>20 requests per day on the heavy model</strong> is the binding constraint. A single row
+costs 1–4 heavy calls as it escalates the ladder, so the free tier sustains roughly
+<strong>5–20 rows per day</strong> — a 2,000-row run would take months. This, not key rotation, is
+why the 2026-07-28 run exhausted quota. Note the 25× asymmetry: Flash-Lite gets 500 RPD against
+Flash's 20, so putting the highest-volume call (L4) on the light model was the right decision.</p>
+<div class="fix"><strong>Fix:</strong> enable billing (Tier 1 — instant, $250 cap). It raises the
+heavy model to 10,000 RPD, a 500× increase on the binding limit.
+<br><br><strong>Key rotation does not substitute.</strong> Google's docs state plainly that
+"rate limits are applied per project, not per API key," so multiple keys in one project share one
+bucket — <code>CLAUDE.md:410</code> describes <code>GEMINI_API_KEY_2</code> as "key rotation for
+higher quota", which only holds if the keys belong to separate projects. Sharding one workload
+across projects to multiply free quota is also the kind of thing Google's terms treat as abuse,
+and 5 projects × 20 RPD still would not run the pipeline.</div>
+</div>
+
+<div class="finding" id="q2">
+<h3>Q2 — Move the heavy model to Gemini 3.6 Flash, not to Pro
+  <span class="sev sev-med">model choice</span></h3>
+<p>Version numbering is misleading here: <strong>Gemini 3.5 and 3.6 Flash are newer than 3.1
+Pro</strong> (3.1 Pro released 2026-02-19; 3.5 Flash 2026-05-19; 3.6 Flash 2026-07-21), and there
+is no 3.5 or 3.6 Pro — Google shipped three Flash-tier models in July and skipped the Pro release.
+On the document-relevant published benchmarks, 3.6 Flash <em>beats</em> 3.1 Pro:</p>
+<div class="tablewrap">
+<table>
+<tr><th>Benchmark</th><th>3.1 Pro</th><th>3.5 Flash</th><th>3.6 Flash</th></tr>
+<tr><td>GDM-MRCR v2 @128k (long-context retrieval)</td><td class="stat">84.9%</td><td class="stat">77.3%</td><td class="stat"><strong>91.8%</strong></td></tr>
+<tr><td>GDM-MRCR v2 @1M</td><td class="stat">26.3%</td><td class="stat">26.6%</td><td class="stat"><strong>54.0%</strong></td></tr>
+<tr><td>CharXiv (chart/figure reasoning)</td><td>not published</td><td class="stat">84.2%</td><td class="stat"><strong>85.2%</strong></td></tr>
+<tr><td>Artificial Analysis Intelligence Index v4.1</td><td class="stat">46</td><td class="stat">50</td><td class="stat">50</td></tr>
+<tr><td>Throughput</td><td class="stat">121 tok/s</td><td class="stat">195 tok/s</td><td class="stat">236 tok/s</td></tr>
+</table>
+</div>
+<p>Roboflow's independent vision leaderboard, which has a dedicated document-understanding
+category, also puts 3.5 Flash ahead of 3.1 Pro at ~3× the speed. Google itself positions the Flash
+line as the document-processing tier (its cited deployments are invoice OCR and 100-page financial
+onboarding).</p>
+<p class="correction"><strong>The benchmark that most favours Pro is the least representative of
+this workload.</strong> MRCR@128k is needle-retrieval over 128,000 tokens; this pipeline caps
+full-text input at ~8,000 characters ≈ 2–3k tokens, roughly 2% of that — a regime where all these
+models are far from degradation. And <strong>no published evaluation covers grounded citation
+extraction or hallucination rates for either model</strong> (Vectara's leaderboard has no entry
+for either), so there is no evidence that Pro is specifically better at the "find the right cited
+reference without inventing one" task that <a href="#d2">D2</a> is about.</p>
+<div class="fix"><strong>Recommendation:</strong> <code>GEMINI_MODEL=gemini-3.6-flash</code>.
+Better on every relevant published measure than Pro, keeps Flash-tier rate limits (Pro's 250 RPD
+on Tier 1 would be a hard ceiling), ~2× faster, and Google reports it uses up to 17% fewer tokens
+than 3.5 Flash for the same work.
+<br><br><strong>Be clear about the cost direction:</strong> 3.6 Flash is cheaper than 3.5 Flash
+($1.50/$7.50 vs $1.50/$9.00 per 1M), but the pipeline currently runs <em>Gemini 3 Flash Preview</em>
+at $0.50/$3.00 — so this is a <strong>3× input / 2.5× output increase</strong> over today, partly
+offset by the token reduction. It buys accuracy and headroom, not savings.
+<br><br>The decisive test is cheap and the harness already exists: re-run a few hundred rows with
+<code>--extracted-test</code> under the new model and compare <code>doi_o</code> agreement and
+<code>doi_o_verification</code> mismatch rates against the current results.</div>
+</div>
+
+<div class="finding" id="q4">
+<h3>Q4 — Flex is applied to only some calls, and only on key 0
+  <span class="sev sev-high">cost</span><span class="verified">verified</span></h3>
+<p><span class="loc">shared/llm_client.py:176–191 (flex applied) · :700–748 <code>call_gemini_with_images</code> · :749–795 <code>call_gemini_with_pdf</code> (flex absent)</span></p>
+<p>Flex and Batch carry the <strong>identical 50% discount</strong> — confirmed on the pricing
+page (3.6 Flash: $0.75/$3.75 under either; 3 Flash Preview: $0.25/$1.50). Since flex needs no
+job-submission plumbing, it is the cheaper option to adopt for a streaming pipeline. But the
+current implementation leaves money on the table twice:</p>
+<ul>
+  <li><strong>The PDF and image calls never set <code>service_tier</code> at all.</strong>
+      <a href="#L12" class="callref">L12</a> and <a href="#L13" class="callref">L13</a> go through
+      <code>call_gemini_with_pdf</code> / <code>call_gemini_with_images</code>, which build their
+      own payload and never add the flex field — so they bill at full standard rate. These carry
+      <em>whole PDFs and rendered page images</em>, making them by far the largest payloads in the
+      pipeline and the worst ones to miss a 50% discount on.</li>
+  <li><strong>Flex is gated to <code>key_idx == 0</code></strong> (<code>llm_client.py:186</code>),
+      on the assumption that keys 1+ are free-tier. If key 0 is disabled by the guardrail, or the
+      paid key is not first in <code>GEMINI_API_KEYS</code>, no call gets flex.</li>
+</ul>
+<div class="fix"><strong>Fix:</strong> set <code>service_tier="flex"</code> in
+<code>call_gemini_with_pdf</code> and <code>call_gemini_with_images</code> (with the
+<code>GEMINI_FLEX_TIMEOUT</code> that the text path already uses — flex can queue for up to 15
+minutes, and their current 45s/120s timeouts would abort). Then replace the
+<code>key_idx == 0</code> heuristic with an explicit marker of which keys are paid, so flex follows
+the key rather than its position. Once every call is on flex, the pipeline is at batch-equivalent
+pricing with no batch plumbing.</div>
+</div>
+
+<h2 id="intent">7 · Intent vs code — the documentation has fallen behind the last five PRs</h2>
+
+<div class="finding" id="d-doc1">
+<h3>CLAUDE.md's Stage 4.5 section describes the pre-#82 design <span class="sev sev-high">high</span></h3>
+<p>It says "two questions in one call" (<code>CLAUDE.md:221</code> — now three calls on three
+models), "fires when there are referenced works" (now fires on abstract-or-title; references
+optional), and "a confident no ends the row" (now requires <em>two models agreeing</em> at high
+weaker-confidence). It never mentions two-model agreement,
+<code>screen_disagreement</code>, Stage 4.6, or the OpenCitations fallback — all live behaviour.</p>
+</div>
+
+<div class="finding" id="d-doc2">
+<h3><code>docs/code-flow/stage3-extract.md</code> describes a pipeline that no longer exists <span class="sev sev-high">high</span></h3>
+<p>It shows <code>run_for_doi</code> fetching and parsing the PDF <em>first</em>, then calling
+<code>disambiguation.py</code> functions that were removed. Stages 2.5, 4, 4.5, and 4.6 are
+absent. Anyone using this doc to reason about cost or routing will be wrong by an order of
+magnitude.</p>
+</div>
+
+<div class="finding" id="d-doc3">
+<h3>Smaller drift items <span class="sev sev-med">medium</span></h3>
+<ul>
+  <li><code>.env.example</code> says the light model is "no longer used by default" and names
+      <code>gemini-2.5-flash-lite</code>; the code defaults to <code>gemini-3.5-flash-lite</code>
+      and uses it as an <a href="#L4" class="callref">L4</a> voter. Nothing states that the screen
+      <em>requires</em> <code>OPENAI_API_KEY</code> (see <a href="#b2">B2</a>).</li>
+  <li>The <a href="#L3" class="callref">L3</a>/<a href="#L6" class="callref">L6</a> prompt header
+      says "REFERENCE LIST (up to 50 entries)" while the code slices <code>[:30]</code> — prompt
+      copy drifting from code, the exact failure mode <a href="#prompts-design">§10</a> addresses.</li>
+  <li><code>sanity_check</code>'s docstring lists <code>screen_disagreement</code> second but
+      applies it fifth; first-match-wins makes the order load-bearing (see <a href="#b6">B6</a>).</li>
+  <li><code>code_outcome.py</code>'s module docstring describes the pre-#70 keyword-then-LLM flow;
+      the keyword pass now runs only under <code>--no-llm</code>.</li>
+  <li><code>filter_method="llm"</code> is documented but unreachable — the rule gate always fires
+      first, so the LLM arm is always <code>"both"</code>.</li>
+  <li>Commit <code>15972c3</code> added <code>votes</code> without bumping
+      <code>REF_SCREEN_PROMPT_VERSION</code> (latent; 0 affected cache files on this machine).</li>
+  <li><code>docs/limitations.md</code> still lists the #44 exclusion-rescue as an unmet revisit
+      obligation, though it is implemented.</li>
+  <li>Stage-4.6 and post-PDF title searches collapse into one <code>llm_title_search</code> value,
+      though their reliability profiles differ — the exact blending the granular method split was
+      introduced to avoid.</li>
+</ul>
+<div class="fix"><strong>Fix:</strong> one documentation PR after the code fixes land: rewrite
+CLAUDE.md §Stage 4.5 and <code>docs/code-flow/stage3-extract.md</code> from the ladder table and
+call map above, update <code>docs/csv-schema.md</code>, and correct <code>.env.example</code>.</div>
+</div>
+
+<h2 id="efficiency">8 · Efficiency &amp; accuracy improvements (ranked)</h2>
+
+<div class="finding" id="e1">
+<h3>E1 — Move <a href="#L4" class="callref">L4</a> to the front of Stage 3 <span class="sev sev-high">biggest win</span></h3>
+<p><span class="loc">extract/run_extract.py:1259</span></p>
+<p>58% of rows reaching the screen are discarded there — but each has already paid
+<a href="#L2" class="callref">L2</a> on the heavy model, often
+<a href="#L3" class="callref">L3</a>, and later an outcome call. L2 answers
+<code>single_original</code> 94% of the time (567/601 cached results). The two L4 votes are
+already being made; moving them before <code>classify_match_type</code> costs nothing and saves
+roughly 1,100+ heavy calls per 2,000-row run.</p>
+<div class="fix"><strong>Fix:</strong> run L4 first; on a confident agreed "no", write the
+<code>not_a_replication</code> row and <code>continue</code> — skipping match-type classification,
+the ladder, and outcome coding. Additionally restrict L2 to rows whose abstract has ≥ 2 distinct
+author-year pairs (already computed) and default the rest to <code>single_original</code>.
+Composes cleanly with <a href="#d1">D1</a>: the combined call becomes the pipeline's front door.</div>
+</div>
+
+<div class="finding" id="e2">
+<h3>E2 — Stop outcome-coding rows that will be quarantined <span class="sev sev-high">high</span></h3>
+<p><span class="loc">extract/run_extract.py:1333–1354, :862–863</span></p>
+<p><a href="#L8" class="callref">L8</a>/<a href="#L9" class="callref">L9</a> run on
+<code>screen_disagreement</code>, <code>target_pending</code>, and
+<code>no_fulltext_available</code> rows — including L9's 8,000-char escalation, which fires
+precisely when the abstract was uninformative (correlated with failing to resolve). An estimated
+25–35% of all outcome calls are wasted.</p>
+<div class="fix"><strong>Fix:</strong> gate <code>_get_outcome</code> on the method set
+<code>_guard_original_link</code> already enumerates, and move that guard plus
+<code>--resolved-only</code> ahead of outcome coding. Also fixes <a href="#b6">B6</a>.</div>
+</div>
+
+<div class="finding" id="e3">
+<h3>E3 — Fix the cache-key regime <span class="sev sev-high">high</span></h3>
+<p><span class="loc">shared/config.py:145 · shared/cache.py:55–60 · shared/llm_client.py:557, :1215 · shared/openalex_client.py:522</span></p>
+<p><code>LLM_CACHE_READ=accumulate</code> (the default) makes <code>PROMPT_VERSION</code> bumps a
+no-op — the legacy DOI-only key always wins. Several caches omit what they depend on:
+<a href="#L3" class="callref">L3</a>/<a href="#L6" class="callref">L6</a> key on the bare DOI (no
+prompt version, candidates, or sections — and cache only on success, so declined fulltext calls
+are repaid every run); the screen key folds <code>bool(refs)</code> but not the reference list, so
+a changed list silently reuses an old <a href="#L5" class="callref">L5</a> pick;
+<code>find_all_candidates</code> is keyed on DOI but called with three different argument sets.</p>
+<div class="fix"><strong>Fix:</strong> delete the dual-cache mechanism and key on content + prompt
+hash — see <a href="#prompts-design">§10</a>, whose template hash supplies the version component
+uniformly.</div>
+</div>
+
+<div class="finding" id="e4">
+<h3>E4 — Cache the title searches <span class="sev sev-med">medium</span></h3>
+<p><span class="loc">shared/openalex_client.py:772, :843</span></p>
+<p><code>_search_crossref_by_title</code> / <code>_search_openalex_by_title</code> are the only
+uncached API calls in the module and can fire 3–5× per row (Stage 4.6,
+<code>_build_ref_o</code> twice, <code>_guard_original_link</code>). Also,
+<code>fetch_openalex_by_doi</code> and <code>fetch_openalex_full_metadata</code> cache the same
+work under two different keys, doubling round-trips per <code>doi_o</code>.</p>
+</div>
+
+<div class="finding" id="e5">
+<h3>E5 — Per-provider rate limiting <span class="sev sev-med">medium</span></h3>
+<p><span class="loc">shared/config.py:152 + 12 call sites</span></p>
+<p>A global 1-second sleep after every call, regardless of provider, costs ~3.5 hours of pure
+sleeping on a 2,000-row run; the two <a href="#L4" class="callref">L4</a> votes even sleep between
+calls to <em>different</em> providers. A per-provider last-call timestamp removes most of it.</p>
+</div>
+
+<h2 id="complexity">9 · Complexity reduction</h2>
+
+<div class="finding" id="c1">
+<h3>C1 — Four hand-rolled provider ladders for a router that already exists</h3>
+<p><span class="loc">shared/llm_client.py:580–606, :997–1017, :1263–1265 · filter/llm_filter.py:92–100</span></p>
+<p>The Gemini → OpenAI → OpenRouter ladder is re-implemented inline four times outside
+<code>call_llm</code>. Collapsing onto it removes ~70 lines, gives every path the OpenRouter
+fallback (<a href="#L5" class="callref">L5</a> silently lacks it), and yields consistent
+<code>model_used</code> attribution — fixing part of <a href="#b3">B3</a>.</p>
+</div>
+
+<div class="finding" id="c2">
+<h3>C2 — The unresolved-dict literal, written six times</h3>
+<p><span class="loc">extract/link_original.py:685–693, 710–718, 745–753, 769–777, 811–819, 831–839</span></p>
+<p>The same seven-key "not resolved" dict appears six times. A tiny
+<code>_unresolved(method, **extra)</code> helper clears the repo's 3-use bar, and giving every
+resolver the same key set lets <code>_build_output</code> and <code>_merge_row</code> stop
+<code>.get()</code>-defending against six producer shapes.</p>
+</div>
+
+<div class="finding" id="c3">
+<h3>C3 — Dead weight</h3>
+<ul>
+  <li>20 of <code>_OA_PASSTHROUGH</code>'s 25 columns exist in no output CSV
+      <span class="loc">(link_original.py:390–399)</span>.</li>
+  <li><code>OPENROUTER_LIGHT_MODEL</code> is defined and referenced nowhere.</li>
+  <li><code>clear_pipeline_caches</code> clears none of the caches the current pipeline writes
+      (<code>refscreen_*</code>, <code>match_type_*</code>, <code>parse_*</code>,
+      <code>outcome_*</code>), so <code>--force</code> barely forces anything.</li>
+  <li><code>_map_method</code>'s fall-through set restates ten identity mappings; the six
+      unregistered <code>validate/routes/</code> blueprints continue to drift.</li>
+</ul>
+</div>
+
+<div class="finding" id="c4">
+<h3>C4 — Oversized functions and duplicated prompt builders</h3>
+<p><code>run_extract</code> (357 lines) and <code>run_for_doi</code> (313 lines) each split
+naturally: lift the six pure-dataframe filter blocks into one <code>_apply_filters</code>, and
+bind <code>_build_output</code>'s repeated first four arguments once so each ladder exit is a
+one-liner. <a href="#L3" class="callref">L3</a>/<a href="#L6" class="callref">L6</a> and
+<a href="#L7" class="callref">L7</a> duplicate four text blocks nearly byte-for-byte, and
+<a href="#L8" class="callref">L8</a>–<a href="#L11" class="callref">L11</a> form a 2×2 grid over
+{replication, reproduction} × {abstract, fulltext} — both resolved by §10.</p>
+</div>
+
+<h2 id="prompts-design">10 · Prompt/code separation</h2>
+
+<p>The <a href="#callmap">call map</a> and <a href="#appendix">appendix</a> above took a
+multi-agent extraction pass to assemble, because <strong>all 18 prompts and fragments are inline
+Python strings across 6 files, and 14 have no version key at all</strong>. Fragments
+(<a href="#F1" class="callref">F1</a>, <a href="#F2" class="callref">F2</a>) are assembled in a
+different module from the prompts they are spliced into, so no reviewer can read
+<a href="#L6" class="callref">L6</a> as actually sent without cross-referencing three files. The
+copy has already drifted from the code in at least one place ("up to 50 entries" vs
+<code>[:30]</code>).</p>
+
+<h3 id="prompt-layout">Proposed layout</h3>
+<pre><code>prompts/
+  filter/classify.md                    # L1
+  extract/
+    match_type.md                       # L2
+    identify_original.md                # L3 / L6
+    identify_all_originals.md           # L7
+    screen_is_replication.md            # L4 — discards 58% of screened rows
+    screen_target_from_refs.md          # L5
+  outcome/
+    replication_abstract.md             # L8
+    replication_fulltext.md             # L9
+    reproduction_abstract.md            # L10
+    reproduction_fulltext.md            # L11
+  parse/
+    refs_from_pdf.md                    # L12
+    refs_from_images.md                 # L13
+  _partials/
+    system_json.md                      # S1 / S2
+    outcome_rules.md    quote_instruction.md    repro_outcome_rules.md
+    flora_anchor.md     title_pattern_hint.md   validator_feedback.md   # F1–F3
+</code></pre>
+
+<h3 id="prompt-loader">Loader</h3>
+<pre><code>def render_prompt(name: str, **fields) -&gt; tuple[str, str]:
+    """Render prompts/&lt;name&gt;.md with fields; return (prompt_text, version).
+
+    version = first 12 hex chars of sha256 over the fully-expanded template
+    (partials included), so editing a shared partial invalidates every prompt
+    using it. Callers MUST fold version into their cache key.
+    Raises KeyError on a missing placeholder — a missing field is a silently
+    degraded prompt, not a blank line.
+    """</code></pre>
+<p>Templates are plain Markdown with <code>{named}</code> placeholders and one
+<code>{{include:_partials/…}}</code> directive; <code>str.format</code> gives missing-placeholder
+errors for free. This collapses the 2×2 outcome grid into a single formatted path name and deletes
+four Python functions.</p>
+
+<h3 id="prompt-cachekeys">Cache-key integration (the part that must not be got wrong)</h3>
+<p>The returned <code>version</code> replaces every hand-maintained constant
+(<code>PROMPT_VERSION</code>, <code>REF_SCREEN_PROMPT_VERSION</code>) and fills the fourteen gaps.
+Two consequences to accept deliberately:</p>
+<ol>
+  <li><strong>Editing a template invalidates its cache.</strong> That is the point — today an edit
+      silently reuses answers produced by the previous wording unless someone remembers a manual
+      bump. Land the first deployment with a one-off rekey script for entries whose template text
+      is provably unchanged.</li>
+  <li><strong><code>LLM_CACHE_READ=accumulate</code> must go</strong> (see <a href="#e3">E3</a>),
+      or the version fold is dead on arrival for the outcome cache.</li>
+</ol>
+<p>The audit benefit is visible in this document: with prompts as files,
+<code>git log -p prompts/extract/screen_is_replication.md</code> becomes the complete revision
+history of the classifier that discards 58% of screened rows — including the PR #82 split that
+<a href="#d1">D1</a> revisits. Today that history is interleaved with unrelated changes across
+1,290 lines of <code>llm_client.py</code>.</p>
+
+<h2 id="plan">11 · Proposed order of work</h2>
+<ol>
+  <li><strong>PR 1 — screen-result plumbing:</strong> <a href="#b1">B1</a> (data is being lost
+      from the validation DB now) + <a href="#b2">B2</a> + <a href="#b3">B3</a>, which share one
+      code path. Then reprocess the set-asides (<a href="#b10">B10</a>).</li>
+  <li><strong>PR 2 — parse-cache hygiene:</strong> <a href="#b4">B4</a> plus a one-off cleanup.</li>
+  <li><strong>PR 3 — gate the title search:</strong> <a href="#d2">D2</a> — highest accuracy
+      return, and it stops fabricated pairings reaching the DB while the rest is in flight.</li>
+  <li><strong>PR 4 — pipeline reorder:</strong> <a href="#e1">E1</a> + <a href="#e2">E2</a> —
+      biggest cost win, small diffs, fixes <a href="#b6">B6</a> as a side effect.</li>
+  <li><strong>PR 5 — screen restructure:</strong> <a href="#d1">D1</a>, after the measurement run
+      it calls for. Best done together with PR 4, since both reshape the front of Stage 3.</li>
+  <li><strong>PR 6 — prompts + cache keys:</strong> <a href="#prompts-design">§9</a> and
+      <a href="#e3">E3</a> together, since the template hash is what fixes the keys.</li>
+  <li><strong>PR 7 — mechanical cleanups and docs:</strong> <a href="#c1">C1</a>–<a href="#c4">C4</a>,
+      <a href="#b5">B5</a>, <a href="#b7">B7</a>–<a href="#b9">B9</a>, <a href="#e4">E4</a>,
+      <a href="#e5">E5</a>, and the <a href="#intent">§6</a> documentation pass.</li>
+</ol>
+<p><strong>Before or alongside PR 1 — one measurement, not a code change:</strong> hand-code a
+sample of the 125 <code>screen_disagreement.csv</code> rows. It validates
+<a href="#L4" class="callref">L4</a> (currently: eight cases), tightens the Stage-2 precision
+estimate, and is a prerequisite for judging <a href="#d1">D1</a> honestly. Everything below
+assumes the screen is roughly trustworthy; this is the cheapest way to find out whether it is.</p>
+<p><strong>Not in any PR above, and larger than all of them:</strong> the Stage-2 precision problem
+in <a href="#root">§5</a>. Worth its own investigation before the next full run, since it sets the
+volume every one of these calls is multiplied by.</p>
+
+<h2 id="flora-rules">12 · FLoRA coding rules vs the pipeline</h2>
+<p>Sources: the FLoRA project document (Aim / Coding Level / Inclusion Criteria / Columns
+&amp; Codebook / Excluded articles) and
+<code>forrtproject/fred-data · output/flora_faq.md</code>. <strong>The Columns / Codebook table
+in that document is the spec</strong> — where the shipped <code>flora.csv</code> disagrees with
+it, the table wins; those disagreements are catalogued separately in
+<a href="#shipped">§13</a>. Each item below states the database rule, then what the code does. Nothing here has been changed — these are the points where
+the two would produce different entries, so that the team can decide which side moves.</p>
+<p class="pathnote">Severity is about database consequence, not code quality:
+<span class="sev sev-high">severe</span> = the pipeline would emit values FLoRA cannot accept, or
+drop entries FLoRA wants; <span class="sev sev-med">moderate</span> = systematic
+mis-coding within accepted values; <span class="sev sev-low">minor</span> = an unimplemented
+field or a wording gap.</p>
+
+<h3>12.1 Outcome vocabulary</h3>
+
+<div class="finding" id="r1">
+<h3>R1 — The reproduction grid has the wrong number of levels on both axes
+  <span class="sev sev-high">severe</span></h3>
+<p><span class="loc">shared/schema.py:172–182 · shared/prompts.py:580–608 · codebook rows
+<code>outcome_computational</code> / <code>outcome_robustness</code></span></p>
+<p>The codebook defines <strong>five</strong> computational levels — <em>Precise · Minor
+deviations · Major deviations · Uninformative / technical failure (no code, no data, did not
+try) · Not checked</em> — and <strong>four</strong> robustness levels — <em>Robust · Minor
+challenges · Major challenges · Not checked</em>. The pipeline emits a 3×3 grid:
+<code>computationally successful | computational issues | computation not checked</code> ×
+<code>robust | robustness challenges | robustness not checked</code>.</p>
+<p>So the pipeline collapses <em>minor</em> and <em>major</em> on both axes, and has no value at
+all for <em>uninformative / technical failure</em> — the case where reproduction was attempted
+but no code or data existed. That last one is not a rounding difference: it is the most common
+real reproduction outcome in economics, and the pipeline must currently record it either as
+"computational issues" (wrong — implies the numbers differed) or as
+<code>cannot_be_determined</code> (wrong — implies the coder could not read the paper).</p>
+<p>The project document also floats the ACRE/BITSS 10-level scale as an alternative. Three
+vocabularies are in play; the pipeline implements a fourth.</p>
+<div class="fix"><strong>Decision needed:</strong> which vocabulary is canonical. If the
+codebook's, the schema grid becomes 5×4 = 20 strings plus the technical-failure escape, and
+<code>REPRO_OUTCOME_RULES</code> needs the minor/major boundary defined in words a model can
+apply consistently.</div>
+</div>
+
+<div class="finding" id="r2">
+<h3>R2 — Two separate coded axes, each with its own quote, are stored as one joined string
+  <span class="sev sev-med">moderate</span></h3>
+<p><span class="loc">shared/schema.py:172–182 · shared/prompts.py:610–618</span></p>
+<p>The codebook has four columns: <code>outcome_computational</code>,
+<code>outcome_computational_quote</code>, <code>outcome_robustness</code>,
+<code>outcome_robustness_quote</code>. The pipeline writes one <code>outcome</code> string
+(<code>"computational issues, robust"</code>) and one shared <code>outcome_phrase</code>. A
+validator therefore sees a single quote that has to justify two independent judgments, and any
+downstream analysis of one axis has to re-split the string.</p>
+<div class="fix"><strong>Fix if the codebook stands:</strong> split into two coded columns and
+two quote columns in <code>EXTRACT_ADDED_COLS</code> and in the repro prompt's JSON block; keep
+the joined string only as a display convenience.</div>
+</div>
+
+<div class="finding" id="r3">
+<h3>R3 — "Statistically successful but flawed" is a FLoRA outcome the pipeline cannot emit
+  <span class="sev sev-high">severe</span></h3>
+<p><span class="loc">shared/schema.py:156–161 · shared/prompts.py:552–565</span></p>
+<p>The codebook's replication outcome list is <em>Success · Failure · Mixed · Uninformative ·
+Statistically successful but flawed · Descriptive / not applicable</em>. The pipeline's
+<code>OUTCOME_CATEGORIES</code> is <em>success · failure · mixed · descriptive ·
+cannot_be_determined · not_a_replication</em>.</p>
+<p>"Statistically successful but flawed" (the codebook's example: <em>"we replicated x using the
+original methods, but show that they are not a valid test of the hypotheses"</em>) has no
+representation. Under the pipeline's rules such a paper codes as <code>success</code> — the
+authors do report the effect was obtained — which is the reading FLoRA specifically created a
+separate category to avoid.</p>
+<div class="fix"><strong>Applied (PR 10):</strong> added as
+<code>statistically_successful_but_flawed</code> to <code>OUTCOME_CATEGORIES</code> and to
+<code>OUTCOME_RULES</code> with the codebook's own example. Every outcome JSON block now
+interpolates one shared <code>OUTCOME_ENUM</code> string: a category defined in the rules but
+missing from the enum is silently coerced away, and the abstract, fulltext and multi-original
+prompts had already drifted apart on exactly that.</div>
+</div>
+
+<div class="finding" id="r4">
+<h3>R4 — <code>uninformative</code> is a live FLoRA category that the pipeline retired as legacy
+  <span class="sev sev-high">severe</span></h3>
+<p><span class="loc">shared/schema.py:190–192 · shared/prompts.py:559</span></p>
+<p>FLoRA's <em>Uninformative</em> means something specific: the replication authors
+<strong>themselves say</strong> the study cannot speak to the original (e.g. their sample was
+too small). The pipeline lists <code>uninformative</code> under
+<code>OUTCOME_LEGACY_VALUES</code> — "predates cannot_be_determined" — and folds it into
+<code>cannot_be_determined</code>, whose prompt rule explicitly covers both readings: "either it
+lacks the information, or the authors themselves report the result as inconclusive".</p>
+<p>Those are different facts about the world. One is a property of the paper (an underpowered
+replication is a finding); the other is a property of our extraction (we could not tell). Merged,
+the database can no longer distinguish a null-informative replication from an unread one, and any
+"share of replications we could not code" statistic silently includes papers that were coded
+correctly.</p>
+<div class="fix"><strong>Applied (PR 10):</strong> <code>uninformative</code> is a first-class
+category again with the codebook's definition, <code>OUTCOME_LEGACY_VALUES</code> is empty, and
+<code>cannot_be_determined</code> is narrowed in the prompt to "WE cannot tell from the text
+supplied". One consequence beyond the prompt: <code>supabase_client._OUTCOME_CANON</code> was
+folding <code>uninformative</code> into <code>cannot_be_determined</code> before building the
+pipeline-vs-human confusion matrix, so a human correcting one to the other landed on the
+diagonal and read as agreement. It no longer does. The outcome cache is invalidated by the
+prompt-hash keys automatically.</div>
+</div>
+
+<div class="finding" id="r5">
+<h3>R5 — <code>not_a_replication</code> is written into the outcome column
+  <span class="sev sev-low">minor</span></h3>
+<p><span class="loc">shared/schema.py:156–161 · extract/code_outcome.py:246–248</span></p>
+<p>FLoRA has no such outcome — a paper that is not a replication is not an entry. The pipeline
+uses the outcome column to carry an exclusion decision, then relies on
+<code>sanity_check</code> to quarantine those rows. It works, but the column now mixes "what
+happened in the replication" with "this is not a replication", and any consumer reading
+<code>extracted.csv</code> without applying the quarantine rules sees a value the codebook does
+not define.</p>
+</div>
+
+<h3>12.2 What counts as a replication</h3>
+
+<div class="finding" id="r6">
+<h3>R6 — "Replication must be an AIM, not a RESULT" is enforced in Stage 2 and absent from the
+  Stage-3 screen <span class="sev sev-high">severe</span></h3>
+<p><span class="loc">shared/prompts.py:71–73 (Stage 2) vs 456–485 (Stage 3 front door)</span></p>
+<p>This is FLoRA's headline inclusion criterion, capitalised in the project document:
+self-identification as a replication <em>before</em> the results, as a statement of purpose. The
+Stage-2 filter prompt carries it — "Must intend to replicate a specific prior study…; it is not
+enough to report that findings replicate earlier work."</p>
+<p>The Stage-3 front-door screen (<a href="#L4" class="callref">L4</a>), which discards 58% of
+rows and is the gate whose verdict is written as the final answer, defines it differently: "A
+paper is a REPLICATION if it collects new data to re-test a finding reported in a previously
+published study." That admits papers whose replication is a result, and it is the looser of the
+two definitions applied later in the pipeline — so a paper Stage 2 correctly held at
+<code>needs_review</code> can be waved through by the screen on the wider rule.</p>
+<div class="fix"><strong>Fix:</strong> port the aim-not-result sentence into
+<code>_CLASSIFY_PROMPT</code> verbatim. Cheap, and it makes the two gates agree on the construct
+they are both gating.</div>
+</div>
+
+<div class="finding" id="r7">
+<h3>R7 — "A study or experiment, not an association or finding" appears nowhere in the code
+  <span class="sev sev-high">severe</span></h3>
+<p><span class="loc">shared/prompts.py:71, 458–462 · the project document's inclusion
+criteria and the "tangential claims" exclusion</span></p>
+<p>FLoRA excludes papers that replicate an association or a finding rather than a study, and the
+document names worked examples on both sides
+(<code>10.1073/pnas.2103313118</code> in, <code>10.1177/0956797619831612</code> out) plus the
+Soto-type papers as a class. The FReD→FLoRA comparison table sharpens it further: checked claims
+"must be central", where FReD accepted tangential ones.</p>
+<p>Every prompt in the pipeline is written in exactly the opposite vocabulary: Stage 2 says
+"re-test a <em>finding</em> from a previously published study", the screen says "re-test a
+published <em>finding</em>", and no prompt mentions centrality at all. There is no rule anywhere
+that would exclude a paper for re-testing a peripheral association.</p>
+<p>This is the largest single gap between the two rule sets, and it is upstream of everything
+else: it changes which papers are entries at all, not how they are coded.</p>
+<div class="fix"><strong>Needs a decision before it can be a fix.</strong> "Central claim of a
+specific study" is a judgment the worked examples make operational for a human; it needs to be
+written as rules a model can apply, ideally with those same DOIs as few-shot cases.</div>
+</div>
+
+<div class="finding" id="r8">
+<h3>R8 — Meta-analyses are a blanket false positive; FLoRA includes some of them
+  <span class="sev sev-med">moderate</span></h3>
+<p><span class="loc">shared/prompts.py:90 · FAQ, "Can meta-analyses that replicate previous
+meta-analysis also be included?"</span></p>
+<p>The FAQ answers yes: a meta-analysis that re-runs an earlier meta-analysis on different data
+(e.g. a larger set of studies) is a replication. The Stage-2 filter prompt lists "meta-analyses
+or systematic reviews" as a <code>false_positive</code> type with no carve-out, so these are
+rejected before Stage 3 ever sees them.</p>
+</div>
+
+<div class="finding" id="r9">
+<h3>R9 — Overlapping observations: the document allows them, the filter prompt's key criterion
+  forbids them <span class="sev sev-med">moderate</span></h3>
+<p><span class="loc">shared/prompts.py:70–87 · document §Replications vs Reproduction · FAQ,
+"additional decade of data" and the panel-data rule</span></p>
+<p>FLoRA: "Replication has different observations (<strong>can be overlapping</strong>);
+reproduction has the same observations." The FAQ confirms it — an extra decade of data on the
+same series is a replication, and panel-data replications that reuse the original's earlier
+waves still count.</p>
+<p>The filter prompt states the criterion without the overlap allowance: "Key criterion: the
+observations analysed are <strong>not</strong> the original's." It does partly compensate — later
+waves and same-repository samples are listed as replications — but the stated rule and the
+examples pull in opposite directions, and a model that follows the stated rule will code
+overlapping-sample panel replications as reproductions.</p>
+<div class="fix"><strong>Fix:</strong> one clause — "the sample may overlap the original's, as
+long as it adds observations the original did not analyse".</div>
+</div>
+
+<div class="finding" id="r10">
+<h3>R10 — None of the report-type exclusions are implemented
+  <span class="sev sev-med">moderate</span></h3>
+<p><span class="loc">shared/utils.py:68–83 · filter/rule_filter.py:52–60</span></p>
+<p>FLoRA excludes: registrations (cannot be linked to a publication, risk duplication), reports
+hosted on Google Docs, and non-persistent websites/blogs such as Psychfiledrawer — while
+explicitly allowing Zenodo, OSF and RPubs. It also requires a narrative summary rather than a
+post-completion registration or a bare results table.</p>
+<p>The pipeline's only structural exclusion is <code>non_article_doi()</code>: figshare DOIs and
+peer-review objects. OSF <em>registrations</em> in particular are not distinguished from OSF
+<em>reports</em>, which is the exclusion FLoRA calls out first.</p>
+<p class="warn">The two source documents disagree with each other here: the project document
+lists "blog posts on websites, RPubs" as acceptable report types, while the FAQ's quality
+criteria exclude blog posts as non-persistent. Worth resolving upstream before implementing
+either.</p>
+</div>
+
+<div class="finding" id="r11">
+<h3>R11 — Psychometric and LLM-respondent exclusions have no rule
+  <span class="sev sev-low">minor</span></h3>
+<p><span class="loc">document §Special types · §List of Excluded articles</span></p>
+<p>Two named exclusions with no counterpart in any prompt: psychometric papers are in only when
+they replicate previous <em>claims</em>, not patterns such as a factor structure; and a
+"replication" whose respondents are LLMs is excluded
+(<code>ideas.repec.org/a/beh/jbepv1/v9y2025i1p75-80.html</code>). Both are narrow, and both are
+the kind of case the screen will confidently accept.</p>
+</div>
+
+<h3>12.3 Row level and identifiers</h3>
+
+<div class="finding" id="r12">
+<h3>R12 — <code>study_o</code> is a study number in FLoRA and a title in the import
+  <span class="sev sev-high">severe</span></h3>
+<p><span class="loc">extract/csv_to_db.py:117</span></p>
+<p>The codebook defines <code>study_o</code> as "Target study in original ref — study number,
+can be multiple (e.g. 1, 2)", coded from the replication's abstract. <code>csv_to_db</code>
+writes <code>"study_o": _s(row.get("title_o"))</code> — the original paper's title.</p>
+<p>Whatever the Supabase column means today, the pipeline never extracts a study number at all,
+so the FLoRA coding level ("one row is one pair of references; if one replication targets several
+studies <em>within the same original paper</em>, it stays one row and <code>study_o</code> carries
+several values") cannot be represented. Multi-target papers are instead always expanded to N rows
+keyed by <code>original_rank</code> — correct for N distinct original <em>papers</em> (the
+document's "combinations of two prior studies" rule), wrong for N studies inside one paper.</p>
+<div class="fix"><strong>Applied (PR 10), partly:</strong> <code>extracted.csv</code> has a real
+<code>study_o</code> column, the multi-original prompt asks for a study number per targeted
+study, and <code>_collapse_same_paper_originals()</code> groups entries that share an original
+paper into one row with the numbers joined ("1, 2"), aggregating their outcomes the way the FAQ
+says to — conflicting verdicts become <code>mixed</code>, a silent study never outvotes one that
+reached a verdict. That also fixes a duplicate-key bug: entries sharing a <code>doi_o</code>
+produced two rows with the same <code>pair_id</code>.
+<p><code>csv_to_db</code> now sends titles as <code>title_r</code> / <code>title_o</code> and
+<code>study_o</code> as the number: <code>study_r</code> / <code>study_o</code> are study
+identifiers, never titles. <strong>This blocks the import until the validation repo adds the two
+title columns</strong> — every insert fails with a PostgREST "column does not exist" error, so
+nothing is written and nothing is corrupted, but nothing imports either. The cross-repo change
+and the in-repo readers that still treat <code>study_r</code> as a title are tracked in
+<a href="https://github.com/forrtproject/flora-extractor/issues/103">issue #103</a>.</p></div>
+</div>
+
+<div class="finding" id="r13">
+<h3>R13 — A paper that is both a reproduction and a replication yields one row
+  <span class="sev sev-med">moderate</span></h3>
+<p><span class="loc">extract/run_extract.py:816–820 · FAQ, "What if a paper includes reproduction
+and replication?"</span></p>
+<p>FLoRA lists it twice — once as each. The pipeline derives <code>record_type</code> from a
+single <code>filter_status</code> value and codes one row in one vocabulary; there is no path
+that emits both. The half that loses the coin toss is simply absent from the database.</p>
+</div>
+
+<div class="finding" id="r14">
+<h3>R14 — No preprint / version-of-record handling, and no meta-paper identifiers
+  <span class="sev sev-med">moderate</span></h3>
+<p><span class="loc">shared/schema.py:37–77 · FAQ, "How are you dealing with Preprints?" and
+"How are meta-papers treated?"</span></p>
+<p>FLoRA codes the version of record in <code>doi_r</code> and keeps preprints and other versions
+in <code>alt_id_r</code> / <code>alt_id_o</code>; for meta-papers it prefers the individually
+published version in <code>doi_r</code> and records the meta-paper in
+<code>ref_meta_r</code> / <code>doi_meta_r</code>; <code>url_r</code> holds the individual report
+when the DOI points at a multi-study container. For originals it always takes the reference as
+given in the article.</p>
+<p><code>EXTRACT_ADDED_COLS</code> has none of <code>alt_id_r</code>, <code>alt_id_o</code>,
+<code>ref_meta_r</code>, <code>doi_meta_r</code>. Whichever record OpenAlex returned becomes
+<code>doi_r</code>, with no preprint→published resolution. For Many Labs-style corpora — a large
+share of what FLoRA contains — this means the meta-paper DOI lands in <code>doi_r</code> for every
+row, which is exactly the case the FAQ writes a rule against.</p>
+</div>
+
+<div class="finding" id="r15">
+<h3>R15 — Three codebook columns are not produced at all
+  <span class="sev sev-low">minor</span></h3>
+<p><span class="loc">shared/schema.py:37–77</span></p>
+<ul>
+  <li><code>publication_status_r</code> — the FAQ gives a mechanical rule (Crossref journal
+      present → journal article; NA and "SSRN Electronic Journal" → working paper) that the
+      pipeline already has the metadata for, in <code>journal_r</code>.</li>
+  <li><code>field</code> — LLM-assisted classification against the DFG taxonomy; not implemented.</li>
+  <li>Entry source — the codebook's vocabulary is "Submission, systematic search, …"; the
+      pipeline's <code>source</code> uses <code>openalex | semantic_scholar | …</code>. Not
+      wrong, just a different axis, and something has to map one to the other.</li>
+</ul>
+<p class="pathnote">Also worth a decision: the codebook marks <code>abstract_r</code> "for future
+analyses — not to be published", and <code>csv_to_db</code> writes it into the
+<code>unvalidated</code> table.</p>
+</div>
+
+<h3>12.4 Where the outcome is read from</h3>
+
+<div class="finding" id="r16">
+<h3>R16 — The escalation reads the first 8,000 characters; FLoRA's rule points at the discussion
+  and conclusion <span class="sev sev-high">severe</span></h3>
+<p><span class="loc">extract/code_outcome.py:41, 276–277 · extract/run_extract.py:831–850 ·
+FAQ, "What is the outcome based on?"</span></p>
+<p>FLoRA: rely on the abstract; if the outcome is not stated there, use <strong>the discussion
+and conclusion sections</strong>. The pipeline's abstract-first design matches the first half
+exactly. The escalation does not match the second: <code>_best_fulltext_from_cache()</code>
+returns the winning parser's <code>raw_text</code> — the whole paper from page one — and
+<code>_llm_outcome</code> truncates it at <code>_FULLTEXT_CAP = 8000</code> characters. For a
+typical article that window ends somewhere in the methods, so the sections FLoRA names as the
+authoritative source are the ones most reliably cut off, and the text that <em>is</em> sent is
+the introduction — which the module docstring itself warns "routinely discusses OTHER studies'
+failures".</p>
+<div class="fix"><strong>Applied (PR 10):</strong> <code>pdf_parsing.outcome_text()</code> slices
+from the last discussion/conclusion heading to the reference list, and falls back to the closing
+pages before the references when there is no usable heading. The references boundary was already
+solved — <code>grobid._split_sections()</code> finds it by heading (last match, so an in-text
+"References show…" cannot win) with a fallback that walks paragraphs backwards for a dense block
+of APA-pattern lines. Two guards: a "Discussion" heading in the first 40% of the body is a
+structured abstract's own label rather than the section, and a heading with under 300 characters
+under it is a contents entry. The text carries a <code>SOURCE:</code> line so a quote is never
+attributed to a section the model was not shown.
+<p>One thing this turned up: <code>_best_fulltext_from_cache()</code> took the top-scoring parse
+method's raw text, but GROBID scores highly on references and returns <em>no</em> raw text at
+all — so it fell back to that method's abstract + intro while another method's full parse sat
+unused in the same cache. It now takes the best method that actually has raw text.</p></div>
+</div>
+
+<h3>12.5 Coding rules the FAQ states and no prompt does</h3>
+<p>Each of these is a one- or two-sentence addition to <code>OUTCOME_RULES</code>. None is
+implemented; all would change codings today. Grouped here rather than given findings of their
+own because they share a single fix.</p>
+<div class="tablewrap">
+<table>
+<tr><th>FLoRA rule</th><th>What the pipeline does instead</th></tr>
+<tr>
+  <td>A failed manipulation check — so the hypothesis could not be tested — is coded
+      <strong>failure</strong>. Same for a failed preliminary test.</td>
+  <td>No rule. The prompt's <code>cannot_be_determined</code> definition ("the authors report the
+      result as inconclusive") is the closest match and would usually win.</td>
+</tr>
+<tr>
+  <td>If the replication's <em>title</em> focuses on one specific effect and that effect did not
+      replicate, code <strong>failure</strong> regardless of other successful checks.</td>
+  <td>No rule. The prompt's mixed definition ("some of several tested findings replicated and
+      others did not") points the other way.</td>
+</tr>
+<tr>
+  <td>Close replication works, conceptual replication does not → <strong>mixed</strong>.</td>
+  <td>Reachable, but only via the authors'-own-framing test; the FAQ states it as a coder rule
+      that applies however the authors frame it.</td>
+</tr>
+<tr>
+  <td>The outcome is about the <strong>central finding the replication was designed to test</strong>
+      and "may leave out robustness checks and exploratory analyses".</td>
+  <td>No rule. Any set of partly-supported findings, central or exploratory, reads as
+      <code>mixed</code>.</td>
+</tr>
+<tr>
+  <td>A replication paper with several studies against one original: results are
+      <strong>aggregated</strong> (authors' judgment; conflicting results → mixed).</td>
+  <td>No rule for the one-original case. The multi-original prompt says the opposite for its own
+      case — "look for the result for THAT SPECIFIC study, NOT the overall aggregate" — which is
+      right there but reads as a general instruction.</td>
+</tr>
+<tr>
+  <td>Replication chains: link to "most likely the closest successor study".</td>
+  <td>No rule. The identification prompt asks for "the ORIGINAL STUDY" and forbids picking the
+      most prominent or most cited — which is the right instinct but does not say
+      <em>nearest predecessor</em>.</td>
+</tr>
+</table>
+</div>
+
+<h3>12.6 Where the two already agree</h3>
+<p>Recorded so the audit is not read as one-sided, and so these are not "fixed" by accident:</p>
+<ul>
+  <li><strong>Method replications are out.</strong> The screen prompt excludes evaluating or
+      comparing an instrument or procedure as the study's goal — matching the document's excluded
+      <code>hal-05527295</code> ("replication" of a method).</li>
+  <li><strong>Conceptual replications are in</strong>, as the document allows "for now".</li>
+  <li><strong>Field-convention relabelling.</strong> The filter prompt's rule that an economics
+      "replication" on the original data is a reproduction implements the document's
+      observations-based split exactly.</li>
+  <li><strong>Internal replications are out</strong> (Study 2 replicates Study 1) while a
+      same-author replication of a published study is in.</li>
+  <li><strong>Synthetic-data replications</strong> are included by the FAQ, and nothing in the
+      pipeline excludes them.</li>
+  <li><strong>Peer review is not required</strong> in either.</li>
+  <li><strong>Descriptive / not applicable</strong> is defined in the prompt close to the
+      codebook's sense.</li>
+</ul>
+
+<h3>12.7 Suggested order</h3>
+<p><strong>Status:</strong> <a href="#r3">R3</a>, <a href="#r4">R4</a>, <a href="#r12">R12</a> and
+<a href="#r16">R16</a> are applied — the two missing outcome categories, one row per pair of
+references rather than per targeted study, study identifiers that are no longer titles, and an
+escalation that reads the discussion instead of the introduction. Steps 3 and 4 below are done.
+Everything else stands as written, and steps 1–2 are unchanged: the rule decisions in
+<a href="#r7">R7</a> and <a href="#r1">R1</a> are still the ones that matter most.</p>
+<p class="warn">The <a href="#r12">R12</a> half of this blocks <code>csv_to_db</code> until the
+validation repo gains <code>title_r</code> / <code>title_o</code> columns
+(<a href="https://github.com/forrtproject/flora-extractor/issues/103">#103</a>).</p>
+<ol>
+  <li><strong>Decide, don't code:</strong> <a href="#r7">R7</a> (association vs study, and
+      centrality) and <a href="#r1">R1</a> (which reproduction vocabulary). Everything else is
+      small once these two are settled, and both change what the database contains rather than
+      how a field is spelled.</li>
+  <li><strong>Prompt-only, no schema change:</strong> <a href="#r6">R6</a>, <a href="#r9">R9</a>,
+      <a href="#r8">R8</a>, and the §12.5 table — one pass over
+      <code>_CLASSIFY_PROMPT</code>, <code>build_filter_prompt</code> and
+      <code>OUTCOME_RULES</code>. The hash-versioned cache keys invalidate exactly the affected
+      entries.</li>
+  <li><strong>Schema:</strong> <a href="#r4">R4</a> and <a href="#r3">R3</a> (restore the two
+      missing outcome categories), <a href="#r12">R12</a> (<code>study_o</code>),
+      <a href="#r2">R2</a> (split the repro axes).</li>
+  <li><strong>Retrieval:</strong> <a href="#r16">R16</a> — independent of every rule decision
+      above, and it makes the outcome coder read what FLoRA says to read.</li>
+  <li><strong>Later:</strong> <a href="#r14">R14</a> (alt-ids and meta-papers),
+      <a href="#r13">R13</a>, <a href="#r10">R10</a>, <a href="#r15">R15</a>,
+      <a href="#r11">R11</a>.</li>
+</ol>
+
+<h2 id="shipped">13 · The shipped dataset vs the spec</h2>
+<p><strong>The spec is the Columns / Codebook table in the FLoRA project document.</strong> There
+is no codebook file anywhere in <code>forrtproject/fred-data</code> — the only matches for
+"codebook" are in archived COS-report <code>.qmd</code> code, and <code>release/</code> holds
+only the citation and dataset scripts. So §12 above measures the pipeline against that table,
+and this section measures the published artifact against it too.</p>
+<p>Figures below are from <code>output/flora.csv</code> on <code>main</code>: <strong>2,470
+rows, 35 columns</strong>, 2,453 replications and 17 reproductions.</p>
+<p class="pathnote">These are not pipeline bugs — nothing here is caused by this repo, and most
+of the rows predate it. They matter because the pipeline writes into this dataset: where the
+spec and the shipped file disagree, a compliant extractor produces values the file has no column
+for, or spells a category three different ways.</p>
+
+<div class="finding" id="s1">
+<h3>S1 — <code>study_o</code> does not exist in the published dataset
+  <span class="sev sev-high">severe</span></h3>
+<p>The spec's coding level — "one row is one pair of references; if one replication paper
+replicates multiple original studies from the same original paper, it is still one row but
+<code>study_o</code> has multiple values (e.g. 1, 2)" — is stated as the <em>second</em> heading
+of the project document, before the inclusion criteria. Neither <code>study_o</code> nor
+<code>study_r</code> is among <code>flora.csv</code>'s 35 columns.</p>
+<p>The codebook's own rightmost column, "Already coded for FReD 2.0 studies in FLoRA", is blank
+for <code>study_o</code>, so this is a planned field rather than a lost one. But it means the
+headline rule about what a row <em>is</em> currently has no representation in the artifact, and
+the pipeline's new <code>study_o</code> (<a href="#r12">R12</a>) has nowhere to land — not in
+<code>flora.csv</code>, and not yet in the validation DB
+(<a href="https://github.com/forrtproject/flora-extractor/issues/103">#103</a>).</p>
+</div>
+
+<div class="finding" id="s2">
+<h3>S2 — Three spellings of the same outcome category
+  <span class="sev sev-high">severe</span></h3>
+<div class="tablewrap">
+<table>
+<tr><th>Spec (codebook)</th><th>flora.csv</th><th>Pipeline</th><th>n in flora.csv</th></tr>
+<tr><td>Success</td><td><code>successful</code></td><td><code>success</code></td><td class="stat">1,016</td></tr>
+<tr><td>Failure</td><td><code>failed</code></td><td><code>failure</code></td><td class="stat">876</td></tr>
+<tr><td>Mixed</td><td><code>mixed</code></td><td><code>mixed</code></td><td class="stat">542</td></tr>
+<tr><td>Statistically successful but flawed</td><td><code>statistically successful but flawed</code></td><td><code>statistically_successful_but_flawed</code></td><td class="stat">7</td></tr>
+<tr><td>Descriptive / not applicable</td><td><code>descriptive only</code></td><td><code>descriptive</code></td><td class="stat">6</td></tr>
+<tr><td>Uninformative</td><td><code>uninformative</code></td><td><code>uninformative</code></td><td class="stat">4</td></tr>
+<tr><td>—</td><td>(blank)</td><td><code>cannot_be_determined</code></td><td class="stat">16</td></tr>
+</table>
+</div>
+<p>Three of the six differ in more than case. Something has to map between them before the
+pipeline's rows can join the file, and today that mapping exists in exactly one place and only
+half of it: <code>supabase_client._OUTCOME_CANON</code> knows
+<code>successful</code>→<code>success</code> and <code>failed</code>→<code>failure</code>, for
+building the confusion matrix. Nothing handles <code>descriptive only</code>, and nothing writes
+the mapping in the other direction.</p>
+<p>The useful half of this table: <strong><code>statistically successful but flawed</code> and
+<code>uninformative</code> are both real, populated values in the shipped data.</strong>
+<a href="#r3">R3</a> and <a href="#r4">R4</a> were categories the pipeline could not express
+that the database was already using — not categories invented from a design document.</p>
+</div>
+
+<div class="finding" id="s3">
+<h3>S3 — 14 of the 17 reproductions have no outcome at all
+  <span class="sev sev-high">severe</span></h3>
+<p>Reproductions are 17 rows of 2,470 (0.7%). Three carry a grid value
+(<code>computationally successful, robust</code> / <code>…, robustness challenges</code> /
+<code>…, robustness not checked</code> — one each). The other 14 have an <strong>empty</strong>
+<code>outcome</code>, and they are essentially the whole of the file's 16 blanks.</p>
+<p>So the reproduction half of the spec has been exercised three times. That is worth knowing
+before acting on <a href="#r1">R1</a>: the 3×3-vs-5×4 mismatch has never been noticed because
+almost nothing has been coded on either grid, and the pipeline is about to become the first
+substantial producer of reproduction outcomes. Choosing the vocabulary now costs three rows of
+recoding; choosing it after a full run does not.</p>
+</div>
+
+<div class="finding" id="s4">
+<h3>S4 — Column names differ from the codebook
+  <span class="sev sev-med">moderate</span></h3>
+<div class="tablewrap">
+<table>
+<tr><th>Codebook / FAQ</th><th>flora.csv</th></tr>
+<tr><td><code>ref_o</code> / <code>ref_r</code></td><td><code>apa_ref_o</code> / <code>apa_ref_r</code></td></tr>
+<tr><td><code>out_quote_source</code></td><td><code>outcome_quote_source</code></td></tr>
+<tr><td><code>alt_id_o</code> / <code>alt_id_r</code> (FAQ)</td><td><code>alt_identifier_o</code> / <code>alt_identifier_r</code></td></tr>
+</table>
+</div>
+<p>The pipeline uses the codebook's names (<code>ref_o</code>, <code>out_quote_source</code>), so
+each of these is a rename at the export boundary. Cheap to handle, cheap to get wrong silently.</p>
+</div>
+
+<div class="finding" id="s5">
+<h3>S5 — Eight codebook columns have no counterpart in the file
+  <span class="sev sev-med">moderate</span></h3>
+<p><code>study_o</code>, <code>publication_status_r</code>, <code>field</code>,
+<code>ref_meta_r</code>, <code>doi_meta_r</code>, <code>outcome_computational</code>(+quote),
+<code>outcome_robustness</code>(+quote), <code>abstract_r</code>.</p>
+<p>Consistent with the codebook being a design document: its "Already coded" column is ticked
+only for <code>ref_o</code>, <code>ref_r</code>, <code>outcome</code>,
+<code>outcome_quote</code>, <code>out_quote_source</code> and <code>url_r</code>. Two of these
+are the ones <a href="#r15">R15</a> asks the pipeline to produce — so producing them means
+adding columns to <code>flora.csv</code>, not just to <code>extracted.csv</code>.</p>
+<p>Note that the two reproduction axes are among the absent columns, which is the other half of
+<a href="#r2">R2</a>: the file stores the single joined <code>outcome</code> string, exactly as
+the pipeline does. On that point the shipped artifact and the pipeline agree with each other and
+differ from the spec.</p>
+</div>
+
+<div class="finding" id="s6">
+<h3>S6 — <code>outcome_quote_source</code> is free text, not the specified vocabulary
+  <span class="sev sev-med">moderate</span></h3>
+<p>The codebook says "Page number or 'abstract'". The file holds <strong>160 distinct
+values</strong> across 2,470 rows. 1,697 are <code>abstract</code> and a further 24 are
+<code>Abstract</code>; 119 look like page numbers. The rest include <code>OSF report</code>,
+<code>full_text</code>, <code>Supplemental Infromation</code> [sic], and bare URLs —
+<code>data file at https://osf.io/fgjvw</code> (76 rows), a GitHub issue comment link (62 rows),
+<code>Study dataset at https://osf.io/4ewkh</code> (25 rows).</p>
+<p>Several of those are genuinely useful provenance the vocabulary has no room for. The pipeline
+emits a closed set (<code>abstract</code> | <code>title</code> | <code>fulltext</code>), so it
+will not add to the sprawl — but it also cannot record "OSF report", which is a real source for
+this corpus.</p>
+</div>
+
+<div class="finding" id="s7">
+<h3>S7 — The preprint and meta-paper rules are barely exercised in the data
+  <span class="sev sev-low">minor</span></h3>
+<p><code>alt_identifier_o</code> is populated in <strong>14</strong> rows and
+<code>alt_identifier_r</code> in <strong>36</strong>, out of 2,470. Preprint versioning and
+meta-paper handling are the two longest answers in the FAQ, and the SCORE corpus alone (88 rows
+by <code>source</code>) is the case they were written for.</p>
+<p>This does not change what <a href="#r14">R14</a> asks the pipeline to do; it does mean the
+pipeline would be the main producer of these fields rather than a late joiner to an established
+practice, so the rule needs to be operationalised, not merely followed.</p>
+</div>
+
+<h3>13.1 What follows for the pipeline</h3>
+<ol>
+  <li><strong>An export mapping is now a required piece of work</strong>, not a formality —
+      <a href="#s2">S2</a> and <a href="#s4">S4</a>. Three outcome values and three column names
+      differ, in one direction only, with no existing code that does it.</li>
+  <li><strong>Settle the reproduction vocabulary before the next run</strong>
+      (<a href="#r1">R1</a>, <a href="#s3">S3</a>). Three coded rows exist today; the cost of
+      deciding late is proportional to what the pipeline writes between now and then.</li>
+  <li><strong><a href="#r3">R3</a> and <a href="#r4">R4</a> are confirmed against data</strong>,
+      not just against the spec — both categories are populated in <code>flora.csv</code>.</li>
+  <li><strong>Adding a column means adding it in three places</strong>
+      (<a href="#s1">S1</a>, <a href="#s5">S5</a>): <code>extracted.csv</code>, the validation
+      DB, and <code>flora.csv</code>. <a href="https://github.com/forrtproject/flora-extractor/issues/103">Issue
+      #103</a> currently tracks the first two.</li>
+</ol>
+
+<h2 id="appendix">Appendix · Every prompt, verbatim</h2>
+<p>Extracted from the working tree at <code>2d5b635</code>. Builder functions are shown as the
+rendered template with <code>{placeholders}</code>; truncation limits and conditional blocks are
+noted per prompt. Shared fragments are reproduced inline exactly as concatenated at runtime.</p>
+<!--PROMPTS-->

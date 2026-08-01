@@ -1,0 +1,283 @@
+<a id="disposition"></a>
+<h2>Review disposition — 30 applied, 37 open</h2>
+<div class="tldr">
+<p>Your 64 comments split into two piles. The 30 that were questions of wording with one defensible answer are <strong>applied</strong> in <a href="https://github.com/forrtproject/flora-extractor/pull/89">PR #89</a> and their threads on this page are resolved. The remaining 37 are below, grouped into 34 decisions (a few of your comments made the same point in different places), plus the three you raised this afternoon, each with what I think we should do.</p>
+<p><strong>Answer them here, not in the PR.</strong> Select any part of a recommendation and hit 💬 Comment to disagree, or ✏️ Suggest to rewrite the recommendation into the one you want. A one-word “yes” on the ones you agree with is enough — I will treat silence as undecided, not as consent.</p>
+</div>
+<h3>Vocabulary and schema</h3>
+<p class="subtitle" style="margin:.2rem 0 1rem">Changes to what the pipeline records, not just how it asks. Each needs a migration decision.</p>
+<section class="prompt">
+<a id="D1"></a>
+<h3><span class="callid">D1</span> Relabel the rule-filter’s <code>false_positive</code> outcomes <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L1</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“Can we relabel these — <code>not_an_article</code> / <code>false_positive_phrase</code> / <code>false_positive_no_phrase</code>”</em></p>
+<p><strong>What it is:</strong> Three different rule paths all write the same <code>false_positive</code>, so the CSV cannot say <em>why</em> a row was dropped — a non-article DOI, an exclusion-pattern hit, and “no replication phrase at all” (the ~2.17M-row bucket) are indistinguishable after the fact.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Add a <code>filter_reason</code> column rather than splitting <code>filter_status</code> into more values. It answers the same question without touching the 3-way vocabulary that the dashboard, <code>sanity_check</code> and Supabase all key on.</div>
+</section>
+<section class="prompt">
+<a id="D2"></a>
+<h3><span class="callid">D2</span> Rename <code>filter_status</code> → <code>paper_type</code> <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L1</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“rename to <code>paper_type</code>”</em></p>
+<p><strong>What it is:</strong> The field holds what kind of paper this is, not the state of any process — the name is wrong and invites the “is it done yet?” reading.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Agreed, but it is a pure rename across <code>schema.py</code>, every CSV, the dashboard and Supabase. Worth one mechanical PR with a migration — <strong>decide whether that happens now or waits for the next schema break</strong>.</div>
+</section>
+<section class="prompt">
+<a id="D3"></a>
+<h3><span class="callid">D3</span> Code the reproduction outcome as two fields, not nine strings <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L10/L11</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“better to code this as 2x3? Would seem to make the prompt shorter and mistakes rarer”</em></p>
+<p><strong>What it is:</strong> The prompt currently lists nine exact strings the model must reproduce verbatim, and any deviation is coerced to <code>cannot_be_determined</code> by <code>_normalise</code>.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Agreed, and it is the strongest of the structural suggestions: ask for <code>"computation"</code> and <code>"robustness"</code> as separate keys with three values each, then join them in code. Same grid, a third of the prompt, and no way to emit an invalid string. Needs <code>OUTCOME_CATEGORIES</code> and any already-coded reproduction rows to follow.</div>
+</section>
+<section class="prompt">
+<a id="D4"></a>
+<h3><span class="callid">D4</span> Add DOI/URL to extracted reference entries <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L12/L13</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“add doi/url field?”</em></p>
+<p><strong>What it is:</strong> The reference dicts carry authors/year/title only.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Cheap to add, but printed reference lists carry a DOI far less often than you would hope, and the downstream matcher resolves by title+author anyway. <strong>Low priority unless you have seen it fail on papers where the DOI was right there.</strong></div>
+</section>
+<h3>Prompt structure and consistency</h3>
+<p class="subtitle" style="margin:.2rem 0 1rem">Restructurings that should be measured rather than assumed — and one live mismatch (D13).</p>
+<section class="prompt">
+<a id="D5"></a>
+<h3><span class="callid">D5</span> Standardise the JSON block and return labels across prompts <span style="color:var(--muted);font-weight:400;font-size:.85rem">— all</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“both the formatting of the JSON block and the return labels should be standardised across prompts”</em></p>
+<p><strong>What it is:</strong> Every prompt phrases its JSON instruction differently (“Respond with ONLY this JSON”, “Return ONLY valid JSON”, “Respond with <strong>only</strong> this JSON (no prose outside the braces)”), and confidence fields are variously <code>confidence</code>, <code>filter_confidence</code>, <code>classification_confidence</code>, <code>target_confidence</code>.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Now cheap to do, since every prompt is in <code>shared/prompts.py</code>. Propose one shared <code>JSON_INSTRUCTION</code> constant and one confidence vocabulary. <strong>The only real decision is whether renaming the response keys is worth invalidating the caches keyed on them.</strong></div>
+</section>
+<section class="prompt">
+<a id="D6"></a>
+<h3><span class="callid">D6</span> Put the genuine-attempt judgment first, since it is judged first <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L8–L11</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“Should “first” come first in the prompt?”</em></p>
+<p><strong>What it is:</strong> The block says “Before classifying the outcome, first judge…” but sits <em>after</em> the outcome rules and few-shot examples.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Agreed — move it above the outcome rules. Held back only because it changes every outcome prompt and I would rather spot-check ~50 rows before and after than assume it is free.</div>
+</section>
+<section class="prompt">
+<a id="D7"></a>
+<h3><span class="callid">D7</span> Merge the abstract and fulltext outcome prompts <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L8+L9, L10+L11</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“merge with previous, so that we don’t duplicate prompt? Also, LLM does not need the history in the prompt, so just the fulltext or not”</em></p>
+<p><strong>What it is:</strong> L9 and L11 exist only to say “the abstract could not settle it”, which is our bookkeeping, not something the model needs. The rules and JSON block are otherwise duplicated verbatim.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Agreed. One prompt with an optional <code>PARSED FULLTEXT</code> block halves the outcome prompt surface and removes a class of drift where one copy is edited and the other is not. Do it together with D8.</div>
+</section>
+<section class="prompt">
+<a id="D8"></a>
+<h3><span class="callid">D8</span> Move TITLE/ABSTRACT/FULLTEXT to the bottom of the prompt <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L8–L11</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“This should be at the bottom — both for caching and for instruction following”</em></p>
+<p><strong>What it is:</strong> Instructions currently sit after the paper text, so the longest, most variable block separates the model from its task.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Agreed on instruction-following grounds. The caching argument only pays if the static prefix clears the provider’s minimum cacheable prefix — worth checking against the actual prompt lengths before claiming it as a saving. Do with D7.</div>
+</section>
+<section class="prompt">
+<a id="D9"></a>
+<h3><span class="callid">D9</span> Drop the L1 decision rules that restate the criteria <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L1</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“Do we think these add anything? They seem to restate criteria?”</em></p>
+<p><strong>What it is:</strong> Rules 1–4 restate the type definitions directly above them; only rule 5 (<code>false_positive</code> overrides) adds anything.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Agreed — keep rule 5, drop 1–4. Not applied because L1 already changed substantially in PR #89 and two edits to the same prompt in one pass makes any behaviour change impossible to attribute.</div>
+</section>
+<section class="prompt">
+<a id="D10"></a>
+<h3><span class="callid">D10</span> L2 should return the target, not just a count <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L2</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“this is clearly nonsense — needs to return match/candidates if single, so that we don’t do the same extraction twice — and should also ask whether it is a replication unless LLM (rather than rule) has already confirmed that”</em></p>
+<p><strong>What it is:</strong> L2 shows the model the title, abstract, cited patterns and the full candidate list, then asks only “how many originals?” — and L3 then shows it the same material again to ask which one.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Agreed that this is wasteful. Two ways to fix it: have L2 also return the selection when it answers <code>single_original</code>, or fold L2 into L3 entirely and let one call return both. <strong>I would fold them.</strong> This is the largest change on the list — it restructures Stage 3 routing, so it wants to be its own PR.</div>
+</section>
+<section class="prompt">
+<a id="D11"></a>
+<h3><span class="callid">D11</span> Ask for a candidate key, not a candidate number <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L3/L6</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“it would seem less risky to get an explicit key rather than a number (as smith2009 is less likely to be mismatched by llm than 3)”</em></p>
+<p><strong>What it is:</strong> The model returns <code>selected_candidate_number</code>, an index into a list we built. An off-by-one silently selects the wrong paper and nothing downstream can detect it.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Agreed, and the failure is invisible, which makes it worse than it looks. Use the OpenAlex ID or an <code>author+year</code> key that we can validate against the list we sent. Needs the response parsing to change with it.</div>
+</section>
+<section class="prompt">
+<a id="D12"></a>
+<h3><span class="callid">D12</span> One role prompt, or none <span style="color:var(--muted);font-weight:400;font-size:.85rem">— all</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“If we use roles (which likely does no harm, even if no longer recommended?), they should be uniform across prompts”</em></p>
+<p><strong>What it is:</strong> Roles vary: “an expert in scientific replication and reproducibility” (L1), “a research methodology expert” (L8–L11), “an expert in research methodology identifying ALL original studies” (L7), and none at all in L2, L4, L5.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Uniform or absent, either is defensible; mixed is not. <strong>Suggest picking one line and using it everywhere</strong> — the variation is historical, not designed.</div>
+</section>
+<section class="prompt">
+<a id="D13"></a>
+<h3><span class="callid">D13</span> The one system message is wrong for most calls that send it <span style="color:var(--muted);font-weight:400;font-size:.85rem">— S1/S2</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“Any reason to use multiple without dedicated validation? At most, we should have a default and then plumbing to supersede these individually? Also, is there value in a system message that overrides the prompt?”</em></p>
+<p><strong>What it is:</strong> There is only one system message, and S1 and S2 are the same string. But it is attached to <em>every</em> <code>call_openai()</code> and <code>call_openrouter()</code> — including the Stage 2 filter, the outcome coder and the reference screen, none of which identify original studies. Those calls are told “You are a research methodology expert that identifies original studies from replication papers” while being asked to do something else.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> <strong>Recommended fix.</strong> Either make it neutral (“Always respond with valid JSON only.”) or pass a per-call system message. The current text is actively misleading on the majority of calls.</div>
+</section>
+<h3>Does this input earn its place?</h3>
+<p class="subtitle" style="margin:.2rem 0 1rem">Blocks we add to prompts whose value is untested. Mostly settled by an experiment, not an argument.</p>
+<section class="prompt">
+<a id="D14"></a>
+<h3><span class="callid">D14</span> Does the cited author-year pattern block help? <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L2, L3/L6</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“Does this benefit an LLM? … again — does this help? If misparsed, might lead the LLM astray. If parsed correctly — trivial for LLM to spot?”</em></p>
+<p><strong>What it is:</strong> Both prompts inject regex-extracted author-year pairs alongside the abstract the model can already read. When the regex misfires, the model is handed a confident wrong hint.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Empirical, and cheap to settle: rerun a sample with the block removed and compare resolutions. <strong>Propose 200 rows that currently resolve via <code>llm_cited_candidates</code>.</strong> My prior matches yours — a modern model reads the citation off the abstract unaided.</div>
+</section>
+<section class="prompt">
+<a id="D15"></a>
+<h3><span class="callid">D15</span> Is the title-pattern hint (F2) worth keeping? <span style="color:var(--muted);font-weight:400;font-size:.85rem">— F2</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“Is this “hint” useful? I doubt it for modern LLMs given that the parts are in the prompt”</em></p>
+<p><strong>What it is:</strong> F2 tells the model that the title looks like “A Replication of X” and lists candidates matching X — both the title and the candidates are already in the prompt.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Agreed it is probably redundant. It also has a side effect worth fixing regardless: because F2 does not start with <code>⚠ FLoRA ANCHOR</code>, F3 wraps it in “a human reviewer marked the previous answer as INCORRECT” — see D16. <strong>Suggest removing F2 and measuring.</strong></div>
+</section>
+<section class="prompt">
+<a id="D16"></a>
+<h3><span class="callid">D16</span> Delete the F3 validator-feedback wrapper <span style="color:var(--muted);font-weight:400;font-size:.85rem">— F3</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“This seems value-free (and hard to include into a pipeline) — a human that identifies that the target is wrong should identify the correct target.”</em></p>
+<p><strong>What it is:</strong> Agreed on the principle, and the implementation has a concrete bug: the branch tests the <em>combined</em> note, so a bare title-pattern hint or any user comment is presented as “A human reviewer marked the previous answer as INCORRECT” even when there was no previous answer.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> <strong>Recommend deleting F3.</strong> If a validator knows the target is wrong, the right output is the correct target, not a nudge. That removes the bug rather than fixing it.</div>
+</section>
+<section class="prompt">
+<a id="D17"></a>
+<h3><span class="callid">D17</span> When does the FLoRA anchor (F1) fire at all? <span style="color:var(--muted);font-weight:400;font-size:.85rem">— F1</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“why would this ever appear here?”</em></p>
+<p><strong>What it is:</strong> F1 fires when the FLoRA sheet already holds a manually verified original for this DOI (<code>validated - changed/unchanged</code>) that is missing from the candidate pool.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> The sharper question is the one behind yours: <strong>if FLoRA has already verified the original, why is the row being re-extracted?</strong> Skipping those rows outright is simpler than anchoring the model toward an answer we already have.</div>
+</section>
+<section class="prompt">
+<a id="D18"></a>
+<h3><span class="callid">D18</span> Do the phrase/cite paths need to stay separate? <span style="color:var(--muted);font-weight:400;font-size:.85rem">— Stage 2</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“Unsure whether these need different paths as we need to decide for both whether they truly are replications/reproductions and what their target is? Consolidate into one path of potential candidates?”</em></p>
+<p><strong>What it is:</strong> “Phrase without a same-sentence cite” → <code>needs_review</code>/medium; “phrase + same-sentence cite” → <code>replication</code>/high. Both still need the same two questions answered downstream.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> The split buys one thing: the high-confidence path skips the Stage 2 LLM. Whether that saving is worth a second code path depends on how often the rule path is right — <strong>which the <code>filter_method</code> breakdown can answer directly</strong> before deciding.</div>
+</section>
+<h3>Truncation and the full-text budget</h3>
+<p class="subtitle" style="margin:.2rem 0 1rem">Where we spend tokens and what we throw away. D24 is the one with real money attached.</p>
+<section class="prompt">
+<a id="D19"></a>
+<h3><span class="callid">D19</span> Should the section snippets be truncated at all? <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L3/L6</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“I wonder if we should shorten this at all? Makes pipeline reporting odd, as these constants cannot effectively be validated … or if we want to cut off the longest tail, should we take start and end of sections (as plan for study is often at the end of the introduction)”</em></p>
+<p><strong>What it is:</strong> <code>abstract[:700]</code>, <code>intro[:600]</code>, <code>methods[:400]</code>, <code>html[:1000]</code> — none of these numbers has a justification on record.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> The start-and-end point is the good one: the sentence naming the replicated study usually sits at the <em>end</em> of the introduction, which is exactly what <code>[:600]</code> discards. <strong>Suggest first 400 + last 400 of intro</strong>, and treating the rest as measurable rather than settling it by argument.</div>
+</section>
+<section class="prompt">
+<a id="D20"></a>
+<h3><span class="callid">D20</span> Send page ranges, not the whole PDF <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L12</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“does this make sense? Should at least limit the number of pages — but in most cases, first 5 plus ref heuristic below should be good?”</em></p>
+<p><strong>What it is:</strong> L12 uploads the entire PDF inline with no truncation, to extract a reference list.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Agreed. First ~5 pages plus the trailing-20% heuristic already used by L13 would cover nearly every layout at a fraction of the upload.</div>
+</section>
+<section class="prompt">
+<a id="D21"></a>
+<h3><span class="callid">D21</span> The 45 MB skip should be a page subset, not a skip <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L12</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“why? Any size constraint? Would seem that this should be a page number limit (and that this might be circumvented by subsetting pages rather than skipping)?”</em></p>
+<p><strong>What it is:</strong> Papers over 45 MB are dropped silently — no reference extraction, no log line the pipeline surfaces.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Agreed, and it follows directly from D20: once pages are subset, size stops being the binding constraint. Large files are usually image-heavy scans, which are exactly the ones parsing already failed on.</div>
+</section>
+<section class="prompt">
+<a id="D22"></a>
+<h3><span class="callid">D22</span> <code>MEDIA_RESOLUTION_LOW</code> when parsing already failed <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L12</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“does this make sense if PDF parsing fails? That seems to suggest that the PDF needs visual reading”</em></p>
+<p><strong>What it is:</strong> L12 only runs because text extraction produced nothing — which usually means a scan — and then asks the model to read it at reduced resolution.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Agreed, the two settings work against each other. <strong>Raise the resolution on this path.</strong> It fires rarely, so the cost is bounded.</div>
+</section>
+<section class="prompt">
+<a id="D23"></a>
+<h3><span class="callid">D23</span> Is the image fallback (L13) redundant with L12? <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L13</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“any point in this if using Gemini? Doesn’t that read the PDF as images anyway?”</em></p>
+<p><strong>What it is:</strong> L13 renders pages to PNG and sends those; L12 sends the PDF and lets the model rasterise it.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Likely redundant, but they fire on different triggers — L12 when pdfminer found no text, L13 when it found text but no references. <strong>Worth checking how often L13 succeeds where L12 failed</strong> before removing it; the caches on disk can answer that without new API calls.</div>
+</section>
+<section class="prompt">
+<a id="D24"></a>
+<h3><span class="callid">D24</span> Ask the expensive PDF call for everything at once <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L12</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“also, when doing such an expensive PDF call, get all information at once — i.e. also outcome, and confirmation of classification?”</em></p>
+<p><strong>What it is:</strong> Having paid to upload a whole paper, we ask only for its reference list, then pay again elsewhere for the outcome.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> <strong>The best cost idea on the list.</strong> One call returning references + outcome + a classification check would remove a separate LLM pass on precisely the rows that are most expensive. Its own PR, and it interacts with D7/D10.</div>
+</section>
+<section class="prompt">
+<a id="D25"></a>
+<h3><span class="callid">D25</span> Greyscale page rendering <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L13</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“is this more token efficient? Otherwise, why not keep color, e.g. given that links offer visual separation?”</em></p>
+<p><strong>What it is:</strong> Pages are rendered at 1.5× zoom in greyscale before upload.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Greyscale saves upload bandwidth, not tokens — image cost is charged by dimensions, so colour is close to free here. <strong>Suggest colour</strong>, for the reason you give.</div>
+</section>
+<h3>Model configuration</h3>
+<p class="subtitle" style="margin:.2rem 0 1rem">Two inconsistencies in the provider chain; D26 is a probable live bug.</p>
+<section class="prompt">
+<a id="D26"></a>
+<h3><span class="callid">D26</span> <code>max_tokens=1024</code> is too small for a reasoning model <span style="color:var(--muted);font-weight:400;font-size:.85rem">— S1/S2</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“too little for reasoning model?”</em></p>
+<p><strong>What it is:</strong> <code>call_openai</code> sets <code>max_completion_tokens=1024</code>, which on gpt-5-mini includes hidden reasoning tokens. The same responses are asked for an <code>outcome_phrase</code> of up to ~1200 characters — roughly 300 tokens of visible output before anything else.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> <strong>Recommended fix, and the most likely live bug on this list.</strong> A truncated response is not valid JSON, so it is indistinguishable from a parse failure and is retried rather than reported. Suggest 4096 and a log line when a response is cut off.</div>
+</section>
+<section class="prompt">
+<a id="D27"></a>
+<h3><span class="callid">D27</span> Temperature is set on some providers and not others <span style="color:var(--muted);font-weight:400;font-size:.85rem">— S1/S2</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“Is this a good idea? I remember that temperature 0 can be unstable — also, does it make sense when not set for the main models?”</em></p>
+<p><strong>What it is:</strong> Gemini sets <code>temperature: 0.0</code>, OpenRouter sets <code>0.0</code>, OpenAI sets nothing and takes the default. So the fallback chain changes sampling behaviour mid-run.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> The inconsistency is the real problem, not the value. <strong>Set it explicitly on all three or none — and decide which</strong>, so a row coded by the OpenAI leg is comparable to one coded by Gemini.</div>
+</section>
+<h3>Audit wording and small prompt cleanups</h3>
+<p class="subtitle" style="margin:.2rem 0 1rem">No decisions needed — noting them so they are not lost.</p>
+<section class="prompt">
+<a id="D28"></a>
+<h3><span class="callid">D28</span> Which rows are sent to the Stage&nbsp;2 LLM <span style="color:var(--muted);font-weight:400;font-size:.85rem">— audit text</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“what does this mean?”</em></p>
+<p><strong>What it is:</strong> It means the Stage 2 rule filter decides most rows on its own, and only those it leaves at <code>needs_review</code> are sent to the Stage 2 LLM.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Audit wording, no code involved — will reword in the next regeneration of this page.</div>
+</section>
+<section class="prompt">
+<a id="D29"></a>
+<h3><span class="callid">D29</span> The “…” in the truncation notes <span style="color:var(--muted);font-weight:400;font-size:.85rem">— audit text</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“what is that?”</em></p>
+<p><strong>What it is:</strong> A literal ellipsis character appended to a snippet when it was cut short, so the model can see that text was removed.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Audit wording; will spell it out.</div>
+</section>
+<section class="prompt">
+<a id="D30"></a>
+<h3><span class="callid">D30</span> Passing <code>pdf_url</code> after the download failed <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L3/L6</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“that seems nonsense — or do we believe that Gemini would be better as webscraping?”</em></p>
+<p><strong>What it is:</strong> When PDF acquisition fails but a URL was found, the URL is put in the prompt with “If you can access this URL, use it”.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> <strong>Agreed, recommend removing the block.</strong> The model cannot fetch it, and a URL in the prompt is an invitation to infer content from a filename.</div>
+</section>
+<section class="prompt">
+<a id="D31"></a>
+<h3><span class="callid">D31</span> Don’t call landing-page text “full text” <span style="color:var(--muted);font-weight:400;font-size:.85rem">— L3/L6</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“if there are cases where this successfully parses abstract and refs which we don’t have, good — but let’s not fake-call it FT”</em></p>
+<p><strong>What it is:</strong> HTML landing-page text is substituted into the <code>INTRODUCTION</code> slot and the row is recorded as <code>llm_fulltext</code>.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> Agreed. Keep the fallback, label it honestly — a distinct <code>link_method</code> so the rows can be told apart when judging resolution quality.</div>
+</section>
+<h3>Raised after PR #89</h3>
+<p class="subtitle" style="margin:.2rem 0 1rem">Your comments from this afternoon. D32 is a live inconsistency PR #89 introduced.</p>
+<section class="prompt">
+<a id="D32"></a>
+<h3><span class="callid">D32</span> RRR is still hard-wired as multi-original in the rule classifier <span style="color:var(--muted);font-weight:400;font-size:.85rem">— run_extract.py:229</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“I hope these are gone?”</em></p>
+<p><strong>What it is:</strong> Half gone, and the remaining half is the one that matters. PR #89 removed Registered Replication Report from the L2 and L7 <em>prompts</em>, but <code>_MULTI_TITLE_RE</code> in <code>classify_match_type</code> still matches <code>registered replication report</code> (and <code>many labs</code>, <code>many analysts</code>) on the title and returns <code>multiple_original</code> at <strong>high</strong> confidence — <em>before</em> the cache and before any LLM call. So for exactly the papers you flagged, the prompt change has no effect: the rule already decided. Verified: <code>“Registered Replication Report: Finkel et al. (2002)” → multiple_original</code>.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> <strong>This is an inconsistency PR #89 created and I should have caught.</strong> The prompt now says RRRs are not a multi-target signal while the rule above it says they are, at high confidence. Recommend dropping <code>registered\s+replication\s+report</code> from <code>_MULTI_TITLE_RE</code> and letting those titles fall through to the LLM, where the abstract can decide. Many Labs and Many Analysts genuinely are multi-target and should stay. Say the word and I will send it as a one-line PR.</div>
+</section>
+<section class="prompt">
+<a id="D33"></a>
+<h3><span class="callid">D33</span> “replications of N” fires on N experiments from one original <span style="color:var(--muted);font-weight:400;font-size:.85rem">— run_extract.py:243</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“what does this mean? “we present 2 replications of smith (2009)” would obviously be single target”</em></p>
+<p><strong>What it is:</strong> Your exact example is safe — the pattern needs digits after “of”, and the count bound is 3&nbsp;≤&nbsp;N&nbsp;&lt;&nbsp;1900, so <code>2 replications of Smith (2009)</code> falls through to the LLM. But the sharper version of your point does fire: <code>“We report replications of 5 experiments from Smith (2009)” → multiple_original, high</code>. Five experiments, one original paper — routed to the multi pipeline and expanded into five rows.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> The rule counts <em>replications</em> and assumes each has a distinct original. Recommend requiring the counted noun to be <code>studies</code>/<code>findings</code>/<code>papers</code> and <strong>excluding <code>experiments</code></strong>, which within a single paper usually means Study&nbsp;1…Study&nbsp;N of one original. Cheap to fix and testable against the rows the rule currently fires on.</div>
+</section>
+<section class="prompt">
+<a id="D34"></a>
+<h3><span class="callid">D34</span> Exclude FLoRA-validated rows rather than anchoring them <span style="color:var(--muted);font-weight:400;font-size:.85rem">— F1</span></h3>
+<p style="border-left:3px solid var(--rule);padding-left:.8rem;color:var(--muted)"><em>“these should not be run but excluded at the start — might want to use the pipeline to validate FLoRA content, but then run independently”</em></p>
+<p><strong>What it is:</strong> Agreed, and this is the same point as D17 arrived at from the other side. Today a validated FLoRA row is re-extracted with its known answer injected as a prompt note, which costs a full extraction and produces a result we cannot treat as independent evidence.</p>
+<div class="fix" style="background:var(--fix-bg);border-left:4px solid var(--fix-border);padding:.7rem .9rem;border-radius:0 6px 6px 0;margin:.7rem 0 0"><strong>Recommendation:</strong> <strong>Recommend excluding them at the filter stage</strong> and deleting F1 with D17. If you later want the pipeline to audit FLoRA, that is a separate run with the anchor <em>off</em> — which is the only way the comparison means anything. Merging D17 and D34 into one decision: <strong>exclude, and drop F1.</strong></div>
+</section>
+<h3>Applied in PR #89</h3>
+<p>For reference — these threads are resolved on this page.</p>
+<div class="tablewrap"><table>
+<tr><th>Prompt</th><th>Change</th></tr>
+<tr><td><code>L1</code></td><td>Numbered the three types; <code>EXACTLY ONE label</code> → <code>EXACTLY ONE of these types</code></td></tr>
+<tr><td><code>L1</code></td><td><code>Must intentionally replicate</code> → <code>Must intend to replicate …; it is not enough to report that findings replicate earlier work</code></td></tr>
+<tr><td><code>L1</code></td><td>Dropped the “explicit study aim” bullet (restated by the above)</td></tr>
+<tr><td><code>L1</code></td><td>Added internal replications to <code>false_positive</code></td></tr>
+<tr><td><code>L1</code></td><td>Dropped <code>original</code> from “same original dataset” and “within the original paper”</td></tr>
+<tr><td><code>L1</code></td><td>“mentioning ‘replication’ casually” → “mentioning the need for ‘replication’ or otherwise discussing rather than doing it”</td></tr>
+<tr><td><code>L1</code></td><td>“data/code release papers” → “data/code papers”</td></tr>
+<tr><td><code>L1</code></td><td>Returned key <code>filter_sort</code> → <code>filter_reasoning</code></td></tr>
+<tr><td><code>L2</code></td><td>Removed Registered Replication Report as a <code>multiple_original</code> signal (also in L7’s forced-multi directive)</td></tr>
+<tr><td><code>L2</code></td><td>Removed “a table of target studies each with its own protocol” — unobservable from an abstract</td></tr>
+<tr><td><code>L2</code></td><td>Removed “(will produce N output rows, one per original)”</td></tr>
+<tr><td><code>L3/L6</code></td><td>“directly replicates” → “replicates or reproduces”</td></tr>
+<tr><td><code>L3/L6</code></td><td><strong>Reference list now sent in full</strong> (was capped at 30 while the header claimed 50)</td></tr>
+<tr><td><code>L3/L6</code></td><td>“INTRODUCTION (from PDF)” → “(from full text)”; dropped “(up to 50 entries)”</td></tr>
+<tr><td><code>L3/L6</code></td><td>Removed the umbrella-project rule (ManyLabs/PSA/StudySwap “are NEVER the original”)</td></tr>
+<tr><td><code>L8–L11</code></td><td><code>descriptive</code>: “adopted” methods, and authors must describe their own intent as a replication</td></tr>
+<tr><td><code>L8–L11</code></td><td>Replaced few-shot example 1 with one that shows the pattern</td></tr>
+<tr><td><code>L8–L11</code></td><td><strong><code>is_genuine_attempt</code> now defined for reproductions too</strong> — the repro JSON asked for a field its rules never explained</td></tr>
+<tr><td><code>L13</code></td><td>Images described as the <em>final</em> pages <em>including</em> the reference section</td></tr>
+</table></div>
+<p><strong>Cache note.</strong> <code>PROMPT_VERSION</code> was bumped, so outcome rows recode. The Stage 2 filter, match-type and identification caches are keyed on DOI/text with no prompt version, so those three prompts change only for rows not yet cached — giving them a version means a full re-run, which is D32 in spirit and your call.</p>

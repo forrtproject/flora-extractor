@@ -11,6 +11,8 @@ them.
 | `screening_prompt_spec.md` | The task specification the prompt was written from: what the screen must decide, the output schema, and every coding rule, independent of wording. |
 | `coding_app_30_discards.html` | Blind coding app for the 30-case review of fresh discards. Results: `analysis/screening_eval/flora_coding_v3_results.csv`. |
 | `coding_app_heldout4.html` | Blind coding app for the four held-out instrument-boundary cases. |
+| `screening_audit.html` | The screening pipeline audit (July 2026): how the pipeline actually behaves step by step, the LLM call map, bugs and proposed fixes, intent-vs-code drift, and the settled screening rules. The historical record `current_state.html` builds on; carries its own comment layer under a separate project slug, so its review threads stay reachable through this file. |
+| `builders/` | Generators: `assemble_audit.py` rebuilds the audit page from its fragments, `build_coding_app.py` rebuilds a coding app from a sheet. The coding sheets and the model key for the 30-case review live here too. |
 
 Both coding apps are self-contained: open in a browser, code with the keyboard, download a CSV.
 Nothing is sent anywhere and no model verdicts are embedded.
