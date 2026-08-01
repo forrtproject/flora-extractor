@@ -79,10 +79,24 @@ EXTRACT_ADDED_COLS = [
 
     # Outcome
     "outcome",             # str   — success | failure | mixed | descriptive | cannot_be_determined | pending | api_error
+                           #         For a reproduction this is DERIVED from the two axes below
+                           #         ("computationally reproducible, robust"), so one column reads
+                           #         the same way for both record types — the way flora.csv stores it.
     "outcome_phrase",      # str   — supporting quote from the paper
-    "outcome_confidence",  # str   — high | medium | low
-    "out_quote_source",    # str   — abstract | title | fulltext
+    "outcome_confidence",  # str   — high | low  (medium is no longer emitted)
+    "out_quote_source",    # str   — abstract | title | fulltext (or two joined by " | ")
     "outcome_reasoning",  # str   — one-sentence LLM note explaining the classification choice
+
+    # Reproduction outcome axes — empty on a replication row. The 4x3 grid is stored
+    # as two coded fields, each with its own quote and quote source: a validator was
+    # otherwise shown one quote asked to justify two independent judgments, and every
+    # downstream analysis had to re-split a joined string to read one axis.
+    "outcome_computation",             # str — COMPUTATION_OUTCOME_VALUES
+    "outcome_computational_quote",     # str — verbatim passage proving the computation verdict
+    "out_quote_computational_source",  # str — abstract | title | fulltext (or two joined by " | ")
+    "outcome_robustness",              # str — ROBUSTNESS_OUTCOME_VALUES
+    "outcome_robustness_quote",        # str — verbatim passage proving the robustness verdict
+    "out_quote_robust_source",         # str — abstract | title | fulltext (or two joined by " | ")
     "outcome_llm_model",   # str   — exact model that coded the outcome ("keyword" for the
                            #         rule-based fallback, blank when no verdict was made);
                            #         differs from link_llm_model when a provider falls over mid-run
@@ -189,31 +203,61 @@ OUTCOME_CATEGORIES = {
     "statistically_successful_but_flawed",
     "uninformative",
     "cannot_be_determined",
-    # Emitted when the classifier judges is_genuine_attempt=false: the text does not
-    # describe a real attempt to replicate/reproduce the named original at all.
+    # Emitted when the full-text outcome pass answers record_type_check="neither":
+    # the paper does not check the named original at all.
     "not_a_replication",
 }
 
 # Reproduction outcomes use a completely different vocabulary from replications.
-# A reproduction re-runs the ORIGINAL data/code, so two independent questions apply:
-#   1. did the computation reproduce?  computationally successful | computational
-#      issues | computation not checked
-#   2. does the result survive alternative specifications?  robust |
-#      robustness challenges | robustness not checked
-# The full 3x3 grid below matches the FLoRA entry form's dropdown. Which vocabulary
-# applies is keyed off the row's `type` column — the same way flora.csv stores it
-# (one `outcome` column, disambiguated by `type`).
-REPRODUCTION_OUTCOME_CATEGORIES = {
-    "computationally successful, robust",
-    "computationally successful, robustness challenges",
-    "computationally successful, robustness not checked",
-    "computational issues, robust",
-    "computational issues, robustness challenges",
-    "computational issues, robustness not checked",
-    "computation not checked, robust",
-    "computation not checked, robustness challenges",
-    "computation not checked, robustness not checked",
+# A reproduction re-runs the ORIGINAL data/code, so two independent questions apply,
+# and each is coded in its own column with its own quote.
+#
+# Axis 1 — did re-running the analysis produce the original numbers? `technical
+# failure` is the case where the reproduction was defeated by the materials (no data,
+# no code, an unrunnable workflow), the most common real reproduction outcome in
+# economics and the one the old 3x3 grid could not express: such a paper had to be
+# recorded either as `computational issues`, asserting a numerical disagreement never
+# observed, or as cannot_be_determined, asserting that we could not read the paper.
+COMPUTATION_OUTCOME_VALUES = {
+    "computationally reproducible",
+    "computational issues",
+    "technical failure",
+    "not checked",
+    "cannot_be_determined",
 }
+
+# Axis 2 — does the finding survive alternative reasonable specifications?
+ROBUSTNESS_OUTCOME_VALUES = {
+    "robust",
+    "robustness challenges",
+    "not checked",
+    "cannot_be_determined",
+}
+
+# The derived `outcome` string for a reproduction: the two settled axis values joined
+# with ", ", computation first. Either axis at cannot_be_determined derives
+# cannot_be_determined instead, so this set holds only the settled combinations.
+# Which vocabulary applies is keyed off the row's `type` column — the same way
+# flora.csv stores it (one `outcome` column, disambiguated by `type`).
+REPRODUCTION_OUTCOME_CATEGORIES = {
+    f"{comp}, {rob}"
+    for comp in COMPUTATION_OUTCOME_VALUES - {"cannot_be_determined"}
+    for rob in ROBUSTNESS_OUTCOME_VALUES - {"cannot_be_determined"}
+}
+
+
+def derive_reproduction_outcome(computation: str, robustness: str) -> str:
+    """The stored `outcome` for a reproduction, from its two axis verdicts.
+
+    An unsettled axis makes the whole verdict unsettled — the axis columns still carry
+    whatever the other axis settled, but the single `outcome` column a reader sorts on
+    must not read as settled when half of it is not.
+    """
+    comp = str(computation or "").strip()
+    rob = str(robustness or "").strip()
+    if (comp in ("", "cannot_be_determined") or rob in ("", "cannot_be_determined")):
+        return "cannot_be_determined"
+    return f"{comp}, {rob}"
 
 # Pipeline-state markers. These are NOT outcome categories — they record where a
 # row sits in the pipeline, never a judgment about the replication result.
@@ -221,11 +265,16 @@ REPRODUCTION_OUTCOME_CATEGORIES = {
 #   api_error — outcome extraction failed after retries
 OUTCOME_STATE_MARKERS = {"pending", "api_error"}
 
-# Values the classifier no longer emits but that still exist in stored CSVs.
-# Empty since `uninformative` was restored as a live category above — the stored
-# rows carrying it are now valid under the current enum rather than tolerated
-# exceptions to it. Kept as a named set so the next retirement has somewhere to go.
-OUTCOME_LEGACY_VALUES: set = set()
+# Values the classifier no longer emits but that still exist in stored CSVs. The
+# nine strings below are the old 3x3 reproduction grid, retired when axis 1 gained
+# `technical failure` and the axes moved into their own columns. The 17 stored
+# reproduction rows still carry them until they are re-coded under the new prompts.
+OUTCOME_LEGACY_VALUES: set = {
+    f"{comp}, {rob}"
+    for comp in ("computationally successful", "computational issues",
+                 "computation not checked")
+    for rob in ("robust", "robustness challenges", "robustness not checked")
+}
 
 # Every value that may legitimately appear in the `outcome` CSV column. Validators of
 # STORED data (e.g. extract/audit_extracted.py) must check against this, not
@@ -237,7 +286,7 @@ OUTCOME_VALUES = (OUTCOME_CATEGORIES | REPRODUCTION_OUTCOME_CATEGORIES
 def outcome_categories_for(record_type: str) -> set:
     """The outcome vocabulary valid for a row of this `type`.
 
-    reproduction -> the 3x3 computation/robustness grid; anything else -> the
+    reproduction -> the derived computation/robustness joins; anything else -> the
     replication categories. cannot_be_determined is valid for both, since either
     classifier can fail to reach a verdict.
     """
