@@ -1713,13 +1713,22 @@ def run_extract(no_llm: bool = False,
                 first_write = False
                 output_rows.append(done)
                 continue
-            # The screen passed the row, so its verdict is the paper-type field —
-            # filter_status is that field (issue #93), and Stage 2 now leaves
-            # undecidable rows at needs_review for exactly this call to settle.
-            # Without the overwrite csv_to_db's import mask would drop them.
+            # The screen passed the row, so the paper-type field has to be settled
+            # here: filter_status is that field (issue #93), Stage 2 now leaves
+            # undecidable rows at needs_review, and csv_to_db imports nothing that
+            # is not replication or reproduction. A row left at needs_review could
+            # resolve an original and get an outcome and still be invisible to human
+            # validation.
             if screen.get("record_type"):
                 row["filter_status"] = screen["record_type"]
-                row["filter_method"] = "screen"
+                row["filter_method"] = "screen"   # the screen decided the type
+            elif str(row.get("filter_status", "")) not in {"replication", "reproduction"}:
+                # The gate proceeded without a qualifying vote (unclear/unclear, or
+                # an unconfident none against an unconfident qualifying answer), so
+                # no call has said what the paper is. Default to replication, as the
+                # old filter_status derivation did for everything non-reproduction,
+                # and leave filter_method naming whoever last actually decided.
+                row["filter_status"] = "replication"
 
         match = classify_match_type(row.to_dict(), no_llm=no_llm)
         match_type = match["original_match_type"]

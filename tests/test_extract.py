@@ -2149,8 +2149,24 @@ def _screen(**over) -> dict:
     return {**_YES_SCREEN, **over}
 
 
+def _import_mask() -> tuple[set, set]:
+    """csv_to_db's (filter_status, link_method) import mask.
+
+    The `supabase` package is not a test dependency, so stub it before importing —
+    the same idiom tests/test_csv_to_db.py uses.
+    """
+    import sys, types
+    if "supabase" not in sys.modules:
+        stub = types.ModuleType("supabase")
+        stub.create_client = lambda url, key: None
+        stub.Client = object
+        sys.modules["supabase"] = stub
+    from extract.csv_to_db import _RESOLVED_METHODS, _RESOLVED_STATUSES
+    return _RESOLVED_STATUSES, _RESOLVED_METHODS
+
+
 class TestFrontDoorScreen:
-    def _run(self, screen, tmp_path, monkeypatch):
+    def _run(self, screen, tmp_path, monkeypatch, filtered_csv: str = ""):
         """Run Stage 3 over one row with the screen returning `screen`.
 
         Returns (result_df, match_mock, ladder_mock, outcome_mock) so a test can
@@ -2158,7 +2174,8 @@ class TestFrontDoorScreen:
         """
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["test-key"])
         monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "test-key")
-        (tmp_path / "filtered.csv").write_text(_FILTERED_CSV, encoding="utf-8-sig")
+        (tmp_path / "filtered.csv").write_text(filtered_csv or _FILTERED_CSV,
+                                               encoding="utf-8-sig")
         m_match = MagicMock(return_value=_MOCK_MATCH)
         m_link  = MagicMock(return_value=_MOCK_LINK)
         m_out   = MagicMock(return_value=_MOCK_OUTCOME)
@@ -2259,6 +2276,52 @@ class TestFrontDoorScreen:
         _, _, m_link, _ = self._run(_YES_SCREEN, tmp_path, monkeypatch)
 
         assert m_link.call_args[1]["classification"] == _YES_SCREEN
+
+    def test_a_proceed_without_a_qualifying_vote_still_imports(self, tmp_path, monkeypatch):
+        """A needs_review row the gate proceeds on without any qualifying vote
+        (unclear/unclear) can still resolve an original and get an outcome. If
+        filter_status stayed needs_review, csv_to_db's import mask would drop the
+        row and the pairing would never reach a human validator."""
+        needs_review_csv = _FILTERED_CSV.replace(
+            "replication,rule_based,direct replication,high",
+            "needs_review,rule_based,phrase without a cite,medium")
+        result, _, m_link, m_out = self._run(
+            _screen(record_type="", screen_classification="unclear", categories=[],
+                    votes=[_vote("gemini", "unclear", confident=False),
+                           _vote("openai", "unclear", confident=False)]),
+            tmp_path, monkeypatch, filtered_csv=needs_review_csv)
+
+        row = result.iloc[0]
+        m_link.assert_called_once()
+        assert row["link_method"] == "same_author_year_title_overlap"
+        # The paper type defaults to replication, as the old filter_status
+        # derivation did for everything non-reproduction…
+        assert row["filter_status"] == "replication"
+        assert row["type"] == "replication"
+        assert m_out.call_args[1]["record_type"] == "replication"
+        # …but no call decided it, so provenance still names the rule filter.
+        assert row["filter_method"] == "rule_based"
+        # The row passes csv_to_db's import mask — the point of all of the above.
+        statuses, methods = _import_mask()
+        assert row["filter_status"] in statuses
+        assert row["link_method"] in methods
+
+    def test_a_proceed_without_a_qualifying_vote_keeps_a_decided_type(
+            self, tmp_path, monkeypatch):
+        """Stage 2 already said reproduction and no screen call overrode it, so the
+        default must not quietly rewrite the row to replication."""
+        repro_csv = _FILTERED_CSV.replace(
+            "replication,rule_based,direct replication,high",
+            "reproduction,rule_based,re-analysis of the original data,high")
+        result, _, _, m_out = self._run(
+            _screen(record_type="", screen_classification="unclear", categories=[],
+                    votes=[_vote("gemini", "unclear", confident=False),
+                           _vote("openai", "none", confident=False)]),
+            tmp_path, monkeypatch, filtered_csv=repro_csv)
+
+        assert result.iloc[0]["filter_status"] == "reproduction"
+        assert result.iloc[0]["type"] == "reproduction"
+        assert m_out.call_args[1]["record_type"] == "reproduction"
 
     def test_the_screen_decides_record_type_and_categories(self, tmp_path, monkeypatch):
         """The screen read the abstract and said what the paper is, so its verdict

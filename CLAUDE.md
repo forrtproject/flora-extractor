@@ -299,7 +299,11 @@ zero settled misses), and both the front door and the batch-tools path in
   split falls back to the first qualifying voter in call order (Gemini), and `both` maps
   to `replication` because such a paper collects new data. Stage 2's `filter_status` is
   now only the `--no-llm` fallback. On a passed row `run_extract` also overwrites
-  `filter_status` with this value and sets `filter_method` to `screen`.
+  `filter_status` with this value and sets `filter_method` to `screen`. When the gate
+  proceeds with no qualifying vote at all, `filter_status` keeps an existing
+  `replication`/`reproduction` and otherwise defaults to `replication`, leaving
+  `filter_method` alone — a row that stayed at `needs_review` would resolve an original
+  and code an outcome and still be dropped by `csv_to_db`'s import mask.
 - **`screen_categories`** — the deduplicated union of both voters' `categories`, joined
   with `|` in enum order, written on every screened row (discards included). It is
   multi-valued: filter it by substring or by splitting on `|`, never by equality.

@@ -41,7 +41,13 @@ filter (`rule_based`), and rows the rules cannot decide are written through as
 `needs_review`. Stage 3's front-door screen is the validated decider of "is this a
 replication at all", so when it passes a row, `run_extract` overwrites
 `filter_status` with the screen's paper type (`replication` / `reproduction`) and
-sets `filter_method` to `screen`, recording which call made the call.
+sets `filter_method` to `screen`, recording which call made the call. When the gate
+proceeds without any qualifying vote (unclear/unclear, or an unconfident `none`
+against an unconfident qualifying answer) no call has said what the paper is: a
+`filter_status` already at `replication` or `reproduction` is left alone, anything
+else defaults to `replication`, and `filter_method` still names whoever last actually
+decided. No row that reaches Stage 3 stays at `needs_review` — `csv_to_db` imports
+nothing else, so a resolved pairing left there would be invisible to human validation.
 
 `llm` and `both` are **historical**: Stage 2 had an LLM escalation for
 `needs_review` rows, which is retired. Rows written before the v3.2 screen still
