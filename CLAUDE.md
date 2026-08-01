@@ -48,7 +48,8 @@ with all stage teams.
 | ---- | ------- |
 | `shared/openalex_client.py` | OpenAlex API wrapper + `find_all_candidates()` (Stage 3 logic) |
 | `shared/openalex_keys.py`   | OpenAlex key rotation, shared by all stages |
-| `shared/llm_client.py`      | Gemini/OpenAI/OpenRouter calls, JSON parsing; `classify_replication()` (front-door screen), `screen_gate()`, `screen_voters()`, `screen_references_with_llm()` (Stage 4.5 target pick) |
+| `shared/llm_client.py`      | Gemini/OpenAI/OpenRouter calls, JSON parsing; `classify_replication()` (front-door screen), `screen_gate()`, `screen_voters()`, `identify_targets_with_llm()` (ladder rungs 4/4.5/7), `screen_references_with_llm()` (Stage 4.5 target pick) |
+| `shared/target_keys.py`     | `assign_target_keys()` — one deduplicated `@smith2009` namespace over a paper's candidates and references, plus the key → record map |
 | `shared/token_usage.py`     | Per-day/provider/model token recording (`cache/token_usage.json`) + the OpenAI daily budget check |
 | `shared/prompts.py`         | Every LLM prompt + `prompt_version()` (hash of the prompt text and every spliced fragment) |
 | `shared/cache.py`           | Cache helpers; `content_key()` builds the content-complete LLM cache key |
@@ -116,11 +117,24 @@ changing a voter or the prompt invalidates exactly those verdicts.
 
 **Resolution ladder** (`run_for_doi()`, cheapest first, returns at first resolution):
 title-pattern match → rule-based citation/candidate match → abstract LLM over
-candidates → reference-list target pick (`llm_references`, accepted only at high
-confidence) → pre-PDF title search (`llm_title_search`, only when both voters were
-qualifying AND confident) → PDF acquisition + full-text LLM. `llm_title_search` is
-provisional (~50% precision): not in `RESOLVED_LINK_METHODS`, never outcome-coded,
-never imported, set aside for human confirmation.
+candidates → reference-list target pick (`llm_references`) → pre-PDF title search
+(`llm_title_search`, only when both voters were qualifying AND confident) → PDF
+acquisition + full-text LLM. `llm_title_search` is provisional (~50% precision): not
+in `RESOLVED_LINK_METHODS`, never outcome-coded, never imported, set aside for human
+confirmation.
+
+**One target prompt for the three LLM rungs.** `build_target_prompt()` serves the
+abstract, reference-list and full-text stages; only the evidence blocks differ, never
+the task or the acceptance rule. Candidates and references are one deduplicated
+`@smith2009` namespace (`assign_target_keys()` in `shared/target_keys.py`), so a work
+in both lists is offered once and a re-fetched list cannot renumber a cached pick onto
+another paper. `identify_targets_with_llm()` makes the call: it validates every key
+against that call's key_map (invented key → unmatched target, repeated key keeps the
+first), takes `doi_o` from the mapped record rather than from the model, and reports
+`stated_count` / `unidentified_count` so a shortfall lands in `link_evidence`. A target
+is accepted only when the model marks it `match_certain`. When the call returns two or
+more targets, `_resolve_and_code()` refuses the single link and reroutes the row
+through the multi-original pipeline.
 
 **Outcome coding runs only on a resolved link** (`_outcome_without_coding()` gates on
 `RESOLVED_LINK_METHODS`); unresolved rows are written `pending`, except

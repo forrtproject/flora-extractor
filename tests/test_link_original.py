@@ -239,7 +239,7 @@ class TestTitleSearchGate:
 
 class TestAbstractStageExcludeDoi:
     def test_abstract_llm_receives_the_real_doi_r(self):
-        """identify_original_with_llm uses its doi_r argument as exclude_doi.
+        """identify_targets_with_llm uses its doi_r argument as exclude_doi.
 
         A suffixed key ("<doi>_abstract") never equals a real DOI, so the "never
         link a paper to itself" exclusion could not fire on this path at all.
@@ -257,7 +257,7 @@ class TestAbstractStageExcludeDoi:
              patch.object(link_original, "_resolve_rule_based",
                           return_value={"resolved": False,
                                         "resolution_method": "needs_fulltext"}), \
-             patch.object(link_original, "identify_original_with_llm",
+             patch.object(link_original, "identify_targets_with_llm",
                           return_value={"resolved": False,
                                         "resolution_method": "llm_no_target",
                                         "llm_source": "gemini"}) as llm, \

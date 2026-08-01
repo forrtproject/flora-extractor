@@ -24,6 +24,7 @@ wording here invalidates the answers produced by the previous wording.
 import ast
 import hashlib
 import inspect
+import re
 import sys
 import textwrap
 from functools import lru_cache
@@ -105,152 +106,179 @@ def build_match_type_prompt(title_r: str,
     )
 
 
-# ── L3 / L6 — original-study identification (abstract and fulltext stages) ────
-# One prompt serves both: Stage 4 calls it with abstract-only context, Stage 5
-# with parsed fulltext sections. F3 (the validator-feedback wrapper) is the
-# validator_block below.
+# ── L3 / L5 / L6 — target identification (abstract, reference-list and fulltext) ─
+# ONE prompt serves all three LLM stages of the resolution ladder. The three it
+# replaces asked three different questions of the same paper — "pick a candidate
+# number", "pick a reference number", "how many originals?" — so a stage could
+# resolve one original for a paper another stage had just read as targeting
+# twenty-eight, and neither answer could be reconciled with the other. What varies
+# between stages now is only which evidence blocks exist, not the task, the
+# vocabulary or the acceptance rule.
+#
+# Everything below is fixed text: it renders identically for every paper, so it is
+# the cacheable prefix and prompt_version("build_target_prompt") tracks it. Per-row
+# evidence — including a validator's note — is rendered AFTER it, under PAPER.
 
-# Dedented once, at import — dedent applied AFTER interpolation is defeated by any
-# multi-line value (candidate list, reference list, section snippets), which left
-# every line of this prompt indented by four spaces.
-_IDENT_TEMPLATE = textwrap.dedent("""
-    {validator_block}{policy}Identify the ORIGINAL STUDY that the replication paper below replicates or reproduces.
+_TARGET_PROMPT = """This paper has been classified as a replication or reproduction.
+Identify the previously published study — or studies — whose finding it re-tests.
 
-    TITLE: {study_r}
-    ABSTRACT: {abstract_snip}
-    CITED PATTERN: {pattern}
+TASK
 
-    CANDIDATES:
-    {cand_text}
+List every distinct original study that the paper below replicates or reproduces.
+Most papers target exactly one. Many name no target that can be identified from the
+evidence supplied — an empty list is a correct and expected answer, not a failure.
+A minority target several.
 
-    INTRODUCTION (from full text):
-    {intro_block}
-    {methods_block}
-    REFERENCE LIST:
-    {ref_text}
-    TASK: {cand_instruction}
+What counts as a target:
+- The paper must re-test that study's reported finding: collecting new data to check
+  whether it holds, or re-analysing that study's own data. Judge the RELATIONSHIP,
+  not the wording — a paper that tests whether a specific published result holds in a
+  new sample is a replication whether or not it uses the word "replication". A study
+  cited for background, motivation or context is NOT a target.
+- Do NOT include a study because it is topically similar, prominent, frequently
+  cited, or the only option offered.
 
-    KEY RULES:
-    - Find the study named with phrases like "we replicated", "direct replication of",
-      "we aimed to replicate" — NOT background citations.
-    - If the paper does not actually replicate or reproduce a specific prior study, or
-      the target cannot be identified from the material shown here, set
-      selected_candidate_number to null AND selected_title to "" — do NOT pick the
-      closest or most-cited reference. Returning no target is a correct answer.
-    - Do NOT select a target merely because it is the only plausible candidate, the
-      only one OpenAlex returned, topically similar, prominent or frequently cited.
-      If the evidence does not identify ONE target unambiguously, return no target.
-    - confidence: high = an explicit, unambiguous connection between this paper's
-      replication/reproduction attempt and exactly one candidate or reference;
-      medium = an explicit connection exists but bibliographic ambiguity remains;
-      low = no target should be returned — set selected_candidate_number to null
-      and selected_title to "".
-    - NEVER invent or guess a DOI. DOIs will be resolved from title and author automatically.
-      An invented DOI is worse than no DOI — it silently corrupts the database.
+How to count:
+- One entry per original PAPER, not per test. Several studies from the same original
+  paper are ONE entry: put their numbers as the replication refers to them
+  ("Study 2", "Experiment 3") in study_numbers, comma-separated. Independent original
+  papers are separate entries.
+- Count the ORIGINALS, not the replicating teams or sites. Many laboratories
+  re-running one original protocol is ONE target. Many analysts re-analysing one
+  dataset is ONE target. A project re-testing N different published findings from
+  different papers is N targets.
 
-    Respond with ONLY this JSON — no prose outside the braces:
-    {{
-      "selected_candidate_number": <integer or null>,
-      "selected_title": "<exact published title — copy from reference list if available>",
-      "selected_year": <year or null>,
-      "selected_first_author": "<surname>",
-      "confidence": "<high|medium|low>",
-      "evidence": "<1-2 sentence quote from the paper>",
-      "reasoning": "<why other candidates were ruled out>"
-    }}
-    """)
+Two separate judgments per target — do not let one stand in for the other:
+- Does the paper re-test this study? That is why the entry exists. Put the words that
+  show it in evidence_quote, copied verbatim from the paper.
+- Do you know WHICH published record it is? That is match_certain. Set `key` to the
+  @key of the matching entry in the lists below and match_certain to true only when
+  the evidence identifies that record and no other listed record fits as well.
+  Otherwise set `key` to null and match_certain to false, and put the identifying
+  details as the paper gives them in target_as_named — it is looked up separately.
+  A wrong original is worse than an unresolved one, so returning null is the right
+  answer whenever two records fit equally well or the target is absent from the lists.
+- Omit an entry only when you cannot tell that a target exists at all. Knowing one
+  exists and not being able to name it is the case above, and it still gets an entry.
+- Use only @keys that appear in the lists below. Never invent a key, and never write
+  a DOI — DOIs come from the matched record automatically.
+
+If the paper states how many studies it replicates:
+- Report that number in stated_count, what it counts in stated_count_unit
+  (papers | studies | findings | experiments | sites | unclear), and the words it
+  appears in in count_evidence_quote.
+- Put the number of targets you could not identify at all in unidentified_count, so a
+  shortfall stays visible instead of vanishing.
+- The stated count is an accounting claim to reconcile, NOT permission to invent
+  targets. Never add an entry you cannot support just to reach it — that is what
+  unidentified_count is for. The paper's own count may also be in different units
+  than this task: "we replicated 28 studies" can be 28 studies drawn from 12 papers,
+  which is 12 entries.
+
+RESPONSE FORMAT
+
+Respond with ONLY a JSON object, no prose outside the braces, with keys:
+"targets" (array, one object per original paper, in the order the paper presents
+them), "stated_count" (number or null), "stated_count_unit" (string or null),
+"count_evidence_quote" (string), "unidentified_count" (number), "reasoning" (one
+sentence in your own words on why these targets and not other cited works).
+
+Each target object has: "key", "match_certain", "target_as_named", "study_numbers",
+"evidence_quote".
+
+A matched target looks like this:
+{"key": "@smith2009", "match_certain": true, "target_as_named": "Smith & Jones (2009), Study 2", "study_numbers": "2", "evidence_quote": "we conducted a direct replication of Smith and Jones (2009, Study 2)"}
+
+A target you can see but cannot match to a listed record looks like this — note that
+key is the JSON value null, not the text "null":
+{"key": null, "match_certain": false, "target_as_named": "Ramirez (2014), the delay-discounting result", "study_numbers": "", "evidence_quote": "we re-analysed the delay-discounting data reported by Ramirez (2014)"}"""
+
+_WS_RE = re.compile(r"\s+")
 
 
-def build_identification_prompt(study_r:        str,
-                                 abstract_r:     str,
-                                 pattern:        str,
-                                 candidates:     list[dict],
-                                 sections:       dict,
-                                 html_text:      str = "",
-                                 validator_note: str = "") -> str:
-    """Build the LLM identification prompt.
+def _target_line(entry: dict) -> str:
+    """One keyed work, in the form both lists use: `@key  Authors (year). Title.`"""
+    authors = entry.get("authors") or []
+    named   = ", ".join(authors[:2]) + (" et al." if len(authors) > 2 else "")
+    return (f"{entry['key']}  {named or 'unknown'} "
+            f"({entry.get('year') or '?'}). {entry.get('title') or ''}").strip()
 
-    html_text — extracted landing-page text used as a full-text substitute.
+
+def _abstract_tail(abstract_r: str, pdf_abstract: str) -> str:
+    """The part of the PDF's abstract the OpenAlex abstract does not already carry.
+
+    The two overlap almost entirely, and sending both spent the budget twice on the
+    same words — but the PDF version is sometimes the longer one, and the extra
+    sentences are where a target is named.
     """
-    # Candidate block (unchanged)
-    if candidates:
-        def _authors_str(c: dict) -> str:
-            authors = c.get("all_authors") or ([c["first_author"]] if c.get("first_author") else [])
-            return ", ".join(authors) if authors else "unknown"
+    pdf = _WS_RE.sub(" ", pdf_abstract or "").strip()
+    if not pdf:
+        return ""
+    openalex = _WS_RE.sub(" ", abstract_r or "").strip()
+    if openalex and pdf.startswith(openalex):
+        return pdf[len(openalex):].strip()
+    if openalex and len(pdf) <= len(openalex):
+        return ""
+    return pdf[:1500]
 
-        cand_lines = [
-            f"{i}. \"{c['title']}\" ({c['year']}, authors: {_authors_str(c)})\n"
-            f"   DOI: {c['doi'] or 'unknown'}  |  OpenAlex: {c['openalex_id']}"
-            for i, c in enumerate(candidates, 1)
-        ]
-        cand_text = "\n".join(cand_lines)
-        cand_instruction = (
-            f"Select the candidate number (1–{len(candidates)}) that is the "
-            f"ORIGINAL STUDY being replicated.\n"
-            f"If none of the candidates is correct, set selected_candidate_number to "
-            f"null and copy the target's title, year and first-author surname from "
-            f"the reference list below."
-        )
-    else:
-        cand_text        = "(No candidates pre-identified — use reference list below.)"
-        cand_instruction = (
-            "No candidates were pre-identified. Use the reference list and full-text "
-            "excerpts to find the original study. Set selected_candidate_number to null."
-        )
 
-    # Sent in full: the whole point of this prompt is to find the original in the
-    # reference list, and a truncated list can simply not contain it.
-    ref_lines = []
-    for ref in sections.get("references", []):
-        authors = "; ".join(ref["authors"][:2])
-        if len(ref["authors"]) > 2:
-            authors += " et al."
-        ref_lines.append(f"- {authors} ({ref['year'] or '?'}). {ref['title']}")
-    ref_text = "\n".join(ref_lines) if ref_lines else "(no references extracted)"
+def build_target_prompt(study_r:        str,
+                        abstract_r:     str,
+                        entries:        list[dict],
+                        *,
+                        pdf_abstract:   str = "",
+                        intro:          str = "",
+                        methods:        str = "",
+                        html_text:      str = "",
+                        validator_note: str = "") -> str:
+    """Render the target-identification prompt.
 
-    # Truncated snippets — prefer GROBID intro over abstract (less overlap with OpenAlex)
-    abstract_snip = (abstract_r[:700] + "…") if len(abstract_r) > 700 else abstract_r
-    intro_snip    = (sections.get("intro",   "") or "")[:600]
+    entries come from shared.target_keys.assign_target_keys — the keys shown here are
+    only meaningful against the key_map from that same call.
 
-    # Include methods only when intro is short (avoid redundancy)
-    methods_snip = ""
-    if len(intro_snip) < 300:
-        methods_snip = (sections.get("methods", "") or "")[:400]
+    Every evidence block is omitted entirely, header included, when it is empty: an
+    "(not available)" placeholder is a line the model has to read and rule out.
+    """
+    blocks: list[str] = []
 
-    # HTML text fallback: use first 1000 chars as a substitute intro/body
-    html_snip = ""
-    if html_text and not intro_snip:
-        html_snip = (html_text[:1000] + "…") if len(html_text) > 1000 else html_text
+    note = (validator_note or "").strip()
+    if note:
+        # Rendered with the inputs, never ahead of the task: a per-row note above the
+        # instructions would break the cacheable prefix and outrank the rules.
+        blocks.append(f"REVIEWER NOTE:\n{note}")
+    if study_r:
+        blocks.append(f"TITLE: {study_r}")
+    if abstract_r:
+        blocks.append(f"ABSTRACT: {abstract_r[:3000]}")
+    tail = _abstract_tail(abstract_r, pdf_abstract)
+    if tail:
+        blocks.append("ABSTRACT CONTINUED (from the PDF, beyond what is above):\n" + tail)
+    body = (intro or "")[:1200] or (html_text or "")[:1200]
+    if body:
+        blocks.append("INTRODUCTION:\n" + body)
+    if methods:
+        blocks.append("METHODS:\n" + methods[:800])
 
-    validator_block = ""
-    if validator_note and validator_note.strip():
-        text = validator_note.strip()
-        if text.startswith("⚠ FLoRA ANCHOR"):
-            validator_block = text + "\n\n---\n\n"
-        else:
-            validator_block = (
-                "⚠️ VALIDATOR FEEDBACK — A human reviewer marked the previous answer as INCORRECT:\n"
-                + text
-                + "\nUse this feedback to correct your selection. The previous candidate was wrong.\n\n---\n\n"
-            )
+    cited = [_target_line(e) for e in entries if e.get("in_candidates")]
+    if cited:
+        blocks.append("WORKS THIS PAPER CITES, pre-matched on author-year:\n"
+                      + "\n".join(cited))
+    # Never truncated: the whole point of this prompt is to find the target in the
+    # reference list, and a cut list can simply not contain it.
+    refs = [_target_line(e) for e in entries
+            if e.get("in_references") and not e.get("in_candidates")]
+    if refs:
+        blocks.append("REFERENCE LIST:\n" + "\n".join(refs))
 
-    return _IDENT_TEMPLATE.format(
-        validator_block=validator_block,
-        policy=EVIDENCE_POLICY,
-        study_r=study_r,
-        abstract_snip=abstract_snip or "(not available)",
-        pattern=pattern or "(not available)",
-        cand_text=cand_text,
-        intro_block=intro_snip or html_snip or "(not available)",
-        methods_block=f"METHODS:\n{methods_snip}" if methods_snip else "",
-        ref_text=ref_text,
-        cand_instruction=cand_instruction,
-    ).strip()
+    return (EVIDENCE_POLICY + _TARGET_PROMPT + "\n\nPAPER\n\n"
+            + "\n\n".join(blocks) + "\n\nRespond with the JSON object only.")
 
 
 # ── L7 — multi-original identification ───────────────────────────────────────
 
-# Dedented once at import — see the note on _IDENT_TEMPLATE.
+# Dedented once, at import — dedent applied AFTER interpolation is defeated by any
+# multi-line value (candidate list, reference list, section snippets), which would
+# leave every line of this prompt indented by four spaces.
 _MULTI_TEMPLATE = textwrap.dedent("""
     {policy}Identify ALL original studies that are replicated or reproduced
     in this scientific paper.
@@ -403,8 +431,9 @@ def build_multi_original_prompt(study_r:     str,
     ).strip()
 
 
-# ── L4 / L5 — Stage 4.5 reference-list screen ────────────────────────────────
-# Two calls rather than one: see the design note in shared/llm_client.py.
+# ── L4 — front-door replication screen ───────────────────────────────────────
+# Question 1 only. The target pick that used to sit beside it is now
+# build_target_prompt above, shared with the abstract and full-text stages.
 
 _CLASSIFY_PROMPT = """You are screening papers for a database of replication and reproduction studies.
 
@@ -512,48 +541,11 @@ Respond with the JSON object only.
 """
 
 
-_TARGET_PROMPT = """{policy}This paper has been classified as a replication or reproduction.
-Identify the previously published study whose finding it re-tests.
-
-Pick a numbered reference only when the abstract explicitly connects that study to the
-re-test. Do not pick one merely because it is topically similar. Use high confidence
-only when the abstract's identifying information matches exactly one reference. If it
-matches several references, or the paper re-tests several distinct original studies,
-set target_number to null and describe the target(s) in target_description.
-
-If the abstract identifies the target but no reference matches it safely, copy the
-identifying wording into target_description — the study can still be looked up.
-
-TITLE: {title}
-
-ABSTRACT: {abstract}
-
-REFERENCES:
-{references}
-
-Respond with ONLY this JSON — no prose outside the braces:
-{{"target_number": <number or null>, "confidence": "<high|medium|low>", "target_description": "<authors, year, title or finding as the abstract states it, or empty>", "evidence_quote": "<exact short quote linking the paper to the target, or empty>", "reasoning": "<one sentence>"}}"""
-
-
 def build_classify_prompt(study_r: str, abstract_r: str) -> str:
     # .replace(), not .format(): the v3.2 text carries a literal JSON example.
     return (_CLASSIFY_PROMPT
             .replace("{title}", study_r or "(not available)")
             .replace("{abstract}", (abstract_r or "(not available)")[:4000]))
-
-
-def build_target_prompt(study_r: str, abstract_r: str, refs: list[dict]) -> str:
-    lines = []
-    for i, r in enumerate(refs, 1):
-        authors = r.get("first_author") or ""
-        year    = r.get("publication_year") or r.get("year") or ""
-        lines.append(f"{i}. {authors} ({year}). {r.get('title', '')}".strip())
-    return _TARGET_PROMPT.format(
-        policy=EVIDENCE_POLICY,
-        title=study_r or "(not available)",
-        abstract=(abstract_r or "(not available)")[:4000],
-        references="\n".join(lines) or "(none available)",
-    )
 
 
 # ── L8–L11 — outcome coding ──────────────────────────────────────────────────

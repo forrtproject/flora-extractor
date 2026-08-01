@@ -74,7 +74,7 @@ def _screen(monkeypatch, tmp_path, gemini_ok: bool, voter2_ok: bool,
     vote = vote or _v()
 
     def gemini(prompt, model=None):
-        if target is not None and "REFERENCES" in prompt:
+        if target is not None and "REFERENCE LIST" in prompt:
             return dict(target), None
         return (dict(vote), None) if gemini_ok else (None, "boom")
 
@@ -238,9 +238,11 @@ def test_screen_attributes_a_resolved_link_to_the_target_picker(monkeypatch, tmp
     refs = [{"doi": "10.1/orig", "title": "Original", "publication_year": 2015,
              "first_author": "Smith"}]
     out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=True, refs=refs,
-                  target={"target_number": 1, "confidence": "high",
-                          "target_description": "Smith 2015",
-                          "evidence_quote": "we re-test Smith (2015)",
+                  target={"targets": [{"key": "@smith2015", "match_certain": True,
+                                       "target_as_named": "Smith 2015",
+                                       "study_numbers": "",
+                                       "evidence_quote": "we re-test Smith (2015)"}],
+                          "unidentified_count": 0,
                           "reasoning": "abstract names it"})
 
     assert out["resolution_method"] == "llm_references"
@@ -344,8 +346,7 @@ def test_a_threaded_verdict_is_not_re_voted(monkeypatch, tmp_path):
     refs = [{"doi": "10.1/orig", "title": "Original", "publication_year": 2015,
              "first_author": "Smith"}]
     monkeypatch.setattr(llm, "call_gemini", lambda prompt, model=None: (
-        {"target_number": 1, "confidence": "high", "target_description": "Smith 2015",
-         "evidence_quote": "q", "reasoning": "r"}, None))
+        dict(_TARGET_ANSWER), None))
     out = llm.screen_references_with_llm("10.1/x", "Title", "Abstract", refs,
                                          classification=verdict)
 
@@ -369,9 +370,7 @@ def test_the_target_pick_is_cached_separately(monkeypatch, tmp_path):
 
     def gemini(prompt, model=None):
         n["calls"] += 1
-        return ({"target_number": 1, "confidence": "high",
-                 "target_description": "Smith 2015", "evidence_quote": "q",
-                 "reasoning": "r"}, None)
+        return dict(_TARGET_ANSWER), None
 
     monkeypatch.setattr(llm, "call_gemini", gemini)
     first = llm.screen_references_with_llm("10.1/x", "T", "A", refs, classification=verdict)
@@ -527,9 +526,10 @@ def test_flex_is_off_entirely_when_disabled(monkeypatch):
 # Every LLM cache key must name what the answer depends on. Keying on the DOI
 # alone replayed one question's answer for a different question.
 
-_TARGET_ANSWER = {"target_number": 1, "confidence": "high",
-                  "target_description": "Smith 2015", "evidence_quote": "q",
-                  "reasoning": "r"}
+_TARGET_ANSWER = {"targets": [{"key": "@smith2015", "match_certain": True,
+                               "target_as_named": "Smith 2015", "study_numbers": "",
+                               "evidence_quote": "q"}],
+                  "unidentified_count": 0, "reasoning": "r"}
 
 _VERDICT_YES = {"resolution_method": "llm_refscreen_declined",
                 "screen_verdict": "proceed", "screen_classification": "replication",
@@ -598,12 +598,12 @@ def _identify(monkeypatch, tmp_path, answer, calls):
     monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "")
 
 
-_DECLINE = {"selected_candidate_number": None, "selected_title": "", "selected_year": None,
-            "selected_first_author": "", "confidence": "low", "evidence": "", "reasoning": "none"}
+_DECLINE = {"targets": [], "unidentified_count": 0, "reasoning": "none"}
 
-_PICK = {"selected_candidate_number": 1, "selected_title": "Original", "selected_year": 2015,
-         "selected_first_author": "Smith", "confidence": "high", "evidence": "e",
-         "reasoning": "r"}
+_PICK = {"targets": [{"key": "@smith2015", "match_certain": True,
+                      "target_as_named": "Smith (2015)", "study_numbers": "",
+                      "evidence_quote": "e"}],
+         "unidentified_count": 0, "reasoning": "r"}
 
 _CAND = [{"title": "Original", "year": 2015, "first_author": "Smith", "all_authors": ["Smith"],
           "doi": "10.1/orig", "openalex_id": "W1"}]
@@ -614,8 +614,8 @@ def test_identification_declines_are_cached(monkeypatch, tmp_path):
     call repay its API cost on every re-run."""
     calls: list = []
     _identify(monkeypatch, tmp_path, _DECLINE, calls)
-    first = llm.identify_original_with_llm("10.1/x", "T", "A", "", _CAND, {})
-    second = llm.identify_original_with_llm("10.1/x", "T", "A", "", _CAND, {})
+    first = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+    second = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
 
     assert first["resolution_method"] == "llm_no_target"
     assert second["resolution_method"] == "llm_no_target"
@@ -626,9 +626,9 @@ def test_identification_declines_are_cached(monkeypatch, tmp_path):
 def test_identification_key_follows_the_candidates(monkeypatch, tmp_path):
     calls: list = []
     _identify(monkeypatch, tmp_path, _PICK, calls)
-    llm.identify_original_with_llm("10.1/x", "T", "A", "", _CAND, {})
+    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
     other = [dict(_CAND[0], title="A different candidate", doi="10.1/other")]
-    llm.identify_original_with_llm("10.1/x", "T", "A", "", other, {})
+    llm.identify_targets_with_llm("10.1/x", "T", "A", other, [])
     assert len(calls) == 2
 
 
@@ -637,10 +637,9 @@ def test_identification_key_follows_the_parsed_sections(monkeypatch, tmp_path):
     the same DOI; the old DOI-only key collided them."""
     calls: list = []
     _identify(monkeypatch, tmp_path, _PICK, calls)
-    llm.identify_original_with_llm("10.1/x", "T", "A", "", _CAND, {}, abstract_only=True)
-    llm.identify_original_with_llm("10.1/x", "T", "A", "", _CAND,
-                                   {"intro": "The PDF has since been parsed.",
-                                    "references": []})
+    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [], abstract_only=True)
+    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [],
+                                  intro="The PDF has since been parsed.")
     assert len(calls) == 2
 
 
@@ -650,7 +649,7 @@ def test_identification_api_failure_is_not_cached(monkeypatch, tmp_path):
     monkeypatch.setattr(llm, "call_gemini", lambda *a, **k: (None, "boom"))
     monkeypatch.setattr(llm, "call_openai", lambda *a, **k: (None, "boom"))
     monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "")
-    out = llm.identify_original_with_llm("10.1/x", "T", "A", "", _CAND, {})
+    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
     assert out["resolution_method"] == "llm_failed"
     assert not list(tmp_path.glob("llm_*.json"))
 
@@ -659,9 +658,9 @@ def test_identification_key_follows_the_prompt_version(monkeypatch, tmp_path):
     """The version is folded in on its own account, not only via the rendered text."""
     calls: list = []
     _identify(monkeypatch, tmp_path, _PICK, calls)
-    llm.identify_original_with_llm("10.1/x", "T", "A", "", _CAND, {})
+    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
     monkeypatch.setattr(llm, "prompt_version", lambda name: "ffffffffffff")
-    llm.identify_original_with_llm("10.1/x", "T", "A", "", _CAND, {})
+    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
     assert len(calls) == 2
 
 
@@ -778,9 +777,9 @@ def test_identification_key_follows_the_openai_fallback(monkeypatch, tmp_path):
     """Gemini going down means OpenAI answers — so the key has to name it too."""
     calls: list = []
     _identify(monkeypatch, tmp_path, {"resolved": False, "reasoning": "no"}, calls)
-    llm.identify_original_with_llm("10.1/x", "T", "A", "p", [], {})
+    llm.identify_targets_with_llm("10.1/x", "T", "A", [], [])
     monkeypatch.setattr(llm, "OPENAI_MODEL", "oai-next")
-    llm.identify_original_with_llm("10.1/x", "T", "A", "p", [], {})
+    llm.identify_targets_with_llm("10.1/x", "T", "A", [], [])
     assert len(calls) == 2
 
 
@@ -797,12 +796,146 @@ def test_target_key_follows_the_openai_fallback(monkeypatch, tmp_path):
 
     def gemini(prompt, model=None):
         n["calls"] += 1
-        return ({"target_number": 1, "confidence": "high",
-                 "target_description": "Smith 2015", "evidence_quote": "q",
-                 "reasoning": "r"}, None)
+        return dict(_TARGET_ANSWER), None
 
     monkeypatch.setattr(llm, "call_gemini", gemini)
     llm.screen_references_with_llm("10.1/x", "T", "A", refs, classification=verdict)
     monkeypatch.setattr(llm, "OPENAI_MODEL", "oai-next")
     llm.screen_references_with_llm("10.1/x", "T", "A", refs, classification=verdict)
     assert n["calls"] == 2
+
+
+# ── The merged target prompt: acceptance and validation (§8.2) ───────────────
+# The model names a @key; the DOI comes from the record that key maps to, in this
+# call. Everything it says about the key is checked first — an invented key, a key
+# repeated across two "different" targets and a self-reported certainty are each a
+# way of writing a wrong original.
+
+def _targets(monkeypatch, tmp_path, answer, calls=None):
+    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+
+    def gemini(prompt, model=None):
+        if calls is not None:
+            calls.append(prompt)
+        return dict(answer), None
+
+    monkeypatch.setattr(llm, "call_gemini", gemini)
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "")
+
+
+def _target(**over) -> dict:
+    base = {"key": "@smith2015", "match_certain": True, "target_as_named": "Smith (2015)",
+            "study_numbers": "", "evidence_quote": "q"}
+    base.update(over)
+    return base
+
+
+def test_a_certain_pick_resolves_with_the_mapped_records_doi(monkeypatch, tmp_path):
+    _targets(monkeypatch, tmp_path, {"targets": [_target()], "reasoning": "r"})
+    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [], abstract_only=True)
+
+    assert out["resolved"] is True
+    assert out["resolved_doi_o"] == "10.1/orig"
+    assert out["llm_confidence"] == "high"
+    assert out["resolution_method"] == "llm_cited_candidates_gemini"
+
+
+def test_an_uncertain_pick_does_not_resolve_but_names_its_target(monkeypatch, tmp_path):
+    """match_certain is the acceptance gate; a target seen but not matched still has
+    to reach Stage 4.6, which searches for it by name."""
+    _targets(monkeypatch, tmp_path,
+             {"targets": [_target(key=None, match_certain=False,
+                                  target_as_named="Ramirez (2014)")],
+              "reasoning": "r"})
+    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+
+    assert out["resolved"] is False
+    assert out["target_as_named"] == "Ramirez (2014)"
+    assert out["llm_confidence"] == "low"
+
+
+def test_an_invented_key_is_demoted_not_obeyed(monkeypatch, tmp_path):
+    _targets(monkeypatch, tmp_path, {"targets": [_target(key="@nosuch1999")],
+                                     "reasoning": "r"})
+    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+
+    assert out["resolved"] is False
+    assert out["targets"][0]["key"] is None
+    assert out["targets"][0]["match_certain"] is False
+    assert "invented key" in out["llm_reasoning"]
+
+
+def test_a_repeated_key_keeps_only_the_first_entry(monkeypatch, tmp_path):
+    _targets(monkeypatch, tmp_path,
+             {"targets": [_target(), _target(target_as_named="again")],
+              "reasoning": "r"})
+    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+
+    assert len(out["targets"]) == 1
+    assert out["multi_target"] is False
+    assert "duplicate key" in out["llm_reasoning"]
+
+
+def test_two_targets_are_flagged_and_no_single_link_is_written(monkeypatch, tmp_path):
+    cands = _CAND + [{"title": "Another original", "year": 2011, "first_author": "Jones",
+                      "all_authors": ["Jones"], "doi": "10.1/second", "openalex_id": "W2"}]
+    _targets(monkeypatch, tmp_path,
+             {"targets": [_target(), _target(key="@jones2011")], "reasoning": "r"})
+    out = llm.identify_targets_with_llm("10.1/x", "T", "A", cands, [])
+
+    assert out["multi_target"] is True
+    assert out["resolved"] is False
+    assert out["resolution_method"] == "llm_multi_target"
+
+
+def test_a_stated_count_that_does_not_reconcile_is_recorded(monkeypatch, tmp_path):
+    _targets(monkeypatch, tmp_path,
+             {"targets": [_target()], "stated_count": 28, "stated_count_unit": "studies",
+              "unidentified_count": 5, "reasoning": "r"})
+    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+
+    assert "stated_count=28 studies" in out["llm_evidence"]
+    assert "unidentified=5" in out["llm_evidence"]
+    assert out["unidentified_count"] == 5
+
+
+def test_a_nonsense_unidentified_count_becomes_zero(monkeypatch, tmp_path):
+    _targets(monkeypatch, tmp_path,
+             {"targets": [], "unidentified_count": "several", "reasoning": "r"})
+    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+
+    assert out["unidentified_count"] == 0
+    assert "unidentified_count not a number" in out["llm_reasoning"]
+
+
+def test_the_two_stages_cache_separately(monkeypatch, tmp_path):
+    """Same DOI, same rendered prompt, two stages: the reference screen's answer must
+    not be replayed as the abstract stage's, or vice versa."""
+    calls: list = []
+    _targets(monkeypatch, tmp_path, {"targets": [_target()], "reasoning": "r"}, calls)
+    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [], abstract_only=True)
+    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [], cache_prefix="reftarget")
+    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [], abstract_only=False)
+
+    assert len(calls) == 3
+    assert len(list(tmp_path.glob("llm_*.json"))) == 2
+    assert len(list(tmp_path.glob("reftarget_*.json"))) == 1
+
+
+def test_the_key_follows_a_records_identity_not_just_its_rendered_line(monkeypatch, tmp_path):
+    """The prompt shows a key, authors, a year and a title — never the DOI. But the
+    link is built from the record the key maps to, so two lists that render
+    identically while mapping the same key to a different DOI are different
+    questions, and replaying the first answer writes the stale original."""
+    calls: list = []
+    _targets(monkeypatch, tmp_path, {"targets": [_target()], "reasoning": "r"}, calls)
+    moved = [dict(_CAND[0], doi="10.1/corrected", openalex_id="W99")]
+
+    first  = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+    second = llm.identify_targets_with_llm("10.1/x", "T", "A", moved, [])
+
+    assert calls[0] == calls[1]                      # the rendered prompt is identical
+    assert len(calls) == 2                           # …and yet it was asked again
+    assert first["resolved_doi_o"]  == "10.1/orig"
+    assert second["resolved_doi_o"] == "10.1/corrected"
