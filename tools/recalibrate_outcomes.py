@@ -23,7 +23,7 @@ from extract.code_outcome import extract_outcome
 from shared.config import DATA_DIR, LLM_CACHE_DIR, OA_XML_CACHE_DIR, PARSE_CACHE_DIR, PDF_CACHE_DIR, log
 from shared.dashboard_cache import refresh as _dashboard_refresh
 from shared.pdf_parsing import best_parse_result, parse_all as _parse_all
-from shared.token_budget import TokenBudgetExhausted
+from shared.token_usage import TokenBudgetExhausted
 from shared.cache import clear_content_keys
 from shared.utils import cache_key, clean_doi
 

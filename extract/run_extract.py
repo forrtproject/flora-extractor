@@ -25,7 +25,7 @@ from shared.config import (
 )
 from shared import token_counter
 from shared.llm_client import call_llm, classify_replication, ladder_fingerprint
-from shared.token_budget import TokenBudgetExhausted
+from shared.token_usage import TokenBudgetExhausted
 from shared.openalex_client import OpenAlexQuotaExhausted, extract_author_year_patterns, find_all_candidates
 from shared.openalex_client import fetch_openalex_by_doi as _oa_by_doi
 from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta

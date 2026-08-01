@@ -153,13 +153,14 @@ GEMINI_PAID_KEYS: set[int] = {
 OUTCOME_FULLTEXT_ESCALATION = os.getenv(
     "OUTCOME_FULLTEXT_ESCALATION", "true").strip().lower() not in {"false", "0", "no"}
 
-# ── Daily LLM token budget ────────────────────────────────────────────────────
-# A hard ceiling on tokens bought per calendar day, across every provider. The
-# running total is persisted (see shared/token_budget.py), so it survives a restart
-# and is shared by concurrent runs; a call that would be made past the ceiling is
-# refused rather than billed. Set DAILY_TOKEN_BUDGET=0 to lift the cap — that is the
-# explicit override, and nothing else disables it.
-DAILY_TOKEN_BUDGET = int(os.getenv("DAILY_TOKEN_BUDGET", "8000000"))
+# ── Daily OpenAI token budget ─────────────────────────────────────────────────
+# A hard ceiling on OpenAI tokens (prompt + completion) bought per calendar day —
+# the metered spend in this pipeline. The running total is persisted (see
+# shared/token_usage.py), so it survives a restart and is shared by concurrent runs;
+# a call that would be made past the ceiling is refused rather than billed. Gemini
+# and OpenRouter usage is recorded but never capped. Set OPENAI_DAILY_TOKEN_BUDGET=0
+# to lift the cap — that is the explicit override, and nothing else disables it.
+OPENAI_DAILY_TOKEN_BUDGET = int(os.getenv("OPENAI_DAILY_TOKEN_BUDGET", "8000000"))
 
 # ── Rate limits (seconds between calls) ──────────────────────────────────────
 OPENALEX_RATE_SEC  = float(os.getenv("OPENALEX_RATE_SEC", "0.3"))

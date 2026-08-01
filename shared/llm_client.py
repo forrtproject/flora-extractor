@@ -27,7 +27,7 @@ from .config import (
     SCREEN_VOTER2_MODEL,
     log,
 )
-from . import token_budget, token_counter
+from . import token_counter, token_usage
 from .cache import content_key, read_cache, write_cache
 from .prompts import (
     JSON_SYSTEM_MESSAGE,
@@ -54,15 +54,30 @@ JSON_MAX_OUTPUT_TOKENS = 4096
 
 # ── Token accounting ──────────────────────────────────────────────────────────
 # Every provider call reports what it cost in its usage field. That number goes to
-# two places: the in-process token_counter, which attributes it to a pipeline stage
-# for the end-of-run summary, and token_budget, which holds the hard daily ceiling
-# across runs and providers. Each call_* function checks the budget before it spends.
+# two places: token_counter, which attributes it to a pipeline stage for the
+# end-of-run summary, and token_usage, which persists it per day, provider and model
+# with input and output kept apart. Only call_openai also checks a ceiling — see
+# OPENAI_DAILY_TOKEN_BUDGET; the other providers are recorded, not capped.
 
 
-def _record_tokens(provider: str, n_tokens: int) -> None:
-    """Charge a completed call's tokens to the run's stage total and the day's budget."""
-    token_counter.record(provider, n_tokens)
-    token_budget.record(n_tokens)
+def _record_tokens(provider: str, model: str, n_in: int, n_out: int) -> None:
+    """Charge a completed call to the run's stage total and the day's usage record."""
+    token_counter.record(provider, n_in + n_out)
+    token_usage.record(provider, model, n_in, n_out)
+
+
+def _gemini_usage(body: dict) -> tuple[int, int]:
+    """(input, output) tokens from a Gemini response body.
+
+    Output is the total minus the prompt rather than candidatesTokenCount: thinking
+    tokens are billed as output and are only in the total. A response without
+    usageMetadata yields (0, 0), which records nothing.
+    """
+    u     = body.get("usageMetadata") or {}
+    n_in  = int(u.get("promptTokenCount", 0) or 0)
+    total = int(u.get("totalTokenCount", 0) or 0)
+    n_out = (total - n_in) if total else int(u.get("candidatesTokenCount", 0) or 0)
+    return n_in, max(n_out, 0)
 
 
 # ── Per-provider rate limiting ────────────────────────────────────────────────
@@ -176,8 +191,6 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
         log.warning("No GEMINI_API_KEY set — skipping Gemini")
         return None, "no API keys configured"
 
-    token_budget.check()
-
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -258,8 +271,7 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
                 text   = body["candidates"][0]["content"]["parts"][0]["text"]
                 result = _parse_llm_json(text)
                 if result is not None:
-                    n_tok = int((body.get("usageMetadata") or {}).get("totalTokenCount", 0))
-                    _record_tokens("gemini", n_tok)
+                    _record_tokens("gemini", model, *_gemini_usage(body))
                     if key_idx > 0:
                         log.info("Gemini succeeded on %s", key_label)
                     return result, ""
@@ -297,7 +309,7 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL,
         log.warning("OPENAI_API_KEY not set — skipping OpenAI")
         return None, "OPENAI_API_KEY not configured"
 
-    token_budget.check()
+    token_usage.check_openai_budget()
 
     import openai
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
@@ -321,9 +333,11 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL,
                 **extra,
             )
             if response.usage:
-                _record_tokens("openai", response.usage.total_tokens)
+                _record_tokens("openai", model,
+                               response.usage.prompt_tokens,
+                               response.usage.completion_tokens)
                 log.debug("OpenAI usage: +%d tokens (day total: %d)",
-                          response.usage.total_tokens, token_budget.spent_today())
+                          response.usage.total_tokens, token_usage.spent("openai"))
             if response.choices[0].finish_reason == "length":
                 log.warning("OpenAI response hit the %d-token cap and was cut off — "
                             "the truncated JSON will fail to parse (model=%s)",
@@ -353,8 +367,6 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
     if not OPENROUTER_API_KEY:
         return None, "OPENROUTER_API_KEY not configured"
 
-    token_budget.check()
-
     import openai
     client = openai.OpenAI(
         api_key=OPENROUTER_API_KEY,
@@ -380,7 +392,9 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
             return None, "response truncated at max_tokens"
         result = _parse_llm_json(response.choices[0].message.content)
         if result and response.usage:
-            _record_tokens("openrouter", response.usage.total_tokens)
+            _record_tokens("openrouter", use_model,
+                           response.usage.prompt_tokens,
+                           response.usage.completion_tokens)
         return result, ("" if result else "response was not valid JSON")
     except Exception as e:
         log.warning("OpenRouter call failed (model=%s): %s", use_model, e)
@@ -611,8 +625,6 @@ def call_gemini_with_images(prompt: str,
     if not GEMINI_API_KEYS:
         return None
 
-    token_budget.check()
-
     parts: list[dict] = [{"text": prompt}]
     for img in image_b64_list:
         parts.append({"inline_data": {"mime_type": img["mime_type"], "data": img["data"]}})
@@ -639,8 +651,7 @@ def call_gemini_with_images(prompt: str,
             body = r.json()
             if not body.get("candidates"):
                 return None
-            _record_tokens("gemini",
-                           int((body.get("usageMetadata") or {}).get("totalTokenCount", 0)))
+            _record_tokens("gemini", model, *_gemini_usage(body))
             text = body["candidates"][0]["content"]["parts"][0]["text"]
             return _parse_llm_json(text)
         except Exception as e:
@@ -665,8 +676,6 @@ def call_gemini_with_pdf(prompt: str,
     """
     if not GEMINI_API_KEYS:
         return None
-
-    token_budget.check()
 
     pdf_b64 = base64.b64encode(pdf_bytes).decode()
 
@@ -705,8 +714,7 @@ def call_gemini_with_pdf(prompt: str,
                 body = r.json()
                 if not body.get("candidates"):
                     return None
-                _record_tokens("gemini",
-                               int((body.get("usageMetadata") or {}).get("totalTokenCount", 0)))
+                _record_tokens("gemini", model, *_gemini_usage(body))
                 text = body["candidates"][0]["content"]["parts"][0]["text"]
                 return _parse_llm_json(text)
             except Exception as e:

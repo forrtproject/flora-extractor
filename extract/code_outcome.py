@@ -40,7 +40,7 @@ from shared.prompts import (
     build_repro_abstract_prompt, build_repro_fulltext_prompt, prompt_versions,
 )
 from shared.schema import OUTCOME_CATEGORIES, outcome_categories_for
-from shared.token_budget import TokenBudgetExhausted
+from shared.token_usage import TokenBudgetExhausted
 
 # Truncation caps (chars) for the abstract-based and fulltext-escalation prompts.
 _ABSTRACT_CAP = 3000

@@ -32,7 +32,7 @@ from extract.run_extract import (
     _rule_classify_multi_original,
     _score_to_confidence,
 )
-from shared.token_budget import TokenBudgetExhausted
+from shared.token_usage import TokenBudgetExhausted
 
 
 # ── Sentence expansion unit tests ────────────────────────────────────────────

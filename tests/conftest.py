@@ -1,20 +1,21 @@
 import pytest
 
 import shared.llm_client as _llm_client
-from shared import token_budget as _token_budget
+from shared import token_usage as _token_usage
 from validate.app import create_app
 
 
 @pytest.fixture(autouse=True)
-def _token_budget_state_in_tmp(tmp_path_factory, monkeypatch):
-    """Keep mocked provider calls out of the real daily token budget.
+def _token_usage_state_in_tmp(tmp_path_factory, monkeypatch):
+    """Keep mocked provider calls out of the real usage record.
 
-    The budget file is shared by every run on the machine, so a suite that spent
-    into it would eat the day's real ceiling a few tokens at a time.
+    That file is shared by every run on the machine, so a suite that wrote into it
+    would both corrupt the usage history and eat the day's real OpenAI ceiling a few
+    tokens at a time.
     """
     monkeypatch.setattr(
-        _token_budget, "BUDGET_STATE_PATH",
-        tmp_path_factory.mktemp("token_budget") / "token_budget.json")
+        _token_usage, "USAGE_STATE_PATH",
+        tmp_path_factory.mktemp("token_usage") / "token_usage.json")
 
 
 @pytest.fixture(autouse=True)

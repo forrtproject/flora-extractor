@@ -45,7 +45,7 @@ from shared.grobid import run_grobid
 from shared.llm_client import identify_all_originals_with_llm
 from shared.openalex_client import find_all_candidates
 from shared.pdf_sources import acquire_pdf
-from shared.token_budget import TokenBudgetExhausted
+from shared.token_usage import TokenBudgetExhausted
 from shared.utils import cache_key, clean_doi
 
 # Columns to pull from all_replications.csv
