@@ -1523,9 +1523,6 @@ def _iter_filtered_rows(filtered_path,
             log.info("%s applied during chunked read", line)
 
     for with_abstract in (True, False):
-        if not with_abstract:
-            log.info("Deferring candidates without abstracts — processing will "
-                     "continue but at lower priority")
         n_read = n_yielded = 0
         for chunk in pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig",
                                  chunksize=_CHUNK_ROWS):
@@ -1536,6 +1533,9 @@ def _iter_filtered_rows(filtered_path,
                 continue
             has_abstract = chunk["abstract_r"].astype(str).str.strip() != ""
             chunk = chunk[has_abstract] if with_abstract else chunk[~has_abstract]
+            if not with_abstract and n_yielded == 0 and not chunk.empty:
+                log.info("Deferring candidates without abstracts — processing will "
+                         "continue but at lower priority")
             n_yielded += len(chunk)
             for _, row in chunk.iterrows():
                 yield row
