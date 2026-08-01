@@ -49,6 +49,8 @@ run_extract.py
             │
             └── else (single_original / multiple_match) — _resolve_and_code():
                     run_for_doi(doi_r, classification=screen)   ← the ladder, below
+                    if the target prompt saw ≥ 2 originals → reroute to the multi
+                        pipeline (force_multi); target_pending if it finds none
                     _merge_row()  → build the output row
                     _guard_original_link()  → reject self-links, recover a missing doi_o
                     --resolved-only         → drop the row here if it has no link
@@ -145,15 +147,37 @@ or abstract contains a parseable `(Author, Year)` citation. Many abstracts — c
 and life-sciences ones especially — carry none, so for those papers the ladder starts
 at 4.5.
 
-**Rung 4.5** (`screen_references_with_llm`) shows the model the abstract plus the
-paper's reference list and asks which numbered reference is the target. A reference is
-accepted **only at `confidence == "high"`**; at medium or low the row escalates, because
-a wrong original is worse than a slow one, and the prompt says explicitly that most
-abstracts do not name their target and that declining is the expected answer. The pick
-is cached separately from the classification (`cache/llm/reftarget_{key}.json`) — the
-two halves are decided at different points in the pipeline, and the rendered reference
-list is in the key, so a re-fetched list cannot replay a pick that pointed at a
-different paper.
+**Rungs 4, 4.5 and 7 are one prompt.** `build_target_prompt()` asks the same question
+at all three — which previously published study or studies does this paper re-test —
+and only the evidence blocks differ: the abstract stage sends the abstract and the
+candidates, 4.5 adds the reference list, the full-text stage adds the PDF abstract's
+tail, the introduction and the methods. The three prompts it replaces asked three
+different questions ("pick a candidate number", "pick a reference number", "how many
+originals?"), so one rung could resolve a single original for a paper another had just
+read as targeting twenty-eight.
+
+Candidates and references are shown as ONE deduplicated `@smith2009` namespace
+(`assign_target_keys()` in `shared/target_keys.py`): a work in both lists is offered
+once, and a returned key is only ever resolved against the key_map from the same call.
+`identify_targets_with_llm()` (`shared/llm_client.py`) makes the call and trusts
+nothing the model says about a key — an invented key is demoted to an unmatched target,
+a repeated key keeps its first entry, and `doi_o` comes from the mapped record rather
+than from the model. `stated_count` / `unidentified_count` are reported so a shortfall
+against a paper's own claimed count lands in `link_evidence` instead of vanishing.
+
+A target is accepted **only when the model marks it `match_certain`**; otherwise the
+row escalates, because a wrong original is worse than a slow one, and the prompt says
+explicitly that most abstracts do not name their target and that declining is the
+expected answer. When the call returns two or more targets, no single link is written:
+`_resolve_and_code()` reroutes the row through the multi-original pipeline, and writes
+`target_pending` only if that pass also finds nothing.
+
+The 4.5 pick is cached separately from the classification
+(`cache/llm/reftarget_{key}.json`) — the two halves are decided at different points in
+the pipeline. Each record's DOI/OpenAlex id is folded into the cache key on its own
+account, because the prompt never shows the DOI: two lists that render identically can
+still map the same key to a different record, and replaying the first answer would
+write the stale original.
 
 **Rungs 4.6 and 5** can both resolve a DOI by searching CrossRef/OpenAlex for a title
 the model named, and both record `llm_title_search`. This is the one link method whose
@@ -323,9 +347,10 @@ python -m extract.promote_test --all --dry-run # preview
 | `_outcome_without_coding()` | `extract/run_extract.py` | The outcome gate |
 | `_guard_original_link()` | `extract/run_extract.py` | Self-link rejection and `doi_o` recovery |
 | `classify_replication()` | `shared/llm_client.py` | Two-model front-door vote |
-| `screen_references_with_llm()` | `shared/llm_client.py` | Reference-list target pick |
+| `screen_references_with_llm()` | `shared/llm_client.py` | Rung 4.5: threads the verdict in, delegates the pick |
 | `run_for_doi()` | `extract/link_original.py` | The resolution ladder |
-| `identify_original_with_llm()` | `shared/llm_client.py` | Abstract-level and full-text identification |
+| `identify_targets_with_llm()` | `shared/llm_client.py` | The merged target prompt: rungs 4, 4.5 and 7 |
+| `assign_target_keys()` | `shared/target_keys.py` | One `@key` namespace over candidates + references |
 | `run_multi_original_for_doi()` | `extract/multi_original.py` | Multi-original pipeline |
 | `extract_outcome()` | `extract/code_outcome.py` | Outcome coding |
 | `find_all_candidates()` | `shared/openalex_client.py` | Candidate search |
