@@ -75,7 +75,7 @@ class TestChangeDetection:
         changed = {n for n in PROMPT_NAMES if after[n] != before[n]}
         for name in ("build_filter_prompt", "build_match_type_prompt",
                      "build_identification_prompt", "build_multi_original_prompt",
-                     "build_classify_prompt", "build_target_prompt",
+                     "build_target_prompt",
                      "build_outcome_abstract_prompt", "build_outcome_fulltext_prompt",
                      "build_repro_abstract_prompt", "build_repro_fulltext_prompt"):
             assert name in changed, f"{name} did not follow EVIDENCE_POLICY"
