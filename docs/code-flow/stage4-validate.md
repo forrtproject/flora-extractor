@@ -10,8 +10,8 @@ The web app is a **read-only monitoring dashboard**. It does not write to any pi
 validate/app.py
     │
     ├── create_app()
-    │       register the 5 blueprints below (dashboard, check, batch,
-    │           multi_originals, disambiguation) — nothing else
+    │       register the 4 blueprints below (dashboard, check, batch,
+    │           disambiguation) — nothing else
     │       /set-name: session-based reviewer name
     │       /pdf: serve PDFs from cache/
     │
@@ -28,9 +28,6 @@ validate/app.py
     │
     ├── Blueprint: batch_bp (routes/batch.py)
     │       GET /batch                          → batch disambiguation for multiple-match papers
-    │
-    ├── Blueprint: multi_orig_bp (routes/multi_originals.py)
-    │       GET /multi-originals                → multi-original paper review
     │
     └── Blueprint: disambiguation_bp (routes/disambiguation.py)
             manual disambiguation UI

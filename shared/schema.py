@@ -35,10 +35,15 @@ FILTERED_COLS = CANDIDATES_COLS + FILTER_ADDED_COLS
 # ── Stage 3 output: extracted.csv ────────────────────────────────────────────
 # All FILTERED_COLS + the following:
 EXTRACT_ADDED_COLS = [
-    # Original-match type — determined by Stage 3 as its first routing step
-    "original_match_type",       # str   — single_original | multiple_match | multiple_original
-    "original_match_confidence", # str   — high | medium | low
-    "classify_llm_model",  # str   — exact model that classified original_match_type (blank when a rule fired or the LLM failed)
+    # Original-match type — OBSERVED, not routed. Nothing predicts how many originals
+    # a paper targets any more: the target prompt answers it, and these three columns
+    # record what came back. multiple_original means the per-target adapter wrote more
+    # than one row for the paper, single_original that it wrote one; the confidence is
+    # high when the ladder settled on an original and low when the row carries none.
+    # multiple_match survives as a legacy value in stored data and is never written.
+    "original_match_type",       # str   — single_original | multiple_original (legacy: multiple_match)
+    "original_match_confidence", # str   — high | low  (legacy: medium)
+    "classify_llm_model",  # str   — legacy; always blank now that no classifier routes the row
 
     # OpenAlex work IDs — bare form (e.g. W2884670852), not the https://openalex.org/ URL.
     # openalex_id_r above carries the URL form inherited from Stage 1; these two are the
@@ -46,6 +51,14 @@ EXTRACT_ADDED_COLS = [
     # here because it needs doi_o, which does not exist before Stage 3.
     "oa_work_id_r",        # str   — OpenAlex work ID of the replication paper
     "oa_work_id_o",        # str   — OpenAlex work ID of the original study
+
+    # Replication-side study identifier. FLoRA's `study_r`: WHICH study inside the
+    # REPLICATION paper re-tests this original ("1, 2" when several do). Blank when
+    # the paper reports a single study or does not say. It is the counterpart of
+    # study_o, and it is what makes a multi-original paper readable: without it a
+    # reader cannot tell which of the replication's studies each row is about.
+    # Filled from the target prompt's replication_study_numbers on both link paths.
+    "study_r",             # str   — replicating study number(s) within this paper
 
     # Original study
     "doi_o",               # str   — original study DOI
@@ -56,10 +69,10 @@ EXTRACT_ADDED_COLS = [
     # replication does not say. It is what makes FLoRA's coding level representable —
     # one row per pair of REFERENCES, so several studies within one original paper
     # stay one row, while several original PAPERS are several rows. Both link paths
-    # fill it from the LLM's study_numbers — the multi path additionally groups on it,
-    # see _collapse_same_paper_originals() in extract/run_extract.py.
-    # NOT the same field as the validation DB's `study_o`, which holds a title —
-    # see extract/csv_to_db.py.
+    # fill it from the LLM's study_numbers — the per-target adapter additionally
+    # groups on it, see _collapse_same_paper_originals() in extract/run_extract.py.
+    # The validation DB's `study_o` used to hold a title; csv_to_db now sends this
+    # number there and the titles to title_o — see extract/csv_to_db.py.
     "study_o",             # str   — target study number(s) within the original paper
     "year_o",              # int   — original study publication year
     "authors_o",           # str   — original study authors, semicolon-separated APA names (e.g. "Bransford, J. D.; Franks, J. J.")

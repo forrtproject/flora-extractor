@@ -52,60 +52,6 @@ EVIDENCE_POLICY = (
     "the specified uncertainty value rather than inferring or guessing.\n\n"
 )
 
-# Every prompt closes with this exact sentence, and every prompt that asks for a
-# confidence uses the key `confidence` with the values below. Before this, five
-# prompts phrased the instruction five ways and named the field five ways
-# (original_match_confidence, target_confidence, outcome_confidence and others)
-# for no reason a reader could reconstruct. The front-door screen is the exception:
-# it takes a boolean `confident`, the field the v3.2 evaluation validated.
-JSON_INSTRUCTION = "Respond with ONLY this JSON — no prose outside the braces:\n"
-CONFIDENCE_FIELD = '"confidence": "<high|medium|low>", '
-
-
-# ── L2 — Stage 3 match-type classification ───────────────────────────────────
-
-def build_match_type_prompt(title_r: str,
-                             abstract_r: str,
-                             distinct_pairs: set,
-                             candidates: list) -> str:
-    abstract_snip = (abstract_r[:800] + "…") if len(abstract_r) > 800 else abstract_r
-    pattern_lines = "\n".join(
-        f"- {s} ({y})" for s, y in sorted(distinct_pairs)
-    ) or "(none found)"
-    cand_lines = "\n".join(
-        f"{i+1}. \"{c.get('title','?')}\" ({c.get('year','?')}) — {c.get('first_author','?')}"
-        for i, c in enumerate(candidates[:15])
-    ) or "(none found)"
-
-    return (
-        EVIDENCE_POLICY +
-        "Classify how many original studies this replication paper targets.\n\n"
-        f"TITLE: {title_r}\n"
-        f"ABSTRACT: {abstract_snip or '(not available)'}\n\n"
-        f"CITED AUTHOR-YEAR PATTERNS IN TITLE/ABSTRACT ({len(distinct_pairs)} distinct):\n"
-        f"{pattern_lines}\n\n"
-        f"CANDIDATE ORIGINALS FROM OPENALEX ({len(candidates)} found):\n"
-        f"{cand_lines}\n\n"
-        "Classify as ONE of:\n"
-        "- single_original: paper targets one specific original study\n"
-        "- multiple_match: 2–5 candidates share the SAME author/year; paper targets ONE"
-        " original but disambiguation is needed (e.g. two papers by Smith 2005)\n"
-        "- multiple_original: paper explicitly replicates SEVERAL INDEPENDENT original"
-        " studies\n\n"
-        "Key rules:\n"
-        "1. Merely citing many background studies is NOT multiple_original.\n"
-        "2. A large candidate list from OpenAlex does NOT mean multiple_original —"
-        " it may just reflect many citations.\n"
-        "3. STRONG signals for multiple_original: explicit count in abstract"
-        " (e.g. 'replications of 28 studies'), project names like Many Labs.\n"
-        "4. multiple_match applies when ONE study is targeted but there are 2–5 candidates"
-        " with the identical author/year — not when there are many different author/year pairs.\n\n"
-        + JSON_INSTRUCTION +
-        '{"original_match_type": "<single_original|multiple_match|multiple_original>", '
-        + CONFIDENCE_FIELD + '"reasoning": "<brief>"}'
-    )
-
-
 # ── L3 / L5 / L6 — target identification (abstract, reference-list and fulltext) ─
 # ONE prompt serves all three LLM stages of the resolution ladder. The three it
 # replaces asked three different questions of the same paper — "pick a candidate
@@ -143,6 +89,10 @@ How to count:
   paper are ONE entry: put their numbers as the replication refers to them
   ("Study 2", "Experiment 3") in study_numbers, comma-separated. Independent original
   papers are separate entries.
+- If the replicating paper itself reports several studies, say which of ITS studies
+  re-tests this original in replication_study_numbers ("Study 1", "Experiment 2" →
+  "1, 2"), comma-separated. Leave it empty when the paper reports a single study or
+  does not say.
 - Count the ORIGINALS, not the replicating teams or sites. Many laboratories
   re-running one original protocol is ONE target. Many analysts re-analysing one
   dataset is ONE target. A project re-testing N different published findings from
@@ -184,14 +134,14 @@ them), "stated_count" (number or null), "stated_count_unit" (string or null),
 sentence in your own words on why these targets and not other cited works).
 
 Each target object has: "key", "match_certain", "target_as_named", "study_numbers",
-"evidence_quote".
+"replication_study_numbers", "evidence_quote".
 
 A matched target looks like this:
-{"key": "@smith2009", "match_certain": true, "target_as_named": "Smith & Jones (2009), Study 2", "study_numbers": "2", "evidence_quote": "we conducted a direct replication of Smith and Jones (2009, Study 2)"}
+{"key": "@smith2009", "match_certain": true, "target_as_named": "Smith & Jones (2009), Study 2", "study_numbers": "2", "replication_study_numbers": "1", "evidence_quote": "we conducted a direct replication of Smith and Jones (2009, Study 2)"}
 
 A target you can see but cannot match to a listed record looks like this — note that
 key is the JSON value null, not the text "null":
-{"key": null, "match_certain": false, "target_as_named": "Ramirez (2014), the delay-discounting result", "study_numbers": "", "evidence_quote": "we re-analysed the delay-discounting data reported by Ramirez (2014)"}"""
+{"key": null, "match_certain": false, "target_as_named": "Ramirez (2014), the delay-discounting result", "study_numbers": "", "replication_study_numbers": "", "evidence_quote": "we re-analysed the delay-discounting data reported by Ramirez (2014)"}"""
 
 _WS_RE = re.compile(r"\s+")
 
@@ -291,163 +241,6 @@ def build_target_prompt(study_r:        str,
 
     return (EVIDENCE_POLICY + _TARGET_PROMPT + "\n\nPAPER\n\n"
             + "\n\n".join(blocks) + "\n\nRespond with the JSON object only.")
-
-
-# ── L7 — multi-original identification ───────────────────────────────────────
-
-# Dedented once, at import — dedent applied AFTER interpolation is defeated by any
-# multi-line value (candidate list, reference list, section snippets), which would
-# leave every line of this prompt indented by four spaces.
-_MULTI_TEMPLATE = textwrap.dedent("""
-    {policy}Identify ALL original studies that are replicated or reproduced
-    in this scientific paper.
-
-    This paper has been classified as potentially targeting MULTIPLE original studies.
-    Your task: determine if this classification is correct (true multi-target) or a
-    false positive (only 1 original), and list ALL originals found.
-    {force_multi_directive}
-
-    ## Replication paper
-    **Title:** {study_r}
-
-    **Abstract:**
-    {abstract_snip}
-
-    ---
-
-    ## Pre-identified candidate original studies (from OpenAlex)
-    {cand_text}
-
-    ---
-
-    ## Full-text excerpts
-
-    **Abstract (from PDF):**
-    {pdf_abstract}
-
-    **Introduction:**
-    {intro_block}
-
-    **Methods:**
-    {methods_block}
-
-    **Reference list (up to 100 entries):**
-    {ref_text}
-    ---
-
-    ## Task
-
-    Identify ALL distinct original studies that this paper directly replicates or reproduces,
-    and for each one determine the replication outcome.
-
-    Rules:
-    - A study is being replicated if the paper explicitly runs the same procedure again
-    - Do NOT include studies that are merely cited for context or background
-    - If you find only 1 original, set is_false_positive to true and still list that one original
-    - If the paper does not replicate or reproduce ANY specific prior study, set
-      is_false_positive to true and return an empty originals list
-    - When an original matches an entry in the candidate list above, put its number in
-      candidate_number; otherwise set candidate_number to null
-    - List one entry per targeted study, INCLUDING when several targeted studies come
-      from the same original paper. For each entry set study_number to the study's
-      number within that paper as the replication refers to it ("Study 2",
-      "Experiment 3" → "2", "3"), or leave it empty when the original reports a single
-      study or the replication does not say which one. Entries that share a paper will
-      be combined into one database row afterwards, so do not merge them here.
-    - For outcome: look for the result for THAT SPECIFIC study (e.g. in a results table or
-      per-study section), NOT the overall aggregate across all studies
-    - outcome values: success (effect confirmed), failure (effect not found), mixed
-      (partial), descriptive (methods reused in a new context without testing the
-      original claim), statistically_successful_but_flawed (effect obtained, but the
-      paper's main message is that the method does not validly test the claim),
-      uninformative (the authors themselves say their attempt cannot speak to the
-      original, e.g. underpowered), cannot_be_determined (the text does not state an
-      outcome)
-
-    Respond with ONLY this JSON — no prose outside the braces:
-    {{
-      "is_false_positive": <true if only 1 original found>,
-      "reasoning": "<brief explanation of why this is/is not multi-target>",
-      "originals": [
-        {{
-          "rank": 1,
-          "candidate_number": <integer from candidate list or null>,
-          "title": "<full title of the original study>",
-          "first_author_surname": "<surname of first author>",
-          "year": <4-digit year or null>,
-          "study_number": "<study number within that paper, e.g. 2, or empty>",
-          "evidence": "<1-2 sentence quote from the paper showing this study is replicated>",
-          "confidence": "<high|medium|low>",
-          "outcome": "<{outcome_enum}>",
-          "outcome_evidence": "<1-2 sentence quote showing the outcome for THIS specific study, or empty if not found>"
-        }}
-      ]
-    }}
-    """)
-
-
-def build_multi_original_prompt(study_r:     str,
-                                  abstract_r:  str,
-                                  candidates:  list[dict],
-                                  sections:    dict,
-                                  html_text:   str = "",
-                                  force_multi: bool = False) -> str:
-    """
-    Build the LLM prompt for identifying ALL original studies in a multi-target
-    replication paper.
-    """
-    if candidates:
-        def _authors_str_m(c: dict) -> str:
-            authors = c.get("all_authors") or ([c["first_author"]] if c.get("first_author") else [])
-            return ", ".join(authors) if authors else "unknown"
-
-        cand_lines = [
-            f"{i}. \"{c['title']}\" ({c['year']}, authors: {_authors_str_m(c)})\n"
-            f"   DOI: {c['doi'] or 'unknown'}  |  OpenAlex: {c['openalex_id']}"
-            for i, c in enumerate(candidates, 1)
-        ]
-        cand_text = "\n".join(cand_lines)
-    else:
-        cand_text = "(No candidates pre-identified — use reference list and full text below.)"
-
-    ref_lines = []
-    for ref in sections.get("references", [])[:100]:
-        authors = "; ".join(ref["authors"][:3])
-        if len(ref["authors"]) > 3:
-            authors += " et al."
-        ref_lines.append(f"- {authors} ({ref['year'] or '?'}). {ref['title']}")
-    ref_text = "\n".join(ref_lines) if ref_lines else "(no references extracted)"
-
-    abstract_snip = (abstract_r[:2000] + "…") if len(abstract_r) > 2000 else abstract_r
-    intro_snip    = (sections.get("intro",   "") or "")[:1200]
-    methods_snip  = (sections.get("methods", "") or "")[:800]
-    html_snip     = ""
-    if html_text and not intro_snip:
-        html_snip = (html_text[:2000] + "…") if len(html_text) > 2000 else html_text
-
-    force_multi_directive = ""
-    if force_multi:
-        force_multi_directive = textwrap.dedent("""
-    ⚠ LIKELY MULTI-TARGET: Automated rules matched this paper to a multi-target
-    replication pattern (e.g. Many Labs, "replications of N studies"). List EVERY
-    distinct original study the paper itself replicates — if the abstract says
-    "replications of N studies", aim to find all N. Do NOT invent targets to reach a
-    count: some matched papers replicate only ONE original study (e.g. a many-analysts
-    paper, where many teams analyse one dataset) — in that case list just that one.
-    """).strip()
-
-    return _MULTI_TEMPLATE.format(
-        policy=EVIDENCE_POLICY,
-        outcome_enum=OUTCOME_ENUM,
-        force_multi_directive=force_multi_directive,
-        study_r=study_r,
-        abstract_snip=abstract_snip or "(not available)",
-        cand_text=cand_text,
-        pdf_abstract=(sections.get("abstract", "") or "")[:700] or "(not available)",
-        intro_block=intro_snip or html_snip or "(not available)",
-        methods_block=methods_snip or "(not available)",
-        ref_text=ref_text,
-    ).strip()
 
 
 # ── L4 — front-door replication screen ───────────────────────────────────────
@@ -579,13 +372,6 @@ def build_classify_prompt(study_r: str, abstract_r: str) -> str:
 # Both bodies carry a literal JSON example, so every substitution is .replace(), never
 # .format(). Static instructions and the response schema come first, per-row inputs
 # last.
-
-# The replication outcome enum as it appears in every JSON block that asks for one.
-# Assembled from one string so the outcome prompt and the multi-original prompt cannot
-# drift apart — they did, and a value offered by one and not another is a value the
-# pipeline silently coerces away.
-OUTCOME_ENUM = ("success|failure|mixed|descriptive|"
-                "statistically_successful_but_flawed|uninformative|cannot_be_determined")
 
 # The two evidence lines. The abstract pass never names "fulltext" as a legal quote
 # source, because a model that is told it holds full text will attribute quotes to it.

@@ -1,4 +1,4 @@
-"""Tests for --no-llm, --match-type-only, --outcome-only CLI flags."""
+"""Tests for the --no-llm, --outcome-only and --extracted-test CLI flags."""
 import json
 import tempfile
 from pathlib import Path
@@ -8,7 +8,6 @@ import pandas as pd
 import pytest
 
 from extract.code_outcome import extract_outcome
-from extract.run_extract import classify_match_type
 
 
 class TestNoLlmExtractOutcome:
@@ -45,32 +44,6 @@ class TestNoLlmExtractOutcome:
                 no_llm=True,
             )
         mock_llm.assert_not_called()
-
-
-class TestNoLlmClassifyMatchType:
-    def test_no_llm_returns_rule_result_when_rule_fires(self):
-        row = {
-            "doi_r": "10.1234/ml",
-            "title_r": "Many Labs 5: Investigating the Reproducibility of Influential Results",
-            "abstract_r": "",
-            "openalex_id_r": "",
-            "year_r": "2020",
-        }
-        result = classify_match_type(row, no_llm=True)
-        assert result["original_match_type"] == "multiple_original"
-
-    def test_no_llm_returns_single_original_default_when_no_rule(self):
-        row = {
-            "doi_r": "10.1234/single",
-            "title_r": "Replication of ego depletion",
-            "abstract_r": "We replicated the original ego depletion effect.",
-            "openalex_id_r": "",
-            "year_r": "2019",
-        }
-        with patch("extract.run_extract._llm_classify_match_type") as mock_llm:
-            result = classify_match_type(row, no_llm=True)
-        mock_llm.assert_not_called()
-        assert result["original_match_type"] == "single_original"
 
 
 # ── --extracted-test flag tests ───────────────────────────────────────────────
@@ -122,18 +95,11 @@ class TestExtractedTestFlag:
     def _run_test_extract(self, tmp_path, filtered_dois, main_doi, main_link_method):
         """Helper: sets up CSVs and runs run_extract in test mode with all API calls mocked."""
         import extract.run_extract as rex
-        (tmp_path / "llm").mkdir(exist_ok=True)
         _make_filtered_csv(tmp_path, filtered_dois)
         _make_extracted_csv(tmp_path, main_doi, main_link_method)
         test_out = tmp_path / "extracted-test.csv"
         prod_csv = tmp_path / "extracted.csv"
         with patch.object(rex, "DATA_DIR", tmp_path), \
-             patch.object(rex, "LLM_CACHE_DIR", tmp_path / "llm"), \
-             patch("extract.run_extract.classify_match_type",
-                   return_value={"original_match_type": "single_original",
-                                 "original_match_confidence": "low",
-                                 "rule_fired": False, "classify_llm_model": "",
-                                 "reasoning": ""}), \
              patch("extract.run_extract.run_for_doi", return_value=_EMPTY_LINK), \
              patch("extract.run_extract._get_outcome", return_value=_EMPTY_OUTCOME), \
              patch("extract.run_extract._save_parse_cache"), \

@@ -33,7 +33,6 @@ tests/
 ├── test_disambiguation.py       — Jaccard scoring + same-author/year resolution
 ├── test_extract.py              — Stage 3 orchestrator + outcome extraction
 ├── test_filter.py               — Stage 2 rule filter
-├── test_multi_original.py       — Multi-original pipeline
 ├── test_openalex_client.py      — OpenAlex API wrapper + find_all_candidates
 ├── test_rule_analysis.py        — Filter rule analysis
 ├── test_search.py               — Stage 1 search + OpenAlex pagination

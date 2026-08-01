@@ -73,10 +73,8 @@ class TestChangeDetection:
         prompt_version.cache_clear()
         after = self._versions()
         changed = {n for n in PROMPT_NAMES if after[n] != before[n]}
-        for name in ("build_match_type_prompt",
-                     "build_multi_original_prompt", "build_target_prompt",
-                     ):
-            assert name in changed, f"{name} did not follow EVIDENCE_POLICY"
+        assert "build_target_prompt" in changed, \
+            "build_target_prompt did not follow EVIDENCE_POLICY"
         # The two outcome prompts state their own evidence policy inline, so they do
         # not follow it either.
         assert "build_outcome_prompt" not in changed

@@ -21,16 +21,14 @@ from shared.schema import (
 )
 from shared.cache import content_key, read_cache
 import extract.code_outcome as code_outcome
+import extract.link_original as link_original
 import extract.run_extract as run_extract
 import shared.llm_client as llm_client
 from extract.code_outcome import extract_outcome, _keyword_scan, _expand_to_sentences
 from extract.run_extract import (
-    classify_match_type,
-    _llm_classify_match_type,
     _map_method,
     _merge_row,
     _merge_multi_row,
-    _rule_classify_multi_original,
     _score_to_confidence,
 )
 from shared.token_usage import TokenBudgetExhausted
@@ -653,6 +651,35 @@ class TestOutcomeCacheKey:
         mock = self._run(tmp_path, abstract_r="a", title_r="T", record_type="reproduction")
         assert mock.call_count == 1
 
+    def test_the_multi_original_flag_misses(self, tmp_path):
+        """The flag adds a sentence to the prompt telling the model the paper's other
+        originals are coded on their own rows. Leaving it out of the key let a
+        per-target row read back a single-original row's answer for the same pair."""
+        self._run(tmp_path, abstract_r="a", title_r="T")
+        mock = self._run(tmp_path, abstract_r="a", title_r="T", multi_original=True)
+        assert mock.call_count == 1
+        assert len(list(tmp_path.glob("outcome_*.json"))) == 2
+
+    def test_the_flag_is_appended_only_when_set(self, tmp_path):
+        """A key component that is always present moves EVERY key. The outcome cache
+        is the most expensive one the pipeline holds — its entries may carry a
+        full-text escalation — so a single-original key must be byte-identical to the
+        one written before the flag existed."""
+        from shared.cache import content_key
+        from shared.llm_client import ladder_fingerprint
+        from shared.config import GEMINI_HEAVY_MODEL
+        from shared.prompts import prompt_version
+
+        parts = (ladder_fingerprint(GEMINI_HEAVY_MODEL),
+                 prompt_version("build_outcome_prompt"), "replication",
+                 "T", "a", "", "", "", "")
+        pre_pr = content_key("outcome", "10.1234/key", *parts)
+        with_flag = content_key("outcome", "10.1234/key", *parts, "multi_original")
+
+        self._run(tmp_path, abstract_r="a", title_r="T")
+        assert [f.stem for f in tmp_path.glob("outcome_*.json")] == [pre_pr]
+        assert with_flag != pre_pr
+
     def test_changed_fulltext_misses(self, tmp_path):
         """The escalation reads the fulltext, so a re-parsed PDF must not replay the
         verdict reached without it."""
@@ -692,138 +719,10 @@ def write_cache_json(cache_dir, key, data):
     (cache_dir / f"{key}.json").write_text(_json.dumps(data), encoding="utf-8")
 
 
-# ── classify_match_type unit tests (Issue 8) ─────────────────────────────────
-
-# Two distinct author-year pairs: below that the LLM match-type call is gated off
-# (audit E1) and classify_match_type returns single_original without asking.
-_ROW = {
-    "doi_r": "10.1000/test",
-    "title_r": "A Replication Study",
-    "abstract_r": "We replicated Smith (2010) and Jones (2012) and found "
-                  "consistent results.",
-    "year_r": "2020",
-    "openalex_id_r": "W999",
-}
-
-_CAND_SINGLE = [{"title": "Smith Study", "year": 2010, "first_author": "Smith",
-                 "doi": "10.999/smith", "openalex_id": "W111", "all_authors": ["Smith"]}]
-_CAND_MULTI  = [
-    {"title": "Smith Study A", "year": 2010, "first_author": "Smith",
-     "doi": "10.999/a", "openalex_id": "W111", "all_authors": ["Smith"]},
-    {"title": "Smith Study B", "year": 2010, "first_author": "Smith",
-     "doi": "10.999/b", "openalex_id": "W222", "all_authors": ["Smith"]},
-]
-
-
-class TestClassifyMatchType:
-    """Issue 8 — unit tests for classify_match_type.
-
-    All external calls (OpenAlex, LLM) are mocked.
-    """
-
-    def _classify(self, tmp_path, oa_result, llm_result, row=None):
-        """Helper: run classify_match_type with mocked OpenAlex + LLM."""
-        row = row or _ROW
-        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.run_extract.find_all_candidates", return_value=oa_result), \
-             patch("extract.run_extract.call_llm", return_value=(llm_result, "gemini-model", "")):
-            return classify_match_type(row)
-
-    def test_returns_single_original(self, tmp_path):
-        llm = {"original_match_type": "single_original",
-               "confidence": "high", "reasoning": "one clear target"}
-        result = self._classify(tmp_path, _CAND_SINGLE, llm)
-        assert result["original_match_type"] == "single_original"
-        assert result["original_match_confidence"] == "high"
-
-    def test_returns_multiple_match(self, tmp_path):
-        llm = {"original_match_type": "multiple_match",
-               "confidence": "high", "reasoning": "same author/year"}
-        result = self._classify(tmp_path, _CAND_MULTI, llm)
-        assert result["original_match_type"] == "multiple_match"
-
-    def test_returns_multiple_original(self, tmp_path):
-        row = dict(_ROW, abstract_r="We replicated Smith (2010) and Jones (2012).")
-        llm = {"original_match_type": "multiple_original",
-               "confidence": "medium", "reasoning": "two independent targets"}
-        result = self._classify(tmp_path, _CAND_MULTI, llm, row=row)
-        assert result["original_match_type"] == "multiple_original"
-        assert result["original_match_confidence"] == "medium"
-
-    def test_openalex_failure_defaults_to_single_original(self, tmp_path):
-        """OpenAlex exception should return single_original without crashing."""
-        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.run_extract.find_all_candidates",
-                   side_effect=ConnectionError("timeout")):
-            result = classify_match_type(_ROW)
-        assert result["original_match_type"] == "single_original"
-        assert result["original_match_confidence"] == "low"
-
-    def test_llm_failure_defaults_to_single_original(self, tmp_path):
-        """LLM failure should return single_original without crashing."""
-        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.run_extract.find_all_candidates", return_value=_CAND_SINGLE), \
-             patch("extract.run_extract.call_llm", return_value=(None, "", "quota | error")):
-            result = classify_match_type(_ROW)
-        assert result["original_match_type"] == "single_original"
-        assert result["original_match_confidence"] == "low"
-
-    def test_result_cached_on_second_call(self, tmp_path):
-        """Second call with the same inputs must not repeat the LLM call.
-
-        The candidate list is part of the key, so the (disk-cached) OpenAlex lookup
-        runs first and is expected to be called both times.
-        """
-        llm = {"original_match_type": "single_original",
-               "confidence": "high", "reasoning": "cached"}
-        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.run_extract.find_all_candidates",
-                   return_value=_CAND_SINGLE), \
-             patch("extract.run_extract.call_llm", return_value=(llm, "gemini-model", "")) as mock_llm:
-            classify_match_type(_ROW)  # first call — populates cache
-            classify_match_type(_ROW)  # second call — should use cache
-        assert mock_llm.call_count == 1
-
-    def test_changed_candidates_miss_the_cache(self, tmp_path):
-        """A different candidate list is a different question — it must be re-asked."""
-        llm = {"original_match_type": "single_original", "confidence": "high"}
-        other = [dict(_CAND_SINGLE[0], title="A completely different paper")]
-        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.run_extract.call_llm", return_value=(llm, "m", "")) as mock_llm:
-            with patch("extract.run_extract.find_all_candidates", return_value=_CAND_SINGLE):
-                classify_match_type(_ROW)
-            with patch("extract.run_extract.find_all_candidates", return_value=other):
-                classify_match_type(_ROW)
-        assert mock_llm.call_count == 2
-
-    def test_invalid_llm_match_type_normalised(self, tmp_path):
-        """LLM returning an unknown match_type value should become single_original."""
-        llm = {"original_match_type": "unknown_value", "confidence": "high"}
-        result = self._classify(tmp_path, _CAND_SINGLE, llm)
-        assert result["original_match_type"] == "single_original"
-
-    def test_prompt_includes_pattern_count_and_candidates(self, tmp_path):
-        """The LLM prompt must include distinct pattern count and candidate list."""
-        captured_prompt = []
-        def fake_llm(prompt, gemini_model=""):
-            captured_prompt.append(prompt)
-            return ({"original_match_type": "single_original",
-                     "confidence": "high"}, "gemini-model", "")
-
-        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.run_extract.find_all_candidates", return_value=_CAND_SINGLE), \
-             patch("extract.run_extract.call_llm", side_effect=fake_llm):
-            classify_match_type(_ROW)
-
-        prompt = captured_prompt[0]
-        assert "distinct" in prompt.lower()
-        assert "smith" in prompt.lower()          # candidate first_author
-        assert "Smith Study" in prompt             # candidate title
-
-
 # ── run_extract orchestration tests ──────────────────────────────────────────
 
 _MOCK_LINK = {
+    "resolved": True,
     "resolution_method": "same_author_year_title_overlap",
     "resolution_score": 0.95,
     "resolved_doi_o": "10.1037/h0054651",
@@ -839,20 +738,31 @@ _MOCK_OUTCOME = {
     "outcome_confidence": "high", "out_quote_source": "abstract",
     "outcome_reasoning": "", "llm_model": "gemini-outcome",
 }
-_MOCK_MULTI = {
-    "is_false_positive": False,
-    "n_originals": 2,
-    "originals": [
-        {"rank": 1, "title": "Study A", "doi": "10.1000/a", "first_author": "Jones",
-         "year": 2000, "evidence": "Jones et al. (2000)", "confidence": "high"},
-        {"rank": 2, "title": "Study B", "doi": "10.1000/b", "first_author": "Kim",
-         "year": 2001, "evidence": "Kim et al. (2001)", "confidence": "medium"},
-    ],
-    "originals_json": "[]",
-}
-# classify_match_type's one shape (_match_type_result): callers read every key.
-_MOCK_MATCH = {"original_match_type": "single_original", "original_match_confidence": "high",
-               "rule_fired": False, "classify_llm_model": "", "reasoning": ""}
+
+
+def _mock_target(key: str, doi: str, title: str, author: str, year: int,
+                 **over) -> dict:
+    """One entry of identify_targets_with_llm's validated target list.
+
+    The record is the mapped @key: the DOI comes from it, never from the model."""
+    target = {"key": key, "match_certain": True, "target_as_named": title,
+              "study_numbers": "", "replication_study_numbers": "",
+              "evidence_quote": f"{author} et al. ({year})",
+              "record": {"doi": doi, "title": title, "first_author": author,
+                         "year": year, "openalex_id": ""}}
+    target.update(over)
+    return target
+
+
+# A ladder that named two originals and accepted neither as THE link — what the
+# per-target adapter exists for.
+_MOCK_MULTI_LINK = dict(
+    _MOCK_LINK, resolved=False, resolution_method="llm_multi_target",
+    multi_target=True, n_targets=2, target_stage="llm_gemini",
+    unidentified_count=0, resolved_doi_o="", resolved_title_o="",
+    targets=[_mock_target("@jones2000", "10.1000/a", "Study A", "Jones", 2000),
+             _mock_target("@kim2001",   "10.1000/b", "Study B", "Kim",   2001)],
+)
 
 # Stage 3's front door: both classifiers agree the paper is a replication, so the
 # row goes down the ladder exactly as it did before the screen moved to the front.
@@ -882,8 +792,7 @@ class TestRunExtract:
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["test-key"])
         monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "test-key")
 
-    def _run(self, filtered_csv: str, mock_multi=None, mock_match=None, screen=None,
-             **run_kwargs):
+    def _run(self, filtered_csv: str, link=None, screen=None, **run_kwargs):
         """Helper: write a temp CSV, run extract with mocked APIs, return result DataFrame."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv",
                                         delete=False, encoding="utf-8-sig") as f:
@@ -892,13 +801,7 @@ class TestRunExtract:
 
         with patch("extract.run_extract.classify_replication",
                    return_value=screen or _YES_SCREEN), \
-             patch("extract.run_extract.classify_match_type",
-                   return_value=mock_match or _MOCK_MATCH), \
-             patch("extract.run_extract.run_for_doi", return_value=_MOCK_LINK), \
-             patch("extract.run_extract.run_multi_original_for_doi",
-                   return_value=mock_multi or {
-                       "is_false_positive": False, "n_originals": 0,
-                       "originals": [], "originals_json": "[]"}), \
+             patch("extract.run_extract.run_for_doi", return_value=link or _MOCK_LINK), \
              patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
              patch("extract.run_extract.verify_and_correct",
                    side_effect=lambda doi, *a, **k: {"doi_o": doi,
@@ -931,7 +834,7 @@ class TestRunExtract:
         assert not missing, f"Missing: {missing}"
 
     def test_false_positives_are_skipped(self):
-        """False positives must appear in output without calling classify_match_type."""
+        """False positives must appear in output without running the ladder."""
         csv = (
             "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
             "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
@@ -940,18 +843,14 @@ class TestRunExtract:
             "10.1000/rep,Real Rep,Abstract,2020,Jones,J. Psych,,W2,openalex,"
             "replication,rule_based,direct replication,high\n"
         )
-        mock_classify = MagicMock(return_value=_MOCK_MATCH)
+        mock_ladder = MagicMock(return_value=_MOCK_LINK)
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv",
                                          delete=False, encoding="utf-8-sig") as f:
             f.write(csv)
             tmp = Path(f.name)
 
         with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
-             patch("extract.run_extract.classify_match_type", mock_classify), \
-             patch("extract.run_extract.run_for_doi", return_value=_MOCK_LINK), \
-             patch("extract.run_extract.run_multi_original_for_doi",
-                   return_value={"is_false_positive": False, "n_originals": 0,
-                                 "originals": [], "originals_json": "[]"}), \
+             patch("extract.run_extract.run_for_doi", mock_ladder), \
              patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
              patch("extract.run_extract.verify_and_correct",
                    side_effect=lambda doi, *a, **k: {"doi_o": doi,
@@ -975,10 +874,9 @@ class TestRunExtract:
         doi_set = set(result["doi_r"])
         assert "10.1000/fp" not in doi_set
         assert "10.1000/rep" in doi_set
-        # classify_match_type called only for the replication row, not the false positive
-        assert mock_classify.call_count == 1
-        called_doi = mock_classify.call_args[0][0].get("doi_r") or ""
-        assert "fp" not in called_doi
+        # the ladder ran only for the replication row, not the false positive
+        assert mock_ladder.call_count == 1
+        assert "fp" not in mock_ladder.call_args[0][0]
 
     def test_link_confidence_is_categorical(self):
         csv = (
@@ -990,20 +888,19 @@ class TestRunExtract:
         result = self._run(csv)
         assert result.iloc[0]["link_confidence"] in {"high", "medium", "low"}
 
-    def test_multiple_original_expands_rows(self):
+    def test_two_targets_expand_to_two_rows(self):
         csv = (
             "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
             "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
             "10.1000/multi,Multi-target,Abstract,2020,Smith,J. Psych,,W1,openalex,"
             "replication,rule_based,direct replication,high\n"
         )
-        result = self._run(csv,
-                           mock_multi=_MOCK_MULTI,
-                           mock_match=dict(_MOCK_MATCH,
-                                           original_match_type="multiple_original"))
+        result = self._run(csv, link=_MOCK_MULTI_LINK)
         assert len(result) == 2
+        assert list(result["doi_o"]) == ["10.1000/a", "10.1000/b"]
         assert list(result["original_rank"].astype(int)) == [1, 2]
         assert list(result["n_originals"].astype(int)) == [2, 2]
+        assert set(result["original_match_type"]) == {"multiple_original"}
 
     _TYPE_CSV = (
         "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
@@ -1045,23 +942,22 @@ class TestRunExtract:
         assert list(result["doi_r"]) == ["10.1000/r1", "10.1000/r3", "10.1000/r5",
                                          "10.1000/r0"]
 
-    def test_classify_not_called_for_false_positives(self):
-        """Routing test: false_positive must bypass classify_match_type entirely."""
+    def test_the_ladder_is_not_run_for_false_positives(self):
+        """Routing test: false_positive must bypass the resolution ladder entirely."""
         csv = (
             "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
             "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
             "10.1000/fp,FP,Abstract,2020,Smith,J. Psych,,W1,openalex,"
             "false_positive,rule_based,meta-discussion,high\n"
         )
-        mock_classify = MagicMock(return_value=_MOCK_MATCH)
+        mock_ladder = MagicMock(return_value=_MOCK_LINK)
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv",
                                          delete=False, encoding="utf-8-sig") as f:
             f.write(csv)
             tmp = Path(f.name)
 
         with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
-             patch("extract.run_extract.classify_match_type", mock_classify), \
-             patch("extract.run_extract.run_for_doi", return_value=_MOCK_LINK), \
+             patch("extract.run_extract.run_for_doi", mock_ladder), \
              patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
              patch("extract.run_extract.verify_and_correct",
                    side_effect=lambda doi, *a, **k: {"doi_o": doi,
@@ -1079,7 +975,7 @@ class TestRunExtract:
         fp_path.unlink(missing_ok=True)
         (tmp.parent / "extracted.csv").unlink(missing_ok=True)
 
-        mock_classify.assert_not_called()
+        mock_ladder.assert_not_called()
 
 
     def test_api_error_passthrough(self):
@@ -1101,11 +997,7 @@ class TestRunExtract:
             tmp = Path(f.name)
 
         with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
-             patch("extract.run_extract.classify_match_type", return_value=_MOCK_MATCH), \
              patch("extract.run_extract.run_for_doi", side_effect=Exception("API timeout")), \
-             patch("extract.run_extract.run_multi_original_for_doi",
-                   return_value={"is_false_positive": False, "n_originals": 0,
-                                 "originals": [], "originals_json": "[]"}), \
              patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
              patch("extract.run_extract.verify_and_correct",
                    side_effect=lambda doi, *a, **k: {"doi_o": doi,
@@ -1136,11 +1028,7 @@ class TestRunExtract:
             "replication,rule_based,direct replication,high\n"
         )
         with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
-             patch("extract.run_extract.classify_match_type", return_value=_MOCK_MATCH), \
              patch("extract.run_extract.run_for_doi", return_value=_MOCK_LINK), \
-             patch("extract.run_extract.run_multi_original_for_doi",
-                   return_value={"is_false_positive": False, "n_originals": 0,
-                                 "originals": [], "originals_json": "[]"}), \
              patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME) as mock_eo, \
              patch("extract.run_extract.DATA_DIR", Path(tempfile.gettempdir())), \
              patch("extract.run_extract.BASE_DIR", Path(tempfile.gettempdir())):
@@ -1270,7 +1158,7 @@ class TestMergeMultiRow:
     _FILTER_ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "Rep Paper",
                              "filter_status": "replication"})
     _OUTCOME = {"outcome": "success", "outcome_phrase": "",
-                "outcome_confidence": "high", "out_quote_source": "llm_multi"}
+                "outcome_confidence": "high", "out_quote_source": "abstract"}
 
     def _merge(self, orig, link_method="llm_fulltext"):
         with patch("extract.run_extract._build_ref_o", return_value=("", "")):
@@ -1309,38 +1197,35 @@ class TestMergeMultiRow:
         assert r["link_method"] == "llm_cited_candidates"
 
 
-# ── Multi-original count regex bound ──────────────────────────────────────────
+# ── The gate's study-count bound ──────────────────────────────────────────────
 
-class TestMultiOriginalCountBound:
-    """3 ≤ N < 1900 — a captured year is not a study count."""
+class TestStudyCountBound:
+    """3 ≤ N < 1900 — a captured year is not a study count. The count no longer
+    routes a row anywhere; it decides whether a deterministic ladder stage may END
+    the row (see link_original.may_stop_at_a_rule)."""
 
-    def test_year_in_title_not_treated_as_count(self):
-        assert _rule_classify_multi_original("Replication of 2019 findings", "") is None
+    def test_year_in_title_is_not_a_count(self):
+        assert not link_original._study_count_stated("Replication of 2019 findings", "")
 
-    def test_year_in_abstract_not_treated_as_count(self):
-        assert _rule_classify_multi_original(
-            "A paper", "We report replications of 2019 studies conducted earlier."
-        ) is None
+    def test_year_in_abstract_is_not_a_count(self):
+        assert not link_original._study_count_stated(
+            "A paper", "We report replications of 2019 studies conducted earlier.")
 
-    def test_valid_count_in_title_routes_to_multiple_original(self):
-        r = _rule_classify_multi_original("Replication of 12 studies", "")
-        assert r is not None
-        assert r["original_match_type"] == "multiple_original"
+    def test_a_count_in_the_title_is_stated(self):
+        assert link_original._study_count_stated("Replication of 12 studies", "")
 
-    def test_valid_count_in_abstract_routes_to_multiple_original(self):
-        r = _rule_classify_multi_original(
-            "A paper", "We replicated 28 classic studies across many labs."
-        )
-        assert r is not None
-        assert r["original_match_type"] == "multiple_original"
+    def test_a_count_in_the_abstract_is_stated(self):
+        assert link_original._study_count_stated(
+            "A paper", "We replicated 28 classic studies across many labs.")
 
-    def test_count_below_minimum_does_not_route(self):
-        assert _rule_classify_multi_original("Replication of 2 studies", "") is None
+    def test_a_count_below_the_minimum_is_not_stated(self):
+        assert not link_original._study_count_stated("Replication of 2 studies", "")
 
-    def test_known_project_name_still_routes(self):
-        r = _rule_classify_multi_original("Many Labs 2: replicating effects", "")
-        assert r is not None
-        assert r["original_match_type"] == "multiple_original"
+    def test_a_project_name_alone_is_not_a_count(self):
+        """Many labs replicating ONE original is one target — the old rule read the
+        project name as N originals and expanded single-target papers into N rows."""
+        assert not link_original._study_count_stated(
+            "Many Labs 2: replicating effects", "")
 
 
 # ── Schema integration test ───────────────────────────────────────────────────
@@ -1753,7 +1638,7 @@ class TestGuardOriginalLink:
         rejected row would otherwise carry a coded outcome on an unresolved link."""
         out = run_extract._guard_original_link(self._row(
             doi_o="10.1/repl", outcome="success", outcome_phrase="we replicated it",
-            outcome_confidence="high", out_quote_source="llm_multi"))
+            outcome_confidence="high", out_quote_source="abstract"))
         assert out["link_method"] == "target_pending"
         assert out["outcome"] == "pending"
         assert out["outcome_phrase"] == ""
@@ -2447,18 +2332,16 @@ class TestFrontDoorScreen:
     def _run(self, screen, tmp_path, monkeypatch, filtered_csv: str = ""):
         """Run Stage 3 over one row with the screen returning `screen`.
 
-        Returns (result_df, match_mock, ladder_mock, outcome_mock) so a test can
-        assert that the heavy calls after the front door were never made.
+        Returns (result_df, ladder_mock, outcome_mock) so a test can assert that the
+        heavy calls after the front door were never made.
         """
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["test-key"])
         monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "test-key")
         (tmp_path / "filtered.csv").write_text(filtered_csv or _FILTERED_CSV,
                                                encoding="utf-8-sig")
-        m_match = MagicMock(return_value=_MOCK_MATCH)
         m_link  = MagicMock(return_value=_MOCK_LINK)
         m_out   = MagicMock(return_value=_MOCK_OUTCOME)
         with patch.object(run_extract, "classify_replication", return_value=screen), \
-             patch.object(run_extract, "classify_match_type", m_match), \
              patch.object(run_extract, "run_for_doi", m_link), \
              patch.object(run_extract, "extract_outcome", m_out), \
              patch.object(run_extract, "verify_and_correct",
@@ -2469,10 +2352,10 @@ class TestFrontDoorScreen:
              patch.object(run_extract, "DATA_DIR", tmp_path), \
              patch.object(run_extract, "BASE_DIR", tmp_path):
             result = run_extract.run_extract()
-        return result, m_match, m_link, m_out
+        return result, m_link, m_out
 
     def test_agreed_none_is_written_without_any_further_call(self, tmp_path, monkeypatch):
-        result, m_match, m_link, m_out = self._run(
+        result, m_link, m_out = self._run(
             _screen(screen_verdict="discard", screen_classification="none",
                     record_type="", categories=["terminology_only"],
                     llm_reasoning="gemini: unrelated",
@@ -2483,13 +2366,12 @@ class TestFrontDoorScreen:
         assert list(result["outcome"]) == ["not_a_replication"]
         assert "gemini=none/confident" in result.iloc[0]["link_evidence"]
         assert result.iloc[0]["screen_categories"] == "terminology_only"
-        m_match.assert_not_called()
         m_link.assert_not_called()
         m_out.assert_not_called()
 
     def test_unconfident_agreed_none_is_still_a_discard(self, tmp_path, monkeypatch):
         """G-softqual discards two "none" votes at any confidence."""
-        result, _, m_link, _ = self._run(
+        result, m_link, _ = self._run(
             _screen(screen_verdict="discard", screen_classification="none",
                     record_type="",
                     votes=[_vote("gemini", "none", confident=False),
@@ -2504,7 +2386,7 @@ class TestFrontDoorScreen:
             self, tmp_path, monkeypatch, partner):
         """The softqual clause: an answer the other voter would not stake anything
         on does not outweigh a confident none."""
-        result, _, m_link, m_out = self._run(
+        result, m_link, m_out = self._run(
             _screen(screen_verdict="discard", screen_classification="none",
                     record_type="",
                     votes=[_vote("gemini", "none"),
@@ -2518,7 +2400,7 @@ class TestFrontDoorScreen:
     def test_a_confident_split_proceeds_down_the_ladder(self, tmp_path, monkeypatch):
         """Was screen_disagreement. A false inclusion costs a ladder run; a false
         discard costs the paper, so a real split escalates instead of terminating."""
-        result, m_match, m_link, _ = self._run(
+        result, m_link, _ = self._run(
             _screen(screen_verdict="proceed", screen_classification="replication",
                     record_type="replication",
                     votes=[_vote("gemini", "replication"), _vote("openai", "none")]),
@@ -2526,22 +2408,20 @@ class TestFrontDoorScreen:
 
         assert "screen_disagreement" not in set(result["link_method"])
         assert result.iloc[0]["link_method"] == "same_author_year_title_overlap"
-        m_match.assert_called_once()
         m_link.assert_called_once()
 
     def test_one_vote_is_target_pending_not_a_verdict(self, tmp_path, monkeypatch):
-        result, m_match, m_link, m_out = self._run(
+        result, m_link, m_out = self._run(
             _screen(resolution_method="llm_refscreen_partial", screen_verdict="",
                     record_type="", llm_error="classifier failed: openai"),
             tmp_path, monkeypatch)
 
         assert list(result["link_method"]) == ["target_pending"]
-        m_match.assert_not_called()
         m_link.assert_not_called()
         m_out.assert_not_called()
 
     def test_no_votes_is_an_api_error(self, tmp_path, monkeypatch):
-        result, _, m_link, _ = self._run(
+        result, m_link, _ = self._run(
             _screen(resolution_method="llm_refscreen_failed", screen_verdict="",
                     record_type="", llm_error="classifier failed: gemini, openai"),
             tmp_path, monkeypatch)
@@ -2551,7 +2431,7 @@ class TestFrontDoorScreen:
         m_link.assert_not_called()
 
     def test_the_verdict_is_threaded_into_the_ladder_not_re_voted(self, tmp_path, monkeypatch):
-        _, _, m_link, _ = self._run(_YES_SCREEN, tmp_path, monkeypatch)
+        _, m_link, _ = self._run(_YES_SCREEN, tmp_path, monkeypatch)
 
         assert m_link.call_args[1]["classification"] == _YES_SCREEN
 
@@ -2564,7 +2444,7 @@ class TestFrontDoorScreen:
         needs_review_csv = _FILTERED_CSV.replace(
             "replication,rule_based,direct replication,high",
             "needs_review,rule_based,phrase without a cite,medium")
-        result, _, m_link, m_out = self._run(
+        result, m_link, m_out = self._run(
             _screen(record_type="", screen_classification="unclear", categories=[],
                     votes=[_vote("gemini", "unclear", confident=False),
                            _vote("openai", "unclear", confident=False)]),
@@ -2590,7 +2470,7 @@ class TestFrontDoorScreen:
         repro_csv = _FILTERED_CSV.replace(
             "replication,rule_based,direct replication,high",
             "reproduction,rule_based,re-analysis of the original data,high")
-        result, _, _, m_out = self._run(
+        result, _, m_out = self._run(
             _screen(record_type="", screen_classification="unclear", categories=[],
                     votes=[_vote("gemini", "unclear", confident=False),
                            _vote("openai", "none", confident=False)]),
@@ -2603,7 +2483,7 @@ class TestFrontDoorScreen:
     def test_the_screen_decides_record_type_and_categories(self, tmp_path, monkeypatch):
         """The screen read the abstract and said what the paper is, so its verdict
         reaches the outcome call, the `type` column and filter_status."""
-        result, _, _, m_out = self._run(
+        result, _, m_out = self._run(
             _screen(record_type="reproduction", screen_classification="reproduction"),
             tmp_path, monkeypatch)
 
@@ -2631,7 +2511,6 @@ class TestDailyTokenBudgetStops:
                                         TokenBudgetExhausted("budget spent")])
 
         with patch.object(run_extract, "classify_replication", screen), \
-             patch.object(run_extract, "classify_match_type", return_value=_MOCK_MATCH), \
              patch.object(run_extract, "run_for_doi", return_value=_MOCK_LINK), \
              patch.object(run_extract, "extract_outcome", return_value=_MOCK_OUTCOME), \
              patch.object(run_extract, "verify_and_correct",
@@ -2647,56 +2526,6 @@ class TestDailyTokenBudgetStops:
         written = pd.read_csv(tmp_path / "extracted.csv", dtype=str, encoding="utf-8-sig")
         assert list(written["doi_r"]) == ["10.1000/rep"]
         assert "api_error" not in set(written["link_method"])
-
-
-class TestMatchTypeLLMGate:
-    """The match-type LLM answered single_original for 94% of rows. It can only
-    distinguish several targets from distinct author-year citations, so with fewer
-    than two the call is gated off — the deterministic rules still run (audit E1)."""
-
-    _ONE_PAIR = dict(_ROW, abstract_r="We replicated Smith (2010) closely.")
-
-    def test_one_author_year_pair_skips_the_llm(self, tmp_path):
-        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.run_extract.find_all_candidates") as oa, \
-             patch("extract.run_extract.call_llm") as llm:
-            result = classify_match_type(self._ONE_PAIR)
-
-        assert result["original_match_type"] == "single_original"
-        llm.assert_not_called()
-        oa.assert_not_called()   # the candidate fetch only exists to feed that prompt
-
-    def test_no_citations_at_all_skips_the_llm(self, tmp_path):
-        row = dict(_ROW, abstract_r="A close replication in a new sample.")
-        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.run_extract.call_llm") as llm:
-            result = classify_match_type(row)
-
-        assert result["original_match_type"] == "single_original"
-        llm.assert_not_called()
-
-    def test_two_pairs_still_ask_the_llm(self, tmp_path):
-        llm_answer = {"original_match_type": "multiple_original", "confidence": "high"}
-        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.run_extract.find_all_candidates", return_value=_CAND_MULTI), \
-             patch("extract.run_extract.call_llm",
-                   return_value=(llm_answer, "gemini-model", "")) as llm:
-            result = classify_match_type(_ROW)
-
-        llm.assert_called_once()
-        assert result["original_match_type"] == "multiple_original"
-
-    def test_the_rules_still_fire_below_the_gate(self, tmp_path):
-        """A Many Labs paper with no citation in its abstract must still route to
-        multiple_original — only the LLM call is gated, not the rules."""
-        row = dict(_ROW, title_r="Many Labs 2: Investigating Variation",
-                   abstract_r="A large-scale project.")
-        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.run_extract.call_llm") as llm:
-            result = classify_match_type(row)
-
-        assert result["original_match_type"] == "multiple_original"
-        llm.assert_not_called()
 
 
 class TestOutcomeGate:
@@ -2744,7 +2573,7 @@ class TestOutcomeGate:
              patch.object(run_extract, "extract_outcome",
                           side_effect=AssertionError("must not code an outcome")):
             rows = run_extract._resolve_and_code(
-                "10.1/rep", row, "single_original", "high", "", screen=None,
+                "10.1/rep", row, screen=None,
                 no_llm=False, no_pdf=True, resolved_only=False,
                 recalibrate_outcomes=False)
 
@@ -2762,7 +2591,7 @@ class TestOutcomeGate:
              patch.object(run_extract, "extract_outcome",
                           side_effect=AssertionError("must not code an outcome")):
             rows = run_extract._resolve_and_code(
-                "10.1/rep", row, "single_original", "high", "", screen=None,
+                "10.1/rep", row, screen=None,
                 no_llm=False, no_pdf=True, resolved_only=True,
                 recalibrate_outcomes=False)
 
@@ -2853,41 +2682,6 @@ class TestParseCacheOnlyAfterTheDocument:
         assert run_extract._has_document("10.1/x", self._link())
 
 
-class TestMatchTypeFailureIsNotCached:
-    """A 429 is not a verdict (audit B8).
-
-    The failure default is single_original, so caching it freezes a Many Labs paper
-    whose title does not trip the rule into the single-original pipeline for every
-    future run.
-    """
-
-    _ROW_MULTI = {
-        "doi_r": "10.1/rep", "title_r": "A study of several effects",
-        "abstract_r": "We revisit Smith (2010) and Jones (2012) in one paper.",
-        "openalex_id_r": "W1", "year_r": "2020",
-    }
-    _CANDS = [{"doi": "10.9/a", "title": "A", "year": 2010, "first_author": "Smith"},
-              {"doi": "10.9/b", "title": "B", "year": 2012, "first_author": "Jones"}]
-
-    def test_failure_writes_no_cache_entry(self, tmp_path):
-        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.run_extract.find_all_candidates", return_value=self._CANDS), \
-             patch("extract.run_extract.call_llm", return_value=(None, "", "quota")):
-            result = classify_match_type(self._ROW_MULTI)
-        assert result["original_match_type"] == "single_original"
-        assert not list(tmp_path.glob("match_type_*.json"))
-
-    def test_a_later_run_can_still_get_a_real_answer(self, tmp_path):
-        llm = {"original_match_type": "multiple_original", "confidence": "high"}
-        with patch("extract.run_extract.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.run_extract.find_all_candidates", return_value=self._CANDS):
-            with patch("extract.run_extract.call_llm", return_value=(None, "", "quota")):
-                classify_match_type(self._ROW_MULTI)
-            with patch("extract.run_extract.call_llm", return_value=(llm, "m", "")):
-                result = classify_match_type(self._ROW_MULTI)
-        assert result["original_match_type"] == "multiple_original"
-
-
 class TestOutcomeReadsTheDiscussion:
     """FLoRA's rule: the abstract, and failing that the discussion and conclusion.
     The escalation used to send the first 8,000 characters — i.e. the introduction,
@@ -2954,13 +2748,144 @@ class TestOutcomeReadsTheDiscussion:
         assert "Our replication succeeded" in captured["fulltext"]
 
 
-# ── Multi-target safety net (§8.2) ───────────────────────────────────────────
-# The match-type router classifies from the abstract alone; the merged target prompt
-# reads the references and the full text. When the resolver sees several originals in
-# a row the router sent down the single path, accepting one link would silently drop
-# the rest — so the row is rerouted through the multi-original pipeline.
+# ── FLoRA's coding level: one row per pair of REFERENCES ─────────────────────
 
-class TestMultiTargetReroute:
+class TestSamePaperStudiesCollapse:
+    """FLoRA's coding level: one row per pair of REFERENCES.
+
+    Several studies replicated from the same original paper are one entry with their
+    numbers in study_o; several original papers are several entries. Before this, every
+    targeted study became its own row — and rows sharing a doi_o also shared a pair_id,
+    which is the key every other system joins on.
+    """
+
+    @staticmethod
+    def _orig(rank, doi, study_number="", outcome="success", title="T", conf="high"):
+        return {"rank": rank, "doi": doi, "title": title, "first_author": "Smith",
+                "year": 2010, "study_number": study_number, "outcome": outcome,
+                "evidence": f"ev{rank}", "outcome_evidence": f"oev{rank}",
+                "confidence": conf}
+
+    def test_same_doi_collapses_and_joins_study_numbers(self):
+        out = run_extract._collapse_same_paper_originals([
+            self._orig(1, "10.1000/a", "1"),
+            self._orig(2, "10.1000/a", "2"),
+            self._orig(3, "10.1000/b", ""),
+        ])
+        assert len(out) == 2
+        assert out[0]["study_number"] == "1, 2"
+        assert [o["rank"] for o in out] == [1, 2]
+        assert out[1]["doi"] == "10.1000/b"
+
+    def test_distinct_papers_are_not_collapsed(self):
+        out = run_extract._collapse_same_paper_originals([
+            self._orig(1, "10.1000/a", "1"),
+            self._orig(2, "10.1000/b", "1"),
+        ])
+        assert len(out) == 2
+        assert [o["study_number"] for o in out] == ["1", "1"]
+
+    def test_conflicting_outcomes_aggregate_to_mixed(self):
+        out = run_extract._collapse_same_paper_originals([
+            self._orig(1, "10.1000/a", "1", outcome="success"),
+            self._orig(2, "10.1000/a", "2", outcome="failure"),
+        ])
+        assert out[0]["outcome"] == "mixed"
+
+    def test_silent_study_does_not_outvote_a_verdict(self):
+        out = run_extract._collapse_same_paper_originals([
+            self._orig(1, "10.1000/a", "1", outcome="failure"),
+            self._orig(2, "10.1000/a", "2", outcome="cannot_be_determined"),
+        ])
+        assert out[0]["outcome"] == "failure"
+
+    def test_partial_study_numbers_are_dropped_not_guessed(self):
+        """Claiming "1" when a second study went unnumbered would assert the
+        replication targeted a study it never named."""
+        out = run_extract._collapse_same_paper_originals([
+            self._orig(1, "10.1000/a", "1"),
+            self._orig(2, "10.1000/a", ""),
+        ])
+        assert out[0]["study_number"] == ""
+
+    def test_collapsed_row_takes_the_weakest_confidence(self):
+        out = run_extract._collapse_same_paper_originals([
+            self._orig(1, "10.1000/a", "1", conf="high"),
+            self._orig(2, "10.1000/a", "2", conf="low"),
+        ])
+        assert out[0]["confidence"] == "low"
+
+    def test_doi_less_entries_group_by_title(self):
+        out = run_extract._collapse_same_paper_originals([
+            self._orig(1, "", "1", title="The  Same Paper"),
+            self._orig(2, "", "2", title="the same paper"),
+            self._orig(3, "", "1", title="A Different Paper"),
+        ])
+        assert len(out) == 2
+        assert out[0]["study_number"] == "1, 2"
+
+    def test_doi_less_entries_with_the_same_title_but_different_years_stay_apart(self):
+        """Generic titles repeat across the literature — the title alone is not an
+        identity, so a DOI-less entry is keyed on year and first author too."""
+        a = self._orig(1, "", "1", title="Experiment 1")
+        b = self._orig(2, "", "1", title="Experiment 1")
+        b["year"] = 1998
+        out = run_extract._collapse_same_paper_originals([a, b])
+        assert len(out) == 2
+        assert [o["rank"] for o in out] == [1, 2]
+
+    def test_doi_less_entries_with_the_same_title_but_different_authors_stay_apart(self):
+        a = self._orig(1, "", "1", title="Experiment 1")
+        b = self._orig(2, "", "1", title="Experiment 1")
+        b["first_author"] = "Jones"
+        out = run_extract._collapse_same_paper_originals([a, b])
+        assert len(out) == 2
+
+    def test_study_o_reaches_the_row(self):
+        row = _merge_multi_row(
+            pd.Series({"doi_r": "10.9/r", "title_r": "R", "filter_status": "replication"}),
+            self._orig(1, "10.1000/a", "1, 2"),
+            {"outcome": "success"}, "multiple_original", "high", 1,
+        )
+        assert row["study_o"] == "1, 2"
+
+    def test_study_r_is_a_union_over_the_merged_studies(self):
+        """study_o says which studies of the ORIGINAL are targeted and needs every
+        member to have named one; study_r says which of THIS paper's studies re-test
+        it, and a member that named none does not unsay the ones that did."""
+        a = self._orig(1, "10.1000/a", "1"); a["study_r"] = "1"
+        b = self._orig(2, "10.1000/a", "2"); b["study_r"] = "2"
+        out = run_extract._collapse_same_paper_originals([a, b])
+        assert out[0]["study_r"] == "1, 2"
+
+    def test_study_r_reaches_the_row(self):
+        row = _merge_multi_row(
+            pd.Series({"doi_r": "10.9/r", "title_r": "R", "filter_status": "replication"}),
+            dict(self._orig(1, "10.1000/a", "1, 2"), study_r="3"),
+            {"outcome": "success"}, "multiple_original", "high", 1,
+        )
+        assert row["study_o"] == "1, 2"
+        assert row["study_r"] == "3"
+
+    def test_a_legacy_study_r_title_never_survives_into_the_column(self):
+        """The seeded columns used study_r for a TITLE. _base_row blanks it, so only a
+        producer that sets a real number can fill it."""
+        row = _merge_multi_row(
+            pd.Series({"doi_r": "10.9/r", "title_r": "R", "study_r": "A Paper Title",
+                       "filter_status": "replication"}),
+            self._orig(1, "10.1000/a", "1"),
+            {"outcome": "success"}, "single_original", "high", 1,
+        )
+        assert row["study_r"] == ""
+
+
+# ── The per-target adapter (WP1) ─────────────────────────────────────────────
+# identify_targets_with_llm answers "which originals does this paper re-test?" over
+# a keyed namespace. When it names targets without accepting one of them as THE
+# link, _resolve_and_code writes one row per confirmed target rather than one link
+# for the first and silence for the rest.
+
+class TestPerTargetAdapter:
     _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
                       "filter_status": "replication"})
 
@@ -2969,45 +2894,348 @@ class TestMultiTargetReroute:
                "categories": ["clearly_declared", "self_retest"],
                "resolution_method": "llm_refscreen_declined", "votes": []}
 
-    def _run(self, multi_result, screen=None):
-        link = dict(_MOCK_LINK, multi_target=True, n_targets=3, resolved=False)
+    @staticmethod
+    def _link(targets, **over):
+        base = dict(_MOCK_LINK, resolved=False, resolution_method="llm_multi_target",
+                    resolved_doi_o="", resolved_title_o="", multi_target=len(targets) > 1,
+                    n_targets=len(targets), target_stage="llm_gemini",
+                    unidentified_count=0, targets=targets, llm_model="gemini-heavy")
+        base.update(over)
+        return base
+
+    def _run(self, targets, outcome=None, screen=None, resolved_only=False, **over):
+        link = self._link(targets, **over)
         with patch.object(run_extract, "run_for_doi", return_value=link), \
-             patch.object(run_extract, "run_multi_original_for_doi",
-                          return_value=multi_result) as multi, \
+             patch.object(run_extract, "_has_document", return_value=False), \
              patch.object(run_extract, "extract_outcome",
-                          side_effect=AssertionError("the single path must not code")):
+                          return_value=outcome if outcome is not None
+                          else _MOCK_OUTCOME) as coder:
             rows = run_extract._resolve_and_code(
-                "10.1/rep", self._ROW, "single_original", "high", "", screen=screen,
-                no_llm=False, no_pdf=True, resolved_only=False,
-                recalibrate_outcomes=False)
-        return rows, multi
+                "10.1/rep", self._ROW, screen=screen, no_llm=False, no_pdf=True,
+                resolved_only=resolved_only, recalibrate_outcomes=False)
+        return rows, coder
 
-    def test_the_row_goes_through_the_multi_original_pipeline(self):
-        rows, multi = self._run({"originals": [
-            {"rank": 1, "title": "First original", "doi": "10.1/a",
-             "first_author": "Smith", "year": 2009, "outcome": "success"},
-            {"rank": 2, "title": "Second original", "doi": "10.1/b",
-             "first_author": "Jones", "year": 2011, "outcome": "failure"},
-        ]})
+    _TWO = [_mock_target("@smith2009", "10.1/a", "First original", "Smith", 2009),
+            _mock_target("@jones2011", "10.1/b", "Second original", "Jones", 2011)]
 
-        assert multi.called
-        assert multi.call_args.kwargs["force_multi"] is True
+    def test_the_reroute_consumes_the_targets(self):
+        """The brief's named seam: the target list the ladder already produced IS the
+        answer, and each of its entries becomes a row."""
+        rows, coder = self._run(self._TWO)
+
         assert [r["doi_o"] for r in rows] == ["10.1/a", "10.1/b"]
+        assert [r["title_o"] for r in rows] == ["First original", "Second original"]
         assert all(r["original_match_type"] == "multiple_original" for r in rows)
         assert all(r["n_originals"] == 2 for r in rows)
+        assert [r["original_rank"] for r in rows] == [1, 2]
+        assert not hasattr(run_extract, "run_multi_original_for_doi")
 
-    def test_a_multi_pass_that_finds_nothing_writes_target_pending(self):
-        rows, _ = self._run({"originals": []})
+        assert coder.call_count == 2
+        assert [c.kwargs["original_title"] for c in coder.call_args_list] == [
+            "First original", "Second original"]
+        assert all(c.kwargs["multi_original"] is True for c in coder.call_args_list)
+
+    def test_the_rows_carry_a_legal_outcome_block(self):
+        """The retired path wrote out_quote_source="llm_multi" and a three-valued
+        confidence, neither of which is in the schema's vocabulary."""
+        rows, _ = self._run(self._TWO)
+
+        for r in rows:
+            assert r["out_quote_source"] in {"abstract", "title", "fulltext"}
+            assert r["outcome_confidence"] in {"high", "low"}
+            assert r["link_confidence"] in {"high", "low"}
+            assert r["link_method"] == "llm_fulltext"
+
+    def test_a_reproduction_target_carries_the_axis_fields(self):
+        repro_outcome = {
+            "outcome": "computationally reproducible, robustness challenges",
+            "outcome_phrase": "", "outcome_confidence": "high", "out_quote_source": "",
+            "outcome_reasoning": "", "llm_model": "gemini-outcome",
+            "outcome_computation": "computationally reproducible",
+            "outcome_computational_quote": "the code reproduced every table",
+            "out_quote_computational_source": "fulltext",
+            "outcome_robustness": "robustness challenges",
+            "outcome_robustness_quote": "the effect did not survive the alternative spec",
+            "out_quote_robust_source": "fulltext",
+        }
+        rows, _ = self._run(self._TWO, outcome=repro_outcome, screen=self._SCREEN)
+
+        for r in rows:
+            assert r["type"] == "reproduction"
+            assert r["outcome_computation"] == "computationally reproducible"
+            assert r["outcome_robustness"] == "robustness challenges"
+            assert r["out_quote_computational_source"] == "fulltext"
+            assert r["out_quote_robust_source"] == "fulltext"
+
+    def test_the_guard_runs_before_the_outcome(self):
+        """A self-link is demoted to target_pending, and the pipeline's most
+        expensive call is never spent on a row that is about to be dropped."""
+        targets = [_mock_target("@self", "10.1/rep", "The paper itself", "Self", 2020)]
+        with patch.object(run_extract, "run_for_doi",
+                          return_value=self._link(targets)), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch.object(run_extract, "extract_outcome",
+                          side_effect=AssertionError("coded a demoted row")) as coder:
+            rows = run_extract._resolve_and_code(
+                "10.1/rep", self._ROW, screen=None, no_llm=True, no_pdf=True,
+                resolved_only=False, recalibrate_outcomes=False)
+
+        coder.assert_not_called()
+        assert rows[0]["link_method"] == "target_pending"
+        assert rows[0]["doi_o"] == ""
+        assert rows[0]["outcome"] == "pending"
+
+    def test_two_targets_on_one_original_collapse_to_one_row(self):
+        """FLoRA's coding level is one row per pair of REFERENCES: two studies of the
+        same original paper are one row with their numbers joined — and one outcome
+        call, not two."""
+        targets = [_mock_target("@smith2009", "10.1/a", "First original", "Smith", 2009,
+                                study_numbers="Study 1"),
+                   _mock_target("@smith2009b", "10.1/a", "First original", "Smith", 2009,
+                                study_numbers="Experiment 2")]
+        rows, coder = self._run(targets)
+
+        assert len(rows) == 1
+        assert rows[0]["study_o"] == "1, 2"
+        assert rows[0]["n_originals"] == 1
+        assert rows[0]["original_match_type"] == "single_original"
+        assert coder.call_count == 1
+        assert coder.call_args.kwargs["multi_original"] is False
+
+    def test_study_r_reaches_the_row_per_target(self):
+        targets = [_mock_target("@smith2009", "10.1/a", "First", "Smith", 2009,
+                                replication_study_numbers="Study 1"),
+                   _mock_target("@jones2011", "10.1/b", "Second", "Jones", 2011,
+                                replication_study_numbers="Experiment 2, 3")]
+        rows, _ = self._run(targets)
+        assert [r["study_r"] for r in rows] == ["1", "2, 3"]
+
+    def test_resolved_only_drops_a_demoted_row_and_renumbers_the_rest(self):
+        """audit_extracted requires ranks 1..n with n_originals == the group size, so
+        the renumbering has to happen after the drops, not before."""
+        targets = [_mock_target("@self", "10.1/rep", "The paper itself", "Self", 2020),
+                   _mock_target("@jones2011", "10.1/b", "Second original", "Jones", 2011)]
+        rows, _ = self._run(targets, resolved_only=True)
+
+        assert len(rows) == 1
+        assert rows[0]["doi_o"] == "10.1/b"
+        assert rows[0]["original_rank"] == 1
+        assert rows[0]["n_originals"] == 1
+
+    def test_an_unmatched_target_is_reported_not_written(self):
+        """A target with no keyed record names a study we cannot identify: there is no
+        published record to write a row about, and the shortfall belongs on the rows
+        that were written."""
+        targets = self._TWO + [{"key": None, "match_certain": False,
+                                "target_as_named": "Ramirez (2014)",
+                                "study_numbers": "", "replication_study_numbers": "",
+                                "evidence_quote": "q", "record": None}]
+        rows, _ = self._run(targets, unidentified_count=1)
+
+        assert len(rows) == 2
+        assert all("identified 2 of 4 targets" in r["link_evidence"] for r in rows)
+        assert all("Ramirez (2014)" in r["link_evidence"] for r in rows)
+
+    def test_no_matchable_target_writes_one_pending_row(self):
+        targets = [{"key": None, "match_certain": False, "target_as_named": "A",
+                    "study_numbers": "", "replication_study_numbers": "",
+                    "evidence_quote": "q", "record": None},
+                   {"key": None, "match_certain": False, "target_as_named": "B",
+                    "study_numbers": "", "replication_study_numbers": "",
+                    "evidence_quote": "q", "record": None}]
+        rows, _ = self._run(targets)
 
         assert len(rows) == 1
         assert rows[0]["link_method"] == "target_pending"
-        assert "3 originals" in rows[0]["link_evidence"]
+        assert "2 originals" in rows[0]["link_evidence"]
 
     def test_an_unresolved_rerouted_row_keeps_what_the_screen_decided(self):
         """The screen ran and classified the paper; the ladder finding no original
         does not undo that, and a pending row stripped of its categories and type
         reads as a paper nobody looked at."""
-        rows, _ = self._run({"originals": []}, screen=self._SCREEN)
+        targets = [{"key": None, "match_certain": False, "target_as_named": "A",
+                    "study_numbers": "", "replication_study_numbers": "",
+                    "evidence_quote": "q", "record": None},
+                   {"key": None, "match_certain": False, "target_as_named": "B",
+                    "study_numbers": "", "replication_study_numbers": "",
+                    "evidence_quote": "q", "record": None}]
+        rows, _ = self._run(targets, screen=self._SCREEN)
 
         assert rows[0]["screen_categories"] == "clearly_declared|self_retest"
         assert rows[0]["type"] == "reproduction"
+
+    def test_a_resolved_single_link_does_not_reach_the_adapter(self):
+        """A ladder that accepted one target already wrote the link; rerouting it
+        would rebuild the same row through a second code path."""
+        link = dict(_MOCK_LINK, targets=[self._TWO[0]], n_targets=1,
+                    resolved_study_r="2")
+        with patch.object(run_extract, "run_for_doi", return_value=link), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch.object(run_extract, "extract_outcome", return_value=_MOCK_OUTCOME), \
+             patch.object(run_extract, "verify_and_correct",
+                          side_effect=lambda doi, *a, **k: {
+                              "doi_o": doi, "doi_o_verification": "skipped",
+                              "evidence_note": ""}):
+            rows = run_extract._resolve_and_code(
+                "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
+                resolved_only=False, recalibrate_outcomes=False)
+
+        assert len(rows) == 1
+        assert rows[0]["link_method"] == "same_author_year_title_overlap"
+        assert rows[0]["doi_o"] == "10.1037/h0054651"
+        assert rows[0]["study_r"] == "2"          # from the link, not from a target
+
+
+class TestAdapterRowsSettleAfterTheDrops:
+    """Everything that describes the GROUP — the match type, the count, the
+    confidence — is only knowable once the guard and --resolved-only have run."""
+
+    _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
+                      "filter_status": "replication"})
+
+    def _run(self, targets, resolved_only=False, **over):
+        link = dict(_MOCK_LINK, resolved=False, resolution_method="llm_multi_target",
+                    resolved_doi_o="", resolved_title_o="", multi_target=True,
+                    n_targets=len(targets), target_stage="llm_gemini",
+                    unidentified_count=0, targets=targets, llm_model="gemini-heavy",
+                    **over)
+        with patch.object(run_extract, "run_for_doi", return_value=link), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch.object(run_extract, "extract_outcome", return_value=_MOCK_OUTCOME):
+            return run_extract._resolve_and_code(
+                "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
+                resolved_only=resolved_only, recalibrate_outcomes=False)
+
+    def test_a_paper_whose_second_target_is_rejected_is_not_multiple_original(self):
+        """The match type is the row count, and the row count is only final after the
+        guard: a surviving single row that still says multiple_original overcounts
+        every multi-original figure on the dashboard."""
+        rows = self._run([
+            _mock_target("@self", "10.1/rep", "The paper itself", "Self", 2020),
+            _mock_target("@jones2011", "10.1/b", "Second original", "Jones", 2011)])
+
+        assert len(rows) == 2
+        survivors = [r for r in rows if r["link_method"] != "target_pending"]
+        assert len(survivors) == 1
+        # Both rows agree on the group, and the demoted one is not a high-confidence
+        # match to an original it no longer has.
+        assert {r["original_match_type"] for r in rows} == {"multiple_original"}
+        demoted = [r for r in rows if r["link_method"] == "target_pending"][0]
+        assert demoted["original_match_confidence"] == "low"
+        assert survivors[0]["original_match_confidence"] == "high"
+
+    def test_resolved_only_leaves_a_single_original_paper(self):
+        rows = self._run([
+            _mock_target("@self", "10.1/rep", "The paper itself", "Self", 2020),
+            _mock_target("@jones2011", "10.1/b", "Second original", "Jones", 2011)],
+            resolved_only=True)
+
+        assert len(rows) == 1
+        assert rows[0]["original_match_type"] == "single_original"
+        assert rows[0]["n_originals"] == 1
+        assert rows[0]["original_match_confidence"] == "high"
+
+    def test_a_provisional_link_is_never_written_at_high_confidence(self):
+        """A DOI the pipeline had to search for is ~50% precise. The single path caps
+        it at low through _link_confidence; the adapter must not undo that."""
+        target = _mock_target("@smith2009", "", "An unindexed original", "Smith", 2009)
+        with patch.object(run_extract, "run_for_doi", return_value=dict(
+                _MOCK_LINK, resolved=False, resolution_method="llm_multi_target",
+                resolved_doi_o="", resolved_title_o="", multi_target=True, n_targets=1,
+                target_stage="llm_gemini", unidentified_count=0, targets=[target])), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch("shared.doi_verify.resolve_doi_by_metadata",
+                   return_value={"doi": "10.9/found"}), \
+             patch.object(run_extract, "extract_outcome", return_value=_MOCK_OUTCOME):
+            rows = run_extract._resolve_and_code(
+                "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
+                resolved_only=False, recalibrate_outcomes=False)
+
+        assert rows[0]["link_method"] == "llm_title_search"
+        assert rows[0]["link_confidence"] == "low"
+        assert rows[0]["original_match_confidence"] == "low"   # not a resolved method
+
+    def test_two_targets_that_verify_to_one_doi_become_one_row(self):
+        """The collapse groups what the MODEL said; the guard then recovers a DOI for
+        a target that had none, so two entries can arrive at one doi_o afterwards —
+        and two rows sharing a doi_o share a pair_id."""
+        targets = [_mock_target("@a", "", "An unindexed original", "Smith", 2009,
+                                study_numbers="1", replication_study_numbers="1"),
+                   _mock_target("@b", "", "An unindexed original (reprint)", "Smith",
+                                2009, study_numbers="2",
+                                replication_study_numbers="2")]
+        outcomes = iter([dict(_MOCK_OUTCOME, outcome="success"),
+                         dict(_MOCK_OUTCOME, outcome="failure")])
+        with patch.object(run_extract, "run_for_doi", return_value=dict(
+                _MOCK_LINK, resolved=False, resolution_method="llm_multi_target",
+                resolved_doi_o="", resolved_title_o="", multi_target=True, n_targets=2,
+                target_stage="llm_gemini", unidentified_count=0, targets=targets)), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch("shared.doi_verify.resolve_doi_by_metadata", return_value=None), \
+             patch.object(run_extract, "_search_crossref_by_title",
+                          return_value={"doi": "10.9/same", "openalex_id": ""}), \
+             patch.object(run_extract, "extract_outcome",
+                          side_effect=lambda *a, **k: next(outcomes)):
+            rows = run_extract._resolve_and_code(
+                "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
+                resolved_only=False, recalibrate_outcomes=False)
+
+        assert len(rows) == 1
+        assert rows[0]["doi_o"] == "10.9/same"
+        assert rows[0]["study_o"] == "1, 2"
+        assert rows[0]["study_r"] == "1, 2"
+        # Two verdicts about one original are reconciled by FLoRA's rule, not by
+        # taking whichever row happened to be first.
+        assert rows[0]["outcome"] == "mixed"
+        assert rows[0]["n_originals"] == 1
+
+
+def test_a_rejected_row_states_nothing_about_the_original_it_lost():
+    """Every one of these fields describes the original the guard just rejected. A row
+    that keeps them reads as a link to a paper the pipeline explicitly refused."""
+    row = {"doi_r": "10.1/rep", "title_r": "A Study of Things",
+           "doi_o": "10.1/rep", "title_o": "A Study of Things", "study_o": "1",
+           "study_r": "2", "year_o": "2009", "authors_o": "Smith, J.",
+           "ref_o": "Smith, J. (2009). A Study of Things.",
+           "bibtex_ref_o": "@article{Smith_2009,}", "oa_work_id_o": "W123",
+           "link_method": "llm_fulltext", "link_confidence": "high"}
+    out = run_extract._guard_original_link(row)
+
+    assert out["link_method"] == "target_pending"
+    for column in ("doi_o", "title_o", "study_o", "study_r", "year_o", "authors_o",
+                   "ref_o", "bibtex_ref_o", "oa_work_id_o"):
+        assert out[column] == "", column
+
+
+def test_study_r_is_not_written_onto_an_unresolved_link():
+    """The ladder can carry a target list past an exit that resolved nothing. Those
+    study numbers belong to the targets' own rows, not to a row with no original."""
+    unresolved = {"resolution_method": "needs_fulltext", "resolved": False,
+                  "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
+                  "resolved_author_o": "", "resolved_study_o": "", "resolved_study_r": "2"}
+    with patch("extract.run_extract._build_ref_o", return_value=("", "", "")):
+        row = _merge_row(pd.Series({"doi_r": "10.1/rep", "title_r": "T",
+                                    "filter_status": "replication"}),
+                         unresolved, {}, "single_original", "low", 1, 1)
+    assert row["study_r"] == ""
+
+
+def test_no_live_reference_to_the_deleted_builders():
+    """The prompts and the writer values the pre-redesign multi pipeline owned. Both
+    values stay legal on the read side; nothing may write them again."""
+    import shared.prompts as prompts
+    assert not hasattr(prompts, "build_multi_original_prompt")
+    assert not hasattr(prompts, "build_match_type_prompt")
+    assert not hasattr(prompts, "OUTCOME_ENUM")
+    assert not hasattr(llm_client, "identify_all_originals_with_llm")
+
+    for path in sorted(Path("extract").glob("*.py")):
+        assert '"llm_multi"' not in path.read_text(encoding="utf-8"), path
+
+    # medium reached the CSV through the multi writer's confidence pass-through.
+    with patch("extract.run_extract._build_ref_o", return_value=("", "", "")):
+        row = _merge_multi_row(
+            pd.Series({"doi_r": "10.1/r", "title_r": "R", "filter_status": "replication"}),
+            {"rank": 1, "doi": "10.1/o", "title": "O", "confidence": "medium"},
+            {}, "single_original", "high", 1)
+    assert row["link_confidence"] == "low"

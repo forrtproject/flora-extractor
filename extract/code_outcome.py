@@ -355,7 +355,8 @@ def _unsettled(output: dict, is_repro: bool) -> bool:
 def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
                     original_title: str = "", original_authors: str = "",
                     original_year: str = "", record_type: str = "replication",
-                    recoded: bool = False) -> tuple[dict, bool]:
+                    recoded: bool = False,
+                    multi_original: bool = False) -> tuple[dict, bool]:
     """LLM-based outcome extraction, with whether the result may be cached.
 
     Two results are deliberately NOT cacheable: api_error after provider exhaustion,
@@ -381,6 +382,13 @@ def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
     reproduction gets a different prompt and a different outcome vocabulary, so it
     must not read back a replication-coded entry), and every input sent — title,
     abstract, the original-study block and the fulltext the escalation would read.
+
+    *multi_original* tells the model the paper also re-tests other originals coded on
+    their own rows — it changes the prompt, so it is part of the key, appended only
+    when set. Without it a single-original row and a per-target row for the same
+    (doi_r, original) would collide on one entry and the second would read back the
+    other variant's answer; with it always present, every existing single-original
+    entry would be orphaned instead.
     """
     abstract_snip = (abstract_r[:_ABSTRACT_CAP] + "…") if len(abstract_r) > _ABSTRACT_CAP else abstract_r
     text_snip     = (fulltext[:_FULLTEXT_CAP] + "…") if len(fulltext) > _FULLTEXT_CAP else fulltext
@@ -389,10 +397,15 @@ def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
     build = build_repro_outcome_prompt if is_repro else build_outcome_prompt
     version = prompt_version(
         "build_repro_outcome_prompt" if is_repro else "build_outcome_prompt")
+    # multi_original is APPENDED, and only when it is set: it names a prompt variant
+    # that did not exist before, and a key component that is always present would move
+    # every single-original key and orphan the outcome cache — the most expensive
+    # entries the pipeline holds, because they may carry a full-text escalation.
     key = content_key("outcome", doi_r, ladder_fingerprint(GEMINI_HEAVY_MODEL),
                       version, record_type,
                       title_r, abstract_snip,
-                      original_authors, original_year, original_title, text_snip)
+                      original_authors, original_year, original_title, text_snip,
+                      *(("multi_original",) if multi_original else ()))
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
         cached.setdefault("outcome_reasoning", "")
@@ -408,7 +421,8 @@ def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
                   "outcome_confidence": "low", "out_quote_source": "",
                   "outcome_reasoning": "", "llm_model": "", **_EMPTY_AXES}
 
-    prompt = build(title_r, abstract_snip, original_authors, original_year, original_title)
+    prompt = build(title_r, abstract_snip, original_authors, original_year,
+                   original_title, multi_original=multi_original)
     result, model_used = _call_outcome_llm(prompt, doi_r)
     if not result:
         log.warning("[%s] outcome LLM failed after all retries — marking api_error", doi_r)
@@ -421,7 +435,8 @@ def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
     if OUTCOME_FULLTEXT_ESCALATION and fulltext and (_unsettled(output, is_repro)
                                                      or not abstract_r):
         esc_prompt = build(title_r, abstract_snip, original_authors, original_year,
-                           original_title, text_snip=text_snip)
+                           original_title, text_snip=text_snip,
+                           multi_original=multi_original)
         esc_result, esc_model = _call_outcome_llm(esc_prompt, doi_r)
         if not esc_result:
             # Caching the abstract's cannot_be_determined here would retire the
@@ -447,7 +462,8 @@ def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
                                                 original_title=original_title,
                                                 original_authors=original_authors,
                                                 original_year=original_year,
-                                                record_type=other, recoded=True)
+                                                record_type=other, recoded=True,
+                                                multi_original=multi_original)
             output = {**output, "record_type": other}
 
     if cacheable:
@@ -457,14 +473,16 @@ def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
 
 def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
                  original_title: str = "", original_authors: str = "",
-                 original_year: str = "", record_type: str = "replication") -> dict:
+                 original_year: str = "", record_type: str = "replication",
+                 multi_original: bool = False) -> dict:
     """The outcome row for *doi_r* — see _outcome_result, whose cacheability flag the
     pipeline has no use for."""
     output, _ = _outcome_result(doi_r, title_r, abstract_r, fulltext,
                                 original_title=original_title,
                                 original_authors=original_authors,
                                 original_year=original_year,
-                                record_type=record_type)
+                                record_type=record_type,
+                                multi_original=multi_original)
     return output
 
 
@@ -500,8 +518,12 @@ def extract_outcome(doi_r: str,
                     original_title: str = "",
                     original_authors: str = "",
                     original_year: str = "",
-                    record_type: str = "replication") -> dict:
+                    record_type: str = "replication",
+                    multi_original: bool = False) -> dict:
     """Extract the outcome from available text.
+
+    multi_original says the paper re-tests other originals too, each coded on its own
+    row: the prompt then tells the model to judge THIS original only.
 
     record_type selects the vocabulary: "reproduction" uses the computation/robustness
     axes, anything else the replication enum. It can also be corrected here — when the
@@ -526,7 +548,8 @@ def extract_outcome(doi_r: str,
                             original_title=original_title,
                             original_authors=original_authors,
                             original_year=original_year,
-                            record_type="reproduction")
+                            record_type="reproduction",
+                            multi_original=multi_original)
 
     # Keyword fast-path is the NO-LLM fallback only (#70). When the LLM is available
     # every "is this a genuine replication?" decision must be seen by it: on the
@@ -558,4 +581,5 @@ def extract_outcome(doi_r: str,
                         original_title=original_title,
                         original_authors=original_authors,
                         original_year=original_year,
-                        record_type=record_type)
+                        record_type=record_type,
+                        multi_original=multi_original)

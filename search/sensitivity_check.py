@@ -73,9 +73,13 @@ def run_sensitivity_check() -> None:
     cands   = _load(cands_path,   "candidates")
 
     # ── Normalise DOIs ────────────────────────────────────────────────────────
-    # all_replications.csv uses doi_r / study_r / abstract_r (same schema as pipeline)
+    # all_replications.csv uses doi_r / title_r / abstract_r (same schema as pipeline).
+    # study_r is only a fallback here, for the legacy seeded exports that used it for a
+    # paper TITLE — in the pipeline schema it is a study NUMBER and never a title.
     doi_col_rep   = "doi_r"   if "doi_r"   in all_rep.columns else next((c for c in all_rep.columns if "doi"   in c.lower()), None)
-    title_col_rep = "study_r" if "study_r" in all_rep.columns else next((c for c in all_rep.columns if "title" in c.lower()), None)
+    title_col_rep = ("title_r" if "title_r" in all_rep.columns else
+                     "study_r" if "study_r" in all_rep.columns else
+                     next((c for c in all_rep.columns if "title" in c.lower()), None))
     abs_col_rep   = "abstract_r" if "abstract_r" in all_rep.columns else next((c for c in all_rep.columns if "abstract" in c.lower()), None)
 
     if doi_col_rep is None:
