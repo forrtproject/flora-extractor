@@ -593,21 +593,47 @@ def _screen_categories(screen: "dict | None") -> str:
     return "|".join((screen or {}).get("categories", []) or [])
 
 
-def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
-               match_type: str, match_conf: str,
-               rank: int, n: int, classify_model: str = "",
-               screen: "dict | None" = None) -> dict:
+def _base_row(filter_row: pd.Series, match_type: str, match_conf: str,
+              classify_model: str, outcome: dict,
+              screen: "dict | None" = None) -> dict:
+    """The fields every written row carries, whichever producer built it.
+
+    The three producers differ only in how they name the original and the link; the
+    classification, the replication-side bibtex, the outcome block, the record type
+    and the rank/count defaults are the same row for all of them.
+    """
     row = filter_row.to_dict()
     # propagate study_r → title_r if title_r is absent (old seeded data uses study_r)
     if not row.get("title_r"):
         row["title_r"] = row.get("study_r", "")
-    doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
-    doi_o_clean = clean_doi(link.get("resolved_doi_o", "") or "")
     row.update({
-        "pair_id":           make_pair_id(doi_r_clean, doi_o_clean),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
         "classify_llm_model":        classify_model,
+        "bibtex_ref_r":      _build_bibtex_r(filter_row),
+        "outcome":             outcome.get("outcome",             "cannot_be_determined"),
+        "outcome_phrase":      outcome.get("outcome_phrase",      ""),
+        "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
+        "out_quote_source":    outcome.get("out_quote_source",    ""),
+        "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
+        "outcome_llm_model":   str(outcome.get("llm_model",       "") or ""),
+        "type":              _record_type(filter_row, screen),
+        "screen_categories": _screen_categories(screen),
+        "original_rank": 1,
+        "n_originals":   1,
+    })
+    return row
+
+
+def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
+               match_type: str, match_conf: str,
+               rank: int, n: int, classify_model: str = "",
+               screen: "dict | None" = None) -> dict:
+    row = _base_row(filter_row, match_type, match_conf, classify_model, outcome, screen)
+    doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
+    doi_o_clean = clean_doi(link.get("resolved_doi_o", "") or "")
+    row.update({
+        "pair_id":         make_pair_id(doi_r_clean, doi_o_clean),
         "doi_o":           doi_o_clean,
         "title_o":         str(link.get("resolved_title_o", "") or ""),
         "year_o":          str(link.get("resolved_year_o",  "") or ""),
@@ -617,19 +643,10 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
             str(link.get("resolved_year_o",   "") or ""),
             str(link.get("resolved_title_o",  "") or ""),
         ))),
-        "bibtex_ref_r":    _build_bibtex_r(filter_row),
         "link_method":     _map_method(link.get("resolution_method", "target_pending")),
         "link_evidence":   str(link.get("llm_evidence",     "") or ""),
         "link_confidence": _link_confidence(link),
         "link_llm_model":  str(link.get("llm_model",        "") or ""),
-        "outcome":             outcome.get("outcome",             "cannot_be_determined"),
-        "outcome_phrase":      outcome.get("outcome_phrase",      ""),
-        "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
-        "out_quote_source":    outcome.get("out_quote_source",    ""),
-        "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
-        "outcome_llm_model":   str(outcome.get("llm_model",       "") or ""),
-        "type":              _record_type(filter_row, screen),
-        "screen_categories": _screen_categories(screen),
         "original_rank": rank,
         "n_originals":   n,
     })
@@ -642,9 +659,7 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
                      link_method: str = "llm_cited_candidates",
                      classify_model: str = "",
                      screen: "dict | None" = None) -> dict:
-    row = filter_row.to_dict()
-    if not row.get("title_r"):
-        row["title_r"] = row.get("study_r", "")
+    row = _base_row(filter_row, match_type, match_conf, classify_model, outcome, screen)
     conf_str = orig.get("confidence", "low")
     if conf_str not in {"high", "medium", "low"}:
         conf_str = "low"
@@ -652,12 +667,9 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
     doi_o_clean  = clean_doi(orig.get("doi", "") or "")
     title_o      = str(orig.get("title", "") or "")
     row.update({
-        "pair_id":           make_pair_id(doi_r_clean, doi_o_clean,
-                                          str(orig.get("openalex_id", "") or ""),
-                                          title_o),
-        "original_match_type":       match_type,
-        "original_match_confidence": match_conf,
-        "classify_llm_model":        classify_model,
+        "pair_id":         make_pair_id(doi_r_clean, doi_o_clean,
+                                        str(orig.get("openalex_id", "") or ""),
+                                        title_o),
         "doi_o":           doi_o_clean,
         "title_o":         title_o,
         "year_o":          str(orig.get("year",         "") or ""),
@@ -668,19 +680,10 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
             title_o,
         ))),
         "study_o":         str(orig.get("study_number", "") or ""),
-        "bibtex_ref_r":    _build_bibtex_r(filter_row),
         "link_method":     link_method,
         "link_evidence":   str(orig.get("evidence",     "") or ""),
         "link_confidence": conf_str,
         "link_llm_model":  link_llm_model,
-        "outcome":             outcome.get("outcome",             "cannot_be_determined"),
-        "outcome_phrase":      outcome.get("outcome_phrase",      ""),
-        "outcome_confidence":  outcome.get("outcome_confidence",  "low"),
-        "out_quote_source":    outcome.get("out_quote_source",    ""),
-        "outcome_reasoning":   outcome.get("outcome_reasoning",   ""),
-        "outcome_llm_model":   str(outcome.get("llm_model",       "") or ""),
-        "type":              _record_type(filter_row, screen),
-        "screen_categories": _screen_categories(screen),
         "original_rank": orig.get("rank", 1),
         "n_originals":   n,
     })
@@ -689,22 +692,19 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
 
 def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
                link_method: str = "api_error", classify_model: str = "") -> dict:
-    row = filter_row.to_dict()
     doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
     outcome = "api_error" if link_method == "api_error" else "pending"
+    row = _base_row(filter_row, match_type, match_conf, classify_model,
+                    {"outcome": outcome})
     row.update({
         "pair_id": make_pair_id(doi_r_clean, ""),
-        "original_match_type":       match_type,
-        "original_match_confidence": match_conf,
-        "classify_llm_model":        classify_model,
         "doi_o": "", "title_o": "", "year_o": "", "authors_o": "", "ref_o": "",
-        "bibtex_ref_o": "", "bibtex_ref_r": _build_bibtex_r(filter_row),
+        "bibtex_ref_o": "",
         "link_method": link_method, "link_evidence": "", "link_confidence": "low",
         "link_llm_model": "",
-        "outcome": outcome, "outcome_phrase": "",
-        "outcome_confidence": "low", "out_quote_source": "", "outcome_reasoning": "",
-        "outcome_llm_model": "",
-        "type": "", "original_rank": 1, "n_originals": 1,
+        # No screen is passed in: a row nobody classified carries no type, and the
+        # replication default _record_type falls back to would be a guess.
+        "type": "",
     })
     return row
 
