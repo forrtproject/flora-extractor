@@ -24,7 +24,7 @@ from shared.config import (
 )
 from shared.disambiguation import jaccard_similarity
 from shared.openalex_client import author_matches
-from shared.utils import cache_key, clean_doi
+from shared.utils import bare_work_id, cache_key, clean_doi
 
 # Tunable thresholds — starting points, not yet empirically validated.
 VERIFY_TITLE_JACCARD  = 0.5   # DOI metadata vs resolved title → "verified"
@@ -364,6 +364,19 @@ def resolve_doi_by_metadata(title: str, author: str, year,
 
     write_cache(DOI_VERIFY_CACHE_DIR, key, {"found": False})
     return None
+
+
+def keeps_no_doi(new_status: str, prior_status: str, oa_work_id_o: str) -> bool:
+    """True when a fresh verification result must not overwrite a recorded "no_doi".
+
+    verify_and_correct only ever searches for DOIs, so an original that genuinely has
+    none always comes back "not_found". Letting that overwrite "no_doi" would turn a
+    row whose identity is its OpenAlex work id into an audit_extracted blocker. Both
+    _verify_row (run_extract) and audit_dois re-verify the same rows, so the rule
+    lives here rather than in either caller.
+    """
+    return (new_status == "not_found" and prior_status == "no_doi"
+            and bool(bare_work_id(oa_work_id_o)))
 
 
 def verify_and_correct(doi_o, title_o, author_o, year_o,

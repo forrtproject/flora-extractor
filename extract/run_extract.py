@@ -37,7 +37,7 @@ from shared.pdf_parsing import (
 )
 from shared.cache import content_key, read_cache, write_cache
 from shared.prompts import build_match_type_prompt, prompt_version
-from shared.doi_verify import verify_and_correct
+from shared.doi_verify import keeps_no_doi, verify_and_correct
 from shared.schema import (
     EXTRACTED_COLS,
     LINK_METHOD_VALUES,
@@ -568,10 +568,8 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
         row["title_r"] = row.get("study_r", "")
     doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
     doi_o_clean = clean_doi(link.get("resolved_doi_o", "") or "")
-    title_o_str = str(link.get("resolved_title_o", "") or "")
     row.update({
-        "pair_id":           make_pair_id(doi_r_clean, doi_o_clean,
-                                          str(row.get("oa_work_id_o", "") or "")),
+        "pair_id":           make_pair_id(doi_r_clean, doi_o_clean),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
         "classify_llm_model":        classify_model,
@@ -1133,8 +1131,8 @@ def _guard_original_link(row: dict) -> dict:
        book chapters, working papers) have no registered DOI; dropping them would
        discard valid links. Marked explicitly so it is never mistaken for verified.
        If the title search did return a work that OpenAlex indexes without a DOI,
-       its work id becomes oa_work_id_o and re-keys pair_id — that id is the row's
-       only identity, and without it audit_extracted blocks the row.
+       its work id becomes oa_work_id_o — that id is the row's only identity, and
+       without it audit_extracted blocks the row.
     4. No DOI and no usable title → target_pending; there is nothing to validate.
     """
     # not_a_replication has no original by design — the reference screen concluded
@@ -1188,7 +1186,10 @@ def _guard_original_link(row: dict) -> dict:
             log.debug("[%s] doi_o title-recovery failed: %s", doi_r, exc)
         found = clean_doi(str((meta or {}).get("doi", "") or ""))
         if found:
-            reason = _is_self(found)
+            # The work id has to be compared too: OpenAlex can return the replication's
+            # own work under a DOI that differs textually from doi_r (alternate or
+            # canonical form), which the DOI comparison alone would wave through.
+            reason = _is_self(found, bare_work_id(str((meta or {}).get("openalex_id", "") or "")))
             if reason:
                 return _reject(f"recovered DOI is a self-link — {reason}")
             log.info("[%s] recovered doi_o=%s from title search", doi_r, found)
@@ -1207,8 +1208,12 @@ def _guard_original_link(row: dict) -> dict:
             if reason:
                 return _reject(f"title-search hit is a self-link — {reason}")
             log.info("[%s] DOI-less original identified as %s", doi_r, work_id_o)
+            # pair_id deliberately NOT recomputed: this is the single-original path,
+            # where the oa: fallback buys no collision protection (one original per
+            # row, and different replications already differ by doi_r) but would
+            # re-key the existing DOI-less rows the validation DB holds under
+            # md5("doi_r|") — a duplicate import. Only multi-original needs it.
             row["oa_work_id_o"] = work_id_o
-            row["pair_id"] = make_pair_id(doi_r, "", work_id_o)
         return row
 
     return row
@@ -1231,17 +1236,17 @@ def _verify_row(row: dict) -> dict:
                            exclude_doi=clean_doi(str(row.get("doi_r", ""))),
                            exclude_title=str(row.get("title_r", "")
                                              or row.get("study_r", "") or ""))
-    # verify_and_correct only ever searches for DOIs, so an original that genuinely
-    # has none comes back "not_found" — which would overwrite the guard's "no_doi"
-    # and turn a row identified by its OpenAlex work id into an audit blocker.
-    if not (v["doi_o_verification"] == "not_found"
-            and row.get("doi_o_verification") == "no_doi"
-            and bare_work_id(str(row.get("oa_work_id_o", "") or ""))):
+    if not keeps_no_doi(v["doi_o_verification"], str(row.get("doi_o_verification", "") or ""),
+                        str(row.get("oa_work_id_o", "") or "")):
         row["doi_o_verification"] = v["doi_o_verification"]
     if v["doi_o"] != old_doi:
         row["doi_o"]   = v["doi_o"]
-        row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), v["doi_o"],
-                                      str(row.get("oa_work_id_o", "") or ""))
+        row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), v["doi_o"])
+        if v["doi_o"]:
+            # The old work id was resolved from the old DOI (or from a title search
+            # that produced it) and may describe a different work; _fill_work_ids
+            # refills it from the corrected DOI, but only if the column is blank.
+            row["oa_work_id_o"] = ""
         new_ref, new_authors, new_bibtex = _build_ref_o(v["doi_o"],
                                             str(row.get("authors_o", "") or ""),
                                             str(row.get("year_o",    "") or ""),
@@ -1257,8 +1262,11 @@ def _verify_row(row: dict) -> dict:
         # title/author/year claim is retained so the row can still be reviewed.
         row["doi_o"] = ""
         row["bibtex_ref_o"] = ""
-        row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), "",
-                                      str(row.get("oa_work_id_o", "") or ""))
+        # Any oa_work_id_o on a row that had a doi_o was resolved from that DOI, which
+        # has just been shown to describe a different paper — so it goes too, and the
+        # pair_id keys on the DOI pair alone rather than on a discredited work id.
+        row["oa_work_id_o"] = ""
+        row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), "")
         row["link_confidence"] = "low"
     if v["evidence_note"]:
         existing = str(row.get("link_evidence", "") or "")

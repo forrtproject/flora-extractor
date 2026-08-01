@@ -1520,7 +1520,7 @@ class TestGuardOriginalLink:
 
     def test_doi_less_original_keeps_the_openalex_work_id(self):
         """A book or pre-DOI-era original OpenAlex indexes without a DOI: the work
-        id is the row's only identity, so it must reach oa_work_id_o and pair_id."""
+        id is the row's only identity, so it must reach oa_work_id_o."""
         hit = {"doi": "", "openalex_id": "W123", "title": "The Original Work"}
         with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
              patch("extract.run_extract._search_openalex_by_title", return_value=hit):
@@ -1529,7 +1529,32 @@ class TestGuardOriginalLink:
         assert out["doi_o"] == ""
         assert out["doi_o_verification"] == "no_doi"
         assert out["oa_work_id_o"] == "W123"
-        assert out["pair_id"] == make_pair_id("10.1/repl", "", "W123")
+
+    def test_legacy_doi_less_row_keeps_its_md5_doi_r_pipe_pair_id(self):
+        """REGRESSION: 129 rows already live in the validation DB keyed on
+        md5("doi_r|"). Re-extracting one and now finding a DOI-less OpenAlex work
+        must stamp oa_work_id_o WITHOUT re-keying pair_id — a changed pair_id is a
+        duplicate import, and the oa: fallback buys nothing on the single-original
+        path anyway."""
+        legacy = make_pair_id("10.1/repl", "")
+        hit = {"doi": "", "openalex_id": "W123", "title": "The Original Work"}
+        with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
+             patch("extract.run_extract._search_openalex_by_title", return_value=hit):
+            out = run_extract._guard_original_link(
+                self._row(doi_o="", oa_work_id_o="", pair_id=legacy))
+        assert out["oa_work_id_o"] == "W123"
+        assert out["pair_id"] == legacy
+        assert out["pair_id"] != make_pair_id("10.1/repl", "", "W123")
+
+    def test_step2_doi_hit_whose_work_id_is_the_replication_is_rejected(self):
+        """OpenAlex can return the replication's own work under an alternate DOI
+        string; the DOI comparison alone would let it through."""
+        hit = {"doi": "10.1/REPL.v2", "openalex_id": "https://openalex.org/W999"}
+        with patch("extract.run_extract._search_crossref_by_title", return_value=hit):
+            out = run_extract._guard_original_link(
+                self._row(doi_o="", oa_work_id_r="W999"))
+        assert out["link_method"] == "target_pending"
+        assert out["doi_o"] == ""
 
     def test_doi_less_original_without_a_work_id_is_left_alone(self):
         with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
@@ -1570,7 +1595,7 @@ class TestNoDoiWorkIdSurvivesVerification:
                 "link_confidence": "high", "oa_work_id_o": "W123",
                 "oa_work_id_r": "W555",
                 "doi_o_verification": "no_doi",
-                "pair_id": make_pair_id("10.1/repl", "", "W123")}
+                "pair_id": make_pair_id("10.1/repl", "")}
 
     def test_verify_row_keeps_no_doi_and_the_pair_id(self):
         v = {"doi_o_verification": "not_found", "doi_o": "",
@@ -1579,13 +1604,30 @@ class TestNoDoiWorkIdSurvivesVerification:
             out = run_extract._verify_row(self._row())
         assert out["doi_o_verification"] == "no_doi"
         assert out["oa_work_id_o"] == "W123"
-        assert out["pair_id"] == make_pair_id("10.1/repl", "", "W123")
+        assert out["pair_id"] == make_pair_id("10.1/repl", "")
 
     def test_fill_work_ids_leaves_the_guard_set_id_alone(self):
         with patch("extract.run_extract._oa_by_doi") as by_doi:
             out = run_extract._fill_work_ids(self._row())
         assert out["oa_work_id_o"] == "W123"
         by_doi.assert_not_called()
+
+    def test_a_found_doi_clears_the_stale_work_id(self):
+        """W123 was resolved before the DOI was known; once verification supplies a
+        real doi_o the id must be refilled from it, not carried over."""
+        v = {"doi_o_verification": "corrected", "doi_o": "10.2/right",
+             "evidence_note": "DOI filled from metadata search"}
+        with patch("extract.run_extract.verify_and_correct", return_value=v), \
+             patch("extract.run_extract._build_ref_o", return_value=("r", "a", "b")):
+            out = run_extract._verify_row(self._row())
+        assert out["doi_o"] == "10.2/right"
+        assert out["oa_work_id_o"] == "", "a stale o-side id blocks _fill_work_ids"
+        assert out["pair_id"] == make_pair_id("10.1/repl", "10.2/right")
+
+        with patch("extract.run_extract._oa_by_doi",
+                   return_value={"openalex_id": "https://openalex.org/W222"}):
+            filled = run_extract._fill_work_ids(out)
+        assert filled["oa_work_id_o"] == "W222"
 
 
 # ── Mismatched doi_o must not survive into the row (fix 1) ───────────────────
@@ -1607,6 +1649,15 @@ class TestMismatchClearsDoi:
         assert out["title_o"] == "The Original Work", "the title claim is retained"
         assert out["doi_o_verification"] == "mismatch"
         assert out["link_confidence"] == "low"
+
+    def test_mismatch_clears_a_work_id_resolved_from_the_wrong_doi(self):
+        v = {"doi_o_verification": "mismatch", "doi_o": "10.2/wrong",
+             "evidence_note": "DOI mismatch: points to another paper"}
+        row = {**self._row(), "oa_work_id_o": "W999"}
+        with patch("extract.run_extract.verify_and_correct", return_value=v):
+            out = run_extract._verify_row(row)
+        assert out["oa_work_id_o"] == ""
+        assert out["pair_id"] == make_pair_id("10.1/repl", "")
 
     def test_verified_doi_untouched(self):
         v = {"doi_o_verification": "verified", "doi_o": "10.2/wrong", "evidence_note": ""}

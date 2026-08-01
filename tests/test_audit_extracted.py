@@ -102,6 +102,20 @@ def test_self_link_fires():
     assert "self_link" in _checks_fired([row])
 
 
+def test_self_link_by_work_id_fires_on_a_no_doi_row():
+    """A no_doi row is identified by its work id, so a self-link there is invisible
+    to the DOI comparison."""
+    row = _clean_row(doi_o="", doi_o_verification="no_doi",
+                     oa_work_id_o="W999", oa_work_id_r="https://openalex.org/W999")
+    assert _severity_of([row], "self_link") == BLOCKER
+
+
+def test_self_link_by_work_id_not_fired_when_distinct():
+    row = _clean_row(doi_o="", doi_o_verification="no_doi",
+                     oa_work_id_o="W123", oa_work_id_r="W999")
+    assert _checks_fired([row]) == set()
+
+
 def test_self_link_not_fired_when_distinct():
     assert "self_link" not in _checks_fired([_clean_row()])
 

@@ -93,6 +93,14 @@ def _row_checks(row: pd.Series) -> list[tuple[str, str, str]]:
     if doi_o and doi_o == doi_r:
         out.append(("self_link", BLOCKER, f"doi_o == doi_r ({doi_o})"))
 
+    # A no_doi row's identity is its work id, so a self-link there is invisible to the
+    # DOI comparison above — the row would reach a validator pointing at itself.
+    oa_work_id_r = bare_work_id(str(row.get("oa_work_id_r", "")
+                                    or row.get("openalex_id_r", "") or ""))
+    if oa_work_id_o and oa_work_id_o == oa_work_id_r:
+        out.append(("self_link", BLOCKER,
+                    f"oa_work_id_o == oa_work_id_r ({oa_work_id_o})"))
+
     outcome = str(row.get("outcome", "") or "")
     link_method = str(row.get("link_method", "") or "")
     if outcome in _UNRESOLVED_OUTCOMES or link_method in _UNRESOLVED_LINK_METHODS:

@@ -276,12 +276,14 @@ def make_pair_id(doi_r: str, doi_o: str, oa_work_id_o: str = "",
     to the pre-fallback hash, which is what keeps pair_ids already imported into
     the validation DB stable.
 
-    *title_o* is passed ONLY by the multi-original writer. 129 existing rows have a
-    blank doi_o and a blank oa_work_id_o, and are already keyed on md5("doi_r|") in
-    the validation DB; feeding them a title would silently re-key every one of them
-    into a duplicate import. They are all single-original, so a title is never
-    needed to tell them apart — only several DOI-less originals of ONE replication
-    need disambiguating, and that is exactly the multi-original case.
+    *oa_work_id_o* and *title_o* are passed ONLY by the multi-original writer. 129
+    existing rows have a blank doi_o and a blank oa_work_id_o, and are already keyed
+    on md5("doi_r|") in the validation DB; feeding them either fallback would silently
+    re-key every one of them into a duplicate import. They are all single-original,
+    where neither fallback buys anything: a single-original row has exactly one
+    original, and rows for different replications already differ by doi_r. Only
+    several DOI-less originals of ONE replication need disambiguating, and that is
+    exactly the multi-original case.
     """
     import hashlib
     import re

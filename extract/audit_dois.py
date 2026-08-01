@@ -22,7 +22,7 @@ import pandas as pd
 
 from extract.run_extract import _build_ref_o
 from shared.config import DATA_DIR, log
-from shared.doi_verify import verify_and_correct
+from shared.doi_verify import keeps_no_doi, verify_and_correct
 from shared.schema import make_pair_id
 from shared.utils import clean_doi
 
@@ -66,7 +66,10 @@ def audit_file(csv_path: Path,
                                exclude_doi=clean_doi(str(row["doi_r"])),
                                exclude_title=str(row.get("title_r", "")
                                                  or row.get("study_r", "") or ""))
+        prior_status = str(row.get("doi_o_verification", "") or "")
         status = v["doi_o_verification"]
+        if keeps_no_doi(status, prior_status, str(row.get("oa_work_id_o", "") or "")):
+            status = prior_status
         counts[status] += 1
         df.at[idx, "doi_o_verification"] = status
 
@@ -81,8 +84,15 @@ def audit_file(csv_path: Path,
 
         if v["doi_o"] != old_doi:
             df.at[idx, "doi_o"]    = v["doi_o"]
-            df.at[idx, "pair_id"]  = make_pair_id(clean_doi(str(row["doi_r"])), v["doi_o"],
-                                                  str(row.get("oa_work_id_o", "") or ""))
+            df.at[idx, "pair_id"]  = make_pair_id(clean_doi(str(row["doi_r"])), v["doi_o"])
+            if v["doi_o"] and str(row.get("oa_work_id_o", "") or ""):
+                # The id was resolved from the DOI that just turned out to be wrong.
+                # This tool has no work-id refill pass, so clear it and say so — a
+                # blank id is refilled by the next run_extract pass, a stale one
+                # would keep pointing at a different work.
+                df.at[idx, "oa_work_id_o"] = ""
+                v["evidence_note"] = (f"{v['evidence_note']}; oa_work_id_o cleared "
+                                      f"(resolved from the superseded DOI)").strip("; ")
             new_ref, new_authors, new_bibtex = _build_ref_o(v["doi_o"],
                                                    str(row.get("authors_o", "") or ""),
                                                    str(row.get("year_o", "") or ""))
