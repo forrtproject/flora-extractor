@@ -4,6 +4,7 @@ Per the api_error contract in CLAUDE.md, transient LLM failures must retry with
 exponential backoff before giving up — a single exception must not immediately
 poison a row. call_openai previously had a bare try/except (no retry).
 """
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1222,3 +1223,92 @@ def test_the_key_follows_a_records_identity_not_just_its_rendered_line(monkeypat
     assert len(calls) == 2                           # …and yet it was asked again
     assert first["resolved_doi_o"]  == "10.1/orig"
     assert second["resolved_doi_o"] == "10.1/corrected"
+
+
+# ── The target list as the adapter consumes it (WP1) ─────────────────────────
+
+def test_a_targets_mapped_record_survives_on_the_output(monkeypatch, tmp_path):
+    """A @key is only meaningful against the key_map of the call that offered it, and
+    run_extract has neither the candidates nor the parsed references to rebuild one."""
+    _targets(monkeypatch, tmp_path, {"targets": [_target()], "reasoning": "r"})
+    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+
+    assert out["targets"][0]["record"]["doi"] == "10.1/orig"
+
+
+def test_a_cached_entry_written_without_a_record_is_repaired(monkeypatch, tmp_path):
+    """The output shape changed without the cache key changing, so entries written by
+    the previous shape come back record-less — and every target in them would be
+    dropped as unmatched."""
+    calls: list = []
+    _targets(monkeypatch, tmp_path, {"targets": [_target()], "reasoning": "r"}, calls)
+    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+
+    entry = next(tmp_path.glob("llm_*.json"))
+    stored = json.loads(entry.read_text())
+    for t in stored["targets"]:
+        assert t.pop("record")
+    entry.write_text(json.dumps(stored))
+
+    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+    assert len(calls) == 1                                   # served from cache
+    assert out["targets"][0]["record"]["doi"] == "10.1/orig"
+
+
+def test_target_stage_names_the_rung_that_produced_a_multi_target_answer(monkeypatch, tmp_path):
+    """resolution_method on a two-target answer is llm_multi_target, which names no
+    rung — but the rows the adapter writes need an honest link_method."""
+    cands = _CAND + [{"title": "Another original", "year": 2011, "first_author": "Jones",
+                      "all_authors": ["Jones"], "doi": "10.1/second", "openalex_id": "W2"}]
+    _targets(monkeypatch, tmp_path,
+             {"targets": [_target(), _target(key="@jones2011")], "reasoning": "r"})
+
+    ref = llm.identify_targets_with_llm("10.1/x", "T", "A", cands, [],
+                                        cache_prefix="reftarget")
+    abstract = llm.identify_targets_with_llm("10.1/x", "T", "A", cands, [],
+                                             abstract_only=True)
+
+    assert ref["resolution_method"] == "llm_multi_target"
+    assert ref["target_stage"] == "llm_references"
+    assert abstract["target_stage"] == "llm_cited_candidates_gemini"
+
+
+def test_the_replications_own_study_numbers_are_cleaned(monkeypatch, tmp_path):
+    """study_r is the counterpart of study_o: which study of THIS paper re-tests the
+    original. Models answer it in prose, exactly as they do study_numbers."""
+    _targets(monkeypatch, tmp_path,
+             {"targets": [_target(replication_study_numbers="Study 1, Experiment 2")],
+              "reasoning": "r"})
+    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+
+    assert out["resolved_study_r"] == "1, 2"
+
+
+class TestStudyNumberCleaning:
+    def test_prose_forms_reduce_to_a_number(self):
+        from shared.llm_client import _clean_study_number
+        assert _clean_study_number("Study 2") == "2"
+        assert _clean_study_number("Experiment 3a") == "3a"
+        assert _clean_study_number(2) == "2"
+
+    def test_absent_or_unparseable_is_empty(self):
+        from shared.llm_client import _clean_study_number
+        assert _clean_study_number(None) == ""
+        assert _clean_study_number("the main study") == ""
+
+    def test_every_named_study_survives_the_answer(self):
+        """Splitting on commas alone kept the first number and dropped the rest, so a
+        target of two studies was recorded as a target of one."""
+        from shared.llm_client import _clean_study_numbers
+        assert _clean_study_numbers("Study 1; Study 4") == "1, 4"
+        assert _clean_study_numbers("2 and 3")          == "2, 3"
+        assert _clean_study_numbers("1 & 2")            == "1, 2"
+        assert _clean_study_numbers("Studies 1-3")      == "1, 2, 3"
+        assert _clean_study_numbers("Studies 1–3")      == "1, 2, 3"
+
+    def test_repeats_collapse_and_prose_still_reduces(self):
+        from shared.llm_client import _clean_study_numbers
+        assert _clean_study_numbers("Study 1, Experiment 1") == "1"
+        assert _clean_study_numbers("Experiment 3a, 3b")     == "3a, 3b"
+        assert _clean_study_numbers("the main study")        == ""
+        assert _clean_study_numbers("")                      == ""

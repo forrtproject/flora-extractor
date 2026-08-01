@@ -347,3 +347,138 @@ class TestStoredEvidenceMatchesThePrompt:
             "10.1/rep", {}, {}, candidates, {}, {}, {}, {"references": refs})
         assert len(json.loads(out["grobid_refs_json"])) == 25
         assert out["n_references_sent"] == 39
+
+
+# ── The may-not-short-circuit gate (WP1) ─────────────────────────────────────
+
+class TestMayStopAtARule:
+    """A first-success ladder ends the row at the first deterministic hit. That is
+    only safe when the paper's own text rules out a second target — otherwise the
+    remaining N-1 originals are dropped without anything ever enumerating them."""
+
+    def test_one_author_year_pair_and_no_count_may_stop(self):
+        assert link_original.may_stop_at_a_rule(
+            "A replication of Smith (2009)",
+            "We re-tested the effect reported by Smith (2009).", 2020) is True
+
+    def test_two_distinct_pairs_may_not_stop(self):
+        assert link_original.may_stop_at_a_rule(
+            "A replication of Smith (2009)",
+            "We re-tested Smith (2009) and Jones (2011).", 2020) is False
+
+    def test_a_stated_study_count_may_not_stop(self):
+        assert link_original.may_stop_at_a_rule(
+            "Many Labs 2",
+            "We report replications of 28 classic studies, following Smith (2009).",
+            2020) is False
+
+    def test_a_year_is_not_a_study_count(self):
+        assert link_original.may_stop_at_a_rule(
+            "Replication of 2019 findings",
+            "We re-tested the effect reported by Smith (2009).", 2020) is True
+
+
+def _run_gate(title_r: str, abstract_r: str, candidates: list,
+              llm_answer: "dict | None" = None,
+              pdf_ok: bool = True) -> dict:
+    """Drive run_for_doi with the title-pattern rule able to fire.
+
+    *llm_answer* is what the full-text target call returns; pdf_ok=False stops the
+    ladder at the no-document exit instead.
+    """
+    cands_df = pd.DataFrame([{
+        "doi_r": "10.1/rep", "study_r": title_r, "abstract_r": abstract_r,
+        "year_r": "2020", "openalex_id_r": "W1", "url_r": "",
+        "author_year_pattern_r": "",
+    }])
+    pdf = ({"pdf_path": "/tmp/x.pdf", "openalex_xml": None, "pdf_source": "unpaywall",
+            "pdf_url": "u", "pdf_ok": True, "pdf_url_tried": []} if pdf_ok else
+           {"pdf_path": None, "openalex_xml": None, "pdf_source": "none",
+            "pdf_url": "", "pdf_ok": False, "pdf_url_tried": []})
+    answer = llm_answer or {"resolved": False, "resolution_method": "llm_no_target",
+                            "llm_source": "gemini", "targets": [],
+                            "llm_reasoning": "no second target"}
+    with patch.object(link_original, "find_all_candidates", return_value=candidates), \
+         patch.object(link_original, "fetch_referenced_works_metadata", return_value=[]), \
+         patch.object(link_original, "fetch_opencitations_references", return_value=[]), \
+         patch.object(link_original, "screen_references_with_llm",
+                      return_value=_screen_result(screen_verdict="proceed",
+                                                  screen_classification="replication",
+                                                  record_type="replication")), \
+         patch.object(link_original, "acquire_pdf", return_value=pdf), \
+         patch.object(link_original, "_parse_all",
+                      return_value={"grobid": {"source": "grobid", "abstract": "",
+                                               "intro": "i", "references": []}}), \
+         patch.object(link_original, "_write_parse_cache"), \
+         patch.object(link_original, "identify_targets_with_llm", return_value=answer):
+        return run_for_doi("10.1/rep", cands_df=cands_df)
+
+
+_GATE_CANDS = [{"title": "Time flies from left to right", "year": 2010,
+                "first_author": "Smith", "all_authors": ["Smith"],
+                "doi": "10.9/orig", "openalex_id": "W9"}]
+
+
+class TestGateInTheLadder:
+    def test_an_ungated_title_pattern_hit_ends_the_row(self):
+        row = _run_gate("A replication of Time flies from left to right",
+                        "We re-tested Smith (2010).", _GATE_CANDS)
+        assert row["resolution_method"] == "title_pattern_match"
+        assert row["resolved_doi_o"] == "10.9/orig"
+
+    def test_a_withheld_pick_is_restored_once_the_target_call_saw_one_target(self):
+        row = _run_gate("A replication of Time flies from left to right",
+                        "We re-tested Smith (2010) and Jones (2011).", _GATE_CANDS)
+        assert row["resolution_method"] == "title_pattern_match"
+        assert row["llm_reasoning"] == "no second target"
+
+    def test_a_withheld_pick_is_not_restored_at_the_no_document_exit(self):
+        """Nothing enumerated the targets there, which is exactly what the pick was
+        being withheld for."""
+        row = _run_gate("A replication of Time flies from left to right",
+                        "We re-tested Smith (2010) and Jones (2011).", _GATE_CANDS,
+                        pdf_ok=False)
+        assert _map_method(row["resolution_method"]) == "target_pending"
+
+    def test_a_withheld_pick_is_not_restored_when_two_targets_were_found(self):
+        row = _run_gate(
+            "A replication of Time flies from left to right",
+            "We re-tested Smith (2010) and Jones (2011).", _GATE_CANDS,
+            llm_answer={"resolved": False, "resolution_method": "llm_multi_target",
+                        "llm_source": "gemini", "multi_target": True,
+                        "targets": [{"key": "@a"}, {"key": "@b"}]})
+        assert row["resolution_method"] == "llm_multi_target"
+        assert row["n_targets"] == 2
+
+
+def test_targets_found_at_the_reference_rung_survive_a_no_document_exit():
+    """Stage 4.5 can name several targets and decline a single link. The list used to
+    die with the stage, so the row was written target_pending with nothing on it."""
+    targets = [{"key": "@a", "match_certain": True, "record": {"doi": "10.9/a"}},
+               {"key": "@b", "match_certain": True, "record": {"doi": "10.9/b"}}]
+    screen = _screen_result(screen_verdict="proceed",
+                            screen_classification="replication",
+                            record_type="replication",
+                            targets=targets, multi_target=True,
+                            target_stage="llm_references",
+                            unidentified_count=1, resolved_study_r="2")
+    cands_df = pd.DataFrame([{
+        "doi_r": "10.1/rep", "study_r": "A study", "abstract_r": "No citations here.",
+        "year_r": "2020", "openalex_id_r": "W1", "url_r": "",
+        "author_year_pattern_r": "",
+    }])
+    with patch.object(link_original, "find_all_candidates", return_value=[]), \
+         patch.object(link_original, "fetch_referenced_works_metadata", return_value=[]), \
+         patch.object(link_original, "fetch_opencitations_references", return_value=[]), \
+         patch.object(link_original, "screen_references_with_llm", return_value=screen), \
+         patch.object(link_original, "acquire_pdf",
+                      return_value={"pdf_path": None, "openalex_xml": None,
+                                    "pdf_source": "none", "pdf_url": "",
+                                    "pdf_ok": False, "pdf_url_tried": []}):
+        row = run_for_doi("10.1/rep", cands_df=cands_df)
+
+    assert row["resolution_method"] == "no_fulltext_available"
+    assert row["n_targets"] == 2
+    assert row["target_stage"] == "llm_references"
+    assert row["unidentified_count"] == 1
+    assert row["resolved_study_r"] == "2"

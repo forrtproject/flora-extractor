@@ -344,14 +344,17 @@ def test_study_columns_carry_identifiers_not_titles():
     row = pd.Series({
         "doi_r": "10.1/rep", "title_r": "A Replication of Smith (2010)",
         "doi_o": "10.2/orig", "title_o": "The Original Work", "study_o": "1, 2",
-        "doi_o_verification": "verified",
+        "study_r": "3", "doi_o_verification": "verified",
     })
     out = csv_to_db._build_unvalidated_row("rec-1", row)
     assert out["study_o"] == "1, 2"
     assert out["title_o"] == "The Original Work"
     assert out["title_r"] == "A Replication of Smith (2010)"
-    assert out["study_r"] == ""
+    # study_r used to be hard-coded empty: the pipeline had no value for it, and now
+    # the target prompt reports one. No new DB column — only the value changes.
+    assert out["study_r"] == "3"
     assert "Original" not in out["study_o"]
+    assert "Replication" not in out["study_r"]
 
 
 def test_missing_study_o_is_empty_not_a_title():
