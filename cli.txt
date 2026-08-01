@@ -25,14 +25,7 @@ python -m extract.run_extract --resume --from-year 2011 --to-year 2021 --predict
 
 # Other outcomes from any year (the 25% fill)
 python -m extract.run_extract --resume --predicted-outcome other --no-multiple-originals --no-reproductions --skip-flora-validated
-# Default: 75% failures (2011-2021) + 25% others, all available rows
-python -m extract.mix_for_validation --failure-year-from 2011 --failure-year-to 2021
-
-# Cap at 400 rows total
-python -m extract.mix_for_validation --failure-year-from 2011 --failure-year-to 2021 --n 400
-
-# Try 70/30 split
-python -m extract.mix_for_validation --failure-pct 70 --failure-year-from 2011 --failure-year-to 2021
+# (extract.mix_for_validation was removed in ae37002 — no replacement.)
 
 --------------------------------------------
 # Filter only OpenAlex rows from 2015 onwards
@@ -67,24 +60,16 @@ do { python -m search.run_search --auto-advance --from-year 2022 --to-year 2026 
 python -m search.run_search --harvest-only
 
 Default (Smart Mode) — Only Process Uncertain Rows
-python recalibrate_outcomes.py --input data/extracted.csv --clear-cache
+python -m tools.recalibrate_outcomes --input data/extracted.csv --clear-cache
 
 If You Want Fresh LLM on Everything
-python recalibrate_outcomes.py --input data/extracted.csv --clear-cache --reprocess-all
+python -m tools.recalibrate_outcomes --input data/extracted.csv --clear-cache --reprocess-all
 
 python -m extract.audit_dois --apply
 
-# Quick check — see how many rows will be processed (no LLM, no writes)
-python -m filter.refilter_fp --dry-run
-
-# Run for real — safe to interrupt and restart anytime
-python -m filter.refilter_fp
-
-# Test on 50 rows first
-python -m filter.refilter_fp --limit 50
-
-# Start completely fresh (clears checkpoint)
-python -m filter.refilter_fp --reset
+# (filter.refilter_fp is gone — it re-screened Stage 2 false positives through the
+# Stage 2 LLM filter, which is retired. Stage 3's front-door screen decides those
+# rows now, so re-run the affected DOIs through extract.run_extract --rescreen.)
 
 # Fix year_o in extracted.csv (clears OA cache + re-fetches with corrected logic)
 python -m tools.fix_years
