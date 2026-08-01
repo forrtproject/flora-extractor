@@ -1,0 +1,272 @@
+[
+  {
+    "id": "H001",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"evaluate internally developed NGS assays\", \"reasoning\": \"The paper evaluates and transitions laboratory testing"
+  },
+  {
+    "id": "H002",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"yes\", \"classification_confidence\": \"high\", \"evidence_quote\": \"Contrary to the previous data showing a 27-month diagnostic delay in Saskatchewan, our study which included a larger p"
+  },
+  {
+    "id": "H003",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The present study was designed to investigate the psychometric properties of the Persian version of the Dizziness Handi"
+  },
+  {
+    "id": "H004",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"yes\", \"classification_confidence\": \"high\", \"evidence_quote\": \"This objective will serve as a replication of past research to provide additional validation of their findings\", \"reas"
+  },
+  {
+    "id": "H005",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"we carried out genome-wide association study (GWAS) analysis in 551 unrelated obese subjects of European ancestry who p"
+  },
+  {
+    "id": "H006",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"This investigation was aimed to adapt and validate the Child Abuse Potential Inventory (CAPI) in Venezuelan pop"
+  },
+  {
+    "id": "H007",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enter"
+  },
+  {
+    "id": "H008",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"This study used four trailers of different designs, and measurements were made over a time period of 90 days, w"
+  },
+  {
+    "id": "H009",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"yes\", \"classification_confidence\": \"high\", \"evidence_quote\": \"online replication of an in-lab vowel recall experiment\", \"reasoning\": \"The abstract explicitly states that the study "
+  },
+  {
+    "id": "H010",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"yes\", \"classification_confidence\": \"high\", \"evidence_quote\": \"This research is a kind of causal research and is a replication of the earlier research.\", \"reasoning\": \"The a"
+  },
+  {
+    "id": "H011",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"A breast cancer-associated Methylation Index (MI) of ELEE, including 31 CpG-sites, was developed using HM450K d"
+  },
+  {
+    "id": "H012",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"To identify novel WM susceptibility loci we conducted a two-stage genome-wide association study (GWAS) in over "
+  },
+  {
+    "id": "H013",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"Our objectives were to estimate detection probabilities for three marsh songbirds... as a function of weather covariate"
+  },
+  {
+    "id": "H014",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"To further study the recovery rate of GIN eggs from cattle faeces, this study was conducted in two laboratories... to e"
+  },
+  {
+    "id": "H015",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements "
+  },
+  {
+    "id": "H016",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enter"
+  },
+  {
+    "id": "H017",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"Lessons for the Sustainable Development Goals from Ethiopia's success: the case of under-5 mortality\", \"reasoning\": \"Th"
+  },
+  {
+    "id": "H018",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"The aim of this work was to understand co-evolution patterns of two interacting replication machinery el"
+  },
+  {
+    "id": "H019",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements "
+  },
+  {
+    "id": "H020",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enter"
+  },
+  {
+    "id": "H021",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The authors propose prognostic models for separate assessment of post-hospital death risk in males and females,"
+  },
+  {
+    "id": "H022",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The aim of the study was to establish whether a dedicated hip fracture unit, geographically separate from the l"
+  },
+  {
+    "id": "H023",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements "
+  },
+  {
+    "id": "H024",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The process of returning S\u00e1mi artefacts from Norwegian capital museums to regional S\u00e1mi museums was officially "
+  },
+  {
+    "id": "H025",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enter"
+  },
+  {
+    "id": "H026",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"This study aims to assess the applicability and reproducibility of the GP atlas on a sample of the eastern Utte"
+  },
+  {
+    "id": "H027",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"revisiting the seismic-based type locality: the Mississippi Fan\", \"reasoning\": \"The paper tests a geological model and "
+  },
+  {
+    "id": "H028",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"This study investigated the association between genetic variants in cell adhesion pathways and the prognosis of"
+  },
+  {
+    "id": "H029",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"yes\", \"classification_confidence\": \"high\", \"evidence_quote\": \"This research was a replication of original research conducted in 1981 by Dr. H. Wohlfarth\", \"reasoning\": \"The"
+  },
+  {
+    "id": "H030",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\"is_replication\": \"yes\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The purpose of this pilot study, a replication of a study that originated in Australia for large classroom siz"
+  }
+]

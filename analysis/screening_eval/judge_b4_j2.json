@@ -1,0 +1,13 @@
+[
+  {"id": "C045", "verdict": "yes", "confidence": "high", "reason": "Abstract states the authors conducted 'a replication of Mintzberg's study' and found different results, an explicit re-test of a prior published finding."},
+  {"id": "C012", "verdict": "no", "confidence": "high", "reason": "This validates the ICH-score prognostic instrument in a new patient subgroup, which is instrument validation rather than replication of a research finding."},
+  {"id": "C047", "verdict": "no", "confidence": "medium", "reason": "The study develops and tests a diagnostic biomarker's sensitivity/specificity, building on a prior CBF finding only as background rather than aiming to re-test it."},
+  {"id": "C022", "verdict": "no", "confidence": "high", "reason": "This is a rebuttal about gene recombination artifacts and mentions 'contamination-free replication' only in the biological/molecular sense."},
+  {"id": "C004", "verdict": "no", "confidence": "medium", "reason": "The paper introduces a new VR/haptic apparatus to 'reproduce the effect of prism adaptation,' which is method/procedure development rather than a study re-testing a prior finding."},
+  {"id": "C034", "verdict": "no", "confidence": "high", "reason": "Concerns viral genome replication mechanisms in enteroviruses, a biological sense of replication."},
+  {"id": "C019", "verdict": "no", "confidence": "medium", "reason": "Reports two internal studies that replicate one another to evaluate use-case quality metrics, which is instrument/metric validation, not re-testing an external published finding."},
+  {"id": "C028", "verdict": "no", "confidence": "high", "reason": "Aims to 'confirm the reproducibility of manual graft preparation,' i.e., evaluating a surgical procedure's consistency, not re-testing a research finding."},
+  {"id": "C033", "verdict": "unclear", "confidence": "low", "reason": "The dissertation's second objective is to replicate emotion-combination patterns across new groups, but the abstract does not clarify whether this targets an external previously published finding versus an internal chapter of the same project."},
+  {"id": "C003", "verdict": "no", "confidence": "high", "reason": "The phrase 'replicating previous evidence of executive dysfunction in HD' is a passing remark about consistency with prior literature, not a stated study aim."},
+  {"id": "C046", "verdict": "no", "confidence": "high", "reason": "The study evaluates the feasibility and diagnostic utility of the 'Ogata score' instrument in a new regional setting, which is instrument validation, not replication of a finding."}
+]

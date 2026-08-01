@@ -1,0 +1,542 @@
+[
+  {
+    "id": "HU01",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"We reproduced findings from rodent neurons by demonstrating that recombinant progranulin (rPGRN) mediated neuroprotection.\""
+  },
+  {
+    "id": "HU02",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"supplementary quantum transport experiments performed on a significant number of graphene based quantum Hall devices\",\"reas"
+  },
+  {
+    "id": "HU03",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"We sought to investigate whether calcium derangement was a specific feature of COVID-19 that distinguishes it from other in"
+  },
+  {
+    "id": "HU04",
+    "bucket": "A_calibration",
+    "truth": "yes",
+    "verdict": "unclear",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\"is_replication\":\"unclear\",\"classification_confidence\":\"medium\",\"evidence_quote\":\"plasmid contamination-free replication of this approach by ourselves and others supported the original conclusions\",\""
+  },
+  {
+    "id": "HU05",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "unclear",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\"is_replication\":\"unclear\",\"classification_confidence\":\"medium\",\"evidence_quote\":\"we report the results of two separate experimental studies conducted, a replication of one another\",\"reasoning\":\"The "
+  },
+  {
+    "id": "HU06",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"Diffusion tensor imaging was performed in a total of 39 male individuals, including 19 alcohol-dependent patients and 20 age"
+  },
+  {
+    "id": "HU07",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "unclear",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\"is_replication\":\"unclear\",\"classification_confidence\":\"medium\",\"evidence_quote\":\"This paper extended the least squares approach to reproduce the results of perturbation studies.\",\"reasoning\":\"The ab"
+  },
+  {
+    "id": "HU08",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "unclear",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\"is_replication\":\"unclear\",\"classification_confidence\":\"medium\",\"evidence_quote\":\"our second objective pertains to the replication of these combinations and the investigation of similarities between "
+  },
+  {
+    "id": "HU09",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "unclear",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\"is_replication\":\"unclear\",\"classification_confidence\":\"medium\",\"evidence_quote\":\"\\\"demonstrate the anti-fibrotic reproducibility of the efficacious nintedanib dose.\\\"\",\"reasoning\":\"The study collect"
+  },
+  {
+    "id": "HU10",
+    "bucket": "A_calibration",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"The present study is a partial replication of the intensive tact instruction tactic, in three students with developmental d"
+  },
+  {
+    "id": "HU11",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"In this study, we validated fPDRPNS in rs-fMRI scans of PD patients (n = 51; 25 training and 26 testing) and age-matched he"
+  },
+  {
+    "id": "HU12",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"in an independent dataset, 32 healthy participants underwent two sets of resting-state functional magnetic resonance imagin"
+  },
+  {
+    "id": "HU13",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"Methods.To evaluate the variability of the domain d loop sequence we retrieved all available full enterovirus sequences (>64"
+  },
+  {
+    "id": "HU14",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"an instrumented physical spinal cord surrogate is presented and validated\",\"reasoning\":\"The abstract describes developing an"
+  },
+  {
+    "id": "HU15",
+    "bucket": "A_calibration",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"To evaluate the variability of the domain d loop sequence we retrieved all available full enterovirus sequences (>6400 nucle"
+  },
+  {
+    "id": "HU16",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The B Field is located in the South China Sea, about 45 KM offshore Sarawak, Malaysia, in a water depth approximately 2"
+  },
+  {
+    "id": "HU17",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"the authors proposed to test the OECD No. 202 methodology using Ceriodaphnia affinis test organisms and to establish metrolo"
+  },
+  {
+    "id": "HU18",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"we report a comparative study of Zn-Sn-Ti-O thin films materials using high-throughput experimental methods at National Inst"
+  },
+  {
+    "id": "HU19",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"I examine Bob Dylan\u2019s unique status in the history of rock\",\"reasoning\":\"The abstract describes a cultural and personal anal"
+  },
+  {
+    "id": "HU20",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"Regrettably, to date, mobile medicine has been more virtual vaporware than digital dynamo.\",\"reasoning\":\"The abstract is a g"
+  },
+  {
+    "id": "HU21",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"medium\",\"evidence_quote\":\"These scores were constructed and validated using baseline data from the Adolescent Brain Cognitive Development (ABCD, N=5"
+  },
+  {
+    "id": "HU22",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"Tis study intends to describe the clinical signs, gross and histopathological features seen in 25 afected lambs in an outbre"
+  },
+  {
+    "id": "HU23",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"Intra- and interobserver reliability was assessed using the kappa index (K).\",\"reasoning\":\"The abstract describes an instrum"
+  },
+  {
+    "id": "HU24",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"no\", \"classification_confidence\": \"high\", \"evidence_quote\": \"late-life learning is seldom integrated into ageing-related policies, programmes, and research and is generally underfu"
+  },
+  {
+    "id": "HU25",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"review a high-throughput process chain for RT-SET fabrication based on reproducing FE-SPL prepared masters by NIL and etchin"
+  },
+  {
+    "id": "HU26",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"This paper considers how a truth discourse about violence against women was produced with the #JaTe\u017c posts published on Face"
+  },
+  {
+    "id": "HU27",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"This study investigated the association between genetic variants in cell adhesion pathways and the prognosis of patients wit"
+  },
+  {
+    "id": "HU28",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"perform a number of Monte Carlo experiments to test the effectiveness of Carr and Lee\u2019s immunization strategy\",\"reasoning\":"
+  },
+  {
+    "id": "HU29",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"We propose to extend the initial notion of the concept, replacing G by \u2018inheritance system\u2019.\",\"reasoning\":\"The abstract desc"
+  },
+  {
+    "id": "HU30",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"We conducted paired, unlimited radius, 10-min point counts during consecutive morning and evening survey periods for our thr"
+  },
+  {
+    "id": "HU31",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"This thesis is an investigation of the optimality and construction problems attendant to the assignment of v treatments to e"
+  },
+  {
+    "id": "HU32",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"Tujuan dari penelitian ini untuk mengetahui hasil pemeriksaan kadar hemoglobin pada pasien HIV dengan pengobatan antiretrovi"
+  },
+  {
+    "id": "HU33",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"The aim of the study is to assess how the evolution of European traffic influences the fatigue assessment of bridges.\",\"reas"
+  },
+  {
+    "id": "HU34",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"a replication of Study 2 (Study 6) was conducted\",\"reasoning\":\"The abstract describes an internal replication within the sam"
+  },
+  {
+    "id": "HU35",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "unclear",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\"is_replication\":\"unclear\",\"classification_confidence\":\"medium\",\"evidence_quote\":\"In previous studies, we were able to demonstrate, in various cellular systems and research platforms that reactions a"
+  },
+  {
+    "id": "HU36",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"\u0e42\u0e14\u0e22\u0e01\u0e32\u0e23\u0e1b\u0e25\u0e01\u0e15\u0e19\u0e02\u0e32\u0e27\u0e02\u0e2d\u0e07\u0e1e\u0e19\u0e18\u0e02\u0e32\u0e27\u0e2b\u0e2d\u0e21\u0e18\u0e23\u0e23\u0e21\u0e28\u0e32\u0e2a\u0e15\u0e23\",\"reasoning\":\"The abstract describes an original greenhouse pot experiment conducted in "
+  },
+  {
+    "id": "HU37",
+    "bucket": "B_discarded",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"To verify the reliability and validity of a Japanese translation of the Satter eating competence Inventory-2.0\u2122\",\"reasoning\""
+  },
+  {
+    "id": "HU38",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"Samples were obtained from new IBD cases across Europe and outcome data were recorded.\",\"reasoning\":\"The abstract describes "
+  },
+  {
+    "id": "HU39",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"allowing us to induce sensorimotor adaptation and to reproduce the effect of prism adaptation\",\"reasoning\":\"The authors col"
+  },
+  {
+    "id": "HU40",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"Part 2 will involve the validation of the TSR in a prospective cohort of colon cancer p-stage II-III patients in a multicen"
+  },
+  {
+    "id": "HU41",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"Across environments we were able to replicate 70% of the local- and 40% of the distant-eQTL using the ILs.\",\"reasoning\":\"Th"
+  },
+  {
+    "id": "HU42",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"To determine whether known monogenic POLG1 polymorphisms could be linked with the unexpectedly high incidence of SHL/LA obs"
+  },
+  {
+    "id": "HU43",
+    "bucket": "C_disagreement",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"We report results from a replication of Price's N-rays analysis\",\"reasoning\":\"The abstract explicitly states they 'report r"
+  },
+  {
+    "id": "HU44",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"medium\",\"evidence_quote\":\"using 16 elements of replication of Ramirez and Gordillo's research\",\"reasoning\":\"The authors apply Ramirez and Gordillo'"
+  },
+  {
+    "id": "HU45",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"a greater age-related decline in executive function was detected in HD patients (\u03b2 = \u22120.06, p = 0.006), replicating previou"
+  },
+  {
+    "id": "HU46",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"yes\", \"classification_confidence\": \"high\", \"evidence_quote\": \"This contribution describes results from several long-term test programs and inter-laboratory studies focused on verif"
+  },
+  {
+    "id": "HU47",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "unclear",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\"is_replication\":\"unclear\",\"classification_confidence\":\"medium\",\"evidence_quote\":\"Experimental results are replicated and investigated using the finite-discrete element method\",\"reasoning\":\"The abstr"
+  },
+  {
+    "id": "HU48",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"\\\"allowing the replication of already reported experimental findings\\\"\",\"reasoning\":\"The abstract describes development of a"
+  },
+  {
+    "id": "HU49",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"yes\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The inclusion of the new series into ARAB8 significantly improves the replication of this master chronology\", \"reasoni"
+  },
+  {
+    "id": "HU50",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"yes\", \"classification_confidence\": \"high\", \"evidence_quote\": \"We aim to evaluate the accuracy and reproducibility of the test for the diagnosis of NSTI.\", \"reasoning\": \"The study c"
+  },
+  {
+    "id": "HU51",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"We then proposed to use the imputed data to replicate association identified in the discovery WES sample.\",\"reasoning\":\"The"
+  },
+  {
+    "id": "HU52",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"Both hourly and daily soil water balances were evaluated using data from a virtual test, modeled after original SWAT testin"
+  },
+  {
+    "id": "HU53",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"\\\"the numerical model developed in previous studies has been verified in the laboratory\\\"\",\"reasoning\":\"The abstract describ"
+  },
+  {
+    "id": "HU54",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"By knocking out R349 gene in a Mimivirus lineage A, we observed the replication of Zamilon\",\"reasoning\":\"The authors perfor"
+  },
+  {
+    "id": "HU55",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"We sought to evaluate the reproducibility of this technique.\",\"reasoning\":\"The authors performed a retrospective chart revi"
+  },
+  {
+    "id": "HU56",
+    "bucket": "C_disagreement",
+    "truth": "unclear",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"medium\",\"evidence_quote\":\"However, validation of the method regarding reliability and reproducibility of results under realistic settings and real "
+  },
+  {
+    "id": "HU57",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"To validate the reproducibility of the AI between shoulder magnetic resonance imaging (MRI) and standard X-ray and to verif"
+  },
+  {
+    "id": "HU58",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"the aim of the present thesis was to therefore examine the reliability and validity of ultrasound technology (via the Muscle"
+  },
+  {
+    "id": "HU59",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"We reproduce results from previous modelling studies, including low ratios of trench over plate motions.\",\"reasoning\":\"The a"
+  },
+  {
+    "id": "HU60",
+    "bucket": "C_disagreement",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "{\"is_replication\": \"yes\", \"classification_confidence\": \"high\", \"evidence_quote\": \"The simulations reproduced results from the literature at a significantly reduced cost.\", \"reasoning\": \"The authors ra"
+  }
+]

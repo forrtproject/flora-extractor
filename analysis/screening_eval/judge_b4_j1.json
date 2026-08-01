@@ -1,0 +1,13 @@
+[
+  {"id": "C045", "verdict": "yes", "confidence": "high", "reason": "Abstract states the authors conducted 'a replication of Mintzberg's study' on whether managers plan, re-testing his observational finding with new data."},
+  {"id": "C012", "verdict": "no", "confidence": "high", "reason": "This evaluates the ICH-score's predictive validity in a new patient population, which is instrument validation, not replication of a specific finding."},
+  {"id": "C047", "verdict": "unclear", "confidence": "low", "reason": "Prior CBF findings are mentioned as background/rationale for a new diagnostic-biomarker proof-of-concept study, and it's not clear re-testing that finding is the study's aim."},
+  {"id": "C022", "verdict": "no", "confidence": "high", "reason": "This is a scientific rebuttal about gene recombination artifacts; 'replication' appears only in the biological/technical sense (plasmid replication of an approach), not as a study re-testing a published finding."},
+  {"id": "C004", "verdict": "no", "confidence": "medium", "reason": "The study develops a new VR/haptic paradigm to 'reproduce the effect' of prism adaptation as a methodological innovation, not to re-test a specific prior finding."},
+  {"id": "C034", "verdict": "no", "confidence": "high", "reason": "'Replication' refers to enterovirus genome replication (a biological process), unrelated to replicating a published finding."},
+  {"id": "C019", "verdict": "no", "confidence": "medium", "reason": "The two studies replicate one another within the same paper to validate use-case quality metrics, not re-test a prior published finding, and metric validation is explicitly excluded."},
+  {"id": "C028", "verdict": "no", "confidence": "high", "reason": "The study evaluates/confirms the reproducibility of a surgical graft-preparation procedure, which is procedure validation, not replication of a published finding."},
+  {"id": "C033", "verdict": "no", "confidence": "medium", "reason": "The 'replication' referenced is an internal re-analysis of the dissertation's own first research question's combinations across subgroups, not a re-test of an externally published finding."},
+  {"id": "C003", "verdict": "no", "confidence": "medium", "reason": "The study characterizes measurement reproducibility of an MRI technique and only briefly notes results are consistent with ('replicating') prior HD literature in passing, not as a study aim."},
+  {"id": "C046", "verdict": "no", "confidence": "high", "reason": "This validates the diagnostic 'Ogata score' instrument's performance in a new regional population, which is instrument validation, explicitly excluded."}
+]

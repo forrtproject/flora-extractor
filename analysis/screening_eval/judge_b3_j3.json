@@ -1,0 +1,14 @@
+[
+  {"id": "C006", "verdict": "no", "confidence": "high", "reason": "This is Part 2 of the authors' own imaging-distortion measurement study, assessing acquisition-process error sources rather than re-testing a previously published finding from another study."},
+  {"id": "C026", "verdict": "yes", "confidence": "high", "reason": "The GWAS hit was explicitly re-tested with new data in independent cohorts (BIOS, KORA, GENOA), succeeding in one and failing in two."},
+  {"id": "C005", "verdict": "no", "confidence": "medium", "reason": "Reproducing prior literature/DNS results here is a benchmark step validating a new numerical/simulation method, not a study whose aim is re-testing a published empirical finding."},
+  {"id": "C042", "verdict": "yes", "confidence": "medium", "reason": "New resting-state fMRI data from an independent sample of 32 participants were used to re-test whether previously identified dynamic connectivity states linked to arousal recur."},
+  {"id": "C043", "verdict": "no", "confidence": "medium", "reason": "This is a cross-site validation of an rs-fMRI-derived disease pattern (a measurement/biomarker method), fitting the instrument/method-validation exclusion rather than re-testing a specific prior finding."},
+  {"id": "C032", "verdict": "no", "confidence": "medium", "reason": "The four independent studies reproduce the authors' own dosing regimen's anti-fibrotic effect internally, not re-test a finding reported in a separate previously published study."},
+  {"id": "C038", "verdict": "no", "confidence": "high", "reason": "This is a reliability and validity study of a translated checklist, explicitly excluded as measurement-instrument validation."},
+  {"id": "C016", "verdict": "yes", "confidence": "medium", "reason": "New human iPSC-neuron data were collected to explicitly re-test a previously published rodent finding (rPGRN-mediated neuroprotection), succeeding for that effect."},
+  {"id": "C031", "verdict": "no", "confidence": "medium", "reason": "Reproducing prior regime behavior is presented as validation of a new coarse-grained force-field method, not a study aimed at re-testing a specific published empirical finding."},
+  {"id": "C007", "verdict": "yes", "confidence": "high", "reason": "The abstract explicitly states Experiment 1's results 'are a replication of previously reported rapid categorization effects,' based on new data collected."},
+  {"id": "C023", "verdict": "no", "confidence": "medium", "reason": "The simulation environment computationally reproduces previously reported experimental findings as a validation step for the modeling tool, not a new-data study aimed at re-testing that finding."},
+  {"id": "C030", "verdict": "yes", "confidence": "high", "reason": "The study explicitly sought replication of the DNAm-adiposity association in an independent cohort, collecting new data, though the result was non-significant."}
+]

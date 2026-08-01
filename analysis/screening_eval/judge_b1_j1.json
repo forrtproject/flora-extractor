@@ -1,0 +1,14 @@
+[
+  {"id": "C036", "verdict": "no", "confidence": "high", "reason": "Concerns biological replication of enterovirus RNA/genome, not a study replication."},
+  {"id": "C010", "verdict": "no", "confidence": "high", "reason": "Reports reproducibility of an experimental measurement technique, not a re-test of a previously published study's finding."},
+  {"id": "C011", "verdict": "no", "confidence": "high", "reason": "Assesses sample-to-sample reproducibility of device fabrication/performance, not replication of a published finding."},
+  {"id": "C040", "verdict": "no", "confidence": "high", "reason": "Translates and validates a measurement scale (CHBMS) in a new population, which is instrument validation, not replication."},
+  {"id": "C025", "verdict": "yes", "confidence": "medium", "reason": "Describes a 'pure replication of the KiGGS results' using new data (GCP wave 2) to re-test the same outcome-control relationship."},
+  {"id": "C009", "verdict": "no", "confidence": "high", "reason": "Assesses reproducibility (inter-reader agreement) of a biomarker measurement, not replication of a prior study's finding."},
+  {"id": "C041", "verdict": "no", "confidence": "high", "reason": "Identical abstract to C036; concerns biological replication of enterovirus RNA, not a study replication."},
+  {"id": "C015", "verdict": "yes", "confidence": "medium", "reason": "Tests their previously reported LRTC finding using new, independent EEG datasets to see if it generalizes."},
+  {"id": "C024", "verdict": "no", "confidence": "medium", "reason": "Investigates an open question motivated by inconsistent prior findings rather than re-testing one specific published study; reproducibility testing is proposed only as future work."},
+  {"id": "C001", "verdict": "no", "confidence": "high", "reason": "Concerns mitochondrial DNA replication machinery (biological), not a replication study of a prior finding."},
+  {"id": "C018", "verdict": "no", "confidence": "high", "reason": "Assesses reproducibility of a scoring method (tumour budding), which is method/procedure validation, not replication."},
+  {"id": "C037", "verdict": "no", "confidence": "high", "reason": "Uses a discovery and internal replication cohort within the same original study design, not a re-test of an earlier separately published finding."}
+]

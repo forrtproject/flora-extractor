@@ -1,0 +1,17 @@
+[
+  {"id": "H007", "verdict": "no", "confidence": "high", "reason": "Concerns viral RNA replication biology, not a study re-testing a research finding."},
+  {"id": "H011", "verdict": "no", "confidence": "medium", "reason": "The methylation-risk association is developed and internally cross-validated within this same discovery study, not re-tested against a previously published external finding."},
+  {"id": "H028", "verdict": "no", "confidence": "medium", "reason": "Classic within-study discovery-then-replication SNP design, not a re-test of a prior published study's finding."},
+  {"id": "H004", "verdict": "yes", "confidence": "high", "reason": "Explicitly designed to serve as a replication of past research findings using new SEM data collection."},
+  {"id": "H013", "verdict": "no", "confidence": "high", "reason": "A new detection-probability study of marsh songbirds, not a re-test of a prior published finding."},
+  {"id": "H018", "verdict": "no", "confidence": "high", "reason": "Duplicate of the enterovirus RNA replication biology abstract; biological, not study replication."},
+  {"id": "H022", "verdict": "no", "confidence": "high", "reason": "A retrospective case series on a service model, only mentioning future replication of the model as a suggestion."},
+  {"id": "H016", "verdict": "no", "confidence": "high", "reason": "Duplicate of the enterovirus RNA replication biology abstract; biological, not study replication."},
+  {"id": "H003", "verdict": "no", "confidence": "high", "reason": "Instrument validation/psychometric study of a translated scale, explicitly excluded regardless of test-retest wording."},
+  {"id": "H025", "verdict": "no", "confidence": "high", "reason": "Duplicate of the enterovirus RNA replication biology abstract; biological, not study replication."},
+  {"id": "H020", "verdict": "no", "confidence": "high", "reason": "Duplicate of the enterovirus RNA replication biology abstract; biological, not study replication."},
+  {"id": "H002", "verdict": "yes", "confidence": "medium", "reason": "New chart-review data collected in a larger Saskatchewan sample explicitly re-tests the previously reported 27-month diagnostic-delay finding."},
+  {"id": "H014", "verdict": "no", "confidence": "high", "reason": "Cross-lab technique comparison assessing sensitivity/accuracy/reproducibility of a diagnostic method, excluded as measurement reproducibility."},
+  {"id": "H027", "verdict": "unclear", "confidence": "low", "reason": "Tests long-held sequence-stratigraphy assumptions with new seismic data at the type locality, but it is unclear whether this targets one specific prior published finding versus a general theoretical convention."},
+  {"id": "H017", "verdict": "no", "confidence": "high", "reason": "A commentary/perspective discussing another paper's case study, not itself a replication or reproduction study."}
+]

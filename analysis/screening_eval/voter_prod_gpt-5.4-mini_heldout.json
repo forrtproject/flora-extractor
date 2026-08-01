@@ -1,0 +1,482 @@
+[
+  {
+    "id": "H001",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 591,
+      "out": 108
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"distributed archived proficiency testing panels to ten laboratories to evaluate internally developed NGS assays\",\"reasoning\":\"The abstract describes an external quality assurance/proficiency testing study of assay performance, not a re-test of a previously published finding or a re-analysis of another study\u2019s data.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "distributed archived proficiency testing panels to ten laboratories to evaluate internally developed NGS assays",
+    "reasoning": "The abstract describes an external quality assurance/proficiency testing study of assay performance, not a re-test of a previously published finding or a re-analysis of another study\u2019s data.",
+    "schema_error": null
+  },
+  {
+    "id": "H002",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 570,
+      "out": 148
+    },
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"Since Saskatchewan has a large rural population, this study sought to determine whether geographically determined access to a neurologist at tertiary centers could be contributing to this lengthy delay.\",\"reasoning\":\"The paper collects new patient data to re-test a previously reported diagnostic-delay finding in Saskatchewan, which fits a replication.\"}",
+    "verdict": "yes",
+    "confidence": "high",
+    "evidence_quote": "Since Saskatchewan has a large rural population, this study sought to determine whether geographically determined access to a neurologist at tertiary centers could be contributing to this lengthy delay.",
+    "reasoning": "The paper collects new patient data to re-test a previously reported diagnostic-delay finding in Saskatchewan, which fits a replication.",
+    "schema_error": null
+  },
+  {
+    "id": "H003",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 746,
+      "out": 93
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"designed to investigate the psychometric properties of the Persian version of the Dizziness Handicap Inventory\",\"reasoning\":\"The abstract describes a validation/psychometric evaluation of a questionnaire in a new sample, not a re-test of a published finding or a re-analysis of an earlier study\u2019s data.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "designed to investigate the psychometric properties of the Persian version of the Dizziness Handicap Inventory",
+    "reasoning": "The abstract describes a validation/psychometric evaluation of a questionnaire in a new sample, not a re-test of a published finding or a re-analysis of an earlier study\u2019s data.",
+    "schema_error": null
+  },
+  {
+    "id": "H004",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 729,
+      "out": 114
+    },
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"\u201cThis objective will serve as a replication of past research to provide additional validation of their findings\u201d\",\"reasoning\":\"The abstract explicitly states that one objective is to replicate past research and validate its findings with new testing.\"}",
+    "verdict": "yes",
+    "confidence": "high",
+    "evidence_quote": "\u201cThis objective will serve as a replication of past research to provide additional validation of their findings\u201d",
+    "reasoning": "The abstract explicitly states that one objective is to replicate past research and validate its findings with new testing.",
+    "schema_error": null
+  },
+  {
+    "id": "H005",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 625,
+      "out": 140
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"we carried out genome-wide association study (GWAS) analysis ... who participated in an intensively supervised weight loss program with replication of promising signals in an independent sample\",\"reasoning\":\"The paper reports a new GWAS with an internal replication sample, but it does not re-test a finding from a previously published study or re-analyze an earlier study\u2019s data.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "we carried out genome-wide association study (GWAS) analysis ... who participated in an intensively supervised weight loss program with replication of promising signals in an independent sample",
+    "reasoning": "The paper reports a new GWAS with an internal replication sample, but it does not re-test a finding from a previously published study or re-analyze an earlier study\u2019s data.",
+    "schema_error": null
+  },
+  {
+    "id": "H006",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 475,
+      "out": 99
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"This investigation was aimed to adapt and validate the Child Abuse Potential Inventory (CAPI) in Venezuelan population.\",\"reasoning\":\"The abstract describes adapting and validating a measurement instrument, not re-testing a previously published finding or re-analyzing earlier data.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "This investigation was aimed to adapt and validate the Child Abuse Potential Inventory (CAPI) in Venezuelan population.",
+    "reasoning": "The abstract describes adapting and validating a measurement instrument, not re-testing a previously published finding or re-analyzing earlier data.",
+    "schema_error": null
+  },
+  {
+    "id": "H007",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 701,
+      "out": 135
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"we retrieved all available full enterovirus sequences ... and analysed the variety and abundance of sequences\",\"reasoning\":\"The paper performs a new sequence-analysis study of enterovirus data to examine co-evolution patterns, rather than re-testing a previously published finding or re-analyzing another study\u2019s data.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "we retrieved all available full enterovirus sequences ... and analysed the variety and abundance of sequences",
+    "reasoning": "The paper performs a new sequence-analysis study of enterovirus data to examine co-evolution patterns, rather than re-testing a previously published finding or re-analyzing another study\u2019s data.",
+    "schema_error": null
+  },
+  {
+    "id": "H008",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 646,
+      "out": 116
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"This study used four trailers of different designs, and measurements were made over a time period of 90 days\",\"reasoning\":\"The abstract describes a comparison and reproducibility assessment of a measurement method/equipment, not a re-test of a published substantive finding or a re-analysis of earlier study data.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "This study used four trailers of different designs, and measurements were made over a time period of 90 days",
+    "reasoning": "The abstract describes a comparison and reproducibility assessment of a measurement method/equipment, not a re-test of a published substantive finding or a re-analysis of earlier study data.",
+    "schema_error": null
+  },
+  {
+    "id": "H009",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 348,
+      "out": 89
+    },
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"the online replication of an in-lab vowel recall experiment\",\"reasoning\":\"It explicitly describes collecting new online data to replicate an earlier in-lab experiment\u2019s findings.\"}",
+    "verdict": "yes",
+    "confidence": "high",
+    "evidence_quote": "the online replication of an in-lab vowel recall experiment",
+    "reasoning": "It explicitly describes collecting new online data to replicate an earlier in-lab experiment\u2019s findings.",
+    "schema_error": null
+  },
+  {
+    "id": "H010",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 896,
+      "out": 119
+    },
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"This research was a kind of causal research and was a replication of the earlier research.\",\"reasoning\":\"The abstract explicitly states that the study is a replication of earlier research and tests the same relationships with new data from North Sumatera districts/cities.\"}",
+    "verdict": "yes",
+    "confidence": "high",
+    "evidence_quote": "This research was a kind of causal research and was a replication of the earlier research.",
+    "reasoning": "The abstract explicitly states that the study is a replication of earlier research and tests the same relationships with new data from North Sumatera districts/cities.",
+    "schema_error": null
+  },
+  {
+    "id": "H011",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 806,
+      "out": 279
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"A breast cancer-associated Methylation Index (MI) of ELEE ... was developed\",\"reasoning\":\"The abstract describes a new EWAS and development/validation of a methylation index within this study, not a re-test of a previously published finding or re-analysis of another study's data.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "A breast cancer-associated Methylation Index (MI) of ELEE ... was developed",
+    "reasoning": "The abstract describes a new EWAS and development/validation of a methylation index within this study, not a re-test of a previously published finding or re-analysis of another study's data.",
+    "schema_error": null
+  },
+  {
+    "id": "H012",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 979,
+      "out": 348
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"we conducted a two-stage genome-wide association study (GWAS)\",\"reasoning\":\"The abstract describes an original two-stage GWAS with an internal replication stage, not a re-test of a previously published finding or re-analysis of earlier data.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "we conducted a two-stage genome-wide association study (GWAS)",
+    "reasoning": "The abstract describes an original two-stage GWAS with an internal replication stage, not a re-test of a previously published finding or re-analysis of earlier data.",
+    "schema_error": null
+  },
+  {
+    "id": "H013",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 893,
+      "out": 95
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"We conducted paired, unlimited radius, 10-min point counts ... at 56 wetlands in Iowa\",\"reasoning\":\"The abstract describes collecting new field data to estimate detection probabilities and survey timing effects, not re-testing a previously published finding or re-analyzing an earlier study\u2019s data.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "We conducted paired, unlimited radius, 10-min point counts ... at 56 wetlands in Iowa",
+    "reasoning": "The abstract describes collecting new field data to estimate detection probabilities and survey timing effects, not re-testing a previously published finding or re-analyzing an earlier study\u2019s data.",
+    "schema_error": null
+  },
+  {
+    "id": "H014",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 856,
+      "out": 303
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"medium\",\"evidence_quote\":\"\u201cTo further study the recovery rate of GIN eggs from cattle faeces, this study was conducted... to evaluate the sensitivity, accuracy, precision and reproducibility\u201d\",\"reasoning\":\"The abstract describes a new method-comparison/validation study of Mini-FLOTAC rather than re-testing a specific published finding or re-analyzing prior data.\"}",
+    "verdict": "no",
+    "confidence": "medium",
+    "evidence_quote": "\u201cTo further study the recovery rate of GIN eggs from cattle faeces, this study was conducted... to evaluate the sensitivity, accuracy, precision and reproducibility\u201d",
+    "reasoning": "The abstract describes a new method-comparison/validation study of Mini-FLOTAC rather than re-testing a specific published finding or re-analyzing prior data.",
+    "schema_error": null
+  },
+  {
+    "id": "H015",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 701,
+      "out": 116
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"The aim of this work was to understand co-evolution patterns\",\"reasoning\":\"The abstract describes a new bioinformatic analysis of enterovirus sequences to study co-evolution, not a re-test of a previously published finding or a re-analysis of an earlier study's data.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "The aim of this work was to understand co-evolution patterns",
+    "reasoning": "The abstract describes a new bioinformatic analysis of enterovirus sequences to study co-evolution, not a re-test of a previously published finding or a re-analysis of an earlier study's data.",
+    "schema_error": null
+  },
+  {
+    "id": "H016",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 689,
+      "out": 109
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enteroviruses\",\"reasoning\":\"The abstract describes a new comparative/sequence-variability analysis of enterovirus genomes, not a study that re-tests a previously published finding or re-analyzes another study's data.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enteroviruses",
+    "reasoning": "The abstract describes a new comparative/sequence-variability analysis of enterovirus genomes, not a study that re-tests a previously published finding or re-analyzes another study's data.",
+    "schema_error": null
+  },
+  {
+    "id": "H017",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 947,
+      "out": 127
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"allow replication of the Ethiopian experience\",\"reasoning\":\"The abstract discusses policy lessons and documenting a case study, not collecting new data to re-test a published finding or re-analyzing an earlier study's data.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "allow replication of the Ethiopian experience",
+    "reasoning": "The abstract discusses policy lessons and documenting a case study, not collecting new data to re-test a published finding or re-analyzing an earlier study's data.",
+    "schema_error": null
+  },
+  {
+    "id": "H018",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 689,
+      "out": 113
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"To evaluate the variability of the domain d loop sequence we retrieved all available full enterovirus sequences\",\"reasoning\":\"The paper analyzes sequence variability and co-evolution in enteroviruses using database sequences, rather than collecting new data to re-test a published finding or re-analyzing another study's dataset.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "To evaluate the variability of the domain d loop sequence we retrieved all available full enterovirus sequences",
+    "reasoning": "The paper analyzes sequence variability and co-evolution in enteroviruses using database sequences, rather than collecting new data to re-test a published finding or re-analyzing another study's dataset.",
+    "schema_error": null
+  },
+  {
+    "id": "H019",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 701,
+      "out": 127
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enteroviruses\",\"reasoning\":\"The abstract describes a new sequence-variability/co-evolution analysis of enterovirus genomes, not a re-test of a published finding or a re-analysis of an earlier study\u2019s data.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enteroviruses",
+    "reasoning": "The abstract describes a new sequence-variability/co-evolution analysis of enterovirus genomes, not a re-test of a published finding or a re-analysis of an earlier study\u2019s data.",
+    "schema_error": null
+  },
+  {
+    "id": "H020",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 701,
+      "out": 114
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enteroviruses\",\"reasoning\":\"The abstract describes an original comparative sequence analysis of enterovirus genomes, not a new test or re-analysis of a specific published study\u2019s finding.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enteroviruses",
+    "reasoning": "The abstract describes an original comparative sequence analysis of enterovirus genomes, not a new test or re-analysis of a specific published study\u2019s finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H021",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 440,
+      "out": 166
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"\u201cThe authors propose prognostic models\u2026\u201d\",\"reasoning\":\"This is a new prognostic model study with validation on new ACS cases, not a re-test of a previously published finding or a re-analysis of an earlier study\u2019s data.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "\u201cThe authors propose prognostic models\u2026\u201d",
+    "reasoning": "This is a new prognostic model study with validation on new ACS cases, not a re-test of a previously published finding or a re-analysis of an earlier study\u2019s data.",
+    "schema_error": null
+  },
+  {
+    "id": "H022",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 683,
+      "out": 113
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"This study was a retrospective case series\",\"reasoning\":\"The paper evaluates outcomes before and after service reconfiguration in a single trust, not a re-test of a previously published finding or re-analysis of another study's data.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "This study was a retrospective case series",
+    "reasoning": "The paper evaluates outcomes before and after service reconfiguration in a single trust, not a re-test of a previously published finding or re-analysis of another study's data.",
+    "schema_error": null
+  },
+  {
+    "id": "H023",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 689,
+      "out": 95
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"the aim of this work was to understand co-evolution patterns\",\"reasoning\":\"The abstract describes a new sequence-variability and co-evolution analysis of enteroviruses, not a re-test or re-analysis of a previously published study's finding.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "the aim of this work was to understand co-evolution patterns",
+    "reasoning": "The abstract describes a new sequence-variability and co-evolution analysis of enteroviruses, not a re-test or re-analysis of a previously published study's finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H024",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 637,
+      "out": 101
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"the replication of valued objects\",\"reasoning\":\"The abstract discusses museum repatriation and collection-making, not collecting new data or re-analysing prior study data to test a published finding.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "the replication of valued objects",
+    "reasoning": "The abstract discusses museum repatriation and collection-making, not collecting new data or re-analysing prior study data to test a published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H025",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 689,
+      "out": 108
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enteroviruses\",\"reasoning\":\"The abstract describes a new comparative sequence analysis of enterovirus genomes, not a new test or re-analysis of a previously published study's finding.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enteroviruses",
+    "reasoning": "The abstract describes a new comparative sequence analysis of enterovirus genomes, not a new test or re-analysis of a previously published study's finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H026",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 591,
+      "out": 160
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"high\",\"evidence_quote\":\"\u201cthis study aims to assess the applicability and reproducibility of the GP atlas on a sample of the eastern Utter Pradesh (UP) population\u201d\",\"reasoning\":\"The paper evaluates the applicability of a skeletal age estimation method in a new population rather than re-testing a specific published finding or re-analysing prior data.\"}",
+    "verdict": "no",
+    "confidence": "high",
+    "evidence_quote": "\u201cthis study aims to assess the applicability and reproducibility of the GP atlas on a sample of the eastern Utter Pradesh (UP) population\u201d",
+    "reasoning": "The paper evaluates the applicability of a skeletal age estimation method in a new population rather than re-testing a specific published finding or re-analysing prior data.",
+    "schema_error": null
+  },
+  {
+    "id": "H027",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 628,
+      "out": 208
+    },
+    "raw": "{\"is_replication\":\"no\",\"classification_confidence\":\"medium\",\"evidence_quote\":\"we present results from testing hypotheses related to the deep-water depositional sequence model\",\"reasoning\":\"The abstract describes original hypothesis testing at a type locality, not re-testing a specific published finding or re-analyzing prior data.\"}",
+    "verdict": "no",
+    "confidence": "medium",
+    "evidence_quote": "we present results from testing hypotheses related to the deep-water depositional sequence model",
+    "reasoning": "The abstract describes original hypothesis testing at a type locality, not re-testing a specific published finding or re-analyzing prior data.",
+    "schema_error": null
+  },
+  {
+    "id": "H028",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 662,
+      "out": 166
+    },
+    "raw": "{\"is_replication\":\"unclear\",\"classification_confidence\":\"low\",\"evidence_quote\":\"followed by the replication of the top SNPs in an additional set of 185 patients\",\"reasoning\":\"The abstract describes an internal replication/validation cohort within the same study, but it does not show that the paper is re-testing a finding from a previously published study or re-analyzing prior data.\"}",
+    "verdict": "unclear",
+    "confidence": "low",
+    "evidence_quote": "followed by the replication of the top SNPs in an additional set of 185 patients",
+    "reasoning": "The abstract describes an internal replication/validation cohort within the same study, but it does not show that the paper is re-testing a finding from a previously published study or re-analyzing prior data.",
+    "schema_error": null
+  },
+  {
+    "id": "H029",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 673,
+      "out": 88
+    },
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"high\",\"evidence_quote\":\"This research was a replication of original research conducted in 1981 by Dr. H. Wohlfarth\",\"reasoning\":\"The abstract explicitly states that the study collected new data to replicate an earlier published study's findings in a different classroom setting.\"}",
+    "verdict": "yes",
+    "confidence": "high",
+    "evidence_quote": "This research was a replication of original research conducted in 1981 by Dr. H. Wohlfarth",
+    "reasoning": "The abstract explicitly states that the study collected new data to replicate an earlier published study's findings in a different classroom setting.",
+    "schema_error": null
+  },
+  {
+    "id": "H030",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 541,
+      "out": 151
+    },
+    "raw": "{\"is_replication\":\"yes\",\"classification_confidence\":\"medium\",\"evidence_quote\":\"\u201ca replication of a study that originated in Australia\u201d\",\"reasoning\":\"The abstract explicitly says it is a replication study and describes a new quasi-experimental test of the same simulation-based pedagogical strategy in a different setting.\"}",
+    "verdict": "yes",
+    "confidence": "medium",
+    "evidence_quote": "\u201ca replication of a study that originated in Australia\u201d",
+    "reasoning": "The abstract explicitly says it is a replication study and describes a new quasi-experimental test of the same simulation-based pedagogical strategy in a different setting.",
+    "schema_error": null
+  }
+]

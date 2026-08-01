@@ -1,0 +1,17 @@
+[
+  {"id": "H007", "verdict": "no", "confidence": "high", "reason": "Biological replication of enterovirus RNA/protein sequences, not a study replication."},
+  {"id": "H011", "verdict": "no", "confidence": "medium", "reason": "Internal discovery/validation/meta-analysis cohorts within one project, not new data re-testing a separately published prior study."},
+  {"id": "H028", "verdict": "no", "confidence": "medium", "reason": "Discovery set and internal replication set within the same study design, not a re-test of a previously published finding."},
+  {"id": "H004", "verdict": "yes", "confidence": "high", "reason": "Dissertation explicitly designed as a replication of past research using a new sample to validate prior findings."},
+  {"id": "H013", "verdict": "no", "confidence": "high", "reason": "New primary study on detection probability of marsh songbirds, not testing a prior published finding."},
+  {"id": "H018", "verdict": "no", "confidence": "high", "reason": "Duplicate of H007: biological replication, not a study replication."},
+  {"id": "H022", "verdict": "no", "confidence": "high", "reason": "Before/after case series at one site; recommends future replication of the service model but is not itself one."},
+  {"id": "H016", "verdict": "no", "confidence": "high", "reason": "Duplicate of H007: biological replication, not a study replication."},
+  {"id": "H003", "verdict": "no", "confidence": "high", "reason": "Psychometric validation/adaptation of an instrument (DHI) in a new population, excluded by criteria."},
+  {"id": "H025", "verdict": "no", "confidence": "high", "reason": "Duplicate of H007: biological replication, not a study replication."},
+  {"id": "H020", "verdict": "no", "confidence": "high", "reason": "Duplicate of H007: biological replication, not a study replication."},
+  {"id": "H002", "verdict": "yes", "confidence": "medium", "reason": "New retrospective data collected in a larger Saskatchewan population to re-test a specific prior study's reported 27-month diagnostic delay finding."},
+  {"id": "H014", "verdict": "no", "confidence": "high", "reason": "Method/technique reproducibility and accuracy comparison between labs, not a replication of a prior study's finding."},
+  {"id": "H027", "verdict": "no", "confidence": "medium", "reason": "Tests long-standing sequence-stratigraphy assumptions/conventions at a type locality, not a specific prior published study's finding."},
+  {"id": "H017", "verdict": "no", "confidence": "high", "reason": "Commentary discussing replicating Ethiopia's policy success elsewhere; not itself a replication/reproduction study."}
+]

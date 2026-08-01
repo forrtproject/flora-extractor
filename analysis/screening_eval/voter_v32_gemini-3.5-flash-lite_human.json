@@ -1,0 +1,1153 @@
+[
+  {
+    "id": "HU01",
+    "bucket": "A_calibration",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2647,
+      "out": 106
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"tool_benchmark\"],\n  \"evidence_quote\": \"demonstrated utility of these cells as a tool to investigate human disease biology\",\n  \"reasoning\": \"The paper characterizes human iPSC-derived neurons and demonstrates their utility as a tool for studying disease biology, mentioning that they reproduced previous findings to validate the model's functionality rather than setting out to replicate earlier published research as a primary aim.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "demonstrated utility of these cells as a tool to investigate human disease biology",
+    "reasoning": "The paper characterizes human iPSC-derived neurons and demonstrates their utility as a tool for studying disease biology, mentioning that they reproduced previous findings to validate the model's functionality rather than setting out to replicate earlier published research as a primary aim.",
+    "schema_error": null
+  },
+  {
+    "id": "HU02",
+    "bucket": "A_calibration",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2455,
+      "out": 93
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"other\"\n  ],\n  \"evidence_quote\": \"investigate the sample-to-sample reproducibility of the electronic properties and device performance\",\n  \"reasoning\": \"The paper investigates sample-to-sample technical and measurement reproducibility of the authors' own devices rather than checking a specific finding from earlier published research.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "investigate the sample-to-sample reproducibility of the electronic properties and device performance",
+    "reasoning": "The paper investigates sample-to-sample technical and measurement reproducibility of the authors' own devices rather than checking a specific finding from earlier published research.",
+    "schema_error": null
+  },
+  {
+    "id": "HU03",
+    "bucket": "A_calibration",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2706,
+      "out": 132
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Two other clinically important coronaviruses, SARS-CoV-1 and Middle East respiratory syndrome (MERS)-CoV, can use calcium ions to enter and replicate within host cells.\",\n  \"reasoning\": \"The study investigates hypocalcaemia in COVID-19 compared to other pneumonias using a retrospective patient sample, and the word 'replicate' is used strictly in a biological virological sense rather than referring to a study replication.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Two other clinically important coronaviruses, SARS-CoV-1 and Middle East respiratory syndrome (MERS)-CoV, can use calcium ions to enter and replicate within host cells.",
+    "reasoning": "The study investigates hypocalcaemia in COVID-19 compared to other pneumonias using a retrospective patient sample, and the word 'replicate' is used strictly in a biological virological sense rather than referring to a study replication.",
+    "schema_error": null
+  },
+  {
+    "id": "HU04",
+    "bucket": "A_calibration",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2633,
+      "out": 102
+    },
+    "raw": "{\n  \"classification\": \"reproduction\",\n  \"confident\": true,\n  \"categories\": [\"clearly_declared\", \"other\"],\n  \"evidence_quote\": \"Here we address the three types of analyses used by Kim et al . to reach their conclusions: informatic contaminant identification, plasmid PCR, and single-cell sequencing.\",\n  \"reasoning\": \"The paper is a reply presenting a re-analysis and defense against an accompanying critical comment concerning earlier published data.\"\n}",
+    "classification": "reproduction",
+    "confident": true,
+    "categories": [
+      "clearly_declared",
+      "other"
+    ],
+    "evidence_quote": "Here we address the three types of analyses used by Kim et al . to reach their conclusions: informatic contaminant identification, plasmid PCR, and single-cell sequencing.",
+    "reasoning": "The paper is a reply presenting a re-analysis and defense against an accompanying critical comment concerning earlier published data.",
+    "schema_error": null
+  },
+  {
+    "id": "HU05",
+    "bucket": "A_calibration",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2498,
+      "out": 83
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"other\"],\n  \"evidence_quote\": \"we report the results of two separate experimental studies conducted, a replication of one another\",\n  \"reasoning\": \"The abstract describes an internal replication between two studies reported within the same paper rather than a replication of earlier published research by others.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "we report the results of two separate experimental studies conducted, a replication of one another",
+    "reasoning": "The abstract describes an internal replication between two studies reported within the same paper rather than a replication of earlier published research by others.",
+    "schema_error": null
+  },
+  {
+    "id": "HU06",
+    "bucket": "A_calibration",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2648,
+      "out": 103
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"other\"\n  ],\n  \"evidence_quote\": \"Here, we aimed to clarify this issue by examining the micro-structural integrity differences of distinct CST segments between alcohol-dependent patients and healthy controls.\",\n  \"reasoning\": \"The study collects primary data to examine structural differences in alcohol dependence without aiming to replicate or reproduce a specific previously published finding from another paper.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "Here, we aimed to clarify this issue by examining the micro-structural integrity differences of distinct CST segments between alcohol-dependent patients and healthy controls.",
+    "reasoning": "The study collects primary data to examine structural differences in alcohol dependence without aiming to replicate or reproduce a specific previously published finding from another paper.",
+    "schema_error": null
+  },
+  {
+    "id": "HU07",
+    "bucket": "A_calibration",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2509,
+      "out": 83
+    },
+    "raw": "{\n  \"classification\": \"reproduction\",\n  \"confident\": true,\n  \"categories\": [\"clearly_declared\"],\n  \"evidence_quote\": \"This paper extended the least squares approach to reproduce the results of perturbation studies.\",\n  \"reasoning\": \"The authors explicitly state that their aim is to reproduce the results of previously published perturbation studies using an extended least squares approach.\"\n}",
+    "classification": "reproduction",
+    "confident": true,
+    "categories": [
+      "clearly_declared"
+    ],
+    "evidence_quote": "This paper extended the least squares approach to reproduce the results of perturbation studies.",
+    "reasoning": "The authors explicitly state that their aim is to reproduce the results of previously published perturbation studies using an extended least squares approach.",
+    "schema_error": null
+  },
+  {
+    "id": "HU08",
+    "bucket": "A_calibration",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2621,
+      "out": 92
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"other\"],\n  \"evidence_quote\": \"Due to the rather exploratory nature of our first research question, our second objective pertains to the replication of these combinations\",\n  \"reasoning\": \"The abstract describes an internal replication or second objective checking a pattern found elsewhere within the same study rather than checking earlier published research in another paper.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "Due to the rather exploratory nature of our first research question, our second objective pertains to the replication of these combinations",
+    "reasoning": "The abstract describes an internal replication or second objective checking a pattern found elsewhere within the same study rather than checking earlier published research in another paper.",
+    "schema_error": null
+  },
+  {
+    "id": "HU09",
+    "bucket": "A_calibration",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2717,
+      "out": 111
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"demonstrate the anti-fibrotic reproducibility of the efficacious nintedanib dose\",\n  \"reasoning\": \"The study uses nintedanib to demonstrate the reproducibility of an established control reference item in their own rat model to validate its use as a tool rather than to re-test an earlier published finding from another paper.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "demonstrate the anti-fibrotic reproducibility of the efficacious nintedanib dose",
+    "reasoning": "The study uses nintedanib to demonstrate the reproducibility of an established control reference item in their own rat model to validate its use as a tool rather than to re-test an earlier published finding from another paper.",
+    "schema_error": null
+  },
+  {
+    "id": "HU10",
+    "bucket": "A_calibration",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2467,
+      "out": 90
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\n    \"clearly_declared\"\n  ],\n  \"evidence_quote\": \"The present study is a partial replication of the intensive tact instruction tactic, in three students with developmental disability.\",\n  \"reasoning\": \"The authors explicitly declare that the study is a partial replication of a previously used tactic from earlier research.\"\n}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared"
+    ],
+    "evidence_quote": "The present study is a partial replication of the intensive tact instruction tactic, in three students with developmental disability.",
+    "reasoning": "The authors explicitly declare that the study is a partial replication of a previously used tactic from earlier research.",
+    "schema_error": null
+  },
+  {
+    "id": "HU11",
+    "bucket": "A_calibration",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2766,
+      "out": 138
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\n    \"clearly_declared\",\n    \"context_transfer\"\n  ],\n  \"evidence_quote\": \"In this study, we validated fPDRPNS in rs-fMRI scans of PD patients (n = 51; 25 training and 26 testing) and age-matched healthy control subjects (n = 25) acquired in Cologne, Germany.\",\n  \"reasoning\": \"The authors state as their aim the validation of a previously developed functional MRI disease network topography in a new patient population and setting.\"\n}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared",
+      "context_transfer"
+    ],
+    "evidence_quote": "In this study, we validated fPDRPNS in rs-fMRI scans of PD patients (n = 51; 25 training and 26 testing) and age-matched healthy control subjects (n = 25) acquired in Cologne, Germany.",
+    "reasoning": "The authors state as their aim the validation of a previously developed functional MRI disease network topography in a new patient population and setting.",
+    "schema_error": null
+  },
+  {
+    "id": "HU12",
+    "bucket": "A_calibration",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2567,
+      "out": 92
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"Our results provide good evidence of the validity and reproducibility of DFC measures\",\n  \"reasoning\": \"The study tests new methods and data to demonstrate the reproducibility of dynamic functional connectivity measures rather than checking a specific reported finding from earlier published research.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "Our results provide good evidence of the validity and reproducibility of DFC measures",
+    "reasoning": "The study tests new methods and data to demonstrate the reproducibility of dynamic functional connectivity measures rather than checking a specific reported finding from earlier published research.",
+    "schema_error": null
+  },
+  {
+    "id": "HU13",
+    "bucket": "A_calibration",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2707,
+      "out": 101
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The abstract discusses biological viral replication, which is one of the non-qualifying ordinary-language and biological senses of the vocabulary.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.",
+    "reasoning": "The abstract discusses biological viral replication, which is one of the non-qualifying ordinary-language and biological senses of the vocabulary.",
+    "schema_error": null
+  },
+  {
+    "id": "HU14",
+    "bucket": "A_calibration",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2564,
+      "out": 86
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"initial_validation\"\n  ],\n  \"evidence_quote\": \"In this study, an instrumented physical spinal cord surrogate is presented and validated.\",\n  \"reasoning\": \"The abstract describes the first validation of a newly proposed instrument or surrogate rather than checking an earlier published finding.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "initial_validation"
+    ],
+    "evidence_quote": "In this study, an instrumented physical spinal cord surrogate is presented and validated.",
+    "reasoning": "The abstract describes the first validation of a newly proposed instrument or surrogate rather than checking an earlier published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "HU15",
+    "bucket": "A_calibration",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2707,
+      "out": 105
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The abstract discusses the biological replication of enteroviruses and viral co-evolution, which uses the vocabulary of replication in a non-qualifying biological sense.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.",
+    "reasoning": "The abstract discusses the biological replication of enteroviruses and viral co-evolution, which uses the vocabulary of replication in a non-qualifying biological sense.",
+    "schema_error": null
+  },
+  {
+    "id": "HU16",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2669,
+      "out": 67
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"other\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The abstract describes an engineering case study about an oil well completion and ESP system failure, containing no replication or reproduction of prior research.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The abstract describes an engineering case study about an oil well completion and ESP system failure, containing no replication or reproduction of prior research.",
+    "schema_error": null
+  },
+  {
+    "id": "HU17",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2706,
+      "out": 125
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"the authors proposed to test the OECD No. 202 methodology using Ceriodaphnia affinis test organisms and to establish metrological characteristics for it\",\n  \"reasoning\": \"The study evaluates a standardized methodology using a local test organism to establish its metrological characteristics and suitability for water quality standards, which is a technical validation of a method rather than a replication of a specific previously reported empirical finding.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "the authors proposed to test the OECD No. 202 methodology using Ceriodaphnia affinis test organisms and to establish metrological characteristics for it",
+    "reasoning": "The study evaluates a standardized methodology using a local test organism to establish its metrological characteristics and suitability for water quality standards, which is a technical validation of a method rather than a replication of a specific previously reported empirical finding.",
+    "schema_error": null
+  },
+  {
+    "id": "HU18",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2603,
+      "out": 122
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"other\"\n  ],\n  \"evidence_quote\": \"Here, we report a comparative study of Zn-Sn-Ti-O thin films materials using high-throughput experimental methods at National Institute of Standards and Technology (NIST) and National Renewable Energy Laboratory (NREL).\",\n  \"reasoning\": \"This is an inter-laboratory technical comparison and quality assurance exercise assessing measurement precision across labs rather than a replication or reproduction of a specific published empirical finding.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "Here, we report a comparative study of Zn-Sn-Ti-O thin films materials using high-throughput experimental methods at National Institute of Standards and Technology (NIST) and National Renewable Energy Laboratory (NREL).",
+    "reasoning": "This is an inter-laboratory technical comparison and quality assurance exercise assessing measurement precision across labs rather than a replication or reproduction of a specific published empirical finding.",
+    "schema_error": null
+  },
+  {
+    "id": "HU19",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2551,
+      "out": 97
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"contemporary replication of the past that acts to hold back innovation\",\n  \"reasoning\": \"The paper discusses cultural attitudes towards Bob Dylan's music, and the use of the word 'replication' is purely conceptual and ordinary-language rather than referring to a replication study.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "contemporary replication of the past that acts to hold back innovation",
+    "reasoning": "The paper discusses cultural attitudes towards Bob Dylan's music, and the use of the word 'replication' is purely conceptual and ordinary-language rather than referring to a replication study.",
+    "schema_error": null
+  },
+  {
+    "id": "HU20",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2646,
+      "out": 65
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"other\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The abstract is an opinion or commentary piece discussing the state of mobile medicine and does not report a replication or reproduction study.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The abstract is an opinion or commentary piece discussing the state of mobile medicine and does not report a replication or reproduction study.",
+    "schema_error": null
+  },
+  {
+    "id": "HU21",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2692,
+      "out": 111
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"tool_benchmark\",\n    \"other\"\n  ],\n  \"evidence_quote\": \"A similar logic in MRI may provide a way to improve reproducibility, precision, and clinical utility for brain-wide MRI association studies.\",\n  \"reasoning\": \"The abstract describes introducing a new methodological approach (Polyneuro scores) and testing it internally across samples rather than checking a specific previously published finding from another paper.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark",
+      "other"
+    ],
+    "evidence_quote": "A similar logic in MRI may provide a way to improve reproducibility, precision, and clinical utility for brain-wide MRI association studies.",
+    "reasoning": "The abstract describes introducing a new methodological approach (Polyneuro scores) and testing it internally across samples rather than checking a specific previously published finding from another paper.",
+    "schema_error": null
+  },
+  {
+    "id": "HU22",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2711,
+      "out": 90
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"stop the replication of arthropod vectors\",\n  \"reasoning\": \"The term replication is used here in its biological sense regarding arthropod vectors, and the study describes an outbreak investigation rather than a replication or reproduction of earlier published research.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "stop the replication of arthropod vectors",
+    "reasoning": "The term replication is used here in its biological sense regarding arthropod vectors, and the study describes an outbreak investigation rather than a replication or reproduction of earlier published research.",
+    "schema_error": null
+  },
+  {
+    "id": "HU23",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2701,
+      "out": 119
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"initial_validation\"],\n  \"evidence_quote\": \"The new AOSpine Upper Cervical Classification System (UCCS) was recently proposed by the AOSpine Knowledge Forum Trauma team to standardize the treatment of upper cervical traumatic injuries (UCI). In this context, evaluating its reliability is paramount prior to clinical use.\",\n  \"reasoning\": \"This paper represents the initial validation and reliability testing of a newly proposed classification system rather than re-validating an already published instrument.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "initial_validation"
+    ],
+    "evidence_quote": "The new AOSpine Upper Cervical Classification System (UCCS) was recently proposed by the AOSpine Knowledge Forum Trauma team to standardize the treatment of upper cervical traumatic injuries (UCI). In this context, evaluating its reliability is paramount prior to clinical use.",
+    "reasoning": "This paper represents the initial validation and reliability testing of a newly proposed classification system rather than re-validating an already published instrument.",
+    "schema_error": null
+  },
+  {
+    "id": "HU24",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2752,
+      "out": 74
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"other\"\n  ],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The paper discusses population ageing, late-life learning, and health policies without containing any aim to replicate or reproduce a previously published finding.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The paper discusses population ageing, late-life learning, and health policies without containing any aim to replicate or reproduce a previously published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "HU25",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2647,
+      "out": 113
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"tool_benchmark\", \"terminology_only\"],\n  \"evidence_quote\": \"This can be overcome by combining FE-SPL with nanoimprint lithography (NIL), which enables the replication of high-resolution features on large areas and provides high throughput.\",\n  \"reasoning\": \"The use of 'replication' here refers to the physical manufacturing process of nanoimprint lithography rather than a replication study of prior scientific claims.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark",
+      "terminology_only"
+    ],
+    "evidence_quote": "This can be overcome by combining FE-SPL with nanoimprint lithography (NIL), which enables the replication of high-resolution features on large areas and provides high throughput.",
+    "reasoning": "The use of 'replication' here refers to the physical manufacturing process of nanoimprint lithography rather than a replication study of prior scientific claims.",
+    "schema_error": null
+  },
+  {
+    "id": "HU26",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2541,
+      "out": 101
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of posts and accumulation of affects in the #MeToo (#JaTe\u017c) network\",\n  \"reasoning\": \"The term replication is used here in an ordinary-language sense to describe the reposting of content on social media, not as a scientific replication of an earlier study.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of posts and accumulation of affects in the #MeToo (#JaTe\u017c) network",
+    "reasoning": "The term replication is used here in an ordinary-language sense to describe the reposting of content on social media, not as a scientific replication of an earlier study.",
+    "schema_error": null
+  },
+  {
+    "id": "HU27",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2684,
+      "out": 99
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"incidental_finding\"\n  ],\n  \"evidence_quote\": \"followed by the replication of the top SNPs in an additional set of 185 patients\",\n  \"reasoning\": \"The mention of replication refers strictly to an internal two-stage discovery and confirmation design within the same study rather than a check on previously published external research.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "incidental_finding"
+    ],
+    "evidence_quote": "followed by the replication of the top SNPs in an additional set of 185 patients",
+    "reasoning": "The mention of replication refers strictly to an internal two-stage discovery and confirmation design within the same study rather than a check on previously published external research.",
+    "schema_error": null
+  },
+  {
+    "id": "HU28",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2512,
+      "out": 100
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\n    \"clearly_declared\",\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"Additionally, we perform a number of Monte Carlo experiments to test the effectiveness of Carr and Lee\u2019s immunization strategy.\",\n  \"reasoning\": \"The authors state that they test the effectiveness of a strategy proposed in earlier published work by Carr and Lee.\"\n}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared",
+      "tool_benchmark"
+    ],
+    "evidence_quote": "Additionally, we perform a number of Monte Carlo experiments to test the effectiveness of Carr and Lee\u2019s immunization strategy.",
+    "reasoning": "The authors state that they test the effectiveness of a strategy proposed in earlier published work by Carr and Lee.",
+    "schema_error": null
+  },
+  {
+    "id": "HU29",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2645,
+      "out": 77
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The paper discusses biological inheritance systems and genetic-epigenetic interactions in Schistosoma mansoni rather than checking a specific previously reported empirical finding.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The paper discusses biological inheritance systems and genetic-epigenetic interactions in Schistosoma mansoni rather than checking a specific previously reported empirical finding.",
+    "schema_error": null
+  },
+  {
+    "id": "HU30",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2660,
+      "out": 100
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"other\"\n  ],\n  \"evidence_quote\": \"Our objectives were to estimate detection probabilities for three marsh songbirds... and to evaluate temporal variability in detection probability\",\n  \"reasoning\": \"The study aims to estimate detection probabilities and evaluate temporal variability for marsh songbirds using new field surveys, rather than checking a specific previously published finding or instrument.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "Our objectives were to estimate detection probabilities for three marsh songbirds... and to evaluate temporal variability in detection probability",
+    "reasoning": "The study aims to estimate detection probabilities and evaluate temporal variability for marsh songbirds using new field surveys, rather than checking a specific previously published finding or instrument.",
+    "schema_error": null
+  },
+  {
+    "id": "HU31",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2702,
+      "out": 93
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"paying special attention to settings for which equal replication of the treatments is not possible.\",\n  \"reasoning\": \"The term replication is used here in its experimental design sense (repetition of treatments across units) rather than as a study checking prior research.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "paying special attention to settings for which equal replication of the treatments is not possible.",
+    "reasoning": "The term replication is used here in its experimental design sense (repetition of treatments across units) rather than as a study checking prior research.",
+    "schema_error": null
+  },
+  {
+    "id": "HU32",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2705,
+      "out": 83
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"mencegah replikasi virus HIV di dalam tubuh\",\n  \"reasoning\": \"The abstract uses the term replication in a biological sense regarding the HIV virus rather than the replication of scientific studies.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "mencegah replikasi virus HIV di dalam tubuh",
+    "reasoning": "The abstract uses the term replication in a biological sense regarding the HIV virus rather than the replication of scientific studies.",
+    "schema_error": null
+  },
+  {
+    "id": "HU33",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2691,
+      "out": 92
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"The aim of the study is to assess how the evolution of European traffic influences the fatigue assessment of bridges.\",\n  \"reasoning\": \"The study evaluates current traffic loads and bridge fatigue standards rather than replicating or reproducing a specific previously published research finding.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "The aim of the study is to assess how the evolution of European traffic influences the fatigue assessment of bridges.",
+    "reasoning": "The study evaluates current traffic loads and bridge fatigue standards rather than replicating or reproducing a specific previously published research finding.",
+    "schema_error": null
+  },
+  {
+    "id": "HU34",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2643,
+      "out": 94
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"other\"],\n  \"evidence_quote\": \"Lastly, a replication of Study 2 (Study 6) was conducted to test whether priming preference accounted for these benefits, but this was not the case.\",\n  \"reasoning\": \"The paper includes an internal replication of its own earlier study rather than checking earlier published research by other authors.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "Lastly, a replication of Study 2 (Study 6) was conducted to test whether priming preference accounted for these benefits, but this was not the case.",
+    "reasoning": "The paper includes an internal replication of its own earlier study rather than checking earlier published research by other authors.",
+    "schema_error": null
+  },
+  {
+    "id": "HU35",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2681,
+      "out": 113
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"we systematically compared differentially expressed gene transcript clusters (TCs) in human Jurkat T cells in microgravity provided by a suborbital ballistic rocket with vector-averaged gravity (vag) provided by a 2D clinostat.\",\n  \"reasoning\": \"The study compares different experimental conditions and methods rather than checking a specific finding reported by earlier research.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "we systematically compared differentially expressed gene transcript clusters (TCs) in human Jurkat T cells in microgravity provided by a suborbital ballistic rocket with vector-averaged gravity (vag) provided by a 2D clinostat.",
+    "reasoning": "The study compares different experimental conditions and methods rather than checking a specific finding reported by earlier research.",
+    "schema_error": null
+  },
+  {
+    "id": "HU36",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 3269,
+      "out": 73
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"other\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The study evaluates the impacts of soil conditions and insect pests on rice varieties as primary agricultural research rather than checking a specific previously published finding or validating an existing instrument.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The study evaluates the impacts of soil conditions and insect pests on rice varieties as primary agricultural research rather than checking a specific previously published finding or validating an existing instrument.",
+    "schema_error": null
+  },
+  {
+    "id": "HU37",
+    "bucket": "B_discarded",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2664,
+      "out": 97
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\n    \"measurement_validation\",\n    \"context_transfer\"\n  ],\n  \"evidence_quote\": \"Factor analysis confirmed that reproducibility of the four factors was similar to the original version.\",\n  \"reasoning\": \"The study re-validates and tests the reliability and validity of an already published instrument in a new language and population setting.\"\n}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "measurement_validation",
+      "context_transfer"
+    ],
+    "evidence_quote": "Factor analysis confirmed that reproducibility of the four factors was similar to the original version.",
+    "reasoning": "The study re-validates and tests the reliability and validity of an already published instrument in a new language and population setting.",
+    "schema_error": null
+  },
+  {
+    "id": "HU38",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2824,
+      "out": 102
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"other\"\n  ],\n  \"evidence_quote\": \"We have characterised disease-associated methylation changes in newly diagnosed IBD, defined the relationship to genetic variation (meQTL) and assessed its prognostic utility in IBD.\",\n  \"reasoning\": \"The paper describes original biomarker discovery and association analyses in new patient samples rather than checking an earlier published finding.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "We have characterised disease-associated methylation changes in newly diagnosed IBD, defined the relationship to genetic variation (meQTL) and assessed its prognostic utility in IBD.",
+    "reasoning": "The paper describes original biomarker discovery and association analyses in new patient samples rather than checking an earlier published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "HU39",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2648,
+      "out": 132
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"tool_benchmark\"],\n  \"evidence_quote\": \"We developed a new set-up based on virtual-reality (VR) and haptic-robotics allowing us to induce sensorimotor adaptation and to reproduce the effect of prism adaptation in a more ecologically valid, yet experimentally controlled context.\",\n  \"reasoning\": \"The abstract describes the development of a new tool and setup that is demonstrated to reproduce known effects in order to show that the new apparatus works, which falls under tool benchmarking rather than checking a specific prior finding.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "We developed a new set-up based on virtual-reality (VR) and haptic-robotics allowing us to induce sensorimotor adaptation and to reproduce the effect of prism adaptation in a more ecologically valid, yet experimentally controlled context.",
+    "reasoning": "The abstract describes the development of a new tool and setup that is demonstrated to reproduce known effects in order to show that the new apparatus works, which falls under tool benchmarking rather than checking a specific prior finding.",
+    "schema_error": null
+  },
+  {
+    "id": "HU40",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2699,
+      "out": 106
+    },
+    "raw": "{\n  \"classification\": \"unclear\",\n  \"confident\": false,\n  \"categories\": [\n    \"measurement_validation\"\n  ],\n  \"evidence_quote\": \"An international multicenter study will validate the parameter prospectively.\",\n  \"reasoning\": \"The abstract describes a prospective validation study of the tumor-stroma ratio, but it is unclear from the text whether this constitutes the re-validation of an already published instrument or the initial validation of a newly developed method.\"\n}",
+    "classification": "unclear",
+    "confident": false,
+    "categories": [
+      "measurement_validation"
+    ],
+    "evidence_quote": "An international multicenter study will validate the parameter prospectively.",
+    "reasoning": "The abstract describes a prospective validation study of the tumor-stroma ratio, but it is unclear from the text whether this constitutes the re-validation of an already published instrument or the initial validation of a newly developed method.",
+    "schema_error": null
+  },
+  {
+    "id": "HU41",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2660,
+      "out": 111
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"To test for independent replication of the RIL eQTL, we used introgression lines (ILs).\",\n  \"reasoning\": \"The replication mentioned is an internal methodological check using introgression lines to confirm eQTL findings within the same study's populations rather than checking an earlier published study's specific finding.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "To test for independent replication of the RIL eQTL, we used introgression lines (ILs).",
+    "reasoning": "The replication mentioned is an internal methodological check using introgression lines to confirm eQTL findings within the same study's populations rather than checking an earlier published study's specific finding.",
+    "schema_error": null
+  },
+  {
+    "id": "HU42",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2757,
+      "out": 86
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"responsible for the replication of mitochondrial DNA\",\n  \"reasoning\": \"The abstract uses the term 'replication' in a biological sense referring to mitochondrial DNA, and does not study a replication or reproduction of earlier research.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "responsible for the replication of mitochondrial DNA",
+    "reasoning": "The abstract uses the term 'replication' in a biological sense referring to mitochondrial DNA, and does not study a replication or reproduction of earlier research.",
+    "schema_error": null
+  },
+  {
+    "id": "HU43",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2489,
+      "out": 102
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\n    \"clearly_declared\",\n    \"context_transfer\"\n  ],\n  \"evidence_quote\": \"We report results from a replication of Price's N-rays analysis and data for three additional reference networks\",\n  \"reasoning\": \"The authors explicitly declare that they are conducting a replication of Price's earlier analysis and extending it to additional reference networks.\"\n}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared",
+      "context_transfer"
+    ],
+    "evidence_quote": "We report results from a replication of Price's N-rays analysis and data for three additional reference networks",
+    "reasoning": "The authors explicitly declare that they are conducting a replication of Price's earlier analysis and extending it to additional reference networks.",
+    "schema_error": null
+  },
+  {
+    "id": "HU44",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2438,
+      "out": 100
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Using qualitative methods and using 16 elements of replication of Ramirez and Gordillo's research\",\n  \"reasoning\": \"The abstract uses the word replication in the non-qualifying sense of reusing an earlier paper's framework or element list as this study's instrument.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Using qualitative methods and using 16 elements of replication of Ramirez and Gordillo's research",
+    "reasoning": "The abstract uses the word replication in the non-qualifying sense of reusing an earlier paper's framework or element list as this study's instrument.",
+    "schema_error": null
+  },
+  {
+    "id": "HU45",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2697,
+      "out": 117
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"This study first characterized the reproducibility of metrics derived from the complex multi-echo gradient-recalled echo (mGRE) signal across the corpus callosum in healthy participants\",\n  \"reasoning\": \"The paper characterizes the technical reproducibility and measurement precision of a signal analysis method as part of its own procedure and applies a tool rather than aiming to check an earlier published finding.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "This study first characterized the reproducibility of metrics derived from the complex multi-echo gradient-recalled echo (mGRE) signal across the corpus callosum in healthy participants",
+    "reasoning": "The paper characterizes the technical reproducibility and measurement precision of a signal analysis method as part of its own procedure and applies a tool rather than aiming to check an earlier published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "HU46",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2606,
+      "out": 87
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"tool_benchmark\"],\n  \"evidence_quote\": \"Using Long-Term Outdoor Exposure Data to Benchmark Accelerated Durability Test Methods\",\n  \"reasoning\": \"The paper uses durability test methods and outdoor exposure data to benchmark and verify standard test methods rather than evaluating a specific reported scientific finding from earlier literature.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "Using Long-Term Outdoor Exposure Data to Benchmark Accelerated Durability Test Methods",
+    "reasoning": "The paper uses durability test methods and outdoor exposure data to benchmark and verify standard test methods rather than evaluating a specific reported scientific finding from earlier literature.",
+    "schema_error": null
+  },
+  {
+    "id": "HU47",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2579,
+      "out": 109
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"Experimental results are replicated and investigated using the finite-discrete element method, which allows for the replication of both the elastic and post-peak fractured behaviors\",\n  \"reasoning\": \"The paper uses a computational simulation method (the finite-discrete element method) to reproduce known experimental behaviors in order to demonstrate and validate the tool itself.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "Experimental results are replicated and investigated using the finite-discrete element method, which allows for the replication of both the elastic and post-peak fractured behaviors",
+    "reasoning": "The paper uses a computational simulation method (the finite-discrete element method) to reproduce known experimental behaviors in order to demonstrate and validate the tool itself.",
+    "schema_error": null
+  },
+  {
+    "id": "HU48",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2478,
+      "out": 106
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"tool_benchmark\"],\n  \"evidence_quote\": \"This work involves the development of a simulation environment that can be used for studying transcutaneous electrotactile stimulation... allowing the replication of already reported experimental findings\",\n  \"reasoning\": \"The paper presents a newly developed simulation tool that is shown to reproduce known results to demonstrate that the tool works, which is an excluded tool-benchmarking study.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "This work involves the development of a simulation environment that can be used for studying transcutaneous electrotactile stimulation... allowing the replication of already reported experimental findings",
+    "reasoning": "The paper presents a newly developed simulation tool that is shown to reproduce known results to demonstrate that the tool works, which is an excluded tool-benchmarking study.",
+    "schema_error": null
+  },
+  {
+    "id": "HU49",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2708,
+      "out": 111
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"The inclusion of the new series into ARAB8 significantly improves the replication of this master chronology from ca. AD 1300 onwards\",\n  \"reasoning\": \"The use of 'replication' here describes improving a master chronology internal to the study's own methodological tooling rather than checking a specific finding reported by earlier published research.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "The inclusion of the new series into ARAB8 significantly improves the replication of this master chronology from ca. AD 1300 onwards",
+    "reasoning": "The use of 'replication' here describes improving a master chronology internal to the study's own methodological tooling rather than checking a specific finding reported by earlier published research.",
+    "schema_error": null
+  },
+  {
+    "id": "HU50",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2589,
+      "out": 97
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\n    \"measurement_validation\"\n  ],\n  \"evidence_quote\": \"We aim to evaluate the accuracy and reproducibility of the test for the diagnosis of NSTI.\",\n  \"reasoning\": \"The study evaluates the reproducibility and accuracy of a previously published diagnostic test (the finger test proposed by Andreasen), which qualifies as measurement re-validation.\"\n}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "measurement_validation"
+    ],
+    "evidence_quote": "We aim to evaluate the accuracy and reproducibility of the test for the diagnosis of NSTI.",
+    "reasoning": "The study evaluates the reproducibility and accuracy of a previously published diagnostic test (the finger test proposed by Andreasen), which qualifies as measurement re-validation.",
+    "schema_error": null
+  },
+  {
+    "id": "HU51",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2859,
+      "out": 102
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"we proposed to use the imputed data to replicate association identified in the discovery WES sample\",\n  \"reasoning\": \"The study uses an internal replication/discovery sample split design within the UK Biobank dataset to demonstrate a new imputation method, which is classified as tool benchmarking and does not qualify.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "we proposed to use the imputed data to replicate association identified in the discovery WES sample",
+    "reasoning": "The study uses an internal replication/discovery sample split design within the UK Biobank dataset to demonstrate a new imputation method, which is classified as tool benchmarking and does not qualify.",
+    "schema_error": null
+  },
+  {
+    "id": "HU52",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2618,
+      "out": 134
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"tool_benchmark\"],\n  \"evidence_quote\": \"The objectives of this study were to evaluate the rigor of the SWAT test in terms of (1) reproducibility of the evaluation, (2) transferability of performance results when tested in a different climate, and (3) whether an hourly soil water balance... would significantly alter performance results\",\n  \"reasoning\": \"The study evaluates the methodological rigor and performance of an evaluation protocol and testing procedure for weather-based irrigation controllers rather than replicating a specific behavioral or empirical finding from earlier research.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "The objectives of this study were to evaluate the rigor of the SWAT test in terms of (1) reproducibility of the evaluation, (2) transferability of performance results when tested in a different climate, and (3) whether an hourly soil water balance... would significantly alter performance results",
+    "reasoning": "The study evaluates the methodological rigor and performance of an evaluation protocol and testing procedure for weather-based irrigation controllers rather than replicating a specific behavioral or empirical finding from earlier research.",
+    "schema_error": null
+  },
+  {
+    "id": "HU53",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2480,
+      "out": 87
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"tool_benchmark\"],\n  \"evidence_quote\": \"The numerical model developed in previous studies has been verified in the laboratory by using laser initiation of explosives\",\n  \"reasoning\": \"The paper is a tool benchmark demonstrating that a newly developed numerical model correctly reproduces physical phenomena to show that the model works.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "The numerical model developed in previous studies has been verified in the laboratory by using laser initiation of explosives",
+    "reasoning": "The paper is a tool benchmark demonstrating that a newly developed numerical model correctly reproduces physical phenomena to show that the model works.",
+    "schema_error": null
+  },
+  {
+    "id": "HU54",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2524,
+      "out": 80
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"we observed the replication of Zamilon\",\n  \"reasoning\": \"The term replication is used here in its biological sense to describe viral multiplication rather than the replication of a scientific study.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "we observed the replication of Zamilon",
+    "reasoning": "The term replication is used here in its biological sense to describe viral multiplication rather than the replication of a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "HU55",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2755,
+      "out": 91
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\n    \"clearly_declared\",\n    \"context_transfer\"\n  ],\n  \"evidence_quote\": \"We sought to evaluate the reproducibility of this technique.\",\n  \"reasoning\": \"The authors explicitly state an aim to evaluate the reproducibility of a previously described surgical technique by applying it to a new patient cohort.\"\n}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared",
+      "context_transfer"
+    ],
+    "evidence_quote": "We sought to evaluate the reproducibility of this technique.",
+    "reasoning": "The authors explicitly state an aim to evaluate the reproducibility of a previously described surgical technique by applying it to a new patient cohort.",
+    "schema_error": null
+  },
+  {
+    "id": "HU56",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2638,
+      "out": 114
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\n    \"clearly_declared\",\n    \"measurement_validation\",\n    \"context_transfer\"\n  ],\n  \"evidence_quote\": \"validation of the method regarding reliability and reproducibility of results under realistic settings and real world scenarios is still required\",\n  \"reasoning\": \"The authors explicitly aim to re-validate an already published method (Dual Frequency Head Maps) regarding its reproducibility and reliability in a new, realistic setting.\"\n}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared",
+      "measurement_validation",
+      "context_transfer"
+    ],
+    "evidence_quote": "validation of the method regarding reliability and reproducibility of results under realistic settings and real world scenarios is still required",
+    "reasoning": "The authors explicitly aim to re-validate an already published method (Dual Frequency Head Maps) regarding its reproducibility and reliability in a new, realistic setting.",
+    "schema_error": null
+  },
+  {
+    "id": "HU57",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2629,
+      "out": 91
+    },
+    "raw": "{\n  \"classification\": \"reproduction\",\n  \"confident\": true,\n  \"categories\": [\"measurement_validation\"],\n  \"evidence_quote\": \"To validate the reproducibility of the AI between shoulder magnetic resonance imaging (MRI) and standard X-ray\",\n  \"reasoning\": \"The study aims to validate the reproducibility and measurement properties of an already published index (the acromion index) using imaging modalities.\"\n}",
+    "classification": "reproduction",
+    "confident": true,
+    "categories": [
+      "measurement_validation"
+    ],
+    "evidence_quote": "To validate the reproducibility of the AI between shoulder magnetic resonance imaging (MRI) and standard X-ray",
+    "reasoning": "The study aims to validate the reproducibility and measurement properties of an already published index (the acromion index) using imaging modalities.",
+    "schema_error": null
+  },
+  {
+    "id": "HU58",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2707,
+      "out": 119
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\n    \"clearly_declared\",\n    \"measurement_validation\"\n  ],\n  \"evidence_quote\": \"the aim of the present thesis was to therefore examine the reliability and validity of ultrasound technology (via the MuscleSound system) to non-invasively assess muscle glycogen concentration in skeletal muscle of team sport athletes.\",\n  \"reasoning\": \"The study aims to evaluate the reliability and validity of an already published measurement tool in a new population and setting.\"\n}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared",
+      "measurement_validation"
+    ],
+    "evidence_quote": "the aim of the present thesis was to therefore examine the reliability and validity of ultrasound technology (via the MuscleSound system) to non-invasively assess muscle glycogen concentration in skeletal muscle of team sport athletes.",
+    "reasoning": "The study aims to evaluate the reliability and validity of an already published measurement tool in a new population and setting.",
+    "schema_error": null
+  },
+  {
+    "id": "HU59",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2633,
+      "out": 94
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"tool_benchmark\"],\n  \"evidence_quote\": \"We reproduce results from previous modelling studies, including low ratios of trench over plate motions.\",\n  \"reasoning\": \"The paper uses numerical models to reproduce known results from previous studies as part of demonstrating the behavior of the tool rather than as a primary replication aim checking a specific reported claim.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "We reproduce results from previous modelling studies, including low ratios of trench over plate motions.",
+    "reasoning": "The paper uses numerical models to reproduce known results from previous studies as part of demonstrating the behavior of the tool rather than as a primary replication aim checking a specific reported claim.",
+    "schema_error": null
+  },
+  {
+    "id": "HU60",
+    "bucket": "C_disagreement",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2512,
+      "out": 107
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"The performance of the overset grid method was assessed to benchmark cases of steady and unsteady flows past a cylinder.\",\n  \"reasoning\": \"The study develops a new numerical method and benchmarks it against known results from the literature to demonstrate that the tool works, which falls under tool benchmarking rather than checking a specific reported finding.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "The performance of the overset grid method was assessed to benchmark cases of steady and unsteady flows past a cylinder.",
+    "reasoning": "The study develops a new numerical method and benchmarks it against known results from the literature to demonstrate that the tool works, which falls under tool benchmarking rather than checking a specific reported finding.",
+    "schema_error": null
+  }
+]

@@ -1,0 +1,2886 @@
+[
+  {
+    "id": "N001",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 1886,
+      "out": 87
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"about_replication\"\n  ],\n  \"evidence_quote\": \"Direct replication is valuable but should not be elevated over other worthwhile research practices\",\n  \"reasoning\": \"The paper is a commentary discussing the value and role of replication rather than a study conducting a replication or reproduction.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "about_replication"
+    ],
+    "evidence_quote": "Direct replication is valuable but should not be elevated over other worthwhile research practices",
+    "reasoning": "The paper is a commentary discussing the value and role of replication rather than a study conducting a replication or reproduction.",
+    "schema_error": null
+  },
+  {
+    "id": "N002",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2326,
+      "out": 107
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"clearly_declared\",\n    \"context_transfer\"\n  ],\n  \"evidence_quote\": \"In the present study, I aimed to provide a conceptual replication and extension of previous findings by investigating temporal overestimation before and after the stressful event.\",\n  \"reasoning\": \"The authors explicitly state that their aim is to provide a conceptual replication of previous findings from earlier published research.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "clearly_declared",
+      "context_transfer"
+    ],
+    "evidence_quote": "In the present study, I aimed to provide a conceptual replication and extension of previous findings by investigating temporal overestimation before and after the stressful event.",
+    "reasoning": "The authors explicitly state that their aim is to provide a conceptual replication of previous findings from earlier published research.",
+    "schema_error": null
+  },
+  {
+    "id": "N003",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2170,
+      "out": 83
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"about_replication\"\n  ],\n  \"evidence_quote\": \"Replication in Psychological Science\",\n  \"reasoning\": \"The paper is a commentary and discussion about the replication crisis and another published replication project rather than presenting an empirical replication or reproduction study itself.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "about_replication"
+    ],
+    "evidence_quote": "Replication in Psychological Science",
+    "reasoning": "The paper is a commentary and discussion about the replication crisis and another published replication project rather than presenting an empirical replication or reproduction study itself.",
+    "schema_error": null
+  },
+  {
+    "id": "N004",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 1867,
+      "out": 84
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"bacterial replication of metabolism in Listeria\",\n  \"reasoning\": \"The abstract uses the term replication in a biological sense to describe bacterial growth rather than the re-testing of a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "bacterial replication of metabolism in Listeria",
+    "reasoning": "The abstract uses the term replication in a biological sense to describe bacterial growth rather than the re-testing of a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N005",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2092,
+      "out": 95
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"They provide, among others, cofactors of enzymes that catalyze the replication of DNA methylation and its repair.\",\n  \"reasoning\": \"The abstract uses the term replication in a biological sense regarding DNA processes rather than referring to the replication of a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "They provide, among others, cofactors of enzymes that catalyze the replication of DNA methylation and its repair.",
+    "reasoning": "The abstract uses the term replication in a biological sense regarding DNA processes rather than referring to the replication of a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N006",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2090,
+      "out": 103
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\",\n    \"about_replication\"\n  ],\n  \"evidence_quote\": \"After replication of the genetic material\",\n  \"reasoning\": \"The abstract uses the term 'replication' in a biological sense regarding genetic material and provides a review of endosomal transport during cell division, neither of which constitutes a study checking a previously published finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only",
+      "about_replication"
+    ],
+    "evidence_quote": "After replication of the genetic material",
+    "reasoning": "The abstract uses the term 'replication' in a biological sense regarding genetic material and provides a review of endosomal transport during cell division, neither of which constitutes a study checking a previously published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N007",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2142,
+      "out": 85
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\"other\"],\n  \"evidence_quote\": \"Replication of this project on a larger scale could serve as the foundation for establishing new policies regarding STS\",\n  \"reasoning\": \"The abstract merely suggests that future replication of the project is needed, which is a non-qualifying usage.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "Replication of this project on a larger scale could serve as the foundation for establishing new policies regarding STS",
+    "reasoning": "The abstract merely suggests that future replication of the project is needed, which is a non-qualifying usage.",
+    "schema_error": null
+  },
+  {
+    "id": "N008",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2089,
+      "out": 110
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\",\n    \"builds_on_literature\"\n  ],\n  \"evidence_quote\": \"Cains-Smith (1982) has suggested that clay minerals can store and replicate structural defects\",\n  \"reasoning\": \"The abstract discusses the biological and chemical processes of replication in the context of the origins of life rather than attempting to replicate a previously published study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only",
+      "builds_on_literature"
+    ],
+    "evidence_quote": "Cains-Smith (1982) has suggested that clay minerals can store and replicate structural defects",
+    "reasoning": "The abstract discusses the biological and chemical processes of replication in the context of the origins of life rather than attempting to replicate a previously published study.",
+    "schema_error": null
+  },
+  {
+    "id": "N009",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2814,
+      "out": 109
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"builds_on_literature\",\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"possibly capable of stopping the replication of SARS-CoV-2\",\n  \"reasoning\": \"The paper discusses the potential antiviral activity and mechanism of action of statins against SARS-CoV-2 using biological replication terminology rather than conducting a replication or reproduction of an earlier study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "builds_on_literature",
+      "terminology_only"
+    ],
+    "evidence_quote": "possibly capable of stopping the replication of SARS-CoV-2",
+    "reasoning": "The paper discusses the potential antiviral activity and mechanism of action of statins against SARS-CoV-2 using biological replication terminology rather than conducting a replication or reproduction of an earlier study.",
+    "schema_error": null
+  },
+  {
+    "id": "N010",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2032,
+      "out": 79
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"cloning for the replication of human individuals is ethically unacceptable\",\n  \"reasoning\": \"The abstract discusses biological and ethical aspects of human cloning rather than replicating a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "cloning for the replication of human individuals is ethically unacceptable",
+    "reasoning": "The abstract discusses biological and ethical aspects of human cloning rather than replicating a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N011",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2315,
+      "out": 95
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\"builds_on_literature\"],\n  \"evidence_quote\": \"A replication of this study with more students across more schools, and different grade levels would improve the generalizability of these results.\",\n  \"reasoning\": \"The abstract describes an original empirical study that merely suggests future replication in its conclusion, rather than conducting a replication itself.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "builds_on_literature"
+    ],
+    "evidence_quote": "A replication of this study with more students across more schools, and different grade levels would improve the generalizability of these results.",
+    "reasoning": "The abstract describes an original empirical study that merely suggests future replication in its conclusion, rather than conducting a replication itself.",
+    "schema_error": null
+  },
+  {
+    "id": "N012",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2250,
+      "out": 106
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"clearly_declared\",\n    \"context_transfer\"\n  ],\n  \"evidence_quote\": \"The present small-scale study is a conceptual replication of Elbro et al. (2012a).\",\n  \"reasoning\": \"The authors explicitly declare that the study is a conceptual replication of a previously published paper and test the findings in a new population.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "clearly_declared",
+      "context_transfer"
+    ],
+    "evidence_quote": "The present small-scale study is a conceptual replication of Elbro et al. (2012a).",
+    "reasoning": "The authors explicitly declare that the study is a conceptual replication of a previously published paper and test the findings in a new population.",
+    "schema_error": null
+  },
+  {
+    "id": "N013",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2343,
+      "out": 118
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"clearly_declared\",\n    \"context_transfer\"\n  ],\n  \"evidence_quote\": \"The present study, as a conceptual replication of Moir and Nation (2002), investigated learners\u2019 metacognitive knowledge for vocabulary learning during a language course.\",\n  \"reasoning\": \"The authors explicitly state that their study is a conceptual replication of a previously published study by Moir and Nation (2002).\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "clearly_declared",
+      "context_transfer"
+    ],
+    "evidence_quote": "The present study, as a conceptual replication of Moir and Nation (2002), investigated learners\u2019 metacognitive knowledge for vocabulary learning during a language course.",
+    "reasoning": "The authors explicitly state that their study is a conceptual replication of a previously published study by Moir and Nation (2002).",
+    "schema_error": null
+  },
+  {
+    "id": "N014",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2243,
+      "out": 106
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\"about_replication\"],\n  \"evidence_quote\": \"Further replication of this study is needed on a large probability sample from different geographical areas to help for the generalization of the results.\",\n  \"reasoning\": \"The paper is a primary randomized controlled trial comparing two treatments, and the mention of replication is merely a standard statement in the conclusion suggesting future research rather than an aim of the current study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "about_replication"
+    ],
+    "evidence_quote": "Further replication of this study is needed on a large probability sample from different geographical areas to help for the generalization of the results.",
+    "reasoning": "The paper is a primary randomized controlled trial comparing two treatments, and the mention of replication is merely a standard statement in the conclusion suggesting future research rather than an aim of the current study.",
+    "schema_error": null
+  },
+  {
+    "id": "N015",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2752,
+      "out": 96
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"In order to allow easy replication of this study, industry standard software that is easily attainable was used.\",\n  \"reasoning\": \"The term replication is used here in the sense of procedural repeatability or methodological transparency rather than as a study checking an earlier published finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "In order to allow easy replication of this study, industry standard software that is easily attainable was used.",
+    "reasoning": "The term replication is used here in the sense of procedural repeatability or methodological transparency rather than as a study checking an earlier published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N016",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2225,
+      "out": 88
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"blocking the replication of SARS-CoV-2\",\n  \"reasoning\": \"The abstract uses the word 'replication' in a biological sense referring to the virus, rather than in the methodological sense of replicating a study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "blocking the replication of SARS-CoV-2",
+    "reasoning": "The abstract uses the word 'replication' in a biological sense referring to the virus, rather than in the methodological sense of replicating a study.",
+    "schema_error": null
+  },
+  {
+    "id": "N017",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2181,
+      "out": 126
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\"context_transfer\"],\n  \"evidence_quote\": \"The cysteine analogue, D-penicillamine, previously reported as a potent inhibitor of tat-mediated transactivation (Chandra et al., 1988), was of limited efficacy in RS 3/7 cells transfected with tat-expressing plasmids.\",\n  \"reasoning\": \"The study tests a previously reported finding from earlier literature (Chandra et al., 1988) in a newly developed cell line system.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "context_transfer"
+    ],
+    "evidence_quote": "The cysteine analogue, D-penicillamine, previously reported as a potent inhibitor of tat-mediated transactivation (Chandra et al., 1988), was of limited efficacy in RS 3/7 cells transfected with tat-expressing plasmids.",
+    "reasoning": "The study tests a previously reported finding from earlier literature (Chandra et al., 1988) in a newly developed cell line system.",
+    "schema_error": null
+  },
+  {
+    "id": "N018",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2024,
+      "out": 114
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The super-replication approach looks for hedging strategies that super-replicate, instead of replicating exactly, the payoff of the derivative security.\",\n  \"reasoning\": \"The terms replication and super-replication are used here in a technical financial mathematics sense to describe pricing and hedging methods, not as a replication or reproduction of a previous study's findings.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The super-replication approach looks for hedging strategies that super-replicate, instead of replicating exactly, the payoff of the derivative security.",
+    "reasoning": "The terms replication and super-replication are used here in a technical financial mathematics sense to describe pricing and hedging methods, not as a replication or reproduction of a previous study's findings.",
+    "schema_error": null
+  },
+  {
+    "id": "N019",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2003,
+      "out": 95
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"transcription and replication of the bacterial genome were placed under the control of nuclear genes\",\n  \"reasoning\": \"The abstract uses the term replication in a biological sense referring to the genome of bacteria and mitochondria, rather than the replication of a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "transcription and replication of the bacterial genome were placed under the control of nuclear genes",
+    "reasoning": "The abstract uses the term replication in a biological sense referring to the genome of bacteria and mitochondria, rather than the replication of a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N020",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 1995,
+      "out": 109
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\"builds_on_literature\"],\n  \"evidence_quote\": \"The result is more likely to constitute what Cardoso (1977) once referred to as \u201cthe originality of a copy\u201d than the wholesale replication of any one institutional model.\",\n  \"reasoning\": \"The paper uses the term replication in a metaphorical or general theoretical sense rather than aiming to replicate a specific empirical finding from earlier research.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "builds_on_literature"
+    ],
+    "evidence_quote": "The result is more likely to constitute what Cardoso (1977) once referred to as \u201cthe originality of a copy\u201d than the wholesale replication of any one institutional model.",
+    "reasoning": "The paper uses the term replication in a metaphorical or general theoretical sense rather than aiming to replicate a specific empirical finding from earlier research.",
+    "schema_error": null
+  },
+  {
+    "id": "N021",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2206,
+      "out": 131
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\"tool_benchmark\"],\n  \"evidence_quote\": \"Implementing the non-linear behaviour in terms of the observed relationship between changes in void ratio and associated changes in permeability under different stress conditions significantly improved the simulated results, resulting in a conceptual model that well reproduced the observed injection pressure and outflow responses for both tests\",\n  \"reasoning\": \"The abstract describes developing and calibrating a model and numerical simulation that reproduce observed laboratory measurements, which is an instance of tool benchmarking rather than checking a previously published finding from external literature.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "Implementing the non-linear behaviour in terms of the observed relationship between changes in void ratio and associated changes in permeability under different stress conditions significantly improved the simulated results, resulting in a conceptual model that well reproduced the observed injection",
+    "reasoning": "The abstract describes developing and calibrating a model and numerical simulation that reproduce observed laboratory measurements, which is an instance of tool benchmarking rather than checking a previously published finding from external literature.",
+    "schema_error": null
+  },
+  {
+    "id": "N022",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 1965,
+      "out": 84
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"clearly_declared\"\n  ],\n  \"evidence_quote\": \"This analysis serves as a replication of Steimer & Mata (2016).\",\n  \"reasoning\": \"The authors explicitly state that their analyses serve as replications of previously published studies.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "clearly_declared"
+    ],
+    "evidence_quote": "This analysis serves as a replication of Steimer & Mata (2016).",
+    "reasoning": "The authors explicitly state that their analyses serve as replications of previously published studies.",
+    "schema_error": null
+  },
+  {
+    "id": "N023",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 3002,
+      "out": 87
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"about_replication\"\n  ],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The paper is an editorial discussing another study's findings on plasma renin activity and briefly mentioning a replication step within that other study, but it is not itself a replication or reproduction study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "about_replication"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The paper is an editorial discussing another study's findings on plasma renin activity and briefly mentioning a replication step within that other study, but it is not itself a replication or reproduction study.",
+    "schema_error": null
+  },
+  {
+    "id": "N024",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2806,
+      "out": 89
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The OPC is an adapted replication of these models of reference centers\",\n  \"reasoning\": \"The paper uses the word replication in the sense of applying a similar organizational model or structural design rather than checking an earlier empirical finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The OPC is an adapted replication of these models of reference centers",
+    "reasoning": "The paper uses the word replication in the sense of applying a similar organizational model or structural design rather than checking an earlier empirical finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N025",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 3333,
+      "out": 82
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"maintain its replicative niche\",\n  \"reasoning\": \"The paper investigates cell biology and pathogen infection mechanisms, using the term 'replicative' in a biological rather than a methodological sense.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "maintain its replicative niche",
+    "reasoning": "The paper investigates cell biology and pathogen infection mechanisms, using the term 'replicative' in a biological rather than a methodological sense.",
+    "schema_error": null
+  },
+  {
+    "id": "N026",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 3010,
+      "out": 89
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"in the sense of a replication of underlying interests and positions\",\n  \"reasoning\": \"The term replication is used here in a political and ordinary-language sense regarding negotiating positions and interests rather than checking an earlier scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "in the sense of a replication of underlying interests and positions",
+    "reasoning": "The term replication is used here in a political and ordinary-language sense regarding negotiating positions and interests rather than checking an earlier scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N027",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2116,
+      "out": 108
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\"tool_benchmark\"],\n  \"evidence_quote\": \"This paper presents a convolutional long short-term memory (ConvLSTM) recurrent neural network capable of forecasting the log change in battle-related deaths\",\n  \"reasoning\": \"The abstract describes a new predictive model developed for a competition and provides supplementary data for replicating its own computational pipeline, rather than aiming to check an earlier published finding from the literature.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "This paper presents a convolutional long short-term memory (ConvLSTM) recurrent neural network capable of forecasting the log change in battle-related deaths",
+    "reasoning": "The abstract describes a new predictive model developed for a competition and provides supplementary data for replicating its own computational pipeline, rather than aiming to check an earlier published finding from the literature.",
+    "schema_error": null
+  },
+  {
+    "id": "N028",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 1975,
+      "out": 115
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"clearly_declared\"\n  ],\n  \"evidence_quote\": \"Here, we replicate and extend this finding, by directly comparing a four dot mask with an annulus mask while probing masking as a function of mask duration, and target-mask separation.\",\n  \"reasoning\": \"The authors explicitly state that their aim is to replicate and extend a specific finding previously demonstrated by Filmer et al. (2015).\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "clearly_declared"
+    ],
+    "evidence_quote": "Here, we replicate and extend this finding, by directly comparing a four dot mask with an annulus mask while probing masking as a function of mask duration, and target-mask separation.",
+    "reasoning": "The authors explicitly state that their aim is to replicate and extend a specific finding previously demonstrated by Filmer et al. (2015).",
+    "schema_error": null
+  },
+  {
+    "id": "N029",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2163,
+      "out": 108
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"other\"\n  ],\n  \"evidence_quote\": \"To replicate and extend our findings from Study 1, we conducted Study 2 with a sample of N = 570 participants\",\n  \"reasoning\": \"The paper is an internal replication where Study 2 replicates Study 1 of the same paper, which does not qualify as checking earlier published research in another paper.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "To replicate and extend our findings from Study 1, we conducted Study 2 with a sample of N = 570 participants",
+    "reasoning": "The paper is an internal replication where Study 2 replicates Study 1 of the same paper, which does not qualify as checking earlier published research in another paper.",
+    "schema_error": null
+  },
+  {
+    "id": "N030",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2262,
+      "out": 131
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"tool_benchmark\",\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The aim of this paper is now to replicate all X-ray spectra and radio emission observed during GX 339-4 2010-2011 outburst.\",\n  \"reasoning\": \"The paper uses a physical model to simulate and match observational data from an astrophysical event to demonstrate the model's validity rather than checking a previously published empirical claim made by other researchers.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "tool_benchmark",
+      "terminology_only"
+    ],
+    "evidence_quote": "The aim of this paper is now to replicate all X-ray spectra and radio emission observed during GX 339-4 2010-2011 outburst.",
+    "reasoning": "The paper uses a physical model to simulate and match observational data from an astrophysical event to demonstrate the model's validity rather than checking a previously published empirical claim made by other researchers.",
+    "schema_error": null
+  },
+  {
+    "id": "N031",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 1984,
+      "out": 89
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\"terminology_only\"],\n  \"evidence_quote\": \"replication of the proDEP program\",\n  \"reasoning\": \"The term replication is used here to describe the implementation or rollout of an educational program ('proDEP program replication') in new schools as an intervention, rather than checking an earlier published scientific finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "replication of the proDEP program",
+    "reasoning": "The term replication is used here to describe the implementation or rollout of an educational program ('proDEP program replication') in new schools as an intervention, rather than checking an earlier published scientific finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N032",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2143,
+      "out": 80
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"other\"\n  ],\n  \"evidence_quote\": \"We believe there is potential for replication of strategy 2 model in other states\",\n  \"reasoning\": \"The abstract merely suggests that future replication is needed rather than reporting a replication study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "We believe there is potential for replication of strategy 2 model in other states",
+    "reasoning": "The abstract merely suggests that future replication is needed rather than reporting a replication study.",
+    "schema_error": null
+  },
+  {
+    "id": "N033",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2373,
+      "out": 105
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\"terminology_only\"],\n  \"evidence_quote\": \"Balbay's technique of ICSPF replicates the open approach with the additional advantages of inserting internal Double-J stents.\",\n  \"reasoning\": \"The term 'replicates' is used to describe how a surgical technique mimics an open approach within the internal design of the study, rather than aiming to replicate a previously published research finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Balbay's technique of ICSPF replicates the open approach with the additional advantages of inserting internal Double-J stents.",
+    "reasoning": "The term 'replicates' is used to describe how a surgical technique mimics an open approach within the internal design of the study, rather than aiming to replicate a previously published research finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N034",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2150,
+      "out": 116
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\"clearly_declared\", \"measurement_validation\", \"context_transfer\"],\n  \"evidence_quote\": \"The aims of our study were to evaluate the test/retest reliability and reproducibility of dysfunctional voiding and incontinence scoring system: Serbian version (DVISSSR)\",\n  \"reasoning\": \"The authors explicitly aim to evaluate the reproducibility and cross-cultural adaptation (context transfer) of a previously published scoring system in a new language and population.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "clearly_declared",
+      "measurement_validation",
+      "context_transfer"
+    ],
+    "evidence_quote": "The aims of our study were to evaluate the test/retest reliability and reproducibility of dysfunctional voiding and incontinence scoring system: Serbian version (DVISSSR)",
+    "reasoning": "The authors explicitly aim to evaluate the reproducibility and cross-cultural adaptation (context transfer) of a previously published scoring system in a new language and population.",
+    "schema_error": null
+  },
+  {
+    "id": "N035",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2110,
+      "out": 92
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"measurement_validation\",\n    \"context_transfer\"\n  ],\n  \"evidence_quote\": \"To verify the reliability and internal consistency of the RKPPS for Brazilian children.\",\n  \"reasoning\": \"The study evaluates the reliability and internal consistency of an already published instrument adapted for a new population.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "measurement_validation",
+      "context_transfer"
+    ],
+    "evidence_quote": "To verify the reliability and internal consistency of the RKPPS for Brazilian children.",
+    "reasoning": "The study evaluates the reliability and internal consistency of an already published instrument adapted for a new population.",
+    "schema_error": null
+  },
+  {
+    "id": "N036",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2039,
+      "out": 121
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"clearly_declared\",\n    \"self_retest\",\n    \"context_transfer\"\n  ],\n  \"evidence_quote\": \"demonstrating the reproducibility of the Mr.MAPP framework for upper limb, we extend it to manage lower limb phantom pain as well\",\n  \"reasoning\": \"The authors state that they are demonstrating the reproducibility of their own previously published framework and extending it to a new population (lower limb amputees).\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "clearly_declared",
+      "self_retest",
+      "context_transfer"
+    ],
+    "evidence_quote": "demonstrating the reproducibility of the Mr.MAPP framework for upper limb, we extend it to manage lower limb phantom pain as well",
+    "reasoning": "The authors state that they are demonstrating the reproducibility of their own previously published framework and extending it to a new population (lower limb amputees).",
+    "schema_error": null
+  },
+  {
+    "id": "N037",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2403,
+      "out": 122
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"clearly_declared\",\n    \"context_transfer\",\n    \"measurement_validation\"\n  ],\n  \"evidence_quote\": \"Adaptar y validar el Child and Adolescent Self-Care Performance Questionnaire (CASPQ) al contexto de la poblaci\u00f3n infantil sana de 8 a 12 a\u00f1os residente en Espa\u00f1a\",\n  \"reasoning\": \"The study aims to culturally adapt and re-validate an already published questionnaire in a new country and population context.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "clearly_declared",
+      "context_transfer",
+      "measurement_validation"
+    ],
+    "evidence_quote": "Adaptar y validar el Child and Adolescent Self-Care Performance Questionnaire (CASPQ) al contexto de la poblaci\u00f3n infantil sana de 8 a 12 a\u00f1os residente en Espa\u00f1a",
+    "reasoning": "The study aims to culturally adapt and re-validate an already published questionnaire in a new country and population context.",
+    "schema_error": null
+  },
+  {
+    "id": "N038",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2122,
+      "out": 116
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The aim of the present study was to assess the reproducibility of [11C]MPC-6827 PET imaging in non-human primate brains.\",\n  \"reasoning\": \"The use of 'reproducibility' here refers to technical test-retest reliability and measurement precision within the study rather than the replication of a previously published finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The aim of the present study was to assess the reproducibility of [11C]MPC-6827 PET imaging in non-human primate brains.",
+    "reasoning": "The use of 'reproducibility' here refers to technical test-retest reliability and measurement precision within the study rather than the replication of a previously published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N039",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2333,
+      "out": 144
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"measurement_validation\",\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The objective of this study was to evaluate the use of Dual Path Platform (DPP) VetTB test (Chembio Diagnostic Systems Inc., Medford, NY, USA) within a Test and Vaccinate or Remove (TVR) wildlife research intervention project.\",\n  \"reasoning\": \"The study evaluates the performance of a diagnostic test within a specific intervention project and mentions measurement reliability and reproducibility, but it does not aim to replicate a specific previously published research finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "measurement_validation",
+      "terminology_only"
+    ],
+    "evidence_quote": "The objective of this study was to evaluate the use of Dual Path Platform (DPP) VetTB test (Chembio Diagnostic Systems Inc., Medford, NY, USA) within a Test and Vaccinate or Remove (TVR) wildlife research intervention project.",
+    "reasoning": "The study evaluates the performance of a diagnostic test within a specific intervention project and mentions measurement reliability and reproducibility, but it does not aim to replicate a specific previously published research finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N040",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2084,
+      "out": 106
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"x-ray fluorescence measurements showed a high linearity and reproducibility of the Pu L\u03b1 peak intensity and plutonium radioactivity\",\n  \"reasoning\": \"The paper uses the word 'reproducibility' in the technical sense of measurement precision within the study rather than as a replication or reproduction of an earlier published finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "x-ray fluorescence measurements showed a high linearity and reproducibility of the Pu L\u03b1 peak intensity and plutonium radioactivity",
+    "reasoning": "The paper uses the word 'reproducibility' in the technical sense of measurement precision within the study rather than as a replication or reproduction of an earlier published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N041",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2061,
+      "out": 108
+    },
+    "raw": "{\n  \"classification\": \"reproduction\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"clearly_declared\",\n    \"measurement_validation\"\n  ],\n  \"evidence_quote\": \"the degree of reproducibility of the results obtainable with the application of this testing scheme to ductile polymers has been assessed by means of multilaboratory RR testing exercises\",\n  \"reasoning\": \"The authors explicitly evaluate the reproducibility of an existing testing procedure across multiple laboratories to determine its reliability.\"\n}",
+    "classification": "reproduction",
+    "confidence": "high",
+    "categories": [
+      "clearly_declared",
+      "measurement_validation"
+    ],
+    "evidence_quote": "the degree of reproducibility of the results obtainable with the application of this testing scheme to ductile polymers has been assessed by means of multilaboratory RR testing exercises",
+    "reasoning": "The authors explicitly evaluate the reproducibility of an existing testing procedure across multiple laboratories to determine its reliability.",
+    "schema_error": null
+  },
+  {
+    "id": "N042",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2124,
+      "out": 107
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"measurement_validation\"\n  ],\n  \"evidence_quote\": \"Intraclass Correlation Coefficient (ICC) is used to evaluate the reproducibility of measurements (or ratings) made by different investigators.\",\n  \"reasoning\": \"The paper uses 'reproducibility' in the technical sense of inter-rater agreement and internal consistency within a study rather than checking a previously published finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "measurement_validation"
+    ],
+    "evidence_quote": "Intraclass Correlation Coefficient (ICC) is used to evaluate the reproducibility of measurements (or ratings) made by different investigators.",
+    "reasoning": "The paper uses 'reproducibility' in the technical sense of inter-rater agreement and internal consistency within a study rather than checking a previously published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N043",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2975,
+      "out": 99
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"builds_on_literature\",\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Here, I will examine progress in each of these areas.\",\n  \"reasoning\": \"The paper is a perspective and review article examining progress in microbial chassis cell development rather than aiming to replicate or reproduce a specific prior study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "builds_on_literature",
+      "terminology_only"
+    ],
+    "evidence_quote": "Here, I will examine progress in each of these areas.",
+    "reasoning": "The paper is a perspective and review article examining progress in microbial chassis cell development rather than aiming to replicate or reproduce a specific prior study.",
+    "schema_error": null
+  },
+  {
+    "id": "N044",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2746,
+      "out": 116
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"661 from the ADNI as a discovery sample and 674 and 105 from the AddNeuroMed and Mayo cohorts as replication samples\",\n  \"reasoning\": \"The term replication is used here merely to describe internal cohorts used within the study's multi-site design rather than as a replication of a previously published external finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "661 from the ADNI as a discovery sample and 674 and 105 from the AddNeuroMed and Mayo cohorts as replication samples",
+    "reasoning": "The term replication is used here merely to describe internal cohorts used within the study's multi-site design rather than as a replication of a previously published external finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N045",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 3448,
+      "out": 75
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\"builds_on_literature\"],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The paper is a review summarizing current knowledge and questions surrounding the Zika virus outbreak rather than an aim to replicate or reproduce a specific prior study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "builds_on_literature"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The paper is a review summarizing current knowledge and questions surrounding the Zika virus outbreak rather than an aim to replicate or reproduce a specific prior study.",
+    "schema_error": null
+  },
+  {
+    "id": "N046",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2344,
+      "out": 80
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"faster replication, more efficient selection resulting from segment reassortment\",\n  \"reasoning\": \"The study investigates viral replication in a biological sense rather than replicating an earlier published study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "faster replication, more efficient selection resulting from segment reassortment",
+    "reasoning": "The study investigates viral replication in a biological sense rather than replicating an earlier published study.",
+    "schema_error": null
+  },
+  {
+    "id": "N047",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2115,
+      "out": 85
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"stops HIV from replication and transmission to others\",\n  \"reasoning\": \"The paper uses the word replication in a biological sense referring to viral processes, rather than in the methodological sense of a replication study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "stops HIV from replication and transmission to others",
+    "reasoning": "The paper uses the word replication in a biological sense referring to viral processes, rather than in the methodological sense of a replication study.",
+    "schema_error": null
+  },
+  {
+    "id": "N048",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2142,
+      "out": 91
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"enrichment culture technique creates conditions that favor replication of specific bacterial phages\",\n  \"reasoning\": \"The abstract uses the term replication in a biological sense regarding bacteriophages, not as a study of replication or reproduction of research findings.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "enrichment culture technique creates conditions that favor replication of specific bacterial phages",
+    "reasoning": "The abstract uses the term replication in a biological sense regarding bacteriophages, not as a study of replication or reproduction of research findings.",
+    "schema_error": null
+  },
+  {
+    "id": "N049",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2316,
+      "out": 90
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"effectively inhibit the replication of high-load HBV DNA\",\n  \"reasoning\": \"The paper uses the term replication in a biological sense regarding HBV DNA and evaluates a clinical treatment comparison rather than replicating a prior study's finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "effectively inhibit the replication of high-load HBV DNA",
+    "reasoning": "The paper uses the term replication in a biological sense regarding HBV DNA and evaluates a clinical treatment comparison rather than replicating a prior study's finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N050",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2022,
+      "out": 93
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"allow the replication of this phenomenon from synthetic images\",\n  \"reasoning\": \"The abstract uses the word 'replication' in a biological or general phenomenon sense (perceiving three dimensions from synthetic images) rather than replicating a previously published study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "allow the replication of this phenomenon from synthetic images",
+    "reasoning": "The abstract uses the word 'replication' in a biological or general phenomenon sense (perceiving three dimensions from synthetic images) rather than replicating a previously published study.",
+    "schema_error": null
+  },
+  {
+    "id": "N051",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 3236,
+      "out": 89
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"block the replication of a betaretrovirus\",\n  \"reasoning\": \"The paper uses the word replication in a biological sense referring to a virus, and does not aim to replicate or reproduce a prior study's findings.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "block the replication of a betaretrovirus",
+    "reasoning": "The paper uses the word replication in a biological sense referring to a virus, and does not aim to replicate or reproduce a prior study's findings.",
+    "schema_error": null
+  },
+  {
+    "id": "N052",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2474,
+      "out": 114
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"clearly_declared\",\n    \"context_transfer\"\n  ],\n  \"evidence_quote\": \"Of the 10 significantly associated bile acid profiles, 2 ratios (GCDCA:CDCA and GUDCA:UDCA) were replicated in the independent ADNI-GO-2 cohort.\",\n  \"reasoning\": \"The authors explicitly report replicating findings from their discovery cohort in an independent secondary cohort.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "clearly_declared",
+      "context_transfer"
+    ],
+    "evidence_quote": "Of the 10 significantly associated bile acid profiles, 2 ratios (GCDCA:CDCA and GUDCA:UDCA) were replicated in the independent ADNI-GO-2 cohort.",
+    "reasoning": "The authors explicitly report replicating findings from their discovery cohort in an independent secondary cohort.",
+    "schema_error": null
+  },
+  {
+    "id": "N053",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2058,
+      "out": 82
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"franchises allow the replication of a successful business\",\n  \"reasoning\": \"The abstract uses the word replication in a business model sense rather than as a study checking a previous research finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "franchises allow the replication of a successful business",
+    "reasoning": "The abstract uses the word replication in a business model sense rather than as a study checking a previous research finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N054",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 3158,
+      "out": 73
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"other\"\n  ],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The paper is a roundtable discussion about the views and experiences of medical abortion in different countries rather than a replication or reproduction study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The paper is a roundtable discussion about the views and experiences of medical abortion in different countries rather than a replication or reproduction study.",
+    "schema_error": null
+  },
+  {
+    "id": "N055",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2081,
+      "out": 112
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\",\n    \"builds_on_literature\"\n  ],\n  \"evidence_quote\": \"The term \u2018Cancer\u2019 encompasses a large group of related disease processes that affect the healthy replication of cells\",\n  \"reasoning\": \"The paper uses the word replication in a biological sense and reviews literature on physical activity and cancer rather than aiming to replicate a prior empirical study's findings.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only",
+      "builds_on_literature"
+    ],
+    "evidence_quote": "The term \u2018Cancer\u2019 encompasses a large group of related disease processes that affect the healthy replication of cells",
+    "reasoning": "The paper uses the word replication in a biological sense and reviews literature on physical activity and cancer rather than aiming to replicate a prior empirical study's findings.",
+    "schema_error": null
+  },
+  {
+    "id": "N056",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2095,
+      "out": 83
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"systemic replication of its urban tissue\",\n  \"reasoning\": \"The abstract uses the word replication in an ordinary-language or architectural sense rather than referring to the replication of a scientific finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "systemic replication of its urban tissue",
+    "reasoning": "The abstract uses the word replication in an ordinary-language or architectural sense rather than referring to the replication of a scientific finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N057",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2370,
+      "out": 116
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"initial_validation\"\n  ],\n  \"evidence_quote\": \"Although reproducibility of the tidal-breath dose-response (TB-DR) method using capsaicin has been validated; the same method using citric acid is uninvestigated.\",\n  \"reasoning\": \"This paper investigates the uninvestigated citric acid version of a method for the first time rather than replicating or re-validating a previously published specific finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "initial_validation"
+    ],
+    "evidence_quote": "Although reproducibility of the tidal-breath dose-response (TB-DR) method using capsaicin has been validated; the same method using citric acid is uninvestigated.",
+    "reasoning": "This paper investigates the uninvestigated citric acid version of a method for the first time rather than replicating or re-validating a previously published specific finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N058",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2024,
+      "out": 107
+    },
+    "raw": "{\n  \"classification\": \"reproduction\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"clearly_declared\",\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"At first, our numerical model under the uniform flow was compared with the previous work to verify the reproducibility of the experimental results.\",\n  \"reasoning\": \"The authors explicitly state that their numerical model was compared with previous work to verify reproducibility, fitting a tool benchmarking reproduction study.\"\n}",
+    "classification": "reproduction",
+    "confidence": "high",
+    "categories": [
+      "clearly_declared",
+      "tool_benchmark"
+    ],
+    "evidence_quote": "At first, our numerical model under the uniform flow was compared with the previous work to verify the reproducibility of the experimental results.",
+    "reasoning": "The authors explicitly state that their numerical model was compared with previous work to verify reproducibility, fitting a tool benchmarking reproduction study.",
+    "schema_error": null
+  },
+  {
+    "id": "N059",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2199,
+      "out": 88
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\"tool_benchmark\"],\n  \"evidence_quote\": \"This study aims to evaluate the feasibility of TAD with a radioactive seed in a Canadian setting.\",\n  \"reasoning\": \"The paper evaluates the feasibility of a new technique in a new setting rather than replicating a previously published specific empirical finding from other researchers.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "This study aims to evaluate the feasibility of TAD with a radioactive seed in a Canadian setting.",
+    "reasoning": "The paper evaluates the feasibility of a new technique in a new setting rather than replicating a previously published specific empirical finding from other researchers.",
+    "schema_error": null
+  },
+  {
+    "id": "N060",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2591,
+      "out": 100
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Normally, MMR accurately detects and corrects mistakes made during replication of a DNA strand.\",\n  \"reasoning\": \"The abstract uses the word 'replication' in the biological sense of DNA replication, and the study itself is an original investigation rather than a replication or reproduction of prior research.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Normally, MMR accurately detects and corrects mistakes made during replication of a DNA strand.",
+    "reasoning": "The abstract uses the word 'replication' in the biological sense of DNA replication, and the study itself is an original investigation rather than a replication or reproduction of prior research.",
+    "schema_error": null
+  },
+  {
+    "id": "N061",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2945,
+      "out": 97
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\",\n    \"builds_on_literature\"\n  ],\n  \"evidence_quote\": \"RpoS accumulates vigorously an initiates replication of PhoP/PhoQ.\",\n  \"reasoning\": \"The paper is a review of the molecular genetics of Salmonella survival, using the term replication in a biological sense.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only",
+      "builds_on_literature"
+    ],
+    "evidence_quote": "RpoS accumulates vigorously an initiates replication of PhoP/PhoQ.",
+    "reasoning": "The paper is a review of the molecular genetics of Salmonella survival, using the term replication in a biological sense.",
+    "schema_error": null
+  },
+  {
+    "id": "N062",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2202,
+      "out": 85
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The abstract uses the term 'replication' in the biological sense of viral replication rather than the methodological sense of repeating a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The abstract uses the term 'replication' in the biological sense of viral replication rather than the methodological sense of repeating a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N063",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2202,
+      "out": 83
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The term replication is used here in its biological sense to describe viral genome copying, rather than checking an earlier published study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The term replication is used here in its biological sense to describe viral genome copying, rather than checking an earlier published study.",
+    "schema_error": null
+  },
+  {
+    "id": "N064",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2202,
+      "out": 101
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The abstract uses the term 'replication' in the biological and viral sense, not in the sense of replicating a published scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds replicative element oriL to initiate replication.",
+    "reasoning": "The abstract uses the term 'replication' in the biological and viral sense, not in the sense of replicating a published scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N065",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2202,
+      "out": 94
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The abstract discusses biological viral replication, which is a non-qualifying sense of the term.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds replicative element oriL to initiate replication.",
+    "reasoning": "The abstract discusses biological viral replication, which is a non-qualifying sense of the term.",
+    "schema_error": null
+  },
+  {
+    "id": "N066",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 87
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The abstract uses the term 'replication' in a biological sense regarding viral genome copying, and does not check or reproduce any previously published study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The abstract uses the term 'replication' in a biological sense regarding viral genome copying, and does not check or reproduce any previously published study.",
+    "schema_error": null
+  },
+  {
+    "id": "N067",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 82
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The abstract uses the word replication in a biological sense concerning viral genome copying rather than the methodological replication of scientific studies.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The abstract uses the word replication in a biological sense concerning viral genome copying rather than the methodological replication of scientific studies.",
+    "schema_error": null
+  },
+  {
+    "id": "N068",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2202,
+      "out": 84
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The term replication is used here in its biological sense to describe viral genome copying, rather than the replication of a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The term replication is used here in its biological sense to describe viral genome copying, rather than the replication of a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N069",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 100
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The term replication is used here in its biological sense concerning viral genome replication rather than the methodological replication of a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.",
+    "reasoning": "The term replication is used here in its biological sense concerning viral genome replication rather than the methodological replication of a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N070",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 101
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The abstract uses the term replication in the biological sense of viral genome replication rather than as a replication study of prior published research.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.",
+    "reasoning": "The abstract uses the term replication in the biological sense of viral genome replication rather than as a replication study of prior published research.",
+    "schema_error": null
+  },
+  {
+    "id": "N071",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 101
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The term replication is used here in its biological sense concerning viral genome copying, not in the sense of replicating a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.",
+    "reasoning": "The term replication is used here in its biological sense concerning viral genome copying, not in the sense of replicating a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N072",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2202,
+      "out": 85
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The abstract uses the term 'replication' in the biological sense of viral replication rather than the methodological sense of repeating a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The abstract uses the term 'replication' in the biological sense of viral replication rather than the methodological sense of repeating a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N073",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 83
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The abstract uses the word replication in a biological and virological sense rather than referring to the repetition of a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The abstract uses the word replication in a biological and virological sense rather than referring to the repetition of a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N074",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 86
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The abstract uses the term replication in the biological sense of viral genome replication, which does not qualify as a scientific reproduction or replication study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The abstract uses the term replication in the biological sense of viral genome replication, which does not qualify as a scientific reproduction or replication study.",
+    "schema_error": null
+  },
+  {
+    "id": "N075",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 99
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The abstract uses the term replication in a biological, viral sense rather than referring to the replication of a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.",
+    "reasoning": "The abstract uses the term replication in a biological, viral sense rather than referring to the replication of a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N076",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2202,
+      "out": 83
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The term replication is used here in its biological sense concerning viral genome copying, not as a replication study of prior research.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The term replication is used here in its biological sense concerning viral genome copying, not as a replication study of prior research.",
+    "schema_error": null
+  },
+  {
+    "id": "N077",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 101
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The abstract uses the term replication in the biological sense of viral genome replication rather than the methodological sense of repeating a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.",
+    "reasoning": "The abstract uses the term replication in the biological sense of viral genome replication rather than the methodological sense of repeating a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N078",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2202,
+      "out": 84
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The abstract uses the term replication in the biological sense of viral genome copying rather than the methodological sense of repeating a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The abstract uses the term replication in the biological sense of viral genome copying rather than the methodological sense of repeating a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N079",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2202,
+      "out": 101
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The abstract uses the term 'replication' in its biological sense regarding viral genome copying, rather than referring to a scientific replication study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds replicative element oriL to initiate replication.",
+    "reasoning": "The abstract uses the term 'replication' in its biological sense regarding viral genome copying, rather than referring to a scientific replication study.",
+    "schema_error": null
+  },
+  {
+    "id": "N080",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 82
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The term replication is used here in its biological sense concerning viral genome copying rather than checking a previously published research finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The term replication is used here in its biological sense concerning viral genome copying rather than checking a previously published research finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N081",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 99
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The abstract uses the term replication in a biological, viral sense rather than referring to the replication of a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.",
+    "reasoning": "The abstract uses the term replication in a biological, viral sense rather than referring to the replication of a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N082",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2202,
+      "out": 94
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity that allows virus to adapt to changing environment\",\n  \"reasoning\": \"The title and abstract use the word replication in a biological sense regarding viral genome copying, and do not evaluate a previously published empirical finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity that allows virus to adapt to changing environment",
+    "reasoning": "The title and abstract use the word replication in a biological sense regarding viral genome copying, and do not evaluate a previously published empirical finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N083",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 83
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The abstract uses the term replication in a biological sense regarding viral genome synthesis and does not check any previously published empirical finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The abstract uses the term replication in a biological sense regarding viral genome synthesis and does not check any previously published empirical finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N084",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 101
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The paper uses the term replication in a biological sense concerning viral genome replication and does not aim to check an earlier published finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.",
+    "reasoning": "The paper uses the term replication in a biological sense concerning viral genome replication and does not aim to check an earlier published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N085",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 101
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The paper uses the term replication in the biological sense of viral genome replication rather than the methodological sense of repeating a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.",
+    "reasoning": "The paper uses the term replication in the biological sense of viral genome replication rather than the methodological sense of repeating a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N086",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 85
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The abstract uses the term 'replication' in its biological sense regarding viral genome copying rather than the methodological replication of a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The abstract uses the term 'replication' in its biological sense regarding viral genome copying rather than the methodological replication of a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N087",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 100
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The term replication is used here in its biological sense concerning viral genome replication rather than the methodological replication of a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.",
+    "reasoning": "The term replication is used here in its biological sense concerning viral genome replication rather than the methodological replication of a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N088",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2202,
+      "out": 100
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The abstract uses the word replication in a biological sense referring to viral genome replication rather than the methodological replication of a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds replicative element oriL to initiate replication.",
+    "reasoning": "The abstract uses the word replication in a biological sense referring to viral genome replication rather than the methodological replication of a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N089",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 98
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The term replication is used here in its biological sense concerning viral genome replication, not the replication of scientific studies.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.",
+    "reasoning": "The term replication is used here in its biological sense concerning viral genome replication, not the replication of scientific studies.",
+    "schema_error": null
+  },
+  {
+    "id": "N090",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 96
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The abstract uses the term 'replication' in the biological and viral sense, which is explicitly excluded.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.",
+    "reasoning": "The abstract uses the term 'replication' in the biological and viral sense, which is explicitly excluded.",
+    "schema_error": null
+  },
+  {
+    "id": "N091",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2202,
+      "out": 104
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The abstract uses the word 'replication' in the biological sense of viral genome replication, which does not qualify as a scientific replication or reproduction study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds replicative element oriL to initiate replication.",
+    "reasoning": "The abstract uses the word 'replication' in the biological sense of viral genome replication, which does not qualify as a scientific replication or reproduction study.",
+    "schema_error": null
+  },
+  {
+    "id": "N092",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 102
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The abstract uses the word replication in a biological sense concerning viral genome processes rather than the re-testing of an earlier published study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.",
+    "reasoning": "The abstract uses the word replication in a biological sense concerning viral genome processes rather than the re-testing of an earlier published study.",
+    "schema_error": null
+  },
+  {
+    "id": "N093",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 98
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The term replication is used here in its biological sense concerning viral genome replication, not the replication of scientific studies.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.",
+    "reasoning": "The term replication is used here in its biological sense concerning viral genome replication, not the replication of scientific studies.",
+    "schema_error": null
+  },
+  {
+    "id": "N094",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 87
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The abstract uses the term replication in a biological sense concerning viral genome copying, not in the sense of replicating a previous study's findings.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The abstract uses the term replication in a biological sense concerning viral genome copying, not in the sense of replicating a previous study's findings.",
+    "schema_error": null
+  },
+  {
+    "id": "N095",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 99
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\",\n  \"reasoning\": \"The abstract uses the term replication in a biological sense concerning viral genome processes rather than the replication of a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.",
+    "reasoning": "The abstract uses the term replication in a biological sense concerning viral genome processes rather than the replication of a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N096",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 84
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The abstract uses the term replication in a biological sense concerning viral genomes, not in the sense of replicating a previously published study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The abstract uses the term replication in a biological sense concerning viral genomes, not in the sense of replicating a previously published study.",
+    "schema_error": null
+  },
+  {
+    "id": "N097",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 84
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The abstract uses the term 'replication' in a biological sense regarding viral genome copying rather than the methodological replication of scientific studies.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The abstract uses the term 'replication' in a biological sense regarding viral genome copying rather than the methodological replication of scientific studies.",
+    "schema_error": null
+  },
+  {
+    "id": "N098",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2202,
+      "out": 89
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The term replication is used here in its biological sense concerning viral genome replication, not in the sense of a replication or reproduction study of published scientific findings.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The term replication is used here in its biological sense concerning viral genome replication, not in the sense of a replication or reproduction study of published scientific findings.",
+    "schema_error": null
+  },
+  {
+    "id": "N099",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2202,
+      "out": 81
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The term replication is used here in its biological sense concerning viral genome copying rather than the replication of scientific studies.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The term replication is used here in its biological sense concerning viral genome copying rather than the replication of scientific studies.",
+    "schema_error": null
+  },
+  {
+    "id": "N100",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2202,
+      "out": 85
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The abstract uses the term 'replication' in the biological sense of viral genome replication, which is a non-qualifying usage.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The abstract uses the term 'replication' in the biological sense of viral genome replication, which is a non-qualifying usage.",
+    "schema_error": null
+  },
+  {
+    "id": "N101",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2202,
+      "out": 87
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The abstract uses the term 'replication' in its biological sense to refer to viral genome copying, not to the replication of a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The abstract uses the term 'replication' in its biological sense to refer to viral genome copying, not to the replication of a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N102",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 86
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The abstract uses the word replication in a biological sense concerning viral genome replication, which does not qualify as a scientific reproduction or replication study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The abstract uses the word replication in a biological sense concerning viral genome replication, which does not qualify as a scientific reproduction or replication study.",
+    "schema_error": null
+  },
+  {
+    "id": "N103",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2202,
+      "out": 88
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity that allows virus to adapt to changing environment\",\n  \"reasoning\": \"The abstract discusses biological viral replication, which is one of the non-qualifying senses of the vocabulary.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity that allows virus to adapt to changing environment",
+    "reasoning": "The abstract discusses biological viral replication, which is one of the non-qualifying senses of the vocabulary.",
+    "schema_error": null
+  },
+  {
+    "id": "N104",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2214,
+      "out": 82
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity\",\n  \"reasoning\": \"The term replication is used here in its biological sense concerning viral genome copying rather than the methodological replication of scientific studies.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The term replication is used here in its biological sense concerning viral genome copying rather than the methodological replication of scientific studies.",
+    "schema_error": null
+  },
+  {
+    "id": "N105",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 3075,
+      "out": 83
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"other\"\n  ],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The paper is a historical and biographical essay celebrating the contributions of biochemist Arthur Pardee and does not aim to replicate, reproduce, or re-test any specific prior study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The paper is a historical and biographical essay celebrating the contributions of biochemist Arthur Pardee and does not aim to replicate, reproduce, or re-test any specific prior study.",
+    "schema_error": null
+  },
+  {
+    "id": "N106",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2089,
+      "out": 97
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"the challenges of replicating the same impact in the Philippine society\",\n  \"reasoning\": \"The term replicating is used here in the ordinary-language and developmental sense of implementing a program in a new setting rather than as an academic replication of a previously published scientific finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "the challenges of replicating the same impact in the Philippine society",
+    "reasoning": "The term replicating is used here in the ordinary-language and developmental sense of implementing a program in a new setting rather than as an academic replication of a previously published scientific finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N107",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2005,
+      "out": 85
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"avoid wasteful repetition and replication of existing services\",\n  \"reasoning\": \"The abstract uses the term replication in an ordinary-language sense regarding educational service provision rather than as a study checking prior scientific findings.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "avoid wasteful repetition and replication of existing services",
+    "reasoning": "The abstract uses the term replication in an ordinary-language sense regarding educational service provision rather than as a study checking prior scientific findings.",
+    "schema_error": null
+  },
+  {
+    "id": "N108",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 1939,
+      "out": 96
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"strives to realize the extension of research results and the replication of research method\",\n  \"reasoning\": \"The term replication is used here in an ordinary-language or methodological sense to refer to applying a research method rather than checking a specific previously published finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "strives to realize the extension of research results and the replication of research method",
+    "reasoning": "The term replication is used here in an ordinary-language or methodological sense to refer to applying a research method rather than checking a specific previously published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N109",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2891,
+      "out": 86
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"builds_on_literature\",\n    \"other\"\n  ],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The paper provides a legal and professional refresher on scope of practice for fitness instructors, without aiming to replicate or reproduce any previously published empirical finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "builds_on_literature",
+      "other"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The paper provides a legal and professional refresher on scope of practice for fitness instructors, without aiming to replicate or reproduce any previously published empirical finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N110",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2458,
+      "out": 90
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"replication of the vector within cancer cells causes the lysis of the cells\",\n  \"reasoning\": \"The abstract uses the term replication in a biological sense referring to viral replication within cells rather than checking a prior study's findings.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "replication of the vector within cancer cells causes the lysis of the cells",
+    "reasoning": "The abstract uses the term replication in a biological sense referring to viral replication within cells rather than checking a prior study's findings.",
+    "schema_error": null
+  },
+  {
+    "id": "N111",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2943,
+      "out": 122
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"builds_on_literature\",\n    \"about_replication\"\n  ],\n  \"evidence_quote\": \"This Commentary highlights proceedings from the workshop titled \\u201cUnveiling the Genetic Architecture of Human Disease for Precision Medicine\\u201d\",\n  \"reasoning\": \"The paper is a workshop commentary discussing human genetics and genomics approaches in drug discovery rather than a study aiming to replicate or reproduce a specific published finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "builds_on_literature",
+      "about_replication"
+    ],
+    "evidence_quote": "This Commentary highlights proceedings from the workshop titled \u201cUnveiling the Genetic Architecture of Human Disease for Precision Medicine\u201d",
+    "reasoning": "The paper is a workshop commentary discussing human genetics and genomics approaches in drug discovery rather than a study aiming to replicate or reproduce a specific published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N112",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2258,
+      "out": 126
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"Here we tested the utility of commonly available multimodal MRI (T1-weighted structure and diffusion MRI), combined with high-throughput brain phenotyping\u2014morphometry and connectomics\u2014and machine learning, as a diagnostic tool for AD.\",\n  \"reasoning\": \"The study proposes and evaluates a new machine learning and multimodal MRI diagnostic tool rather than aiming to replicate or reproduce a specific previously published finding from other researchers.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "Here we tested the utility of commonly available multimodal MRI (T1-weighted structure and diffusion MRI), combined with high-throughput brain phenotyping\u2014morphometry and connectomics\u2014and machine learning, as a diagnostic tool for AD.",
+    "reasoning": "The study proposes and evaluates a new machine learning and multimodal MRI diagnostic tool rather than aiming to replicate or reproduce a specific previously published finding from other researchers.",
+    "schema_error": null
+  },
+  {
+    "id": "N113",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 1875,
+      "out": 84
+    },
+    "raw": "{\n  \"classification\": \"reproduction\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"clearly_declared\"\n  ],\n  \"evidence_quote\": \"This dataset is provided for replication of results presented in the article\",\n  \"reasoning\": \"The abstract explicitly states that the dataset is provided for the replication of results from a previously published article.\"\n}",
+    "classification": "reproduction",
+    "confidence": "high",
+    "categories": [
+      "clearly_declared"
+    ],
+    "evidence_quote": "This dataset is provided for replication of results presented in the article",
+    "reasoning": "The abstract explicitly states that the dataset is provided for the replication of results from a previously published article.",
+    "schema_error": null
+  },
+  {
+    "id": "N114",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2108,
+      "out": 90
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"clearly_declared\",\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"We have succeeded in the histological replication of GP on mouse skin.\",\n  \"reasoning\": \"The authors explicitly state that they achieved a histological replication of granular parakeratosis using a mouse model.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "clearly_declared",
+      "tool_benchmark"
+    ],
+    "evidence_quote": "We have succeeded in the histological replication of GP on mouse skin.",
+    "reasoning": "The authors explicitly state that they achieved a histological replication of granular parakeratosis using a mouse model.",
+    "schema_error": null
+  },
+  {
+    "id": "N115",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 3310,
+      "out": 124
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"builds_on_literature\",\n    \"about_replication\"\n  ],\n  \"evidence_quote\": \"The study of Bermingham et al. in EBioMedicine aimed to advance the field of epigenetics in COPD by quantifying differentially methylated sites in peripheral blood\",\n  \"reasoning\": \"The paper is a review and discussion of epigenetic targets in lung diseases that mentions prior replication challenges and findings in the literature rather than setting out to conduct a replication itself.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "builds_on_literature",
+      "about_replication"
+    ],
+    "evidence_quote": "The study of Bermingham et al. in EBioMedicine aimed to advance the field of epigenetics in COPD by quantifying differentially methylated sites in peripheral blood",
+    "reasoning": "The paper is a review and discussion of epigenetic targets in lung diseases that mentions prior replication challenges and findings in the literature rather than setting out to conduct a replication itself.",
+    "schema_error": null
+  },
+  {
+    "id": "N116",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2089,
+      "out": 83
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"involved in the replication of HPV genomes\",\n  \"reasoning\": \"The abstract uses the term 'replication' in a biological sense regarding HPV genomes rather than the replication of a previous scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "involved in the replication of HPV genomes",
+    "reasoning": "The abstract uses the term 'replication' in a biological sense regarding HPV genomes rather than the replication of a previous scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N117",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2229,
+      "out": 93
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"To compare the reproducibility of 11 antibody assays for IgG and IgM myelin oligodendrocyte glycoprotein antibodies\",\n  \"reasoning\": \"The study assesses technical measurement reproducibility and assay performance across laboratories rather than aiming to replicate a specific finding from previously published research.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "To compare the reproducibility of 11 antibody assays for IgG and IgM myelin oligodendrocyte glycoprotein antibodies",
+    "reasoning": "The study assesses technical measurement reproducibility and assay performance across laboratories rather than aiming to replicate a specific finding from previously published research.",
+    "schema_error": null
+  },
+  {
+    "id": "N118",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2036,
+      "out": 121
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"evaluate ORYZA2000 using datasets where the same (similar) varieties were grown under both direct sowing and transplanting conditions, in order to verify the capability and adaptability of model\",\n  \"reasoning\": \"The study evaluates a simulation model using new field experiments to demonstrate its adaptability and capability, which constitutes tool benchmarking rather than checking a specific finding from earlier published research.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "evaluate ORYZA2000 using datasets where the same (similar) varieties were grown under both direct sowing and transplanting conditions, in order to verify the capability and adaptability of model",
+    "reasoning": "The study evaluates a simulation model using new field experiments to demonstrate its adaptability and capability, which constitutes tool benchmarking rather than checking a specific finding from earlier published research.",
+    "schema_error": null
+  },
+  {
+    "id": "N119",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2044,
+      "out": 86
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"clearly_declared\",\n    \"context_transfer\"\n  ],\n  \"evidence_quote\": \"few studies have reproduced the results on ecommerce platforms\",\n  \"reasoning\": \"The authors explicitly state that they aim to reproduce earlier results in the new context of ecommerce platforms.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "clearly_declared",
+      "context_transfer"
+    ],
+    "evidence_quote": "few studies have reproduced the results on ecommerce platforms",
+    "reasoning": "The authors explicitly state that they aim to reproduce earlier results in the new context of ecommerce platforms.",
+    "schema_error": null
+  },
+  {
+    "id": "N120",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2298,
+      "out": 110
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"context_transfer\",\n    \"measurement_validation\"\n  ],\n  \"evidence_quote\": \"To test the reliability and validity of Chinese version of Bodily Distress Syndrome Checklist (BDS Checklist) in Chinese patients.\",\n  \"reasoning\": \"The study aims to re-validate an already published instrument in a new population and language, qualifying as a measurement re-validation and context transfer.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "context_transfer",
+      "measurement_validation"
+    ],
+    "evidence_quote": "To test the reliability and validity of Chinese version of Bodily Distress Syndrome Checklist (BDS Checklist) in Chinese patients.",
+    "reasoning": "The study aims to re-validate an already published instrument in a new population and language, qualifying as a measurement re-validation and context transfer.",
+    "schema_error": null
+  },
+  {
+    "id": "N121",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2921,
+      "out": 116
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"context_transfer\"\n  ],\n  \"evidence_quote\": \"For the PDIs in connection with magnetic islands, we have reproduced the original results from the TEXTOR tokamak and additionally shown the occurrence of such PDIs in third-harmonic ECRH experiments for the \ufb01rst time\",\n  \"reasoning\": \"The authors explicitly state that they reproduced original results from a different tokamak (TEXTOR) in their own experiments.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "context_transfer"
+    ],
+    "evidence_quote": "For the PDIs in connection with magnetic islands, we have reproduced the original results from the TEXTOR tokamak and additionally shown the occurrence of such PDIs in third-harmonic ECRH experiments for the \ufb01rst time",
+    "reasoning": "The authors explicitly state that they reproduced original results from a different tokamak (TEXTOR) in their own experiments.",
+    "schema_error": null
+  },
+  {
+    "id": "N122",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2325,
+      "out": 131
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"measurement_validation\",\n    \"context_transfer\"\n  ],\n  \"evidence_quote\": \"This cross-sectional study aimed to investigate the psychometric properties and factor structure of the Turkish version of the C-OIDP for use in Turkish primary school children.\",\n  \"reasoning\": \"The study evaluates the psychometric properties of a previously published instrument (the C-OIDP) in a new cultural and linguistic population (Turkish children), qualifying as a measurement re-validation and context transfer.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "measurement_validation",
+      "context_transfer"
+    ],
+    "evidence_quote": "This cross-sectional study aimed to investigate the psychometric properties and factor structure of the Turkish version of the C-OIDP for use in Turkish primary school children.",
+    "reasoning": "The study evaluates the psychometric properties of a previously published instrument (the C-OIDP) in a new cultural and linguistic population (Turkish children), qualifying as a measurement re-validation and context transfer.",
+    "schema_error": null
+  },
+  {
+    "id": "N123",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2088,
+      "out": 116
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"measurement_validation\"\n  ],\n  \"evidence_quote\": \"The instrument was applied in two instances, having an interval of 7 days between the two measurements (test and re-test).\",\n  \"reasoning\": \"The paper measures test-retest reliability and internal measurement reproducibility within its own sample rather than re-testing a previously published finding or re-validating a published instrument in a distinct external context.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "measurement_validation"
+    ],
+    "evidence_quote": "The instrument was applied in two instances, having an interval of 7 days between the two measurements (test and re-test).",
+    "reasoning": "The paper measures test-retest reliability and internal measurement reproducibility within its own sample rather than re-testing a previously published finding or re-validating a published instrument in a distinct external context.",
+    "schema_error": null
+  },
+  {
+    "id": "N124",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 1909,
+      "out": 114
+    },
+    "raw": "{\n  \"classification\": \"unclear\",\n  \"confidence\": \"low\",\n  \"categories\": [\n    \"measurement_validation\",\n    \"other\"\n  ],\n  \"evidence_quote\": \"the reproducibility of modified Bosniak classification to guide the radiological and clinical follow up\",\n  \"reasoning\": \"The abstract mentions evaluating the reproducibility of a modified classification system, but it is incomplete and does not clearly state whether this involves re-analysing published data or performing a formal validation study of an already published instrument.\"\n}",
+    "classification": "unclear",
+    "confidence": "low",
+    "categories": [
+      "measurement_validation",
+      "other"
+    ],
+    "evidence_quote": "the reproducibility of modified Bosniak classification to guide the radiological and clinical follow up",
+    "reasoning": "The abstract mentions evaluating the reproducibility of a modified classification system, but it is incomplete and does not clearly state whether this involves re-analysing published data or performing a formal validation study of an already published instrument.",
+    "schema_error": null
+  },
+  {
+    "id": "N125",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2132,
+      "out": 113
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"measurement_validation\"\n  ],\n  \"evidence_quote\": \"The goal of this study was to confirm the comparability of water yields obtained from capillary column methodology to those yields from packed columns by the statistical analysis of yield data from the 24 th Asia Collaborative Study\",\n  \"reasoning\": \"The paper aims to evaluate and re-verify the reproducibility of an established measurement standard using new collaborative study data.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "measurement_validation"
+    ],
+    "evidence_quote": "The goal of this study was to confirm the comparability of water yields obtained from capillary column methodology to those yields from packed columns by the statistical analysis of yield data from the 24 th Asia Collaborative Study",
+    "reasoning": "The paper aims to evaluate and re-verify the reproducibility of an established measurement standard using new collaborative study data.",
+    "schema_error": null
+  },
+  {
+    "id": "N126",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2190,
+      "out": 101
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"measurement_validation\"\n  ],\n  \"evidence_quote\": \"In this study was compared the technical quality of radiographs and hip distraction using the PennHIP and the Dis-UTAD distractors\",\n  \"reasoning\": \"The study evaluates and compares an alternative medical distraction device against the established PennHIP method to test for measurement agreement and statistical reproducibility.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "measurement_validation"
+    ],
+    "evidence_quote": "In this study was compared the technical quality of radiographs and hip distraction using the PennHIP and the Dis-UTAD distractors",
+    "reasoning": "The study evaluates and compares an alternative medical distraction device against the established PennHIP method to test for measurement agreement and statistical reproducibility.",
+    "schema_error": null
+  },
+  {
+    "id": "N127",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2340,
+      "out": 101
+    },
+    "raw": "{\n  \"classification\": \"reproduction\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"measurement_validation\"\n  ],\n  \"evidence_quote\": \"this study aimed to perform an independent interobserver and intraobserver agreement evaluation of the recently developed ATN grading system for MM.\",\n  \"reasoning\": \"The study evaluates the interobserver and intraobserver reproducibility of a recently proposed classification system, which fits the category of measurement validation.\"\n}",
+    "classification": "reproduction",
+    "confidence": "high",
+    "categories": [
+      "measurement_validation"
+    ],
+    "evidence_quote": "this study aimed to perform an independent interobserver and intraobserver agreement evaluation of the recently developed ATN grading system for MM.",
+    "reasoning": "The study evaluates the interobserver and intraobserver reproducibility of a recently proposed classification system, which fits the category of measurement validation.",
+    "schema_error": null
+  },
+  {
+    "id": "N128",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2912,
+      "out": 84
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The paper is a commentary discussing air pollution policy and mentions the word replication only in the context of administrative overlap or ordinary-language usage, rather than as a replication study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The paper is a commentary discussing air pollution policy and mentions the word replication only in the context of administrative overlap or ordinary-language usage, rather than as a replication study.",
+    "schema_error": null
+  },
+  {
+    "id": "N129",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2386,
+      "out": 89
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"to avoid pseudo-replication of results\",\n  \"reasoning\": \"The paper uses the term 'pseudo-replication' solely in reference to its internal sampling design rather than as a replication or reproduction of a previously published study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "to avoid pseudo-replication of results",
+    "reasoning": "The paper uses the term 'pseudo-replication' solely in reference to its internal sampling design rather than as a replication or reproduction of a previously published study.",
+    "schema_error": null
+  },
+  {
+    "id": "N130",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2029,
+      "out": 101
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"about_replication\"\n  ],\n  \"evidence_quote\": \"As an exploratory study, replication of this study is necessary and it would be useful to expand this research to additional populations.\",\n  \"reasoning\": \"The mention of replication is merely a concluding remark stating that future replication is needed rather than the paper itself being a replication or reproduction study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "about_replication"
+    ],
+    "evidence_quote": "As an exploratory study, replication of this study is necessary and it would be useful to expand this research to additional populations.",
+    "reasoning": "The mention of replication is merely a concluding remark stating that future replication is needed rather than the paper itself being a replication or reproduction study.",
+    "schema_error": null
+  },
+  {
+    "id": "N131",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2055,
+      "out": 105
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"One of the major and recurring issues in the criticism is the perceived replication of banking products that mimic conventional settings in many respects.\",\n  \"reasoning\": \"The abstract uses the word replication in an ordinary-language or field-specific sense to describe financial product design rather than the replication of a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "One of the major and recurring issues in the criticism is the perceived replication of banking products that mimic conventional settings in many respects.",
+    "reasoning": "The abstract uses the word replication in an ordinary-language or field-specific sense to describe financial product design rather than the replication of a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N132",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2092,
+      "out": 94
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"RNA-dependent RNA polymerase (RdRp) is involved in the replication of the virus\",\n  \"reasoning\": \"The paper is a review of COVID-19 vaccine developments and uses the word replication in a biological sense referring to viral processes.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "RNA-dependent RNA polymerase (RdRp) is involved in the replication of the virus",
+    "reasoning": "The paper is a review of COVID-19 vaccine developments and uses the word replication in a biological sense referring to viral processes.",
+    "schema_error": null
+  },
+  {
+    "id": "N133",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2100,
+      "out": 79
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\"clearly_declared\", \"context_transfer\"],\n  \"evidence_quote\": \"replication of the solution in the Indian context has been explored\",\n  \"reasoning\": \"The abstract explicitly states that the replication of the solution in a new geographic context is explored.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "clearly_declared",
+      "context_transfer"
+    ],
+    "evidence_quote": "replication of the solution in the Indian context has been explored",
+    "reasoning": "The abstract explicitly states that the replication of the solution in a new geographic context is explored.",
+    "schema_error": null
+  },
+  {
+    "id": "N134",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2173,
+      "out": 90
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"avoid the replication of the resource curse syndrome\",\n  \"reasoning\": \"The abstract uses the word replication in an ordinary-language sense to refer to avoiding the recurrence of a macroeconomic phenomenon, not to checking a prior empirical finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "avoid the replication of the resource curse syndrome",
+    "reasoning": "The abstract uses the word replication in an ordinary-language sense to refer to avoiding the recurrence of a macroeconomic phenomenon, not to checking a prior empirical finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N135",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2210,
+      "out": 82
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"inhibits replication of the virus\",\n  \"reasoning\": \"The term replication is used here in its biological sense regarding the virus, rather than referring to a replication study of prior research.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "inhibits replication of the virus",
+    "reasoning": "The term replication is used here in its biological sense regarding the virus, rather than referring to a replication study of prior research.",
+    "schema_error": null
+  },
+  {
+    "id": "N136",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2336,
+      "out": 87
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\"terminology_only\"],\n  \"evidence_quote\": \"The replication of HIV provirus by various pathways is activated by oxidative stress\",\n  \"reasoning\": \"The abstract uses the term 'replication' in a biological sense regarding the HIV provirus rather than as a study checking a previously published finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of HIV provirus by various pathways is activated by oxidative stress",
+    "reasoning": "The abstract uses the term 'replication' in a biological sense regarding the HIV provirus rather than as a study checking a previously published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N137",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2361,
+      "out": 97
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"other\"\n  ],\n  \"evidence_quote\": \"encourages the replication of our analysis with data on the effective occupation of the accommodation\",\n  \"reasoning\": \"The paper is an original empirical study of Airbnb markets in Latin America, and the mention of replication only appears as a suggestion for future research in the limitations section.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "encourages the replication of our analysis with data on the effective occupation of the accommodation",
+    "reasoning": "The paper is an original empirical study of Airbnb markets in Latin America, and the mention of replication only appears as a suggestion for future research in the limitations section.",
+    "schema_error": null
+  },
+  {
+    "id": "N138",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 3008,
+      "out": 103
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"builds_on_literature\",\n    \"other\"\n  ],\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The paper discusses the clinical challenge of interpreting ambiguous antibody test results and introduces the concept of 'antibody of unknown significance' using a case study, which is ordinary clinical commentary rather than a replication or reproduction of a specific published finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "builds_on_literature",
+      "other"
+    ],
+    "evidence_quote": "",
+    "reasoning": "The paper discusses the clinical challenge of interpreting ambiguous antibody test results and introduces the concept of 'antibody of unknown significance' using a case study, which is ordinary clinical commentary rather than a replication or reproduction of a specific published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N139",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2511,
+      "out": 93
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Vasoactive Intestinal Peptide (VIP) blocks replication of the SARS-CoV-2 virus\",\n  \"reasoning\": \"The term replication is used here in its biological sense referring to viral replication, not the replication of a scientific study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Vasoactive Intestinal Peptide (VIP) blocks replication of the SARS-CoV-2 virus",
+    "reasoning": "The term replication is used here in its biological sense referring to viral replication, not the replication of a scientific study.",
+    "schema_error": null
+  },
+  {
+    "id": "N140",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 3070,
+      "out": 91
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Antivirals are drugs that arrest the replication of the virus.\",\n  \"reasoning\": \"The paper is a review of COVID-19 treatments and vaccines, and uses the word replication only in its biological sense regarding the virus.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Antivirals are drugs that arrest the replication of the virus.",
+    "reasoning": "The paper is a review of COVID-19 treatments and vaccines, and uses the word replication only in its biological sense regarding the virus.",
+    "schema_error": null
+  },
+  {
+    "id": "N141",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2784,
+      "out": 110
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"Repetition-rehearsal: replication of the Normal-rehearsal condition\",\n  \"reasoning\": \"The paper is a data descriptor article presenting a new dataset, and the use of the term 'replication' refers solely to an internal repeated experimental condition within the study design rather than a replication of prior published external research.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Repetition-rehearsal: replication of the Normal-rehearsal condition",
+    "reasoning": "The paper is a data descriptor article presenting a new dataset, and the use of the term 'replication' refers solely to an internal repeated experimental condition within the study design rather than a replication of prior published external research.",
+    "schema_error": null
+  },
+  {
+    "id": "N142",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 3061,
+      "out": 92
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"about_replication\"\n  ],\n  \"evidence_quote\": \"Reproducibility and replication of research is a cornerstone of good scientific practice.\",\n  \"reasoning\": \"The paper is a commentary discussing research waste, redundant meta-analyses, and open science practices rather than conducting a replication or reproduction study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "about_replication"
+    ],
+    "evidence_quote": "Reproducibility and replication of research is a cornerstone of good scientific practice.",
+    "reasoning": "The paper is a commentary discussing research waste, redundant meta-analyses, and open science practices rather than conducting a replication or reproduction study.",
+    "schema_error": null
+  },
+  {
+    "id": "N143",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 4025,
+      "out": 107
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"terminology_only\"\n  ],\n  \"evidence_quote\": \"This review summarizes medicinal plants and bioactive compounds that have been shown to act on molecular targets involved in the infection and replication of SARS-CoV-2.\",\n  \"reasoning\": \"The term replication is used here in its biological sense regarding viral replication within a host, not in the methodological sense of replicating a study.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "This review summarizes medicinal plants and bioactive compounds that have been shown to act on molecular targets involved in the infection and replication of SARS-CoV-2.",
+    "reasoning": "The term replication is used here in its biological sense regarding viral replication within a host, not in the methodological sense of replicating a study.",
+    "schema_error": null
+  },
+  {
+    "id": "N144",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 1997,
+      "out": 128
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"The goal of the present study was to see if an extremely simple mathematical model, based on stiff wind turbines, would be able to reproduce the results of some of those software packages.\",\n  \"reasoning\": \"The study tests a new mathematical model to see if it can reproduce outputs of existing software packages in order to demonstrate that the tool works, which falls under tool benchmarking rather than checking a reported finding from prior research.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "The goal of the present study was to see if an extremely simple mathematical model, based on stiff wind turbines, would be able to reproduce the results of some of those software packages.",
+    "reasoning": "The study tests a new mathematical model to see if it can reproduce outputs of existing software packages in order to demonstrate that the tool works, which falls under tool benchmarking rather than checking a reported finding from prior research.",
+    "schema_error": null
+  },
+  {
+    "id": "N145",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2377,
+      "out": 92
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confidence\": \"high\",\n  \"categories\": [\"other\"],\n  \"evidence_quote\": \"We assessed the reproducibility of the OCT measurements and compared in-vivo measurements to histomorphometric data.\",\n  \"reasoning\": \"The paper investigates the technical measurement reproducibility (intra-observer and inter-observer reliability) within its own study design rather than checking a previously published finding.\"\n}",
+    "classification": "none",
+    "confidence": "high",
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "We assessed the reproducibility of the OCT measurements and compared in-vivo measurements to histomorphometric data.",
+    "reasoning": "The paper investigates the technical measurement reproducibility (intra-observer and inter-observer reliability) within its own study design rather than checking a previously published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "N146",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2278,
+      "out": 127
+    },
+    "raw": "{\n  \"classification\": \"reproduction\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"measurement_validation\"\n  ],\n  \"evidence_quote\": \"In present study we aimed to validate the use of image-derived input functions (IDIF) in the kinetic modeling of cerebral blood flow (CBF) measured by [15O]H2O PET by comparing with the accepted reference standard arterial input function (AIF).\",\n  \"reasoning\": \"The paper aims to evaluate and validate an already established measurement method by comparing it against reference standards.\"\n}",
+    "classification": "reproduction",
+    "confidence": "high",
+    "categories": [
+      "measurement_validation"
+    ],
+    "evidence_quote": "In present study we aimed to validate the use of image-derived input functions (IDIF) in the kinetic modeling of cerebral blood flow (CBF) measured by [15O]H2O PET by comparing with the accepted reference standard arterial input function (AIF).",
+    "reasoning": "The paper aims to evaluate and validate an already established measurement method by comparing it against reference standards.",
+    "schema_error": null
+  },
+  {
+    "id": "N147",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2123,
+      "out": 96
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"context_transfer\"\n  ],\n  \"evidence_quote\": \"We aimed to understand how much results from lipid profiling in the model organism Caenorhabditis elegans are influenced by different culture conditions in different laboratories.\",\n  \"reasoning\": \"The study tests whether established lipid profiling findings hold across different laboratory settings and conditions.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "context_transfer"
+    ],
+    "evidence_quote": "We aimed to understand how much results from lipid profiling in the model organism Caenorhabditis elegans are influenced by different culture conditions in different laboratories.",
+    "reasoning": "The study tests whether established lipid profiling findings hold across different laboratory settings and conditions.",
+    "schema_error": null
+  },
+  {
+    "id": "N148",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2080,
+      "out": 89
+    },
+    "raw": "{\n  \"classification\": \"reproduction\",\n  \"confidence\": \"high\",\n  \"categories\": [\"clearly_declared\", \"context_transfer\"],\n  \"evidence_quote\": \"Subsequently, the reproducibility of the prediction model was validated using independent test data from another site.\",\n  \"reasoning\": \"The authors explicitly state that they validated the reproducibility of their prediction model using independent test data from another site.\"\n}",
+    "classification": "reproduction",
+    "confidence": "high",
+    "categories": [
+      "clearly_declared",
+      "context_transfer"
+    ],
+    "evidence_quote": "Subsequently, the reproducibility of the prediction model was validated using independent test data from another site.",
+    "reasoning": "The authors explicitly state that they validated the reproducibility of their prediction model using independent test data from another site.",
+    "schema_error": null
+  },
+  {
+    "id": "N149",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2033,
+      "out": 111
+    },
+    "raw": "{\n  \"classification\": \"reproduction\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"clearly_declared\",\n    \"self_retest\"\n  ],\n  \"evidence_quote\": \"The aim of the current commentary is to analyse the performance of this already trained predictive model on the molecules of the second \\\"Solubility Challenge\\\".\",\n  \"reasoning\": \"The authors state that their aim is to re-analyse their previously published model's performance on a new dataset.\"\n}",
+    "classification": "reproduction",
+    "confidence": "high",
+    "categories": [
+      "clearly_declared",
+      "self_retest"
+    ],
+    "evidence_quote": "The aim of the current commentary is to analyse the performance of this already trained predictive model on the molecules of the second \"Solubility Challenge\".",
+    "reasoning": "The authors state that their aim is to re-analyse their previously published model's performance on a new dataset.",
+    "schema_error": null
+  },
+  {
+    "id": "N150",
+    "bucket": "not_a_replication",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 1983,
+      "out": 128
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confidence\": \"high\",\n  \"categories\": [\n    \"context_transfer\",\n    \"tool_benchmark\"\n  ],\n  \"evidence_quote\": \"This paper aims to evaluate whether a computer model previously used to reproduce the effects of the yellow fever vaccine in the body is also capable of reproducing the effects of a distinct vaccine: ChAdOx1 nCoV-19.\",\n  \"reasoning\": \"The authors aim to test whether a previously established computational model applies to a new vaccine context, checking prior findings with a new target.\"\n}",
+    "classification": "replication",
+    "confidence": "high",
+    "categories": [
+      "context_transfer",
+      "tool_benchmark"
+    ],
+    "evidence_quote": "This paper aims to evaluate whether a computer model previously used to reproduce the effects of the yellow fever vaccine in the body is also capable of reproducing the effects of a distinct vaccine: ChAdOx1 nCoV-19.",
+    "reasoning": "The authors aim to test whether a previously established computational model applies to a new vaccine context, checking prior findings with a new target.",
+    "schema_error": null
+  }
+]

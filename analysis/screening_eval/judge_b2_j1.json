@@ -1,0 +1,14 @@
+[
+  {"id": "C035", "verdict": "no", "confidence": "high", "reason": "Describes in vitro physical/mechanical replication of a physiological process (spinal cord injury) with a novel sensor, not a re-test of a prior published finding."},
+  {"id": "C039", "verdict": "no", "confidence": "high", "reason": "\"Replication\" refers to viral genome replication (biological sense), not a study replication/reproduction."},
+  {"id": "C029", "verdict": "no", "confidence": "medium", "reason": "Extends a least-squares method to 'reproduce the results of perturbation studies' as a methodological/estimation approach, not a re-test or re-analysis of a specific prior published finding."},
+  {"id": "C013", "verdict": "no", "confidence": "medium", "reason": "Applies a previously developed and validated procedure (WTMM sliding-window method) to a new sample to demonstrate the method's reproducibility, i.e. validating a method rather than re-testing a specific published finding."},
+  {"id": "C002", "verdict": "no", "confidence": "high", "reason": "A new primary retrospective study on hypocalcaemia in COVID-19; not framed as testing a previously published finding."},
+  {"id": "C017", "verdict": "no", "confidence": "high", "reason": "\"Replication of results\" here means demonstrating an engineering process works across locations (ordinary-language sense), not re-testing a published scientific finding."},
+  {"id": "C044", "verdict": "yes", "confidence": "medium", "reason": "Explicitly described as 'a partial replication of the intensive tact instruction tactic' with new participants, re-testing a previously reported intervention effect."},
+  {"id": "C008", "verdict": "no", "confidence": "high", "reason": "Primary study characterizing seizure waveforms across patients/seizures within the same dataset; 'reproducible' describes internal consistency, not a replication study aim."},
+  {"id": "C020", "verdict": "no", "confidence": "high", "reason": "Compares real traffic datasets to assess whether Eurocode fatigue models reproduce effects of heavy vehicles; an engineering model-validation study, not a replication of a published empirical finding."},
+  {"id": "C027", "verdict": "yes", "confidence": "high", "reason": "Abstract explicitly states results from 'a main study and a preregistered replication' testing the same mind-wandering/rereading effect with new data."},
+  {"id": "C014", "verdict": "no", "confidence": "medium", "reason": "Evaluates whether human tractography techniques can reproduce connectivity patterns from prior animal tract-tracing, framed as validating a clinical technique rather than replicating a published study's finding."},
+  {"id": "C021", "verdict": "no", "confidence": "high", "reason": "A secondary analysis of an existing cohort examining CRH and preterm birth risk; not presented as re-testing or re-analysing a specific earlier published study's data."}
+]

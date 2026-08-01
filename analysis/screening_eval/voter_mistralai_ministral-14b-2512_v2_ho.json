@@ -1,0 +1,272 @@
+[
+  {
+    "id": "H001",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"a proper assessment of assay accuracy and the reproducibility of low abundance variant detection, ... "
+  },
+  {
+    "id": "H002",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"Further study is required to determine reproducibility of results.\\\"\",\n  \"reasoning\": \"The abstract ex"
+  },
+  {
+    "id": "H003",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"The present study was designed to investigate the **psychometric properties** of the Persian version of "
+  },
+  {
+    "id": "H004",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"This objective will serve as a replication of past research to provide additional validation of their"
+  },
+  {
+    "id": "H005",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"replication of promising signals in an independent sample of 1,331 obese subjects who completed the p"
+  },
+  {
+    "id": "H006",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"recommend a replication of the study in other regions of the country\\\"\",\n  \"reasoning\": \"The paper foc"
+  },
+  {
+    "id": "H007",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The study analyzes evolutionary patterns of viral sequences (3C protein and oriL doma"
+  },
+  {
+    "id": "H008",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"The reproducibility of the CPX method is still not well known... variations between measurements are a"
+  },
+  {
+    "id": "H009",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"online replication of an in-lab vowel recall experiment\\\"\",\n  \"reasoning\": \"The abstract explicitly s"
+  },
+  {
+    "id": "H010",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "medium",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"medium\",\n  \"evidence_quote\": \"\\\"This research is a kind of causal research and is a replication of the earlier research.\\\"\",\n  \"rea"
+  },
+  {
+    "id": "H011",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"The MI was validated using targeted bisulphite sequencing in the Generations Study (n=440 case-contro"
+  },
+  {
+    "id": "H012",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"To identify novel WM susceptibility loci we conducted a two-stage genome-wide association study (GWAS) i"
+  },
+  {
+    "id": "H013",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The study focuses on estimating detection probabilities for survey design optimizatio"
+  },
+  {
+    "id": "H014",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"To further study the recovery rate of GIN eggs from cattle faeces, this study was conducted in two labor"
+  },
+  {
+    "id": "H015",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The study analyzes evolutionary patterns of viral sequences (3C protein and oriL doma"
+  },
+  {
+    "id": "H016",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The study focuses on analyzing sequence variability and co-evolution patterns of vira"
+  },
+  {
+    "id": "H017",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"This will enable other countries to emulate the experiences of these countries and **replicate them** "
+  },
+  {
+    "id": "H018",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity...\",\n  \"reasoning\": \"The study focuses on **biolo"
+  },
+  {
+    "id": "H019",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The study analyzes evolutionary patterns of viral sequences (3C protein and oriL doma"
+  },
+  {
+    "id": "H020",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\",\n  \"reasoning\": \"The study analyzes evolutionary patterns of viral sequences (3C protein and oriL doma"
+  },
+  {
+    "id": "H021",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"Reproducibility of prognostic results was confirmed for new ACS cases\\\"\",\n  \"reasoning\": \"This describ"
+  },
+  {
+    "id": "H022",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"This study was a **retrospective case series** using data collected from Brighton and Sussex University "
+  },
+  {
+    "id": "H023",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity...\",\n  \"reasoning\": \"The study focuses on **biolo"
+  },
+  {
+    "id": "H024",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"the replication of valued objects\\\"\",\n  \"reasoning\": \"The term 'replication' here refers to *copying o"
+  },
+  {
+    "id": "H025",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"The replication of enteroviruses features low fidelity...\",\n  \"reasoning\": \"The study focuses on **biolo"
+  },
+  {
+    "id": "H026",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"The specificity and applicability of the GP atlas have been recapitulated in many studies\\\"\",\n  \"reaso"
+  },
+  {
+    "id": "H027",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"By independently testing the relationship between cycles of relative sea-level change and those of se"
+  },
+  {
+    "id": "H028",
+    "bucket": "heldout",
+    "truth": "no",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"replication of the top SNPs in an additional set of 185 patients\\\"\",\n  \"reasoning\": \"The abstract exp"
+  },
+  {
+    "id": "H029",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "yes",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"yes\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"This research was a replication of original research conducted in 1981 by Dr. H. Wohlfarth...\\\"\",\n  \""
+  },
+  {
+    "id": "H030",
+    "bucket": "heldout",
+    "truth": "yes",
+    "verdict": "no",
+    "conf": "high",
+    "error": null,
+    "raw": "```json\n{\n  \"is_replication\": \"no\",\n  \"classification_confidence\": \"high\",\n  \"evidence_quote\": \"\\\"replication of a study that originated in Australia for large classroom sizes\\\"\",\n  \"reasoning\": \"The "
+  }
+]
