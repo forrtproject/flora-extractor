@@ -508,7 +508,8 @@ Title: {title}
 
 Abstract: {abstract}
 
-Respond with the JSON object only."""
+Respond with the JSON object only.
+"""
 
 
 _TARGET_PROMPT = """{policy}This paper has been classified as a replication or reproduction.
