@@ -13,24 +13,28 @@ Rows that do not belong in the resolved set are moved OUT to a dedicated set-asi
 CSV (the same files the dashboard's "set-aside" tab reads), one bucket per problem:
 
     screen_disagreement→ screen_disagreement.csv   the two Q1 classifiers disagreed
-    not_a_replication  → not_a_replication.csv     outcome == not_a_replication
     non_article        → not_a_replication.csv     doi_r is a figshare data record
                                                    or a peer-review object (DOI pattern)
-    non_article_type   → not_a_replication.csv     the registry types doi_r as a
-                                                   non-study object (dataset, software,
-                                                   peer-review, supplementary ...)
-                                                   (only with --deep: metadata lookup)
-    self_link          → unresolved_self_links.csv doi_o == doi_r
-    doi_mismatch       → unresolved_doi_mismatch.csv doi_o_verification == mismatch
     title_search_provisional → provisional_title_search.csv  link_method ==
                                                    llm_title_search: a provisional
                                                    link awaiting human confirmation
     target_pending     → target_pending.csv        link_method == target_pending
+    not_a_replication  → not_a_replication.csv     outcome == not_a_replication
+    self_link          → unresolved_self_links.csv doi_o == doi_r
+    doi_mismatch       → unresolved_doi_mismatch.csv doi_o_verification == mismatch
+    non_article_type   → not_a_replication.csv     the registry types doi_r as a
+                                                   non-study object (dataset, software,
+                                                   peer-review, supplementary ...)
+                                                   (only with --deep: metadata lookup)
     fabricated_doi_o   → fabricated_original_doi.csv doi_o present but registered nowhere
                                                     (only with --deep: doi.org 404 check)
 
 Each row lands in the FIRST bucket it matches (rules applied in listed order), so a
-row is never double-counted or duplicated across files.
+row is never double-counted or duplicated across files. Where a row stands in the
+pipeline is decided before what its outcome column says: an unresolved link_method
+routes on that, so a row whose abstract pass answered not_a_replication while its
+target was never resolved (or was demoted by the original-link guard) is awaiting a
+target and belongs in target_pending.csv.
 
 cannot_be_determined rows are deliberately KEPT in extracted.csv (a linked original
 with an undecidable outcome is still a real record awaiting full text), so that bucket
@@ -131,26 +135,36 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
     doi_r = df["doi_r"].map(clean_doi)
 
     # (bucket name, destination file, row mask) — first match wins per row.
+    # The link_method rules come first, and the outcome rule last of the discard
+    # buckets: WHERE a row stands in the pipeline decides which file it belongs in,
+    # and what its outcome column happens to say is a fact about that file's contents,
+    # not about its identity. not_a_replication.csv is read as "the pipeline settled
+    # that this paper replicates nothing"; a row that never got a link has settled
+    # nothing, whatever verdict was written beside it.
     rules = [
-        # Disagreement first: not_a_replication.csv is read as "both classifiers agreed
-        # this is not a replication", and a disagreement row whose outcome happened to
-        # be coded not_a_replication used to win the outcome rule and land there,
-        # biasing any precision computed over that file (audit B6).
+        # Disagreement first: a disagreement row whose outcome happened to be coded
+        # not_a_replication used to win the outcome rule and land in that file,
+        # biasing any precision computed over it (audit B6).
         ("screen_disagreement", "screen_disagreement.csv",
          df["link_method"] == "screen_disagreement"),
-        ("not_a_replication", "not_a_replication.csv", df["outcome"] == "not_a_replication"),
         # figshare data records / peer-review objects: Stage-2 false positives (#17) that
-        # predate the rule_filter DOI exclusion. Routed to the not_a_replication bucket.
+        # predate the rule_filter DOI exclusion. The replication record itself is bogus,
+        # so this is a permanent discard and outranks the unresolved states — a re-run
+        # has nothing to gain by retrying it. Routed to the not_a_replication bucket.
         ("non_article", "not_a_replication.csv", df["doi_r"].map(lambda d: bool(non_article_doi(d)))),
-        ("self_link", "unresolved_self_links.csv", (doi_o != "") & (doi_o == doi_r)),
-        ("doi_mismatch", "unresolved_doi_mismatch.csv", df["doi_o_verification"] == "mismatch"),
         # Provisional: the target was matched against the whole literature by title
         # search rather than picked from a candidate list, at ~50% measured precision,
         # and the failure is invisible to doi_o_verification — the DOI really is the
         # named paper, it just is not this paper's target. Set aside for confirmation.
         ("title_search_provisional", "provisional_title_search.csv",
          df["link_method"] == "llm_title_search"),
+        # Unresolved before the outcome buckets: the abstract pass can answer
+        # not_a_replication on a row whose link was never resolved (or was demoted by
+        # _guard_original_link), and such a row is awaiting a target, not a finding.
         ("target_pending", "target_pending.csv", df["link_method"] == "target_pending"),
+        ("not_a_replication", "not_a_replication.csv", df["outcome"] == "not_a_replication"),
+        ("self_link", "unresolved_self_links.csv", (doi_o != "") & (doi_o == doi_r)),
+        ("doi_mismatch", "unresolved_doi_mismatch.csv", df["doi_o_verification"] == "mismatch"),
     ]
 
     moved: dict[str, int] = {}
