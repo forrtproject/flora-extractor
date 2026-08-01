@@ -435,3 +435,28 @@ def test_run_search_final_log_does_not_crash_on_void_merge(monkeypatch):
         df = fetch_i4r(from_year=2024, to_year=2024)
         titles = df["title_r"].str.lower().tolist()
         assert any("replication" in t or "comment" in t for t in titles)
+
+
+def test_get_page_rotates_key_on_budget_refusal(monkeypatch, tmp_path):
+    """Finding 4: Stage 1 used to send one key and die on a budget refusal while
+    other keys were still unspent. A 429 that means 'insufficient budget' must
+    rotate to the next key and retry, not back off."""
+    from shared import openalex_keys
+
+    monkeypatch.setattr(oa, "OA_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(openalex_keys, "OPENALEX_API_KEYS", ["k1", "k2"])
+    monkeypatch.setattr(openalex_keys, "_key_idx", 0)
+
+    seen_auth = []
+
+    class _Resp:
+        def __init__(self, status): self.status_code = status; self.headers = {}
+        def json(self): return {"message": "Insufficient budget"} if self.status_code == 429 else {"results": []}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        seen_auth.append(headers.get("Authorization"))
+        return _Resp(429 if len(seen_auth) == 1 else 200)
+
+    monkeypatch.setattr(oa.requests, "get", fake_get)
+    assert oa._get_page({"filter": "x"}) == {"results": []}
+    assert seen_auth == ["Bearer k1", "Bearer k2"]

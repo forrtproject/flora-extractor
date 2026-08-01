@@ -17,10 +17,13 @@ from typing import Optional
 import requests
 
 from .config import (
-    OA_CACHE_DIR, OPENALEX_API_KEY, OPENALEX_API_KEYS, OPENALEX_RATE_SEC, CROSSREF_RATE_SEC,
+    OA_CACHE_DIR, OPENALEX_RATE_SEC, CROSSREF_RATE_SEC,
     RESEARCHER_EMAIL, log,
 )
 from .cache import content_key, read_cache, write_cache
+from .openalex_keys import (
+    headers as oa_headers, is_budget_refusal, quota_message, rotate_key,
+)
 from .utils import bare_work_id, clean_doi, cache_key
 
 # ── Unicode ranges (chr() avoids \u in compiled regexes for Python < 3.12) ────
@@ -205,66 +208,7 @@ def extract_author_year_patterns(text: str,
 
 # ── OpenAlex API ──────────────────────────────────────────────────────────────
 
-_OA_HEADERS: dict[str, str] = {
-    "User-Agent": (
-        f"FLoRA-DisambiguationPipeline/1.0 (mailto:{RESEARCHER_EMAIL})"
-    )
-}
 _oa_last_call = 0.0
-
-# Index into OPENALEX_API_KEYS of the key currently in use. Advanced only by
-# _rotate_key(), on a budget refusal.
-_oa_key_idx = 0
-
-
-def _oa_headers() -> dict[str, str]:
-    """Headers for the current key.
-
-    OpenAlex only recognises the key as a Bearer token; a bare key in the
-    Authorization header is silently ignored and the request is served from the
-    anonymous pool (1000/day, shared per-IP) instead of the keyed pool. That
-    mis-auth is why Stage 3 hit "Insufficient budget" 429s while Stage 1 (which
-    already sent Bearer) did not. Verified against the live API 2026-07-23.
-    """
-    if _oa_key_idx < len(OPENALEX_API_KEYS):
-        return {**_OA_HEADERS, "Authorization": f"Bearer {OPENALEX_API_KEYS[_oa_key_idx]}"}
-    return _OA_HEADERS
-
-
-def _rotate_key() -> bool:
-    """Advance to the next key. False when none is left."""
-    global _oa_key_idx
-    if _oa_key_idx + 1 >= len(OPENALEX_API_KEYS):
-        return False
-    _oa_key_idx += 1
-    log.warning("OpenAlex key %d/%d out of budget — rotating to key %d",
-                _oa_key_idx, len(OPENALEX_API_KEYS), _oa_key_idx + 1)
-    return True
-
-
-def _is_budget_refusal(r) -> bool:
-    """True when a 429 means 'you cannot afford this', not 'you are too fast'."""
-    try:
-        body = r.json()
-    except ValueError:
-        return False
-    if str(body.get("message", "")).lower().startswith("insufficient budget"):
-        return True
-    return body.get("dailyRemainingUsd") == 0 and body.get("prepaidRemainingUsd") == 0
-
-
-def _quota_message(r) -> str:
-    try:
-        body = r.json()
-    except ValueError:
-        body = {}
-    return (
-        f"OpenAlex quota exhausted: {body.get('message', 'insufficient budget')} "
-        f"(daily remaining ${body.get('dailyRemainingUsd', '?')}, "
-        f"prepaid remaining ${body.get('prepaidRemainingUsd', '?')}). "
-        "Stopping: continuing without candidates would silently degrade every link. "
-        "Add funds at https://openalex.org/pricing or wait for the midnight-UTC reset."
-    )
 
 
 class OpenAlexQuotaExhausted(RuntimeError):
@@ -299,15 +243,15 @@ def _oa_get(url: str, params: dict | None = None) -> Optional[dict]:
     # run with more keys than retry slots would give up with keys still unused.
     while attempt <= len(_RETRY_DELAYS):
         try:
-            r = requests.get(url, headers=_oa_headers(), params=params or {},
+            r = requests.get(url, headers=oa_headers(), params=params or {},
                              timeout=30)
             if r.status_code == 429:
-                if _is_budget_refusal(r):
+                if is_budget_refusal(r):
                     # Try the next key before giving up; only when every key is
                     # drained does this become a hard stop.
-                    if _rotate_key():
+                    if rotate_key():
                         continue
-                    raise OpenAlexQuotaExhausted(_quota_message(r))
+                    raise OpenAlexQuotaExhausted(quota_message(r))
                 if attempt >= len(_RETRY_DELAYS):
                     break
                 # Use our own schedule — OpenAlex sometimes sends absurdly large

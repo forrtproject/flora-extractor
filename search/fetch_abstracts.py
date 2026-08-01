@@ -89,9 +89,9 @@ from typing import Optional
 import requests
 
 from shared.config import (
-    CACHE_DIR, DATA_DIR, ELSEVIER_API_KEY, EPMC_RATE_SEC, OPENALEX_API_KEY,
-    RESEARCHER_EMAIL, log,
+    CACHE_DIR, DATA_DIR, ELSEVIER_API_KEY, EPMC_RATE_SEC, RESEARCHER_EMAIL, log,
 )
+from shared.openalex_keys import headers as oa_headers, is_budget_refusal, rotate_key
 from shared.utils import clean_doi, cache_key
 from shared.dashboard_cache import _parquet_path, refresh as _dc_refresh
 
@@ -153,17 +153,13 @@ _DOI_PREFIX_RE = re.compile(r"(10\.\d{4,9})/")
 # un-checkpointed rows. Mirrors how the Scopus phase stops on quota exhaustion.
 TRANSIENT_BREAKER_LIMIT = 25
 
-# Shared session for CrossRef / Semantic Scholar / Scopus — deliberately carries
-# NO Authorization header. The OpenAlex premium key must never leak to these hosts:
-# CrossRef rejects an unknown Bearer token with 401, silently killing the entire
-# CrossRef abstract-recovery tier. OpenAlex requests use _OA_SESSION instead.
+# One session for every host, deliberately carrying NO Authorization header. The
+# OpenAlex key must never leak to CrossRef, which rejects an unknown Bearer token
+# with 401 and so loses the entire CrossRef abstract-recovery tier. The OpenAlex
+# phase passes its credential per request instead (oa_headers()), which is also
+# what lets it pick up a key rotated in by another phase or stage.
 _SESSION = requests.Session()
 _SESSION.headers.update({"User-Agent": f"FLoRA-Extractor/1.0 (mailto:{RESEARCHER_EMAIL})"})
-
-_OA_SESSION = requests.Session()
-_OA_SESSION.headers.update({"User-Agent": f"FLoRA-Extractor/1.0 (mailto:{RESEARCHER_EMAIL})"})
-if OPENALEX_API_KEY:
-    _OA_SESSION.headers["Authorization"] = f"Bearer {OPENALEX_API_KEY}"
 
 
 # ---------------------------------------------------------------------------
@@ -325,19 +321,24 @@ def _fetch_openalex_batch(oa_ids: list[str]) -> Optional[dict[str, Optional[str]
         f"&per-page={OA_BATCH_SIZE}"
     )
     result: dict[str, Optional[str]] = {oid: None for oid in oa_ids}
-    try:
-        resp = _OA_SESSION.get(url, timeout=30)
-        resp.raise_for_status()
-        for work in resp.json().get("results", []):
-            wid = work.get("id", "").replace("https://openalex.org/", "").strip()
-            abstract = _reconstruct_abstract(work.get("abstract_inverted_index"))
-            input_key = bare_to_input.get(wid)
-            if input_key is not None:
-                result[input_key] = abstract
-    except Exception as exc:
-        log.warning("OpenAlex batch error (batch not checkpointed): %s", exc)
-        return None
-    return result
+    while True:
+        try:
+            resp = _SESSION.get(url, headers=oa_headers(), timeout=30)
+            # A budget refusal means this key is spent, not that the batch failed:
+            # the next key can still serve it.
+            if resp.status_code == 429 and is_budget_refusal(resp) and rotate_key():
+                continue
+            resp.raise_for_status()
+            for work in resp.json().get("results", []):
+                wid = work.get("id", "").replace("https://openalex.org/", "").strip()
+                abstract = _reconstruct_abstract(work.get("abstract_inverted_index"))
+                input_key = bare_to_input.get(wid)
+                if input_key is not None:
+                    result[input_key] = abstract
+        except Exception as exc:
+            log.warning("OpenAlex batch error (batch not checkpointed): %s", exc)
+            return None
+        return result
 
 
 # ---------------------------------------------------------------------------

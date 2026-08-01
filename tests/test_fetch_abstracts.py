@@ -51,7 +51,7 @@ def test_openalex_batch_matches_full_url_ids(monkeypatch):
         captured["url"] = url
         return DummyResponse(payload)
 
-    monkeypatch.setattr(fa._OA_SESSION, "get", fake_get)
+    monkeypatch.setattr(fa._SESSION, "get", fake_get)
 
     full_url = "https://openalex.org/W2889412410"
     result = fa._fetch_openalex_batch([full_url])
@@ -65,7 +65,7 @@ def test_openalex_batch_matches_full_url_ids(monkeypatch):
 
 def test_openalex_batch_missing_work_stays_none(monkeypatch):
     """An id with no matching result stays None (a genuine miss)."""
-    monkeypatch.setattr(fa._OA_SESSION, "get", lambda url, timeout: DummyResponse({"results": []}))
+    monkeypatch.setattr(fa._SESSION, "get", lambda url, **kw: DummyResponse({"results": []}))
     result = fa._fetch_openalex_batch(["https://openalex.org/W999"])
     assert result == {"https://openalex.org/W999": None}
 
@@ -289,12 +289,10 @@ def test_phase4_priority_file_reorders_quota(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_openalex_key_does_not_leak_to_shared_session():
-    """The shared session (CrossRef/S2/Scopus) must carry no Authorization header;
-    only the dedicated OpenAlex session may. A leaked Bearer token makes CrossRef 401."""
+    """The session must carry no Authorization header: it is used for CrossRef,
+    which 401s on an unknown Bearer token. The OpenAlex phase passes its key per
+    request instead."""
     assert "Authorization" not in fa._SESSION.headers
-    # If a key is configured, it lives only on the OpenAlex session.
-    if fa.OPENALEX_API_KEY:
-        assert fa._OA_SESSION.headers.get("Authorization") == f"Bearer {fa.OPENALEX_API_KEY}"
 
 
 def test_crossref_uses_shared_session_without_auth(monkeypatch):
@@ -396,8 +394,8 @@ def test_crossref_phase_checkpoints_empty_not_transient(monkeypatch, tmp_path):
     df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
 
     # OpenAlex finds nothing → both rows fall through to CrossRef.
-    monkeypatch.setattr(fa._OA_SESSION, "get",
-                        lambda url, timeout=None: DummyResponse({"results": []}))
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
 
     def fake_get(url, timeout=None, **kwargs):
         doi = url.split("/works/", 1)[1].split("?", 1)[0]
@@ -431,8 +429,8 @@ def test_crossref_circuit_breaker_stops_phase(monkeypatch, tmp_path):
     })
     df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
 
-    monkeypatch.setattr(fa._OA_SESSION, "get",
-                        lambda url, timeout=None: DummyResponse({"results": []}))
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
 
     requested = set()
 
@@ -467,8 +465,8 @@ def test_openalex_whole_batch_failure_not_checkpointed(monkeypatch, tmp_path):
     })
     df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
 
-    monkeypatch.setattr(fa._OA_SESSION, "get",
-                        lambda url, timeout=None: DummyResponse({}, status_code=500))
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, timeout=None, **kw: DummyResponse({}, status_code=500))
     fa.run(scopus_limit=0)
 
     assert "oa:" not in _checkpoint()   # batch failure checkpointed nothing
@@ -496,8 +494,8 @@ def test_openalex_successful_batch_missing_id_is_checkpointed(monkeypatch, tmp_p
     payload = {"results": [
         {"id": "https://openalex.org/W1", "abstract_inverted_index": {"Found": [0]}},
     ]}
-    monkeypatch.setattr(fa._OA_SESSION, "get",
-                        lambda url, timeout=None: DummyResponse(payload))
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, timeout=None, **kw: DummyResponse(payload))
     fa.run(scopus_limit=0)
 
     done = _checkpoint()
@@ -540,8 +538,8 @@ def test_s2_batch_phase_transient_falls_through_to_crossref(monkeypatch, tmp_pat
     })
     df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
 
-    monkeypatch.setattr(fa._OA_SESSION, "get",
-                        lambda url, timeout=None: DummyResponse({"results": []}))
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
     monkeypatch.setattr(fa._SESSION, "post",
                         lambda url, params=None, json=None, headers=None, timeout=None,
                         **kw: DummyResponse({}, status_code=429))   # S2 batch: transient
@@ -604,8 +602,8 @@ def test_s2_batch_phase_whole_batch_failure_not_checkpointed(monkeypatch, tmp_pa
     })
     df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
 
-    monkeypatch.setattr(fa._OA_SESSION, "get",
-                        lambda url, timeout=None: DummyResponse({"results": []}))
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
     monkeypatch.setattr(fa._SESSION, "post",
                         lambda *a, **k: DummyResponse({}, status_code=500))
     # CrossRef also empty, so Phase 3 doesn't accidentally resolve these first.
@@ -635,8 +633,8 @@ def test_s2_batch_phase_successful_batch_null_entry_is_definitive_miss(monkeypat
     })
     df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
 
-    monkeypatch.setattr(fa._OA_SESSION, "get",
-                        lambda url, timeout=None: DummyResponse({"results": []}))
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
 
     def fake_post(url, params=None, json=None, headers=None, timeout=None, **kw):
         requested = [i.split("DOI:", 1)[1] for i in json["ids"]]
@@ -675,8 +673,8 @@ def test_s2_runs_before_crossref_skips_crossref_call_on_s2_hit(monkeypatch, tmp_
     })
     df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
 
-    monkeypatch.setattr(fa._OA_SESSION, "get",
-                        lambda url, timeout=None: DummyResponse({"results": []}))
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
     monkeypatch.setattr(fa._SESSION, "post",
                         lambda url, params=None, json=None, headers=None, timeout=None,
                         **kw: DummyResponse([{"abstract": "S2 hit"}]))
@@ -718,7 +716,7 @@ def test_run_fills_from_cache_by_key_priority(monkeypatch, tmp_path):
     })
     df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
 
-    def fake_oa_get(url, timeout=None):
+    def fake_oa_get(url, timeout=None, **kw):
         # Row 0 (W0) resolves via OpenAlex; all other OA lookups empty.
         if "W0" in url:
             return DummyResponse({"results": [
@@ -727,9 +725,11 @@ def test_run_fills_from_cache_by_key_priority(monkeypatch, tmp_path):
             ]})
         return DummyResponse({"results": []})
 
-    monkeypatch.setattr(fa._OA_SESSION, "get", fake_oa_get)
-
     def fake_get(url, timeout=None, headers=None, **kwargs):
+        # One session serves every host now (the OpenAlex key rides on the request,
+        # not the session), so this router covers the OpenAlex phase too.
+        if "api.openalex.org" in url:
+            return fake_oa_get(url, timeout=timeout, **kwargs)
         # Europe PMC (Phase 2) now runs before every other doi-keyed phase, so it
         # sees all four doi rows first. All miss here, so each row still falls
         # through to the single source the test intends to exercise.
@@ -797,8 +797,8 @@ def test_run_respects_cache_key_priority_over_lower_tiers(monkeypatch, tmp_path)
     # Both identifiers already checkpointed so no phase re-fetches.
     fa.CHECKPOINT_PATH.write_text("oa:https://openalex.org/W1\ndoi:10.1/x\n", encoding="utf-8")
 
-    monkeypatch.setattr(fa._OA_SESSION, "get",
-                        lambda url, timeout=None: DummyResponse({"results": []}))
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
     monkeypatch.setattr(fa._SESSION, "get",
                         lambda *a, **k: DummyResponse({"message": {}}))
 
@@ -862,8 +862,8 @@ def test_candidates_csv_is_never_read_whole(monkeypatch, tmp_path):
         return real_read_csv(path, *args, **kwargs)
 
     monkeypatch.setattr(pd, "read_csv", guarded_read_csv)
-    monkeypatch.setattr(fa._OA_SESSION, "get",
-                        lambda url, timeout=None: DummyResponse({"results": []}))
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
 
     fa.run(scopus_limit=0)   # must not raise the assertion
 
@@ -921,7 +921,7 @@ def test_dry_run_writes_nothing_but_reports_counts(monkeypatch, tmp_path, caplog
     # Any HTTP call under dry-run is a bug.
     def boom(*a, **k):
         raise AssertionError("no API calls under --dry-run")
-    monkeypatch.setattr(fa._OA_SESSION, "get", boom)
+    monkeypatch.setattr(fa._SESSION, "get", boom)
     monkeypatch.setattr(fa._SESSION, "get", boom)
 
     with caplog.at_level(logging.INFO):
@@ -955,11 +955,11 @@ def test_limit_caps_processing(monkeypatch, tmp_path):
 
     requested = []
 
-    def fake_oa_get(url, timeout=None):
+    def fake_oa_get(url, timeout=None, **kw):
         requested.append(url)
         return DummyResponse({"results": []})
 
-    monkeypatch.setattr(fa._OA_SESSION, "get", fake_oa_get)
+    monkeypatch.setattr(fa._SESSION, "get", fake_oa_get)
     fa.run(limit=2, scopus_limit=0)
 
     done = _checkpoint()
@@ -1058,8 +1058,8 @@ def test_epmc_phase_whole_batch_failure_not_checkpointed(monkeypatch, tmp_path):
         "openalex_id_r": ["", ""],
     }).to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
 
-    monkeypatch.setattr(fa._OA_SESSION, "get",
-                        lambda url, timeout=None: DummyResponse({"results": []}))
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
     monkeypatch.setattr(fa._SESSION, "get",
                         lambda url, params=None, timeout=None, headers=None, **kw:
                         DummyResponse({}, status_code=500))
@@ -1084,8 +1084,8 @@ def test_epmc_hit_skips_s2_and_crossref_entirely(monkeypatch, tmp_path):
         "openalex_id_r": [""],
     }).to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
 
-    monkeypatch.setattr(fa._OA_SESSION, "get",
-                        lambda url, timeout=None: DummyResponse({"results": []}))
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
 
     calls = {"epmc": 0, "crossref": 0, "s2_post": 0}
 
@@ -1143,8 +1143,8 @@ def test_dataset_dois_are_excluded_from_every_phase(monkeypatch, tmp_path):
         queried.append((params or {}).get("query", url))
         return DummyResponse(_epmc_payload())
 
-    monkeypatch.setattr(fa._OA_SESSION, "get",
-                        lambda url, timeout=None: DummyResponse({"results": []}))
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
     monkeypatch.setattr(fa._SESSION, "get", fake_get)
     fa.run(scopus_limit=0)
 

@@ -28,7 +28,8 @@ from typing import Optional
 import pandas as pd
 import requests
 
-from shared.config import OA_CACHE_DIR, OPENALEX_API_KEY, OPENALEX_RATE_SEC, RESEARCHER_EMAIL, log
+from shared.config import OA_CACHE_DIR, OPENALEX_API_KEYS, OPENALEX_RATE_SEC, RESEARCHER_EMAIL, log
+from shared.openalex_keys import headers as oa_headers, is_budget_refusal, rotate_key
 from shared.schema import CANDIDATES_COLS
 from shared.utils import cache_key, clean_doi
 
@@ -361,15 +362,9 @@ def _get_page(params: dict, max_retries: int = 5) -> dict:
             log.warning("Corrupt cache file %s — deleting and re-fetching", cache_path.name)
             cache_path.unlink()
 
-    headers: dict = {}
-    if OPENALEX_API_KEY:
-        headers["Authorization"] = f"Bearer {OPENALEX_API_KEY}"
-    elif RESEARCHER_EMAIL:
-        headers["User-Agent"] = f"mailto:{RESEARCHER_EMAIL}"
-
     for attempt in range(max_retries):
         try:
-            resp = requests.get(_BASE_URL, params=params, headers=headers, timeout=30)
+            resp = requests.get(_BASE_URL, params=params, headers=oa_headers(), timeout=30)
         except requests.RequestException as exc:
             if attempt == max_retries - 1:
                 raise
@@ -391,6 +386,11 @@ def _get_page(params: dict, max_retries: int = 5) -> dict:
             return data
 
         if resp.status_code == 429:
+            # A budget refusal is not throttling: the current key is spent, so
+            # sleeping cannot help but the next key can. Rotating does not consume
+            # a retry attempt.
+            if is_budget_refusal(resp) and rotate_key():
+                continue
             wait = float(resp.headers.get("Retry-After", 60))
             if wait > 600:
                 # Retry-After > 10 minutes means the daily quota is exhausted.
@@ -611,8 +611,9 @@ def fetch_openalex_candidates(
         Returns an empty DataFrame (with correct columns) if no results
         are found or all phrase jobs are already complete.
     """
-    if OPENALEX_API_KEY:
-        log.info("OpenAlex: authenticated (Bearer token — keyed budget active)")
+    if OPENALEX_API_KEYS:
+        log.info("OpenAlex: authenticated (%d key(s) in rotation — keyed budget active)",
+                 len(OPENALEX_API_KEYS))
     else:
         log.info("OpenAlex: unauthenticated — add OPENALEX_API_KEY to .env for higher rate limits")
 
@@ -748,7 +749,7 @@ def fetch_openalex_concept_candidates(
     Each concept is an independent resumable job.  Completed concepts are
     skipped automatically.
     """
-    if OPENALEX_API_KEY:
+    if OPENALEX_API_KEYS:
         log.info("OpenAlex concept search: authenticated")
     else:
         log.info("OpenAlex concept search: unauthenticated")
@@ -771,16 +772,10 @@ def list_oa_concepts(query: str) -> list[dict]:
 
     Returns a list of dicts with keys: id, name, works_count.
     """
-    headers: dict = {}
-    if OPENALEX_API_KEY:
-        headers["Authorization"] = f"Bearer {OPENALEX_API_KEY}"
-    elif RESEARCHER_EMAIL:
-        headers["User-Agent"] = f"mailto:{RESEARCHER_EMAIL}"
-
     resp = requests.get(
         "https://api.openalex.org/concepts",
         params={"search": query, "per-page": 15, "mailto": RESEARCHER_EMAIL},
-        headers=headers,
+        headers=oa_headers(),
         timeout=15,
     )
     resp.raise_for_status()
