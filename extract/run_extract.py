@@ -570,8 +570,7 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
     title_o_str = str(link.get("resolved_title_o", "") or "")
     row.update({
         "pair_id":           make_pair_id(doi_r_clean, doi_o_clean,
-                                          str(row.get("oa_work_id_o", "") or ""),
-                                          title_o_str),
+                                          str(row.get("oa_work_id_o", "") or "")),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
         "classify_llm_model":        classify_model,
@@ -1218,8 +1217,7 @@ def _verify_row(row: dict) -> dict:
     if v["doi_o"] != old_doi:
         row["doi_o"]   = v["doi_o"]
         row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), v["doi_o"],
-                                      str(row.get("oa_work_id_o", "") or ""),
-                                      str(row.get("title_o", "") or ""))
+                                      str(row.get("oa_work_id_o", "") or ""))
         new_ref, new_authors, new_bibtex = _build_ref_o(v["doi_o"],
                                             str(row.get("authors_o", "") or ""),
                                             str(row.get("year_o",    "") or ""),
@@ -1236,8 +1234,7 @@ def _verify_row(row: dict) -> dict:
         row["doi_o"] = ""
         row["bibtex_ref_o"] = ""
         row["pair_id"] = make_pair_id(clean_doi(str(row.get("doi_r", ""))), "",
-                                      str(row.get("oa_work_id_o", "") or ""),
-                                      str(row.get("title_o", "") or ""))
+                                      str(row.get("oa_work_id_o", "") or ""))
         row["link_confidence"] = "low"
     if v["evidence_note"]:
         existing = str(row.get("link_evidence", "") or "")

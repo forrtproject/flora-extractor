@@ -1168,6 +1168,14 @@ class TestMakePairId:
                 == "22e94c46165158b30a740f3e66114c82")
         assert make_pair_id("", "") == "b99834bc19bbad24580b3adfa04fb947"
 
+    def test_identifierless_row_keeps_its_legacy_hash(self):
+        """extracted.csv holds 129 single-original rows with a blank doi_o AND a blank
+        oa_work_id_o, already keyed on md5("doi_r|") in the validation DB. Nothing may
+        re-key them, which is why the single-original writer never passes title_o —
+        this literal is the real pair_id of one of those rows."""
+        assert (make_pair_id("10.34917/4332616", "", "")
+                == "422738f9134f6255828b6088979c7ae3")
+
     def test_extra_arguments_are_ignored_when_doi_o_is_set(self):
         assert (make_pair_id("10.1/rep", "10.2/orig", "W123", "A Title")
                 == make_pair_id("10.1/rep", "10.2/orig"))
