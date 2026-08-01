@@ -41,25 +41,29 @@ run_extract.py
             │       └── gate says "proceed"                → continue, carrying the
             │           screen's record_type and screen_categories into the row
             │
-            ├── classify_match_type(row) → original_match_type
-            │
-            ├── if multiple_original:
-            │       run_multi_original_for_doi(doi_r) → N originals
-            │       → N rows (original_rank = 1, 2, 3 …), each guarded and written
-            │
-            └── else (single_original / multiple_match) — _resolve_and_code():
+            └── _resolve_and_code():
                     run_for_doi(doi_r, classification=screen)   ← the ladder, below
-                    if the target prompt saw ≥ 2 originals → reroute to the multi
-                        pipeline (force_multi); target_pending if it finds none
-                    _merge_row()  → build the output row
-                    _guard_original_link()  → reject self-links, recover a missing doi_o
-                    --resolved-only         → drop the row here if it has no link
-                    _outcome_without_coding() → outcome gate (below)
-                        └── if the row is codeable: parse cache → extract_outcome()
+                    │
+                    ├── the ladder named targets but accepted none as THE link
+                    │       → _per_target_rows(): one row per original PAPER
+                    │         (collapse → guard → --resolved-only → outcome, once
+                    │         per original, ranks renumbered 1..n after the drops)
+                    │       → target_pending if no target could be matched
+                    │
+                    └── the ladder resolved one link
+                            _merge_row()  → build the output row
+                            _guard_original_link()  → reject self-links, recover doi_o
+                            --resolved-only         → drop the row if it has no link
+                            _outcome_without_coding() → outcome gate (below)
+                                └── if codeable: parse cache → extract_outcome()
 ```
 
-A row that the front door ends never pays for the match-type call, the ladder, PDF
-acquisition or outcome coding. `--rescreen` reopens exactly the rows a previous run set
+Nothing predicts how many originals a paper targets: the merged target prompt answers
+it, and `original_match_type` records what came back (`multiple_original` when the
+adapter wrote more than one row, `single_original` otherwise).
+
+A row that the front door ends never pays for the ladder, PDF acquisition or outcome
+coding. `--rescreen` reopens exactly the rows a previous run set
 aside on the screen's own verdict, wherever a previous run's rows are being read
 (`--resume`, or the production CSV that `--extracted-test` skips against), so a changed
 voter pair or prompt decides them again. Every other resolved row is carried forward
@@ -102,27 +106,26 @@ verdict alone is not something a reviewer can act on.
 Cached at `cache/llm/classify_{key}.json`, keyed on the prompt version, **both** model
 names and the abstract itself.
 
-## Match-type classification (`classify_match_type`)
+## The may-not-short-circuit gate (`link_original.may_stop_at_a_rule`)
+
+The ladder below returns at the first rung that resolves, so a paper with one
+conspicuous target can end at a rule before anything enumerates the rest. No rule
+asserts that a paper has several originals any more; a rule may only **withhold** the
+cheap path:
 
 ```
-classify_match_type(row)
-    │
-    ├── deterministic rules on title + abstract (run BEFORE the cache, so a stale
-    │   LLM result cannot override them):
-    │       "Many Labs" / "Many Analysts" in the title            → multiple_original
-    │       "replication of N studies/findings/papers", 3 ≤ N < 1900 → multiple_original
-    │
-    ├── fewer than 2 distinct author-year pairs in title + abstract
-    │       → single_original, no LLM call (the only abstract evidence for several
-    │         different targets is several different citations)
-    │
-    └── otherwise: find_all_candidates() → LLM (GEMINI_HEAVY_MODEL) chooses
-            single_original | multiple_match | multiple_original
-            OpenAlex failure or LLM failure → single_original at low confidence
+may_stop_at_a_rule(title_r, abstract_r, year_r)
+    exactly one distinct author-year pair across title + abstract,
+    AND no stated study count ("replications of N studies", 3 ≤ N < 1900)
+        → a deterministic rung may END the row
+    otherwise
+        → its pick is WITHHELD; the ladder continues to a call that can enumerate,
+          and the pick is restored only if that call returned ≤ 1 target
 ```
 
-Registered Replication Reports are deliberately not treated as multi-target: an RRR is
-many labs replicating **one** original.
+A false positive costs one LLM call; a false negative silently drops N-1 originals.
+Project names are not a signal: Many Labs is many labs replicating **one** original, and
+a Registered Replication Report likewise.
 
 ## Original-study resolution ladder (`link_original.run_for_doi`)
 
@@ -168,9 +171,12 @@ against a paper's own claimed count lands in `link_evidence` instead of vanishin
 A target is accepted **only when the model marks it `match_certain`**; otherwise the
 row escalates, because a wrong original is worse than a slow one, and the prompt says
 explicitly that most abstracts do not name their target and that declining is the
-expected answer. When the call returns two or more targets, no single link is written:
-`_resolve_and_code()` reroutes the row through the multi-original pipeline, and writes
-`target_pending` only if that pass also finds nothing.
+expected answer. When the call returns two or more targets, no single link is written: the whole target
+list — mapped records included — reaches `_resolve_and_code()`, which hands it to
+`_per_target_rows()` for one row per original. A target the model saw but could not
+match to a record gets no row (there is no published record to write one about); the
+shortfall is reported in the `link_evidence` of every row that was written, and a paper
+where nothing matched is written `target_pending`.
 
 The 4.5 pick is cached separately from the classification
 (`cache/llm/reftarget_{key}.json`) — the two halves are decided at different points in
@@ -298,7 +304,6 @@ wording, with nothing to bump by hand.
 | `cache/llm/reftarget_*.json` | reference-list target picks |
 | `cache/llm/llm_*.json` | abstract-level and full-text identification |
 | `cache/llm/outcome_*.json` | outcome verdicts, including escalations |
-| `cache/llm/match_type_*.json` | match-type classifications |
 | `cache/parse/parse_*.json` | per-method parse results |
 
 Declines are cached; API failures are not.
@@ -345,8 +350,9 @@ python -m extract.promote_test --all --dry-run # preview
 |----------|------|-------------|
 | `run_extract()` | `extract/run_extract.py` | Main orchestrator |
 | `_front_door_row()` | `extract/run_extract.py` | Turns a screen verdict into a finished row, or `None` to continue |
-| `classify_match_type()` | `extract/run_extract.py` | Routing step (rules, then LLM) |
+| `may_stop_at_a_rule()` | `extract/link_original.py` | Whether a deterministic rung may end the row |
 | `_resolve_and_code()` | `extract/run_extract.py` | Ladder → merge → guard → outcome for one row |
+| `_per_target_rows()` | `extract/run_extract.py` | One row per original the target prompt named |
 | `_outcome_without_coding()` | `extract/run_extract.py` | The outcome gate |
 | `_guard_original_link()` | `extract/run_extract.py` | Self-link rejection and `doi_o` recovery |
 | `classify_replication()` | `shared/llm_client.py` | Two-model front-door vote |
@@ -354,7 +360,6 @@ python -m extract.promote_test --all --dry-run # preview
 | `run_for_doi()` | `extract/link_original.py` | The resolution ladder |
 | `identify_targets_with_llm()` | `shared/llm_client.py` | The merged target prompt: rungs 4, 4.5 and 7 |
 | `assign_target_keys()` | `shared/target_keys.py` | One `@key` namespace over candidates + references |
-| `run_multi_original_for_doi()` | `extract/multi_original.py` | Multi-original pipeline |
 | `extract_outcome()` | `extract/code_outcome.py` | Outcome coding |
 | `find_all_candidates()` | `shared/openalex_client.py` | Candidate search |
 | `parse_all()` / `best_parse_result()` | `shared/pdf_parsing.py` | Run all PDF parsers, score and pick |

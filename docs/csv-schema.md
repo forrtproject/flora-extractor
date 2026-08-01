@@ -61,14 +61,15 @@ All `filtered.csv` columns, plus:
 | Column | Type | Description |
 | ------ | ---- | ----------- |
 | `pair_id` | string | MD5 of `doi_r` + the original's identifier — unique row key; recomputed if `doi_o` is corrected. The identifier is `doi_o` when it is set, else `oa:<oa_work_id_o>`, else `t:<normalised title_o>`, so DOI-less originals of the same replication stay distinct instead of all hashing to the same value. The hash for any row with a `doi_o` is unchanged from before that fallback existed |
-| `original_match_type` | string | `single_original` \| `multiple_match` \| `multiple_original` |
-| `original_match_confidence` | string | `high` \| `medium` \| `low` |
-| `classify_llm_model` | string | Model that classified `original_match_type`; blank when a rule fired, when `--no-llm` was set, or when the classifier LLM failed |
+| `original_match_type` | string | **Observed, not routed**: `multiple_original` when the per-target adapter wrote more than one row for the paper, `single_original` when it wrote one. `multiple_match` is a legacy value in stored data and is never written |
+| `original_match_confidence` | string | `high` when the ladder settled on an original, `low` when the row carries none. `medium` is a legacy value in stored data |
+| `classify_llm_model` | string | Legacy. Always blank: no classifier routes the row any more |
 | `oa_work_id_r` | string | OpenAlex work ID of the replication paper, **bare** form (`W2884670852`). Derived from `openalex_id_r`, which stores the URL form; falls back to a DOI lookup |
 | `oa_work_id_o` | string | OpenAlex work ID of the original study, bare form. Normally resolved from `doi_o` *after* DOI verification, so it always describes the DOI actually written. For a DOI-less original (`doi_o_verification = no_doi`) it is the only identifier the row has: it carries the record identity, drives `pair_id`, and becomes the `url_o` validators click. Blank when there is neither a `doi_o` nor a known OpenAlex record |
+| `study_r` | string | FLoRA's `study_r`: which study **inside this replication** re-tests the original named on this row, as a number — several numbers (`1, 2`) when several do. Blank when the paper reports a single study or does not say. Filled from the target prompt's `replication_study_numbers` on both link paths; blank on rungs that resolve without an LLM. The counterpart of `study_o`, and what makes a multi-original paper readable |
 | `doi_o` | string | DOI of the original (target) study |
 | `title_o` | string | Title of the original study |
-| `study_o` | string | FLoRA's `study_o`: which study **inside** the original paper is targeted, as a number — several numbers (`1, 2`) when one replication targets several studies from the same paper. Blank when the original reports a single study or the replication does not say. Filled from the target prompt's `study_numbers` on the single-original path and from the multi-original answer on the multi path; blank on rungs that resolve without an LLM. A study identifier, never a title (issue #103) |
+| `study_o` | string | FLoRA's `study_o`: which study **inside** the original paper is targeted, as a number — several numbers (`1, 2`) when one replication targets several studies from the same paper. Blank when the original reports a single study or the replication does not say. Filled from the target prompt's `study_numbers` on both link paths; blank on rungs that resolve without an LLM. A study identifier, never a title (issue #103) |
 | `year_o` | int | Publication year of the original study |
 | `authors_o` | string | Authors of the original study (semicolon-separated surnames) |
 | `ref_o` | string | Formatted reference string for the original study |
@@ -204,7 +205,9 @@ Supabase tables.
 
 > **The import needs a schema change in the validation repo before it will run.**
 > `unvalidated` needs `title_r` and `title_o` columns: `study_r` / `study_o` are study
-> identifiers and were carrying paper titles instead. Until those columns exist every
+> identifiers and were carrying paper titles instead. No new column is needed for
+> `study_r` itself — only its value changes, from a hard-coded `""` to the number the
+> target prompt reports. Until those columns exist every
 > insert fails with a PostgREST "column does not exist" error — nothing is written and
 > nothing is corrupted. Tracked in issue #103.
 

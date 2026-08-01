@@ -69,8 +69,8 @@ with all stage teams.
 | ----- | ----- |
 | `search/` | `run_search.py` (orchestrator; index-based merge/append), `openalex_search.py` (cursor-paginated phrase/concept harvest), `external_lists.py`, `deduplicate.py`, `fetch_abstracts.py` (abstract backfill: OpenAlex → EPMC → S2 → CrossRef → Scopus as uniform checkpointed phases) |
 | `filter/` | `rule_filter.py` (deterministic classifier), `run_filter.py` (chunked orchestrator). No LLM: rule-undecidable rows are written through as `needs_review` and settled by Stage 3's screen |
-| `extract/` | `run_extract.py` (orchestrator: chunked read, front-door screen, match type, single/multi routing), `link_original.py` (resolution ladder), `multi_original.py`, `code_outcome.py` (outcome coding; reproductions use the computation/robustness axes), `sanity_check.py` (post-run quarantine to set-aside CSVs; runs on completion and Ctrl-C), `promote_test.py`, `audit_dois.py`, `csv_to_db.py`, `clean_parse_cache.py` |
-| `validate/` | Read-only Flask dashboard: `app.py` registers `dashboard`, `check`, `batch`, `multi_originals` blueprints only |
+| `extract/` | `run_extract.py` (orchestrator: chunked read, front-door screen, per-target adapter), `link_original.py` (resolution ladder), `code_outcome.py` (outcome coding; reproductions use the computation/robustness axes), `sanity_check.py` (post-run quarantine to set-aside CSVs; runs on completion and Ctrl-C), `promote_test.py`, `audit_dois.py`, `csv_to_db.py`, `clean_parse_cache.py` |
+| `validate/` | Read-only Flask dashboard: `app.py` registers the `dashboard`, `check` and `batch` blueprints only |
 | `misc/` | Reference examples and 20-row sample CSVs — do not import |
 
 ## CSV Schema
@@ -130,11 +130,23 @@ the task or the acceptance rule. Candidates and references are one deduplicated
 in both lists is offered once and a re-fetched list cannot renumber a cached pick onto
 another paper. `identify_targets_with_llm()` makes the call: it validates every key
 against that call's key_map (invented key → unmatched target, repeated key keeps the
-first), takes `doi_o` from the mapped record rather than from the model, and reports
-`stated_count` / `unidentified_count` so a shortfall lands in `link_evidence`. A target
-is accepted only when the model marks it `match_certain`. When the call returns two or
-more targets, `_resolve_and_code()` refuses the single link and reroutes the row
-through the multi-original pipeline.
+first), takes `doi_o` from the mapped record rather than from the model, keeps the
+mapped record on each target, and reports `stated_count` / `unidentified_count` so a
+shortfall lands in `link_evidence`. A target is accepted only when the model marks it
+`match_certain`, and `replication_study_numbers` gives `study_r` — which study of the
+REPLICATION re-tests this original.
+
+**The per-target adapter.** A ladder that named targets without accepting one as THE
+link goes to `_per_target_rows()`, which writes one row per original PAPER: resolve the
+key through its record, collapse several studies of one original into one row, guard,
+apply `--resolved-only`, then code the outcome once per original through
+`extract_outcome`. Ranks are renumbered after the drops. Unmatched targets get no row;
+the shortfall is reported in `link_evidence`. Because the ladder returns at its first
+success, `may_stop_at_a_rule()` in `link_original.py` withholds a deterministic pick
+whenever the paper's own text does not rule out a second target, and restores it only
+if an enumerating call then found at most one. `original_match_type` /
+`original_match_confidence` are observations about the answer, not a prediction made
+before it.
 
 **Two outcome prompts, one per vocabulary.** `build_outcome_prompt()` (replication)
 and `build_repro_outcome_prompt()` (reproduction) each serve both passes: supplying the
