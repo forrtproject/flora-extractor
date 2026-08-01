@@ -174,6 +174,10 @@ def _build_metadata_row(record_id: str, row: pd.Series) -> dict:
         "link_evidence":              _s(row.get("link_evidence")),
         "link_confidence":            _s(row.get("link_confidence")),
         "link_llm_model":             _s(row.get("link_llm_model")),
+        # Full-text provenance: which acquisition tier supplied the document and
+        # which parser produced the text. Blank when the row read no document.
+        "pdf_source":                 _s(row.get("pdf_source")),
+        "parse_method":               _s(row.get("parse_method")),
         "screen_categories":          _s(row.get("screen_categories")),
         "outcome_confidence":         _s(row.get("outcome_confidence")),
         "authors_r":                  _s(row.get("authors_r")),

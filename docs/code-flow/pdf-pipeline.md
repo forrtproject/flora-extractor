@@ -32,6 +32,20 @@ Result cached at: cache/pdf/{key}.pdf
 Returns: (path_to_pdf, source_name) or (None, None)
 ```
 
+The tier that supplied the document is written to the row's `pdf_source`, and the
+parser that won the scoring below to `parse_method` — full-text provenance is a
+property of the row, not something a later audit has to reconstruct from cache
+timestamps.
+
+**A content-free OpenAlex XML result is no document.** Every result cached before
+2026-08 was a 174-byte shell (`{"abstract":"","intro":"","methods":"","references":[]}`),
+and since a shell is truthy the ladder's "no document" guard passed it through and
+coded the row as `llm_fulltext` with no full text behind it.
+`openalex_xml_has_content()` in `shared/pdf_sources.py` is the predicate: a result
+with no section text and no references is dropped at the guard, is never cached as a
+success, and a cached shell is ignored on read. Each drop logs a warning naming the
+work, because a shell means the fetch or the TEI parse is broken upstream.
+
 ## PDF Parsing
 
 ```

@@ -86,6 +86,13 @@ Never change a column name without updating `schema.py` and notifying all teams.
 - `type` may be empty on a screened row where nothing (screen or Stage 2) assigned a
   paper type; such rows are not imported by `csv_to_db`.
 - `screen_categories` is |-joined multi-select — match by substring/split, never equality.
+- `pdf_source` and `parse_method` are full-text provenance: the acquisition tier that
+  supplied the document and the parser that won `best_parse_result()`. Both blank when
+  the row acquired or parsed nothing — a `llm_fulltext` row with a blank `pdf_source`
+  is a contradiction. There is no landing-page HTML substitute for a document any
+  more, and a content-free OpenAlex XML result (`openalex_xml_has_content()` in
+  `shared/pdf_sources.py`) is no document either: it ends the row at
+  `no_fulltext_available` and is never cached as a success.
 
 ## Stage 3 — Front Door and Resolution
 

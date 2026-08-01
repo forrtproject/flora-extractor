@@ -317,6 +317,22 @@ def get_openalex_oa_url(doi: str) -> Optional[str]:
 
 # ── OpenAlex GROBID XML (Tier 0) ──────────────────────────────────────────────
 
+def openalex_xml_has_content(oa_xml: "dict | None") -> bool:
+    """True when an OpenAlex GROBID-XML result carries any text to read.
+
+    Every one of the 60 results cached before 2026-08 was a 174-byte shell —
+    every section empty, no references — and a shell is truthy, so the ladder's
+    "no document" guard let it through and the row was coded as `llm_fulltext`
+    from nothing at all. A result with no section text and no references is no
+    document, whatever the API said about has_content.
+    """
+    sections = (oa_xml or {}).get("sections") or {}
+    if sections.get("references"):
+        return True
+    return any(str(sections.get(name) or "").strip()
+               for name in sections if name != "references")
+
+
 def get_openalex_fulltext(openalex_id: str) -> "dict | None":
     """
     Fetch pre-parsed GROBID XML from OpenAlex content API for a work.
@@ -329,7 +345,9 @@ def get_openalex_fulltext(openalex_id: str) -> "dict | None":
       4. Cache result in OA_XML_CACHE_DIR/oa_xml_{hash}.json
 
     Returns {"source": "openalex_xml", "sections": {...}, "xml_url": str} or None.
-    Never speculatively hits content.openalex.org.
+    Never speculatively hits content.openalex.org. A content-free result is None,
+    and is not cached: it is not an answer about the paper, it is a broken fetch or
+    parse, and caching it made the breakage permanent and invisible.
     """
     if not openalex_id:
         return None
@@ -342,9 +360,14 @@ def get_openalex_fulltext(openalex_id: str) -> "dict | None":
     cache_file = OA_XML_CACHE_DIR / f"oa_xml_{key}.json"
     if cache_file.exists():
         try:
-            return json.loads(cache_file.read_text(encoding="utf-8"))
+            cached = json.loads(cache_file.read_text(encoding="utf-8"))
         except Exception:
-            pass
+            cached = None
+        if cached is not None:
+            if openalex_xml_has_content(cached):
+                return cached
+            log.warning("OpenAlex XML cache for %s is a content-free shell — "
+                        "ignoring it and re-fetching", oa_id)
 
     # Step 1 — check has_content flag
     time.sleep(0.1)
@@ -395,6 +418,12 @@ def get_openalex_fulltext(openalex_id: str) -> "dict | None":
         return None
 
     result = {"source": "openalex_xml", "sections": sections, "xml_url": xml_url}
+
+    if not openalex_xml_has_content(result):
+        log.warning("OpenAlex reported grobid_xml for %s but the parsed result is "
+                    "empty (no sections, no references) — treating it as no document",
+                    oa_id)
+        return None
 
     # Step 4 — cache
     try:
@@ -457,65 +486,6 @@ def scrape_pdf_from_landing_page(landing_url: str) -> Optional[str]:
 
     except Exception as e:
         log.debug("Landing-page scrape failed (%s): %s", landing_url, e)
-        return None
-
-
-# ── HTML text extraction fallback ─────────────────────────────────────────────
-
-def extract_html_text_as_fulltext(url: str, doi: str = "") -> Optional[str]:
-    """
-    Download a URL that returned HTML (not PDF) and extract visible text.
-    Useful for landing pages (PsyArXiv, OSF, some journals) that expose
-    the abstract and sometimes the full text in HTML.
-
-    Saves extracted text to PDF_CACHE_DIR/<hash>.txt (max 50 000 chars).
-    Returns the text, or None if extraction fails or yields too little text.
-    """
-    key        = cache_key(doi or url)
-    cache_file = PDF_CACHE_DIR / f"{key}.txt"
-
-    if cache_file.exists():
-        return cache_file.read_text(encoding="utf-8")
-
-    try:
-        r = requests.get(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (compatible; academic research bot)",
-                "Accept"    : "text/html,application/xhtml+xml",
-            },
-            timeout=20,
-            allow_redirects=True,
-        )
-        if r.status_code != 200:
-            return None
-        ct = r.headers.get("content-type", "")
-        if "html" not in ct.lower():
-            return None
-
-        from lxml import etree
-        parser = etree.HTMLParser()
-        tree   = etree.fromstring(r.content, parser)
-
-        # Remove script, style, nav, footer to reduce noise
-        for tag in tree.xpath("//script | //style | //nav | //footer | //header"):
-            parent = tag.getparent()
-            if parent is not None:
-                parent.remove(tag)
-
-        raw  = " ".join(tree.xpath("//text()"))
-        text = re.sub(r"\s+", " ", raw).strip()
-
-        if len(text) < 300:   # too little content to be useful
-            return None
-
-        text = text[:50_000]
-        cache_file.write_text(text, encoding="utf-8")
-        log.info("HTML text extracted (%d chars) from %s", len(text), url)
-        return text
-
-    except Exception as e:
-        log.debug("HTML text extraction failed (%s): %s", url, e)
         return None
 
 
@@ -859,7 +829,6 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
         pdf_path       str | None
         pdf_ok         bool
         pdf_url_tried  list[str]
-        html_text      str          — extracted landing-page text when PDF unavailable
         openalex_xml   dict | None  — structured content from OpenAlex GROBID XML (Tier 0)
     """
     doi_r     = clean_doi(doi_r)
@@ -906,8 +875,8 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
     # Tier 4 — Unpaywall direct PDFs
     # Every other tier is guarded by `if not dl["success"]`; this one was not, so a
     # DOI already served by arXiv/OSF/OpenAlex still cost an Unpaywall round-trip.
-    # Tiers 8 and 11 are the only other consumers of uw_landing/uw_direct and both
-    # sit inside `if not dl["success"]` blocks, so the empty list is never reached.
+    # Tier 8 is the only other consumer of uw_landing/uw_direct and it sits inside
+    # an `if not dl["success"]` block, so the empty list is never reached.
     uw_all     = get_all_unpaywall_pdf_urls(doi_r) if not dl["success"] else []
     uw_direct  = [u for u in uw_all if u["type"] == "pdf"]
     uw_landing = [u for u in uw_all if u["type"] == "landing"]
@@ -958,23 +927,11 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
             dl      = pw_result
             all_tried.append(pdf_url)
 
-    # Tier 11 — HTML text extraction (fallback when no PDF available)
-    # If all PDF tiers failed but we have a URL, extract visible text.
-    html_text = ""
-    if not dl["success"]:
-        best_url = (uw_landing[0]["url"] if uw_landing else None) or \
-                   (uw_direct[0]["url"] if uw_direct else None)
-        if best_url:
-            html_text = extract_html_text_as_fulltext(best_url, doi_r) or ""
-            if html_text:
-                log.info("  [%s] HTML text fallback: %d chars", doi_r, len(html_text))
-
     return {
         "pdf_url"       : pdf_url,
-        "pdf_source"    : pdf_src if dl["success"] else ("html_text" if html_text else (pdf_src or "none")),
+        "pdf_source"    : pdf_src if dl["success"] else (pdf_src or "none"),
         "pdf_path"      : str(dl["path"]) if dl.get("path") else None,
         "pdf_ok"        : dl["success"],
         "pdf_url_tried" : all_tried,
-        "html_text"     : html_text,
         "openalex_xml"  : oa_xml,
     }

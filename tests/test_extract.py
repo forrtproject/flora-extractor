@@ -731,7 +731,6 @@ _MOCK_LINK = {
     "resolved_author_o": "Smith",
     "llm_evidence": "Smith (1935)",
     "grobid_intro": "",
-    "html_text": "",
 }
 _MOCK_OUTCOME = {
     "outcome": "success", "outcome_phrase": "replicated",
@@ -3238,6 +3237,62 @@ def test_study_r_is_not_written_onto_an_unresolved_link():
                                     "filter_status": "replication"}),
                          unresolved, {}, "single_original", "low", 1, 1)
     assert row["study_r"] == ""
+
+
+class TestFulltextProvenanceReachesTheRow:
+    """A row coded llm_fulltext asserts a model read the paper; pdf_source and
+    parse_method are what say WHICH document, on both writer paths. "none" is the
+    waterfall's word for a failed attempt and is blank on the row."""
+
+    _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "T",
+                      "filter_status": "replication"})
+
+    def test_the_single_link_path_records_the_tier_and_the_parser(self):
+        link = {"resolution_method": "llm_fulltext", "resolved": True,
+                "resolved_doi_o": "10.1/orig", "resolved_title_o": "O",
+                "resolved_year_o": 2009, "resolved_author_o": "Smith",
+                "resolved_study_o": "", "resolved_study_r": "",
+                "pdf_source": "unpaywall_pdf", "parse_method": "pdfminer"}
+        with patch("extract.run_extract._build_ref_o", return_value=("", "", "")):
+            row = _merge_row(self._ROW, link, {}, "single_original", "high", 1, 1)
+        assert (row["pdf_source"], row["parse_method"]) == ("unpaywall_pdf", "pdfminer")
+
+    def test_a_row_that_acquired_nothing_carries_no_provenance(self):
+        link = {"resolution_method": "no_fulltext_available", "resolved": False,
+                "resolved_doi_o": "", "resolved_title_o": "", "resolved_year_o": None,
+                "resolved_author_o": "", "resolved_study_o": "",
+                "pdf_source": "none", "parse_method": ""}
+        with patch("extract.run_extract._build_ref_o", return_value=("", "", "")):
+            row = _merge_row(self._ROW, link, {}, "single_original", "low", 1, 1)
+        assert (row["pdf_source"], row["parse_method"]) == ("", "")
+
+    def test_every_per_target_row_carries_the_papers_provenance(self):
+        """The whole group was read from one document, so one provenance covers it."""
+        link = {"targets": [
+                    {"match_certain": True, "target_as_named": "O1",
+                     "study_numbers": "", "replication_study_numbers": "",
+                     "evidence_quote": "q",
+                     "record": {"doi": "10.1/o1", "title": "O1",
+                                "first_author": "Smith", "year": 2009}},
+                    {"match_certain": True, "target_as_named": "O2",
+                     "study_numbers": "", "replication_study_numbers": "",
+                     "evidence_quote": "q",
+                     "record": {"doi": "10.1/o2", "title": "O2",
+                                "first_author": "Jones", "year": 2011}}],
+                "target_stage": "llm_fulltext", "unidentified_count": 0,
+                "llm_model": "m", "pdf_source": "openalex_xml",
+                "parse_method": "openalex_xml", "pdf_ok": False}
+        with patch("extract.run_extract._build_ref_o", return_value=("", "", "")), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch.object(run_extract, "_get_outcome", return_value={}), \
+             patch.object(run_extract, "_verify_row", side_effect=lambda r: r):
+            rows = run_extract._per_target_rows(self._ROW, "10.1/rep", link, None,
+                                                no_llm=True, no_pdf=True,
+                                                resolved_only=False,
+                                                recalibrate_outcomes=False)
+        assert len(rows) == 2
+        assert all((r["pdf_source"], r["parse_method"])
+                   == ("openalex_xml", "openalex_xml") for r in rows)
 
 
 def test_no_live_reference_to_the_deleted_builders():

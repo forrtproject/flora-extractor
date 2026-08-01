@@ -117,12 +117,6 @@ class TestPromptRendering:
         assert prompt.index("PAPER") < prompt.index("REVIEWER NOTE:")
         assert prompt.index("REVIEWER NOTE:") < prompt.index("TITLE: T")
 
-    def test_html_text_substitutes_for_a_missing_introduction(self):
-        prompt = build_target_prompt("T", "A", [], html_text="Landing page body.")
-        assert "INTRODUCTION:\nLanding page body." in prompt
-        assert "INTRODUCTION:\nParsed intro." in build_target_prompt(
-            "T", "A", [], intro="Parsed intro.", html_text="Landing page body.")
-
 
 class TestDistinctDoisNeverMerge:
     def test_same_title_and_year_but_two_registered_dois_stay_apart(self):
