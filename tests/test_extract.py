@@ -1627,6 +1627,24 @@ class TestRecordTypeCheckRecode:
         assert mock_llm.call_count == 2
         assert result["outcome"] == "failure"
 
+    def test_a_failed_recode_is_not_cached(self, tmp_path):
+        """The recode's own call failing yields api_error, which the outer call must not
+        checkpoint under the replication key — a re-run has to try again."""
+        first, _ = self._run(
+            tmp_path, [self._ABS_CBD, self._FT_SAYS_REPRO, None, None, None])
+        assert first["outcome"] == "api_error"
+        second, mock_llm = self._run(
+            tmp_path, [self._ABS_CBD, self._FT_SAYS_REPRO, self._REPRO_VERDICT])
+        assert mock_llm.call_count == 3
+        assert second["outcome"] == "computational issues, not checked"
+
+    def test_a_successful_recode_is_cached(self, tmp_path):
+        self._run(tmp_path, [self._ABS_CBD, self._FT_SAYS_REPRO, self._REPRO_VERDICT])
+        result, mock_llm = self._run(tmp_path, [])
+        assert mock_llm.call_count == 0
+        assert result["outcome"] == "computational issues, not checked"
+        assert result["record_type"] == "reproduction"
+
     def test_a_recoded_type_reaches_the_row(self):
         row = run_extract._apply_outcome(
             {"type": "replication"},

@@ -352,11 +352,19 @@ def _unsettled(output: dict, is_repro: bool) -> bool:
     return output["outcome"] == "cannot_be_determined"
 
 
-def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
-                 original_title: str = "", original_authors: str = "",
-                 original_year: str = "", record_type: str = "replication",
-                 recoded: bool = False) -> dict:
-    """LLM-based outcome extraction.
+def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
+                    original_title: str = "", original_authors: str = "",
+                    original_year: str = "", record_type: str = "replication",
+                    recoded: bool = False) -> tuple[dict, bool]:
+    """LLM-based outcome extraction, with whether the result may be cached.
+
+    Two results are deliberately NOT cacheable: api_error after provider exhaustion,
+    and the abstract verdict returned when the full-text escalation itself failed.
+    Both are transient, and a cached one is a definitive miss the pipeline never
+    retries. A recode inherits the cacheability of the call it delegated to — the
+    outer call cannot tell a delegated api_error from a delegated verdict by looking
+    at the dict, and writing one under the original vocabulary's key checkpointed an
+    outage as an answer.
 
     The primary pass reads the abstract. If it leaves the verdict unsettled (or the
     abstract is empty) and parsed fulltext is available, a second, fulltext-based
@@ -388,7 +396,7 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
         cached.setdefault("outcome_reasoning", "")
-        return cached
+        return cached, True
 
     token_counter.set_stage("extract_outcome")
 
@@ -404,9 +412,10 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
     result, model_used = _call_outcome_llm(prompt, doi_r)
     if not result:
         log.warning("[%s] outcome LLM failed after all retries — marking api_error", doi_r)
-        return _api_error
+        return _api_error, False
 
     output = _normalise(result, prompt, model_used, record_type)
+    cacheable = True
 
     # Escalation: the abstract could not settle it → read the parsed fulltext.
     if OUTCOME_FULLTEXT_ESCALATION and fulltext and (_unsettled(output, is_repro)
@@ -419,7 +428,7 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
             # escalation for good; the fulltext call must stay retryable.
             log.warning("[%s] outcome fulltext escalation failed — returning the "
                         "abstract verdict uncached so a re-run retries it", doi_r)
-            return output
+            return output, False
         output = _normalise(esc_result, esc_prompt, esc_model, record_type,
                             fulltext_pass=True)
         if not output["out_quote_source"] and output["outcome_phrase"]:
@@ -434,14 +443,28 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
         if not recoded and output["record_type_check"] == other:
             log.info("[%s] full text says this is a %s, not a %s — re-coding once",
                      doi_r, other, record_type)
-            output = _llm_outcome(doi_r, title_r, abstract_r, fulltext,
-                                  original_title=original_title,
-                                  original_authors=original_authors,
-                                  original_year=original_year,
-                                  record_type=other, recoded=True)
-            output["record_type"] = other
+            output, cacheable = _outcome_result(doi_r, title_r, abstract_r, fulltext,
+                                                original_title=original_title,
+                                                original_authors=original_authors,
+                                                original_year=original_year,
+                                                record_type=other, recoded=True)
+            output = {**output, "record_type": other}
 
-    write_cache(LLM_CACHE_DIR, key, output)
+    if cacheable:
+        write_cache(LLM_CACHE_DIR, key, output)
+    return output, cacheable
+
+
+def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
+                 original_title: str = "", original_authors: str = "",
+                 original_year: str = "", record_type: str = "replication") -> dict:
+    """The outcome row for *doi_r* — see _outcome_result, whose cacheability flag the
+    pipeline has no use for."""
+    output, _ = _outcome_result(doi_r, title_r, abstract_r, fulltext,
+                                original_title=original_title,
+                                original_authors=original_authors,
+                                original_year=original_year,
+                                record_type=record_type)
     return output
 
 
