@@ -159,6 +159,29 @@ def test_disagreement_beats_the_outcome_rule(tmp_path, monkeypatch):
     assert set(nar["doi_r"]) == {"10.1/nar"}
 
 
+def test_an_unresolved_row_routes_on_its_link_not_its_outcome(tmp_path, monkeypatch):
+    """The abstract pass can answer not_a_replication on a row whose target was never
+    resolved. Such a row is awaiting a target, not a settled finding, so it belongs in
+    target_pending.csv — not_a_replication.csv is read as the pipeline's verdict."""
+    monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
+    ex = tmp_path / "extracted.csv"
+    _write(ex, [
+        {"doi_r": "10.1/tp", "outcome": "not_a_replication", "openalex_id_r": "W1",
+         "out_quote_source": "abstract", "link_method": "target_pending"},
+        {"doi_r": "10.1/nar", "outcome": "not_a_replication", "openalex_id_r": "W2",
+         "link_method": "not_a_replication"},
+    ])
+
+    s = sc.run_sanity_check(ex, move=True, deep=False)
+
+    assert s["moved"]["target_pending"] == 1
+    assert s["moved"]["not_a_replication"] == 1
+    tp = pd.read_csv(tmp_path / "target_pending.csv", dtype=str, keep_default_na=False)
+    nar = pd.read_csv(tmp_path / "not_a_replication.csv", dtype=str, keep_default_na=False)
+    assert set(tp["doi_r"]) == {"10.1/tp"}
+    assert set(nar["doi_r"]) == {"10.1/nar"}
+
+
 def test_provisional_title_search_rows_are_set_aside(tmp_path, monkeypatch):
     """A title-search link is ~50% precise and its failure mode is invisible to
     doi_o_verification, so a verified-looking row must still leave extracted.csv

@@ -3022,6 +3022,26 @@ class TestPerTargetAdapter:
         assert rows[0]["original_rank"] == 1
         assert rows[0]["n_originals"] == 1
 
+    def test_a_demoted_target_row_stays_pending_beside_a_kept_sibling(self):
+        """The adapter codes the outcome AFTER the guard, so a demoted target has no
+        verdict to keep: it must still be written unresolved and pending, next to a
+        sibling that was coded — the shape sanity_check routes to target_pending.csv
+        and csv_to_db skips, rather than a row with a verdict on no original."""
+        targets = [_mock_target("@self", "10.1/rep", "The paper itself", "Self", 2020),
+                   _mock_target("@jones2011", "10.1/b", "Second original", "Jones", 2011)]
+        rows, coder = self._run(targets)
+
+        assert coder.call_count == 1  # only the surviving target is coded
+        demoted, kept = rows
+        assert demoted["link_method"] == "target_pending"
+        assert demoted["doi_o"] == "" and demoted["title_o"] == ""
+        assert demoted["outcome"] == "pending"
+        assert demoted["outcome_phrase"] == "" and demoted["out_quote_source"] == ""
+        assert demoted["original_match_confidence"] == "low"
+        assert kept["doi_o"] == "10.1/b" and kept["outcome"] == _MOCK_OUTCOME["outcome"]
+        assert [r["original_rank"] for r in rows] == [1, 2]
+        assert all(r["n_originals"] == 2 for r in rows)
+
     def test_an_unmatched_target_is_reported_not_written(self):
         """A target with no keyed record names a study we cannot identify: there is no
         published record to write a row about, and the shortfall belongs on the rows
