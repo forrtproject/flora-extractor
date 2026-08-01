@@ -211,6 +211,18 @@ def _target_line(entry: dict) -> str:
             f"({entry.get('year') or '?'}). {entry.get('title') or ''}").strip()
 
 
+def rendered_reference_entries(entries: list[dict]) -> list[dict]:
+    """The entries build_target_prompt renders under REFERENCE LIST.
+
+    A work that is also a candidate is shown once, in the candidate block, and
+    assign_target_keys has already dropped the entries with neither a title nor a DOI.
+    link_original counts what this returns rather than the raw parsed list, so the
+    stored n_references_sent cannot drift from what the model was actually shown.
+    """
+    return [e for e in entries
+            if e.get("in_references") and not e.get("in_candidates")]
+
+
 def _abstract_tail(abstract_r: str, pdf_abstract: str) -> str:
     """The part of the PDF's abstract the OpenAlex abstract does not already carry.
 
@@ -273,8 +285,7 @@ def build_target_prompt(study_r:        str,
                       + "\n".join(cited))
     # Never truncated: the whole point of this prompt is to find the target in the
     # reference list, and a cut list can simply not contain it.
-    refs = [_target_line(e) for e in entries
-            if e.get("in_references") and not e.get("in_candidates")]
+    refs = [_target_line(e) for e in rendered_reference_entries(entries)]
     if refs:
         blocks.append("REFERENCE LIST:\n" + "\n".join(refs))
 
@@ -1008,10 +1019,10 @@ def _canonical_source(fn: FunctionType) -> str:
 
 def _collect(fn: FunctionType, parts: dict[str, str]) -> None:
     """Record *fn*'s canonical source and, transitively, every module-level string or
-    int constant and helper function it references.
+    numeric constant and helper function it references.
 
-    Ints count because a truncation cap changes what the model is sent just as surely
-    as a re-worded sentence does.
+    Numbers count because a truncation cap changes what the model is sent just as
+    surely as a re-worded sentence does.
     """
     tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
     for node in ast.walk(tree):
@@ -1021,7 +1032,7 @@ def _collect(fn: FunctionType, parts: dict[str, str]) -> None:
         if name in parts or not hasattr(_MODULE, name):
             continue
         value = getattr(_MODULE, name)
-        if isinstance(value, int) and not isinstance(value, bool):
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
             parts[name] = repr(value)
         elif isinstance(value, str):
             # The value, not the expression that built it: REPRO_JSON and friends

@@ -111,6 +111,7 @@ function renderResults(data) {
     try { refs = JSON.parse(data.grobid_refs_json) || []; } catch (_) { refs = []; }
   }
   const nRefsSent    = Number(data.n_references_sent) || 0;
+  const nRefsParsed  = Number(data.n_grobid_refs) || 0;
   const grobid_abs   = data.grobid_abstract || '';
   const grobid_intro = data.grobid_intro  || '';
   const candidates   = data.candidates    || [];
@@ -222,8 +223,8 @@ function renderResults(data) {
   if (grobid_stat || grobid_abs || grobid_intro || refs.length > 0) {
     let gContent = grid('repeat(3,1fr)', [
       `<div>${field('Status', '')}${pill(grobid_stat, grobid_stat==='success'?'background:#dcfce7;color:#166534':'background:#fef3c7;color:#92400e')}</div>`,
-      field('References parsed', String(nRefsSent || refs.length)),
-      '',
+      field('References parsed', String(nRefsParsed || refs.length)),
+      field('References sent', String(nRefsSent)),
     ]);
 
     if (grobid_abs) gContent += collap('Abstract (PDF extract)', esc(grobid_abs));

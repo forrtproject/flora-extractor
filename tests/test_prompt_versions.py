@@ -108,6 +108,16 @@ class TestChangeDetection:
         changed = {n for n in PROMPT_NAMES if after[n] != before[n]}
         assert changed == {"build_outcome_prompt", "build_repro_outcome_prompt"}
 
+    def test_truncation_cap_edit_reaches_the_prompt_that_slices_with_it(self, monkeypatch):
+        """A cap is not wording, but it decides how much of the paper the model reads,
+        so a verdict taken at 3000 characters must not be replayed for one at 1000."""
+        before = self._versions()
+        monkeypatch.setattr(prompts, "TARGET_ABSTRACT_CHARS", 1000)
+        prompt_version.cache_clear()
+        after = self._versions()
+        changed = {n for n in PROMPT_NAMES if after[n] != before[n]}
+        assert changed == {"build_target_prompt"}
+
     def test_json_system_message_edit_changes_every_version(self, monkeypatch):
         """It is spliced into every OpenAI/OpenRouter request at the provider layer,
         so it is part of what the model was asked even though no builder names it."""
