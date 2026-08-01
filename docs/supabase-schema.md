@@ -57,10 +57,23 @@ Completed validation records with per-validator and LLM check results.
 
 Per-record metadata. Not currently used by the monitoring dashboard. Written by
 `extract/csv_to_db.py::_build_metadata_row` — the filter, link and outcome method /
-confidence / model fields, the author, journal and OpenAlex id fields, the
-original rank and count, and `screen_categories` (text, `|`-joined; see
-[`csv-schema.md`](csv-schema.md)). A column added there needs a matching
-`alter table record_metadata add column …` before the next import.
+confidence / model fields, the author, journal and OpenAlex id fields, and the
+original rank and count. A column added there needs a matching
+`alter table record_metadata add column …` before the next import: PostgREST
+rejects the whole insert when the payload names a column the table does not have.
+
+**Pending migration.** `_build_metadata_row` already sends these; the validation repo
+has to add them before the next import runs (tracked in forrtproject/flora-validation#3):
+
+| Column | Type | Sent since | Description |
+|--------|------|-----------|-------------|
+| `screen_categories` | text | — | `\|`-joined union of the front-door voters' category labels; see [`csv-schema.md`](csv-schema.md) |
+| `pdf_source` | text | forrtproject/flora-extractor#124 | Acquisition tier that supplied the full text (`arxiv`, `unpaywall_pdf`, `openalex_xml`, …); blank when the row read no document |
+| `parse_method` | text | forrtproject/flora-extractor#124 | Parser whose result was sent to the LLM (`pdfminer`, `grobid`, `openalex_xml`, …); blank when nothing was parsed |
+
+The reproduction axis columns (`outcome_computation`, `outcome_computational_quote`,
+`out_quote_computational_source`, `outcome_robustness`, `outcome_robustness_quote`,
+`out_quote_robust_source`) are the same kind of pending entry on `unvalidated`.
 
 ## Dashboard endpoints
 
