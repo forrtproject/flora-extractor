@@ -628,96 +628,69 @@ def _drop_openalex_misses() -> int:
 # ---------------------------------------------------------------------------
 
 def enrich_abstracts(df: "pd.DataFrame") -> "pd.DataFrame":
-    """Fill missing abstracts in *df* in-place using Europe PMC, then CrossRef, then S2.
+    """Fill missing abstracts in *df* in place using Europe PMC, then CrossRef, then S2.
 
-    Called by run_search._merge_into_candidates_csv before writing new rows
-    so every candidate arrives with the best available abstract.
+    Called by run_search._merge_into_candidates_csv before writing new rows so every
+    candidate arrives with the best available abstract. It runs the same phase
+    runners, per-identifier cache and checkpoint as the standalone ``run()`` command,
+    so results are shared across both code paths and neither re-pays for the other's
+    misses. Europe PMC goes first for the same reason it is Phase 2 there: it is the
+    only one of the three that covers the Elsevier/Springer records the others
+    structurally lack, and it needs no API key.
 
-    Europe PMC goes first for the same reason it is Phase 2 in run(): it is the only
-    source that covers the Elsevier/Springer records the other two structurally lack,
-    and it needs no API key. Rows are batched EPMC_BATCH_SIZE at a time before the
-    per-row CrossRef/S2 loop, so a merge of new candidates costs a handful of calls
-    rather than one per row.
-
-    Modifies df in-place and returns it. Uses the same cache as the standalone
-    fetch_abstracts run command, so results are shared across both code paths.
+    Scopus is deliberately absent — its weekly quota is worth spending deliberately
+    via ``fetch_abstracts --scopus-priority``, not incidentally during a merge.
     """
-    import pandas as pd
+    def _missing_mask():
+        return df["abstract_r"].fillna("").str.strip() == ""
 
-    s2_key = S2_API_KEY
-    missing_mask = df["abstract_r"].fillna("").str.strip() == ""
-    if not missing_mask.any():
+    if not _missing_mask().any():
         return df
-
-    n_missing = missing_mask.sum()
+    n_missing = int(_missing_mask().sum())
     log.debug("enrich_abstracts: %d rows have no abstract — trying Europe PMC + CrossRef + S2",
               n_missing)
-
-    n_found = 0
 
     def _fetchable_doi(doi_r) -> str:
         """Cleaned DOI for a row an abstract could actually exist for, else "".
 
-        Both passes below must apply the dataset-prefix rule identically — filtering
-        in only one of them silently sends dataset DOIs to the other.
+        A dataset DOI has no abstract anywhere, so asking any source for one only
+        buys a confirmed miss.
         """
         doi = clean_doi(str(doi_r or ""))
         return "" if doi.split("/")[0] in _DATASET_PREFIXES else doi
 
-    # Europe PMC pass — batched.
-    epmc_rows: dict = {}
-    for idx, row in df[missing_mask].iterrows():
-        doi = _fetchable_doi(row.get("doi_r", ""))
-        if doi:
-            epmc_rows[idx] = doi
+    def _dois_still_missing() -> list[str]:
+        dois = (_fetchable_doi(v) for v in df.loc[_missing_mask(), "doi_r"])
+        return [d for d in dict.fromkeys(dois) if d]
 
-    pending = [d for d in dict.fromkeys(epmc_rows.values())
-               if _read_abstract_cache(f"epmc:{d}") is None]
-    for start in range(0, len(pending), EPMC_BATCH_SIZE):
-        batch = pending[start : start + EPMC_BATCH_SIZE]
-        time.sleep(EPMC_RATE_SEC)
-        fetched = _fetch_epmc_batch(batch)
-        if fetched is None:
-            continue   # transient — leave uncached so a later run retries
-        for doi, abstract in fetched.items():
-            _write_abstract_cache(f"epmc:{doi}", abstract if abstract else "__none__")
-    for idx, doi in epmc_rows.items():
-        cached = _read_abstract_cache(f"epmc:{doi}")
-        if cached and cached != "__none__":
-            df.at[idx, "abstract_r"] = cached
-            n_found += 1
+    def _fill_from_cache(namespace: str) -> int:
+        filled = 0
+        for idx in df.index[_missing_mask()]:
+            doi = _fetchable_doi(df.at[idx, "doi_r"])
+            cached = _read_abstract_cache(f"{namespace}:{doi}") if doi else None
+            if cached and cached != "__none__":
+                df.at[idx, "abstract_r"] = cached
+                filled += 1
+        return filled
 
-    missing_mask = df["abstract_r"].fillna("").str.strip() == ""
-    for idx, row in df[missing_mask].iterrows():
-        doi = _fetchable_doi(row.get("doi_r", ""))
-        if not doi:
-            continue
+    # The found-index sidecar only exists to speed up run()'s cross-phase skip
+    # checks over a 500k-row worklist; here the re-read of df after each phase does
+    # that job, so the runners get a throwaway set.
+    found_index: set[str] = set()
 
-        # CrossRef — only cache definitive results; a transient failure is left
-        # uncached so a later run retries the DOI.
-        cached = _read_abstract_cache(f"doi:{doi}")
-        if cached is None:
-            time.sleep(CROSSREF_RATE_SEC)
-            cr_abstract, cr_status = _fetch_crossref_abstract(doi)
-            if cr_status != "transient":
-                _write_abstract_cache(f"doi:{doi}", cr_abstract if cr_abstract else "__none__")
-            cached = cr_abstract if cr_abstract else "__none__"
-        abstract = cached if cached and cached != "__none__" else None
+    _run_batch_phase("enrich — Europe PMC", "epmc", _dois_still_missing(),
+                     EPMC_BATCH_SIZE, EPMC_RATE_SEC, _fetch_epmc_batch, found_index)
+    n_found = _fill_from_cache("epmc")
 
-        # S2 fallback
-        if not abstract and s2_key:
-            s2_cached = _read_abstract_cache(f"s2:{doi}")
-            if s2_cached is None:
-                time.sleep(S2_RATE_SEC)
-                s2_abstract, s2_status = _fetch_s2_abstract(doi, s2_key)
-                if s2_status != "transient":
-                    _write_abstract_cache(f"s2:{doi}", s2_abstract if s2_abstract else "__none__")
-                s2_cached = s2_abstract if s2_abstract else "__none__"
-            abstract = s2_cached if s2_cached and s2_cached != "__none__" else None
+    _run_item_phase("enrich — CrossRef", "doi", _dois_still_missing(), CROSSREF_RATE_SEC,
+                    _fetch_crossref_abstract, found_index, progress_every=2000)
+    n_found += _fill_from_cache("doi")
 
-        if abstract:
-            df.at[idx, "abstract_r"] = abstract
-            n_found += 1
+    if S2_API_KEY:
+        _run_item_phase("enrich — S2", "s2", _dois_still_missing(), S2_RATE_SEC,
+                        lambda d: _fetch_s2_abstract(d, S2_API_KEY), found_index,
+                        progress_every=2000)
+        n_found += _fill_from_cache("s2")
 
     log.info("enrich_abstracts: recovered %d / %d missing abstracts", n_found, n_missing)
     return df
@@ -853,6 +826,140 @@ def _load_scopus_priority(path: Path) -> dict[str, int]:
     return ranks
 
 
+# ---------------------------------------------------------------------------
+# Phase runners — one contract for all five sources
+# ---------------------------------------------------------------------------
+
+def _phase_targets(worklist: list[dict], namespace: str, done: set[str],
+                   found_index: set[str]) -> list[str]:
+    """Cleaned DOIs a DOI-keyed phase still has to try.
+
+    A DOI drops out if this phase has already tried it (its own checkpoint
+    namespace) or if any earlier phase already recovered an abstract for the row.
+    """
+    targets: list[str] = []
+    for r in worklist:
+        doi = clean_doi(str(r["doi_r"] or ""))
+        if not doi or f"{namespace}:{doi}" in done:
+            continue
+        if _already_resolved(r["oa"], r["doi_r"], found_index):
+            continue
+        targets.append(doi)
+    return targets
+
+
+def _run_batch_phase(label: str, namespace: str, ids: list[str], batch_size: int,
+                     rate_sec: float, fetch, found_index: set[str]) -> int:
+    """Run one batched phase over *ids*; return how many abstracts it recovered.
+
+    *fetch* takes the uncached ids of one batch and returns {id: abstract | None},
+    or None for a whole-batch failure. That distinction is the contract: a failed
+    batch leaves its ids un-cached and un-checkpointed so a later run retries them,
+    while an id absent from a SUCCESSFUL response is a definitive miss, cached as
+    ``__none__`` and checkpointed so no later run pays for it again.
+    TRANSIENT_BREAKER_LIMIT consecutive whole-batch failures stop the phase — the
+    host is throttling us, and a rerun resumes from the checkpoint.
+    """
+    log.info("%s: %d rows to try.", label, len(ids))
+    found = 0
+    consecutive_transient = 0
+
+    for batch_start in range(0, len(ids), batch_size):
+        batch = ids[batch_start : batch_start + batch_size]
+
+        results: dict[str, Optional[str]] = {}
+        uncached: list[str] = []
+        for ident in batch:
+            cached = _read_abstract_cache(f"{namespace}:{ident}")
+            if cached is not None:
+                results[ident] = cached if cached != "__none__" else None
+            else:
+                uncached.append(ident)
+
+        batch_transient = False
+        if uncached:
+            time.sleep(rate_sec)
+            fetched = fetch(uncached)
+            if fetched is None:
+                batch_transient = True
+                consecutive_transient += 1
+                log.warning("%s: batch failed; %d ids left for retry.", label, len(uncached))
+                if consecutive_transient >= TRANSIENT_BREAKER_LIMIT:
+                    log.warning("%s: throttled — stopping phase; rerun to resume. "
+                                "(%d consecutive transient batches)",
+                                label, consecutive_transient)
+                    break
+            else:
+                consecutive_transient = 0
+                for ident, abstract in fetched.items():
+                    _write_abstract_cache(f"{namespace}:{ident}", abstract or "__none__")
+                    results[ident] = abstract
+
+        for ident in batch:
+            if batch_transient and ident in uncached:
+                continue
+            _append_checkpoint(f"{namespace}:{ident}")
+            if results.get(ident):
+                found += 1
+                found_index.add(f"{namespace}:{ident}")
+
+        done_so_far = batch_start + len(batch)
+        if done_so_far % 5000 < batch_size:
+            log.info("  %s progress: %d / %d  (found: %d)",
+                     label, done_so_far, len(ids), found)
+
+    log.info("%s complete. Abstracts found: %d", label, found)
+    return found
+
+
+def _run_item_phase(label: str, namespace: str, dois: list[str], rate_sec: float,
+                    fetch, found_index: set[str], progress_every: int) -> int:
+    """Run one per-DOI phase; return how many abstracts it recovered.
+
+    *fetch* returns (abstract, status) with status ``ok`` / ``empty`` (a definitive
+    miss, cached and checkpointed) / ``transient`` (neither, so a later run retries
+    the DOI) / ``stop`` (end the phase now — Scopus's spent weekly quota).
+    TRANSIENT_BREAKER_LIMIT transient failures in a row stop the phase too.
+    """
+    log.info("%s: %d rows to try.", label, len(dois))
+    found = 0
+    consecutive_transient = 0
+
+    for i, doi in enumerate(dois, 1):
+        cached = _read_abstract_cache(f"{namespace}:{doi}")
+        if cached is not None:
+            abstract = cached if cached != "__none__" else None
+        else:
+            time.sleep(rate_sec)
+            abstract, status = fetch(doi)
+            if status == "stop":
+                log.warning("%s: stopping phase (%d rows done, %d found).",
+                            label, i - 1, found)
+                break
+            if status == "transient":
+                consecutive_transient += 1
+                log.warning("%s: transient failure for %s (not checkpointed).", label, doi)
+                if consecutive_transient >= TRANSIENT_BREAKER_LIMIT:
+                    log.warning("%s: throttled — stopping phase; rerun to resume. "
+                                "(%d consecutive transient failures)",
+                                label, consecutive_transient)
+                    break
+                continue
+            _write_abstract_cache(f"{namespace}:{doi}", abstract or "__none__")
+
+        consecutive_transient = 0
+        _append_checkpoint(f"{namespace}:{doi}")
+        if abstract:
+            found += 1
+            found_index.add(f"{namespace}:{doi}")
+
+        if i % progress_every == 0:
+            log.info("  %s progress: %d / %d  (found: %d)", label, i, len(dois), found)
+
+    log.info("%s complete. Abstracts found: %d", label, found)
+    return found
+
+
 def run(dry_run: bool = False, limit: Optional[int] = None,
         scopus_limit: int = SCOPUS_DEFAULT_LIMIT,
         scopus_priority: Optional[Path] = None,
@@ -915,54 +1022,11 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
         # picks up exactly where Phase 1's checkpoint left off.
         log.info("Phase 1 — OpenAlex batch: skipped (--skip-openalex).")
     else:
-        oa_ids = [r["oa"] for r in worklist if r["oa"] and f"oa:{r['oa']}" not in done]
-        log.info("Phase 1 — OpenAlex batch: %d rows to try.", len(oa_ids))
-
-        for batch_start in range(0, len(oa_ids), OA_BATCH_SIZE):
-            batch_ids = oa_ids[batch_start : batch_start + OA_BATCH_SIZE]
-
-            # Check cache first — skip call if all cached
-            results: dict[str, Optional[str]] = {}
-            uncached_ids: list[str] = []
-            for oid in batch_ids:
-                cached = _read_abstract_cache(f"oa:{oid}")
-                if cached is not None:
-                    results[oid] = cached if cached != "__none__" else None
-                else:
-                    uncached_ids.append(oid)
-
-            # A whole-batch HTTP failure returns None: no id in the batch is a
-            # definitive miss, so leave the uncached ids un-cached and un-checkpointed
-            # for a later run to retry. A successful batch missing a specific id IS a
-            # definitive miss for that id (cached + checkpointed below).
-            batch_transient = False
-            if uncached_ids:
-                time.sleep(OPENALEX_RATE_SEC)
-                fetched = _fetch_openalex_batch(uncached_ids)
-                if fetched is None:
-                    batch_transient = True
-                    log.warning("Phase 1 — OpenAlex batch failed; %d ids left for retry.",
-                                len(uncached_ids))
-                else:
-                    for oid, abstract in fetched.items():
-                        _write_abstract_cache(f"oa:{oid}", abstract if abstract else "__none__")
-                        results[oid] = abstract
-
-            # Checkpoint each resolved id. On a transient batch, skip the ids that were
-            # not resolved (no cache, no checkpoint) so they retry next run.
-            for oid in batch_ids:
-                if batch_transient and oid in uncached_ids:
-                    continue
-                _append_checkpoint(f"oa:{oid}")
-                if results.get(oid):
-                    n_found += 1
-                    found_index.add(f"oa:{oid}")
-
-            done_so_far = batch_start + len(batch_ids)
-            if done_so_far % 5000 == 0:
-                log.info("  OpenAlex progress: %d / %d  (found: %d)", done_so_far, len(oa_ids), n_found)
-
-        log.info("Phase 1 complete. Abstracts found: %d", n_found)
+        n_found += _run_batch_phase(
+            "Phase 1 — OpenAlex batch", "oa",
+            [r["oa"] for r in worklist if r["oa"] and f"oa:{r['oa']}" not in done],
+            OA_BATCH_SIZE, OPENALEX_RATE_SEC, _fetch_openalex_batch, found_index,
+        )
 
     # ------------------------------------------------------------------
     # Phase 2: Europe PMC, BATCHED (rows still missing after Phase 1)
@@ -972,187 +1036,39 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
     # 8.5% and CrossRef 0.3%, because this corpus's gap is dominated by Elsevier and
     # Springer, who do not deposit abstracts to CrossRef at all. Running it first
     # leaves the keyed, slower, quota-bound phases a much smaller residual.
-    epmc_dois = [
-        clean_doi(str(r["doi_r"] or "")) for r in worklist
-        if clean_doi(str(r["doi_r"] or ""))
-        and f"epmc:{clean_doi(r['doi_r'])}" not in done
-        and not _already_resolved(r["oa"], r["doi_r"], found_index)
-    ]
-    log.info("Phase 2 — Europe PMC batch: %d rows to try.", len(epmc_dois))
-
-    phase2_found = 0
-    consecutive_transient = 0
-    for batch_start in range(0, len(epmc_dois), EPMC_BATCH_SIZE):
-        batch_dois = epmc_dois[batch_start : batch_start + EPMC_BATCH_SIZE]
-
-        results: dict[str, Optional[str]] = {}
-        uncached_dois: list[str] = []
-        for doi in batch_dois:
-            cached = _read_abstract_cache(f"epmc:{doi}")
-            if cached is not None:
-                results[doi] = cached if cached != "__none__" else None
-            else:
-                uncached_dois.append(doi)
-
-        # Same whole-batch-failure contract as Phases 1 and 3: a failed batch leaves
-        # its DOIs un-cached/un-checkpointed for a later run; a DOI absent from a
-        # successful response is a definitive miss (cached + checkpointed).
-        batch_transient = False
-        if uncached_dois:
-            time.sleep(EPMC_RATE_SEC)
-            fetched = _fetch_epmc_batch(uncached_dois)
-            if fetched is None:
-                batch_transient = True
-                consecutive_transient += 1
-                log.warning("Phase 2 — Europe PMC batch failed; %d DOIs left for retry.",
-                            len(uncached_dois))
-                if consecutive_transient >= TRANSIENT_BREAKER_LIMIT:
-                    log.warning("Europe PMC throttling — stopping phase; rerun to resume. "
-                                "(%d consecutive transient batches)", consecutive_transient)
-                    break
-            else:
-                consecutive_transient = 0
-                for doi, abstract in fetched.items():
-                    _write_abstract_cache(f"epmc:{doi}", abstract if abstract else "__none__")
-                    results[doi] = abstract
-
-        for doi in batch_dois:
-            if batch_transient and doi in uncached_dois:
-                continue
-            _append_checkpoint(f"epmc:{doi}")
-            if results.get(doi):
-                phase2_found += 1
-                n_found += 1
-                found_index.add(f"epmc:{doi}")
-
-        done_so_far = batch_start + len(batch_dois)
-        if done_so_far % 5000 < EPMC_BATCH_SIZE:
-            log.info("  Europe PMC progress: %d / %d  (found: %d)",
-                     done_so_far, len(epmc_dois), phase2_found)
-
-    log.info("Phase 2 complete. Abstracts found: %d", phase2_found)
+    n_found += _run_batch_phase(
+        "Phase 2 — Europe PMC batch", "epmc",
+        _phase_targets(worklist, "epmc", done, found_index),
+        EPMC_BATCH_SIZE, EPMC_RATE_SEC, _fetch_epmc_batch, found_index,
+    )
 
     # ------------------------------------------------------------------
     # Phase 3: Semantic Scholar, BATCHED (rows still missing after Phase 2)
     # ------------------------------------------------------------------
     # Ordered ahead of CrossRef: a full production run (2026-07-27/28, 494,406 rows)
     # measured S2's batch endpoint at ~49.8 DOIs/sec sustained, 14.5% hit rate, vs
-    # CrossRef's one-DOI-at-a-time ~3/sec at ~0.6% on the same corpus. Running S2
-    # first clears most of the corpus in a fraction of the time, leaving CrossRef
-    # (Phase 4) a much smaller residual to pick over. It stays worth running after
-    # Europe PMC because the two overlap only partly — S2 is the only source that
-    # sees SSRN (10.2139), which Europe PMC does not index.
+    # CrossRef's one-DOI-at-a-time ~3/sec at ~0.6% on the same corpus. It stays worth
+    # running after Europe PMC because the two overlap only partly — S2 is the only
+    # source that sees SSRN (10.2139), which Europe PMC does not index.
     if not s2_key:
         log.info("Phase 3 — S2: skipped (S2_API_KEY not set in .env).")
     else:
-        s2_dois = [
-            clean_doi(str(r["doi_r"] or "")) for r in worklist
-            if clean_doi(str(r["doi_r"] or ""))
-            and f"s2:{clean_doi(r['doi_r'])}" not in done
-            and not _already_resolved(r["oa"], r["doi_r"], found_index)
-        ]
-        log.info("Phase 3 — Semantic Scholar batch: %d rows to try.", len(s2_dois))
-
-        phase3_found = 0
-        consecutive_transient = 0
-        for batch_start in range(0, len(s2_dois), S2_BATCH_SIZE):
-            batch_dois = s2_dois[batch_start : batch_start + S2_BATCH_SIZE]
-
-            results: dict[str, Optional[str]] = {}
-            uncached_dois: list[str] = []
-            for doi in batch_dois:
-                cached = _read_abstract_cache(f"s2:{doi}")
-                if cached is not None:
-                    results[doi] = cached if cached != "__none__" else None
-                else:
-                    uncached_dois.append(doi)
-
-            # Same whole-batch-failure contract as Phase 1: a failed batch leaves its
-            # ids un-cached/un-checkpointed for a later run; a successful batch's
-            # null entry for a DOI is a definitive miss (cached + checkpointed).
-            batch_transient = False
-            if uncached_dois:
-                time.sleep(S2_BATCH_RATE_SEC)
-                fetched = _fetch_s2_batch(uncached_dois, s2_key)
-                if fetched is None:
-                    batch_transient = True
-                    consecutive_transient += 1
-                    log.warning("Phase 3 — S2 batch failed; %d DOIs left for retry.",
-                                len(uncached_dois))
-                    if consecutive_transient >= TRANSIENT_BREAKER_LIMIT:
-                        log.warning("Semantic Scholar throttling — stopping phase; "
-                                    "rerun to resume. (%d consecutive transient batches)",
-                                    consecutive_transient)
-                        break
-                else:
-                    consecutive_transient = 0
-                    for doi, abstract in fetched.items():
-                        _write_abstract_cache(f"s2:{doi}", abstract if abstract else "__none__")
-                        results[doi] = abstract
-
-            for doi in batch_dois:
-                if batch_transient and doi in uncached_dois:
-                    continue
-                _append_checkpoint(f"s2:{doi}")
-                if results.get(doi):
-                    phase3_found += 1
-                    n_found += 1
-                    found_index.add(f"s2:{doi}")
-
-            done_so_far = batch_start + len(batch_dois)
-            if done_so_far % 5000 < S2_BATCH_SIZE:
-                log.info("  S2 progress: %d / %d  (found: %d)",
-                         done_so_far, len(s2_dois), phase3_found)
-
-        log.info("Phase 3 complete. Abstracts found: %d", phase3_found)
+        n_found += _run_batch_phase(
+            "Phase 3 — Semantic Scholar batch", "s2",
+            _phase_targets(worklist, "s2", done, found_index),
+            S2_BATCH_SIZE, S2_BATCH_RATE_SEC,
+            lambda batch: _fetch_s2_batch(batch, s2_key), found_index,
+        )
 
     # ------------------------------------------------------------------
     # Phase 4: CrossRef by DOI (fallback for rows Phases 2-3 didn't resolve)
     # ------------------------------------------------------------------
-    crossref_targets = [
-        r["doi_r"] for r in worklist
-        if clean_doi(str(r["doi_r"] or ""))
-        and f"doi:{clean_doi(r['doi_r'])}" not in done
-        and not _already_resolved(r["oa"], r["doi_r"], found_index)
-    ]
-    log.info("Phase 4 — CrossRef: %d rows to try.", len(crossref_targets))
-
-    phase4_found = 0
-    consecutive_transient = 0
-    for i, doi_r in enumerate(crossref_targets, 1):
-        doi = clean_doi(str(doi_r or ""))
-        if not doi:
-            continue
-
-        cached = _read_abstract_cache(f"doi:{doi}")
-        if cached is not None:
-            abstract = cached if cached != "__none__" else None
-        else:
-            time.sleep(CROSSREF_RATE_SEC)
-            abstract, status = _fetch_crossref_abstract(doi)
-            if status == "transient":
-                # Do NOT cache or checkpoint — a later run must retry this DOI.
-                consecutive_transient += 1
-                log.warning("CrossRef transient failure for %s (not checkpointed).", doi)
-                if consecutive_transient >= TRANSIENT_BREAKER_LIMIT:
-                    log.warning("CrossRef throttling — stopping phase; rerun to resume. "
-                                "(%d consecutive transient failures)", consecutive_transient)
-                    break
-                continue
-            _write_abstract_cache(f"doi:{doi}", abstract if abstract else "__none__")
-
-        consecutive_transient = 0
-        _append_checkpoint(f"doi:{doi}")
-
-        if abstract:
-            phase4_found += 1
-            n_found += 1
-            found_index.add(f"doi:{doi}")
-
-        if i % 2000 == 0:
-            log.info("  CrossRef progress: %d / %d  (found: %d)", i, len(crossref_targets), phase4_found)
-
-    log.info("Phase 4 complete. Abstracts found: %d", phase4_found)
+    n_found += _run_item_phase(
+        "Phase 4 — CrossRef", "doi",
+        _phase_targets(worklist, "doi", done, found_index),
+        CROSSREF_RATE_SEC, _fetch_crossref_abstract, found_index,
+        progress_every=2000,
+    )
 
     # ------------------------------------------------------------------
     # Phase 5: Elsevier Scopus (fallback for rows still missing a DOI abstract)
@@ -1160,55 +1076,31 @@ def run(dry_run: bool = False, limit: Optional[int] = None,
     if not elsevier_key:
         log.info("Phase 5 — Scopus: skipped (ELSEVIER_API_KEY not set in .env).")
     else:
-        scopus_targets = [
-            r["doi_r"] for r in worklist
-            if clean_doi(str(r["doi_r"] or ""))
-            and f"scopus:{clean_doi(r['doi_r'])}" not in done
-            and not _already_resolved(r["oa"], r["doi_r"], found_index)
-        ]
+        scopus_targets = _phase_targets(worklist, "scopus", done, found_index)
         if scopus_priority is not None:
             # The weekly quota (~10k) is far smaller than the missing-abstract pool,
             # so which rows get it matters. DOIs in the priority file (in file order)
             # are tried first; everything else keeps worklist order after them
             # (list.sort is stable, so equal-rank rows are not reshuffled).
             ranks = _load_scopus_priority(scopus_priority)
-            scopus_targets.sort(key=lambda d: ranks.get(clean_doi(str(d)), len(ranks)))
+            scopus_targets.sort(key=lambda d: ranks.get(d, len(ranks)))
             log.info("Phase 5 — Scopus priority: %d DOIs in %s, %d matched in queue.",
                      len(ranks), scopus_priority,
-                     sum(1 for d in scopus_targets if clean_doi(str(d)) in ranks))
+                     sum(1 for d in scopus_targets if d in ranks))
         if scopus_limit and scopus_limit > 0:
             scopus_targets = scopus_targets[:scopus_limit]
-        log.info("Phase 5 — Scopus: %d rows to try (weekly-quota cap: %s).",
-                 len(scopus_targets), scopus_limit)
+            log.info("Phase 5 — Scopus weekly-quota cap: %s", scopus_limit)
 
-        phase5_found = 0
-        for i, doi_r in enumerate(scopus_targets, 1):
-            doi = clean_doi(str(doi_r or ""))
-            if not doi:
-                continue
+        def _fetch_scopus(doi: str) -> tuple[Optional[str], str]:
+            abstract, quota_exhausted = _fetch_scopus_abstract(doi, elsevier_key)
+            if quota_exhausted:
+                return None, "stop"
+            return (abstract, "ok") if abstract else (None, "empty")
 
-            cached = _read_abstract_cache(f"scopus:{doi}")
-            if cached is not None:
-                abstract = cached if cached != "__none__" else None
-            else:
-                time.sleep(SCOPUS_RATE_SEC)
-                abstract, quota_exhausted = _fetch_scopus_abstract(doi, elsevier_key)
-                if quota_exhausted:
-                    log.warning("Phase 5 — Scopus quota exhausted; stopping phase "
-                                "(%d rows done, %d found).", i - 1, phase5_found)
-                    break
-                _write_abstract_cache(f"scopus:{doi}", abstract if abstract else "__none__")
-
-            _append_checkpoint(f"scopus:{doi}")
-
-            if abstract:
-                phase5_found += 1
-                n_found += 1
-
-            if i % 500 == 0:
-                log.info("  Scopus progress: %d / %d  (found: %d)", i, len(scopus_targets), phase5_found)
-
-        log.info("Phase 5 complete. Abstracts found: %d", phase5_found)
+        n_found += _run_item_phase(
+            "Phase 5 — Scopus", "scopus", scopus_targets, SCOPUS_RATE_SEC,
+            _fetch_scopus, found_index, progress_every=500,
+        )
 
     # ------------------------------------------------------------------
     # Final write-back: streamed merge cache → candidates.csv, then Parquet mirror

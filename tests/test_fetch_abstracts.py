@@ -1161,6 +1161,7 @@ def test_enrich_abstracts_batches_epmc_first_and_skips_dataset_dois(monkeypatch,
     monkeypatch.setattr(fa, "ABSTRACT_CACHE_DIR", tmp_path / "abstracts")
     fa.ABSTRACT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(fa, "FOUND_INDEX_PATH", tmp_path / "found.txt")
+    monkeypatch.setattr(fa, "CHECKPOINT_PATH", tmp_path / "done.txt")
     monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
     monkeypatch.setattr(fa, "S2_API_KEY", "")
 
