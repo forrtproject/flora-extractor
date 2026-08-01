@@ -308,6 +308,23 @@ def _valid_multi_count(n: int) -> bool:
     return _MULTI_N_MIN <= n < _MULTI_N_MAX
 
 
+def _match_type_result(match_type: str, confidence: str, rule_fired: bool = False,
+                       classify_model: str = "", reasoning: str = "") -> dict:
+    """The one shape classify_match_type returns, whichever path decided it.
+
+    Every caller reads rule_fired and classify_llm_model; a path that omitted them
+    (an OpenAlex failure, or a result cached before the key existed) was answered
+    with a silent default instead of the path's own answer.
+    """
+    return {
+        "original_match_type":       match_type,
+        "original_match_confidence": confidence,
+        "rule_fired":                rule_fired,
+        "classify_llm_model":        classify_model,
+        "reasoning":                 reasoning,
+    }
+
+
 def _rule_classify_multi_original(title_r: str, abstract_r: str) -> "dict | None":
     """
     Return a classification dict if title or abstract contains unambiguous signals
@@ -318,12 +335,10 @@ def _rule_classify_multi_original(title_r: str, abstract_r: str) -> "dict | None
     a captured year such as "replication of 2019 findings" is NOT a study count.
     """
     if _MULTI_TITLE_RE.search(title_r):
-        return {
-            "original_match_type":       "multiple_original",
-            "original_match_confidence": "high",
-            "rule_fired":                True,
-            "reasoning": "Title matches a known multi-target replication project (Many Labs, RRR, etc).",
-        }
+        return _match_type_result(
+            "multiple_original", "high", rule_fired=True,
+            reasoning="Title matches a known multi-target replication project "
+                      "(Many Labs, RRR, etc).")
     m = _MULTI_TITLE_COUNT_RE.search(title_r)
     if m:
         try:
@@ -331,12 +346,9 @@ def _rule_classify_multi_original(title_r: str, abstract_r: str) -> "dict | None
         except (ValueError, TypeError):
             n = -1
         if _valid_multi_count(n):
-            return {
-                "original_match_type":       "multiple_original",
-                "original_match_confidence": "high",
-                "rule_fired":                True,
-                "reasoning": f"Title explicitly states replication of {n} studies.",
-            }
+            return _match_type_result(
+                "multiple_original", "high", rule_fired=True,
+                reasoning=f"Title explicitly states replication of {n} studies.")
     for pattern in _MULTI_ABSTRACT_RES:
         m = pattern.search(abstract_r)
         if not m:
@@ -346,12 +358,9 @@ def _rule_classify_multi_original(title_r: str, abstract_r: str) -> "dict | None
         except (IndexError, ValueError, TypeError):
             continue
         if _valid_multi_count(n):
-            return {
-                "original_match_type":       "multiple_original",
-                "original_match_confidence": "high",
-                "rule_fired":                True,
-                "reasoning": f"Abstract explicitly states replication of {n} studies.",
-            }
+            return _match_type_result(
+                "multiple_original", "high", rule_fired=True,
+                reasoning=f"Abstract explicitly states replication of {n} studies.")
     return None
 
 
@@ -429,8 +438,7 @@ def classify_match_type(row: dict, no_llm: bool = False) -> dict:
         return rule
 
     if no_llm:
-        return {"original_match_type": "single_original",
-                "original_match_confidence": "low", "rule_fired": False}
+        return _match_type_result("single_original", "low")
 
     try:
         year_r = int(year_r_str) if year_r_str else 2099
@@ -452,8 +460,7 @@ def classify_match_type(row: dict, no_llm: bool = False) -> dict:
     if len(distinct_pairs) < 2:
         log.debug("[%s] classify_match_type: %d distinct author-year pair(s) — "
                   "single_original without an LLM call", doi_r, len(distinct_pairs))
-        return {"original_match_type": "single_original",
-                "original_match_confidence": "low", "rule_fired": False}
+        return _match_type_result("single_original", "low")
 
     # Step 2: fetch OpenAlex referenced works and match against patterns
     try:
@@ -463,7 +470,7 @@ def classify_match_type(row: dict, no_llm: bool = False) -> dict:
     except Exception as e:
         log.warning("[%s] classify_match_type: OpenAlex failed: %s — defaulting to single_original",
                     doi_r, e)
-        return {"original_match_type": "single_original", "original_match_confidence": "low"}
+        return _match_type_result("single_original", "low")
 
     # Step 3: call LLM. The cache is read here rather than before the candidate
     # fetch, because the candidate list is in the prompt and so in the key; the
@@ -474,7 +481,10 @@ def classify_match_type(row: dict, no_llm: bool = False) -> dict:
                       ladder_fingerprint(GEMINI_HEAVY_MODEL), prompt)
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
-        return cached
+        return _match_type_result(
+            cached["original_match_type"], cached["original_match_confidence"],
+            classify_model=str(cached.get("classify_llm_model", "") or ""),
+            reasoning=str(cached.get("reasoning", "") or ""))
 
     result = _llm_classify_match_type(prompt, doi_r)
     # Only a real answer is cached. The failure default is single_original, so
@@ -484,8 +494,7 @@ def classify_match_type(row: dict, no_llm: bool = False) -> dict:
     if result is None:
         log.warning("[%s] classify_match_type: LLM failed — defaulting to single_original "
                     "for this run, not cached", doi_r)
-        return {"original_match_type": "single_original",
-                "original_match_confidence": "low", "classify_llm_model": ""}
+        return _match_type_result("single_original", "low")
     write_cache(LLM_CACHE_DIR, key, result)
     return result
 
@@ -502,12 +511,8 @@ def _llm_classify_match_type(prompt: str, doi_r: str) -> "dict | None":
         mtype = "single_original"
     if conf not in {"high", "medium", "low"}:
         conf = "low"
-    return {
-        "original_match_type":       mtype,
-        "original_match_confidence": conf,
-        "classify_llm_model":        model_used,
-        "reasoning":                 str(result.get("reasoning", "") or ""),
-    }
+    return _match_type_result(mtype, conf, classify_model=model_used,
+                              reasoning=str(result.get("reasoning", "") or ""))
 
 
 # ── Data adapters ─────────────────────────────────────────────────────────────
@@ -1709,7 +1714,7 @@ def run_extract(no_llm: bool = False,
         if not no_llm:
             token_counter.set_stage("extract_refscreen")
             screen = classify_replication(
-                doi_r, str(row.get("title_r", "") or row.get("study_r", "")), abstract_r)
+                doi_r, str(row.get("title_r", "") or ""), abstract_r)
             done = _front_door_row(row, screen)
             if done is not None:
                 log.info("[%s] front-door screen: %s", doi_r, done["link_method"])

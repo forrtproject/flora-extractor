@@ -2056,6 +2056,17 @@ class TestResumeReadsTheScreenSetAsides:
                                                        rescreen=True)
         assert set(resolved) == {"10.1/keep"}
 
+    def test_set_aside_keys_union_both_files_and_key_doi_less_rows(self, tmp_path):
+        """The set of keys itself: both files are read, and a row with no DOI keys on
+        the next identifier in the chain rather than collapsing to the empty key."""
+        self._setup(tmp_path)
+        self._write(tmp_path / "not_a_replication.csv",
+                    [{"doi_r": "10.1/nar", "link_method": "not_a_replication"},
+                     {"doi_r": "", "openalex_id_r": "W7", "title_r": "No DOI",
+                      "link_method": "not_a_replication"}])
+        assert run_extract._screen_set_aside_keys(tmp_path) == {
+            "10.1/nar", "oa:W7", "10.1/dis"}
+
     def test_missing_set_aside_files_are_fine(self, tmp_path):
         out = tmp_path / "extracted.csv"
         self._write(out, [{"doi_r": "10.1/keep", "filter_status": "replication",
