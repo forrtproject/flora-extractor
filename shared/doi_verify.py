@@ -140,7 +140,8 @@ def _fetch_via_content_negotiation(doi: str) -> Optional[dict]:
             first_surname = (authors[0].get("family") or "") if authors else ""
             return {"registered": True, "title": title,
                     "first_author_surname": first_surname,
-                    "year": year, "source": "content_negotiation"}
+                    "year": year, "type": str(csl.get("type") or ""),
+                    "source": "content_negotiation"}
         except Exception as exc:
             log.warning("doi_verify content-negotiation %s failed: %s", doi, exc)
     return None
@@ -150,10 +151,13 @@ def fetch_doi_metadata(doi: str) -> Optional[dict]:
     """Return the metadata *doi* currently points to, or None on api_error.
 
     Shape: {"registered": bool, "title": str, "first_author_surname": str,
-            "year": int|None, "source": "crossref"|"openalex"}
+            "year": int|None, "type": str, "source": "crossref"|"openalex"}
+
+    "type" is the registry's work type ("journal-article", "dataset", "peer-review",
+    ...) and is "" when the source does not report one; see non_article_type().
     """
     doi = clean_doi(doi)
-    key = cache_key(doi + "_doimeta")
+    key = cache_key(doi + "_doimeta_v2")  # v2: pre-type cache entries lack "type"
     cached = read_cache(DOI_VERIFY_CACHE_DIR, key)
     if cached is not None:
         return cached
@@ -169,6 +173,7 @@ def fetch_doi_metadata(doi: str) -> Optional[dict]:
             "title": titles[0] if titles else "",
             "first_author_surname": (authors[0].get("family", "") if authors else ""),
             "year": _crossref_year(msg),
+            "type": str(msg.get("type") or ""),
             "source": "crossref",
         }
         write_cache(DOI_VERIFY_CACHE_DIR, key, meta)
@@ -179,7 +184,7 @@ def fetch_doi_metadata(doi: str) -> Optional[dict]:
     # also fall through to OpenAlex.
     data, _ = _get_json("https://api.openalex.org/works",
                         {"filter": f"doi:{doi}",
-                         "select": "title,authorships,publication_year",
+                         "select": "title,authorships,publication_year,type",
                          "mailto": RESEARCHER_EMAIL})
     if data and data.get("results"):
         w = data["results"][0]
@@ -189,6 +194,7 @@ def fetch_doi_metadata(doi: str) -> Optional[dict]:
             "title": w.get("title") or "",
             "first_author_surname": _surname(first),
             "year": w.get("publication_year"),
+            "type": str(w.get("type") or ""),
             "source": "openalex",
         }
         write_cache(DOI_VERIFY_CACHE_DIR, key, meta)
@@ -202,7 +208,7 @@ def fetch_doi_metadata(doi: str) -> Optional[dict]:
             write_cache(DOI_VERIFY_CACHE_DIR, key, meta)
             return meta
         meta = {"registered": False, "title": "", "first_author_surname": "",
-                "year": None, "source": "crossref"}
+                "year": None, "type": "", "source": "crossref"}
         write_cache(DOI_VERIFY_CACHE_DIR, key, meta)
         return meta
 

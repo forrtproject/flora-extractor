@@ -83,6 +83,44 @@ def non_article_doi(doi: str) -> str:
     return ""
 
 
+_NON_ARTICLE_TYPES = {
+    "dataset": "dataset_record",
+    "database": "dataset_record",
+    "software": "software_record",
+    "peer-review": "peer_review_object",
+    "supplementary-materials": "supplementary_material",
+    "component": "supplementary_material",
+    "paratext": "paratext_record",
+    "libguides": "library_guide",
+    "grant": "grant_record",
+    "standard": "standard_document",
+}
+
+
+def non_article_type(work_type: str) -> str:
+    """Reason string if the OpenAlex/CrossRef work *type* is a non-study object, else "".
+
+    Companion to non_article_doi(): that one pattern-matches DOI strings, this one uses
+    the work type the registry reports. A hand-check of 50 provisionally-linked rows
+    found 23 were not studies — Dataverse/Zenodo/Mendeley deposits and eLife
+    "Author response" objects — none of which the DOI patterns catch, but all of which
+    carry a giveaway type (dataset, peer-review, ...).
+
+    EXCLUDE-ONLY, never require. Only types affirmatively known not to be studies are
+    rejected; an empty, missing or unrecognised type returns "". Do NOT rewrite this as
+    an allow-list of acceptable types: `type` coverage is incomplete and inconsistent
+    across CrossRef, OpenAlex and content negotiation, so requiring a known-good type
+    would silently drop real replications.
+
+    "other" is deliberately NOT excluded — it is the registries' catch-all for anything
+    unclassified, including ordinary articles. "data-paper" and "software-paper" are
+    papers *about* data/software and are likewise kept, which is why matching is exact
+    rather than by substring.
+    """
+    t = str(work_type or "").strip().lower().replace("_", "-")
+    return _NON_ARTICLE_TYPES.get(t, "")
+
+
 def cache_key(text: str) -> str:
     """
     Return a stable, filesystem-safe cache key for *text*.
