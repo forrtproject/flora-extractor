@@ -151,6 +151,12 @@ PRESCREEN_ENABLED = os.getenv("PRESCREEN_ENABLED", "").strip().lower() in {"1", 
 # so voter 2 is asked only about the rows voter 1 rejects. qwen goes first because it
 # rejects slightly less often, which is what voter 2 is billed for.
 #
+# mistral-nemo would be $1/pass cheaper for a marginally better discard rate and was NOT
+# chosen: alone on this prompt it discards 39 of 567 gold positives, against 5 and 12 for
+# these two. The pair's measured loss is still zero, but a voter that says no to one
+# genuine replication in fourteen makes the AND gate a single-voter gate with a noisy
+# co-signer, and the tier's whole safety argument is that two independent voters agree.
+#
 # Not inclusionai/ling-2.6-flash, 3x cheaper again: it has a single OpenRouter endpoint
 # (Novita) that returned 429 for every call on 2026-08-02 under every routing mode, with
 # credit on the account. If that clears it is worth re-measuring — one env var.

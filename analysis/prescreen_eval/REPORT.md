@@ -81,6 +81,36 @@ it one of the dearer options despite a cheap headline rate. `inclusionai/ling-2.
 OpenRouter endpoint (Novita) that returned 429 for every call under every routing mode,
 with credit on the account. Worth re-measuring if that clears; it is one env var.
 
+### Which pair to run
+
+Every pairing of the three models measured on `p7`, net of the override:
+
+| pair | neg discarded | positives lost | $/pass |
+| --- | --: | --: | --: |
+| nemo + mistral-small | 66% | 0/567 | $1.28 |
+| **qwen + mistral-small** (shipped) | **64%** | **0/567** | **$2.25** |
+| nemo + qwen | 62% | 1/567 | $1.28 |
+
+`nemo + mistral-small` scores marginally better and costs $1 less per pass, and it is not
+what ships. The reason is what each voter does *alone* on `p7`:
+
+| voter | discards of 184 negatives | gold positives lost alone |
+| --- | --: | --: |
+| `qwen3-30b-a3b` | 89% | 5/567 |
+| `mistral-small-24b` | 96% | 12/567 |
+| `mistral-nemo` | 97% | **39/567** |
+
+nemo says "no" to almost everything, including one gold positive in fourteen. Paired with
+mistral-small the measured loss is still zero, because the second voter and the override
+catch what nemo drops — but the AND gate has then degenerated towards a single-voter gate
+with a noisy co-signer, and its safety depends on the other two mechanisms holding. The
+shipped pair is two voters that are each individually sane, which degrades more gracefully
+if one model's behaviour drifts. $1 per corpus pass is not a reason to give that up.
+
+nemo also proved the least reliable under concurrency here — 429s, occasional null
+content, occasional unparseable replies. That costs savings rather than papers, since
+every non-answer proceeds, but it makes it a poor voter 1.
+
 ## The override is what carries the safety
 
 The four gold positives the AND gate would discard, and the phrase that saves each:
