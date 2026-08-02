@@ -17,7 +17,6 @@
     <button id="btn-run" class="btn btn-primary" onclick="toggleRunMenu(event)">&#9654; Run &#9660;</button>
     <div id="run-menu" style="display:none;position:absolute;top:calc(100% + 4px);left:0;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:200;min-width:180px;padding:4px">
       <button onclick="pickRun('all')"        style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#9654; All</button>
-      <button onclick="pickRun('smart')"      style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#9654; Smart Run <span style="font-size:10px;color:#6b7280">(skip &#10003; OK)</span></button>
       <button id="btn-run-selected" onclick="pickRun('selected')" style="display:block;width:100%;text-align:left;padding:7px 12px;font-size:12px;background:none;border:none;cursor:pointer;border-radius:4px" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background=''">&#9654; Selected <span id="selected-count"></span></button>
     </div>
   </div>
@@ -105,7 +104,6 @@
         <th>Matched Original</th>
         <th>FLoRA Tag</th>
         <th>FLoRA Status</th>
-        <th>Val.</th>
         <th>PDF</th>
       </tr>
       <tr class="filter-row" id="filter-row">
@@ -136,11 +134,6 @@
           <div id="f-valstatus-menu" style="display:none;position:absolute;top:calc(100% + 2px);left:0;z-index:300;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);min-width:200px;padding:0 0 4px;max-height:260px;overflow-y:auto"></div>
         </th>
         <th style="position:relative">
-          <button id="f-userval-btn" class="col-filter" onclick="_msToggle('userval',event)"
-            style="width:100%;text-align:left;background:#fff;border:1px solid #e2e8f0;border-radius:4px;padding:3px 6px;font-size:11px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">All</button>
-          <div id="f-userval-menu" style="display:none;position:absolute;top:calc(100% + 2px);left:0;z-index:300;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);min-width:170px;padding:0 0 4px;max-height:240px;overflow-y:auto"></div>
-        </th>
-        <th style="position:relative">
           <button id="f-pdf-btn" class="col-filter" onclick="_msToggle('pdf',event)"
             style="width:100%;text-align:left;background:#fff;border:1px solid #e2e8f0;border-radius:4px;padding:3px 6px;font-size:11px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">All</button>
           <div id="f-pdf-menu" style="display:none;position:absolute;top:calc(100% + 2px);left:0;z-index:300;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);min-width:180px;padding:0 0 4px;max-height:240px;overflow-y:auto"></div>
@@ -165,10 +158,9 @@ const multiFilters = {
   method   : new Set(),
   flora    : new Set(),
   valstatus: new Set(),
-  userval  : new Set(),
   pdf      : new Set(),
 };
-const _MS_KEYS = ['status','method','flora','valstatus','userval','pdf'];
+const _MS_KEYS = ['status','method','flora','valstatus','pdf'];
 
 // ── DOM helper ───────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -266,13 +258,6 @@ function populateFilterDropdowns() {
     [{ value:'_blank', label:'— (blank)' }].concat(floraSt.filter(s => s).map(s => ({ value: s, label: s }))),
     'All statuses');
 
-  _msBuild('userval', [
-    { value:'successful', label:'✓ OK' },
-    { value:'failed',     label:'✗ Failed' },
-    { value:'recheck',    label:'↵ Recheck' },
-    { value:'_none',      label:'Not validated' },
-  ], 'All');
-
   _msBuild('pdf', [
     { value:'has_pdf',  label:'Has cached PDF' },
     { value:'url_only', label:'URL only (no cache)' },
@@ -288,13 +273,6 @@ function renderTable() {
     tbody.appendChild(makeDataRow(c, i + 1));
     tbody.appendChild(makeDetailRow(c.doi_r));
   });
-}
-
-function _valCellHtml(status) {
-  if (status === "successful") return '<span class="pill pill-green"  style="font-size:10px;padding:1px 6px">&#10003; OK</span>';
-  if (status === "failed")     return '<span class="pill pill-red"    style="font-size:10px;padding:1px 6px">&#10007; Fail</span>';
-  if (status === "recheck")    return '<span class="pill pill-orange" style="font-size:10px;padding:1px 6px">&#8635; Check</span>';
-  return '<span style="color:#9ca3af;font-size:11px">—</span>';
 }
 
 function makeDataRow(c, num) {
@@ -345,7 +323,6 @@ function makeDataRow(c, num) {
     + '<td title="' + (c.resolved_title_o||"").replace(/"/g,'&quot;') + '">' + truncOrig + '</td>'
     + '<td>' + (c.flora_tag ? pillHtml(ft.label, ft.cls) : "\u2014") + '</td>'
     + '<td>' + (floraValSt ? '<span style="font-size:11px;color:#475569">' + floraValSt.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</span>' : '<span style="color:#9ca3af">\u2014</span>') + '</td>'
-    + '<td id="val-cell-' + eid + '">' + _valCellHtml(c.user_val_status) + '</td>'
     + '<td>' + pdfCell + '</td>';
 
   tr.onclick = () => toggleRow(c.doi_r);
@@ -357,7 +334,7 @@ function makeDetailRow(doi_r) {
   tr.className     = "detail-row";
   tr.id            = "detail-" + CSS.escape(doi_r);
   tr.style.display = expanded[doi_r] ? "" : "none";
-  tr.innerHTML = '<td colspan="13"><div class="detail-panel" id="panel-' + CSS.escape(doi_r) + '">'
+  tr.innerHTML = '<td colspan="11"><div class="detail-panel" id="panel-' + CSS.escape(doi_r) + '">'
     + '<p style="padding:12px 0;color:#6b7280">Loading result...</p></div></td>';
   return tr;
 }
@@ -392,10 +369,6 @@ function applyFilters() {
     if (show && multiFilters.valstatus.size > 0) {
       const val = (c.flora_validation_status || '').trim();
       if (!multiFilters.valstatus.has(val || '_blank')) show = false;
-    }
-    if (show && multiFilters.userval.size > 0) {
-      const uv = c.user_val_status || '';
-      if (!multiFilters.userval.has(uv || '_none')) show = false;
     }
     if (show && multiFilters.pdf.size > 0) {
       const pk = c.pdf_serve_url ? 'has_pdf' : c.pdf_url ? 'url_only' : 'no_pdf';
@@ -489,10 +462,11 @@ function _panelHeader(doi_r) {
     + '<button class="btn btn-secondary" style="padding:3px 10px;font-size:11px" '
     + 'id="copy-btn-' + eid + '" title="Copy Claude-friendly debug summary to clipboard" '
     + 'onclick="onCopyDebug(\'' + doiEsc + '\', this)">&#128203; Copy Debug</button>'
-    + '<button class="btn btn-secondary" style="padding:3px 10px;font-size:11px" '
-    + 'id="val-btn-' + eid + '" '
-    + 'onclick="toggleValSection(\'' + doiEsc + '\')"'
-    + '>&#10003; Validate</button>'
+    + '<button class="btn btn-primary" style="padding:3px 10px;font-size:11px" '
+    + 'id="rerun-btn-' + eid + '" title="Clear caches and re-run the pipeline for this DOI" '
+    + 'onclick="rerunDoi(\'' + doiEsc + '\')"'
+    + '>&#8635; Re-run</button>'
+    + '<span id="run-msg-' + eid + '" style="font-size:11px;color:#475569"></span>'
     + '</div>';
 }
 
@@ -511,18 +485,14 @@ function togglePanelView(doi_r) {
   const btn   = $("log-btn-" + CSS.escape(doi_r));
   if (!panel || !btn) return;
   const result = JSON.parse(panel.dataset.resultJson || "{}");
-  const _vsEl  = document.getElementById("val-section-" + CSS.escape(doi_r));
-  const wasOpen = _vsEl ? _vsEl.style.display !== "none" : false;
   if (panel.dataset.view === "formatted") {
     panel.dataset.view = "log";
     btn.textContent = "\u2756 Formatted View";
-    panel.innerHTML = _valSection(doi_r) + _panelHeader(doi_r) + buildRawLogHTML(result);
-    _restoreValOpen(doi_r, wasOpen);
+    panel.innerHTML = _panelHeader(doi_r) + buildRawLogHTML(result);
   } else {
     panel.dataset.view = "formatted";
     btn.textContent = "\uD83D\uDCC3 Full Log";
-    panel.innerHTML = _valSection(doi_r) + _panelHeader(doi_r) + buildResultsHTML(result);
-    _restoreValOpen(doi_r, wasOpen);
+    panel.innerHTML = _panelHeader(doi_r) + buildResultsHTML(result);
   }
 }
 
@@ -548,7 +518,7 @@ async function toggleRow(doi_r) {
       } else {
         panel.dataset.resultJson = JSON.stringify(result);
         panel.dataset.view = "formatted";
-        panel.innerHTML = _valSection(doi_r) + _panelHeader(doi_r) + buildResultsHTML(result);
+        panel.innerHTML = _panelHeader(doi_r) + buildResultsHTML(result);
       }
     } catch (e) {
       const panel = $("panel-" + CSS.escape(doi_r));
@@ -699,82 +669,17 @@ async function stopBatch() {
   await fetch("/api/batch/stop", { method: "POST" });
 }
 
-// ── Validation panel ──────────────────────────────────────────────────────────
-function _valSection(doi_r) {
-  const eid     = CSS.escape(doi_r);
-  const doiEsc  = doi_r.replace(/'/g, "\\'");
-  const cand    = candidates.find(c => c.doi_r === doi_r) || {};
-  const status  = cand.user_val_status  || "";
-  const comment = (cand.user_val_comment || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;");
-  const isOpen  = !!status;
-  const badge   = status === "successful" ? '<span class="pill pill-green"  style="font-size:10px;padding:1px 6px">&#10003; Successful</span>'
-                : status === "failed"     ? '<span class="pill pill-red"    style="font-size:10px;padding:1px 6px">&#10007; Failed</span>'
-                : status === "recheck"    ? '<span class="pill pill-orange" style="font-size:10px;padding:1px 6px">&#8635; Recheck</span>'
-                : "";
-  return '<div id="val-section-' + eid + '" style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:8px;background:#f8fafc;' + (isOpen ? '' : 'display:none') + '">'
-    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
-    +   '<span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Validation</span>'
-    +   badge
-    + '</div>'
-    + '<div style="display:flex;gap:20px;margin-bottom:8px">'
-    +   '<label style="font-size:12px;cursor:pointer;display:flex;align-items:center;gap:4px"><input type="radio" name="val-' + doi_r + '" value="successful"' + (status==="successful"?" checked":"") + '> &#10003; Successful</label>'
-    +   '<label style="font-size:12px;cursor:pointer;display:flex;align-items:center;gap:4px"><input type="radio" name="val-' + doi_r + '" value="failed"' + (status==="failed"?" checked":"") + '> &#10007; Failed</label>'
-    +   '<label style="font-size:12px;cursor:pointer;display:flex;align-items:center;gap:4px"><input type="radio" name="val-' + doi_r + '" value="recheck"' + (status==="recheck"?" checked":"") + '> &#8635; Recheck</label>'
-    + '</div>'
-    + '<textarea id="val-comment-' + eid + '" rows="2" style="width:100%;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:6px 8px;resize:vertical;box-sizing:border-box;font-family:inherit" placeholder="Note — e.g. correct DOI, why this resolution is wrong...">' + comment + '</textarea>'
-    + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">'
-    +   '<button class="btn btn-secondary" style="font-size:11px;padding:3px 12px" onclick="saveValidation(\'' + doiEsc + '\')">Save</button>'
-    +   '<button class="btn btn-primary" style="font-size:11px;padding:3px 12px" id="rerun-val-' + eid + '" onclick="rerunWithComment(\'' + doiEsc + '\')"' + (status==="successful"?" disabled":"") + '>&#8635; Re-run</button>'
-    +   '<span id="val-msg-' + eid + '" style="font-size:11px;color:#475569;flex:1"></span>'
-    + '</div>'
-    + '</div>';
-}
-
-function _restoreValOpen(doi_r, wasOpen) {
-  const vs = document.getElementById("val-section-" + CSS.escape(doi_r));
-  if (vs) vs.style.display = wasOpen ? "" : "none";
-}
-
-function toggleValSection(doi_r) {
-  const vs = document.getElementById("val-section-" + CSS.escape(doi_r));
-  if (vs) vs.style.display = vs.style.display === "none" ? "" : "none";
-}
-
-async function saveValidation(doi_r) {
-  const eid     = CSS.escape(doi_r);
-  const msgEl   = document.getElementById("val-msg-" + eid);
-  const checked = [...document.getElementsByName('val-' + doi_r)].find(r => r.checked);
-  if (!checked) { if (msgEl) msgEl.textContent = "Select a status first."; return; }
-  const status  = checked.value;
-  const comment = (document.getElementById("val-comment-" + eid) || {}).value || "";
-  try {
-    const resp = await fetch("/api/batch/validate", {
-      method: "POST", headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({doi_r, validation_status: status, comment}),
-    });
-    const data = await resp.json();
-    if (!data.ok) { if (msgEl) msgEl.textContent = "Error saving."; return; }
-    const cand = candidates.find(c => c.doi_r === doi_r);
-    if (cand) { cand.user_val_status = status; cand.user_val_comment = comment; }
-    const cell = document.getElementById("val-cell-" + eid);
-    if (cell) cell.innerHTML = _valCellHtml(status);
-    const rerunBtn = document.getElementById("rerun-val-" + eid);
-    if (rerunBtn) rerunBtn.disabled = (status === "successful");
-    if (msgEl) { msgEl.textContent = "\u2713 Saved"; setTimeout(() => { msgEl.textContent = ""; }, 2000); }
-  } catch(e) { if (msgEl) msgEl.textContent = "Error: " + e.message; }
-}
-
-async function rerunWithComment(doi_r) {
+// ── Single-DOI re-run ────────────────────────────────────────────────────────
+async function rerunDoi(doi_r) {
   const eid   = CSS.escape(doi_r);
-  const msgEl = document.getElementById("val-msg-" + eid);
-  const btn   = document.getElementById("rerun-val-" + eid);
-  const comment = (document.getElementById("val-comment-" + eid) || {}).value || "";
+  const msgEl = document.getElementById("run-msg-" + eid);
+  const btn   = document.getElementById("rerun-btn-" + eid);
   if (btn) btn.disabled = true;
   if (msgEl) msgEl.innerHTML = '<span class="spinner"></span> Running\u2026';
   try {
     const resp = await fetch("/api/batch/run_doi", {
       method: "POST", headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({doi_r, validation_comment: comment}),
+      body: JSON.stringify({doi_r}),
     });
     const data = await resp.json();
     if (data.error) { if (msgEl) msgEl.textContent = "Error: " + data.error; return; }
@@ -801,16 +706,14 @@ async function rerunWithComment(doi_r) {
     if (panel) {
       panel.dataset.resultJson = JSON.stringify(data);
       panel.dataset.view = "formatted";
-      panel.innerHTML = _valSection(doi_r) + _panelHeader(doi_r) + buildResultsHTML(data);
-      _restoreValOpen(doi_r, true);
+      panel.innerHTML = _panelHeader(doi_r) + buildResultsHTML(data);
     }
-    if (msgEl) msgEl.textContent = "\u21ba Rerun complete \u2713";
+    const newMsgEl = document.getElementById("run-msg-" + eid);
+    if (newMsgEl) newMsgEl.textContent = "\u21ba Rerun complete \u2713";
     applyFilters(); updateStats();
-  } catch(e) { if (msgEl) msgEl.textContent = "Error: " + e.message; }
-  finally {
-    const checked = [...document.getElementsByName('val-' + doi_r)].find(r => r.checked);
-    const st = checked ? checked.value : "";
-    if (btn) btn.disabled = (st === "successful");
+  } catch(e) {
+    const el = document.getElementById("run-msg-" + eid);
+    if (el) el.textContent = "Error: " + e.message;
   }
 }
 

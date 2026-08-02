@@ -1006,7 +1006,7 @@ def fetch_openalex_by_doi(doi: str) -> Optional[dict]:
         "first_author"    : authors[0] if authors else "",
         "all_authors"     : authors,
         "match_year_exact": True,
-        "cited_pattern"   : "flora_anchor",
+        "cited_pattern"   : "doi_lookup",
     }
 
     return result

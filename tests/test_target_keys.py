@@ -112,11 +112,6 @@ class TestPromptRendering:
         prompt = build_target_prompt("T", "A", entries)
         assert all(e["key"] in prompt for e in entries)
 
-    def test_the_reviewer_note_renders_with_the_inputs_not_above_the_task(self):
-        prompt = build_target_prompt("T", "A", [], validator_note="⚠ FLoRA ANCHOR: 10.1/x")
-        assert prompt.index("PAPER") < prompt.index("REVIEWER NOTE:")
-        assert prompt.index("REVIEWER NOTE:") < prompt.index("TITLE: T")
-
 
 class TestDistinctDoisNeverMerge:
     def test_same_title_and_year_but_two_registered_dois_stay_apart(self):

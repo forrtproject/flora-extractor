@@ -2,7 +2,7 @@
 link_original.py — Single-DOI orchestration of the full disambiguation pipeline.
 
 Public API:
-    run_for_doi(doi_r, flora_df, cands_df, force=False, validation_comment="") → dict
+    run_for_doi(doi_r, flora_df, cands_df, force=False) → dict
 
 The returned dict contains all columns the web app and QMD export need,
 clearly prefixed by source:
@@ -38,10 +38,10 @@ from shared.pdf_parsing import (
     best_parse_result as _best_parse_shared,
     parse_result_is_empty,
 )
-from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_openalex_by_doi, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
+from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
 from shared.prompts import (
     TARGET_INTRO_CHARS, TARGET_METHODS_CHARS,
-    _abstract_tail, build_flora_anchor_note, rendered_reference_entries,
+    _abstract_tail, rendered_reference_entries,
 )
 from shared.target_keys import assign_target_keys
 from shared.pdf_sources import acquire_pdf, openalex_xml_has_content
@@ -724,7 +724,6 @@ def run_for_doi(doi_r:              str,
                 flora_df:           Optional[pd.DataFrame] = None,
                 cands_df:           Optional[pd.DataFrame] = None,
                 force:              bool = False,
-                validation_comment: str  = "",
                 no_llm:             bool = False,
                 no_pdf:             bool = False,
                 classification:     Optional[dict] = None) -> dict:
@@ -782,31 +781,6 @@ def run_for_doi(doi_r:              str,
         doi_r, oa_id_r, study_r, abstract_r, year_r, pattern_r
     )
     log.info("[%s] %d candidate(s) from OpenAlex re-query", doi_r, len(candidates))
-
-    # ── FLoRA anchor injection (validated DOIs only) ──────────────────────────
-    # For DOIs the FLoRA team has manually verified, inject the known-correct
-    # original as a candidate (if absent) and prepend an anchor note to every
-    # LLM call so the model knows to prefer it unless evidence contradicts.
-    flora_val_status = flora.get("flora_validation_status", "").lower()
-    flora_doi_o      = flora.get("flora_doi_o", "")
-    anchor_note      = ""
-
-    _is_validated = (
-        "validated - changed"   in flora_val_status
-        or "validated - unchanged" in flora_val_status
-    )
-    if _is_validated and flora_doi_o:
-        existing_dois = {clean_doi(c.get("doi", "")) for c in candidates}
-        if clean_doi(flora_doi_o) not in existing_dois:
-            anchor_cand = fetch_openalex_by_doi(flora_doi_o)
-            if anchor_cand:
-                candidates = [anchor_cand] + candidates
-                log.info("[%s] FLoRA anchor injected: %s", doi_r, flora_doi_o)
-        anchor_note = build_flora_anchor_note(
-            flora_doi_o, flora.get("flora_study_o", ""))
-
-    # Combine anchor note with any user-supplied validation comment
-    effective_note = "\n\n".join(filter(None, [anchor_note, validation_comment]))
 
     # Every exit from here on assembles the same output from the same base data;
     # only the resolution (and, past the PDF stage, the pdf/grobid/sections blocks)
@@ -931,7 +905,6 @@ def run_for_doi(doi_r:              str,
             # the abstract-stage and full-text answers stay separate without it.
             llm4 = identify_targets_with_llm(
                 doi_r, study_r, abstract_r, candidates, [],
-                validator_note=effective_note,
                 abstract_only=True,
             )
             _keep(llm4)
@@ -1132,7 +1105,6 @@ def run_for_doi(doi_r:              str,
         pdf_abstract   = sections.get("abstract", ""),
         intro          = sections.get("intro",    ""),
         methods        = sections.get("methods",  ""),
-        validator_note = effective_note,
     )
     log.info("[%s] LLM: resolved=%s source=%s", doi_r,
              llm["resolved"], llm["llm_source"])
