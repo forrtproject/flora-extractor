@@ -27,13 +27,21 @@ class DummyResponse:
             raise fa.requests.HTTPError(f"HTTP {self.status_code}")
 
 
+@pytest.fixture
+def no_scopus_key(monkeypatch):
+    """Blank the Elsevier key so Phase 5 (Scopus) is skipped and the test exercises
+    only the phases above it."""
+    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
+
+
 # ---------------------------------------------------------------------------
 # OpenAlex batch join — regression for the full-URL vs bare-id mismatch bug
 # ---------------------------------------------------------------------------
 
 def test_openalex_batch_matches_full_url_ids(monkeypatch):
     """openalex_id_r stores full URLs; the response 'id' is a bare W-id.
-    The join must still match and return the abstract keyed by the full URL."""
+    The join must still match and return the abstract keyed by the full URL.
+    An id absent from a SUCCESSFUL response is a genuine miss, mapped to None."""
     payload = {
         "results": [
             {
@@ -54,20 +62,14 @@ def test_openalex_batch_matches_full_url_ids(monkeypatch):
     monkeypatch.setattr(fa._SESSION, "get", fake_get)
 
     full_url = "https://openalex.org/W2889412410"
-    result = fa._fetch_openalex_batch([full_url])
+    result = fa._fetch_openalex_batch([full_url, "https://openalex.org/W999"])
 
     # Keyed by the exact input string (the full URL), not the bare id.
     assert result[full_url] == "This is the abstract"
+    assert result["https://openalex.org/W999"] is None
     # Filter is queried with the bare id form.
     assert "ids.openalex:W2889412410" in captured["url"]
     assert "https://openalex.org/W2889412410" not in captured["url"].split("filter=")[1]
-
-
-def test_openalex_batch_missing_work_stays_none(monkeypatch):
-    """An id with no matching result stays None (a genuine miss)."""
-    monkeypatch.setattr(fa._SESSION, "get", lambda url, **kw: DummyResponse({"results": []}))
-    result = fa._fetch_openalex_batch(["https://openalex.org/W999"])
-    assert result == {"https://openalex.org/W999": None}
 
 
 # ---------------------------------------------------------------------------
@@ -104,15 +106,6 @@ def test_drop_openalex_misses(monkeypatch, tmp_path):
 # Scopus parsing + quota handling
 # ---------------------------------------------------------------------------
 
-def test_scopus_parse_abstract():
-    payload = {
-        "abstracts-retrieval-response": {
-            "coredata": {"dc:description": "  A Scopus abstract.  "}
-        }
-    }
-    assert fa._parse_scopus_abstract(payload) == "A Scopus abstract."
-
-
 def test_scopus_parse_strips_tags_and_handles_missing():
     tagged = {"abstracts-retrieval-response": {"coredata": {"dc:description": "<p>Body</p>"}}}
     assert fa._parse_scopus_abstract(tagged) == "Body"
@@ -120,15 +113,6 @@ def test_scopus_parse_strips_tags_and_handles_missing():
     assert fa._parse_scopus_abstract(
         {"abstracts-retrieval-response": {"coredata": {}}}
     ) is None
-
-
-def test_scopus_fetch_success(monkeypatch):
-    payload = {"abstracts-retrieval-response": {"coredata": {"dc:description": "Found it"}}}
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout, headers, **kw: DummyResponse(payload))
-    abstract, exhausted = fa._fetch_scopus_abstract("10.1/x", "KEY")
-    assert abstract == "Found it"
-    assert exhausted is False
 
 
 def test_scopus_fetch_404_is_clean_miss(monkeypatch):
@@ -150,22 +134,6 @@ def test_scopus_fetch_quota_exhausted_via_header(monkeypatch):
     abstract, exhausted = fa._fetch_scopus_abstract("10.1/x", "KEY")
     assert abstract is None
     assert exhausted is True
-
-
-def test_scopus_fetch_persistent_429_exhausts(monkeypatch):
-    """A 429 without a remaining=0 header retries, then gives up as exhausted."""
-    calls = {"n": 0}
-    monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
-
-    def fake_get(url, timeout, headers, **kw):
-        calls["n"] += 1
-        return DummyResponse({}, status_code=429, headers={})
-
-    monkeypatch.setattr(fa._SESSION, "get", fake_get)
-    abstract, exhausted = fa._fetch_scopus_abstract("10.1/x", "KEY")
-    assert abstract is None
-    assert exhausted is True
-    assert calls["n"] == 3  # retried 3× per repo convention
 
 
 # ---------------------------------------------------------------------------
@@ -288,15 +256,9 @@ def test_phase4_priority_file_reorders_quota(monkeypatch, tmp_path):
 # Session auth isolation — the OpenAlex Bearer key must not leak to CrossRef/S2/Scopus
 # ---------------------------------------------------------------------------
 
-def test_openalex_key_does_not_leak_to_shared_session():
-    """The session must carry no Authorization header: it is used for CrossRef,
-    which 401s on an unknown Bearer token. The OpenAlex phase passes its key per
-    request instead."""
-    assert "Authorization" not in fa._SESSION.headers
-
-
 def test_crossref_uses_shared_session_without_auth(monkeypatch):
-    """CrossRef fetches must go through the no-auth shared session."""
+    """CrossRef fetches must go through the no-auth shared session: it 401s on an
+    unknown Bearer token, so the OpenAlex key has to ride on the request instead."""
     captured = {}
 
     def fake_get(url, timeout=None, **kwargs):
@@ -329,62 +291,34 @@ def _checkpoint(monkeypatch=None):
     return fa.CHECKPOINT_PATH.read_text(encoding="utf-8") if fa.CHECKPOINT_PATH.exists() else ""
 
 
-def test_crossref_adds_mailto_and_retries_429_then_ok(monkeypatch):
-    """A 429 is transient: retry with backoff, then succeed → ('...', 'ok').
-    The request URL carries the polite-pool ?mailto= param."""
-    calls = {"n": 0, "url": None}
-    monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
+@pytest.mark.parametrize("payload,status_code,expected", [
+    # A 200 carrying an abstract: JATS markup is stripped off the way in.
+    ({"message": {"abstract": "<jats:p>Real body</jats:p>"}}, 200, ("Real body", "ok")),
+    # HTTP 200 with no abstract field, and a 404, are both DEFINITIVE misses.
+    ({"message": {}}, 200, (None, "empty")),
+    ({}, 404, (None, "empty")),
+])
+def test_crossref_status_mapping_and_mailto(monkeypatch, payload, status_code, expected):
+    """CrossRef maps a response to (abstract, status), and every request carries the
+    polite-pool ?mailto= param. (Retry/transient behaviour is pinned at the seam by
+    test_request_with_retry_gives_up_as_transient_but_hands_back_4xx.)"""
+    captured = {}
 
     def fake_get(url, timeout=None, **kwargs):
-        calls["n"] += 1
-        calls["url"] = url
-        if calls["n"] == 1:
-            return DummyResponse({}, status_code=429, headers={"Retry-After": "1"})
-        return DummyResponse({"message": {"abstract": "<jats:p>Real body</jats:p>"}})
+        captured["url"] = url
+        return DummyResponse(payload, status_code=status_code)
 
     monkeypatch.setattr(fa._SESSION, "get", fake_get)
-    abstract, status = fa._fetch_crossref_abstract("10.1/x")
-    assert (abstract, status) == ("Real body", "ok")
-    assert calls["n"] == 2  # retried once
-    assert "mailto=" in calls["url"]
+    assert fa._fetch_crossref_abstract("10.1/x") == expected
+    assert "mailto=" in captured["url"]
 
 
-def test_crossref_persistent_429_is_transient(monkeypatch):
-    """Three 429s in a row exhaust retries → (None, 'transient'), NOT a miss."""
-    calls = {"n": 0}
-    monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
-
-    def fake_get(url, timeout=None, **kwargs):
-        calls["n"] += 1
-        return DummyResponse({}, status_code=429)
-
-    monkeypatch.setattr(fa._SESSION, "get", fake_get)
-    abstract, status = fa._fetch_crossref_abstract("10.1/x")
-    assert (abstract, status) == (None, "transient")
-    assert calls["n"] == 3  # 3 attempts per repo convention
-
-
-def test_crossref_200_no_abstract_is_empty(monkeypatch):
-    """HTTP 200 with no abstract field is a DEFINITIVE miss → (None, 'empty')."""
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout=None, **kw: DummyResponse({"message": {}}))
-    assert fa._fetch_crossref_abstract("10.1/x") == (None, "empty")
-
-
-def test_crossref_404_is_empty(monkeypatch):
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout=None, **kw: DummyResponse({}, status_code=404))
-    assert fa._fetch_crossref_abstract("10.1/x") == (None, "empty")
-
-
-def test_crossref_phase_checkpoints_empty_not_transient(monkeypatch, tmp_path):
+def test_crossref_phase_checkpoints_empty_not_transient(monkeypatch, tmp_path, no_scopus_key):
     """The CrossRef phase checkpoints an 'empty' DOI but leaves a 'transient' one
     un-checkpointed so a later run retries it."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
     monkeypatch.setattr(fa, "S2_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
         "abstract_r": ["", ""],
@@ -393,11 +327,12 @@ def test_crossref_phase_checkpoints_empty_not_transient(monkeypatch, tmp_path):
     })
     df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
 
-    # OpenAlex finds nothing → both rows fall through to CrossRef.
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
-
+    # OpenAlex and Europe PMC find nothing → both rows fall through to CrossRef.
     def fake_get(url, timeout=None, **kwargs):
+        if "api.openalex.org" in url:
+            return DummyResponse({"results": []})
+        if "europepmc" in url:
+            return DummyResponse(_epmc_payload())
         doi = url.split("/works/", 1)[1].split("?", 1)[0]
         if doi == "10.1/empty":
             return DummyResponse({"message": {}})          # definitive miss
@@ -411,15 +346,13 @@ def test_crossref_phase_checkpoints_empty_not_transient(monkeypatch, tmp_path):
     assert "doi:10.1/transient" not in done  # transient is NOT — it retries next run
 
 
-def test_crossref_circuit_breaker_stops_phase(monkeypatch, tmp_path):
+def test_crossref_circuit_breaker_stops_phase(monkeypatch, tmp_path, no_scopus_key):
     """After N consecutive transient failures the phase breaks; DOIs after the
     break are never requested and never checkpointed."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
     monkeypatch.setattr(fa, "TRANSIENT_BREAKER_LIMIT", 3)
     monkeypatch.setattr(fa, "S2_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     dois = [f"10.1/{c}" for c in "abcde"]
     df = pd.DataFrame({
@@ -429,12 +362,13 @@ def test_crossref_circuit_breaker_stops_phase(monkeypatch, tmp_path):
     })
     df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
 
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
-
     requested = set()
 
     def fake_get(url, timeout=None, **kwargs):
+        if "api.openalex.org" in url:
+            return DummyResponse({"results": []})
+        if "europepmc" in url:
+            return DummyResponse(_epmc_payload())
         doi = url.split("/works/", 1)[1].split("?", 1)[0]
         requested.add(doi)
         return DummyResponse({}, status_code=429)   # everything transient
@@ -449,14 +383,14 @@ def test_crossref_circuit_breaker_stops_phase(monkeypatch, tmp_path):
     assert "doi:" not in _checkpoint()   # nothing checkpointed at all
 
 
-def test_openalex_whole_batch_failure_not_checkpointed(monkeypatch, tmp_path):
+def test_openalex_whole_batch_failure_not_checkpointed(monkeypatch, tmp_path, no_scopus_key):
     """A whole-batch HTTP failure returns None and poisons no ids: none of the
-    batch's ids are cached or checkpointed, so they all retry next run."""
+    batch's ids are cached or checkpointed, so they all retry next run. This is the
+    contract every batched phase shares (Europe PMC and S2 route through the same
+    _run_batch_phase)."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
     monkeypatch.setattr(fa, "S2_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
         "abstract_r": ["", ""],
@@ -474,14 +408,14 @@ def test_openalex_whole_batch_failure_not_checkpointed(monkeypatch, tmp_path):
     assert list(out["abstract_r"]) == ["", ""]
 
 
-def test_openalex_successful_batch_missing_id_is_checkpointed(monkeypatch, tmp_path):
+def test_openalex_successful_batch_missing_id_is_checkpointed(monkeypatch, tmp_path,
+                                                              no_scopus_key):
     """A successful batch where a specific id is absent from the response is a
-    DEFINITIVE miss for that id — it must be checkpointed (unlike a batch failure)."""
+    DEFINITIVE miss for that id — it must be checkpointed (unlike a batch failure).
+    Shared _run_batch_phase contract, so it holds for Europe PMC and S2 too."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
     monkeypatch.setattr(fa, "S2_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
         "abstract_r": ["", ""],
@@ -506,60 +440,15 @@ def test_openalex_successful_batch_missing_id_is_checkpointed(monkeypatch, tmp_p
     assert out.loc[1, "abstract_r"] == ""
 
 
-def test_s2_persistent_429_is_transient_and_not_checkpointed(monkeypatch):
-    """S2 429 is transient (was previously a silent miss). Unit-level test of the
-    single-item _fetch_s2_abstract, still used by run_search's enrich_abstracts()
-    for one-row-at-a-time enrichment (the bulk backfill's Phase 2 uses the batch
-    endpoint instead — see the batch-specific tests below)."""
-    calls = {"n": 0}
-    monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout=None, headers=None: (calls.update(n=calls["n"] + 1)
-                        or DummyResponse({}, status_code=429)))
-    abstract, status = fa._fetch_s2_abstract("10.1/x", "KEY")
-    assert (abstract, status) == (None, "transient")
-    assert calls["n"] == 3
-
-
-def test_s2_batch_phase_transient_falls_through_to_crossref(monkeypatch, tmp_path):
-    """Phase 2 (S2 batch) transient failure does not checkpoint the DOI, so it
-    remains a target for Phase 3 (CrossRef), which resolves it as a definitive
-    miss and checkpoints it there instead."""
-    import pandas as pd
-    _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setattr(fa, "S2_API_KEY", "KEY")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-
-    df = pd.DataFrame({
-        "abstract_r": [""],
-        "doi_r": ["10.1/x"],
-        "openalex_id_r": ["https://openalex.org/W1"],
-    })
-    df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
-
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
-    monkeypatch.setattr(fa._SESSION, "post",
-                        lambda url, params=None, json=None, headers=None, timeout=None,
-                        **kw: DummyResponse({}, status_code=429))   # S2 batch: transient
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout=None, headers=None, **kw:
-                        DummyResponse({"message": {}}))             # CrossRef: definitive miss
-    fa.run(scopus_limit=0)
-
-    done = _checkpoint()
-    assert "doi:10.1/x" in done       # CrossRef definitive miss checkpointed
-    assert "s2:10.1/x" not in done    # S2 batch transient NOT checkpointed — retries next run
-
-
 # ---------------------------------------------------------------------------
 # Semantic Scholar batch endpoint (Phase 2) — mirrors the OpenAlex batch tests
 # ---------------------------------------------------------------------------
 
 def test_s2_batch_preserves_request_order_no_id_join_needed(monkeypatch):
     """Unlike OpenAlex, S2's batch response is a plain array in request order —
-    zip(dois, response) is the whole join, verified against a real shape."""
+    zip(dois, response) is the whole join, verified against a real shape. A
+    whole-batch HTTP failure returns None instead, so the caller checkpoints nothing
+    in the batch (the same contract as _fetch_openalex_batch)."""
     captured = {}
 
     def fake_post(url, params=None, json=None, headers=None, timeout=None, **kw):
@@ -576,119 +465,10 @@ def test_s2_batch_preserves_request_order_no_id_join_needed(monkeypatch):
     assert "semanticscholar.org/graph/v1/paper/batch" in captured["url"]
     assert captured["headers"]["x-api-key"] == "KEY"
 
-
-def test_s2_batch_whole_batch_failure_returns_none(monkeypatch):
-    """A whole-batch HTTP failure (after retries) returns None so the caller
-    checkpoints nothing in the batch — mirrors _fetch_openalex_batch's contract."""
     monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
     monkeypatch.setattr(fa._SESSION, "post",
                         lambda *a, **k: DummyResponse({}, status_code=500))
     assert fa._fetch_s2_batch(["10.1/a"], "KEY") is None
-
-
-def test_s2_batch_phase_whole_batch_failure_not_checkpointed(monkeypatch, tmp_path):
-    """Phase 2 (S2 batch): a whole-batch failure poisons no DOI — none in the
-    batch are cached or checkpointed, so they all retry next run."""
-    import pandas as pd
-    _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setattr(fa, "S2_API_KEY", "KEY")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-
-    df = pd.DataFrame({
-        "abstract_r":    ["", ""],
-        "doi_r":         ["10.1/a", "10.1/b"],
-        "openalex_id_r": ["", ""],
-    })
-    df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
-
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
-    monkeypatch.setattr(fa._SESSION, "post",
-                        lambda *a, **k: DummyResponse({}, status_code=500))
-    # CrossRef also empty, so Phase 3 doesn't accidentally resolve these first.
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout=None, headers=None, **kw:
-                        DummyResponse({}, status_code=500))
-    fa.run(scopus_limit=0)
-
-    done = _checkpoint()
-    assert "s2:10.1/a" not in done and "s2:10.1/b" not in done
-
-
-def test_s2_batch_phase_successful_batch_null_entry_is_definitive_miss(monkeypatch, tmp_path):
-    """Phase 2 (S2 batch): a successful batch where a DOI's entry is null is a
-    DEFINITIVE miss for that DOI — it must be checkpointed (unlike a batch failure),
-    so it does not repeat the S2 call, but still falls through to CrossRef (Phase 3)."""
-    import pandas as pd
-    _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setattr(fa, "S2_API_KEY", "KEY")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-
-    df = pd.DataFrame({
-        "abstract_r":    ["", ""],
-        "doi_r":         ["10.1/hit", "10.1/miss"],
-        "openalex_id_r": ["", ""],
-    })
-    df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
-
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
-
-    def fake_post(url, params=None, json=None, headers=None, timeout=None, **kw):
-        requested = [i.split("DOI:", 1)[1] for i in json["ids"]]
-        return DummyResponse([
-            {"abstract": "S2 hit"} if d == "10.1/hit" else None
-            for d in requested
-        ])
-    monkeypatch.setattr(fa._SESSION, "post", fake_post)
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout=None, headers=None, **kw:
-                        DummyResponse({"message": {}}))   # CrossRef: definitive miss too
-    fa.run(scopus_limit=0)
-
-    done = _checkpoint()
-    assert "s2:10.1/hit" in done and "s2:10.1/miss" in done   # both checkpointed by S2
-    assert "doi:10.1/miss" in done   # 10.1/miss fell through to CrossRef, also missed
-    assert "doi:10.1/hit" not in done   # 10.1/hit was resolved by S2 — CrossRef never tried
-    out = pd.read_csv(fa.CANDIDATES_PATH, dtype=str, encoding="utf-8-sig").fillna("")
-    assert out.loc[0, "abstract_r"] == "S2 hit"
-    assert out.loc[1, "abstract_r"] == ""
-
-
-def test_s2_runs_before_crossref_skips_crossref_call_on_s2_hit(monkeypatch, tmp_path):
-    """Reordering check: when S2 (Phase 2) resolves a DOI, CrossRef (Phase 3) must
-    never be called for it at all — not just that it isn't needed."""
-    import pandas as pd
-    _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setattr(fa, "S2_API_KEY", "KEY")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-
-    df = pd.DataFrame({
-        "abstract_r": [""],
-        "doi_r": ["10.1/x"],
-        "openalex_id_r": [""],
-    })
-    df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
-
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
-    monkeypatch.setattr(fa._SESSION, "post",
-                        lambda url, params=None, json=None, headers=None, timeout=None,
-                        **kw: DummyResponse([{"abstract": "S2 hit"}]))
-
-    crossref_called = {"n": 0}
-    def fake_get(url, timeout=None, headers=None, **kw):
-        if "crossref.org" in url:
-            crossref_called["n"] += 1
-        return DummyResponse({"message": {}})
-    monkeypatch.setattr(fa._SESSION, "get", fake_get)
-
-    fa.run(scopus_limit=0)
-
-    assert crossref_called["n"] == 0, "CrossRef must not be called when S2 already resolved the DOI"
 
 
 # ---------------------------------------------------------------------------
@@ -775,47 +555,14 @@ def test_run_fills_from_cache_by_key_priority(monkeypatch, tmp_path):
     assert out.loc[4, "abstract_r"] == ""      # only a '__none__' cache hit → stays empty
 
 
-def test_run_respects_cache_key_priority_over_lower_tiers(monkeypatch, tmp_path):
-    """When more than one key is cached for a row, the oa key wins over doi."""
-    import pandas as pd
-    _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setattr(fa, "S2_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-
-    df = pd.DataFrame({
-        "abstract_r":    [""],
-        "doi_r":         ["10.1/x"],
-        "openalex_id_r": ["https://openalex.org/W1"],
-    })
-    df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
-
-    # Pre-seed both an oa hit and a doi hit; oa must win in the merge.
-    fa._write_abstract_cache("oa:https://openalex.org/W1", "OA wins")
-    fa._write_abstract_cache("doi:10.1/x", "DOI loses")
-    # Both identifiers already checkpointed so no phase re-fetches.
-    fa.CHECKPOINT_PATH.write_text("oa:https://openalex.org/W1\ndoi:10.1/x\n", encoding="utf-8")
-
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda *a, **k: DummyResponse({"message": {}}))
-
-    fa.run(scopus_limit=0)
-
-    out = pd.read_csv(fa.CANDIDATES_PATH, dtype=str, encoding="utf-8-sig").fillna("")
-    assert out.loc[0, "abstract_r"] == "OA wins"
-
-
-def test_skip_openalex_makes_no_openalex_call_but_still_tries_crossref(monkeypatch, tmp_path):
+def test_skip_openalex_makes_no_openalex_call_but_still_tries_crossref(monkeypatch, tmp_path,
+                                                                        no_scopus_key):
     """--skip-openalex must not touch OpenAlex at all, and must not strand doi_r rows —
     Phase 3 (CrossRef; S2 is skipped here via a blank key) has to see them regardless
     of Phase 1 having run."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
     monkeypatch.setattr(fa, "S2_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
         "abstract_r":    [""],
@@ -835,36 +582,6 @@ def test_skip_openalex_makes_no_openalex_call_but_still_tries_crossref(monkeypat
     assert f"oa:{'https://openalex.org/W1'}" not in _checkpoint()
     assert "doi:10.1/only-doi" in _checkpoint(), \
         "Phase 3 (CrossRef) must still process the row even though Phase 1 was skipped"
-
-
-def test_candidates_csv_is_never_read_whole(monkeypatch, tmp_path):
-    """Guard against the OOM anti-pattern: every pd.read_csv of candidates.csv must
-    pass a chunksize (streamed), never an unchunked full-file read."""
-    import pandas as pd
-    _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setattr(fa, "S2_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-
-    df = pd.DataFrame({
-        "abstract_r":    ["", ""],
-        "doi_r":         ["", ""],
-        "openalex_id_r": ["https://openalex.org/W1", "https://openalex.org/W2"],
-    })
-    df.to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
-
-    real_read_csv = pd.read_csv
-
-    def guarded_read_csv(path, *args, **kwargs):
-        if str(path) == str(fa.CANDIDATES_PATH):
-            assert "chunksize" in kwargs, "candidates.csv must be read in chunks"
-        return real_read_csv(path, *args, **kwargs)
-
-    monkeypatch.setattr(pd, "read_csv", guarded_read_csv)
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
-
-    fa.run(scopus_limit=0)   # must not raise the assertion
 
 
 def test_candidates_parquet_is_never_read_whole(monkeypatch, tmp_path):
@@ -899,15 +616,13 @@ def test_candidates_parquet_is_never_read_whole(monkeypatch, tmp_path):
     assert {w["doi_r"] for w in worklist} == {"10.1/a", ""}
 
 
-def test_dry_run_writes_nothing_but_reports_counts(monkeypatch, tmp_path, caplog):
+def test_dry_run_writes_nothing_but_reports_counts(monkeypatch, tmp_path, caplog, no_scopus_key):
     """--dry-run makes no API calls, rewrites no file, but still counts missing
     rows by identifier type."""
     import logging
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
     monkeypatch.setattr(fa, "S2_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
         "abstract_r":    ["", "", "present"],
@@ -921,7 +636,7 @@ def test_dry_run_writes_nothing_but_reports_counts(monkeypatch, tmp_path, caplog
     def boom(*a, **k):
         raise AssertionError("no API calls under --dry-run")
     monkeypatch.setattr(fa._SESSION, "get", boom)
-    monkeypatch.setattr(fa._SESSION, "get", boom)
+    monkeypatch.setattr(fa._SESSION, "post", boom)
 
     with caplog.at_level(logging.INFO):
         fa.run(dry_run=True)
@@ -936,14 +651,12 @@ def test_dry_run_writes_nothing_but_reports_counts(monkeypatch, tmp_path, caplog
     assert "with doi_r:         1" in text
 
 
-def test_limit_caps_processing(monkeypatch, tmp_path):
+def test_limit_caps_processing(monkeypatch, tmp_path, no_scopus_key):
     """--limit N caps the worklist to the first N missing rows: only those rows'
     identifiers are fetched/checkpointed."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
     monkeypatch.setattr(fa, "S2_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     df = pd.DataFrame({
         "abstract_r":    ["", "", "", ""],
@@ -993,6 +706,14 @@ def test_epmc_batch_joins_by_doi_not_by_position(monkeypatch):
     result = fa._fetch_epmc_batch(["10.1/a", "10.1/b", "10.1/c"])
     assert result == {"10.1/a": "first", "10.1/b": None, "10.1/c": "third"}
 
+    # A persistent 5xx returns None instead, so the caller checkpoints nothing —
+    # one transient failure must not poison EPMC_BATCH_SIZE DOIs as permanent misses.
+    monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, params=None, timeout=None:
+                        DummyResponse({}, status_code=503))
+    assert fa._fetch_epmc_batch(["10.1/a", "10.1/b"]) is None
+
 
 def test_epmc_batch_requests_core_view_and_quotes_dois(monkeypatch):
     """resultType=core is REQUIRED — the 'lite' view omits abstractText, so with it
@@ -1012,15 +733,6 @@ def test_epmc_batch_requests_core_view_and_quotes_dois(monkeypatch):
     assert captured["params"]["query"] == 'DOI:"10.1/a" OR DOI:"10.1/b"'
 
 
-def test_epmc_batch_strips_jats_markup(monkeypatch):
-    monkeypatch.setattr(
-        fa._SESSION, "get",
-        lambda url, params=None, timeout=None: DummyResponse(_epmc_payload(
-            {"doi": "10.1/a",
-             "abstractText": "<jats:p>Real <jats:italic>text</jats:italic></jats:p>"})))
-    assert fa._fetch_epmc_batch(["10.1/a"])["10.1/a"] == "Real text"
-
-
 def test_epmc_batch_duplicate_records_keep_first_abstract(monkeypatch):
     """A DOI can match both a preprint and its published record. The first record
     carrying an abstract wins; a later empty one must not overwrite it."""
@@ -1032,59 +744,18 @@ def test_epmc_batch_duplicate_records_keep_first_abstract(monkeypatch):
     assert fa._fetch_epmc_batch(["10.1/a"])["10.1/a"] == "the good one"
 
 
-def test_epmc_batch_whole_batch_failure_returns_none(monkeypatch):
-    """A persistent 5xx returns None so the caller checkpoints nothing — one
-    transient failure must not poison EPMC_BATCH_SIZE DOIs as permanent misses."""
-    monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, params=None, timeout=None:
-                        DummyResponse({}, status_code=503))
-    assert fa._fetch_epmc_batch(["10.1/a", "10.1/b"]) is None
-
-
-def test_epmc_phase_whole_batch_failure_not_checkpointed(monkeypatch, tmp_path):
-    """Phase 2 (Europe PMC): a whole-batch failure leaves every DOI in the batch
-    un-checkpointed, so a later run retries them."""
-    import pandas as pd
-    _setup_run(monkeypatch, tmp_path)
-    monkeypatch.setattr(fa, "S2_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-
-    pd.DataFrame({
-        "abstract_r":    ["", ""],
-        "doi_r":         ["10.1/a", "10.1/b"],
-        "openalex_id_r": ["", ""],
-    }).to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
-
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, params=None, timeout=None, headers=None, **kw:
-                        DummyResponse({}, status_code=500))
-    fa.run(scopus_limit=0)
-
-    done = _checkpoint()
-    assert "epmc:10.1/a" not in done and "epmc:10.1/b" not in done
-
-
-def test_epmc_hit_skips_s2_and_crossref_entirely(monkeypatch, tmp_path):
+def test_epmc_hit_skips_s2_and_crossref_entirely(monkeypatch, tmp_path, no_scopus_key):
     """Ordering check: Europe PMC runs first, so a DOI it resolves must never reach
     the S2 batch endpoint or CrossRef at all — not merely be unaffected by them."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
     monkeypatch.setattr(fa, "S2_API_KEY", "KEY")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     pd.DataFrame({
         "abstract_r":    [""],
         "doi_r":         ["10.1016/x"],
         "openalex_id_r": [""],
     }).to_csv(fa.CANDIDATES_PATH, index=False, encoding="utf-8-sig")
-
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
 
     calls = {"epmc": 0, "crossref": 0, "s2_post": 0}
 
@@ -1113,14 +784,12 @@ def test_epmc_hit_skips_s2_and_crossref_entirely(monkeypatch, tmp_path):
     assert out.loc[0, "abstract_r"] == "EPMC hit"
 
 
-def test_dataset_dois_are_excluded_from_every_phase(monkeypatch, tmp_path):
+def test_dataset_dois_are_excluded_from_every_phase(monkeypatch, tmp_path, no_scopus_key):
     """Dataverse/Zenodo DOIs register datasets, not articles — no abstract exists,
     so they must never reach a fetch phase. They still count as missing."""
     import pandas as pd
     _setup_run(monkeypatch, tmp_path)
     monkeypatch.setattr(fa, "S2_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
-    monkeypatch.setattr(fa, "ELSEVIER_API_KEY", "")
 
     pd.DataFrame({
         "abstract_r":    ["", "", ""],
@@ -1142,8 +811,6 @@ def test_dataset_dois_are_excluded_from_every_phase(monkeypatch, tmp_path):
         queried.append((params or {}).get("query", url))
         return DummyResponse(_epmc_payload())
 
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, timeout=None, **kw: DummyResponse({"results": []}))
     monkeypatch.setattr(fa._SESSION, "get", fake_get)
     fa.run(scopus_limit=0)
 

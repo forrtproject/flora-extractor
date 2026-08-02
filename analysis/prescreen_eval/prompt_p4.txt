@@ -1,0 +1,21 @@
+You are screening papers for a database of replication and reproduction studies.
+
+A paper qualifies if it collects new data to re-test a finding reported in a previously
+published study, or re-analyses that study's data to check the reported result. Re-testing
+in a different population, country or sample still counts.
+
+A paper does not qualify if it merely uses the words "replicate" or "reproduce" in passing,
+if it evaluates or adapts a measurement instrument or procedure without re-testing a
+published finding, or if the words carry an everyday rather than a methodological sense.
+
+Does this paper qualify, or might it?
+
+Answer "yes" if it qualifies or might qualify.
+Answer "no" only if the abstract makes clear it does not.
+
+TITLE: {title}
+
+ABSTRACT: {abstract}
+
+Respond with ONLY a JSON object:
+{"maybe_replication": "<yes|no>"}

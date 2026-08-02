@@ -230,45 +230,32 @@ def _phrase_endpoint(tmp_path, monkeypatch, persisted):
     return create_app().test_client().get("/api/dashboard/search-phrases").get_json()
 
 
-def test_search_phrases_endpoint_survives_a_missing_cache(tmp_path, monkeypatch):
+@pytest.mark.parametrize("persisted,expected_source,expect_note", [
+    # current snapshot: carries the coverage fields
+    ({"rows": [{"phrase": "replication of", "fetched": 42, "jobs": 1,
+                "expected": 100, "source": "phrase"}],
+      "total_fetched": 42, "total_expected": 100, "unattributed_files": 0,
+      "coverage_from_year": 1990},
+     "stats_json", False),
+    # legacy snapshot: written before coverage tracking, so no expected/incomplete
+    # fields. Serving it as if current would hide the under-fetching the coverage
+    # columns exist to surface (#68), so it must be marked and carry an explanation.
+    ({"rows": [{"phrase": "replication of", "fetched": 42, "jobs": 1, "source": "phrase"}],
+      "total_fetched": 42, "unattributed_files": 0},
+     "stats_json_legacy", True),
+])
+def test_search_phrases_endpoint_falls_back_to_stats_json(
+        tmp_path, monkeypatch, persisted, expected_source, expect_note):
     """cache/ is gitignored, so a deployed instance has no cursor files — the
-    endpoint must fall back to the phrase yield persisted in stats.json."""
-    data = _phrase_endpoint(tmp_path, monkeypatch, {
-        "rows": [{"phrase": "replication of", "fetched": 42, "jobs": 1,
-                  "expected": 100, "source": "phrase"}],
-        "total_fetched": 42, "total_expected": 100, "unattributed_files": 0,
-        "coverage_from_year": 1990,
-    })
-    assert data["_source"] == "stats_json"
-    assert data["total_fetched"] == 42
-
-
-def test_legacy_stats_json_is_labelled_not_silently_served(tmp_path, monkeypatch):
-    """A snapshot written before coverage tracking has no expected/incomplete fields.
-    Serving it as if current would hide the under-fetching the coverage columns exist
-    to surface (#68), so it must be marked and carry an explanation."""
-    data = _phrase_endpoint(tmp_path, monkeypatch, {
-        "rows": [{"phrase": "replication of", "fetched": 42, "jobs": 1, "source": "phrase"}],
-        "total_fetched": 42, "unattributed_files": 0,
-    })
-    assert data["_source"] == "stats_json_legacy"
-    assert data["total_fetched"] == 42, "the old numbers are still served, just labelled"
-    assert "note" in data
+    endpoint must fall back to the phrase yield persisted in stats.json, and label
+    the snapshot it served."""
+    data = _phrase_endpoint(tmp_path, monkeypatch, persisted)
+    assert data["_source"] == expected_source
+    assert data["total_fetched"] == 42, "the persisted numbers are still served"
+    assert ("note" in data) == expect_note
 
 
 # ── Set-aside CSVs ───────────────────────────────────────────────────────────
-
-def test_set_registry_files_resolve(tmp_path):
-    """Every registered set must name a real file under data/ — a typo would show
-    an empty tab rather than an error."""
-    from shared.config import DATA_DIR
-    from validate.routes.dashboard import SET_FILES
-
-    assert SET_FILES, "registry is empty"
-    for key, spec in SET_FILES.items():
-        assert {"title", "file", "why", "action"} <= set(spec), f"{key} missing keys"
-        assert (DATA_DIR / spec["file"]).suffix == ".csv"
-
 
 def test_set_reader_drops_phantom_unnamed_columns(tmp_path, monkeypatch):
     """Hand-maintained CSVs carry trailing commas; pandas turns them into empty

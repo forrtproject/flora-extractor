@@ -4,6 +4,7 @@ Stage 2 actually calls per row.
 """
 
 import pandas as pd
+import pytest
 
 from filter.phrase_detection import (
     find_replication_phrase_span,
@@ -17,18 +18,6 @@ from shared.schema import FILTERED_COLS
 def test_phrase_detection_positive():
     text = "We replicated the original study by Smith (2010)."
     assert find_replication_phrase_span(text)[0] == "we replicated"
-
-
-def test_phrase_detection_excludes_dna():
-    text = "DNA replication in eukaryotes via the replication fork machinery."
-    assert is_non_scholarly_context(text)
-    assert find_replication_phrase_span(text) is None
-
-
-def test_phrase_detection_excludes_code():
-    text = "Replication of the dataset using a public repository pipeline."
-    assert is_non_scholarly_context(text)
-    assert find_replication_phrase_span(text) is None
 
 
 def test_qualifier_phrases_match_plurals():
@@ -154,42 +143,43 @@ def test_rule_filter_phrase_no_cite_needs_review():
     assert out["filter_confidence"] == "medium"
 
 
-def test_rule_filter_dna_excluded():
-    out = classify_row(_row(
-        "DNA replication mechanisms",
-        "We study DNA replication forks in cells.",
-    ))
+@pytest.mark.parametrize("title,abstract", [
+    # biological "replication" — DNA / replication forks
+    ("DNA replication mechanisms", "We study DNA replication forks in cells."),
+    # technical verb: replicating code, not a study
+    ("Software replication",
+     "We replicated the code using a public pipeline, no prior study named."),
+    # technical object: replicating a dataset
+    ("Replication of a dataset",
+     "Replication of the dataset using a public repository pipeline."),
+])
+def test_rule_filter_non_scholarly_excluded(title, abstract):
+    """The exclusion patterns fire at phrase level AND make the row a hard
+    false_positive — there is no rescuing author-year cite in any of these."""
+    assert is_non_scholarly_context(abstract)
+    assert find_replication_phrase_span(abstract) is None
+    out = classify_row(_row(title, abstract))
     assert out["filter_status"] == "false_positive"
-    assert "exclusion:" in out["filter_evidence"]
+    assert out["filter_evidence"].startswith("exclusion:")
 
 
-def test_rule_filter_excludes_figshare_data_doi():
-    """#17: figshare DOIs are data records, not articles — reject even if the text
-    reads like a replication with a citation."""
+@pytest.mark.parametrize("doi,expected_status,expected_evidence", [
+    # #17: figshare DOIs are data records, not articles — reject even if the text
+    # reads like a replication with a citation.
+    ("10.6084/m9.figshare.4213113.v1", "false_positive", "exclusion:figshare_data_record"),
+    # #17: a /reviews/ DOI segment marks a peer-review object, never the study.
+    ("10.7287/peerj.10325v0.1/reviews/2", "false_positive", "exclusion:peer_review_object"),
+    # negative control: a real article DOI with a genuine replication+cite passes.
+    ("10.1037/xge0000123", "replication", None),
+])
+def test_rule_filter_doi_exclusions(doi, expected_status, expected_evidence):
     row = _row("A direct replication of Smith (2019)",
                "We report a direct replication of Smith (2019).")
-    row["doi_r"] = "10.6084/m9.figshare.4213113.v1"
+    row["doi_r"] = doi
     out = classify_row(row)
-    assert out["filter_status"] == "false_positive"
-    assert out["filter_evidence"] == "exclusion:figshare_data_record"
-
-
-def test_rule_filter_excludes_peer_review_object_doi():
-    """#17: a /reviews/ DOI segment marks a peer-review object, never the study."""
-    row = _row("A direct replication of Smith (2019)",
-               "We report a direct replication of Smith (2019).")
-    row["doi_r"] = "10.7287/peerj.10325v0.1/reviews/2"
-    out = classify_row(row)
-    assert out["filter_status"] == "false_positive"
-    assert out["filter_evidence"] == "exclusion:peer_review_object"
-
-
-def test_rule_filter_normal_doi_unaffected_by_doi_exclusion():
-    """A real article DOI with a genuine replication+cite still passes."""
-    row = _row("A direct replication of Smith (2019)",
-               "We report a direct replication of Smith (2019).")
-    row["doi_r"] = "10.1037/xge0000123"
-    assert classify_row(row)["filter_status"] == "replication"
+    assert out["filter_status"] == expected_status
+    if expected_evidence is not None:
+        assert out["filter_evidence"] == expected_evidence
 
 
 def test_rule_filter_exclusion_with_phrase_and_cite_readmitted():
@@ -202,16 +192,6 @@ def test_rule_filter_exclusion_with_phrase_and_cite_readmitted():
     ))
     assert out["filter_status"] == "needs_review"
     assert "phrase+cite present" in out["filter_evidence"]
-
-
-def test_rule_filter_exclusion_without_cite_still_rejected():
-    """An exclusion with no rescuing author-year cite stays a hard false_positive."""
-    out = classify_row(_row(
-        "Software replication",
-        "We replicated the code using a public pipeline, no prior study named.",
-    ))
-    assert out["filter_status"] == "false_positive"
-    assert out["filter_evidence"].startswith("exclusion:")
 
 
 def test_rule_filter_no_phrase_false_positive():

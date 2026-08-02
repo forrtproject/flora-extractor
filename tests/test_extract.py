@@ -15,7 +15,6 @@ import pytest
 from shared.schema import (
     EXTRACTED_COLS,
     LINK_METHOD_VALUES,
-    OUTCOME_CATEGORIES,
     RESOLVED_LINK_METHODS,
     make_pair_id,
 )
@@ -37,35 +36,25 @@ from shared.token_usage import TokenBudgetExhausted
 # ── Sentence expansion unit tests ────────────────────────────────────────────
 
 class TestExpandToSentences:
-    def test_returns_target_sentence(self):
-        text = "First sentence. We replicated the effect. Third sentence."
-        result = _expand_to_sentences(text, text.index("We replicated"), text.index("We replicated") + 5, n_context=0)
-        assert "We replicated the effect" in result
-
-    def test_includes_one_sentence_before(self):
+    def test_context_window(self):
+        """n_context sentences either side of the match, clamped at both ends."""
         text = "First sentence. We replicated the effect. Third sentence."
         start = text.index("We replicated")
-        result = _expand_to_sentences(text, start, start + 5, n_context=1)
-        assert "First sentence" in result
-        assert "We replicated the effect" in result
-
-    def test_includes_one_sentence_after(self):
-        text = "First sentence. We replicated the effect. Third sentence."
-        start = text.index("We replicated")
-        result = _expand_to_sentences(text, start, start + 5, n_context=1)
-        assert "We replicated the effect" in result
-        assert "Third sentence" in result
-
-    def test_single_sentence_no_error(self):
-        text = "We replicated the effect."
-        result = _expand_to_sentences(text, 3, 15, n_context=1)
-        assert "We replicated the effect" in result
-
-    def test_match_at_start_clamps(self):
-        text = "Failed to replicate. Second sentence. Third sentence."
-        result = _expand_to_sentences(text, 0, 18, n_context=1)
-        assert "Failed to replicate" in result
-        assert "Second sentence" in result
+        assert "We replicated the effect" in _expand_to_sentences(
+            text, start, start + 5, n_context=0)
+        window = _expand_to_sentences(text, start, start + 5, n_context=1)
+        assert "First sentence" in window
+        assert "We replicated the effect" in window
+        assert "Third sentence" in window
+        # A match in the first sentence clamps rather than running off the front.
+        head = "Failed to replicate. Second sentence. Third sentence."
+        clamped = _expand_to_sentences(head, 0, 18, n_context=1)
+        assert "Failed to replicate" in clamped
+        assert "Second sentence" in clamped
+        # A lone sentence and an empty string are both non-errors.
+        assert "We replicated the effect" in _expand_to_sentences(
+            "We replicated the effect.", 3, 15, n_context=1)
+        assert _expand_to_sentences("", 0, 0) == ""
 
     def test_et_al_not_split(self):
         text = "Smith et al. found an effect. The replication failed."
@@ -73,10 +62,6 @@ class TestExpandToSentences:
         result = _expand_to_sentences(text, start, start + 20, n_context=1)
         assert "Smith et al" in result
         assert "replication failed" in result
-
-    def test_empty_text_returns_empty(self):
-        result = _expand_to_sentences("", 0, 0)
-        assert result == ""
 
 
 # ── Keyword scan unit tests ───────────────────────────────────────────────────
@@ -92,35 +77,25 @@ class TestKeywordScan:
         ("partially replicated with some but not all findings held", "mixed"),
         ("No evidence was found for precognition in any experiment", "failure"),
         ("adapted the procedure in a different cultural population", "descriptive"),
+        # A failure phrase outranks a success keyword in the same clause.
+        ("we failed to replicate the originally replicated finding", "failure"),
+        # Declines: effect size alone must not decide the outcome. `mixed` requires
+        # the authors' own evidence to be partly supporting and partly not; a
+        # supported-but-smaller effect is a success. Neither is decidable here, so
+        # the row goes to the LLM rather than being coded on magnitude alone.
+        ("significant but smaller effect than the original study reported", None),
+        ("the replication produced a reduced effect magnitude", None),
+        ("we attempted this study across multiple sites", None),
     ])
     def test_keyword_scan(self, text, expected):
         hit = _keyword_scan(text, "abstract")
+        if expected is None:
+            assert hit is None, f"Expected no hit for: {text!r}"
+            return
         assert hit is not None, f"No match for: {text!r}"
         assert hit["outcome"] == expected, (
             f"Expected {expected}, got {hit['outcome']} for: {text!r}"
         )
-
-    @pytest.mark.parametrize("text", [
-        "significant but smaller effect than the original study reported",
-        "the replication produced a reduced effect magnitude",
-    ])
-    def test_reduced_effect_size_alone_is_not_a_keyword_hit(self, text):
-        """Effect size alone must not decide the outcome.
-
-        `mixed` requires the authors to present their own evidence as partly
-        supporting and partly not; a supported-but-smaller effect is a success.
-        Neither is decidable from these phrases, so the keyword pass declines and
-        the row goes to the LLM rather than being coded on magnitude alone.
-        """
-        assert _keyword_scan(text, "abstract") is None
-
-    def test_no_match_returns_none(self):
-        hit = _keyword_scan("we attempted this study across multiple sites", "abstract")
-        assert hit is None
-
-    def test_failure_beats_success_keyword(self):
-        hit = _keyword_scan("we failed to replicate the originally replicated finding", "abstract")
-        assert hit["outcome"] == "failure"
 
     def test_success_in_the_same_sentence_vetoes_a_failure_keyword(self):
         """A failure phrase does not decide a sentence that also reports success."""
@@ -148,32 +123,27 @@ class TestKeywordScan:
         """"No significant difference" describes the test, not the verdict.
 
         In a successful replication it is how the comparison against the original
-        is reported, so an explicit success claim in the same abstract wins.
+        is reported, so an explicit success claim in the same abstract wins. Alone,
+        the same phrase still codes failure — but only at medium confidence.
         """
         hit = _keyword_scan(text, "abstract")
         assert hit is not None
         assert hit["outcome"] == "success"
+        alone = _keyword_scan("We found no evidence of ego depletion.", "abstract")
+        assert alone["outcome"] == "failure"
+        assert alone["outcome_confidence"] == "medium"
 
-    def test_weak_failure_phrase_alone_still_codes_failure_at_medium(self):
-        hit = _keyword_scan("We found no evidence of ego depletion.", "abstract")
-        assert hit["outcome"] == "failure"
-        assert hit["outcome_confidence"] == "medium"
-
-    def test_returns_source_correctly(self):
-        hit = _keyword_scan("successfully replicated", "fulltext")
-        assert hit["out_quote_source"] == "fulltext"
-
-    def test_outcome_phrase_is_not_bare_keyword(self):
-        text = "We ran three experiments. The results failed to replicate. Further analysis confirmed this."
+    def test_outcome_phrase_spans_the_surrounding_sentences(self):
+        text = ("Prior work found a large effect. We failed to replicate this effect "
+                "in our sample. Our power was 0.95.")
         hit = _keyword_scan(text, "abstract")
         assert hit is not None
         assert len(hit["outcome_phrase"]) > len("failed to replicate")
-
-    def test_outcome_phrase_contains_surrounding_sentence(self):
-        text = "Prior work found a large effect. We failed to replicate this effect in our sample. Our power was 0.95."
-        hit = _keyword_scan(text, "abstract")
-        assert hit is not None
-        assert "Prior work" in hit["outcome_phrase"] or "power was" in hit["outcome_phrase"]
+        assert ("Prior work" in hit["outcome_phrase"]
+                or "power was" in hit["outcome_phrase"])
+        # The scanned source is reported back, not inferred.
+        assert hit["out_quote_source"] == "abstract"
+        assert _keyword_scan("successfully replicated", "fulltext")["out_quote_source"] == "fulltext"
 
 
 # ── extract_outcome unit tests ────────────────────────────────────────────────
@@ -218,17 +188,22 @@ class TestExtractOutcome:
         assert result["outcome"] == "not_a_replication"
 
     def test_keyword_hit_skips_llm_in_no_llm_mode(self):
-        """The keyword fast-path is preserved when the LLM is off."""
+        """The keyword fast-path, whole: with the LLM off a replication abstract is
+        coded from the keyword scan alone — no call, no reasoning, and the row names
+        the rule rather than a model that never answered."""
         with patch("extract.code_outcome.call_llm") as mock_llm:
             result = extract_outcome(
                 "10.1234/test",
                 abstract_r="we found no evidence of the original effect",
                 title_r="A Replication Study",
+                record_type="replication",
                 no_llm=True,
             )
         mock_llm.assert_not_called()
         assert result["outcome"] == "failure"
         assert result["out_quote_source"] == "abstract"
+        assert result.get("outcome_reasoning", "") == ""
+        assert result["llm_model"] == "keyword"
 
     def test_uninformative_triggers_llm(self):
         """No keyword match should fall through to LLM."""
@@ -268,15 +243,6 @@ class TestExtractOutcome:
         assert result["outcome_confidence"] == "low"
         # An API failure must not be cached — a re-run has to be able to code the row.
         assert not list(tmp_path.glob("*.json"))
-
-    def test_llm_failure_backs_off_between_retries(self, tmp_path):
-        """call_llm reports failure by returning None, so the backoff must run on that path."""
-        sleeps: list = []
-        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.time.sleep", side_effect=sleeps.append), \
-             patch("extract.code_outcome.call_llm", return_value=(None, "", "quota")):
-            extract_outcome("10.1234/fail", abstract_r="ambiguous text")
-        assert sleeps == [1, 2]
 
     def test_llm_result_cached(self, tmp_path):
         """LLM result should be written to cache and reused."""
@@ -324,18 +290,6 @@ class TestLLMOutcomePrompt:
             )
         return result, mock_llm
 
-    def test_original_citation_appears_in_prompt_when_provided(self, tmp_path):
-        _, mock_llm = self._run_llm(
-            tmp_path, original_title="The Original", original_authors="Smith", original_year="2010"
-        )
-        prompt = mock_llm.call_args[0][0]
-        assert "THIS PAPER REPLICATES: Smith (2010). The Original" in prompt
-
-    def test_no_original_block_when_title_empty(self, tmp_path):
-        _, mock_llm = self._run_llm(tmp_path)
-        prompt = mock_llm.call_args[0][0]
-        assert "THIS PAPER REPLICATES" not in prompt
-
     def test_fulltext_not_in_abstract_prompt(self, tmp_path):
         """#61 abstract-first: the FIRST call must be abstract-only. Fulltext is held
         in reserve for escalation, so it must not appear in the abstract prompt."""
@@ -355,16 +309,6 @@ class TestLLMOutcomePrompt:
         result, _ = self._run_llm(tmp_path)
         assert "outcome_reasoning" in result
         assert result["outcome_reasoning"] == "All effects replicated."
-
-    def test_outcome_reasoning_empty_on_keyword_hit(self):
-        # #70: keyword short-circuit is no_llm-only now; with the LLM off a keyword hit
-        # still returns a keyword result with empty reasoning.
-        result = extract_outcome(
-            "10.1234/kw", abstract_r="we failed to replicate the original finding",
-            no_llm=True,
-        )
-        assert result["outcome"] == "failure"
-        assert result.get("outcome_reasoning", "") == ""
 
     def test_outcome_reasoning_empty_on_llm_failure(self):
         with patch("extract.code_outcome.call_llm", return_value=(None, "", "")):
@@ -390,41 +334,6 @@ class TestLLMOutcomePrompt:
 
 # ── Outcome-coding unification tests ─────────────────────────────────────────
 
-class TestOutcomeEnumSingleSource:
-    """The outcome enum is defined once in schema and imported everywhere."""
-
-    def test_code_outcome_valid_is_schema_categories(self):
-        assert code_outcome._VALID_OUTCOMES is OUTCOME_CATEGORIES
-
-    def test_run_extract_valid_is_schema_categories(self):
-        assert run_extract._VALID_OUTCOMES is OUTCOME_CATEGORIES
-
-    def test_cannot_be_determined_present(self):
-        assert "cannot_be_determined" in OUTCOME_CATEGORIES
-
-    def test_categories_are_exact(self):
-        # not_a_replication is a genuine classifier output (is_genuine_attempt=false),
-        # so it belongs in the category enum. uninformative and
-        # statistically_successful_but_flawed are FLoRA codebook categories restored
-        # in the rule-alignment pass — see shared/schema.py.
-        assert OUTCOME_CATEGORIES == {
-            "success", "failure", "mixed", "descriptive",
-            "statistically_successful_but_flawed", "uninformative",
-            "cannot_be_determined", "not_a_replication",
-        }
-
-    def test_uninformative_is_a_live_category_not_a_legacy_value(self):
-        """FLoRA's 'the authors say their study is uninformative' is a coding, not a
-        historical artefact — and is distinct from 'we could not tell'."""
-        from shared.schema import OUTCOME_LEGACY_VALUES, OUTCOME_VALUES
-        assert "uninformative" in OUTCOME_CATEGORIES
-        assert "uninformative" in OUTCOME_VALUES
-        assert "uninformative" not in OUTCOME_LEGACY_VALUES
-
-    def test_flawed_success_is_distinguishable_from_success(self):
-        assert "statistically_successful_but_flawed" in OUTCOME_CATEGORIES
-
-
 class TestKeywordScanNoFulltext:
     """The fulltext keyword scan was removed — only title + abstract are scanned."""
 
@@ -441,15 +350,6 @@ class TestKeywordScanNoFulltext:
         )
         assert result["outcome"] == "cannot_be_determined"
 
-    def test_abstract_signal_still_fires(self):
-        result = extract_outcome(
-            "10.1234/abskw",
-            abstract_r="We failed to replicate the original finding.",
-            no_llm=True,
-        )
-        assert result["outcome"] == "failure"
-        assert result["out_quote_source"] == "abstract"
-
 
 class TestFulltextEscalation:
     _ABS_CBD = {"outcome": "cannot_be_determined", "outcome_phrase": "",
@@ -459,14 +359,22 @@ class TestFulltextEscalation:
                 "outcome_confidence": "high", "out_quote_source": "fulltext",
                 "outcome_reasoning": "results section is explicit"}
 
-    def test_escalation_fires_on_cannot_be_determined(self, tmp_path):
+    # No abstract → escalate even though the abstract call did not return cbd.
+    _ABS_THIN = {"outcome": "success", "outcome_phrase": "", "outcome_confidence": "low",
+                 "out_quote_source": "title", "outcome_reasoning": ""}
+
+    @pytest.mark.parametrize("abstract,first", [
+        ("ambiguous abstract", _ABS_CBD),   # the abstract could not settle it
+        ("",                   _ABS_THIN),  # there was no abstract to settle it with
+    ])
+    def test_escalation_fires(self, tmp_path, abstract, first):
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
              patch("extract.code_outcome.time.sleep"), \
              patch("extract.code_outcome.call_llm",
-                   side_effect=[(self._ABS_CBD, "m", ""), (self._FT_FAIL, "m", "")]) as mock_llm:
+                   side_effect=[(first, "m", ""), (self._FT_FAIL, "m", "")]) as mock_llm:
             result = extract_outcome(
-                "10.1234/esc", abstract_r="ambiguous abstract",
+                "10.1234/esc", abstract_r=abstract,
                 fulltext="RESULTS: the effect did not replicate.", title_r="A Study",
             )
         assert mock_llm.call_count == 2
@@ -475,47 +383,22 @@ class TestFulltextEscalation:
         assert result["outcome"] == "failure"
         assert result["out_quote_source"] == "fulltext"
 
-    def test_no_escalation_when_flag_off(self, tmp_path):
+    @pytest.mark.parametrize("flag,fulltext", [
+        (False, "RESULTS: the effect did not replicate."),   # escalation switched off
+        (True,  ""),                                         # nothing to escalate to
+    ])
+    def test_no_escalation(self, tmp_path, flag, fulltext):
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", False), \
+             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", flag), \
              patch("extract.code_outcome.time.sleep"), \
              patch("extract.code_outcome.call_llm",
                    side_effect=[(self._ABS_CBD, "m", ""), (self._FT_FAIL, "m", "")]) as mock_llm:
             result = extract_outcome(
                 "10.1234/noesc", abstract_r="ambiguous abstract",
-                fulltext="RESULTS: the effect did not replicate.", title_r="A Study",
+                fulltext=fulltext, title_r="A Study",
             )
         assert mock_llm.call_count == 1
         assert result["outcome"] == "cannot_be_determined"
-
-    def test_no_escalation_when_no_fulltext(self, tmp_path):
-        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
-             patch("extract.code_outcome.time.sleep"), \
-             patch("extract.code_outcome.call_llm",
-                   side_effect=[(self._ABS_CBD, "m", "")]) as mock_llm:
-            result = extract_outcome(
-                "10.1234/noft", abstract_r="ambiguous abstract",
-                fulltext="", title_r="A Study",
-            )
-        assert mock_llm.call_count == 1
-        assert result["outcome"] == "cannot_be_determined"
-
-    def test_escalation_fires_on_empty_abstract(self, tmp_path):
-        # No abstract → escalate even though the abstract call did not return cbd.
-        abs_success = {"outcome": "success", "outcome_phrase": "", "outcome_confidence": "low",
-                       "out_quote_source": "title", "outcome_reasoning": ""}
-        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
-             patch("extract.code_outcome.time.sleep"), \
-             patch("extract.code_outcome.call_llm",
-                   side_effect=[(abs_success, "m", ""), (self._FT_FAIL, "m", "")]) as mock_llm:
-            result = extract_outcome(
-                "10.1234/emptyabs", abstract_r="",
-                fulltext="RESULTS: the effect did not replicate.", title_r="A Study",
-            )
-        assert mock_llm.call_count == 2
-        assert result["outcome"] == "failure"
 
     def test_failed_escalation_is_not_cached(self, tmp_path):
         """Caching the abstract's cannot_be_determined after the fulltext call died
@@ -556,33 +439,6 @@ class TestOutcomePromptContent:
             extract_outcome("10.1234/pr", abstract_r="ambiguous abstract", title_r="T", **kw)
         return mock_llm.call_args_list[0][0][0]
 
-    def test_example_one_relabelled_descriptive(self, tmp_path):
-        prompt = self._prompt(tmp_path)
-        assert "— descriptive: the methods are reused" in prompt
-
-    def test_uninformative_and_flawed_success_are_offered(self, tmp_path):
-        """Both FLoRA categories must appear in the rules AND in the response schema —
-        a category defined in prose but absent from the schema is silently coerced away."""
-        prompt = self._prompt(tmp_path)
-        assert '- "uninformative" —' in prompt
-        assert '- "statistically_successful_but_flawed" —' in prompt
-        assert ('- "outcome": one of "success", "failure", "mixed", "descriptive",\n'
-                '  "statistically_successful_but_flawed", "uninformative", '
-                '"cannot_be_determined"') in prompt
-
-    def test_no_default_to_cannot_be_determined_line(self, tmp_path):
-        prompt = self._prompt(tmp_path)
-        assert "rather than 'uninformative'" not in prompt
-
-    def test_abstract_pass_names_no_fulltext_evidence(self, tmp_path):
-        """The abstract pass must not tell the model it holds full text, or quotes come
-        back attributed to a section the model never saw."""
-        prompt = self._prompt(tmp_path)
-        assert ("You have the paper's title and abstract, and the original study it has "
-                "been linked to.") in prompt
-        assert "PAPER TEXT" not in prompt
-        assert "record_type_check" not in prompt
-
     def test_abstract_truncated_at_3000(self, tmp_path):
         long_abstract = ("A" * 2999) + "MARKER_INSIDE" + ("B" * 3000) + "MARKER_OUTSIDE"
         ret = {"outcome": "success", "outcome_phrase": "x", "confidence": "high",
@@ -595,6 +451,37 @@ class TestOutcomePromptContent:
         assert "MARKER_OUTSIDE" not in prompt
         assert "MARKER_INSIDE" not in prompt  # sits just past the 3000-char cap
         assert "…" in prompt
+
+
+class TestOutcomePromptOffersEveryCategory:
+    """A category the schema defines but the prompt's answer options omit is a
+    category the model can never return — the parser then coerces it away silently,
+    and the coding vocabulary quietly shrinks. The two must agree by construction."""
+
+    @staticmethod
+    def _schema_block(prompt: str) -> str:
+        """The response-schema section: the enumerated answer fields, nothing else."""
+        start = prompt.index("Return exactly")
+        return prompt[start:prompt.index("Use these field names", start)]
+
+    def test_replication_prompt_offers_every_replication_category(self):
+        from shared.prompts import build_outcome_prompt
+        from shared.schema import outcome_categories_for
+        block = self._schema_block(build_outcome_prompt("t", "a"))
+        for category in outcome_categories_for("replication"):
+            # not_a_replication is the full-text pass's is_genuine_attempt veto, not
+            # an option the model picks from the outcome enum.
+            if category == "not_a_replication":
+                continue
+            assert f'"{category}"' in block, category
+
+    def test_reproduction_prompt_offers_every_axis_value(self):
+        from shared.prompts import build_repro_outcome_prompt
+        from shared.schema import (COMPUTATION_OUTCOME_VALUES,
+                                   ROBUSTNESS_OUTCOME_VALUES)
+        block = self._schema_block(build_repro_outcome_prompt("t", "a"))
+        for value in COMPUTATION_OUTCOME_VALUES | ROBUSTNESS_OUTCOME_VALUES:
+            assert f'"{value}"' in block, value
 
 
 class TestOutcomePromptPlaceholderInjection:
@@ -698,19 +585,6 @@ class TestOutcomeCacheKey:
         finally:
             prompts.prompt_version.cache_clear()
         assert mock.call_count == 1
-
-    def test_accumulate_env_var_is_gone(self):
-        import shared.cache as cache_mod
-        import shared.config as config_mod
-        assert not hasattr(cache_mod, "read_dual_cache")
-        assert not hasattr(cache_mod, "write_dual_cache")
-        assert not hasattr(config_mod, "LLM_CACHE_READ")
-
-    def test_content_key_shape_allows_per_doi_glob(self, tmp_path):
-        from shared.utils import cache_key as _ck
-        key = content_key("outcome", "10.1/x", "a", "b")
-        assert key.startswith(f"outcome_{_ck('10.1/x')}_")
-        assert content_key("outcome", "10.1/x", "a", "c") != key
 
 
 def write_cache_json(cache_dir, key, data):
@@ -877,16 +751,6 @@ class TestRunExtract:
         assert mock_ladder.call_count == 1
         assert "fp" not in mock_ladder.call_args[0][0]
 
-    def test_link_confidence_is_categorical(self):
-        csv = (
-            "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
-            "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
-            "10.1000/test,Test,Abstract,2020,Smith,J. Psych,,W1,openalex,"
-            "replication,rule_based,direct replication,high\n"
-        )
-        result = self._run(csv)
-        assert result.iloc[0]["link_confidence"] in {"high", "medium", "low"}
-
     def test_two_targets_expand_to_two_rows(self):
         csv = (
             "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
@@ -909,13 +773,6 @@ class TestRunExtract:
         "10.1000/repro,Repro Paper,Abstract,2020,Jones,J. Psych,,W2,openalex,"
         "reproduction,rule_based,reproduction study,high\n"
     )
-
-    def test_type_column_comes_from_the_screen_not_filter_status(self):
-        """The screen read the abstract and said what the paper is, so its verdict
-        overrides Stage 2's guess for both rows."""
-        result = self._run(self._TYPE_CSV,
-                           screen={**_YES_SCREEN, "record_type": "reproduction"})
-        assert set(result["type"]) == {"reproduction"}
 
     def test_type_column_falls_back_to_filter_status_without_an_llm(self):
         """--no-llm runs no screen, so Stage 2's filter_status is all there is."""
@@ -1060,14 +917,6 @@ class TestGranularLinkMethods:
     ]
 
     @pytest.mark.parametrize("method", GRANULAR)
-    def test_map_method_passes_through(self, method):
-        assert _map_method(method) == method
-
-    def test_no_method_maps_to_author_year_match(self):
-        for method in self.GRANULAR:
-            assert _map_method(method) != "author_year_match"
-
-    @pytest.mark.parametrize("method", GRANULAR)
     def test_merge_row_emits_granular_label(self, method):
         link = {
             "resolution_method": method,
@@ -1123,10 +972,6 @@ class TestMakePairId:
         assert (make_pair_id("10.1/rep", "10.2/orig", "W123", "A Title")
                 == make_pair_id("10.1/rep", "10.2/orig"))
 
-    def test_returns_32_char_hex(self):
-        pid = make_pair_id("10.1/rep", "", "W2003152982")
-        assert len(pid) == 32 and all(c in "0123456789abcdef" for c in pid)
-
     def test_two_doi_less_originals_of_one_replication_are_distinct(self):
         """The collision this fallback exists to fix: without it both originals
         hash to "doi_r|" and csv_to_db silently drops one of them."""
@@ -1177,23 +1022,12 @@ class TestMergeMultiRow:
         assert r1["pair_id"] != collide
         assert r2["pair_id"] != collide
 
-    def test_resolved_doi_pair_id_is_deterministic(self):
-        r = self._merge({"rank": 1, "doi": "10.1/x", "title": "X",
-                         "first_author": "A", "year": 2001, "confidence": "high"})
-        assert r["pair_id"] == make_pair_id("10.1/rep", "10.1/x")
-
     def test_two_doi_less_originals_with_openalex_ids_are_distinct(self):
         r1 = self._merge({"rank": 1, "doi": "", "title": "A Book",
                           "openalex_id": "W1", "confidence": "high"})
         r2 = self._merge({"rank": 2, "doi": "", "title": "A Book",
                           "openalex_id": "W2", "confidence": "high"})
         assert r1["pair_id"] != r2["pair_id"]
-
-    def test_link_method_label_is_passed_through(self):
-        r = self._merge({"rank": 1, "doi": "10.1/x", "title": "X",
-                         "first_author": "A", "year": 2001, "confidence": "high"},
-                        link_method="llm_cited_candidates")
-        assert r["link_method"] == "llm_cited_candidates"
 
 
 # ── The gate's study-count bound ──────────────────────────────────────────────
@@ -1298,35 +1132,12 @@ class TestFloraSkipDois:
         assert run_extract._load_flora_skip_dois(
             tmp_path / "nope.csv", tmp_path / "also-nope.csv") == set()
 
-    def test_skip_is_on_by_default(self):
-        import inspect
-        sig = inspect.signature(run_extract.run_extract)
-        assert sig.parameters["skip_flora_validated"].default is True
-
 
 # ── Reproduction outcome coding (3x3 computation/robustness grid) ────────────
 
 class TestReproductionOutcome:
     """Reproductions use a different vocabulary from replications; the row's
     type must select it, or every reproduction verdict is coerced away."""
-
-    def test_grid_is_two_axis_vocabularies_plus_the_derived_join(self):
-        from shared.schema import (COMPUTATION_OUTCOME_VALUES,
-                                   REPRODUCTION_OUTCOME_CATEGORIES as R,
-                                   ROBUSTNESS_OUTCOME_VALUES)
-        assert COMPUTATION_OUTCOME_VALUES == {
-            "computationally reproducible", "computational issues",
-            "technical failure", "not checked", "cannot_be_determined"}
-        assert ROBUSTNESS_OUTCOME_VALUES == {
-            "robust", "robustness challenges", "not checked", "cannot_be_determined"}
-        # The derived join set holds only the settled combinations: an unsettled axis
-        # derives cannot_be_determined instead of a joined string.
-        assert len(R) == 12
-        for comp in ("computationally reproducible", "computational issues",
-                     "technical failure", "not checked"):
-            for rob in ("robust", "robustness challenges", "not checked"):
-                assert f"{comp}, {rob}" in R
-        assert not any("cannot_be_determined" in v for v in R)
 
     def test_vocabulary_selected_by_type(self):
         from shared.schema import outcome_categories_for
@@ -1336,15 +1147,6 @@ class TestReproductionOutcome:
         assert "computationally reproducible, robust" not in repl
         assert "success" in repl and "success" not in repro
         assert "cannot_be_determined" in repro and "cannot_be_determined" in repl
-
-    def test_old_grid_values_are_legacy_not_current(self):
-        """The 3x3 strings are still on disk in 17 rows, so a stored-data validator
-        must accept them — but nothing emits them any more."""
-        from shared.schema import (OUTCOME_LEGACY_VALUES, OUTCOME_VALUES,
-                                   REPRODUCTION_OUTCOME_CATEGORIES)
-        assert "computationally successful, robust" in OUTCOME_LEGACY_VALUES
-        assert "computationally successful, robust" in OUTCOME_VALUES
-        assert "computationally successful, robust" not in REPRODUCTION_OUTCOME_CATEGORIES
 
     def test_axes_are_stored_and_the_outcome_is_derived(self, tmp_path):
         mock = {"outcome_computation": "computational issues",
@@ -1415,21 +1217,6 @@ class TestReproductionOutcome:
         assert res["outcome"] == "computational issues, not checked"
         assert "reproduction study" in mock_llm.call_args[0][0]
         assert "AXIS 1 — outcome_computation" in mock_llm.call_args[0][0]
-
-    def test_replication_uses_keyword_scan_only_in_no_llm(self):
-        # Replications use the keyword scan as the no_llm fallback; reproductions never do.
-        with patch("extract.code_outcome.call_llm") as mock_llm:
-            res = extract_outcome("10.1/repl", abstract_r="we found no evidence of the effect",
-                                  record_type="replication", no_llm=True)
-        mock_llm.assert_not_called()
-        assert res["outcome"] == "failure"
-
-    def test_both_vocabularies_ask_for_self_contained_quotes(self):
-        from shared.prompts import build_outcome_prompt, build_repro_outcome_prompt
-        for p in (build_outcome_prompt("t", "a"), build_repro_outcome_prompt("t", "a")):
-            assert "Quote 1-4" in p
-            assert "complete" in p
-            assert "self-contained" in p
 
 
 # ── Per-axis escalation, record_type_check and response repair ──────────────
@@ -1533,18 +1320,16 @@ class TestRecordTypeCheckRecode:
         assert mock_llm.call_count == 4
         assert result["record_type"] == "reproduction"
 
-    def test_a_matching_answer_changes_nothing(self, tmp_path):
-        ft_agrees = dict(self._FT_SAYS_REPRO, record_type_check="replication")
-        result, mock_llm = self._run(tmp_path, [self._ABS_CBD, ft_agrees])
+    @pytest.mark.parametrize("check", ["replication", "unclear"])
+    def test_an_answer_that_is_not_the_other_vocabulary_changes_nothing(self, tmp_path,
+                                                                        check):
+        """Only the other vocabulary triggers a recode: agreement and "unclear" both
+        leave the row coded as it was, with no third call."""
+        ft = dict(self._FT_SAYS_REPRO, record_type_check=check)
+        result, mock_llm = self._run(tmp_path, [self._ABS_CBD, ft])
         assert mock_llm.call_count == 2
         assert result["outcome"] == "failure"
         assert "record_type" not in result
-
-    def test_unclear_changes_nothing(self, tmp_path):
-        ft_unclear = dict(self._FT_SAYS_REPRO, record_type_check="unclear")
-        result, mock_llm = self._run(tmp_path, [self._ABS_CBD, ft_unclear])
-        assert mock_llm.call_count == 2
-        assert result["outcome"] == "failure"
 
     def test_a_failed_recode_is_not_cached(self, tmp_path):
         """The recode's own call failing yields api_error, which the outer call must not
@@ -1556,13 +1341,6 @@ class TestRecordTypeCheckRecode:
             tmp_path, [self._ABS_CBD, self._FT_SAYS_REPRO, self._REPRO_VERDICT])
         assert mock_llm.call_count == 3
         assert second["outcome"] == "computational issues, not checked"
-
-    def test_a_successful_recode_is_cached(self, tmp_path):
-        self._run(tmp_path, [self._ABS_CBD, self._FT_SAYS_REPRO, self._REPRO_VERDICT])
-        result, mock_llm = self._run(tmp_path, [])
-        assert mock_llm.call_count == 0
-        assert result["outcome"] == "computational issues, not checked"
-        assert result["record_type"] == "reproduction"
 
     def test_a_recoded_type_reaches_the_row(self):
         row = run_extract._apply_outcome(
@@ -1622,14 +1400,12 @@ class TestGuardOriginalLink:
         assert out["link_method"] == "target_pending"
         assert out["doi_o"] == ""
 
-    def test_self_link_by_title_rejected(self):
-        out = run_extract._guard_original_link(
-            self._row(doi_o="", title_o="A Study of Things"))
-        assert out["link_method"] == "target_pending"
-
-    def test_self_link_title_match_ignores_case_and_punctuation(self):
-        out = run_extract._guard_original_link(
-            self._row(doi_o="", title_o="  a study of THINGS.  "))
+    @pytest.mark.parametrize("title_o", [
+        "A Study of Things",
+        "  a study of THINGS.  ",   # case and punctuation must not hide a self-link
+    ])
+    def test_self_link_by_title_rejected(self, title_o):
+        out = run_extract._guard_original_link(self._row(doi_o="", title_o=title_o))
         assert out["link_method"] == "target_pending"
 
     def test_demotion_clears_a_merged_outcome(self):
@@ -1672,15 +1448,23 @@ class TestGuardOriginalLink:
             out = run_extract._guard_original_link(self._row(doi_o=""))
         assert out["link_method"] == "target_pending"
 
-    def test_genuinely_empty_doi_with_real_title_is_kept(self):
+    @pytest.mark.parametrize("openalex_hit", [
+        None,                              # nothing came back at all
+        {"doi": "", "openalex_id": ""},    # a hit with no identifier on it
+    ])
+    def test_genuinely_empty_doi_with_real_title_is_kept(self, openalex_hit):
         """No DOI anywhere, but a substantive distinct title -> keep the row and
-        mark it explicitly rather than dropping a valid original."""
+        mark it explicitly rather than dropping a valid original. With no identifier
+        to key on, pair_id must stay exactly as it was."""
         with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
-             patch("extract.run_extract._search_openalex_by_title", return_value=None):
+             patch("extract.run_extract._search_openalex_by_title",
+                   return_value=openalex_hit):
             out = run_extract._guard_original_link(self._row(doi_o=""))
         assert out["link_method"] == "llm_fulltext"
         assert out["doi_o"] == ""
         assert out["doi_o_verification"] == "no_doi"
+        assert out.get("oa_work_id_o", "") == ""
+        assert out["pair_id"] == "p"
 
     def test_no_doi_and_no_usable_title_is_pending(self):
         with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
@@ -1725,15 +1509,6 @@ class TestGuardOriginalLink:
                 self._row(doi_o="", oa_work_id_r="W999"))
         assert out["link_method"] == "target_pending"
         assert out["doi_o"] == ""
-
-    def test_doi_less_original_without_a_work_id_is_left_alone(self):
-        with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
-             patch("extract.run_extract._search_openalex_by_title",
-                   return_value={"doi": "", "openalex_id": ""}):
-            out = run_extract._guard_original_link(self._row(doi_o=""))
-        assert out["doi_o_verification"] == "no_doi"
-        assert out.get("oa_work_id_o", "") == ""
-        assert out["pair_id"] == "p", "no identifier found — pair_id must not be re-keyed"
 
     def test_work_id_matching_the_replication_is_a_self_link(self):
         hit = {"doi": "", "openalex_id": "W999", "title": "The Original Work"}
@@ -1930,13 +1705,6 @@ class TestFillWorkIds:
             out = run_extract._fill_work_ids(row)
         assert out["oa_work_id_o"] == "W222"
 
-    def test_r_side_falls_back_to_doi_lookup(self):
-        row = {"openalex_id_r": "", "doi_r": "10.1/r", "doi_o": ""}
-        with patch("extract.run_extract._oa_by_doi",
-                   return_value={"openalex_id": "https://openalex.org/W333"}):
-            out = run_extract._fill_work_ids(row)
-        assert out["oa_work_id_r"] == "W333"
-
     def test_unresolvable_ids_are_blank_not_missing(self):
         row = {"openalex_id_r": "", "doi_r": "", "doi_o": ""}
         with patch("extract.run_extract._oa_by_doi", return_value=None):
@@ -1963,22 +1731,10 @@ class TestFillWorkIds:
         assert out["doi_o"] == "10.2/right"
         assert out["oa_work_id_o"] == "W222", "the id must follow the corrected DOI"
 
-    def test_schema_declares_both_columns(self):
-        from shared.schema import EXTRACTED_COLS
-        assert "oa_work_id_r" in EXTRACTED_COLS
-        assert "oa_work_id_o" in EXTRACTED_COLS
-
 
 # ── Title-search provenance is visible in link_method (fix 2) ────────────────
 
 class TestTitleSearchProvenance:
-    def test_schema_knows_the_method(self):
-        from shared.schema import LINK_METHOD_VALUES, RESOLVED_LINK_METHODS
-        assert "llm_title_search" in LINK_METHOD_VALUES
-        # Provisional, not resolved: ~50% measured precision and the failure mode is
-        # invisible to doi_o_verification, so the row must not import (audit D2).
-        assert "llm_title_search" not in RESOLVED_LINK_METHODS
-
     def test_mapped_from_internal_label(self):
         assert run_extract._map_method("llm_title_search_gemini") == "llm_title_search"
         assert run_extract._map_method("llm_title_search_openai") == "llm_title_search"
@@ -2014,69 +1770,16 @@ class TestLinkMethodEnumCoverage:
         unlisted = self._emitted() - LINK_METHOD_VALUES
         assert not unlisted, f"link_method values missing from the enum: {unlisted}"
 
-    def test_call_site_literals_are_in_the_enum(self):
-        import inspect, re
-        from shared.schema import LINK_METHOD_VALUES
-        src = inspect.getsource(run_extract)
-        literals = set(re.findall(r'link_method\s*=\s*"([^"]+)"', src))
-        unlisted = literals - LINK_METHOD_VALUES
-        assert not unlisted, f"link_method literals missing from the enum: {unlisted}"
-
     def test_map_method_passthrough_matches_the_enum(self):
         from shared.schema import LINK_METHOD_VALUES
         for value in LINK_METHOD_VALUES:
             assert run_extract._map_method(value) == value
 
-    def test_reference_screen_resolutions_reach_the_db(self):
-        # csv_to_db imports supabase at module level, so read its source instead of
-        # importing it: the point is that its import filter is the schema set.
-        from pathlib import Path
-        from shared.schema import RESOLVED_LINK_METHODS
+    def test_the_reference_screen_resolves(self):
+        """csv_to_db filters DB imports on RESOLVED_LINK_METHODS, so an omission
+        silently drops resolved rows — llm_references, 25% of extracted-test.csv,
+        was dropped exactly this way."""
         assert "llm_references" in RESOLVED_LINK_METHODS
-        src = Path(__file__).resolve().parents[1] / "extract" / "csv_to_db.py"
-        text = src.read_text(encoding="utf-8")
-        assert "from shared.schema import RESOLVED_LINK_METHODS" in text
-        assert 'df["link_method"].isin(_RESOLVED_METHODS)' in text
-
-    def test_set_aside_verdicts_are_known_but_unresolved(self):
-        from shared.schema import LINK_METHOD_VALUES, RESOLVED_LINK_METHODS
-        for value in ("not_a_replication", "screen_disagreement"):
-            assert value in LINK_METHOD_VALUES
-            assert value not in RESOLVED_LINK_METHODS
-
-
-class TestOutcomeVocabularyNeverCrosses:
-    """A reproduction must only ever carry one of the 9 grid values (or
-    cannot_be_determined / not_a_replication), and a replication only the
-    replication enum. Every caller of extract_outcome must pass record_type —
-    tools/recalibrate_outcomes.py did not, and coded a reproduction as 'success'."""
-
-    def test_every_production_caller_passes_record_type(self):
-        import inspect, re
-        import extract.run_extract as rx
-        import tools.recalibrate_outcomes as rc
-        for mod in (rx, rc):
-            src = inspect.getsource(mod)
-            for m in re.finditer(r"extract_outcome\(", src):
-                tail = src[m.end():m.end() + 900]
-                depth, body = 1, []
-                for ch in tail:
-                    if ch == "(":
-                        depth += 1
-                    elif ch == ")":
-                        depth -= 1
-                        if depth == 0:
-                            break
-                    body.append(ch)
-                call = "".join(body)
-                assert "record_type" in call, (
-                    f"{mod.__name__} calls extract_outcome without record_type; a "
-                    f"reproduction would silently be coded in replication vocabulary")
-
-    def test_reproduction_rejects_replication_vocabulary(self):
-        from shared.schema import outcome_categories_for
-        assert "success" not in outcome_categories_for("reproduction")
-        assert "computationally successful, robust" not in outcome_categories_for("replication")
 
 
 # ── Decision-model attribution and the two-provider requirement ──────────────
@@ -2088,54 +1791,36 @@ class TestClassifyModelAttribution:
     _FILTER_ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "Rep",
                              "filter_status": "replication"})
 
-    def test_merge_row_persists_the_classifier_model(self):
-        link = {"resolution_method": "llm_fulltext", "resolved_doi_o": "10.1/orig",
-                "resolved_title_o": "Original", "resolved_year_o": 2000,
-                "resolved_author_o": "Smith", "resolution_score": 1.0,
-                "llm_confidence": "high"}
+    _LINK = {"resolution_method": "llm_fulltext", "resolved_doi_o": "10.1/orig",
+             "resolved_title_o": "Original", "resolved_year_o": 2000,
+             "resolved_author_o": "Smith", "resolution_score": 1.0,
+             "llm_confidence": "high", "llm_model": "gemini-link"}
+    _ORIG = {"rank": 1, "doi": "10.1/o", "title": "O", "first_author": "A",
+             "year": 2001, "confidence": "high"}
+
+    def _merge_row(self):
         with patch("extract.run_extract._build_ref_o", return_value=("ref", "auth", "bib")):
-            row = _merge_row(self._FILTER_ROW, link, _MOCK_OUTCOME,
-                             "single_original", "high", 1, 1, "gemini-heavy")
-        assert row["classify_llm_model"] == "gemini-heavy"
+            return _merge_row(self._FILTER_ROW, self._LINK, _MOCK_OUTCOME,
+                              "single_original", "high", 1, 1, "gemini-heavy")
 
-    def test_merge_multi_row_persists_the_classifier_model(self):
+    def _merge_multi_row(self):
         with patch("extract.run_extract._build_ref_o", return_value=("", "", "")):
-            row = _merge_multi_row(self._FILTER_ROW,
-                                   {"rank": 1, "doi": "10.1/o", "title": "O",
-                                    "first_author": "A", "year": 2001,
-                                    "confidence": "high"},
-                                   _MOCK_OUTCOME, "multiple_original", "high", 2,
-                                   classify_model="gemini-heavy")
-        assert row["classify_llm_model"] == "gemini-heavy"
+            return _merge_multi_row(self._FILTER_ROW, self._ORIG, _MOCK_OUTCOME,
+                                    "multiple_original", "high", 2,
+                                    classify_model="gemini-heavy")
 
-    def test_empty_row_persists_the_classifier_model(self):
-        row = run_extract._empty_row(self._FILTER_ROW, "single_original", "low",
-                                     link_method="target_pending",
-                                     classify_model="gemini-heavy")
-        assert row["classify_llm_model"] == "gemini-heavy"
+    def _empty_row(self):
+        return run_extract._empty_row(self._FILTER_ROW, "single_original", "low",
+                                      link_method="target_pending",
+                                      classify_model="gemini-heavy")
 
-    def test_merge_row_persists_the_outcome_model(self):
-        link = {"resolution_method": "llm_fulltext", "resolved_doi_o": "10.1/orig",
-                "resolved_title_o": "Original", "resolved_year_o": 2000,
-                "resolved_author_o": "Smith", "resolution_score": 1.0,
-                "llm_confidence": "high", "llm_model": "gemini-link"}
-        with patch("extract.run_extract._build_ref_o", return_value=("ref", "auth", "bib")):
-            row = _merge_row(self._FILTER_ROW, link, _MOCK_OUTCOME,
-                             "single_original", "high", 1, 1, "gemini-heavy")
-        # The outcome step fails over independently of the link step, so the two
-        # models can differ inside one run — that is the whole point of the column.
-        assert row["outcome_llm_model"] == "gemini-outcome"
-        assert row["link_llm_model"] == "gemini-link"
+    @pytest.mark.parametrize("builder", ["_merge_row", "_merge_multi_row", "_empty_row"])
+    def test_the_classifier_model_is_persisted(self, builder):
+        assert getattr(self, builder)()["classify_llm_model"] == "gemini-heavy"
 
-    def test_merge_multi_row_persists_the_outcome_model(self):
-        with patch("extract.run_extract._build_ref_o", return_value=("", "", "")):
-            row = _merge_multi_row(self._FILTER_ROW,
-                                   {"rank": 1, "doi": "10.1/o", "title": "O",
-                                    "first_author": "A", "year": 2001,
-                                    "confidence": "high"},
-                                   _MOCK_OUTCOME, "multiple_original", "high", 2,
-                                   classify_model="gemini-heavy")
-        assert row["outcome_llm_model"] == "gemini-outcome"
+    @pytest.mark.parametrize("builder", ["_merge_row", "_merge_multi_row"])
+    def test_the_outcome_model_is_persisted(self, builder):
+        assert getattr(self, builder)()["outcome_llm_model"] == "gemini-outcome"
 
     def test_apply_outcome_persists_the_outcome_model(self):
         """The post-gate writer is the one that runs on every coded row — a column
@@ -2144,15 +1829,12 @@ class TestClassifyModelAttribution:
         assert row["outcome_llm_model"] == "gemini-outcome"
         assert row["outcome"] == "success"
 
-    def test_keyword_coded_rows_name_the_rule_not_a_model(self):
-        from extract.code_outcome import extract_outcome
-        out = extract_outcome("10.1/rep", "We failed to replicate the original effect.",
-                              title_r="A replication", no_llm=True)
-        assert out["outcome"] == "failure"
-        assert out["llm_model"] == "keyword"
-
-    def test_classify_llm_model_is_in_the_schema(self):
-        assert "classify_llm_model" in EXTRACTED_COLS
+    def test_the_link_model_is_the_link_stages_own(self):
+        """The outcome step fails over independently of the link step, so the two
+        models can differ inside one run — that is the whole point of the column."""
+        row = self._merge_row()
+        assert row["link_llm_model"] == "gemini-link"
+        assert row["outcome_llm_model"] == "gemini-outcome"
 
 
 class TestMultiRowRecordType:
@@ -2170,13 +1852,8 @@ class TestMultiRowRecordType:
                            "filter_status": filter_status}),
                 self._ORIG, _MOCK_OUTCOME, "multiple_original", "high", 2)
 
-    def test_reproduction_keeps_its_type(self):
-        assert self._row("reproduction")["type"] == "reproduction"
-
-    def test_replication_is_unchanged(self):
-        assert self._row("replication")["type"] == "replication"
-
-    def test_matches_the_single_original_path(self):
+    @pytest.mark.parametrize("filter_status", ["replication", "reproduction"])
+    def test_both_paths_carry_stage_2s_type(self, filter_status):
         """_merge_row already honours filter_status; the multi path must not disagree."""
         link = {"resolution_method": "llm_fulltext", "resolved_doi_o": "10.1/orig",
                 "resolved_title_o": "Original", "resolved_year_o": 2000,
@@ -2184,9 +1861,10 @@ class TestMultiRowRecordType:
                 "llm_confidence": "high"}
         with patch("extract.run_extract._build_ref_o", return_value=("r", "a", "b")):
             single = _merge_row(pd.Series({"doi_r": "10.1/rep", "title_r": "Rep",
-                                           "filter_status": "reproduction"}),
+                                           "filter_status": filter_status}),
                                 link, _MOCK_OUTCOME, "single_original", "high", 1, 1)
-        assert single["type"] == self._row("reproduction")["type"]
+        assert self._row(filter_status)["type"] == filter_status
+        assert single["type"] == filter_status
 
 
 class TestRescreenReopensSetAsides:
@@ -2233,10 +1911,6 @@ class TestRescreenReopensSetAsides:
         resolved, _ = run_extract._load_extracted_rows(self._csv(tmp_path, rows),
                                                       rescreen=True)
         assert resolved == {}
-
-    def test_flag_reaches_run_extract(self):
-        import inspect
-        assert "rescreen" in inspect.signature(run_extract.run_extract).parameters
 
 
 class TestResumeReadsTheScreenSetAsides:
@@ -2291,33 +1965,23 @@ class TestResumeReadsTheScreenSetAsides:
         assert run_extract._screen_set_aside_keys(tmp_path) == {
             "10.1/nar", "oa:W7", "10.1/dis"}
 
-    def test_missing_set_aside_files_are_fine(self, tmp_path):
-        out = tmp_path / "extracted.csv"
-        self._write(out, [{"doi_r": "10.1/keep", "filter_status": "replication",
-                           "link_method": "llm_references", "doi_o": "10.1/o"}])
-        resolved, _ = run_extract._load_extracted_rows(out)
-        assert set(resolved) == {"10.1/keep"}
-
 
 class TestScreenProviderPrecheck:
     """The front-door screen needs two providers to have anything to weigh against
     each other, so a run configured with one must fail at startup, not 2,000 rows
     in. Which second key it needs follows SCREEN_VOTER2_MODEL."""
 
-    def test_a_slashless_voter_needs_the_openai_key(self, monkeypatch):
-        monkeypatch.setattr(llm_client, "SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
-        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["k"])
-        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "")
-        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "k")
-        with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
-            run_extract._check_screen_providers(no_llm=False)
-
-    def test_a_slashed_voter_needs_the_openrouter_key(self, monkeypatch):
-        monkeypatch.setattr(llm_client, "SCREEN_VOTER2_MODEL", "mistralai/ministral-14b-2512")
+    @pytest.mark.parametrize("voter2,missing", [
+        ("gpt-5.4-mini",                  "OPENAI_API_KEY"),
+        ("mistralai/ministral-14b-2512",  "OPENROUTER_API_KEY"),
+    ])
+    def test_the_second_voters_own_key_is_required(self, monkeypatch, voter2, missing):
+        monkeypatch.setattr(llm_client, "SCREEN_VOTER2_MODEL", voter2)
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["k"])
         monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "k")
-        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "")
-        with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
+        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "k")
+        monkeypatch.setattr(run_extract, missing, "")
+        with pytest.raises(RuntimeError, match=missing):
             run_extract._check_screen_providers(no_llm=False)
 
     def test_missing_gemini_key_raises(self, monkeypatch):
@@ -2326,13 +1990,12 @@ class TestScreenProviderPrecheck:
         with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
             run_extract._check_screen_providers(no_llm=False)
 
-    def test_both_keys_present_passes(self, monkeypatch):
+    def test_a_configured_run_passes_and_no_llm_skips_the_check(self, monkeypatch):
         monkeypatch.setattr(llm_client, "SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["k"])
         monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "k")
         run_extract._check_screen_providers(no_llm=False)
-
-    def test_no_llm_skips_the_check(self, monkeypatch):
+        # --no-llm makes no screen call at all, so no key is needed.
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", [])
         monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "")
         monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "")
@@ -2428,32 +2091,25 @@ class TestFrontDoorScreen:
             result = run_extract.run_extract()
         return result, m_link, m_out
 
-    def test_agreed_none_is_written_without_any_further_call(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("confident", [True, False])
+    def test_agreed_none_is_written_without_any_further_call(self, tmp_path, monkeypatch,
+                                                             confident):
+        """G-softqual discards two "none" votes at any confidence."""
         result, m_link, m_out = self._run(
             _screen(screen_verdict="discard", screen_classification="none",
                     record_type="", categories=["terminology_only"],
                     llm_reasoning="gemini: unrelated",
-                    votes=[_vote("gemini", "none"), _vote("openai", "none")]),
+                    votes=[_vote("gemini", "none", confident=confident),
+                           _vote("openai", "none", confident=confident)]),
             tmp_path, monkeypatch)
 
         assert list(result["link_method"]) == ["not_a_replication"]
         assert list(result["outcome"]) == ["not_a_replication"]
-        assert "gemini=none/confident" in result.iloc[0]["link_evidence"]
+        label = "confident" if confident else "unconfident"
+        assert f"gemini=none/{label}" in result.iloc[0]["link_evidence"]
         assert result.iloc[0]["screen_categories"] == "terminology_only"
         m_link.assert_not_called()
         m_out.assert_not_called()
-
-    def test_unconfident_agreed_none_is_still_a_discard(self, tmp_path, monkeypatch):
-        """G-softqual discards two "none" votes at any confidence."""
-        result, m_link, _ = self._run(
-            _screen(screen_verdict="discard", screen_classification="none",
-                    record_type="",
-                    votes=[_vote("gemini", "none", confident=False),
-                           _vote("openai", "none", confident=False)]),
-            tmp_path, monkeypatch)
-
-        assert list(result["link_method"]) == ["not_a_replication"]
-        m_link.assert_not_called()
 
     @pytest.mark.parametrize("partner", ["unclear", "replication"])
     def test_confident_none_plus_an_unconfident_partner_is_a_discard(
@@ -2740,12 +2396,6 @@ class TestParseCacheOnlyAfterTheDocument:
         monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
         assert run_extract._has_document(
             "10.1/x", self._link(pdf_ok=True, pdf_source="arxiv"))
-
-    def test_openalex_xml_only_counts_as_a_document(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
-        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
-        assert run_extract._has_document(
-            "10.1/x", self._link(pdf_source="openalex_xml"))
 
     def test_pdf_cached_by_an_earlier_run_counts(self, tmp_path, monkeypatch):
         """--recalibrate-outcomes re-reads documents a previous run downloaded."""

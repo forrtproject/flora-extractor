@@ -85,18 +85,12 @@ def test_a_provider_that_reports_nothing_is_not_guessed_at():
 
 # ── The OpenAI daily cap ─────────────────────────────────────────────────────
 
-def test_the_cap_counts_prompt_and_completion(monkeypatch):
-    monkeypatch.setattr(tu, "OPENAI_DAILY_TOKEN_BUDGET", 8_000_000)
-    _call_openai(monkeypatch, prompt_tokens=900, completion_tokens=100)
-
-    assert tu.spent("openai") == 1000
-
-
-def test_an_openai_call_below_the_cap_goes_through(monkeypatch):
+def test_a_call_below_the_cap_goes_through_and_charges_prompt_plus_completion(monkeypatch):
     monkeypatch.setattr(tu, "OPENAI_DAILY_TOKEN_BUDGET", 8_000_000)
     tu.record("openai", "gpt-5.4-mini", 7_000_000, 999_999)
 
-    assert _call_openai(monkeypatch)[0] == {"ok": True}
+    assert _call_openai(monkeypatch, prompt_tokens=900, completion_tokens=100)[0] == {"ok": True}
+    assert tu.spent("openai") == 7_999_999 + 1000
 
 
 def test_an_openai_call_past_the_cap_raises_before_it_spends(monkeypatch):

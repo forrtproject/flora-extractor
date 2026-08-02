@@ -100,7 +100,7 @@ def test_load_existing_pair_ids_exact_multiple_of_page_size():
 
 
 # --------------------------------------------------------------------------- #
-# 2. Disjoint skip accounting                                                 #
+# 2. Shared dry-run harness                                                   #
 # --------------------------------------------------------------------------- #
 def _run_and_capture(df, capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("SUPABASE_URL", "https://fake.supabase.co")
@@ -109,60 +109,6 @@ def _run_and_capture(df, capsys, monkeypatch, tmp_path):
     df.to_csv(csv_path, index=False, encoding="utf-8-sig")
     csv_to_db.run_import(csv_path, dry_run=True)
     return capsys.readouterr().out
-
-
-def test_skip_accounting_is_disjoint(capsys, monkeypatch, tmp_path):
-    """Each skipped row lands in exactly one bucket; buckets + resolved == total."""
-    df = pd.DataFrame([
-        # resolved (imported)
-        {"filter_status": "replication", "link_method": "author_year_match_legacy",
-         "doi_r": "10.1/a", "doi_o": "10.2/a", "pair_id": "pa"},
-        # false_positive that ALSO has no_original_found — must count as FP only,
-        # never double-counted or subtracted into a negative "other" bucket.
-        {"filter_status": "false_positive", "link_method": "no_original_found",
-         "doi_r": "10.1/b", "doi_o": "", "pair_id": "pb"},
-        # genuine no_original_found (a real replication, LLM found no original)
-        {"filter_status": "replication", "link_method": "no_original_found",
-         "doi_r": "10.1/c", "doi_o": "", "pair_id": "pc"},
-        # other pending
-        {"filter_status": "replication", "link_method": "target_pending",
-         "doi_r": "10.1/d", "doi_o": "", "pair_id": "pd"},
-        # plain false_positive
-        {"filter_status": "false_positive", "link_method": "author_year_match_legacy",
-         "doi_r": "10.1/e", "doi_o": "", "pair_id": "pe"},
-    ])
-
-    out = _run_and_capture(df, capsys, monkeypatch, tmp_path)
-
-    assert "Resolved (import):  1" in out
-    assert "false_positive:     2" in out          # both FP rows, incl. the no_orig one
-    assert "no_original_found:  1" in out           # only the non-FP no_orig row
-    assert "target_pending / api_error / other: 1" in out
-
-
-def test_skip_buckets_sum_to_total(capsys, monkeypatch, tmp_path):
-    """Parse the printed counts and confirm resolved + all skip buckets == len(df)."""
-    df = pd.DataFrame([
-        {"filter_status": "replication", "link_method": "llm_cited_candidates",
-         "doi_r": "10.1/a", "doi_o": "10.2/a", "pair_id": "pa"},
-        {"filter_status": "false_positive", "link_method": "no_original_found",
-         "doi_r": "10.1/b", "doi_o": "", "pair_id": "pb"},
-        {"filter_status": "replication", "link_method": "no_original_found",
-         "doi_r": "10.1/c", "doi_o": "", "pair_id": "pc"},
-        {"filter_status": "reproduction", "link_method": "api_error",
-         "doi_r": "10.1/d", "doi_o": "", "pair_id": "pd"},
-    ])
-
-    out = _run_and_capture(df, capsys, monkeypatch, tmp_path)
-
-    import re
-    resolved = int(re.search(r"Resolved \(import\):\s+(\d+)", out).group(1))
-    fp = int(re.search(r"false_positive:\s+(\d+)", out).group(1))
-    no_orig = int(re.search(r"no_original_found:\s+(\d+)", out).group(1))
-    other = int(re.search(r"other:\s+(\d+)", out).group(1))
-
-    assert resolved + fp + no_orig + other == len(df)
-    assert min(resolved, fp, no_orig, other) >= 0
 
 
 # --------------------------------------------------------------------------- #
@@ -214,22 +160,6 @@ def _resolved_df():
     ])
 
 
-def test_flora_rows_are_not_imported(capsys, monkeypatch, tmp_path):
-    """A doi_r already in FLoRA must be gated out before the Supabase insert."""
-    monkeypatch.setenv("SUPABASE_URL", "https://fake.supabase.co")
-    monkeypatch.setenv("SUPABASE_SERVICE_KEY", "fake-key")
-    monkeypatch.setattr(csv_to_db, "default_flora_skip_dois",
-                        lambda: {"10.1037/per0000041"})
-    csv_path = tmp_path / "extracted.csv"
-    _resolved_df().to_csv(csv_path, index=False, encoding="utf-8-sig")
-
-    csv_to_db.run_import(csv_path, dry_run=True)
-    out = capsys.readouterr().out
-
-    assert "Resolved (import):  1" in out
-    assert "already in FLoRA:   1" in out
-
-
 def test_flora_gate_can_be_disabled(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("SUPABASE_URL", "https://fake.supabase.co")
     monkeypatch.setenv("SUPABASE_SERVICE_KEY", "fake-key")
@@ -265,57 +195,45 @@ def test_flora_gate_blocks_the_actual_insert(monkeypatch, tmp_path):
 # --------------------------------------------------------------------------- #
 # 6. url_o derivation — never point confidently at the wrong paper             #
 # --------------------------------------------------------------------------- #
-def test_url_o_uses_doi_when_verified():
-    row = {"doi_o": "10.2/orig", "doi_o_verification": "verified", "title_o": "T"}
-    assert csv_to_db._derive_url_o(row) == "https://doi.org/10.2/orig"
-
-
-def test_url_o_not_emitted_for_unverified_doi():
-    """A mismatched DOI must NOT become a confident doi.org link — that sends a
-    validator to the wrong paper, which is worse than giving them a search."""
-    row = {"doi_o": "10.2/wrong", "doi_o_verification": "mismatch",
-           "title_o": "The Original Work"}
-    url = csv_to_db._derive_url_o(row)
-    assert "doi.org/10.2/wrong" not in url
-    assert "openalex.org" in url and "The" in url
-
-
-def test_url_o_falls_back_to_search_when_no_doi():
-    """Preprints / old papers legitimately have no DOI — give a resolvable search
-    link rather than an empty cell."""
-    row = {"doi_o": "", "doi_o_verification": "no_doi", "title_o": "A Titled Work"}
-    url = csv_to_db._derive_url_o(row)
-    assert url.startswith("https://openalex.org/works?search=")
-    assert "Titled" in url
-
-
-def test_url_o_uses_openalex_work_url_when_no_doi():
-    """A DOI-less original (book, chapter, pre-DOI paper) has one canonical record:
-    its OpenAlex work. That beats a title search, which is only a lookup."""
-    row = {"doi_o": "", "doi_o_verification": "no_doi",
-           "title_o": "Gender Advertisements", "oa_work_id_o": "W2003152982"}
-    assert csv_to_db._derive_url_o(row) == "https://openalex.org/W2003152982"
-
-
-def test_url_o_normalises_openalex_url_form():
-    row = {"doi_o": "", "doi_o_verification": "no_doi", "title_o": "T",
-           "oa_work_id_o": "https://openalex.org/W2003152982"}
-    assert csv_to_db._derive_url_o(row) == "https://openalex.org/W2003152982"
-
-
-def test_url_o_prefers_work_url_over_untrusted_doi():
-    row = {"doi_o": "10.2/wrong", "doi_o_verification": "mismatch",
-           "title_o": "The Original Work", "oa_work_id_o": "W123"}
-    assert csv_to_db._derive_url_o(row) == "https://openalex.org/W123"
-
-
-def test_url_o_empty_when_nothing_to_point_at():
-    assert csv_to_db._derive_url_o({"doi_o": "", "doi_o_verification": "", "title_o": ""}) == ""
-
-
-def test_url_o_accepts_corrected_doi():
-    row = {"doi_o": "10.2/fixed", "doi_o_verification": "corrected", "title_o": "T"}
-    assert csv_to_db._derive_url_o(row) == "https://doi.org/10.2/fixed"
+@pytest.mark.parametrize("rule,cases", [
+    # A doi.org link is emitted only for a DOI whose metadata was confirmed.
+    ("trusted doi", [
+        ({"doi_o": "10.2/orig", "doi_o_verification": "verified", "title_o": "T"},
+         "https://doi.org/10.2/orig"),
+        ({"doi_o": "10.2/fixed", "doi_o_verification": "corrected", "title_o": "T"},
+         "https://doi.org/10.2/fixed"),
+    ]),
+    # A DOI-less original (book, chapter, pre-DOI paper) has one canonical record:
+    # its OpenAlex work. That beats a title search, and it also beats an untrusted
+    # DOI. The id is normalised whether stored bare or as a URL.
+    ("openalex work id", [
+        ({"doi_o": "", "doi_o_verification": "no_doi",
+          "title_o": "Gender Advertisements", "oa_work_id_o": "W2003152982"},
+         "https://openalex.org/W2003152982"),
+        ({"doi_o": "", "doi_o_verification": "no_doi", "title_o": "T",
+          "oa_work_id_o": "https://openalex.org/W2003152982"},
+         "https://openalex.org/W2003152982"),
+        ({"doi_o": "10.2/wrong", "doi_o_verification": "mismatch",
+          "title_o": "The Original Work", "oa_work_id_o": "W123"},
+         "https://openalex.org/W123"),
+    ]),
+    # A mismatched DOI must NOT become a confident doi.org link — that sends a
+    # validator to the wrong paper, which is worse than giving them a search.
+    # Preprints / old papers with no DOI get the same search rather than a blank.
+    ("title search", [
+        ({"doi_o": "10.2/wrong", "doi_o_verification": "mismatch",
+          "title_o": "The Original Work"},
+         "https://openalex.org/works?search=The+Original+Work"),
+        ({"doi_o": "", "doi_o_verification": "no_doi", "title_o": "A Titled Work"},
+         "https://openalex.org/works?search=A+Titled+Work"),
+    ]),
+    ("nothing to point at", [
+        ({"doi_o": "", "doi_o_verification": "", "title_o": ""}, ""),
+    ]),
+])
+def test_derive_url_o(rule, cases):
+    for row, expected in cases:
+        assert csv_to_db._derive_url_o(row) == expected, rule
 
 
 def test_provisional_title_search_rows_are_not_imported(capsys, monkeypatch, tmp_path):

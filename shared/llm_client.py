@@ -649,7 +649,6 @@ def identify_targets_with_llm(doi_r:          str,
                               pdf_abstract:   str = "",
                               intro:          str = "",
                               methods:        str = "",
-                              validator_note: str = "",
                               cache_prefix:   str = "llm",
                               abstract_only:  bool = False,
                               openrouter:     bool = True) -> dict:
@@ -670,8 +669,7 @@ def identify_targets_with_llm(doi_r:          str,
     entries, key_map = assign_target_keys(candidates, references)
     prompt = build_target_prompt(study_r, abstract_r, entries,
                                  pdf_abstract=pdf_abstract, intro=intro,
-                                 methods=methods,
-                                 validator_note=validator_note)
+                                 methods=methods)
     # The prompt shows the model a key, authors, a year and a title — but the answer
     # is converted to a link through the record that key maps to, and the DOI it
     # carries is not on the page. Two runs whose lists render identically can still

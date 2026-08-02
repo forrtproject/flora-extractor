@@ -1,0 +1,40 @@
+{
+ "goldpos_flora": {
+  "source_dois": 974,
+  "in_filtered": 931,
+  "with_title_and_abstract": 921,
+  "dropped_not_in_filtered": 43,
+  "dropped_no_abstract_or_title": 10,
+  "abstract_from_curated_fallback": 56,
+  "kept": 833,
+  "cap": 833
+ },
+ "goldpos_repro": {
+  "source_dois": 84,
+  "in_filtered": 74,
+  "with_title_and_abstract": 74,
+  "dropped_not_in_filtered": 10,
+  "dropped_no_abstract_or_title": 0,
+  "abstract_from_curated_fallback": 5,
+  "kept": 74,
+  "cap": 76
+ },
+ "goldneg_curated": {
+  "source_dois": 14150,
+  "in_filtered": 13952,
+  "with_title_and_abstract": 13059,
+  "dropped_not_in_filtered": 198,
+  "dropped_no_abstract_or_title": 893,
+  "abstract_from_curated_fallback": 1,
+  "kept": 400,
+  "cap": 400
+ },
+ "goldneg_screen": {
+  "source_rows": 290,
+  "with_title_and_abstract_dedup": 184,
+  "titles_recovered_from_filtered": 0,
+  "dropped": 106,
+  "kept": 184,
+  "cap": 300
+ }
+}

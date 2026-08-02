@@ -1,5 +1,7 @@
 """
-Tests for the streamed (chunk-bounded) Stage-2 filter in filter/run_filter.py.
+Tests for the streamed (chunk-bounded) Stage-2 filter in filter/run_filter.py,
+plus the shared dedup+index implementation in shared/csv_index.py that Stage 1
+and Stage 2 both build on.
 
 The refactor moved classification + writing inside the 50k-row chunk loop so a
 default run never loads the whole candidates.csv into memory.  The load-bearing
@@ -14,9 +16,11 @@ resumed run against an existing index would reprocess or duplicate rows.
 from unittest.mock import patch
 
 import pandas as pd
+import pytest
 
 import filter.run_filter as rf
-from shared.row_key import primary_key
+from shared.csv_index import KeyIndex, dedup_csv
+from shared.row_key import primary_key, row_keys
 from shared.schema import CANDIDATES_COLS
 
 
@@ -97,34 +101,24 @@ _ROWS = [
 ]
 
 
-def test_streamed_keys_match_old_concat_default(tmp_path, monkeypatch):
-    """No year/source filter: streamed keys == old concat-ignore_index keys."""
-    _patch_paths(monkeypatch, tmp_path)
-    _write_candidates(tmp_path / "candidates.csv", _ROWS)
-
-    expected = _expected_keys_old_style(tmp_path / "candidates.csv")
-    # Force small chunks so the multi-chunk path is exercised on a tiny file.
-    with patch.object(rf.pd, "read_csv", _chunked_read(3)):
-        rf.run_filter()
-
-    assert _read_index(tmp_path) == expected
-    # idx fallback must be present for the two fully id-less rows (positions 4, 6).
-    assert "idx:4" in expected and "idx:6" in expected
-
-
-def test_streamed_keys_match_old_concat_with_year_filter(tmp_path, monkeypatch):
-    """With a year filter dropping some rows, idx:<n> must count position among
+@pytest.mark.parametrize("from_year", [None, 2000])
+def test_streamed_keys_match_old_concat(tmp_path, monkeypatch, from_year):
+    """Streamed keys == old concat-ignore_index keys, with and without a year
+    filter. With a filter dropping rows, idx:<n> must count position among
     *surviving* rows — exactly as pd.concat(ignore_index=True) did."""
     _patch_paths(monkeypatch, tmp_path)
     _write_candidates(tmp_path / "candidates.csv", _ROWS)
 
-    expected = _expected_keys_old_style(tmp_path / "candidates.csv", from_year=2000)
+    expected = _expected_keys_old_style(tmp_path / "candidates.csv",
+                                        from_year=from_year)
+    # Force small chunks so the multi-chunk path is exercised on a tiny file.
     with patch.object(rf.pd, "read_csv", _chunked_read(3)):
-        rf.run_filter(from_year=2000)
+        rf.run_filter(from_year=from_year)
 
     assert _read_index(tmp_path) == expected
-    # The 1999 id-less row is filtered out, so the surviving id-less rows keep
-    # their positions among survivors (idx:4, idx:6), not global positions.
+    # idx fallback must be present for the two fully id-less rows; the 1999
+    # id-less row is filtered out at from_year=2000, so survivors keep their
+    # positions among survivors (idx:4, idx:6), not global positions.
     assert "idx:4" in expected and "idx:6" in expected
 
 
@@ -177,6 +171,62 @@ def test_needs_review_rows_are_written_through(tmp_path, monkeypatch):
     assert len(_read_index(tmp_path)) == len(_ROWS)
     # A second run reprocesses nothing: every row, needs_review included, is indexed.
     assert rf.run_filter() == 0
+
+
+# ── shared/csv_index.py: the dedup+index implementation both stages share ────
+
+def _index(tmp_path) -> KeyIndex:
+    return KeyIndex(tmp_path / "index.txt", row_keys, "Test")
+
+
+def test_dedup_csv_drops_duplicates_rewrites_file_and_rebuilds_index(tmp_path):
+    csv_path = tmp_path / "rows.csv"
+    pd.DataFrame([
+        {"doi_r": "10.1/aaa", "openalex_id_r": "", "url_r": "", "title_r": "First"},
+        {"doi_r": "10.1/AAA", "openalex_id_r": "", "url_r": "", "title_r": "Dup by DOI"},
+        {"doi_r": "", "openalex_id_r": "W1", "url_r": "", "title_r": "Second"},
+        {"doi_r": "", "openalex_id_r": "", "url_r": "", "title_r": ""},   # no key — always kept
+    ]).to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+    index = _index(tmp_path)
+    before, after = dedup_csv(csv_path, index)
+
+    assert (before, after) == (4, 3)
+    kept = pd.read_csv(csv_path, dtype=str, encoding="utf-8-sig").fillna("")
+    assert kept["title_r"].tolist() == ["First", "Second", ""]
+    assert index.load() == {"10.1/aaa", "oa:W1"}
+
+
+def test_dedup_csv_dry_run_leaves_the_file_alone(tmp_path):
+    csv_path = tmp_path / "rows.csv"
+    pd.DataFrame([
+        {"doi_r": "10.1/aaa", "openalex_id_r": "", "url_r": "", "title_r": "First"},
+        {"doi_r": "10.1/aaa", "openalex_id_r": "", "url_r": "", "title_r": "Dup"},
+    ]).to_csv(csv_path, index=False, encoding="utf-8-sig")
+    original = csv_path.read_bytes()
+
+    before, after = dedup_csv(csv_path, _index(tmp_path), dry_run=True)
+
+    assert (before, after) == (2, 1)
+    assert csv_path.read_bytes() == original
+    assert not (tmp_path / "index.txt").exists()
+
+
+def test_dedup_csv_catches_a_collision_on_any_key_not_just_the_primary(tmp_path):
+    # A later row with a NEW doi but an already-seen OpenAlex id is the same paper;
+    # the incremental merge rejects it on any key, so the rebuild must too.
+    csv_path = tmp_path / "rows.csv"
+    pd.DataFrame([
+        {"doi_r": "", "openalex_id_r": "W1", "url_r": "", "title_r": "First"},
+        {"doi_r": "10.1/new", "openalex_id_r": "W1", "url_r": "",
+         "title_r": "Same paper, DOI added"},
+    ]).to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+    before, after = dedup_csv(csv_path, _index(tmp_path))
+
+    assert (before, after) == (2, 1)
+    kept = pd.read_csv(csv_path, dtype=str, encoding="utf-8-sig").fillna("")
+    assert kept["title_r"].tolist() == ["First"]
 
 
 def _chunked_read(chunksize: int):

@@ -7,6 +7,7 @@ Stages used in this pipeline:
   extract_classify   — Stage 3 match-type classification
   extract_abstract   — Stage 3 abstract-level LLM linking
   extract_fulltext   — Stage 3 fulltext LLM linking
+  extract_prescreen  — Stage 3 cheap pre-screen (optional, see shared/prescreen.py)
   extract_outcome    — Stage 3 outcome extraction
 
 Usage:

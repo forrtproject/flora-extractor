@@ -75,22 +75,19 @@ def test_reset_set_only_includes_backfilled(paths):
     assert reset == {"10.1/b"}
 
 
-def test_dry_run_writes_nothing(paths):
+def test_dry_run_writes_nothing_then_apply_drops_exactly_reset_rows(paths):
     _standard_fixture(paths)
+
+    # Dry run first: reports the same row but touches nothing.
     before = paths["filtered"].read_bytes()
     assert not paths["index"].exists()
-
-    summary = rb.reset_backfilled(apply=False)
-
-    assert summary["backfilled_rows"] == 1
-    assert summary["would_drop"] == 1
-    assert "rows_dropped" not in summary
+    dry = rb.reset_backfilled(apply=False)
+    assert dry["backfilled_rows"] == 1
+    assert dry["would_drop"] == 1
+    assert "rows_dropped" not in dry
     assert paths["filtered"].read_bytes() == before  # unchanged
     assert not paths["index"].exists()               # not rebuilt
 
-
-def test_apply_drops_exactly_reset_rows(paths):
-    _standard_fixture(paths)
     # Seed a stale index so index_before is reported.
     paths["index"].write_text("10.1/a\n10.1/b\n10.1/c\n", encoding="utf-8")
 

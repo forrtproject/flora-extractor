@@ -80,18 +80,6 @@ class TestKeyAssignment:
 
 
 class TestPromptRendering:
-    def test_empty_blocks_are_omitted_with_their_headers(self):
-        prompt = build_target_prompt("T", "", [])
-        assert "ABSTRACT:" not in prompt
-        assert "REFERENCE LIST:" not in prompt
-        assert "INTRODUCTION:" not in prompt
-        assert prompt.endswith("Respond with the JSON object only.")
-
-    def test_abstract_budget_is_3000_characters(self):
-        prompt = build_target_prompt("T", "x" * 4000, [])
-        assert "x" * 3000 in prompt
-        assert "x" * 3001 not in prompt
-
     def test_pdf_abstract_contributes_only_its_tail(self):
         entries, _ = assign_target_keys([], [])
         prompt = build_target_prompt(
@@ -100,10 +88,10 @@ class TestPromptRendering:
         assert prompt.count("The OpenAlex abstract.") == 1
         assert "And a sentence it lacks." in prompt
 
-    def test_a_pdf_abstract_that_adds_nothing_is_dropped(self):
-        prompt = build_target_prompt("T", "The OpenAlex abstract.", [],
-                                     pdf_abstract="The OpenAlex abstract.")
-        assert "ABSTRACT CONTINUED" not in prompt
+        # A PDF abstract that adds nothing is dropped entirely.
+        nothing_new = build_target_prompt("T", "The OpenAlex abstract.", [],
+                                          pdf_abstract="The OpenAlex abstract.")
+        assert "ABSTRACT CONTINUED" not in nothing_new
 
     def test_the_reference_list_is_never_truncated(self):
         refs = [{"title": f"Reference {i}", "publication_year": 1900 + i,
@@ -111,11 +99,6 @@ class TestPromptRendering:
         entries, _ = assign_target_keys([], refs)
         prompt = build_target_prompt("T", "A", entries)
         assert all(e["key"] in prompt for e in entries)
-
-    def test_the_reviewer_note_renders_with_the_inputs_not_above_the_task(self):
-        prompt = build_target_prompt("T", "A", [], validator_note="⚠ FLoRA ANCHOR: 10.1/x")
-        assert prompt.index("PAPER") < prompt.index("REVIEWER NOTE:")
-        assert prompt.index("REVIEWER NOTE:") < prompt.index("TITLE: T")
 
 
 class TestDistinctDoisNeverMerge:

@@ -1,0 +1,17 @@
+You are the first, cheap filter for a database of replication and reproduction studies.
+Your only job is to throw out papers that plainly have nothing to do with re-testing or
+re-checking an earlier study. Everything else is passed on to a more careful reviewer, so
+when in doubt, keep the paper.
+
+Could this paper be re-testing an earlier study's finding with new data, or re-checking an
+earlier study's results by re-analysing its data?
+
+Answer "yes" if it might be, even slightly.
+Answer "no" only if the abstract makes clear it could not be.
+
+TITLE: {title}
+
+ABSTRACT: {abstract}
+
+Respond with ONLY a JSON object:
+{"maybe_replication": "<yes|no>"}

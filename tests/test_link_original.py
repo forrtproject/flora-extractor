@@ -1,64 +1,123 @@
-"""Tests for citation-context extraction and Stage 4.5 screen routing in
-extract/link_original.py."""
+"""Tests for citation-context extraction, title-pattern resolution and Stage 4.5
+screen routing in extract/link_original.py."""
 import json
 from unittest.mock import patch
 
 import pandas as pd
+import pytest
 
 import extract.link_original as link_original
-from extract.link_original import _extract_cit_contexts, run_for_doi
+from extract.link_original import (
+    _extract_cit_contexts, _extract_title_target, _resolve_by_title_pattern,
+    run_for_doi,
+)
 from extract.run_extract import _map_method
 from shared.prompts import TARGET_INTRO_CHARS, build_target_prompt
 
 
 class TestExtractCitContexts:
-    def test_narrative_citation_detected(self):
-        """The old local regex only matched fully-parenthetical citations like
-        '(Antle, 2010)' and missed narrative citations like 'Kim et al. (2014)' —
-        this was the confirmed root cause of the aepp.13320 wrong-original-link bug."""
-        text = "In this paper, we replicate Kim et al. (2014) who study downside risk."
-        results = _extract_cit_contexts(text)
-        assert any(r["surnames"] == ["kim"] and r["year"] == 2014 for r in results)
-
-    def test_parenthetical_citation_still_detected(self):
-        text = "We compare our results to the partial moments model (Antle, 2010)."
-        results = _extract_cit_contexts(text)
-        assert any(r["surnames"] == ["antle"] and r["year"] == 2010 for r in results)
-
     def test_both_narrative_and_parenthetical_present(self):
         """Reconstructs the real aepp.13320 case: the true target is cited
-        narratively, a secondary comparison is cited parenthetically — both must
-        be extractable so the resolver can score and pick the right one."""
+        narratively ('Kim et al. (2014)'), a secondary comparison parenthetically.
+
+        The old local regex matched only the parenthetical form, which was the
+        confirmed root cause of the aepp.13320 wrong-original-link bug. Both forms
+        must be extractable — with every surname of a multi-author citation kept —
+        so the resolver can score them and pick the right one.
+        """
         text = (
             "we replicate Kim et al. (2014) who perform a quantile moments-based "
-            "analysis. We compare to the partial moments model (Antle, 2010)."
+            "analysis. We compare to the partial moments model (Antle, 2010). "
+            "Jones and Smith (2015) found similar effects."
         )
         results = _extract_cit_contexts(text)
         surnames_years = {(tuple(r["surnames"]), r["year"]) for r in results}
         assert (("kim",), 2014) in surnames_years
         assert (("antle",), 2010) in surnames_years
+        assert (("jones", "smith"), 2015) in surnames_years
 
     def test_journal_hint_extracted_from_parenthetical(self):
-        text = ("This builds on prior work (Antle, 2010, American Journal of "
-                 "Agricultural Economics).")
-        results = _extract_cit_contexts(text)
-        match = next(r for r in results if r["surnames"] == ["antle"])
-        assert "American Journal of Agricultural Economics" in match["journal"]
+        """A trailing journal name is a disambiguation hint, and its absence must
+        leave the field empty rather than absorbing the next token."""
+        with_hint = _extract_cit_contexts(
+            "This builds on prior work (Antle, 2010, American Journal of "
+            "Agricultural Economics).")
+        without = _extract_cit_contexts(
+            "We compare our results to the partial moments model (Antle, 2010).")
 
-    def test_no_journal_when_absent(self):
-        text = "We compare our results to the partial moments model (Antle, 2010)."
-        results = _extract_cit_contexts(text)
-        match = next(r for r in results if r["surnames"] == ["antle"])
-        assert match["journal"] == ""
+        hit = next(r for r in with_hint if r["surnames"] == ["antle"])
+        assert "American Journal of Agricultural Economics" in hit["journal"]
+        assert next(r for r in without if r["surnames"] == ["antle"])["journal"] == ""
 
-    def test_multi_author_surnames_all_preserved(self):
-        text = "Jones and Smith (2015) found similar effects in a related domain."
-        results = _extract_cit_contexts(text)
-        match = next(r for r in results if r["year"] == 2015)
-        assert set(match["surnames"]) == {"jones", "smith"}
 
-    def test_no_citation_returns_empty(self):
-        assert _extract_cit_contexts("No citations appear in this sentence at all.") == []
+# ── Stage 2.5 title-pattern resolver ─────────────────────────────────────────
+
+class TestExtractTitleTarget:
+    @pytest.mark.parametrize("title,expected_contains", [
+        ("Replication of the ego depletion effect",        "ego depletion effect"),
+        ("A Direct Replication of the pen-in-mouth effect","pen-in-mouth effect"),
+        ("Failed Replication of the IAT effect",           "IAT effect"),
+        ("Replicating Milgram's obedience study",           "Milgram"),
+        ("Revisiting the weapons effect",                  "weapons effect"),
+        ("Re-examining the anchoring and adjustment effect","anchoring and adjustment effect"),
+        ("Reconsidering ego depletion",                    "ego depletion"),
+        ("The pen-in-mouth effect: A Replication",         "pen-in-mouth effect"),
+        ("The pen-in-mouth effect: Replication and Extension","pen-in-mouth effect"),
+        ("Does power posing increase testosterone? Replication attempt",  None),
+        ("Can we replicate the Mozart effect?",             "Mozart effect"),
+        ("Testing the replicability of social priming",     "social priming"),
+        ("A Reproduction of the embodied cognition effect", "embodied cognition effect"),
+    ])
+    def test_extract_target(self, title, expected_contains):
+        result = _extract_title_target(title)
+        if expected_contains is None:
+            assert result is None or len(result) < 15
+        else:
+            assert result is not None, f"Expected match for: {title!r}"
+            assert expected_contains.lower() in result.lower(), (
+                f"Expected {expected_contains!r} in {result!r} for title {title!r}"
+            )
+
+    def test_no_match_returns_none(self):
+        assert _extract_title_target("A meta-analysis of social priming effects") is None
+
+    def test_generic_title_returns_none(self):
+        assert _extract_title_target("Many Labs 2: Investigating Variation in Replicability") is None
+
+
+class TestResolveByTitlePattern:
+    _CANDIDATES = [
+        {"doi": "10.1037/ego", "title": "Ego depletion: Is the active self a limited resource?",
+         "year": 1998, "first_author": "Baumeister"},
+        {"doi": "10.1037/sleep", "title": "Sleep deprivation and cognitive performance",
+         "year": 2005, "first_author": "Harrison"},
+        {"doi": "10.1037/social", "title": "Social facilitation effects in competitive tasks",
+         "year": 2003, "first_author": "Zajonc"},
+    ]
+
+    def test_resolves_when_single_strong_match(self):
+        result = _resolve_by_title_pattern(
+            "10.1234/rep",
+            "Replication of the ego depletion effect: Is the active self a limited resource?",
+            self._CANDIDATES,
+        )
+        assert result is not None
+        assert result["resolved"] is True
+        assert result["resolved_doi_o"] == "10.1037/ego"
+        assert result["resolution_method"] == "title_pattern_match"
+
+    def test_returns_none_when_no_pattern_in_title(self):
+        result = _resolve_by_title_pattern(
+            "10.1234/rep",
+            "A meta-analysis of sleep deprivation studies",
+            self._CANDIDATES,
+        )
+        assert result is None
+
+    def test_returns_none_when_no_candidates(self):
+        result = _resolve_by_title_pattern(
+            "10.1234/rep", "Replication of ego depletion", [])
+        assert result is None
 
 
 # ── Stage 4.5 screen routing ─────────────────────────────────────────────────
@@ -216,25 +275,24 @@ class TestTitleSearchGate:
         assert row["resolution_method"] == "llm_title_search_prepdf"
         assert row["resolved_doi_o"] == "10.9/orig"
 
-    def test_an_unconfident_voter_does_not_search(self):
-        row, search = _run_to_title_search(_yes_screen(v2_confident=False), hit=_HIT)
+    @pytest.mark.parametrize("broken", [
+        "second_voter_unconfident", "first_voter_unconfident",
+        "second_voter_non_qualifying", "no_target_description",
+    ])
+    def test_any_missing_conjunct_blocks_the_search(self, broken):
+        screen = {
+            "second_voter_unconfident": lambda: _yes_screen(v2_confident=False),
+            "first_voter_unconfident": lambda: _yes_screen(v1_confident=False),
+            "second_voter_non_qualifying": lambda: _yes_screen(v2_class="unclear"),
+        }.get(broken, _yes_screen)()
+        if broken == "no_target_description":
+            screen["target_description"] = ""
+
+        row, search = _run_to_title_search(screen, hit=_HIT)
+
         assert not search.called
         assert row["resolved_doi_o"] == ""
         assert _map_method(row["resolution_method"]) == "target_pending"
-
-    def test_an_unconfident_first_voter_does_not_search(self):
-        _, search = _run_to_title_search(_yes_screen(v1_confident=False), hit=_HIT)
-        assert not search.called
-
-    def test_a_non_qualifying_voter_does_not_search(self):
-        _, search = _run_to_title_search(_yes_screen(v2_class="unclear"), hit=_HIT)
-        assert not search.called
-
-    def test_missing_target_description_does_not_search(self):
-        screen = _yes_screen()
-        screen["target_description"] = ""
-        _, search = _run_to_title_search(screen, hit=_HIT)
-        assert not search.called
 
 
 # ── Abstract-stage LLM: self-link exclusion (audit B9) ───────────────────────

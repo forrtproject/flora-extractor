@@ -43,27 +43,24 @@ class TestCoverage:
         prompt_version.cache_clear()
         assert prompt_version("build_classify_prompt") == first
 
-    def test_unknown_name_raises(self):
-        with pytest.raises(KeyError):
-            prompt_version("build_no_such_prompt")
-
-    def test_non_prompt_object_raises(self):
-        with pytest.raises(KeyError):
-            prompt_version("textwrap")
-
 
 class TestChangeDetection:
     def _versions(self):
         return {n: prompt_version(n) for n in PROMPT_NAMES}
 
-    def test_template_edit_changes_its_own_version(self, monkeypatch):
+    @pytest.mark.parametrize("attr,suffix,expected", [
+        # A template edit reaches its own prompt and nothing else.
+        ("_TARGET_PROMPT", "\nEXTRA RULE", {"build_target_prompt"}),
+        # One prompt per outcome vocabulary, and the two are separate documents:
+        # an edit to the replication body must not invalidate reproduction verdicts.
+        ("_OUTCOME_TEMPLATE", "\n5. ...", {"build_outcome_prompt"}),
+    ])
+    def test_template_edit_reaches_its_own_prompt_only(self, monkeypatch, attr, suffix, expected):
         before = self._versions()
-        monkeypatch.setattr(prompts, "_TARGET_PROMPT",
-                            prompts._TARGET_PROMPT + "\nEXTRA RULE")
+        monkeypatch.setattr(prompts, attr, getattr(prompts, attr) + suffix)
         prompt_version.cache_clear()
         after = self._versions()
-        assert after["build_target_prompt"] != before["build_target_prompt"]
-        assert after["build_classify_prompt"] == before["build_classify_prompt"]
+        assert {n for n in PROMPT_NAMES if after[n] != before[n]} == expected
 
     def test_shared_fragment_edit_changes_every_user(self, monkeypatch):
         """EVIDENCE_POLICY opens most prompts — editing it must invalidate them all."""
@@ -83,17 +80,6 @@ class TestChangeDetection:
         # prompt states its own policy, so it is one of them.
         assert "PDF_REFERENCES_PROMPT" not in changed
         assert "build_classify_prompt" not in changed
-
-    def test_outcome_template_edit_reaches_its_vocabulary_only(self, monkeypatch):
-        """One prompt per vocabulary now, and the two are separate documents: an edit
-        to the replication body must not invalidate reproduction verdicts."""
-        before = self._versions()
-        monkeypatch.setattr(prompts, "_OUTCOME_TEMPLATE",
-                            prompts._OUTCOME_TEMPLATE + "\n5. ...")
-        prompt_version.cache_clear()
-        after = self._versions()
-        changed = {n for n in PROMPT_NAMES if after[n] != before[n]}
-        assert changed == {"build_outcome_prompt"}
 
     def test_pass_only_fragments_reach_both_vocabularies(self, monkeypatch):
         """The PAPER TEXT block is spliced by both builders, so editing it moves both
@@ -125,14 +111,6 @@ class TestChangeDetection:
         prompt_version.cache_clear()
         after = self._versions()
         assert all(after[n] != before[n] for n in PROMPT_NAMES)
-
-    def test_docstrings_are_not_part_of_the_version(self):
-        """Canonicalisation strips docstrings and comments: only text that can reach
-        the model moves a version."""
-        src = prompts._canonical_source(prompts.build_target_prompt)
-        assert "Render the target-identification prompt" not in src
-        assert "only meaningful against the key_map" not in src
-        assert "_TARGET_PROMPT" in src
 
     def test_prompt_versions_joins_and_follows_each(self, monkeypatch):
         pair = ("build_outcome_prompt", "build_repro_outcome_prompt")

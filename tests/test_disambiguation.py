@@ -16,27 +16,16 @@ from shared.disambiguation import (
 # ── jaccard_similarity ────────────────────────────────────────────────────────
 
 class TestJaccardSimilarity:
-    def test_identical_strings_return_1(self):
-        assert jaccard_similarity("ego depletion Baumeister", "ego depletion Baumeister") == 1.0
-
-    def test_empty_string_returns_0(self):
-        assert jaccard_similarity("", "some text") == 0.0
-        assert jaccard_similarity("some text", "") == 0.0
-
-    def test_no_overlap_returns_0(self):
-        assert jaccard_similarity("apple banana cherry", "dog elephant frog") == 0.0
-
-    def test_partial_overlap(self):
-        sim = jaccard_similarity("ego depletion Baumeister 1998", "ego depletion original")
-        assert 0.0 < sim < 1.0
-
-    def test_short_words_excluded(self):
-        # Words < 3 chars are excluded from the token set ("a", "of", etc.)
-        sim = jaccard_similarity("a of to dog", "a of to cat")
-        assert sim == 0.0  # only "dog" and "cat" qualify; no overlap
-
-    def test_case_insensitive(self):
-        assert jaccard_similarity("EGO DEPLETION", "ego depletion") == 1.0
+    @pytest.mark.parametrize("a,b,lo,hi", [
+        ("EGO DEPLETION", "ego depletion", 1.0, 1.0),   # identical, case-insensitively
+        ("", "some text", 0.0, 0.0),
+        ("apple banana cherry", "dog elephant frog", 0.0, 0.0),
+        # words < 3 chars are excluded, so only "dog"/"cat" qualify → no overlap
+        ("a of to dog", "a of to cat", 0.0, 0.0),
+        ("ego depletion Baumeister 1998", "ego depletion original", 0.0001, 0.9999),
+    ])
+    def test_jaccard_similarity(self, a, b, lo, hi):
+        assert lo <= jaccard_similarity(a, b) <= hi
 
 
 # ── resolve_same_author_year ──────────────────────────────────────────────────
@@ -74,54 +63,34 @@ class TestResolveSameAuthorYear:
         assert result["resolved"] is True
         assert result["resolved_doi_o"] == "10.1000/a"
 
-    def test_near_miss_context_gives_zero_scores(self):
-        """When context has no word overlap with either candidate, no winner."""
-        cands = [
-            self._cand("10.1000/a", "Study One Topic Alpha Beta Gamma", "2010"),
-            self._cand("10.1000/b", "Study Two Other Research Field Zeta", "2010"),
-        ]
-        # "generic abstract" shares no tokens with either candidate title
+    @pytest.mark.parametrize("case,cands,title,abstract,method", [
+        # best_score == 0 → fails the > 0.05 floor
+        ("near_miss", [("10.1000/a", "Study One Topic Alpha Beta Gamma", "2010", "Smith"),
+                       ("10.1000/b", "Study Two Other Research Field Zeta", "2010", "Smith")],
+         "A Replication", "generic abstract", None),
+        # score_A == score_B → the 1.5× margin condition cannot be satisfied
+        ("tie", [("10.1000/a", "Ego Depletion", "2010", "Smith"),
+                 ("10.1000/b", "Ego Depletion", "2010", "Smith")],
+         "Replication of Ego Depletion", "ego depletion", None),
+        # different first-author surnames → Jaccard step skipped entirely
+        ("different_surnames", [("10.1000/a", "Some Study Alpha Beta", "2010", "Smith"),
+                                ("10.1000/b", "Another Study Gamma Delta", "2010", "Jones")],
+         "Replication Study", "abstract text", "needs_fulltext"),
+        ("no_candidates", [], "A Replication", "abstract", "no_candidates_found"),
+    ])
+    def test_unresolvable_cases(self, case, cands, title, abstract, method):
         result = resolve_same_author_year(
-            "10.9999/rep", "A Replication", "generic abstract", cands
+            "10.9999/rep", title, abstract,
+            [self._cand(*c) for c in cands],
         )
-        # best_score == 0, fails the > 0.05 floor → unresolved
         assert result["resolved"] is False
+        if method:
+            assert result["resolution_method"] == method
 
     def test_umbrella_paper_routed_to_fulltext(self):
         """A single ManyLabs candidate must not auto-resolve — needs full-text."""
         cands = [self._cand("10.1000/a", "ManyLabs Replication Project", "2015")]
         result = resolve_same_author_year("10.9999/rep", "A Replication", "abstract", cands)
-        assert result["resolved"] is False
-        assert result["resolution_method"] == "needs_fulltext"
-
-    def test_empty_candidate_list(self):
-        result = resolve_same_author_year("10.9999/rep", "A Replication", "abstract", [])
-        assert result["resolved"] is False
-        assert result["resolution_method"] == "no_candidates_found"
-
-    def test_tie_between_equal_candidates(self):
-        """Two candidates with identical titles produce equal Jaccard scores;
-        the 1.5× margin condition (best >= second * 1.5) cannot be satisfied."""
-        cands = [
-            self._cand("10.1000/a", "Ego Depletion", "2010"),
-            self._cand("10.1000/b", "Ego Depletion", "2010"),
-        ]
-        result = resolve_same_author_year(
-            "10.9999/rep", "Replication of Ego Depletion", "ego depletion", cands
-        )
-        # score_A == score_B → margin condition fails → unresolved
-        assert result["resolved"] is False
-
-    def test_different_surnames_skips_jaccard(self):
-        """When candidates have different first-author surnames the Jaccard step
-        is skipped entirely and the result routes to full-text."""
-        cands = [
-            self._cand("10.1000/a", "Some Study Alpha Beta", "2010", "Smith"),
-            self._cand("10.1000/b", "Another Study Gamma Delta", "2010", "Jones"),
-        ]
-        result = resolve_same_author_year(
-            "10.9999/rep", "Replication Study", "abstract text", cands
-        )
         assert result["resolved"] is False
         assert result["resolution_method"] == "needs_fulltext"
 
@@ -152,24 +121,16 @@ class TestResolveByGrobidRefs:
         assert result["resolved_doi_o"] == "10.1000/a"
         assert result["resolution_method"] == "grobid_ref_match"
 
-    def test_no_refs_returns_unresolved(self):
-        cands = [self._cand("10.1000/a", "Some Study")]
-        result = resolve_by_grobid_refs("10.9999/rep", cands, {"references": []})
-        assert result["resolved"] is False
-
-    def test_year_mismatch_blocks_match(self):
-        """Year off by 2 blocks the match even with identical titles."""
-        cands = [self._cand("10.1000/a", "Ego Depletion Study Alpha Beta Gamma", year=2010)]
-        refs  = [self._ref("Ego Depletion Study Alpha Beta Gamma", year=2013)]
+    @pytest.mark.parametrize("ref_year,expected", [
+        (2011, True),   # off by 1 — within tolerance
+        (2013, False),  # off by 3 — blocks the match even with an identical title
+    ])
+    def test_year_tolerance(self, ref_year, expected):
+        title = "Ego Depletion Self Control Resource Model"
+        cands = [self._cand("10.1000/a", title, year=2010)]
+        refs  = [self._ref(title, year=ref_year)]
         result = resolve_by_grobid_refs("10.9999/rep", cands, {"references": refs})
-        assert result["resolved"] is False
-
-    def test_year_within_one_matches(self):
-        """Year off by exactly 1 is within tolerance and should not block the match."""
-        cands = [self._cand("10.1000/a", "Ego Depletion Self Control Resource Model", year=2010)]
-        refs  = [self._ref("Ego Depletion Self Control Resource Model", year=2011)]
-        result = resolve_by_grobid_refs("10.9999/rep", cands, {"references": refs})
-        assert result["resolved"] is True
+        assert result["resolved"] is expected
 
     def test_author_bonus_lowers_threshold(self):
         """When the first-author surname matches, the Jaccard threshold drops from
@@ -183,7 +144,9 @@ class TestResolveByGrobidRefs:
         result = resolve_by_grobid_refs("10.9999/rep", cands, {"references": refs})
         assert result["resolved"] is True
 
-    def test_empty_candidates_returns_unresolved(self):
-        refs = [self._ref("Some Study")]
-        result = resolve_by_grobid_refs("10.9999/rep", [], {"references": refs})
+    @pytest.mark.parametrize("with_cands,with_refs", [(True, False), (False, True)])
+    def test_missing_side_returns_unresolved(self, with_cands, with_refs):
+        cands = [self._cand("10.1000/a", "Some Study")] if with_cands else []
+        refs  = [self._ref("Some Study")] if with_refs else []
+        result = resolve_by_grobid_refs("10.9999/rep", cands, {"references": refs})
         assert result["resolved"] is False

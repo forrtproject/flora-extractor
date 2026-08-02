@@ -52,6 +52,7 @@ with all stage teams.
 | `shared/target_keys.py`     | `assign_target_keys()` — one deduplicated `@smith2009` namespace over a paper's candidates and references, plus the key → record map |
 | `shared/token_usage.py`     | Per-day/provider/model token recording (`cache/token_usage.json`) + the OpenAI daily budget check |
 | `shared/prompts.py`         | Every LLM prompt + `prompt_version()` (hash of the prompt text and every spliced fragment) |
+| `shared/prescreen.py`       | The optional cheap pre-screen: `hard_signal()`, `prescreen_bypass()`, `prescreen()`. Off unless `PRESCREEN_ENABLED` |
 | `shared/cache.py`           | Cache helpers; `content_key()` builds the content-complete LLM cache key |
 | `shared/row_key.py`         | Row identity: `row_keys()` / `primary_key()` (doi → oa: → url: → title:) |
 | `shared/csv_index.py`       | Sidecar index load/save/append/build + shared CSV dedup (streaming writes) |
@@ -95,6 +96,22 @@ Never change a column name without updating `schema.py` and notifying all teams.
   `no_fulltext_available` and is never cached as a success.
 
 ## Stage 3 — Front Door and Resolution
+
+**The optional cheap pre-screen** (`shared/prescreen.py`, off unless
+`PRESCREEN_ENABLED`) sits in front of everything below. Two very small models
+(`PRESCREEN_VOTER1_MODEL`, `PRESCREEN_VOTER2_MODEL`, both OpenRouter by default) are
+asked one question with one field of answer; voter 2 is asked only when voter 1 said
+"no", because once the row can no longer be discarded a second opinion changes nothing.
+The tier may only DISCARD, and only on two explicit noes — one keep, an unrecognised
+label, an unreadable reply or a provider failure all pass the row through to the screen
+unchanged, and non-answers are never cached. Three classes of row are never pre-screened
+at all: text that states the design outright (`hard_signal()`), rows from a
+`CURATED_SOURCES` list, and rows with under `PRESCREEN_MIN_ABSTRACT_CHARS` of abstract.
+Stage 2's own high-confidence `replication` verdict is deliberately not a bypass — 98%
+of rows reaching Stage 3 carry it, including every screen-confirmed negative. A discard
+writes `link_method = prescreen_discard`, is quarantined by `sanity_check` to its own
+`data/prescreen_discard.csv`, and is reopened by `--rescreen`; turning the flag off does
+**not** reopen it. Evidence: `analysis/prescreen_eval/REPORT.md`.
 
 **Front-door screen** (`classify_replication()`): two voters — Gemini
 (`GEMINI_LIGHT_MODEL`) and `SCREEN_VOTER2_MODEL` (default `gpt-5.4-mini`; an id with
@@ -248,6 +265,7 @@ OPENAI_API_KEY=...              # required for Stage 3 (default screen voter 2)
 OPENROUTER_API_KEY=...          # only if SCREEN_VOTER2_MODEL contains "/"
 GEMINI_MODEL=...  GEMINI_HEAVY_MODEL=...  OPENAI_MODEL=...
 SCREEN_VOTER2_MODEL=gpt-5.4-mini
+PRESCREEN_ENABLED=              # unset = off; the cheap pre-screen's discards are terminal
 OPENAI_DAILY_TOKEN_BUDGET=8000000   # 0 disables the cap
 GEMINI_USE_FLEX=true            # 50% discount on paid keys; flex uses GEMINI_FLEX_TIMEOUT
 OPENAI_USE_FLEX=true            # same trade on OpenAI; refused flex falls back to standard

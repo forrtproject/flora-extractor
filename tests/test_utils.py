@@ -1,4 +1,8 @@
-"""Tests for shared/utils.py helpers."""
+"""Tests for shared/utils.py helpers, plus the APA reference formatter that is the
+only real logic left over from the deleted tests/test_apa_resolver.py."""
+import pytest
+
+from analysis.apa_resolver import format_apa_reference
 from shared.utils import (bare_work_id, citation_fragment, clean_citation_title,
                           non_article_type, sentence_spans, usable_title)
 
@@ -29,39 +33,25 @@ class TestNonArticleType:
 
 
 class TestBareWorkId:
-    def test_strips_openalex_url(self):
-        assert bare_work_id("https://openalex.org/W2884670852") == "W2884670852"
+    @pytest.mark.parametrize("raw", [
+        "https://openalex.org/W2884670852",
+        "W2884670852",
+        "  w2884670852/ ",   # uppercased and trimmed
+    ])
+    def test_accepts_work_ids(self, raw):
+        assert bare_work_id(raw) == "W2884670852"
 
-    def test_passes_through_bare_id(self):
-        assert bare_work_id("W2884670852") == "W2884670852"
-
-    def test_uppercases_and_trims(self):
-        assert bare_work_id("  w2884670852/ ") == "W2884670852"
-
-    def test_rejects_non_work_entities(self):
-        """Author/source/institution ids share the URL shape but are not work ids."""
-        assert bare_work_id("https://openalex.org/A5023888391") == ""
-        assert bare_work_id("https://openalex.org/S137773608") == ""
-
-    def test_rejects_junk_and_blank(self):
-        assert bare_work_id("") == ""
-        assert bare_work_id("10.1037/abc123") == ""
-        assert bare_work_id(None) == ""
+    @pytest.mark.parametrize("raw", [
+        # Author/source ids share the URL shape but are not work ids.
+        "https://openalex.org/A5023888391",
+        "https://openalex.org/S137773608",
+        "", "10.1037/abc123", None,
+    ])
+    def test_rejects_everything_else(self, raw):
+        assert bare_work_id(raw) == ""
 
 
 class TestSentenceSpans:
-    def test_single_sentence(self):
-        text = "We replicated the effect."
-        spans = sentence_spans(text)
-        assert spans == [(0, len(text))]
-
-    def test_two_sentences(self):
-        text = "First sentence. Second sentence."
-        spans = sentence_spans(text)
-        assert len(spans) == 2
-        assert text[spans[0][0]:spans[0][1]] == "First sentence."
-        assert text[spans[1][0]:spans[1][1]] == "Second sentence."
-
     def test_offsets_align_with_original_text(self):
         """Offsets must index into the ORIGINAL text, not a stripped/masked copy."""
         text = "Intro. We attempted a direct replication of Smith (2010). Discussion."
@@ -69,16 +59,16 @@ class TestSentenceSpans:
         target = next(s for s in spans if "Smith (2010)" in text[s[0]:s[1]])
         assert text[target[0]:target[1]] == "We attempted a direct replication of Smith (2010)."
 
-    def test_et_al_not_split(self):
-        text = "Smith et al. found an effect. The replication failed."
+    @pytest.mark.parametrize("text,first", [
+        ("Smith et al. found an effect. The replication failed.",
+         "Smith et al. found an effect."),
+        ("J. Smith proposed the theory. It was later tested.",
+         "J. Smith proposed the theory."),
+    ])
+    def test_abbreviations_do_not_split_a_sentence(self, text, first):
         spans = sentence_spans(text)
         assert len(spans) == 2
-        assert "Smith et al. found an effect." in text[spans[0][0]:spans[0][1]]
-
-    def test_initial_not_split(self):
-        text = "J. Smith proposed the theory. It was later tested."
-        spans = sentence_spans(text)
-        assert len(spans) == 2
+        assert first in text[spans[0][0]:spans[0][1]]
 
     def test_empty_text_returns_empty_list(self):
         assert sentence_spans("") == []
@@ -119,3 +109,37 @@ class TestCitationTitles:
         assert citation_fragment("M.R"), "what cleaning the fragment leaves behind"
         assert citation_fragment("L.J.T. Balter, et al., Low-grade inflammation")
         assert not usable_title("[3] M. Moieni, M.R")
+class TestFormatApaReference:
+    """The one surviving test from tests/test_apa_resolver.py.
+
+    That file was deleted because its other tests asserted only the return TYPE of
+    loaders reading gitignored production CSVs. This one covers real formatting
+    logic — author-list assembly, initials, the ", & " join, and the
+    volume(issue), pages tail — and it is the string a human reads when confirming
+    a missing-DOI replication, so a silent change to it is worth catching. It lives
+    here rather than in its own file because it is the module's only unit-testable
+    function.
+    """
+
+    def test_full_metadata_renders_every_field(self):
+        apa = format_apa_reference({
+            "authors": [{"family": "Smith", "given": "Beatrice"},
+                        {"family": "Jones", "given": "Alan"}],
+            "year": 2023, "title": "A replication study on X",
+            "journal": "Journal of Psychology",
+            "volume": 45, "issue": 3, "pages": "234-245",
+        })
+        assert apa == ("Smith, B., & Jones, A. (2023). A replication study on X. "
+                       "Journal of Psychology, 45(3), 234-245.")
+
+    def test_single_author_and_no_volume_or_pages(self):
+        """One author takes no ampersand, and absent optional fields must be
+        omitted rather than rendered as empty punctuation."""
+        apa = format_apa_reference({
+            "authors": [{"family": "Brown", "given": "Carla"}],
+            "year": 2022, "title": "Reproducing X findings", "journal": "Nature",
+        })
+        assert apa == "Brown, C. (2022). Reproducing X findings. Nature."
+
+    def test_empty_metadata_is_an_empty_string(self):
+        assert format_apa_reference({}) == ""
