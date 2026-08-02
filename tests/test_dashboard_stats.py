@@ -256,6 +256,53 @@ def test_legacy_stats_json_is_labelled_not_silently_served(tmp_path, monkeypatch
     assert "note" in data
 
 
+# ── Token usage panel (#115) ─────────────────────────────────────────────────
+
+def test_token_usage_aggregates_across_days_keeping_provider_and_io_apart(
+        tmp_path, monkeypatch):
+    """One model reached through two providers is two rows, and in/out never merge —
+    a total alone cannot say what a run cost."""
+    import json as _json
+
+    from shared import token_usage as tu
+
+    path = tmp_path / "token_usage.json"
+    path.write_text(_json.dumps({
+        "2026-07-31": {"openai":     {"gpt-5.4-mini": {"in": 100, "out": 10}}},
+        "2026-08-01": {"openai":     {"gpt-5.4-mini": {"in":  50, "out":  5}},
+                       "openrouter": {"gpt-5.4-mini": {"in":   7, "out":  3}}},
+    }), encoding="utf-8")
+    monkeypatch.setattr(tu, "USAGE_STATE_PATH", path)
+
+    from validate.app import create_app
+    data = create_app().test_client().get("/api/dashboard/token-usage").get_json()
+
+    rows = {(r["provider"], r["model"]): r for r in data["rows"]}
+    assert rows[("openai", "gpt-5.4-mini")] == {
+        "provider": "openai", "model": "gpt-5.4-mini",
+        "in": 150, "out": 15, "total": 165}
+    assert rows[("openrouter", "gpt-5.4-mini")]["total"] == 10
+    assert (data["in"], data["out"], data["total"]) == (157, 18, 175)
+    # Recent days first, and only days that actually recorded usage.
+    assert [d["day"] for d in data["days"]] == ["2026-08-01", "2026-07-31"]
+    assert data["days"][0]["total"] == 65
+
+
+def test_token_usage_survives_a_missing_record(tmp_path, monkeypatch):
+    """cache/ is gitignored, so a fresh checkout has no usage file — the panel must
+    render a "nothing recorded" state, not an error."""
+    from shared import token_usage as tu
+
+    monkeypatch.setattr(tu, "USAGE_STATE_PATH", tmp_path / "absent.json")
+
+    from validate.app import create_app
+    resp = create_app().test_client().get("/api/dashboard/token-usage")
+    assert resp.status_code == 200
+    assert resp.get_json()["rows"] == []
+    assert resp.get_json()["days"] == []
+    assert resp.get_json()["total"] == 0
+
+
 # ── Set-aside CSVs ───────────────────────────────────────────────────────────
 
 def test_set_registry_files_resolve(tmp_path):

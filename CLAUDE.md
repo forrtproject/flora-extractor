@@ -181,7 +181,9 @@ Every LLM call records input/output tokens per day/provider/model in
 `cache/token_usage.json` (`shared/token_usage.py`). OpenAI spend is hard-capped by
 `OPENAI_DAILY_TOKEN_BUDGET` (default 8,000,000/day; `0` disables): when exhausted,
 `TokenBudgetExhausted` stops the run cleanly (rows written so far stay, sanity_check
-runs). Dashboard display of usage: issue #115.
+runs). The Stage 3 dashboard tab shows the record — cumulative per provider+model with
+the input/output split, plus a per-day breakdown — from
+`/api/dashboard/token-usage`.
 
 ## Caching
 

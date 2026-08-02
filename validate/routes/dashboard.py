@@ -5,6 +5,7 @@ Routes:
   GET  /dashboard                        → dashboard page
   GET  /api/dashboard/csv-stats          → pipeline stats (stats.json → live compute)
   GET  /api/dashboard/search-phrases     → per-phrase OpenAlex yield from cursor files
+  GET  /api/dashboard/token-usage        → LLM token spend by provider/model and by day
   GET  /api/dashboard/download           → stream a raw pipeline CSV as attachment
   GET  /api/dashboard/supabase-stats     → Supabase validation KPIs (cached 5 min)
   GET  /api/dashboard/supabase-analytics → coverage, per-field validator agreement,
@@ -21,8 +22,9 @@ import shutil
 import pandas as pd
 from flask import Blueprint, jsonify, render_template, request, send_file
 
-from shared.config import DATA_DIR, BASE_DIR
+from shared.config import DATA_DIR, BASE_DIR, OPENAI_DAILY_TOKEN_BUDGET
 from shared import supabase_client as supa
+from shared import token_usage
 from shared.dashboard_cache import compute_stage_stats, load_stats
 
 ANALYSIS_DIR = BASE_DIR / "analysis"
@@ -195,6 +197,56 @@ def api_search_phrases():
                         "recorded in stats.json — run the Stage 1 pipeline, or "
                         "regenerate stats.json, to populate per-phrase yield.")
     return jsonify({**live, "_source": "cursor_cache"})
+
+
+@dashboard_bp.route("/api/dashboard/token-usage")
+def api_token_usage():
+    """LLM token spend, cumulative per provider+model and broken down by day.
+
+    Provider stays a level of its own because a model id does not name its provider —
+    gpt-5.4-mini reached through OpenRouter is not OpenAI spend. Input and output are
+    kept apart because they are priced differently.
+
+    A missing or unreadable cache/token_usage.json yields an empty structure rather
+    than an error: the panel then says nothing has been recorded.
+    """
+    record = token_usage.all_usage()
+
+    totals: dict[tuple[str, str], dict[str, int]] = {}
+    days: list[dict] = []
+    for day in sorted(record, reverse=True):
+        providers = record[day] or {}
+        day_rows: list[dict] = []
+        for provider in sorted(providers):
+            for model, counts in sorted((providers[provider] or {}).items()):
+                tin  = int(counts.get("in", 0) or 0)
+                tout = int(counts.get("out", 0) or 0)
+                day_rows.append({"provider": provider, "model": model,
+                                 "in": tin, "out": tout, "total": tin + tout})
+                agg = totals.setdefault((provider, model), {"in": 0, "out": 0})
+                agg["in"]  += tin
+                agg["out"] += tout
+        days.append({
+            "day":   day,
+            "rows":  day_rows,
+            "in":    sum(r["in"]    for r in day_rows),
+            "out":   sum(r["out"]   for r in day_rows),
+            "total": sum(r["total"] for r in day_rows),
+        })
+
+    rows = [{"provider": p, "model": m, "in": v["in"], "out": v["out"],
+             "total": v["in"] + v["out"]}
+            for (p, m), v in totals.items()]
+    rows.sort(key=lambda r: -r["total"])
+
+    return jsonify({
+        "rows":  rows,
+        "days":  days,
+        "in":    sum(r["in"]    for r in rows),
+        "out":   sum(r["out"]   for r in rows),
+        "total": sum(r["total"] for r in rows),
+        "openai_daily_budget": OPENAI_DAILY_TOKEN_BUDGET,
+    })
 
 
 # ── Set-aside CSVs ────────────────────────────────────────────────────────────

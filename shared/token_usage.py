@@ -88,6 +88,14 @@ def usage(day: str = "") -> dict:
     return _read_all().get(day or _today(), {})
 
 
+def all_usage() -> dict:
+    """The whole record: {day: {provider: {model: {"in": n, "out": n}}}}.
+
+    Days with no usage are simply absent — nothing zero-fills them.
+    """
+    return _read_all()
+
+
 def spent(provider: str, day: str = "") -> int:
     """Input + output tokens recorded for one provider on `day`."""
     return sum(m.get("in", 0) + m.get("out", 0)
