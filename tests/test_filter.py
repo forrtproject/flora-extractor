@@ -31,8 +31,30 @@ def test_phrase_detection_excludes_code():
     assert find_replication_phrase_span(text) is None
 
 
+def test_qualifier_phrases_match_plurals():
+    """``\\b`` after "replication" fails on the "s" of "replications", so every
+    singular-only qualifier pattern silently missed the plural for years."""
+    for text in ("Two conceptual replications of Smith (2010).",
+                 "We report direct replications of the original effect.",
+                 "Three independent replications of Jones (2015)."):
+        assert find_replication_phrase_span(text) is not None, text
+
+
+def test_biological_replication_of_word_order_excluded():
+    """BIOLOGICAL only caught "<organism> replication"; virology abstracts using
+    the "replication of <organism>" order passed the filter."""
+    for text in ("The replication of enteroviruses features low fidelity.",
+                 "Restriction of Replication of Oncolytic Herpes Simplex Virus."):
+        assert is_non_scholarly_context(text), text
+
+
+def test_data_availability_boilerplate_excluded():
+    text = "Data and code to reproduce the results in this paper are on OSF."
+    assert is_non_scholarly_context(text)
+
+
 def test_reproduction_only():
-    text = "We tested the reproducibility of Brown's (2018) original effect."
+    text = "We report a computational reproduction of Brown's (2018) original analysis."
     assert find_replication_phrase_span(text) is not None
     assert is_reproduction_only(text)
 
@@ -85,7 +107,7 @@ def test_rule_filter_replication_with_cite():
 def test_rule_filter_reproduction_with_cite():
     out = classify_row(_row(
         "Reproducibility study",
-        "We tested the reproducibility of Brown (2018) and found no support.",
+        "We ran a computational reproduction of Brown (2018) and found no support.",
     ))
     assert out["filter_status"] == "reproduction"
 

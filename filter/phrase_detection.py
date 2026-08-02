@@ -26,26 +26,32 @@ import yaml
 # Patterns are intentionally compiled WITHOUT a global counterpart — JS's /g
 # flag carries lastIndex across calls (LESSONS.md #15 in the SciMeto repo).
 # Python's ``re`` API is stateless, so this just means we use ``search``.
+# Reproduction-genre phrases, shared by REPLICATION_PHRASES and REPRODUCTION_PHRASES.
+# ``is_reproduction_only`` compares pattern objects by identity, and ``re.compile``
+# caches on (pattern, flags), so listing the same source twice would still work —
+# but naming them once makes the shared membership explicit.
+_REPRODUCTION_ANCHORED: list[re.Pattern] = [
+    re.compile(r"\breproductions? of ['\"“‘]", re.IGNORECASE),
+    re.compile(r"\bcomputational reproduc\w+\b", re.IGNORECASE),
+    re.compile(r"\brobustness\s+(?:replicabilit\w+|reproducibilit\w+|replication)\b", re.IGNORECASE),
+    re.compile(r"\breproduc\w+\s+(?:and|&)\s+(?:replicat|extend|extension)\w*\b", re.IGNORECASE),
+]
+
+# Every "<qualifier> replication" pattern carries an explicit ``s?``: ``\b`` after
+# ``replication`` fails on the ``s`` of "replications", so the singular-only forms
+# silently missed every plural. On the human-curated FLoRA set that cost 332 hits.
 REPLICATION_PHRASES: list[re.Pattern] = [
     # --- original phrases ---
-    re.compile(r"\breplication of\b", re.IGNORECASE),
+    re.compile(r"\breplications? of\b", re.IGNORECASE),
     re.compile(r"\bwe replicated\b", re.IGNORECASE),
     re.compile(r"\bwe replicate\b", re.IGNORECASE),
-    re.compile(r"\breplicating the findings\b", re.IGNORECASE),
-    re.compile(r"\bdirect replication\b", re.IGNORECASE),
-    re.compile(r"\bconceptual replication\b", re.IGNORECASE),
-    re.compile(r"\bpreregistered replication\b", re.IGNORECASE),
-    re.compile(r"\bregistered replication\b", re.IGNORECASE),
+    re.compile(r"\bdirect replications?\b", re.IGNORECASE),
+    re.compile(r"\bconceptual replications?\b", re.IGNORECASE),
+    re.compile(r"\bregistered replications?\b", re.IGNORECASE),
     re.compile(r"\bfailed to replicate\b", re.IGNORECASE),
     re.compile(r"\bdid not replicate\b", re.IGNORECASE),
-    re.compile(r"\bcould not reproduce\b", re.IGNORECASE),
-    re.compile(r"\bsuccessfully replicated\b", re.IGNORECASE),
-    re.compile(r"\breproducibility of\b", re.IGNORECASE),
-    re.compile(r"\breplication and extensions?\b", re.IGNORECASE),
     re.compile(r"\bregistered report of\b", re.IGNORECASE),
-    re.compile(r"\b(?:close|high[-\s]powered|pre[-\s]?registered|large[-\s]scale)\s+replication\b", re.IGNORECASE),
-    re.compile(r"\breplication (?:and|&) extension\b", re.IGNORECASE),
-    re.compile(r"\breproduce[ds]?\s+(?:the\s+)?(?:original\s+)?(?:findings?|effects?|results?)\b", re.IGNORECASE),
+    re.compile(r"\b(?:close|high[-\s]powered|pre[-\s]?registered|large[-\s]scale)\s+replications?\b", re.IGNORECASE),
     # --- ported from old R pipeline's explicit_replication_claims ---
     # recovered ~15,862 candidates previously marked false_positive (phrase_coverage_analysis.py)
     re.compile(r"\battempt\w*\s+to\s+replicate\b", re.IGNORECASE),
@@ -53,25 +59,30 @@ REPLICATION_PHRASES: list[re.Pattern] = [
     re.compile(r"\bset\s+out\s+to\s+replicate\b", re.IGNORECASE),
     re.compile(r"\bsuccess\w*\s+replicat\w*\b", re.IGNORECASE),
     re.compile(r"\bwe\s+(?:conducted|performed|carried\s+out)\s+a\s+replication\b", re.IGNORECASE),
-    re.compile(r"\b(?:many-?labs?|multi-?site)\s+replication\b", re.IGNORECASE),
-    re.compile(r"\breplicat\w*\s+and\s+exten\w*\b", re.IGNORECASE),
-    re.compile(r"\breplication\s+stud(?:y|ies)\s+of\b", re.IGNORECASE),
+    re.compile(r"\b(?:many-?labs?|multi-?site)\s+replications?\b", re.IGNORECASE),
+    re.compile(r"\breplicat\w*\s+(?:and|&)\s+exten\w*\b", re.IGNORECASE),
+    re.compile(r"\breplication\s+stud(?:y|ies)\b", re.IGNORECASE),
     re.compile(r"\bstudy\s+replicate[sd]\b", re.IGNORECASE),
-    re.compile(r"\bour\s+replication\b", re.IGNORECASE),
-    re.compile(r"\bindependent\s+replication\b", re.IGNORECASE),
-    re.compile(r"\bexact\s+replication\b", re.IGNORECASE),
-    re.compile(r"\breplication\s+attempt\b", re.IGNORECASE),
-    re.compile(r"\bcross-?(?:cultural|national|lab(?:oratory)?)\s+replication\b", re.IGNORECASE),
+    re.compile(r"\bour\s+replications?\b", re.IGNORECASE),
+    re.compile(r"\bexact\s+replications?\b", re.IGNORECASE),
+    re.compile(r"\breplication\s+attempts?\b", re.IGNORECASE),
+    re.compile(r"\bcross-?(?:cultural|national|lab(?:oratory)?)\s+replications?\b", re.IGNORECASE),
+    # --- reproduction vocabulary the list never covered ---
+    # Anchored on purpose. A bare "reproduction of" matches animal breeding and
+    # "social reproduction" far more often than a reproduction study (8% precision
+    # over 15,440 corpus rows), while these four cost nothing and score better on
+    # the curated reproduction list.
+    *_REPRODUCTION_ANCHORED,
+    re.compile(r"\breplicat(?:e|es|ed|ing)\s+(?:the\s+)?"
+               r"(?:previous|prior|original|earlier|main|key|core|published)?\s*"
+               r"(?:findings?|results?|effects?|analys[ei]s|stud(?:y|ies))\b",
+               re.IGNORECASE),
 ]
 
 # Subset that should be classified as ``reproduction`` rather than ``replication``
 # when the only matching phrases come from this list. The set is intentionally
 # narrow — see RULEBOOK §Filter.
-REPRODUCTION_PHRASES: list[re.Pattern] = [
-    re.compile(r"\bcould not reproduce\b", re.IGNORECASE),
-    re.compile(r"\breproducibility of\b", re.IGNORECASE),
-    re.compile(r"\breproduce[ds]?\s+(?:the\s+)?(?:original\s+)?(?:findings?|effects?|results?)\b", re.IGNORECASE),
-]
+REPRODUCTION_PHRASES: list[re.Pattern] = list(_REPRODUCTION_ANCHORED)
 
 
 def _load_exclusion_regexes() -> list[tuple[str, re.Pattern]]:
@@ -88,7 +99,7 @@ def _load_exclusion_regexes() -> list[tuple[str, re.Pattern]]:
     return out
 
 
-# Compiled once at import. The YAML file is small (~4 patterns) and immutable
+# Compiled once at import. The YAML file is small (~6 patterns) and immutable
 # across a run; reloading on every call would be wasteful.
 NON_SCHOLARLY_REPLICATION_CONTEXTS: list[tuple[str, re.Pattern]] = _load_exclusion_regexes()
 
