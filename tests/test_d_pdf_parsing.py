@@ -312,3 +312,54 @@ class TestDirectRefsCacheIdentity:
         src = inspect.getsource(grobid._extract_refs_via_pdf_images)
         assert "_pdf_fingerprint(pdf_path)" in src
         assert "GEMINI_MODEL" in src
+
+
+class TestNumericReferenceTitles:
+    """REGRESSION (doi_r 10.1016/j.physbeh.2021.113324, PR #122 acceptance run): a
+    numeric-style reference list has no "(year)" to cut the title at, so every parsed
+    title was the raw citation line — "[2] L.J.T. Balter, et al., Low-grade
+    inflammation decrea…" — and one was a bare fragment, "[3] M. Moieni, M.R".
+    Both reached title_o."""
+
+    _BLOCK = (
+        "References\n"
+        "[2] L.J.T. Balter, et al., Low-grade inflammation decreases emotion "
+        "recognition - Evidence from the vaccination model of inflammation, "
+        "Brain Behav. Immun. 73 (2018) 216-221.\n"
+        "[3] M. Moieni, M.R\n"
+        "Smith, J. (2009). Attitudes toward HIV. Journal of Social Psychology, 12, 3-9.\n"
+        "Thaler, R. (2008). Nudge. Yale University Press.\n"
+        "Иванов, И. (2015). Влияние воспаления на распознавание эмоций. "
+        "Вопросы психологии, 3, 12-20.\n"
+    )
+
+    def _refs(self) -> list[dict]:
+        from shared.grobid import _parse_references_block
+        return _parse_references_block(self._BLOCK)
+
+    def test_entry_marker_and_author_list_are_not_the_title(self):
+        title = self._refs()[0]["title"]
+        assert title.startswith("Low-grade inflammation decreases emotion recognition")
+        assert "[2]" not in title and "Balter" not in title
+
+    def test_every_reference_keeps_a_title_and_reaches_the_key_namespace(self):
+        """No reference is ever dropped or blanked for an awkward title: one that
+        vanishes from the @key namespace is invisible to the target prompt and is
+        counted in no shortfall. That includes the truncated fragment, the short
+        title ("Nudge") and the Cyrillic one."""
+        from shared.target_keys import assign_target_keys
+
+        refs = self._refs()
+        assert len(refs) == 5, [r["title"] for r in refs]
+        assert all(r["title"] for r in refs)
+        assert any("Moieni" in r["title"] for r in refs), "the fragment keeps its string"
+        assert any(r["title"].startswith("Nudge") for r in refs)
+        assert any(r["title"].startswith("Влияние") for r in refs)
+
+        entries, _ = assign_target_keys([], refs)
+        assert len(entries) == len(refs), "the prompt must offer every reference"
+
+    def test_an_abbreviation_no_longer_swallows_the_journal(self):
+        """REGRESSION: requiring a lowercase character before the sentence period cut
+        no title at "… of HIV." and let the journal name into it."""
+        assert "Attitudes toward HIV" in [r["title"] for r in self._refs()]

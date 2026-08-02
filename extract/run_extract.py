@@ -48,7 +48,8 @@ from shared.schema import (
     RESOLVED_LINK_METHODS,
     make_pair_id,
 )
-from shared.utils import bare_work_id, cache_key, clean_doi, csv_lock
+from shared.utils import (bare_work_id, cache_key, citation_fragment,
+                          clean_citation_title, clean_doi, csv_lock, usable_title)
 # Shared with csv_to_db so extraction and validation skip the same set (see shared/flora_skip.py)
 from shared.flora_skip import (
     FLORA_VALIDATED_STATUSES,
@@ -793,16 +794,28 @@ def _target_entry(target: dict, doi_r: str) -> "dict | None":
     The DOI comes from the mapped record, never from the model. A reference parsed out
     of a PDF carries no DOI, so it is searched for once — the resulting link is
     provisional, at roughly 50% precision, exactly as on the single-link path.
+
+    Such a reference also carries the raw citation line as its title, so the title is
+    cleaned before anything is searched for or written, and a title that is still a
+    citation fragment — like a paper with no DOI at all — makes the entry a low-
+    confidence one: the row names an original nobody can look up.
     """
     record = target.get("record")
     if not (target.get("match_certain") and record):
         return None
 
+    raw_title = str(record.get("title") or "")
+    cleaned   = clean_citation_title(raw_title)
+    # Cleaning down to a fragment is no improvement: keep what the record carried so a
+    # reviewer sees it, and let the guard reject the row on it. A short cleaned title
+    # ("Nudge") is a title and is kept.
+    title = raw_title if citation_fragment(cleaned) else cleaned
+
     doi = clean_doi(str(record.get("doi") or ""))
     provisional = False
-    if not doi and record.get("title"):
+    if not doi and usable_title(title):
         from shared.doi_verify import resolve_doi_by_metadata
-        hit = resolve_doi_by_metadata(record["title"], record.get("first_author", ""),
+        hit = resolve_doi_by_metadata(title, record.get("first_author", ""),
                                       record.get("year"), exclude_doi=doi_r)
         if hit:
             doi = clean_doi(str(hit.get("doi", "") or ""))
@@ -811,15 +824,19 @@ def _target_entry(target: dict, doi_r: str) -> "dict | None":
     return {
         "rank":         0,     # renumbered over the written rows, after every drop
         "doi":          doi,
-        "title":        str(record.get("title") or ""),
+        "title":        title,
         "year":         record.get("year"),
         "first_author": str(record.get("first_author") or ""),
         "openalex_id":  str(record.get("openalex_id") or ""),
         "study_number": _clean_study_numbers(target.get("study_numbers", "")),
         "study_r":      _clean_study_numbers(target.get("replication_study_numbers", "")),
         "evidence":     str(target.get("evidence_quote") or ""),
-        # match_certain IS the acceptance gate, so a written row is a confident one.
-        "confidence":   "high",
+        # match_certain is the acceptance gate, but confidence is about the RECORD the
+        # key resolved to: with no DOI, or with a title that is a citation fragment,
+        # there is nothing a validator can check and the row is not a confident one.
+        # A DOI settles identity whatever the title's length, so "Nudge" with a DOI
+        # stays high — only the shape rule and a missing DOI demote.
+        "confidence":   "high" if doi and not citation_fragment(title) else "low",
         "provisional":  provisional,
     }
 
@@ -997,10 +1014,6 @@ def _norm_title(t: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(t or "").lower()).strip()
 
 
-# A title this short is boilerplate ("n/a", "unknown"), not a usable original.
-_MIN_USABLE_TITLE = 10
-
-
 def _guard_original_link(row: dict) -> dict:
     """Reject self-links and recover a missing doi_o before the row is written.
 
@@ -1019,6 +1032,8 @@ def _guard_original_link(row: dict) -> dict:
        its work id becomes oa_work_id_o — that id is the row's only identity, and
        without it audit_extracted blocks the row.
     4. No DOI and no usable title → target_pending; there is nothing to validate.
+       "Usable" is `usable_title()`: long enough, and not a fragment of a citation
+       string ("[3] M. Moieni, M.R"), which names no paper however long it is.
     """
     # not_a_replication has no original by design — the reference screen concluded
     # the paper never replicated anything. Asking it for a doi_o would rewrite the
@@ -1067,7 +1082,7 @@ def _guard_original_link(row: dict) -> dict:
 
     # 2. best-effort DOI recovery from the title
     meta: Optional[dict] = None
-    if not doi_o and len(_norm_title(title_o)) >= _MIN_USABLE_TITLE:
+    if not doi_o and usable_title(title_o):
         year_o = str(row.get("year_o", "") or "")
         try:
             meta = (_search_crossref_by_title(title_o, year_o)
@@ -1090,7 +1105,7 @@ def _guard_original_link(row: dict) -> dict:
 
     # 3/4. no DOI: keep only if the title is a usable, distinct original
     if not doi_o:
-        if len(_norm_title(title_o)) < _MIN_USABLE_TITLE:
+        if not usable_title(title_o):
             return _reject("no doi_o and no usable title_o")
         row["doi_o_verification"] = "no_doi"
         work_id_o = bare_work_id(str((meta or {}).get("openalex_id", "") or ""))
@@ -1337,7 +1352,8 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
         # than writing a constant "high" onto a link nobody confirmed.
         link_method = ("llm_title_search" if entry["provisional"]
                        else _map_method(str(link.get("target_stage") or "llm_fulltext")))
-        entry = {**entry, "confidence": "low" if entry["provisional"] else "high"}
+        entry = {**entry, "confidence": ("low" if entry["provisional"]
+                                         else entry["confidence"])}
         result_row = _guard_original_link(
             {**_merge_multi_row(row, entry, {}, match_type, "high", len(entries),
                                 link_model, link_method=link_method,
@@ -1376,8 +1392,12 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
         result_row["n_originals"]   = len(rows)
         result_row["original_match_type"] = ("multiple_original" if len(rows) > 1
                                              else "single_original")
+        # Both halves have to hold: a resolved method says the ladder finished, and
+        # link_confidence says the record it finished on is checkable. A row whose
+        # link is low-confidence must not advertise a high-confidence match.
         result_row["original_match_confidence"] = (
-            "high" if str(result_row.get("link_method", "")) in RESOLVED_LINK_METHODS
+            "high" if (str(result_row.get("link_method", "")) in RESOLVED_LINK_METHODS
+                       and str(result_row.get("link_confidence", "")) == "high")
             else "low")
     return rows
 
