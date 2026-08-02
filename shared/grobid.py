@@ -611,6 +611,50 @@ def _tei_findall(node, name: str) -> list:
     return [el for el in node.iter() if _tei_localname(el) == name]
 
 
+# Elements whose content is not the paper's argument: the bibliography is parsed
+# separately into `references`, and <back> also holds acknowledgements and annexes.
+# Leaving them in raw_text is not merely noise — outcome_text() falls back to the
+# tail of the text, so a bibliography at the end becomes the "closing pages" the
+# outcome model is asked to read a verdict out of.
+_TEI_SKIP_IN_TEXT = {"back", "listbibl"}
+
+# Block-level elements get a line break around their content. outcome_text() and
+# _split_sections() find headings at the START OF A LINE, so a globally
+# whitespace-collapsed body has no headings at all — and the OpenAlex dialect,
+# whose headings survive only as the text node opening a <div>, would lose every
+# section boundary it has left.
+_TEI_BLOCK_TAGS = {"div", "p", "head", "figure", "table", "row", "list", "item",
+                   "note", "formula", "ab", "quote"}
+
+
+def _tei_structured_text(el) -> str:
+    """Element text with newline markers around block elements (unnormalised)."""
+    if _tei_localname(el) in _TEI_SKIP_IN_TEXT or el.get("type") == "references":
+        return ""
+    parts: list[str] = [el.text or ""]
+    for child in el:
+        chunk = _tei_structured_text(child)
+        if chunk:
+            name = _tei_localname(child)
+            if name in _TEI_BLOCK_TAGS:
+                parts.append(f"\n{chunk}\n")
+            elif name == "s":
+                # GROBID wraps each sentence in <s>; without a separator the last
+                # word of one sentence runs into the first word of the next.
+                parts.append(f" {chunk}")
+            else:
+                parts.append(chunk)
+        parts.append(child.tail or "")
+    return "".join(parts)
+
+
+def _tei_body_text(el) -> str:
+    """Readable body text of *el*: line breaks kept, other whitespace normalised."""
+    lines = [re.sub(r"[^\S\n]+", " ", ln).strip()
+             for ln in _tei_structured_text(el).split("\n")]
+    return "\n".join(ln for ln in lines if ln)
+
+
 def parse_tei_sections(tei_xml: str) -> dict:
     """Parse GROBID TEI-XML into sections and references.
 
@@ -618,8 +662,10 @@ def parse_tei_sections(tei_xml: str) -> dict:
     server returns a ``<body>`` with ``<head>`` elements, so intro and methods can
     be picked out by heading. OpenAlex's HTML-mangled copy has neither body nor
     heads, so what is recoverable there is the abstract, the references, and
-    ``raw_text`` (the whole ``<text>`` element) — intro and methods stay empty
-    rather than being guessed at from a document with no headings.
+    ``raw_text`` (the ``<text>`` element, minus the bibliography) — intro and
+    methods stay empty rather than being guessed at from a document with no
+    headings. ``link_original.run_for_doi()`` is what carries that raw_text on to
+    the model when the headings are missing.
     """
     out: dict = {"abstract": "", "intro": "", "methods": "", "references": [],
                  "raw_text": ""}
@@ -642,7 +688,7 @@ def parse_tei_sections(tei_xml: str) -> dict:
         if container is None:
             container = _tei_find(root, "text")
         if container is not None:
-            out["raw_text"] = _text_of(container)
+            out["raw_text"] = _tei_body_text(container)
             for div in _tei_findall(container, "div"):
                 head = next((c for c in div if _tei_localname(c) == "head"), None)
                 if head is None:
