@@ -1,5 +1,6 @@
 """Tests for shared/utils.py helpers."""
-from shared.utils import bare_work_id, non_article_type, sentence_spans
+from shared.utils import (bare_work_id, citation_fragment, clean_citation_title,
+                          non_article_type, sentence_spans, usable_title)
 
 
 class TestNonArticleType:
@@ -81,3 +82,40 @@ class TestSentenceSpans:
 
     def test_empty_text_returns_empty_list(self):
         assert sentence_spans("") == []
+
+
+class TestCitationTitles:
+    """A reference parsed without GROBID structure carries the raw citation line as
+    its title. Cleaning it must not mangle titles that only look like one."""
+
+    def test_a_numeric_citation_is_cleaned_down_to_its_title(self):
+        raw = ("[2] L.J.T. Balter, et al., Low-grade inflammation decreases emotion "
+               "recognition, Brain Behav. Immun. 73 (2018) 216-221.")
+        cleaned = clean_citation_title(raw)
+        assert cleaned.startswith("Low-grade inflammation decreases emotion recognition")
+
+    def test_a_leading_number_is_only_bibliography_numbering_before_an_author(self):
+        """"[12] Angry Men" and "3. Methods…" are titles; the number goes only when
+        an author list follows it."""
+        for title in ("[12] Angry Men", "3. Methods for Estimating Prevalence",
+                      "[18F]FDG uptake in the human brain"):
+            assert clean_citation_title(title) == title
+            assert usable_title(title)
+
+    def test_a_leading_et_al_is_not_evidence_of_an_author_list(self):
+        assert clean_citation_title("Et al., and other stories") == \
+            "Et al., and other stories"
+
+    def test_non_latin_and_short_titles_are_titles(self):
+        """usable_title() gates confidence and title searches, so a False here would
+        follow a record around — it must not fire on a script it cannot spell."""
+        assert usable_title("Влияние воспаления на распознавание эмоций")
+        assert not citation_fragment("Влияние воспаления на распознавание эмоций")
+        assert not citation_fragment("Nudge"), "short, but a title"
+        assert not usable_title("Nudge"), "too short to search on"
+
+    def test_citation_fragments_are_recognised(self):
+        assert citation_fragment("[3] M. Moieni, M.R")
+        assert citation_fragment("M.R"), "what cleaning the fragment leaves behind"
+        assert citation_fragment("L.J.T. Balter, et al., Low-grade inflammation")
+        assert not usable_title("[3] M. Moieni, M.R")

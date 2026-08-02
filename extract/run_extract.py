@@ -48,8 +48,8 @@ from shared.schema import (
     RESOLVED_LINK_METHODS,
     make_pair_id,
 )
-from shared.utils import (bare_work_id, cache_key, clean_citation_title, clean_doi,
-                          csv_lock, usable_title)
+from shared.utils import (bare_work_id, cache_key, citation_fragment,
+                          clean_citation_title, clean_doi, csv_lock, usable_title)
 # Shared with csv_to_db so extraction and validation skip the same set (see shared/flora_skip.py)
 from shared.flora_skip import (
     FLORA_VALIDATED_STATUSES,
@@ -806,9 +806,10 @@ def _target_entry(target: dict, doi_r: str) -> "dict | None":
 
     raw_title = str(record.get("title") or "")
     cleaned   = clean_citation_title(raw_title)
-    # An unusable cleaning is no improvement: keep what was parsed so a reviewer sees
-    # it, and let the guard reject the row on it.
-    title = cleaned if usable_title(cleaned) else raw_title
+    # Cleaning down to a fragment is no improvement: keep what the record carried so a
+    # reviewer sees it, and let the guard reject the row on it. A short cleaned title
+    # ("Nudge") is a title and is kept.
+    title = raw_title if citation_fragment(cleaned) else cleaned
 
     doi = clean_doi(str(record.get("doi") or ""))
     provisional = False
@@ -833,7 +834,9 @@ def _target_entry(target: dict, doi_r: str) -> "dict | None":
         # match_certain is the acceptance gate, but confidence is about the RECORD the
         # key resolved to: with no DOI, or with a title that is a citation fragment,
         # there is nothing a validator can check and the row is not a confident one.
-        "confidence":   "high" if doi and usable_title(title) else "low",
+        # A DOI settles identity whatever the title's length, so "Nudge" with a DOI
+        # stays high — only the shape rule and a missing DOI demote.
+        "confidence":   "high" if doi and not citation_fragment(title) else "low",
         "provisional":  provisional,
     }
 
@@ -1389,8 +1392,12 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
         result_row["n_originals"]   = len(rows)
         result_row["original_match_type"] = ("multiple_original" if len(rows) > 1
                                              else "single_original")
+        # Both halves have to hold: a resolved method says the ladder finished, and
+        # link_confidence says the record it finished on is checkable. A row whose
+        # link is low-confidence must not advertise a high-confidence match.
         result_row["original_match_confidence"] = (
-            "high" if str(result_row.get("link_method", "")) in RESOLVED_LINK_METHODS
+            "high" if (str(result_row.get("link_method", "")) in RESOLVED_LINK_METHODS
+                       and str(result_row.get("link_confidence", "")) == "high")
             else "low")
     return rows
 

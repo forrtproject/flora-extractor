@@ -1788,6 +1788,31 @@ class TestReferenceStringTargets:
         assert fragment["confidence"] == "low"
         assert fragment["doi"] == ""
 
+    def test_settlement_does_not_advertise_a_low_link_as_a_high_match(self):
+        """original_match_confidence is settled after the guard and --resolved-only
+        from the link METHOD; a resolved method on a record nobody can check is still
+        not a high-confidence match."""
+        link = {"targets": [{"match_certain": True, "target_as_named": "T",
+                             "study_numbers": "", "replication_study_numbers": "",
+                             "evidence_quote": "q",
+                             "record": {"doi": "10.2/orig", "title": self._FRAGMENT,
+                                        "first_author": "Moieni", "year": 2015}}],
+                "target_stage": "llm_fulltext", "unidentified_count": 0,
+                "llm_model": "m", "pdf_source": "", "parse_method": "", "pdf_ok": False}
+        row = pd.Series({"doi_r": "10.1/repl", "title_r": "R",
+                         "filter_status": "replication"})
+        with patch("extract.run_extract._build_ref_o", return_value=("", "", "")), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch.object(run_extract, "_get_outcome", return_value={}), \
+             patch.object(run_extract, "_verify_row", side_effect=lambda r: r):
+            rows = run_extract._per_target_rows(row, "10.1/repl", link, None,
+                                                no_llm=True, no_pdf=True,
+                                                resolved_only=False,
+                                                recalibrate_outcomes=False)
+        assert len(rows) == 1
+        assert rows[0]["link_confidence"] == "low"
+        assert rows[0]["original_match_confidence"] == "low"
+
     def test_a_fragment_title_with_no_doi_is_pending(self):
         """The guard's usable-title rule has to catch citation fragments: "[3] M.
         Moieni, M.R" is long enough to clear the length threshold on its own."""

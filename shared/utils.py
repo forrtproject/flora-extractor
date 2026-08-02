@@ -145,29 +145,54 @@ def pdf_serve_url(doi_r: str, result: dict) -> str:
 # citation line — "[2] L.J.T. Balter, et al., Low-grade inflammation decreases
 # emotion recognition …, Brain Behav. Immun. 73 (2018) 216–221." — and a numbering
 # marker or an author list in front of the title names no paper that a title search,
-# a validator or doi_verify's Jaccard comparison can match. Two rules below: strip
-# what is demonstrably not part of the title, and refuse what is left when it is
-# still a fragment of the citation rather than a title.
+# a validator or doi_verify's Jaccard comparison can match.
+#
+# Two rules below, and they do different jobs. clean_citation_title() strips what is
+# demonstrably not part of the title, and only when the evidence for that is a
+# following author list — "[12] Angry Men" and "3. Methods for …" are titles.
+# usable_title() judges what is left. It gates CONFIDENCE, title searches and
+# verification — never a record's existence: a reference dropped from the @key
+# namespace is invisible to the target prompt and is not counted as a shortfall,
+# which is worse than one carrying an awkward title.
 
-# Shorter than this, once normalised, is boilerplate ("n/a", "unknown") — not a title.
+# Shorter than this, punctuation aside, is boilerplate ("n/a", "unknown") — not a
+# title we can search on. Legitimate short titles ("Nudge") fail it too, which is
+# why it may only cost a row its confidence.
 MIN_USABLE_TITLE = 10
 
 # "[2] ", "(2) ", "3. " — entry numbering in Vancouver/numeric reference lists.
 _REF_MARKER_RE = re.compile(r"^\s*(?:[\[(]\d{1,3}[\])][.,)]?|\d{1,3}\.)\s+")
 
 _INITIALS = r"(?:[A-Z]\.[-\s]*){1,4}"
-# One author in a numeric-style list, up to its separator: "L.J.T. Balter, ",
-# "Moieni M.R., " or "et al., ". Requires the separator, so a title's first words
-# are never mistaken for a name.
+# One author in a numeric-style list, up to its separator: "L.J.T. Balter, " or
+# "Moieni M.R., ". Requires the separator, so a title's first words are never
+# mistaken for a name.
 _AUTHOR_CHUNK_RE = re.compile(
-    rf"^(?:et\.?\s*al\.?"
-    rf"|{_INITIALS}(?:[A-Z][\w'’\-]+\s+)?[A-Z][\w'’\-]+"
+    rf"^(?:{_INITIALS}(?:[A-Z][\w'’\-]+\s+)?[A-Z][\w'’\-]+"
     rf"|[A-Z][\w'’\-]+,?\s+{_INITIALS})\s*(?:[,;&]|\band\b)\s*")
+# "et al., " continues an author list; on its own it is no evidence of one, so it
+# is only ever stripped after a real name has been.
+_ET_AL_RE = re.compile(r"^et\.?\s*al\.?\s*(?:[,;&]|\band\b)\s*", re.IGNORECASE)
 
 # A citation cut off mid-author-list: "… , M.R", "… , J.".
 _TRUNCATED_AUTHORS_RE = re.compile(r",\s*(?:[A-Z]\.){1,3}[A-Z]?\s*$")
+# Nothing but initials — what is left when a truncated citation is cleaned ("M.R").
+_INITIALS_ONLY_RE = re.compile(r"^(?:[A-Z]\.[-\s]*){1,4}[A-Z]?\.?$")
 
-_TITLE_NORM_RE = re.compile(r"[^a-z0-9]+")
+# Unicode-aware: a Cyrillic or CJK title is a title, and stripping it to nothing
+# would make every non-Latin original unusable.
+_TITLE_NORM_RE = re.compile(r"[\W_]+", re.UNICODE)
+
+
+def _strip_reference_marker(text: str) -> str:
+    """Drop a leading "[2] "/"3. " ONLY when an author list follows it — that is the
+    only evidence that the number is bibliography numbering rather than the title
+    ("[12] Angry Men", "3. Methods for Estimating Prevalence")."""
+    match = _REF_MARKER_RE.match(text)
+    if not match:
+        return text
+    rest = text[match.end():].lstrip()
+    return rest if _AUTHOR_CHUNK_RE.match(rest) else text
 
 
 def clean_citation_title(title: str) -> str:
@@ -175,23 +200,44 @@ def clean_citation_title(title: str) -> str:
 
     Returns the title portion of a raw citation string; a title that is already a
     title comes back unchanged. Never strips everything away — a string that is
-    nothing but authors is returned as-is for `usable_title()` to reject.
+    nothing but authors is returned as-is for `usable_title()` to judge.
     """
-    text = _REF_MARKER_RE.sub("", str(title or "")).strip()
+    text = _strip_reference_marker(str(title or "").strip())
+    stripped_a_name = False
     while True:
-        match = _AUTHOR_CHUNK_RE.match(text)
+        match = _AUTHOR_CHUNK_RE.match(text) or (
+            _ET_AL_RE.match(text) if stripped_a_name else None)
         if not match or not text[match.end():].strip():
             return text
+        stripped_a_name = True
         text = text[match.end():].strip()
 
 
+def citation_fragment(title: str) -> bool:
+    """True when *title* is a piece of a citation rather than a title: it leads with
+    an author list, or it was cut off mid-initials ("M. Moieni, M.R").
+
+    Shape only — length says nothing here, because "Nudge" and "Grit" are titles.
+    """
+    text = _strip_reference_marker(str(title or "").strip())
+    if not text:
+        return True
+    return bool(_AUTHOR_CHUNK_RE.match(text) or _TRUNCATED_AUTHORS_RE.search(text)
+                or _INITIALS_ONLY_RE.match(text))
+
+
 def usable_title(title: str) -> bool:
-    """True when *title* can stand for a paper: long enough, and not a citation
-    fragment (a leading author list, or a citation truncated mid-initials)."""
-    text = _REF_MARKER_RE.sub("", str(title or "")).strip()
-    if len(_TITLE_NORM_RE.sub(" ", text.lower()).strip()) < MIN_USABLE_TITLE:
+    """True when *title* can stand for a paper in a title search or a title
+    comparison: long enough to search on, and not a citation fragment.
+
+    False is a statement about what can be DONE with the string, not about whether
+    the record it belongs to is real — callers demote confidence and skip title
+    lookups on a False, they never discard the record.
+    """
+    text = _strip_reference_marker(str(title or "").strip())
+    if len(_TITLE_NORM_RE.sub(" ", text).strip()) < MIN_USABLE_TITLE:
         return False
-    return not (_AUTHOR_CHUNK_RE.match(text) or _TRUNCATED_AUTHORS_RE.search(text))
+    return not citation_fragment(text)
 
 
 _ABBREV_RE = re.compile(

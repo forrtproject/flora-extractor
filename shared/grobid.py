@@ -142,9 +142,11 @@ def _parse_references_block(block: str) -> list[dict]:
         stripped = line.strip()
         if not stripped:
             continue
-        # New entry: starts with [N] or looks like "Surname, I. (YEAR)"
+        # New entry: starts with [N] or looks like "Surname, I. (YEAR)" — in any
+        # script, so a Cyrillic or Greek reference list is split into entries too
+        # rather than accumulating into whichever Latin entry preceded it.
         is_new = bool(re.match(r"^\[?\d+\][\.\s]", stripped)) or \
-                 bool(re.match(r"^[A-Z][a-z]+,\s+[A-Z]", stripped) and
+                 bool(re.match(r"^[^\W\d_]{2,},\s+[^\W\d_]", stripped, re.UNICODE) and
                       bool(_YEAR_RE.search(stripped[:100])))
         if is_new and current:
             entries.append(" ".join(current))
@@ -190,17 +192,24 @@ def _parse_references_block(block: str) -> list[dict]:
         post_year = re.sub(r"^[\s\.\,\)]+", "", post_year)
         # Numeric (Vancouver) references put the year last, so there is no year match
         # to cut at and post_year is still the whole citation: "[2] L.J.T. Balter, et
-        # al., Low-grade inflammation …". The entry marker and the author list are
-        # demonstrably not the title, so they go before the sentence split runs.
-        post_year = clean_citation_title(post_year)
+        # al., Low-grade inflammation …". An entry marker followed by an author list
+        # is demonstrably not the title, so it goes before the sentence split runs.
+        cleaned = clean_citation_title(post_year)
         # First sentence ending at ". Capital" is the title — but the period after an
-        # author's initial ("M. Moieni, M.R") is not a sentence end, so the character
-        # before it must be part of a word.
-        title_m = re.match(r"(.{10,}?[a-z0-9)\]])[\.?!]\s+[A-Z]", post_year)
-        title = (title_m.group(1) if title_m else post_year[:200]).strip()
-        # What is still a citation fragment names no paper. Keeping it would put a
-        # raw author list into title_o and send a title search after it.
-        ref["title"] = title if usable_title(title) else ""
+        # author's initial ("M. Moieni, M.R") is not a sentence end, so the token
+        # before it must be at least two characters ("… of HIV. Journal of …" still
+        # splits, in any script).
+        title_m = re.match(r"(.{10,}?\w{2})[\.?!]\s+[A-Z]", cleaned, re.UNICODE)
+        title = (title_m.group(1) if title_m else cleaned[:200]).strip()
+        # Cleaning that leaves something unusable ("M.R") has taken the reference's
+        # only description with it, so the longer parsed string is kept instead. A
+        # reference is never dropped or blanked for an awkward title — it would vanish
+        # from the @key namespace, invisible to the target prompt and counted in no
+        # shortfall. usable_title() gates what downstream DOES with a string (its
+        # confidence, whether it is searched on), never a record's existence.
+        fallback = post_year[:200].strip()
+        ref["title"] = (title if usable_title(title) or len(title) >= len(fallback)
+                        else fallback)
 
         # Skip entries with no useful information
         if not ref["title"] and not ref["year"]:
