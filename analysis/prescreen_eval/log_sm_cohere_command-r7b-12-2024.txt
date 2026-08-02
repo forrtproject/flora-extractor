@@ -1,9 +1,0 @@
-cases_live_goldpos_flora.json: 539 cases, 0 cached, 539 to call
-  100/539
-  200/539
-  300/539
-  400/539
-  500/539
-  -> pre_p7_cohere_command-r7b-12-2024_live_goldpos_flora.json: {'yes': 454, 'no': 85}  api_errors=0  tokens in=220387 out=4312
-cases_live_goldpos_repro.json: 28 cases, 0 cached, 28 to call
-  -> pre_p7_cohere_command-r7b-12-2024_live_goldpos_repro.json: {'yes': 28}  api_errors=0  tokens in=11527 out=224

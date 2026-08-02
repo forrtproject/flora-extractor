@@ -1,9 +1,0 @@
-cases_live_goldpos_flora.json: 539 cases, 0 cached, 539 to call
-  100/539
-  200/539
-  300/539
-  400/539
-  500/539
-  -> pre_p7_meta-llama_llama-3.2-3b-instruct_live_goldpos_flora.json: {'yes': 320, 'no': 213, 'SCHEMA_ERROR': 6}  api_errors=0  tokens in=216090 out=4851
-cases_live_goldpos_repro.json: 28 cases, 0 cached, 28 to call
-  -> pre_p7_meta-llama_llama-3.2-3b-instruct_live_goldpos_repro.json: {'yes': 22, 'no': 6}  api_errors=0  tokens in=11276 out=252
