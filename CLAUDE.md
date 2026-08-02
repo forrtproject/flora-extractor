@@ -113,7 +113,12 @@ writes `link_method = prescreen_discard`, is quarantined by `sanity_check` to it
 `data/prescreen_discard.csv`, and is reopened by `--rescreen`; turning the flag off does
 **not** reopen it. `PRESCREEN_MODE=shadow` records verdicts without acting on them. The two voters'
 errors are 37.8x more correlated than independence, so the deterministic override — not
-the pair — is what carries the safety. Evidence: `analysis/prescreen_eval/REPORT.md`.
+the pair — is what carries the safety. `hard_signal()` is therefore measured in its own
+right, on 7,505 FLoRA papers and 1,333 live Stage-3 negatives: it fires on 94.7% of
+positives and 36% of screen-confirmed negatives, and every edit to `_SIGNAL_PATTERNS`
+needs both rates re-measured (`analysis/prescreen_eval/eval_override.py`) because the
+patterns buy safety directly out of the tier's saving. Evidence:
+`analysis/prescreen_eval/REPORT.md` and `OVERRIDE_EVAL.md`.
 
 **Front-door screen** (`classify_replication()`): two voters — Gemini
 (`GEMINI_LIGHT_MODEL`) and `SCREEN_VOTER2_MODEL` (default `gpt-5.4-mini`; an id with
