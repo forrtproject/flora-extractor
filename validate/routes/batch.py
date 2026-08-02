@@ -10,8 +10,8 @@ Routes:
   POST /api/batch/stop           → set stop flag on running batch
   POST /api/batch/export         → write export file; body: {"type": "review"|"all"|"minimal"|"selected", "format": "csv"|"xlsx"|"pdf", "dois": [...]}
   POST /api/batch/refresh        → reload source files and re-filter candidates
+  POST /api/batch/run_doi        → clear caches and re-run the pipeline for one DOI
 """
-import datetime
 import json
 import math
 import queue
@@ -24,7 +24,7 @@ from flask import Blueprint, Response, jsonify, render_template, request, stream
 
 from validate import state
 from shared.config import (
-    CACHE_DIR, DATA_DIR,
+    DATA_DIR,
     FILTERED_CSV_PATH, FINAL_OUTPUT_PATH, FLORA_SHEET_PATH,
     OPENALEX_CANDS_PATH, PDF_CACHE_DIR, REVIEW_CSV_PATH, log,
 )
@@ -34,28 +34,6 @@ from openpyxl.utils import get_column_letter
 from fpdf import FPDF
 from extract.link_original import run_for_doi
 from shared.utils import cache_key, clean_doi, pdf_serve_url
-
-VALIDATION_FILE = CACHE_DIR / "validations.json"
-
-
-def _load_validations():
-    if VALIDATION_FILE.exists():
-        try:
-            with VALIDATION_FILE.open(encoding="utf-8") as fh:
-                state.validations.update(json.load(fh))
-        except Exception as e:
-            log.warning("Could not load validations: %s", e)
-
-
-def _save_validations():
-    try:
-        with VALIDATION_FILE.open("w", encoding="utf-8") as fh:
-            json.dump(state.validations, fh, ensure_ascii=False, indent=2)
-    except Exception as e:
-        log.warning("Could not save validations: %s", e)
-
-
-_load_validations()
 
 batch_bp = Blueprint("batch", __name__)
 
@@ -82,7 +60,7 @@ _REVIEW_COLS = [
 
 _MINIMAL_COLS = [
     "doi_r", "study_r", "resolved_doi_o", "resolved_title_o",
-    "user_val_status", "flora_validation_status",
+    "flora_validation_status",
 ]
 
 
@@ -197,13 +175,10 @@ def _write_export(export_type: str, fmt: str, dois: list) -> dict:
 
         rows = []
         for doi_r, result in state.resolved.items():
-            v = state.validations.get(doi_r, {})
             rows.append({
                 **result,
-                "doi_r"           : doi_r,
-                "flora_tag"       : _flora_tag(result),
-                "user_val_status" : v.get("status",  ""),
-                "user_val_comment": v.get("comment", ""),
+                "doi_r"     : doi_r,
+                "flora_tag" : _flora_tag(result),
             })
 
     full_df = pd.DataFrame(rows)
@@ -306,7 +281,6 @@ def _build_candidate_row(row: pd.Series) -> dict:
         result.get("flora_validation_status")
         or str(row.get("flora_validation_status", "") or "")
     )
-    v = state.validations.get(doi_r, {})
     return {
         "doi_r"                  : doi_r,
         "study_r"                : str(row.get("study_r", "")),
@@ -318,8 +292,6 @@ def _build_candidate_row(row: pd.Series) -> dict:
         "flora_tag"              : _flora_tag(result) if result else "",
         "validation_status"      : validation_status,
         "flora_validation_status": flora_validation_status,
-        "user_val_status"        : v.get("status",  ""),
-        "user_val_comment"       : v.get("comment", ""),
         "pdf_serve_url"     : pdf_serve_url(doi_r, result) if result else "",
         "pdf_ok"            : bool(result.get("pdf_ok", False)) if result else False,
         "pdf_url"           : result.get("pdf_url",    "") if result else "",
@@ -518,7 +490,7 @@ def api_run():
     Start the batch pipeline. Streams Server-Sent Events as each DOI completes.
 
     Request body:
-      {"mode": "all" | "unresolved" | "selected" | "smart", "dois": [...]}
+      {"mode": "all" | "unresolved" | "selected", "dois": [...]}
 
     SSE event types:
       {"type": "progress", "doi": "...", "index": 4, "total": 11, "result": {...}}
@@ -546,11 +518,6 @@ def api_run():
                 d for d in all_dois
                 if not (state.resolved.get(d) or {}).get("resolved_doi_o")
                 and not (state.resolved.get(d) or {}).get("resolved_title_o")
-            ]
-        elif mode == "smart":
-            queue_list = [
-                d for d in all_dois
-                if state.validations.get(d, {}).get("status") != "successful"
             ]
         else:
             queue_list = all_dois
@@ -642,39 +609,17 @@ def api_run():
     )
 
 
-# ── API: human validation ─────────────────────────────────────────────────────
-
-@batch_bp.route("/api/batch/validate", methods=["POST"])
-def api_validate():
-    """Save a human validation status + comment for a DOI."""
-    body   = request.get_json(force=True) or {}
-    doi_r  = clean_doi(body.get("doi_r", ""))
-    status = body.get("validation_status", "")
-    comment = body.get("comment", "")
-    if not doi_r or status not in ("successful", "failed", "recheck"):
-        return jsonify({"error": "invalid input"}), 400
-    state.validations[doi_r] = {
-        "status"   : status,
-        "comment"  : comment,
-        "timestamp": datetime.datetime.utcnow().isoformat(),
-    }
-    _save_validations()
-    return jsonify({"ok": True})
-
-
-# ── API: single-DOI re-run with validation comment ────────────────────────────
+# ── API: single-DOI re-run ────────────────────────────────────────────────────
 
 @batch_bp.route("/api/batch/run_doi", methods=["POST"])
 def api_run_doi():
-    """Re-run the pipeline for one DOI with an optional validator note."""
+    """Re-run the pipeline for one DOI."""
     body    = request.get_json(force=True) or {}
     doi_r   = clean_doi(body.get("doi_r", ""))
-    comment = body.get("validation_comment", "")
     if not doi_r:
         return jsonify({"error": "doi_r required"}), 400
     try:
-        result = run_for_doi(doi_r, state.flora_df, state.cands_df,
-                             force=True, validation_comment=comment)
+        result = run_for_doi(doi_r, state.flora_df, state.cands_df, force=True)
         result["pdf_serve_url"] = pdf_serve_url(doi_r, result)
         result["flora_tag"]     = _flora_tag(result)
         with state.resolved_lock:

@@ -200,8 +200,7 @@ def build_target_prompt(study_r:        str,
                         *,
                         pdf_abstract:   str = "",
                         intro:          str = "",
-                        methods:        str = "",
-                        validator_note: str = "") -> str:
+                        methods:        str = "") -> str:
     """Render the target-identification prompt.
 
     entries come from shared.target_keys.assign_target_keys — the keys shown here are
@@ -212,11 +211,6 @@ def build_target_prompt(study_r:        str,
     """
     blocks: list[str] = []
 
-    note = (validator_note or "").strip()
-    if note:
-        # Rendered with the inputs, never ahead of the task: a per-row note above the
-        # instructions would break the cacheable prefix and outrank the rules.
-        blocks.append(f"REVIEWER NOTE:\n{note}")
     if study_r:
         blocks.append(f"TITLE: {study_r}")
     if abstract_r:
@@ -817,18 +811,6 @@ PDF_IMAGE_REFERENCES_PROMPT = textwrap.dedent("""
       ]
     }
 """).strip()
-
-
-# ── F1 — note injected into the identification prompt as validator_note ──────
-
-def build_flora_anchor_note(flora_doi_o: str, flora_study_o: str) -> str:
-    return (
-        f"⚠ FLoRA ANCHOR: The FLoRA database has manually verified the original "
-        f"study for this replication as DOI: {flora_doi_o} "
-        f"(\"{flora_study_o}\"). "
-        f"Evaluate this against the evidence — confirm it if supported, "
-        f"override only if you find strong contradicting evidence."
-    )
 
 
 # ── Versioning ───────────────────────────────────────────────────────────────
