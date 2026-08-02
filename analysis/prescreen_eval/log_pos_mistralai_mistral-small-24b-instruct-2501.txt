@@ -1,0 +1,27 @@
+cases_live_goldpos_flora.json: 539 cases, 0 cached, 539 to call
+  100/539
+  200/539
+  300/539
+  400/539
+  500/539
+  -> pre_p7_mistralai_mistral-small-24b-instruct-2501_live_goldpos_flora.json: {'yes': 528, 'no': 11}  api_errors=0  tokens in=302841 out=5643
+cases_live_goldpos_repro.json: 28 cases, 0 cached, 28 to call
+  -> pre_p7_mistralai_mistral-small-24b-instruct-2501_live_goldpos_repro.json: {'yes': 27, 'no': 1}  api_errors=0  tokens in=15801 out=300
+cases_live_goldpos_flora.json: 539 cases, 0 cached, 539 to call
+  100/539
+  200/539
+  300/539
+  400/539
+  500/539
+  -> pre_p5_mistralai_mistral-small-24b-instruct-2501_live_goldpos_flora.json: {'yes': 539}  api_errors=0  tokens in=304458 out=5011
+cases_live_goldpos_repro.json: 28 cases, 0 cached, 28 to call
+  -> pre_p5_mistralai_mistral-small-24b-instruct-2501_live_goldpos_repro.json: {'yes': 28}  api_errors=0  tokens in=15885 out=276
+cases_live_goldpos_flora.json: 539 cases, 0 cached, 539 to call
+  100/539
+  200/539
+  300/539
+  400/539
+  500/539
+  -> pre_p8_mistralai_mistral-small-24b-instruct-2501_live_goldpos_flora.json: {'yes': 538, 'no': 1}  api_errors=0  tokens in=307692 out=5475
+cases_live_goldpos_repro.json: 28 cases, 0 cached, 28 to call
+  -> pre_p8_mistralai_mistral-small-24b-instruct-2501_live_goldpos_repro.json: {'yes': 28}  api_errors=0  tokens in=16053 out=288

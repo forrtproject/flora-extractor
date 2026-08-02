@@ -1,135 +1,152 @@
 # Pre-screen evaluation — findings (issue #130)
 
-Run 2026-08-02. Voters: `mistralai/mistral-nemo` + `google/gemini-2.5-flash-lite` via
-OpenRouter. Prompt: `prompt_p4.txt`, which is `_PRESCREEN_PROMPT` in `shared/prompts.py`.
-
-## Summary
+Run 2026-08-02. Shipped configuration: prompt `p7` (= `_PRESCREEN_PROMPT` in
+`shared/prompts.py`), voters `qwen/qwen3-30b-a3b-instruct-2507` +
+`mistralai/mistral-small-24b-instruct-2501` via OpenRouter. Population: the 751 rows of
+the eval sets that Stage 2 does not already kill (see `README.md`).
 
 | | measured | 95% CI |
 | --- | --: | --: |
-| screen-confirmed negatives discarded (n=184) | 44% | 37–51% |
-| …after the hard-signal override rescues 27 of them | **29%** | 23–36% |
+| screen-confirmed negatives discarded (n=184) | 87% | 81–91% |
+| …after the hard-signal override rescues 43 of them | **64%** | 56–70% |
 | gold positives lost (n=567) | **0** | 0.00–0.67% |
 
-The tier works, at a saving far smaller than the issue assumes, and the deterministic
-override — not the models — is what makes it safe.
+## The question has to be answerable with "no"
 
-## Three findings that change the issue's premises
+This is the finding worth keeping, and it took two rounds to reach.
 
-**1. The economics are ~3.5× smaller than stated.** The issue budgets ~180,000 rows
-through Stage 3 at ~$315. Measured over `data/filtered.csv` on 2026-08-02, 2,532,538 of
-2,581,092 rows (98.1%) are `filter_status = false_positive` and never reach Stage 3 at
-all. The real population is **49,800 rows**, the whole screening bill is **~$87**, and a
-29% discard rate on the ~58% of it that the screen rejects saves about **$15 per full
-corpus pass**. At that size the tier is not worth enabling for its own sake; it is worth
-having built and measured in case #129 changes the volume by an order of magnitude.
+The issue proposed a minimal, positively framed prompt: *"Could this paper be re-testing
+or re-checking a specific earlier study's finding? Answer yes if it might be, no only if
+it clearly could not be."* It discarded **1% and 5%** of confirmed negatives. Safe, and
+useless.
 
-**2. The simple-prompt hypothesis is wrong — the opposite is true.** The issue proposes
-that a minimal, positively framed question would beat the production screen's enumerated
-exclusions, because a long conditional list gives a small model more ways to argue
-"clearly out". Measured on the same 184 screen-confirmed negatives:
+The reason is not that the models are too weak. It is that the question has no reachable
+negative branch. An abstract is partial information, so almost any paper *could* be
+re-testing something, and a model answering "yes" is being correct rather than timid. No
+amount of insisting fixes that; the question has to change.
 
-| prompt | flash-lite | nemo | AND-gate |
-| --- | --: | --: | --: |
-| `p1` one question, positive framing (the issue's proposal) | 5% | 1% | ~0% |
-| `p3` p1 plus "you are the cheap first filter, when in doubt keep" | 1%* | 0%* | ~0% |
-| `p4` names what does **not** count (no enumerated edge cases) | 58% | 55% | 44% |
+What changes it is asking about **evidence** rather than possibility: *"Is there anything
+here suggesting that the authors deliberately check a specific result from earlier
+published research?"* That is a claim about the text, and a small model can falsify a
+claim about the text. Four framings, same rows, single voters:
 
-\* partial runs, stopped when the direction was unambiguous.
+| prompt | framing | nemo | qwen3-30b | mistral-small |
+| --- | --- | --: | --: | --: |
+| `p1` | could this **possibly** be one? | 1% | — | — |
+| `p8` | which is the **better description**? | 27% | 58% | 54% |
+| `p6` | would a reader **describe** it as one? | 52% | 68% | 29% |
+| `p5` | any **positive indication** in the text? | 93% | 63% | 61% |
+| `p7` | does anything **suggest a deliberate check**? | **97%** | **89%** | **96%** |
 
-Naming what does not count is what makes a small model able to discard anything at all.
-`p1` and `p3` are perfectly safe and completely useless: they keep essentially the whole
-corpus, so the tier costs money and saves none. This is the single clearest result here,
-and it is worth recording because the intuition behind it was reasonable.
+(% of the 184 screen-confirmed negatives each voter discards alone.)
 
-Note that `p4` carries no enumerated edge-case list — no biological, engineering or
-distributed-systems clauses. It states the construct positively, then names three ways
-of not qualifying in general terms. That appears to be the useful middle: enough
-structure to license a "no", no catalogue of special cases.
+The framings that ask about possibility or characterisation discard least; the two that
+ask what the text shows discard most, and `p7` is the most consistent across models.
+Three details in `p7` carry that, and none is decorative: defining both vocabularies up
+front stops "reproduction" being read as ordinary data re-use; "deliberately" excludes
+papers that merely build on prior work; and routing genuine ambiguity to "yes"
+explicitly is what stops the loosened gate taking the uncertain rows with it.
 
-**3. The Suiter miss was a prompt artifact, not a model limit.** The issue's sharpest
-failure — an abstract opening "The purpose of this prospective, double-blinded,
-multirater, systematic replication study was to…" discarded by both cheap models — was
-kept by every model and every prompt tested here. It is also caught by the deterministic
-override before any model is asked, so it cannot recur.
+Through the AND gate on the shipped pair:
+
+| prompt | neg discarded | net of override | positives lost | net of override |
+| --- | --: | --: | --: | --: |
+| `p8` | 45% | 28% | 0 | 0/567 |
+| `p5` | 52% | 38% | 0 | 0/567 |
+| **`p7`** | **87%** | **64%** | 4 | **0/567** |
+
+`p7` is the only framing aggressive enough to lose gold positives at all — and all four
+it would lose carry an explicit replication phrase, so the override rescues every one.
+
+## The model matters as much as the prompt
+
+On identical text (`p4`), single-voter discard rates across the cheap field:
+
+| model | $/1k rows | discard on negatives |
+| --- | --: | --: |
+| `google/gemma-3-12b-it` | 0.028 | 15% |
+| `cohere/command-r7b-12-2024` | 0.021 | 24% |
+| `mistralai/mistral-nemo` | 0.010 | 55% |
+| `google/gemini-2.5-flash-lite` | 0.056 | 58% |
+| `mistralai/mistral-small-24b-instruct-2501` | 0.030 | 67% |
+| `qwen/qwen3-30b-a3b-instruct-2507` | 0.030 | 77% |
+
+15% to 77% on the same words. A prompt result from one small model says nothing about
+another, and price does not predict behaviour — the most expensive model tested is
+mid-table.
+
+Two practical traps. `qwen/qwen3.7-flash` emits ~550 output tokens per call, which makes
+it one of the dearer options despite a cheap headline rate. `inclusionai/ling-2.6-flash`
+— the cheapest thing here at $0.0055/1k and the issue's first choice — has a single
+OpenRouter endpoint (Novita) that returned 429 for every call under every routing mode,
+with credit on the account. Worth re-measuring if that clears; it is one env var.
 
 ## The override is what carries the safety
 
-Five gold positives were discarded by the binding voter. **All five carry an explicit
-replication phrase that `hard_signal()` matches:**
+The four gold positives the AND gate would discard, and the phrase that saves each:
 
 | case | DOI | phrase |
 | --- | --- | --- |
-| GP201 | 10.1027/1614-0001/a000082 | "We replicated" |
+| GP314 | 10.1073/pnas.2202700119 | "conceptual replication" |
+| GP317 | 10.1075/target.18159.ola | "conceptual replication" |
 | GP395 | 10.1089/cap.2024.0078 | "Replication of the" |
-| GP565 | 10.1177/0734282915580885 | "Replication of the" |
-| GP646 | 10.1186/s12888-023-04903-9 | "replication of the" |
-| GR021 | 10.1017/psrm.2017.44 | "we replicate" |
+| GP527 | 10.1128/jvi.00068-12 | "replication of the" |
 
-So the measured gold-positive loss with the override on is **0 of 567**. The override
-also fires on 31% of the confirmed negatives — that is its cost, and it is the right
-cost to pay: a needless override sends one row to a $0.0018 screen call, while a missed
-one loses a replication study permanently. The gap between the 44% raw and 29% net
-discard rate is exactly this.
+So the measured loss with the override on is **0 of 567**. The override also fires on 31%
+of the confirmed negatives, and that is the right price: a needless rescue costs one
+$0.0018 screen call, a missed one costs a replication study permanently. The gap between
+87% and 64% is exactly this.
 
-Stage 2's own verdict cannot serve as the override. 98% of rows that reach Stage 3 carry
-`filter_status = replication` at `high` confidence — including **all 184** screen-confirmed
-negatives — so bypassing on it would disable the tier entirely.
+It also means the safety margin now rests more heavily on a hand-written regex than it
+did under a milder prompt — 43 rescues rather than 27. A phrasing the regex does not know
+is the tier's live failure mode.
+
+Stage 2's own verdict cannot serve as the override: 98% of rows reaching Stage 3 carry
+`filter_status = replication` at `high` confidence, including **all 184** screen-confirmed
+negatives, so bypassing on it would disable the tier entirely.
+
+## What it costs and saves
+
+From the measured 583 input / 9 output tokens per row. Voter 2 is asked only about rows
+voter 1 rejects (~52% of the live mix), so voter 1 runs on everything and ordering is a
+real cost lever.
+
+| | per 49,800-row pass |
+| --- | --: |
+| tier cost | $2.25 |
+| screen calls avoided (37% of rows) | $32.35 |
+| **net** | **~$30** |
+
+Against a ~$87 screening bill. Better than the ~$15 of the first configuration, and still
+not a number worth taking any risk for on its own — the case for the tier is #129.
 
 ## What this evaluation cannot tell you
 
-**The positive-side result is exact; the raw AND-gate figure behind it is a bound.**
-OpenRouter credits ran out (HTTP 402) partway through flash-lite's positive buckets, and
-`score_prescreen.py` prints an `INCOMPLETE — AND is a floor` warning for them. Read the
-0-loss figure this way: the override runs **before** any model is asked, so a row it
-rescues is kept whatever the voters would have said, and all five candidate losses are
-rescued. That holds at any coverage. What is *not* measured is how many of the five the
-AND-gate would have discarded on its own — flash-lite never scored any of them — so the
-override's contribution is bounded above by 5 of 567 rather than pinned. What is also
-missing is the second benefit estimate on the curated-negative bucket.
-
-**`inclusionai/ling-2.6-flash` could not be evaluated.** It returned HTTP 429 for every
-call through OpenRouter on 2026-08-02, at every concurrency from 1 to 10 and with and
-without cheapest-provider pinning. Whatever it scores, it cannot gate a corpus, so
-`mistralai/mistral-nemo` and `google/gemini-2.5-flash-lite` are the shipped pair. Ling is
-half the price of nemo again and remains the better voter if its availability recovers;
-swapping it back in is one env var, and it should be re-measured when that happens.
-
-**What the tier costs to run**, from the measured 525 input / 8 output tokens per row.
-Voter 2 is asked only about the rows voter 1 rejects (~55%), so voter 1 runs on every row
-and the cheaper model belongs in that slot — the ordering is worth more than it looks:
-
-| pair (voter 1 first) | $/1,000 rows | per 49,800-row pass |
-| --- | --: | --: |
-| nemo → flash-lite (shipped) | $0.041 | $2.04 |
-| flash-lite → nemo (same verdicts) | $0.062 | $3.08 |
-| ling → nemo, if ling recovers | $0.010 | $0.50 |
-
-Against a ~$87 screening bill that saves ~$15, all three are rounding errors. The
-ordering is right on principle rather than because the money matters.
-
 **Zero observed misses is not a bounded miss rate.** The 95% interval on 0/567 still
 reaches 0.67%. Bounding the true rate below 0.5% needs ~600 gold positives with zero
-misses — roughly what is here — but the interval is one-sided comfort only if the sample
-is representative, and it is not:
+misses — about what is here — but that is one-sided comfort only if the sample is
+representative, and it is not:
 
-- **The gold positives are the easy positives.** They are canonical, well-described
-  replications already in FLoRA. The marginal, oddly-phrased papers that only keyword
-  search finds are what a small model misses, and they are structurally absent.
+- **The gold positives are the easy positives.** Canonical, well-described replications
+  already in FLoRA. The marginal, oddly-phrased papers that only keyword search finds are
+  what a small model misses, and they are structurally absent.
 - **The negatives are labelled by the system under test.** The 184 "screen-confirmed"
-  negatives carry the validated screen's own error rate, so the 29% is agreement with
-  the big screen, not accuracy against truth.
-- **These rows are derivation data.** They are the same population that motivated the
-  issue, and `p4` was chosen on them. The effect size (44% vs ~0%) is far too large for
-  a winner's curse to explain, but the exact rates are in-sample.
+  negatives carry the validated screen's own error rate, so 64% is agreement with the big
+  screen, not accuracy against truth.
+- **These rows are derivation data.** They are the population that motivated the issue,
+  and `p7` was chosen on them. The effect size (87% vs 1%) is far too large for a
+  winner's curse to explain, but the exact rates are in-sample.
+
+**Coverage gaps.** The curated-negative bucket was not re-run under `p7`, so the benefit
+rests on one negative bucket. `p6` and `p3` were not run on the positives, having been
+ruled out on the negative side.
 
 ## Recommendation
 
-Ship the tier, leave `PRESCREEN_ENABLED` off, and do not turn it on for $15.
+Ship the tier, leave `PRESCREEN_ENABLED` off, and do not turn it on for $30.
 
 Before enabling it, run it in **shadow**: record `prescreen_verdict` on every row, act on
 no discard, and count how often it would have discarded a row the validated screen then
-kept. That is the quantity that actually matters — an incremental loss, not a miss
-against a gold list — it needs no gold labels, it is measurable in the thousands on the
-live population, and it is the only number that should decide this. Revisit when #129
-settles the corpus size.
+kept. That is an incremental loss rather than a miss against a gold list, it needs no gold
+labels, it is measurable in the thousands on the live population, and it is the only
+number that should decide this. Revisit when #129 settles the corpus size.

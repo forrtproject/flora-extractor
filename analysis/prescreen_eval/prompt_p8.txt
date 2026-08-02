@@ -1,0 +1,12 @@
+A replication collects new data to re-test a finding reported in a previously published study. A reproduction re-analyses that study's own data to check its reported result. Re-testing in a different population, country or sample still counts.
+
+Which is the better description of this paper: it checks an earlier published finding, or it conducts research for some other purpose?
+
+Answer "yes" if checking an earlier finding is the better description, or if the two descriptions cannot be distinguished safely. Answer "no" if another purpose is clearly the better description and no earlier finding is being checked.
+
+TITLE: {title}
+
+ABSTRACT: {abstract}
+
+Respond with ONLY a JSON object:
+{"maybe_replication": "<yes|no>"}

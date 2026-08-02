@@ -143,17 +143,19 @@ SCREEN_VOTER2_MODEL = os.getenv("SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
 # Deliberately separate from SCREEN_VOTER2_MODEL: changing a pre-screen model must
 # never silently alter the validated screen's cached verdicts.
 PRESCREEN_ENABLED = os.getenv("PRESCREEN_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
-# Order matters for cost, not for the verdict: the gate discards only when BOTH voters
-# say no, so voter 2 is asked only about the rows voter 1 rejects. Voter 1 therefore runs
-# on every row and the cheaper model belongs in that slot — nemo first rather than
-# flash-lite first is $2.04 vs $3.08 per corpus pass for identical answers.
+# Both measured on the full eval and both reliable under concurrency: 8/8 clean replies,
+# 9 output tokens, ~$0.027 per 1,000 rows each. The model matters as much as the prompt —
+# on identical text, discard rates across the cheap field ran from 15% to 97%.
 #
-# Not inclusionai/ling-2.6-flash, which is 2x cheaper again ($0.010/M in): issue #130
-# measured it returning 429 for every call through OpenRouter on 2026-08-02, at any
-# concurrency and any routing. If its availability recovers it is the better voter, and
-# swapping it in is one env var.
-PRESCREEN_VOTER1_MODEL = os.getenv("PRESCREEN_VOTER1_MODEL", "mistralai/mistral-nemo")
-PRESCREEN_VOTER2_MODEL = os.getenv("PRESCREEN_VOTER2_MODEL", "google/gemini-2.5-flash-lite")
+# Order is a cost choice, not a verdict choice: the gate discards only when BOTH say no,
+# so voter 2 is asked only about the rows voter 1 rejects. qwen goes first because it
+# rejects slightly less often, which is what voter 2 is billed for.
+#
+# Not inclusionai/ling-2.6-flash, 3x cheaper again: it has a single OpenRouter endpoint
+# (Novita) that returned 429 for every call on 2026-08-02 under every routing mode, with
+# credit on the account. If that clears it is worth re-measuring — one env var.
+PRESCREEN_VOTER1_MODEL = os.getenv("PRESCREEN_VOTER1_MODEL", "qwen/qwen3-30b-a3b-instruct-2507")
+PRESCREEN_VOTER2_MODEL = os.getenv("PRESCREEN_VOTER2_MODEL", "mistralai/mistral-small-24b-instruct-2501")
 # Below this many characters of abstract there is not enough text for a 3B-class model
 # to be trusted with a terminal verdict, so the row bypasses the pre-screen.
 PRESCREEN_MIN_ABSTRACT_CHARS = int(os.getenv("PRESCREEN_MIN_ABSTRACT_CHARS", "200"))

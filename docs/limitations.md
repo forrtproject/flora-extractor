@@ -145,8 +145,8 @@ the tier in front of it.
 Two limits of the evidence in `analysis/prescreen_eval/REPORT.md` are structural and no
 larger run of the same design would fix them:
 
-- **The miss rate cannot be bounded tightly enough.** The exact 95% interval on a
-  point estimate of 2 misses in 833 gold positives is 0.03%–0.87%. Bounding the true
+- **The miss rate cannot be bounded tightly enough.** The exact 95% interval on zero
+  misses in 567 gold positives still reaches 0.67%. Bounding the true
   rate below 0.5% would need roughly 1,450 independent gold positives with the same two
   misses, and the FLoRA database does not contain that many that also reach Stage 3.
 - **The gold positives are the easy positives.** They are canonical, well-described
@@ -160,4 +160,4 @@ row the validated screen went on to keep. That quantity is the real cost, it is
 measurable in the thousands without any gold labels, and it is the only number that
 should decide this. Re-check the economics at the same time: measured over
 `data/filtered.csv` on 2026-08-02, 49,800 of 2,581,092 rows reach Stage 3, so the whole
-screening bill is ~$87 and the most this tier can save today is ~$50.
+screening bill is ~$87 and this tier nets ~$30 of it.

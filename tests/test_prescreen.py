@@ -125,7 +125,9 @@ def test_the_discard_row_records_who_ended_the_paper(tmp_path, monkeypatch):
     assert out[0]["link_method"] == "prescreen_discard"
     assert out[0]["prescreen_verdict"] == "discard"
     assert out[0]["outcome_confidence"] == "low"
-    assert "google" in out[0]["link_evidence"] and "mistral" in out[0]["link_evidence"]
+    # both configured voters and what each said, whichever models they are
+    for _, model in ps.prescreen_voters():
+        assert f"{model}=no" in out[0]["link_evidence"]
 
 
 def test_a_bypassed_row_costs_nothing_and_still_says_so(tmp_path, monkeypatch):

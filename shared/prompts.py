@@ -363,32 +363,37 @@ def build_classify_prompt(study_r: str, abstract_r: str) -> str:
 
 
 # ── The cheap pre-screen (issue #130) ────────────────────────────────────────
-# Issue #130 expected the opposite of what was measured. The hypothesis was that a
-# minimal, positively framed question would beat the production screen's enumerated
-# exclusions, because a long conditional list gives a small model more ways to talk
-# itself into "clearly out". Measured over 184 screen-confirmed negatives, the minimal
-# question discarded 5% and 1% (the two voters) — safe and useless. Naming what does
-# NOT count is what makes a small model able to discard anything at all: 58% and 50%
-# on the same rows, at a gold-positive loss the hard-signal override then rescued.
-# See analysis/prescreen_eval/REPORT.md.
+# What this prompt is avoiding: "could this paper be re-testing an earlier study?" is
+# unanswerable with "no". An abstract is partial information, so almost any paper COULD
+# be, and the models say so — that phrasing discarded 1% and 5% of confirmed negatives.
+# The fix is not more force but a different question. Asking whether the TEXT SUGGESTS
+# a deliberate check moves the judgment from what the world might contain to what the
+# evidence shows, which is a thing a 3B-class model can answer either way. Same models,
+# same rows: 89–97% discarded.
+#
+# Three details carry that, and none is decorative. Defining both vocabularies up front
+# stops "reproduction" being read as ordinary re-use of data. "Deliberately" excludes
+# papers that merely build on prior work. And routing genuine ambiguity to "yes"
+# explicitly is what keeps the loosened gate from taking the uncertain rows with it.
+#
+# Measured on 567 gold positives and 184 confirmed negatives: 87% of negatives discarded
+# through the AND gate, 64% after the deterministic override, zero positives lost. See
+# analysis/prescreen_eval/REPORT.md — four framings were compared, and the two that ask
+# about possibility rather than evidence are the two that discard nothing.
 #
 # The answer is one field. A reasoning field was measured too and only bought output
 # cost and parse-failure surface.
-_PRESCREEN_PROMPT = """You are screening papers for a database of replication and
-reproduction studies.
+_PRESCREEN_PROMPT = """A replication collects new data to re-test a finding reported in a
+previously published study. A reproduction re-analyses that study's own data to check its
+reported result. Re-testing in a different population, country or sample still counts.
 
-A paper qualifies if it collects new data to re-test a finding reported in a previously
-published study, or re-analyses that study's data to check the reported result. Re-testing
-in a different population, country or sample still counts.
+Is there anything here suggesting that the authors deliberately check a specific result
+from earlier published research?
 
-A paper does not qualify if it merely uses the words "replicate" or "reproduce" in passing,
-if it evaluates or adapts a measurement instrument or procedure without re-testing a
-published finding, or if the words carry an everyday rather than a methodological sense.
-
-Does this paper qualify, or might it?
-
-Answer "yes" if it qualifies or might qualify.
-Answer "no" only if the abstract makes clear it does not.
+Answer "yes" if the title or abstract suggests such a check, or leaves the paper's purpose
+genuinely unclear.
+Answer "no" if it describes another purpose without suggesting that an earlier reported
+result is being checked.
 
 TITLE: {title}
 

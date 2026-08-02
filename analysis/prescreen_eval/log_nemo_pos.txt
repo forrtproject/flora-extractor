@@ -1,0 +1,9 @@
+cases_live_goldpos_flora.json: 539 cases, 0 cached, 539 to call
+  100/539
+  200/539
+  300/539
+  400/539
+  500/539
+  -> pre_p5_mistralai_mistral-nemo_live_goldpos_flora.json: {'yes': 531, 'no': 8}  api_errors=0  tokens in=219267 out=4332
+cases_live_goldpos_repro.json: 28 cases, 0 cached, 28 to call
+  -> pre_p5_mistralai_mistral-nemo_live_goldpos_repro.json: {'yes': 28}  api_errors=0  tokens in=11461 out=224
