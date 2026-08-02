@@ -413,7 +413,8 @@ def _run_gate(title_r: str, abstract_r: str, candidates: list,
               abstract_answer: "dict | None" = None,
               screen: "dict | None" = None,
               pdf_ok: bool = True, no_llm: bool = False, no_pdf: bool = False,
-              oa_xml: "dict | None" = None) -> dict:
+              oa_xml: "dict | None" = None, parse: "dict | None" = None,
+              identify=None) -> dict:
     """Drive run_for_doi with the title-pattern rule able to fire.
 
     *abstract_answer* is what the Stage 4 abstract call returns and *llm_answer* what
@@ -446,10 +447,12 @@ def _run_gate(title_r: str, abstract_r: str, candidates: list,
                           record_type="replication")), \
          patch.object(link_original, "acquire_pdf", return_value=pdf), \
          patch.object(link_original, "_parse_all",
-                      return_value={"grobid": {"source": "grobid", "abstract": "",
-                                               "intro": "i", "references": []}}), \
+                      return_value=parse or {"grobid": {"source": "grobid",
+                                                        "abstract": "", "intro": "i",
+                                                        "references": []}}), \
          patch.object(link_original, "_write_parse_cache"), \
-         patch.object(link_original, "identify_targets_with_llm", side_effect=_identify):
+         patch.object(link_original, "identify_targets_with_llm",
+                      side_effect=identify or _identify):
         return run_for_doi("10.1/rep", cands_df=cands_df, no_llm=no_llm, no_pdf=no_pdf)
 
 
@@ -542,6 +545,35 @@ class TestGateRestoresWhenNothingEnumerates:
         assert row["resolution_method"] == "title_pattern_match"
         assert row["grobid_status"] == "not_attempted"
         assert row["pdf_source"] == "none"
+
+    def test_openalex_body_text_reaches_the_llm_instead_of_no_context(self):
+        """A parse with body text and nothing else must still be read.
+
+        OpenAlex's TEI has no <head> elements, so parse_tei_sections cannot split it
+        and returns the body whole in raw_text. Before raw_text was carried into
+        sections, build_target_prompt saw abstract/intro/methods only: a document with
+        text but no abstract and no references passed the "we have a document" guard
+        and was then dropped as no_context, with the text never sent anywhere."""
+        body = ("INTRODUCTION\nWe re-test the finding reported by Smith (2010) that "
+                "time flies from left to right. " * 20)
+        oa_xml = {"source": "openalex_xml", "xml_url": "u",
+                  "sections": {"abstract": "", "intro": "", "methods": "",
+                               "references": [], "raw_text": body}}
+        parse = {"openalex_xml": {"source": "openalex_xml", "abstract": "",
+                                  "intro": "", "references": [], "raw_text": body}}
+        seen: dict = {}
+
+        def _capture(*a, **k):
+            seen.update(k)
+            return _answer()
+
+        row = _run_gate("An unrelated title", "", [], pdf_ok=False, oa_xml=oa_xml,
+                        parse=parse, identify=_capture)
+        assert row["resolution_method"] != "no_context"
+        assert seen["intro"].startswith("INTRODUCTION")
+        # Sent and stored at the same size, so the row shows what the model read.
+        assert len(seen["intro"]) <= TARGET_INTRO_CHARS
+        assert row["grobid_intro"] == seen["intro"]
 
     def test_the_no_document_exit_restores_it(self):
         row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS, pdf_ok=False,

@@ -1079,6 +1079,20 @@ def run_for_doi(doi_r:              str,
         "methods":    "",
         "references": best_refs,
     }
+    # A parse can carry the whole body and still have no section split: OpenAlex's
+    # TEI lost its <head> elements to an HTML round-trip, so parse_tei_sections has
+    # nothing to divide the text by and returns it whole in raw_text. Without this
+    # the recovered text reached nothing — build_target_prompt only ever reads
+    # abstract/intro/methods, so a document with body text but no abstract and no
+    # references passed the "we have a document" guard and was then dropped as
+    # no_context. Treat that body the way a PDF's raw text is treated and open the
+    # INTRODUCTION block with it: the front of a paper is where it says what it is
+    # re-testing, which is what this prompt asks about. Sliced here at the size
+    # build_target_prompt sends, so the row stores exactly what the model read.
+    if not sections["intro"] and not sections["methods"]:
+        raw = str(best.get("raw_text") or "").strip()
+        if raw:
+            sections["intro"] = raw[:TARGET_INTRO_CHARS]
     # build_target_prompt sends the PDF abstract only as the tail the OpenAlex abstract
     # does not already carry — often "" when the two agree. Record that tail so the row
     # shows the evidence the model was given rather than the section it came from.
