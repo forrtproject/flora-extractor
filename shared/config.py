@@ -133,6 +133,40 @@ OPENROUTER_HEAVY_MODEL = os.getenv("OPENROUTER_HEAVY_MODEL", "qwen/qwen3.5-35b-a
 # An id containing "/" is routed to OpenRouter, anything else to OpenAI direct.
 SCREEN_VOTER2_MODEL = os.getenv("SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
 
+# ── Stage 3 cheap pre-screen (issue #130) ─────────────────────────────────────
+# An optional tier in front of the validated screen: two very small models that can
+# only DISCARD, and only when both agree the row is clearly out of scope. Everything
+# else — one keep, an unreadable reply, an API failure — falls through to the screen
+# unchanged, so the tier can lose papers but can never add them.
+#
+# Default OFF. A pre-screen discard is terminal and never reaches a human, so the
+# validated screen's measured zero-settled-miss property does not extend to it.
+# Deliberately separate from SCREEN_VOTER2_MODEL: changing a pre-screen model must
+# never silently alter the validated screen's cached verdicts.
+PRESCREEN_ENABLED = os.getenv("PRESCREEN_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+# Both measured on the full eval and both reliable under concurrency: 8/8 clean replies,
+# 9 output tokens, ~$0.027 per 1,000 rows each. The model matters as much as the prompt —
+# on identical text, discard rates across the cheap field ran from 15% to 97%.
+#
+# Order is a cost choice, not a verdict choice: the gate discards only when BOTH say no,
+# so voter 2 is asked only about the rows voter 1 rejects. qwen goes first because it
+# rejects slightly less often, which is what voter 2 is billed for.
+#
+# mistral-nemo would be $1/pass cheaper for a marginally better discard rate and was NOT
+# chosen: alone on this prompt it discards 39 of 567 gold positives, against 5 and 12 for
+# these two. The pair's measured loss is still zero, but a voter that says no to one
+# genuine replication in fourteen makes the AND gate a single-voter gate with a noisy
+# co-signer, and the tier's whole safety argument is that two independent voters agree.
+#
+# Not inclusionai/ling-2.6-flash, 3x cheaper again: it has a single OpenRouter endpoint
+# (Novita) that returned 429 for every call on 2026-08-02 under every routing mode, with
+# credit on the account. If that clears it is worth re-measuring — one env var.
+PRESCREEN_VOTER1_MODEL = os.getenv("PRESCREEN_VOTER1_MODEL", "qwen/qwen3-30b-a3b-instruct-2507")
+PRESCREEN_VOTER2_MODEL = os.getenv("PRESCREEN_VOTER2_MODEL", "mistralai/mistral-small-24b-instruct-2501")
+# Below this many characters of abstract there is not enough text for a 3B-class model
+# to be trusted with a terminal verdict, so the row bypasses the pre-screen.
+PRESCREEN_MIN_ABSTRACT_CHARS = int(os.getenv("PRESCREEN_MIN_ABSTRACT_CHARS", "200"))
+
 # ── Stage 1 engine source ─────────────────────────────────────────────────────
 # FLORA_USE_ENGINE=1 (or true/yes/on) opts into the YAML-spec engine source.
 FLORA_USE_ENGINE = os.getenv("FLORA_USE_ENGINE", "").strip().lower() in {"1", "true", "yes", "on"}

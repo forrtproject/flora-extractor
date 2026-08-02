@@ -1,0 +1,1302 @@
+[
+ {
+  "id": "NC001",
+  "doi": "10.1001/jama.2016.13713",
+  "usage": {
+   "in": 132,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC002",
+  "doi": "10.1001/jamadermatol.2020.5651",
+  "usage": {
+   "in": 719,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC003",
+  "doi": "10.1001/jamanetworkopen.2020.13463",
+  "usage": {
+   "in": 756,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "Replication of our",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC004",
+  "doi": "10.1001/jamanetworkopen.2023.30145",
+  "usage": {
+   "in": 914,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication study",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC005",
+  "doi": "10.1001/jamaophthalmol.2014.5627",
+  "usage": {
+   "in": 762,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC006",
+  "doi": "10.1002/2014jg002642",
+  "usage": {
+   "in": 396,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC007",
+  "doi": "10.1002/acp.3626",
+  "usage": {
+   "in": 293,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "conceptual replication",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC008",
+  "doi": "10.1002/acp.3681",
+  "usage": {
+   "in": 285,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC009",
+  "doi": "10.1002/adfm.202214130",
+  "usage": {
+   "in": 402,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication of a",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC010",
+  "doi": "10.1002/admi.202000040",
+  "usage": {
+   "in": 269,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "successfully replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC011",
+  "doi": "10.1002/ajmg.a.62759",
+  "usage": {
+   "in": 600,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC012",
+  "doi": "10.1002/ajmg.b.32491",
+  "usage": {
+   "in": 425,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "successfully replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC013",
+  "doi": "10.1002/ajpa.24224",
+  "usage": {
+   "in": 456,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "Replication of the",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC014",
+  "doi": "10.1002/app.33603",
+  "usage": {
+   "in": 356,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC015",
+  "doi": "10.1002/art.27292",
+  "usage": {
+   "in": 565,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "independent replication",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC016",
+  "doi": "10.1002/art.37854",
+  "usage": {
+   "in": 613,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "independent replication",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC017",
+  "doi": "10.1002/art.38749",
+  "usage": {
+   "in": 566,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication of the",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC018",
+  "doi": "10.1002/art.42265",
+  "usage": {
+   "in": 463,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC019",
+  "doi": "10.1002/aur.1886",
+  "usage": {
+   "in": 545,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication studies",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC020",
+  "doi": "10.1002/bdm.1781",
+  "usage": {
+   "in": 374,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC021",
+  "doi": "10.1002/bdm.1821",
+  "usage": {
+   "in": 323,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC022",
+  "doi": "10.1002/bin.1418",
+  "usage": {
+   "in": 294,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC023",
+  "doi": "10.1002/cb.1380",
+  "usage": {
+   "in": 352,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication of the",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC024",
+  "doi": "10.1002/cb.1720",
+  "usage": {
+   "in": 202,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC025",
+  "doi": "10.1002/cl2.1368",
+  "usage": {
+   "in": 627,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC026",
+  "doi": "10.1002/cnm.2738",
+  "usage": {
+   "in": 496,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC027",
+  "doi": "10.1002/cpt.1596",
+  "usage": {
+   "in": 437,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "successfully replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC028",
+  "doi": "10.1002/dev.21807",
+  "usage": {
+   "in": 322,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC029",
+  "doi": "10.1002/ece3.6330",
+  "usage": {
+   "in": 273,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication studies",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC030",
+  "doi": "10.1002/ejp.1835",
+  "usage": {
+   "in": 678,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "external replication",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC031",
+  "doi": "10.1002/ejsp.2521",
+  "usage": {
+   "in": 0,
+   "out": 0
+  },
+  "error": "no choices: {\"error\": {\"message\": \"Internal Server Error\", \"code\": 500}}",
+  "raw": "",
+  "hard_signal": "we replicated",
+  "verdict": "",
+  "schema_error": "empty"
+ },
+ {
+  "id": "NC032",
+  "doi": "10.1002/ejsp.2909",
+  "usage": {
+   "in": 310,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "preregistered replication",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC033",
+  "doi": "10.1002/ejsp.850",
+  "usage": {
+   "in": 324,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication of Study",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC034",
+  "doi": "10.1002/gcc.22271",
+  "usage": {
+   "in": 510,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication study",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC035",
+  "doi": "10.1002/gepi.22440",
+  "usage": {
+   "in": 346,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC036",
+  "doi": "10.1002/hep.29211",
+  "usage": {
+   "in": 347,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC037",
+  "doi": "10.1002/hipo.23539",
+  "usage": {
+   "in": 427,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC038",
+  "doi": "10.1002/hrm.22166",
+  "usage": {
+   "in": 360,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC039",
+  "doi": "10.1002/ijc.32146",
+  "usage": {
+   "in": 353,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC040",
+  "doi": "10.1002/ijop.12511",
+  "usage": {
+   "in": 289,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC041",
+  "doi": "10.1002/ijop.12717",
+  "usage": {
+   "in": 343,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC042",
+  "doi": "10.1002/ijop.12785",
+  "usage": {
+   "in": 356,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we sought to replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC043",
+  "doi": "10.1002/jbm.b.34575",
+  "usage": {
+   "in": 378,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC044",
+  "doi": "10.1002/jbmr.1788",
+  "usage": {
+   "in": 536,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "successfully replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC045",
+  "doi": "10.1002/job.2001",
+  "usage": {
+   "in": 0,
+   "out": 0
+  },
+  "error": "no choices: {\"error\": {\"message\": \"The operation was aborted\", \"code\": 504}}",
+  "raw": "",
+  "hard_signal": "We replicated",
+  "verdict": "",
+  "schema_error": "empty"
+ },
+ {
+  "id": "NC046",
+  "doi": "10.1002/job.2194",
+  "usage": {
+   "in": 310,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC047",
+  "doi": "10.1002/job.2259",
+  "usage": {
+   "in": 369,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC048",
+  "doi": "10.1002/job.2472",
+  "usage": {
+   "in": 306,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC049",
+  "doi": "10.1002/job.2627",
+  "usage": {
+   "in": 350,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC050",
+  "doi": "10.1002/joc.2191",
+  "usage": {
+   "in": 301,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "Replication of a",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC051",
+  "doi": "10.1002/mar.21133",
+  "usage": {
+   "in": 270,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC052",
+  "doi": "10.1002/mar.21601",
+  "usage": {
+   "in": 298,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC053",
+  "doi": "10.1002/mrm.28022",
+  "usage": {
+   "in": 462,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication of a",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC054",
+  "doi": "10.1002/per.2288",
+  "usage": {
+   "in": 354,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC055",
+  "doi": "10.1002/qua.23288",
+  "usage": {
+   "in": 366,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC056",
+  "doi": "10.1002/smj.3200",
+  "usage": {
+   "in": 315,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC057",
+  "doi": "10.1002/suco.202200179",
+  "usage": {
+   "in": 239,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC058",
+  "doi": "10.1002/wat2.1194",
+  "usage": {
+   "in": 304,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC059",
+  "doi": "10.1007/s00221-017-4912-9",
+  "usage": {
+   "in": 410,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "failed to replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC060",
+  "doi": "10.1007/s00335-020-09845-1",
+  "usage": {
+   "in": 353,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC061",
+  "doi": "10.1007/s00401-016-1594-5",
+  "usage": {
+   "in": 532,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC062",
+  "doi": "10.1007/s00401-024-02727-9",
+  "usage": {
+   "in": 227,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC063",
+  "doi": "10.1007/s00426-022-01693-9",
+  "usage": {
+   "in": 307,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we devised successfully replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC064",
+  "doi": "10.1007/s00429-018-1808-9",
+  "usage": {
+   "in": 369,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC065",
+  "doi": "10.1007/s00439-013-1369-1",
+  "usage": {
+   "in": 313,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC066",
+  "doi": "10.1007/s00787-018-1169-1",
+  "usage": {
+   "in": 764,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC067",
+  "doi": "10.1007/s10551-023-05393-1",
+  "usage": {
+   "in": 404,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC068",
+  "doi": "10.1007/s10869-022-09817-z",
+  "usage": {
+   "in": 276,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC069",
+  "doi": "10.1007/s11199-019-01036-w",
+  "usage": {
+   "in": 356,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "conceptual replication",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC070",
+  "doi": "10.1007/s11357-012-9502-y",
+  "usage": {
+   "in": 448,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC071",
+  "doi": "10.1007/s11682-019-00128-1",
+  "usage": {
+   "in": 570,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC072",
+  "doi": "10.1007/s11689-011-9091-6",
+  "usage": {
+   "in": 255,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "Replication studies",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC073",
+  "doi": "10.1007/s12144-018-9810-1",
+  "usage": {
+   "in": 257,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC074",
+  "doi": "10.1007/s12193-021-00366-y",
+  "usage": {
+   "in": 311,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC075",
+  "doi": "10.1007/s12250-021-00439-y",
+  "usage": {
+   "in": 450,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC076",
+  "doi": "10.1007/s13142-014-0272-1",
+  "usage": {
+   "in": 350,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC077",
+  "doi": "10.1007/s13524-013-0238-9",
+  "usage": {
+   "in": 361,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC078",
+  "doi": "10.1007/s13524-014-0325-6",
+  "usage": {
+   "in": 258,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC079",
+  "doi": "10.1016/j.ajhg.2016.07.001",
+  "usage": {
+   "in": 474,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC080",
+  "doi": "10.1016/j.antiviral.2024.106021",
+  "usage": {
+   "in": 459,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC081",
+  "doi": "10.1016/j.apor.2022.103397",
+  "usage": {
+   "in": 343,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC082",
+  "doi": "10.1016/j.apor.2025.104597",
+  "usage": {
+   "in": 471,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication of the",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC083",
+  "doi": "10.1016/j.bandl.2021.105010",
+  "usage": {
+   "in": 269,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC084",
+  "doi": "10.1016/j.bbrep.2021.101187",
+  "usage": {
+   "in": 340,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication of a",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC085",
+  "doi": "10.1016/j.biochi.2020.11.010",
+  "usage": {
+   "in": 405,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC086",
+  "doi": "10.1016/j.bone.2019.04.010",
+  "usage": {
+   "in": 411,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "failed to replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC087",
+  "doi": "10.1016/j.cell.2023.08.028",
+  "usage": {
+   "in": 327,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC088",
+  "doi": "10.1016/j.celrep.2020.107765",
+  "usage": {
+   "in": 299,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC089",
+  "doi": "10.1016/j.chb.2021.106977",
+  "usage": {
+   "in": 328,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC090",
+  "doi": "10.1016/j.chbr.2022.100229",
+  "usage": {
+   "in": 338,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC091",
+  "doi": "10.1016/j.cognition.2016.03.011",
+  "usage": {
+   "in": 288,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC092",
+  "doi": "10.1016/j.concog.2018.07.011",
+  "usage": {
+   "in": 315,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication and extension",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC093",
+  "doi": "10.1016/j.concog.2019.102797",
+  "usage": {
+   "in": 271,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC094",
+  "doi": "10.1016/j.cub.2022.04.068",
+  "usage": {
+   "in": 395,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC095",
+  "doi": "10.1016/j.dib.2020.105449",
+  "usage": {
+   "in": 397,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC096",
+  "doi": "10.1016/j.dib.2023.109853",
+  "usage": {
+   "in": 0,
+   "out": 0
+  },
+  "error": "no choices: {\"error\": {\"message\": \"Internal Server Error\", \"code\": 500}}",
+  "raw": "",
+  "hard_signal": "replication of the",
+  "verdict": "",
+  "schema_error": "empty"
+ },
+ {
+  "id": "NC097",
+  "doi": "10.1016/j.euroecorev.2019.103310",
+  "usage": {
+   "in": 309,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "conceptual replication",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC098",
+  "doi": "10.1016/j.heliyon.2020.e04488",
+  "usage": {
+   "in": 351,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication of the",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC099",
+  "doi": "10.1016/j.heliyon.2023.e15943",
+  "usage": {
+   "in": 329,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NC100",
+  "doi": "10.1016/j.ijchp.2022.100353",
+  "usage": {
+   "in": 397,
+   "out": 8
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication of the",
+  "verdict": "yes",
+  "reason": ""
+ }
+]

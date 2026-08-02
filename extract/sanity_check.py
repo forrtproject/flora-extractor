@@ -57,7 +57,7 @@ import pandas as pd
 import requests
 
 from shared.config import DATA_DIR, RESEARCHER_EMAIL
-from shared.schema import EXTRACTED_COLS
+from shared.schema import EXTRACTED_COLS, SCREEN_SET_ASIDE_FILES
 from shared.doi_verify import fetch_doi_metadata
 from shared.utils import bare_work_id, clean_doi, csv_lock, non_article_doi, non_article_type
 
@@ -95,6 +95,42 @@ def _quarantine(df: pd.DataFrame, mask: pd.Series, dest: Path) -> int:
     combined = combined.drop_duplicates(subset="_k", keep="last").drop(columns="_k")
     combined.to_csv(dest, index=False, encoding="utf-8-sig")
     return len(move)
+
+
+def _purge_stale_screen_keys(refiled: dict[str, set]) -> int:
+    """Drop papers from a screening set-aside file once this pass filed them elsewhere.
+
+    A resume treats any key in these files as settled (`_load_extracted_rows` in
+    run_extract), so a record left behind after the paper moved on strands it. The
+    sequence that bites: `--rescreen` reopens a pre-screen discard, the paper is decided
+    again and this time comes back `target_pending`, sanity_check files it in
+    target_pending.csv — and the old key still sitting in prescreen_discard.csv marks it
+    settled on the next ordinary resume, forever.
+
+    Only keys this pass actively re-filed are touched, and only in the OTHER screening
+    files. Being in a file is not evidence of belonging there — not_a_replication.csv
+    also holds the non_article buckets, whose rows carry any link_method — so nothing
+    is inferred from a row's verdict.
+
+    refiled — destination filename → the dedup keys quarantined there this pass.
+    """
+    purged = 0
+    for fname in SCREEN_SET_ASIDE_FILES:
+        path = DATA_DIR / fname
+        if not path.exists():
+            continue
+        elsewhere = {k for dest, keys in refiled.items() if dest != fname for k in keys}
+        if not elsewhere:
+            continue
+        frame = _norm(pd.read_csv(path, dtype=str, keep_default_na=False))
+        if frame.empty:
+            continue
+        stale = frame.apply(_dedup_key, axis=1).isin(elsewhere)
+        if not stale.any():
+            continue
+        purged += int(stale.sum())
+        frame[~stale].to_csv(path, index=False, encoding="utf-8-sig")
+    return purged
 
 
 def _doi_is_registered(doi: str) -> bool:
@@ -162,6 +198,12 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
         # not_a_replication on a row whose link was never resolved (or was demoted by
         # _guard_original_link), and such a row is awaiting a target, not a finding.
         ("target_pending", "target_pending.csv", df["link_method"] == "target_pending"),
+        # Before the outcome rule, and in its own file: the cheap pre-screen writes
+        # outcome=not_a_replication, but it is a weaker instrument than the validated
+        # pair and mixing its discards into not_a_replication.csv would corrupt any
+        # precision computed over the screen. Excluded from DB import either way.
+        ("prescreen_discard", "prescreen_discard.csv",
+         df["link_method"] == "prescreen_discard"),
         ("not_a_replication", "not_a_replication.csv", df["outcome"] == "not_a_replication"),
         ("self_link", "unresolved_self_links.csv", (doi_o != "") & (doi_o == doi_r)),
         ("doi_mismatch", "unresolved_doi_mismatch.csv", df["doi_o_verification"] == "mismatch"),
@@ -169,9 +211,14 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
 
     moved: dict[str, int] = {}
     claimed = pd.Series(False, index=df.index)
+    # destination file → keys filed there this pass, so a screening set-aside file can
+    # be purged of a paper that has since been decided somewhere else.
+    refiled: dict[str, set] = {}
     for name, fname, mask in rules:
         mask = mask & ~claimed
         moved[name] = _quarantine(df, mask, DATA_DIR / fname) if move else int(mask.sum())
+        if mask.any():
+            refiled.setdefault(fname, set()).update(df[mask].apply(_dedup_key, axis=1))
         claimed |= mask
 
     if deep:
@@ -206,6 +253,9 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
         with csv_lock(path):
             df.to_csv(path, index=False, encoding="utf-8-sig")
 
+    if move:
+        moved["screen_set_aside_purged"] = _purge_stale_screen_keys(refiled)
+
     # Report-only signals (never moved).
     yo = pd.to_numeric(df["year_o"], errors="coerce")
     yr = pd.to_numeric(df["year_r"], errors="coerce")
@@ -234,10 +284,14 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
             "doi_mismatch": "unresolved_doi_mismatch.csv",
             "title_search_provisional": "provisional_title_search.csv",
             "target_pending": "target_pending.csv",
+            "prescreen_discard": "prescreen_discard.csv",
             "fabricated_doi_o": "fabricated_original_doi.csv"}
     for name in dest:
         if name in moved:
             print(f"  {name:20s} -> {dest[name]:30s} {moved[name]}")
+    if moved.get("screen_set_aside_purged"):
+        print(f"  {'stale screen keys':20s} -> {'purged from set-aside files':30s} "
+              f"{moved['screen_set_aside_purged']}")
     if not deep:
         print(f"  fabricated_doi_o     (skipped -- pass --deep to network-check "
               f"{unregistered} unregistered doi_o)")

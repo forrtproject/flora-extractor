@@ -88,6 +88,11 @@ EXTRACT_ADDED_COLS = [
     "screen_categories",   # str   — |-joined union of the front-door screen's category
                            #         labels (SCREEN_CATEGORIES in shared/llm_client.py);
                            #         multi-valued, so filter it by substring, never equality
+    "prescreen_verdict",   # str   — the cheap pre-screen's answer, blank when the tier
+                           #         was off: discard | proceed | bypass:<reason>. A
+                           #         discard is terminal and never reaches a human, so
+                           #         which models ended the row is recorded in
+                           #         link_evidence alongside it
     "doi_o_verification",  # str   — verified | corrected | mismatch | no_doi | not_found | no_metadata | api_error | skipped
 
     # Full-text provenance. A row coded llm_fulltext asserts that a model read the
@@ -197,12 +202,25 @@ LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
     # Screen verdicts that end the row without a target. sanity_check quarantines
     # both; exclude from DB import.
     "not_a_replication",
+    # The cheap pre-screen (shared/prescreen.py, off unless PRESCREEN_ENABLED) ended
+    # the row before the validated screen ever voted. Deliberately NOT folded into
+    # not_a_replication: that value means the validated pair settled the paper, and an
+    # audit of the screen must not have to disentangle a lower-recall tier's discards
+    # from it. Quarantined to its own prescreen_discard.csv; excluded from DB import.
+    "prescreen_discard",
     # Historical, no longer emitted: the front door's gate has no disagreement
     # terminal state, so a split now proceeds down the ladder. Rows on disk still
     # carry the value and --rescreen must keep reopening them.
     "screen_disagreement",
     "target_pending", "api_error",
 }
+
+# Where the screening tiers park the rows they settled from the abstract alone. These
+# are the files --rescreen reopens, and the files sanity_check must purge a key from
+# when a later pass files that same paper somewhere else: a resume treats any key in
+# them as settled, so a record left behind after the paper moved on strands it forever.
+SCREEN_SET_ASIDE_FILES = ("not_a_replication.csv", "screen_disagreement.csv",
+                          "prescreen_discard.csv")
 
 DOI_VERIFICATION_VALUES = {
     "verified", "corrected", "mismatch", "no_doi",

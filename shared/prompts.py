@@ -362,6 +362,54 @@ def build_classify_prompt(study_r: str, abstract_r: str) -> str:
             .replace("{abstract}", (abstract_r or "(not available)")[:4000]))
 
 
+# ── The cheap pre-screen (issue #130) ────────────────────────────────────────
+# What this prompt is avoiding: "could this paper be re-testing an earlier study?" is
+# unanswerable with "no". An abstract is partial information, so almost any paper COULD
+# be, and the models say so — that phrasing discarded 1% and 5% of confirmed negatives.
+# The fix is not more force but a different question. Asking whether the TEXT SUGGESTS
+# a deliberate check moves the judgment from what the world might contain to what the
+# evidence shows, which is a thing a 3B-class model can answer either way. Same models,
+# same rows: 89–97% discarded.
+#
+# Three details carry that, and none is decorative. Defining both vocabularies up front
+# stops "reproduction" being read as ordinary re-use of data. "Deliberately" excludes
+# papers that merely build on prior work. And routing genuine ambiguity to "yes"
+# explicitly is what keeps the loosened gate from taking the uncertain rows with it.
+#
+# Measured on 567 gold positives and 184 confirmed negatives: 87% of negatives discarded
+# through the AND gate, 64% after the deterministic override, zero positives lost. See
+# analysis/prescreen_eval/REPORT.md — four framings were compared, and the two that ask
+# about possibility rather than evidence are the two that discard nothing.
+#
+# The answer is one field. A reasoning field was measured too and only bought output
+# cost and parse-failure surface.
+_PRESCREEN_PROMPT = """A replication collects new data to re-test a finding reported in a
+previously published study. A reproduction re-analyses that study's own data to check its
+reported result. Re-testing in a different population, country or sample still counts.
+
+Is there anything here suggesting that the authors deliberately check a specific result
+from earlier published research?
+
+Answer "yes" if the title or abstract suggests such a check, or leaves the paper's purpose
+genuinely unclear.
+Answer "no" if it describes another purpose without suggesting that an earlier reported
+result is being checked.
+
+TITLE: {title}
+
+ABSTRACT: {abstract}
+
+Respond with ONLY a JSON object:
+{"maybe_replication": "<yes|no>"}
+"""
+
+
+def build_prescreen_prompt(title: str, abstract: str) -> str:
+    return (_PRESCREEN_PROMPT
+            .replace("{title}", title or "(not available)")
+            .replace("{abstract}", (abstract or "(not available)")[:3000]))
+
+
 # ── L8–L11 — outcome coding ──────────────────────────────────────────────────
 # Two prompts, not four: the vocabulary (replication vs reproduction) is a genuinely
 # different document, the pass (abstract-only vs full-text escalation) is a handful of

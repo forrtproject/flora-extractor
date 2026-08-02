@@ -1,0 +1,12 @@
+A replication collects new data to re-test a finding reported in a previously published study. A reproduction re-analyses that study's own data to check its reported result. Re-testing in a different population, country or sample still counts.
+
+Does the title or abstract give any positive indication that this paper is a replication or reproduction?
+
+Answer "yes" if the text indicates either activity, or if it is too vague to judge safely. Answer "no" if the paper's purpose is described clearly but there is no indication that it checks an earlier reported finding.
+
+TITLE: {title}
+
+ABSTRACT: {abstract}
+
+Respond with ONLY a JSON object:
+{"maybe_replication": "<yes|no>"}

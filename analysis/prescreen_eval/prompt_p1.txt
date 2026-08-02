@@ -1,0 +1,10 @@
+Could this paper be re-testing or re-checking a specific earlier study's finding?
+
+Answer "yes" if it might be. Answer "no" only if it clearly could not be.
+
+TITLE: {title}
+
+ABSTRACT: {abstract}
+
+Respond with ONLY a JSON object:
+{"maybe_replication": "<yes|no>"}

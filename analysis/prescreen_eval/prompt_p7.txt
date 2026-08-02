@@ -1,0 +1,12 @@
+A replication collects new data to re-test a finding reported in a previously published study. A reproduction re-analyses that study's own data to check its reported result. Re-testing in a different population, country or sample still counts.
+
+Is there anything here suggesting that the authors deliberately check a specific result from earlier published research?
+
+Answer "yes" if the title or abstract suggests such a check, or leaves the paper's purpose genuinely unclear. Answer "no" if it describes another purpose without suggesting that an earlier reported result is being checked.
+
+TITLE: {title}
+
+ABSTRACT: {abstract}
+
+Respond with ONLY a JSON object:
+{"maybe_replication": "<yes|no>"}

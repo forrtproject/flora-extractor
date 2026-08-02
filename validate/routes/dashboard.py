@@ -210,6 +210,16 @@ SET_FILES: dict[str, dict] = {
                "Stage 2 false positives that survived the phrase gate.",
         "action": "Spot-check for classifier over-rejection; genuine misses should be promoted back.",
     },
+    "prescreen_discard": {
+        "title": "Pre-screen Discards",
+        "file": "prescreen_discard.csv",
+        "why": "The optional cheap pre-screen (two very small models, both answering that the "
+               "paper is clearly out of scope) ended these rows before the validated front-door "
+               "screen ever voted. It is a weaker instrument than that screen and its discards "
+               "are terminal, so they are kept separate rather than mixed into Not a Replication.",
+        "action": "Sample these regularly whenever PRESCREEN_ENABLED is on — nothing else in the "
+                  "pipeline ever looks at them again. --rescreen reopens them.",
+    },
     "unresolved_doi_mismatch": {
         "title": "Unresolved DOI Mismatch",
         "file": "unresolved_doi_mismatch.csv",
