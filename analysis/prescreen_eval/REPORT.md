@@ -9,7 +9,13 @@ the eval sets that Stage 2 does not already kill (see `README.md`).
 | --- | --: | --: |
 | screen-confirmed negatives discarded (n=184) | 87% | 81–91% |
 | …after the hard-signal override rescues 43 of them | **64%** | 56–70% |
+| curated negatives discarded (n=400) | 46% | 41–51% |
+| …after the override rescues 140 of them | **11%** | 8–14% |
 | gold positives lost (n=567) | **0** | 0.00–0.67% |
+
+The two negative buckets disagree by a factor of six on what the tier nets, and the gap
+is the override's doing, not the models' — see *What the tier actually saves depends on
+the bucket*.
 
 ## The question has to be answerable with "no"
 
@@ -206,6 +212,36 @@ It also means the safety margin now rests more heavily on a hand-written regex t
 did under a milder prompt — 43 rescues rather than 27. A phrasing the regex does not know
 is the tier's live failure mode.
 
+### What the tier actually saves depends on the bucket
+
+Running the 400 curated negatives under `p7` (run 2026-08-03, closing the last coverage
+gap) gives a very different net saving from the screen-confirmed bucket, and the reason
+is worth understanding before anyone widens the override:
+
+| bucket | n | AND-discard | net of override | override fires on |
+| --- | --: | --: | --: | --: |
+| screen-confirmed negatives | 184 | 87% | **64%** | 31% |
+| curated negatives | 400 | 46% | **11%** | **83%** |
+| gold positives (FLoRA) | 539 | 1% | 0% | 90% |
+
+The models are not much worse on the curated bucket than the headline suggests — they
+still AND-discard 46% of it. What removes the saving is the override: it fires on 332 of
+those 400 rows, so 140 of the 183 discards are rescued and never happen. These are the
+old pipeline's keyword-harvest false positives — molecular-biology "DNA replication",
+engineering "replication of the geometry", papers that merely mention replicating — so
+they are *enriched for replication vocabulary by construction*, which is exactly what the
+override keys on. The screen-confirmed bucket, drawn from the current pipeline's own
+population, carries that vocabulary in only 31% of rows.
+
+Two things follow. First, the live net saving is bracketed by 11% and 64%, not pinned at
+64%, and where it lands depends on how much of the real Stage 3 population reads like
+each bucket — a question only the shadow run answers. Second, and more consequentially
+for the outstanding work: **widening the override is not the free action the per-row
+price implies.** At $0.0018 a needless rescue it is cheap per row, but a pattern that
+fires on a vocabulary-rich population can erase a large share of the tier's benefit — on
+the curated bucket the existing patterns already erase three quarters of it. Coverage on
+the positives has to be bought against measured firing on negatives, not assumed free.
+
 Stage 2's own verdict cannot serve as the override: 98% of rows reaching Stage 3 carry
 `filter_status = replication` at `high` confidence, including **all 184** screen-confirmed
 negatives, so bypassing on it would disable the tier entirely.
@@ -225,6 +261,12 @@ real cost lever.
 Against a ~$87 screening bill. Better than the ~$15 of the first configuration, and still
 not a number worth taking any risk for on its own — the case for the tier is #129.
 
+The 37% assumes the live mix behaves like the screen-confirmed bucket. Scaling by the
+curated bucket's net rate instead (11% rather than 64%) the tier avoids ~6% of rows,
+saves ~$5.60 and nets about **$3** a pass — it pays for itself and little more. The true
+figure is somewhere between $3 and $30, and the shadow run measures it directly on the
+real population.
+
 ## What this evaluation cannot tell you
 
 **Zero observed misses is not a bounded miss rate.** The 95% interval on 0/567 still
@@ -242,9 +284,9 @@ representative, and it is not:
   and `p7` was chosen on them. The effect size (87% vs 1%) is far too large for a
   winner's curse to explain, but the exact rates are in-sample.
 
-**Coverage gaps.** The curated-negative bucket was not re-run under `p7`, so the benefit
-rests on one negative bucket. `p6` and `p3` were not run on the positives, having been
-ruled out on the negative side.
+**Coverage gaps.** `p6` and `p3` were not run on the positives, having been ruled out on
+the negative side. The curated-negative bucket has now been run under `p7`, and it did
+not confirm the headline — it bracketed it (above).
 
 ## Rejected: shortening the input
 

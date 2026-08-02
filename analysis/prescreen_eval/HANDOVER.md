@@ -6,15 +6,14 @@ and what will bite you.
 
 ## Where the work lives
 
-- Worktree: `.claude/worktrees/issue-130-prescreen`, branch `worktree-issue-130-prescreen`.
+- Worktree: `.claude/worktrees/issue-130-prescreen`.
 - **PR #135 is MERGED** into main (squash commit `859560d`), containing everything up to
   `97e4428`.
-- **Three commits are NOT in main and need a second PR**:
-  - `190c093` pre-screen on by default + `PRESCREEN_MODE=shadow` + the correlated-failure finding
-  - `2ee432b` corrected reasoning-model cost figure
-  - `3ea6b4e` what the second voter actually buys
-
-Open that PR first — the work is finished and tested, it is only unmerged.
+- **PR #139** carries everything after it, on branch `issue-130-prescreen-followup`
+  (cherry-picked onto `origin/main`; the old `worktree-issue-130-prescreen` branch is
+  superseded): on-by-default + shadow mode + the correlated-failure finding, the corrected
+  reasoning-model cost figure, what the second voter buys, and this handover. The 26
+  pre-screen tests pass on that base. Awaiting review.
 
 ## Read this before touching the default
 
@@ -92,23 +91,26 @@ The plan, which nothing has been written for yet:
 
 Watch for: a pattern with high positive recall AND high negative hit rate is not
 automatically bad — a needless override costs $0.0018, a missed one costs a paper. Bias
-toward inclusion and say what the false-positive rate costs in dollars.
+toward inclusion and say what the false-positive rate costs in dollars. But see task 2:
+the aggregate cost is no longer small, so report each pattern's negative firing rate as a
+share of the tier's remaining benefit, not only in cents.
 
 Sources worth mining that are NOT the current eval set, per codex's review: reproduction
 and re-analysis vocabulary (which differs sharply from replication vocabulary),
 non-English abstracts, and phrases appearing late in abstracts rather than at the start.
 
-### 2. Run the curated-negative bucket under `p7`
+### 2. ~~Run the curated-negative bucket under `p7`~~ — DONE 2026-08-03
 
-`cases_live_goldneg_curated.json` (400 rows that genuinely reach Stage 3) has only been
-run under `p1` and `p4`. The whole 64% benefit figure rests on one bucket of 184 rows.
-One command per model, ~10 minutes:
+Both shipped voters ran the 400 curated negatives under `p7`. The result did not confirm
+the 64% headline; it bracketed it. Net of the override the tier discards **11%** of that
+bucket against 64% of the screen-confirmed one, because the override fires on 83% of
+curated negatives against 31% of screen-confirmed ones. See *What the tier actually saves
+depends on the bucket* in `REPORT.md`.
 
-```bash
-set -a; source ~/.claude/api_keys.env; set +a
-.venv/bin/python eval_prescreen.py qwen/qwen3-30b-a3b-instruct-2507 prompt_p7.txt \
-    cases_live_goldneg_curated.json --workers=3
-```
+This changes the framing of task 1 below: a wider override is not free. On a
+vocabulary-rich population the existing patterns already erase three quarters of the
+tier's saving, so every proposed addition needs its negative firing rate measured, not
+waved through at $0.0018 a row.
 
 ### 3. The shadow run — the only thing that settles this
 
