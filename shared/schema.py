@@ -354,8 +354,7 @@ VALIDATION_STATUS_VALUES = {"confirmed", "rejected", "pending", "needs_review"}
 # rows exist — reserved until external_lists is wired into run_search. Both names
 # are already in shared.config.CURATED_SOURCES, so those rows will bypass Stage 2's
 # keyword filter on the day the fetchers are wired in.
-SOURCE_VALUES = {"openalex", "openalex_concept", "openalex_snapshot", "semantic_scholar",
-                 "backfill_old_pipeline"}
+SOURCE_VALUES = {"openalex", "openalex_concept", "semantic_scholar", "backfill_old_pipeline"}
 
 # ── Default empty row builders ────────────────────────────────────────────────
 

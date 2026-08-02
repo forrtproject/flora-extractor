@@ -35,11 +35,10 @@ OA_XML_CACHE_DIR     = CACHE_DIR / "openalex_xml"   # GROBID XML from content.op
 PARSE_CACHE_DIR      = CACHE_DIR / "parse"           # per-method parse results
 MARKITDOWN_CACHE_DIR = CACHE_DIR / "markdown"        # raw .md files from MarkItDown
 DOI_VERIFY_CACHE_DIR = CACHE_DIR / "doi_verify"      # CrossRef/OpenAlex DOI verification
-SNAPSHOT_CACHE_DIR   = CACHE_DIR / "snapshot"        # OpenAlex bulk-parquet manifest + scan ledger
 
 for _d in [DATA_DIR, PDF_CACHE_DIR, GROBID_CACHE_DIR, LLM_CACHE_DIR,
            OA_CACHE_DIR, OA_XML_CACHE_DIR, PARSE_CACHE_DIR, MARKITDOWN_CACHE_DIR,
-           DOI_VERIFY_CACHE_DIR, SNAPSHOT_CACHE_DIR]:
+           DOI_VERIFY_CACHE_DIR]:
     _d.mkdir(parents=True, exist_ok=True)
 
 # ── Input / output files ──────────────────────────────────────────────────────
@@ -182,18 +181,6 @@ CURATED_SOURCES = frozenset(
     for s in os.getenv("CURATED_SOURCES", "i4r,bob_reed,backfill_old_pipeline").split(",")
     if s.strip()
 )
-
-# ── OpenAlex snapshot (bulk parquet) ──────────────────────────────────────────
-# The public S3 bucket holding the whole corpus as column-projectable parquet.
-# Overridable so a mirror or a local copy can be pointed at without code changes.
-SNAPSHOT_BASE_URL = os.getenv("FLORA_SNAPSHOT_BASE_URL",
-                              "https://openalex.s3.amazonaws.com/data/parquet")
-# Attempts per partition file before it is skipped and reported at the end of the run.
-SNAPSHOT_HTTP_RETRIES = int(os.getenv("SNAPSHOT_HTTP_RETRIES", "3"))
-# Rows per pyarrow batch. Survivors are merged per batch (never per file), so this
-# also bounds how much of a large partition is ever held in memory.
-SNAPSHOT_BATCH_ROWS = int(os.getenv("SNAPSHOT_BATCH_ROWS", "50000"))
-SNAPSHOT_HTTP_TIMEOUT = int(os.getenv("SNAPSHOT_HTTP_TIMEOUT", "60"))
 
 # ── External servers ──────────────────────────────────────────────────────────
 GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")
