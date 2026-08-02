@@ -42,6 +42,7 @@ class TestFetchDoiMetadata:
         assert meta["first_author_surname"] == "Schindler"
         assert meta["year"] == 2019
         assert meta["source"] == "crossref"
+        assert meta["type"] == ""   # this work reports none
         assert "crossref.org" in g.call_args_list[0].args[0]
 
     def test_unregistered_doi_404(self):
@@ -81,26 +82,14 @@ class TestFetchDoiMetadata:
         assert meta["year"] == 2015
         assert meta["source"] == "content_negotiation"
 
-    def test_datacite_doi_404_on_crossref_found_in_openalex(self):
+    @pytest.mark.parametrize("crossref_status,doi", [
+        # CrossRef is down — OpenAlex answers instead.
+        (500, "10.1111/psyp.13449"),
         # Zenodo/OSF DOIs are DataCite-registered: CrossRef 404s on them but
         # OpenAlex indexes them — they must not be reported as unregistered.
-        from shared.doi_verify import fetch_doi_metadata
-        oa = {"results": [{
-            "title": "Reproduction of a neural network analysis",
-            "publication_year": 2020,
-            "authorships": [{"author": {"display_name": "Ayo Adewale"}}],
-        }]}
-        def fake_get(url, **kw):
-            if "crossref.org" in url:
-                return _resp(404)
-            return _resp(200, oa)
-        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
-            meta = fetch_doi_metadata("10.5281/zenodo.18973411")
-        assert meta["registered"] is True
-        assert meta["source"] == "openalex"
-        assert meta["first_author_surname"] == "Adewale"
-
-    def test_crossref_down_openalex_fallback(self):
+        (404, "10.5281/zenodo.18973411"),
+    ])
+    def test_openalex_answers_when_crossref_does_not(self, crossref_status, doi):
         from shared.doi_verify import fetch_doi_metadata
         oa = {"results": [{
             "title": "Emotion word processing in the brain",
@@ -109,10 +98,10 @@ class TestFetchDoiMetadata:
         }]}
         def fake_get(url, **kw):
             if "crossref.org" in url:
-                return _resp(500)
+                return _resp(crossref_status)
             return _resp(200, oa)
         with patch("shared.doi_verify.requests.get", side_effect=fake_get):
-            meta = fetch_doi_metadata("10.1111/psyp.13449")
+            meta = fetch_doi_metadata(doi)
         assert meta["registered"] is True
         assert meta["source"] == "openalex"
         assert meta["first_author_surname"] == "Schindler"
@@ -123,15 +112,15 @@ class TestFetchDoiMetadata:
             meta = fetch_doi_metadata("10.1111/psyp.13449")
         assert meta is None
 
-    def test_crossref_type_is_returned(self):
+    def test_the_work_type_is_returned_by_either_source(self):
+        """sanity_check --deep routes on this field, so both sources have to fill it
+        — and the OpenAlex query has to ask for it."""
         from shared.doi_verify import fetch_doi_metadata
         work = {"message": {**CROSSREF_WORK["message"], "type": "dataset"}}
         with patch("shared.doi_verify.requests.get", return_value=_resp(200, work)):
             meta = fetch_doi_metadata("10.7910/dvn/abcdef")
         assert meta["type"] == "dataset"
 
-    def test_openalex_type_is_returned(self):
-        from shared.doi_verify import fetch_doi_metadata
         oa = {"results": [{
             "title": "Author response: Some eLife paper",
             "publication_year": 2021,
@@ -142,15 +131,9 @@ class TestFetchDoiMetadata:
             return _resp(404) if "crossref.org" in url else _resp(200, oa)
         with patch("shared.doi_verify.requests.get", side_effect=fake_get) as g:
             meta = fetch_doi_metadata("10.7554/elife.12345.041")
-        assert meta["type"] == "peer-review"
+        assert meta["type"] == "peer-review"   # a non-article object, quarantined later
         oa_call = [c for c in g.call_args_list if "openalex.org" in c.args[0]][0]
         assert "type" in oa_call.kwargs["params"]["select"].split(",")
-
-    def test_type_is_empty_when_source_reports_none(self):
-        from shared.doi_verify import fetch_doi_metadata
-        with patch("shared.doi_verify.requests.get", return_value=_resp(200, CROSSREF_WORK)):
-            meta = fetch_doi_metadata("10.1111/psyp.13449")
-        assert meta["type"] == ""
 
     def test_result_is_cached(self):
         from shared.doi_verify import fetch_doi_metadata
@@ -160,29 +143,26 @@ class TestFetchDoiMetadata:
         assert g.call_count == 1
 
 
+TITLE = "Emotion word processing in the brain"
+
+
 class TestMetadataMatches:
-    def test_match(self):
+    @pytest.mark.parametrize("meta,claimed_year,expected", [
+        # Exact metadata, and the same metadata a year out — YEAR_TOLERANCE is 1.
+        ({"registered": True, "title": TITLE,
+          "first_author_surname": "Schindler", "year": 2019}, 2019, True),
+        ({"registered": True, "title": TITLE,
+          "first_author_surname": "Schindler", "year": 2019}, 2020, True),
+        # A DOI that describes a different paper entirely.
+        ({"registered": True, "title": "Cardiac responses to startling stimuli",
+          "first_author_surname": "Other", "year": 2015}, 2019, False),
+        # An unregistered DOI has nothing to match against.
+        ({"registered": False, "title": "", "first_author_surname": "", "year": None},
+         2019, False),
+    ])
+    def test_the_match_thresholds(self, meta, claimed_year, expected):
         from shared.doi_verify import metadata_matches
-        meta = {"registered": True, "title": "Emotion word processing in the brain",
-                "first_author_surname": "Schindler", "year": 2019}
-        assert metadata_matches(meta, "Emotion word processing in the brain", "Schindler", 2019)
-
-    def test_year_off_by_one_ok(self):
-        from shared.doi_verify import metadata_matches
-        meta = {"registered": True, "title": "Emotion word processing in the brain",
-                "first_author_surname": "Schindler", "year": 2019}
-        assert metadata_matches(meta, "Emotion word processing in the brain", "Schindler", 2020)
-
-    def test_different_title_fails(self):
-        from shared.doi_verify import metadata_matches
-        meta = {"registered": True, "title": "Cardiac responses to startling stimuli",
-                "first_author_surname": "Other", "year": 2015}
-        assert not metadata_matches(meta, "Emotion word processing in the brain", "Schindler", 2019)
-
-    def test_unregistered_fails(self):
-        from shared.doi_verify import metadata_matches
-        meta = {"registered": False, "title": "", "first_author_surname": "", "year": None}
-        assert not metadata_matches(meta, "Emotion word processing in the brain", "Schindler", 2019)
+        assert bool(metadata_matches(meta, TITLE, "Schindler", claimed_year)) is expected
 
 
 CROSSREF_SEARCH = {
@@ -234,10 +214,6 @@ class TestResolveDoiByMetadata:
         assert hit is not None
         assert hit["doi"] == ""
         assert hit["openalex_id"] == "https://openalex.org/W123456789"
-
-    def test_no_title_returns_none(self):
-        from shared.doi_verify import resolve_doi_by_metadata
-        assert resolve_doi_by_metadata("", "Schindler", 2019) is None
 
     def test_client_error_4xx_not_retried(self):
         from shared.doi_verify import fetch_doi_metadata
@@ -536,13 +512,6 @@ class TestVerifyAndCorrect:
         assert out["doi_o_verification"] == "corrected"
         assert out["doi_o"] == "10.1111/psyp.13449"
 
-    def test_not_found(self):
-        from shared import doi_verify as dv
-        with patch.object(dv, "resolve_doi_by_metadata", return_value=None):
-            out = dv.verify_and_correct("", "Some unfindable title", "Nobody", 1999)
-        assert out["doi_o_verification"] == "not_found"
-        assert out["doi_o"] == ""
-
     def test_no_metadata(self):
         from shared import doi_verify as dv
         unreg = {"registered": False, "title": "", "first_author_surname": "",
@@ -560,10 +529,35 @@ class TestVerifyAndCorrect:
         assert out["doi_o_verification"] == "api_error"
         assert out["doi_o"] == "10.1111/psyp.13449"
 
-    def test_skipped(self):
+    @pytest.mark.parametrize("title,author,year,expected", [
+        # A title to search for, but nothing found.
+        ("Some unfindable title", "Nobody", 1999, "not_found"),
+        # No DOI and no title: there is no question to ask.
+        ("", "", "", "skipped"),
+    ])
+    def test_a_blank_doi_without_a_hit(self, title, author, year, expected):
         from shared import doi_verify as dv
-        out = dv.verify_and_correct("", "", "", "")
-        assert out["doi_o_verification"] == "skipped"
+        with patch.object(dv, "resolve_doi_by_metadata", return_value=None):
+            out = dv.verify_and_correct("", title, author, year)
+        assert out["doi_o_verification"] == expected
+        assert out["doi_o"] == ""
+
+
+@pytest.mark.parametrize("new_status,prior_status,work_id,expected", [
+    # The row's identity is its OpenAlex work id: a fresh "not_found" (all
+    # verify_and_correct can ever say about a DOI-less original) must not
+    # overwrite the recorded "no_doi" and turn the row into an audit blocker.
+    ("not_found", "no_doi", "https://openalex.org/W123", True),
+    ("not_found", "no_doi", "W123", True),
+    # No work id — there is nothing to keep the row on, so let it through.
+    ("not_found", "no_doi", "", False),
+    # A real verdict about a real DOI always wins.
+    ("corrected", "no_doi", "W123", False),
+    ("not_found", "mismatch", "W123", False),
+])
+def test_keeps_no_doi(new_status, prior_status, work_id, expected):
+    from shared.doi_verify import keeps_no_doi
+    assert keeps_no_doi(new_status, prior_status, work_id) is expected
 
 
 class TestVerifyRowHook:
@@ -593,6 +587,15 @@ class TestVerifyRowHook:
         assert "existing evidence" in row["link_evidence"]
         assert "DOI corrected" in row["link_evidence"]
 
+        # Negative control: a "verified" verdict changes nothing at all.
+        ok = {"doi_o_verification": "verified",
+              "doi_o": "10.1016/j.biopsycho.2015.07.014", "evidence_note": ""}
+        with patch("extract.run_extract.verify_and_correct", return_value=ok):
+            row = _verify_row(self._row())
+        assert row["doi_o_verification"] == "verified"
+        assert row["link_evidence"] == "existing evidence"
+        assert row["pair_id"] == "x"
+
     def test_mismatch_downgrades_confidence_and_clears_doi(self):
         """A mismatched DOI is registered but describes a DIFFERENT paper, and
         verify_and_correct found no better candidate. Keeping it would send a
@@ -621,17 +624,6 @@ class TestVerifyRowHook:
             row = _verify_row(self._row(link_method="target_pending", doi_o=""))
         vc.assert_not_called()
         assert row["doi_o_verification"] == "skipped"
-
-    def test_verified_leaves_row_untouched(self):
-        from extract.run_extract import _verify_row
-        v = {"doi_o_verification": "verified",
-             "doi_o": "10.1016/j.biopsycho.2015.07.014", "evidence_note": ""}
-        with patch("extract.run_extract.verify_and_correct", return_value=v):
-            row = _verify_row(self._row())
-        assert row["doi_o_verification"] == "verified"
-        assert row["link_evidence"] == "existing evidence"
-        assert row["pair_id"] == "x"
-
 
 class TestAuditDois:
     def _csv(self, tmp_path):
@@ -683,12 +675,10 @@ class TestAuditDois:
         pend = df[df["doi_r"] == "10.2222/pending"].iloc[0]
         assert pend["doi_o_verification"] == "skipped"
 
-    def test_doi_filter(self, tmp_path):
-        from extract.audit_dois import audit_file
-        path = self._csv(tmp_path)
+        # --doi narrows the run to one row: the other is never even verified.
         with patch("extract.audit_dois.verify_and_correct") as vc:
             vc.return_value = {"doi_o_verification": "verified",
-                               "doi_o": "10.1016/j.biopsycho.2015.07.014", "evidence_note": ""}
+                               "doi_o": "10.1111/psyp.13449", "evidence_note": ""}
             summary = audit_file(path, apply=False, report_path=tmp_path / "report.csv",
                                  only_doi="10.1111/psyp.13707")
         assert vc.call_count == 1

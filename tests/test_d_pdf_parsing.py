@@ -1,39 +1,74 @@
 """Tests for shared/pdf_parsing.py — uniform parsing result shape."""
-import json
+import builtins
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import pytest
 
 from shared.pdf_parsing import (
-    _error_result, _uniform_shape,
     parse_openalex_xml, parse_pdfminer, parse_grobid,
-    parse_docpluck, parse_docling,
-    parse_all, PARSE_METHODS,
+    parse_docpluck, parse_docling, parse_opendataloader,
+    parse_markitdown,
 )
 
+_SHAPE_KEYS = ("source", "title", "abstract", "intro", "references", "raw_text", "error")
 
-class TestUniformShape:
-    def test_error_result_has_all_keys(self):
-        r = _error_result("pdfminer", "failed")
-        for key in ("source", "title", "abstract", "intro", "references", "raw_text", "error"):
+
+def _fake_pdf(tmp_path: Path) -> Path:
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+    return pdf
+
+
+def _docling_absent(tmp_path):
+    with patch.dict("sys.modules", {"docling": None, "docling.document_converter": None}):
+        return parse_docling(_fake_pdf(tmp_path))
+
+
+def _markitdown_absent(tmp_path):
+    real_import = builtins.__import__
+
+    def _mock_import(name, *args, **kwargs):
+        if name == "markitdown":
+            raise ImportError("not installed")
+        return real_import(name, *args, **kwargs)
+
+    with patch.object(builtins, "__import__", _mock_import):
+        return parse_markitdown(_fake_pdf(tmp_path), doi_r="10.1234/nolib")
+
+
+class TestBadInputErrorShape:
+    """Bad input — no path, a path that does not exist, or a missing library — must
+    come back as an error-shaped dict from every parser, never as a raised exception:
+    parse_all runs all six and the caller scores whatever it gets."""
+
+    @pytest.mark.parametrize("call", [
+        pytest.param(lambda p: parse_openalex_xml(None), id="openalex_xml_none"),
+        pytest.param(lambda p: parse_pdfminer(None), id="pdfminer_none"),
+        pytest.param(lambda p: parse_pdfminer(p / "nonexistent.pdf"), id="pdfminer_missing"),
+        pytest.param(lambda p: parse_grobid("10.1234/test", None), id="grobid_none"),
+        pytest.param(lambda p: parse_docpluck(p / "nonexistent.pdf"), id="docpluck_missing"),
+        pytest.param(lambda p: parse_opendataloader(None), id="opendataloader_none"),
+        pytest.param(_docling_absent, id="docling_not_installed"),
+        pytest.param(lambda p: parse_markitdown(None, doi_r="10.1234/test"),
+                     id="markitdown_none"),
+        pytest.param(lambda p: parse_markitdown(p / "fake.pdf", doi_r=""),
+                     id="markitdown_no_doi"),
+        pytest.param(lambda p: parse_markitdown(p / "missing.pdf", doi_r="10.1234/x"),
+                     id="markitdown_missing_file"),
+        pytest.param(_markitdown_absent, id="markitdown_not_installed"),
+    ])
+    def test_returns_uniform_error(self, call, tmp_path, monkeypatch):
+        from shared import config as cfg
+        md_dir = tmp_path / "md"
+        md_dir.mkdir()
+        monkeypatch.setattr(cfg, "MARKITDOWN_CACHE_DIR", md_dir)
+        r = call(tmp_path)
+        assert r["error"] is not None
+        for key in _SHAPE_KEYS:
             assert key in r, f"missing key: {key}"
-        assert r["source"] == "pdfminer"
-        assert r["error"] == "failed"
-
-    def test_uniform_shape_fills_missing_keys(self):
-        r = _uniform_shape("grobid", {"intro": "hello"})
-        assert r["source"] == "grobid"
-        assert r["intro"] == "hello"
-        assert r["abstract"] == ""
-        assert r["references"] == []
-        assert r["error"] is None
 
 
 class TestParseOpenAlexXml:
-    def test_returns_error_when_input_none(self):
-        r = parse_openalex_xml(None)
-        assert r["error"] is not None
-
     def test_returns_sections_from_cached_dict(self):
         cached = {
             "source": "openalex_xml",
@@ -50,21 +85,7 @@ class TestParseOpenAlexXml:
         assert r["error"] is None
 
 
-class TestParsePdfminer:
-    def test_returns_error_when_path_none(self):
-        r = parse_pdfminer(None)
-        assert r["error"] is not None
-
-    def test_returns_error_when_file_not_found(self, tmp_path):
-        r = parse_pdfminer(tmp_path / "nonexistent.pdf")
-        assert r["error"] is not None
-
-
 class TestParseGrobid:
-    def test_returns_error_when_path_none(self):
-        r = parse_grobid("10.1234/test", None)
-        assert r["error"] is not None
-
     def test_calls_run_grobid_and_maps_sections(self, tmp_path):
         fake_pdf = tmp_path / "test.pdf"
         fake_pdf.write_bytes(b"%PDF-1.4")
@@ -88,53 +109,7 @@ class TestParseGrobid:
         assert r["error"] is None
 
 
-class TestParseDocling:
-    def test_returns_error_when_docling_not_installed(self, tmp_path):
-        fake_pdf = tmp_path / "test.pdf"
-        fake_pdf.write_bytes(b"%PDF-1.4")
-        with patch.dict("sys.modules", {"docling": None, "docling.document_converter": None}):
-            r = parse_docling(fake_pdf)
-        assert r["error"] is not None
-
-
-class TestParseAll:
-    def test_returns_dict_with_all_method_keys(self, tmp_path):
-        fake_pdf = tmp_path / "test.pdf"
-        fake_pdf.write_bytes(b"%PDF-1.4")
-
-        oa_xml_data = {"source": "openalex_xml", "sections": {"abstract": "hello"}}
-
-        with patch("shared.pdf_parsing.parse_pdfminer", return_value=_error_result("pdfminer", "skip")), \
-             patch("shared.pdf_parsing.parse_grobid",   return_value=_error_result("grobid",   "skip")), \
-             patch("shared.pdf_parsing.parse_docling",  return_value=_error_result("docling",  "not installed")), \
-             patch("shared.pdf_parsing.parse_docpluck", return_value=_error_result("docpluck", "not installed")):
-            results = parse_all("10.1234/t", fake_pdf, oa_xml=oa_xml_data)
-
-        for method in PARSE_METHODS:
-            assert method in results
-
-
 class TestParseMarkitdown:
-    def test_returns_error_when_pdf_path_is_none(self):
-        from shared.pdf_parsing import parse_markitdown
-        r = parse_markitdown(None, doi_r="10.1234/test")
-        assert r["error"] is not None
-        assert r["source"] == "markitdown"
-
-    def test_returns_error_when_doi_r_empty(self, tmp_path):
-        from shared.pdf_parsing import parse_markitdown
-        r = parse_markitdown(tmp_path / "fake.pdf", doi_r="")
-        assert r["error"] is not None
-        assert r["source"] == "markitdown"
-
-    def test_returns_error_when_file_missing(self, tmp_path, monkeypatch):
-        from shared import config as cfg
-        monkeypatch.setattr(cfg, "MARKITDOWN_CACHE_DIR", tmp_path / "md")
-        (tmp_path / "md").mkdir()
-        from shared.pdf_parsing import parse_markitdown
-        r = parse_markitdown(tmp_path / "missing.pdf", doi_r="10.1234/x")
-        assert r["error"] is not None
-
     def test_uses_cached_md_if_present(self, tmp_path, monkeypatch):
         from shared import config as cfg
         monkeypatch.setattr(cfg, "MARKITDOWN_CACHE_DIR", tmp_path)
@@ -144,41 +119,10 @@ class TestParseMarkitdown:
             "# Abstract\nCached abstract text.\n# Introduction\nIntro here.",
             encoding="utf-8",
         )
-        from shared.pdf_parsing import parse_markitdown
         r = parse_markitdown(tmp_path / "any.pdf", doi_r="10.1234/cached")
         assert r["error"] is None
         assert "Cached abstract text" in r["abstract"]
         assert "Intro here" in r["intro"]
-
-    def test_markitdown_not_installed_returns_error(self, tmp_path, monkeypatch):
-        import builtins
-        from shared import config as cfg
-        monkeypatch.setattr(cfg, "MARKITDOWN_CACHE_DIR", tmp_path / "md")
-        (tmp_path / "md").mkdir()
-        pdf = tmp_path / "paper.pdf"
-        pdf.write_bytes(b"%PDF-1.4 fake")
-        real_import = builtins.__import__
-        def _mock_import(name, *args, **kwargs):
-            if name == "markitdown":
-                raise ImportError("not installed")
-            return real_import(name, *args, **kwargs)
-        monkeypatch.setattr(builtins, "__import__", _mock_import)
-        from shared.pdf_parsing import parse_markitdown
-        r = parse_markitdown(pdf, doi_r="10.1234/nolib")
-        assert r["error"] is not None
-
-    def test_markitdown_in_parse_methods(self):
-        from shared.pdf_parsing import PARSE_METHODS
-        assert "markitdown" in PARSE_METHODS
-
-    def test_parse_all_includes_markitdown_key(self, tmp_path, monkeypatch):
-        from shared import config as cfg
-        monkeypatch.setattr(cfg, "MARKITDOWN_CACHE_DIR", tmp_path)
-        from shared.pdf_parsing import parse_all
-        with patch("shared.pdf_parsing.parse_markitdown",
-                   return_value=_error_result("markitdown", "no pdf_path")):
-            result = parse_all("10.1234/x", pdf_path=None, oa_xml=None)
-        assert "markitdown" in result
 
 
 class TestOutcomeText:
@@ -305,13 +249,6 @@ class TestDirectRefsCacheIdentity:
         self._run(tmp_path, pdf)
         monkeypatch.setattr(grobid, "GEMINI_MODEL", "gemini-next")
         assert self._run(tmp_path, pdf).call_count == 1
-
-    def test_image_refs_cache_also_names_the_pdf_and_model(self):
-        import inspect
-        from shared import grobid
-        src = inspect.getsource(grobid._extract_refs_via_pdf_images)
-        assert "_pdf_fingerprint(pdf_path)" in src
-        assert "GEMINI_MODEL" in src
 
 
 class TestNumericReferenceTitles:

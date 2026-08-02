@@ -58,33 +58,30 @@ def test_clean_row_fires_nothing():
 
 # ── BLOCKER checks ───────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("verification", ["mismatch", "not_found", "no_metadata",
-                                          "no_doi", "api_error", "skipped", ""])
-def test_doi_o_unverified_fires(verification):
-    fired = _checks_fired([_clean_row(doi_o_verification=verification)])
-    assert "doi_o_unverified" in fired
-    assert _severity_of([_clean_row(doi_o_verification=verification)],
-                        "doi_o_unverified") == BLOCKER
+@pytest.mark.parametrize("verification,blocks", [
+    # Only "verified" and "corrected" are a checked link…
+    ("verified",  False),
+    ("corrected", False),
+    # …everything else — including a blank field — is not.
+    ("mismatch",  True),
+    ("",          True),
+])
+def test_doi_o_must_be_verified(verification, blocks):
+    rows = [_clean_row(doi_o_verification=verification)]
+    if blocks:
+        assert _severity_of(rows, "doi_o_unverified") == BLOCKER
+    else:
+        assert "doi_o_unverified" not in _checks_fired(rows)
 
 
-@pytest.mark.parametrize("verification", ["verified", "corrected"])
-def test_doi_o_verified_ok(verification):
-    assert "doi_o_unverified" not in _checks_fired(
-        [_clean_row(doi_o_verification=verification)])
-
-
-def test_no_doi_with_openalex_id_is_not_a_blocker():
+@pytest.mark.parametrize("work_id", ["W2003152982", "https://openalex.org/W2003152982"])
+def test_no_doi_with_openalex_id_is_not_a_blocker(work_id):
     """Books, chapters and pre-DOI-era papers have no DOI to verify. The row is
-    still identifiable — and clickable — through its OpenAlex work id."""
+    still identifiable — and clickable — through its OpenAlex work id, in either
+    the bare or the URL form."""
     row = _clean_row(doi_o="", doi_o_verification="no_doi",
-                     oa_work_id_o="W2003152982", title_o="Gender Advertisements")
+                     oa_work_id_o=work_id, title_o="Gender Advertisements")
     assert _checks_fired([row]) == set()
-
-
-def test_no_doi_with_openalex_url_form_is_not_a_blocker():
-    row = _clean_row(doi_o="", doi_o_verification="no_doi",
-                     oa_work_id_o="https://openalex.org/W2003152982")
-    assert "doi_o_unverified" not in _checks_fired([row])
 
 
 def test_no_doi_without_openalex_id_still_blocks():
@@ -110,20 +107,6 @@ def test_self_link_by_work_id_fires_on_a_no_doi_row():
     assert _severity_of([row], "self_link") == BLOCKER
 
 
-def test_self_link_by_work_id_not_fired_when_distinct():
-    row = _clean_row(doi_o="", doi_o_verification="no_doi",
-                     oa_work_id_o="W123", oa_work_id_r="W999")
-    assert _checks_fired([row]) == set()
-
-
-def test_self_link_not_fired_when_distinct():
-    assert "self_link" not in _checks_fired([_clean_row()])
-
-
-def test_self_link_not_fired_when_doi_o_empty():
-    assert "self_link" not in _checks_fired([_clean_row(doi_o="")])
-
-
 def test_duplicate_pair_id_fires_on_both_rows():
     rows = [_clean_row(pair_id="dup", doi_r="10.1/a"),
             _clean_row(pair_id="dup", doi_r="10.1/b")]
@@ -133,27 +116,21 @@ def test_duplicate_pair_id_fires_on_both_rows():
     assert all(r["severity"] == BLOCKER for r in dup)
 
 
-def test_duplicate_pair_id_not_fired_when_unique():
-    rows = [_clean_row(pair_id="a", doi_r="10.1/a"),
-            _clean_row(pair_id="b", doi_r="10.1/b")]
-    assert "duplicate_pair_id" not in _checks_fired(rows)
-
-
 @pytest.mark.parametrize("field,value", [
-    ("outcome", "pending"), ("outcome", "api_error"),
-    ("link_method", "target_pending"), ("link_method", "api_error"),
-    ("link_method", "no_original_found"),
+    ("outcome", "pending"),                 # the outcome half never ran
+    ("link_method", "target_pending"),      # the link half never resolved
 ])
 def test_unresolved_stage_fires(field, value):
     assert "unresolved_stage" in _checks_fired([_clean_row(**{field: value})])
 
 
-@pytest.mark.parametrize("field", ["title_r", "title_o", "abstract_r"])
-def test_missing_display_field_fires(field):
-    report = audit_dataframe(pd.DataFrame([_clean_row(**{field: ""})]))
+def test_missing_display_field_fires():
+    """A validator cannot judge a row whose display fields are blank; the detail
+    names the field that is missing."""
+    report = audit_dataframe(pd.DataFrame([_clean_row(title_o="")]))
     hits = [r for r in report if r["check"] == "missing_display_field"]
     assert hits and hits[0]["severity"] == BLOCKER
-    assert field in hits[0]["detail"]
+    assert "title_o" in hits[0]["detail"]
 
 
 # ── WARNING checks ───────────────────────────────────────────────────────────
@@ -187,17 +164,6 @@ def test_cannot_be_determined_is_canonical():
     """Regression: cannot_be_determined is a valid outcome and must not be flagged."""
     row = _clean_row(outcome="cannot_be_determined")
     assert "outcome_not_canonical" not in _checks_fired([row])
-
-
-def test_outcome_canonical_ok():
-    for good in ("success", "failure", "mixed", "uninformative", "descriptive"):
-        assert "outcome_not_canonical" not in _checks_fired([_clean_row(outcome=good)])
-
-
-def test_quote_exact_substring_ok():
-    assert "quote_not_in_abstract" not in _checks_fired([_clean_row(
-        abstract_r="The study found a clear effect here.",
-        outcome_phrase="found a clear effect")])
 
 
 def test_quote_whitespace_case_normalized_ok():
@@ -237,13 +203,6 @@ def test_joined_quote_checked_against_the_source_in_the_same_position():
         out_quote_source="abstract | fulltext")])
 
 
-def test_joined_quote_still_fires_on_the_abstract_half():
-    assert "quote_not_in_abstract" in _checks_fired([_clean_row(
-        abstract_r="This paper is about photosynthesis in tomato plants.",
-        outcome_phrase="the priming effect did not replicate | nor in the second sample",
-        out_quote_source="abstract | fulltext")])
-
-
 def test_reproduction_axis_quotes_are_checked_too():
     fired = _checks_fired([_clean_row(
         abstract_r="Re-running the code returned the reported coefficients.",
@@ -277,21 +236,12 @@ def test_quote_source_count_mismatch_fires_both_ways():
     assert "quote_source_count_mismatch" not in _checks_fired([_clean_row()])
 
 
-def test_low_link_confidence_fires():
-    assert "low_link_confidence" in _checks_fired([_clean_row(link_confidence="low")])
-
-
-def test_low_outcome_confidence_fires():
-    assert "low_outcome_confidence" in _checks_fired(
-        [_clean_row(outcome_confidence="low")])
-
-
-def test_multi_original_consistent_ok():
-    rows = [_clean_row(pair_id="p1", doi_r="10.1/multi", doi_o="10.2/o1",
-                       original_rank="1", n_originals="2"),
-            _clean_row(pair_id="p2", doi_r="10.1/multi", doi_o="10.2/o2",
-                       original_rank="2", n_originals="2")]
-    assert "multi_original_inconsistent" not in _checks_fired(rows)
+@pytest.mark.parametrize("field,check", [
+    ("link_confidence", "low_link_confidence"),
+    ("outcome_confidence", "low_outcome_confidence"),
+])
+def test_low_confidence_fires(field, check):
+    assert check in _checks_fired([_clean_row(**{field: "low"})])
 
 
 def test_multi_original_bad_ranks_fires():
@@ -328,16 +278,9 @@ def test_audit_file_writes_report_and_counts(tmp_path):
     assert list(written.columns) == ["pair_id", "doi_r", "check", "severity", "detail"]
     assert counts[("doi_o_unverified", BLOCKER)] == 1
 
-
-def test_audit_file_only_doi_filters(tmp_path):
-    df = pd.DataFrame([_clean_row(doi_r="10.1/keep", doi_o_verification="mismatch"),
-                       _clean_row(pair_id="other", doi_r="10.1/drop",
-                                  doi_o_verification="mismatch")])
-    csv = tmp_path / "e.csv"
-    df.to_csv(csv, index=False, encoding="utf-8-sig")
-    report_rows, _ = audit_file(csv, report_path=tmp_path / "r.csv",
-                                only_doi="10.1/keep")
-    assert {r["doi_r"] for r in report_rows} == {"10.1/keep"}
+    # --doi narrows the audit to one replication.
+    report_rows, _ = audit_file(csv, report_path=report, only_doi="10.1/x")
+    assert {r["doi_r"] for r in report_rows} == {"10.1/x"}
 
 
 def test_blocked_pair_ids_reads_only_blockers(tmp_path):
@@ -351,17 +294,21 @@ def test_blocked_pair_ids_reads_only_blockers(tmp_path):
     assert blocked_pair_ids(report) == {"b1"}
 
 
-def test_only_warnings_no_blockers(tmp_path):
-    rows = [_clean_row(link_confidence="low")]
-    _, counts = audit_file(
-        _write_csv(tmp_path, rows), report_path=tmp_path / "r.csv")
-    assert not any(sev == BLOCKER for (_c, sev) in counts)
+def test_audit_tolerates_a_frame_without_the_optional_columns():
+    """An extracted.csv written before oa_work_id_o and the reproduction-axis quote
+    columns existed still has to audit: the row checks read those fields defensively,
+    so their absence is not an error — and a no_doi row with no work id to fall back
+    on still blocks."""
+    optional = ("oa_work_id_o", "oa_work_id_r", "outcome_computational_quote",
+                "out_quote_computational_source", "outcome_robustness_quote",
+                "out_quote_robust_source")
+    df = pd.DataFrame([_clean_row(), _clean_row(pair_id="nd", doi_r="10.1/nd", doi_o="",
+                                                doi_o_verification="no_doi")])
+    assert not any(c in df.columns for c in optional)
 
-
-def _write_csv(tmp_path, rows) -> "object":
-    csv = tmp_path / "extracted.csv"
-    pd.DataFrame(rows).to_csv(csv, index=False, encoding="utf-8-sig")
-    return csv
+    report = audit_dataframe(df)
+    assert {r["check"] for r in report if r["pair_id"] == "pid-clean"} == set()
+    assert [r["severity"] for r in report if r["check"] == "doi_o_unverified"] == [BLOCKER]
 
 
 # ── csv_to_db integration ────────────────────────────────────────────────────

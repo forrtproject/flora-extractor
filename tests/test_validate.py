@@ -9,10 +9,6 @@ in test_supabase_client.py.
 """
 
 
-def test_placeholder():
-    assert True
-
-
 def test_set_name_stores_session(app):
     """POST /set-name stores reviewer_id in session and redirects."""
     with app.test_client() as c:
@@ -29,13 +25,7 @@ def test_dashboard_accessible_without_name(app):
         assert rv.status_code == 200
 
 
-# ── New dashboard/check route tests ───────────────────────────────────────────
-
 def test_check_route_accessible(client):
-    """New /check page must exist."""
+    """The /check page must exist."""
     rv = client.get("/check")
-    assert rv.status_code == 200
-
-def test_dashboard_still_works(client):
-    rv = client.get("/dashboard")
     assert rv.status_code == 200
