@@ -1,0 +1,584 @@
+[
+  {
+    "id": "H001",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2520,
+      "out": 130
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"tool_benchmark\"],\"evidence_quote\":\"This small study showed that the SS External Quality Assurance (EQA) approach can be used as a transitional strategy for using NGS to generate SS-like data and for ongoing performance\",\"reasoning\":\"The paper evaluates a testing strategy and assay performance as a quality assurance benchmark, not a re-test of a specific previously published finding.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "tool_benchmark"
+    ],
+    "evidence_quote": "This small study showed that the SS External Quality Assurance (EQA) approach can be used as a transitional strategy for using NGS to generate SS-like data and for ongoing performance",
+    "reasoning": "The paper evaluates a testing strategy and assay performance as a quality assurance benchmark, not a re-test of a specific previously published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H002",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2499,
+      "out": 187
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"builds_on_literature\"],\"evidence_quote\":\"Further study is required to determine reproducibility of results.\",\"reasoning\":\"The study investigates a local clinical question and only mentions prior findings in discussion, without stating an aim to replicate or re-test a specific earlier result.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "builds_on_literature"
+    ],
+    "evidence_quote": "Further study is required to determine reproducibility of results.",
+    "reasoning": "The study investigates a local clinical question and only mentions prior findings in discussion, without stating an aim to replicate or re-test a specific earlier result.",
+    "schema_error": null
+  },
+  {
+    "id": "H003",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2675,
+      "out": 182
+    },
+    "raw": "{\"classification\":\"replication\",\"confident\":true,\"categories\":[\"measurement_validation\",\"context_transfer\"],\"evidence_quote\":\"The present study was designed to investigate the psychometric properties of the Persian version of the Dizziness Handicap Inventory (P-DHI).\",\"reasoning\":\"This is a new-language validation of an already published questionnaire, which counts as re-testing an existing instrument in a different context.\"}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "measurement_validation",
+      "context_transfer"
+    ],
+    "evidence_quote": "The present study was designed to investigate the psychometric properties of the Persian version of the Dizziness Handicap Inventory (P-DHI).",
+    "reasoning": "This is a new-language validation of an already published questionnaire, which counts as re-testing an existing instrument in a different context.",
+    "schema_error": null
+  },
+  {
+    "id": "H004",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2658,
+      "out": 273
+    },
+    "raw": "{\"classification\":\"replication\",\"confident\":true,\"categories\":[\"clearly_declared\",\"builds_on_literature\"],\"evidence_quote\":\"This objective will serve as a replication of past research to provide additional validation of their findings\",\"reasoning\":\"The abstract plainly states that the study's second objective is to serve as a replication of past research by providing additional validation of its findings.\"}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared",
+      "builds_on_literature"
+    ],
+    "evidence_quote": "This objective will serve as a replication of past research to provide additional validation of their findings",
+    "reasoning": "The abstract plainly states that the study's second objective is to serve as a replication of past research by providing additional validation of its findings.",
+    "schema_error": null
+  },
+  {
+    "id": "H005",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2554,
+      "out": 183
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"other\"],\"evidence_quote\":\"with replication of promising signals in an independent sample of 1,331 obese subjects who completed the program at a later date\",\"reasoning\":\"The abstract describes an internal discovery-and-replication design within the same study rather than an attempt to re-test a specific finding from earlier published research.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "with replication of promising signals in an independent sample of 1,331 obese subjects who completed the program at a later date",
+    "reasoning": "The abstract describes an internal discovery-and-replication design within the same study rather than an attempt to re-test a specific finding from earlier published research.",
+    "schema_error": null
+  },
+  {
+    "id": "H006",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2404,
+      "out": 175
+    },
+    "raw": "{\"classification\":\"replication\",\"confident\":true,\"categories\":[\"measurement_validation\",\"context_transfer\"],\"evidence_quote\":\"adapt and validate the Child Abuse Potential Inventory (CAPI) in Venezuelan population\",\"reasoning\":\"The study explicitly aims to adapt and validate an already published inventory in a new population, which qualifies as a measurement re-validation replication.\"}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "measurement_validation",
+      "context_transfer"
+    ],
+    "evidence_quote": "adapt and validate the Child Abuse Potential Inventory (CAPI) in Venezuelan population",
+    "reasoning": "The study explicitly aims to adapt and validate an already published inventory in a new population, which qualifies as a measurement re-validation replication.",
+    "schema_error": null
+  },
+  {
+    "id": "H007",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2630,
+      "out": 144
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"terminology_only\",\"builds_on_literature\"],\"evidence_quote\":\"Enterovirus protein 3C ... binds the replicative element oriL to initiate replication.\",\"reasoning\":\"The abstract uses replication in the biological sense of viral genome replication and reports ordinary evolutionary analysis, not a re-test of an earlier published finding.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only",
+      "builds_on_literature"
+    ],
+    "evidence_quote": "Enterovirus protein 3C ... binds the replicative element oriL to initiate replication.",
+    "reasoning": "The abstract uses replication in the biological sense of viral genome replication and reports ordinary evolutionary analysis, not a re-test of an earlier published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H008",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2575,
+      "out": 461
+    },
+    "raw": "{\"classification\":\"replication\",\"confident\":true,\"categories\":[\"measurement_validation\"],\"evidence_quote\":\"The reproducibility of the CPX method is still not well known.\",\"reasoning\":\"The study explicitly aims to assess the reproducibility of an already published measurement procedure using new data, which fits measurement re-validation and thus a qualifying replication-type study.\"}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "measurement_validation"
+    ],
+    "evidence_quote": "The reproducibility of the CPX method is still not well known.",
+    "reasoning": "The study explicitly aims to assess the reproducibility of an already published measurement procedure using new data, which fits measurement re-validation and thus a qualifying replication-type study.",
+    "schema_error": null
+  },
+  {
+    "id": "H009",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2277,
+      "out": 201
+    },
+    "raw": "{\"classification\":\"replication\",\"confident\":true,\"categories\":[\"clearly_declared\",\"context_transfer\"],\"evidence_quote\":\"The presentation will outline the online replication of an in-lab vowel recall experiment\",\"reasoning\":\"The abstract explicitly states that the work is an online replication of a prior in-lab experiment, which is a direct retest in a new setting.\"}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared",
+      "context_transfer"
+    ],
+    "evidence_quote": "The presentation will outline the online replication of an in-lab vowel recall experiment",
+    "reasoning": "The abstract explicitly states that the work is an online replication of a prior in-lab experiment, which is a direct retest in a new setting.",
+    "schema_error": null
+  },
+  {
+    "id": "H010",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2825,
+      "out": 130
+    },
+    "raw": "{\"classification\":\"replication\",\"confident\":true,\"categories\":[\"clearly_declared\"],\"evidence_quote\":\"This research is a kind of causal research and is a replication of the earlier research.\",\"reasoning\":\"The abstract explicitly says the study is a replication of earlier research, so it clearly qualifies as a replication study.\"}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared"
+    ],
+    "evidence_quote": "This research is a kind of causal research and is a replication of the earlier research.",
+    "reasoning": "The abstract explicitly says the study is a replication of earlier research, so it clearly qualifies as a replication study.",
+    "schema_error": null
+  },
+  {
+    "id": "H011",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2735,
+      "out": 252
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"other\"],\"evidence_quote\":\"replicated in a meta-analysis including four study cohorts\",\"reasoning\":\"The abstract describes within-study validation/replication of a newly developed methylation index and not an attempt to re-test a specific finding from earlier published research.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "replicated in a meta-analysis including four study cohorts",
+    "reasoning": "The abstract describes within-study validation/replication of a newly developed methylation index and not an attempt to re-test a specific finding from earlier published research.",
+    "schema_error": null
+  },
+  {
+    "id": "H012",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2908,
+      "out": 160
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"other\"],\"evidence_quote\":\"selected for replication (stage 2)\",\"reasoning\":\"The paper uses a two-stage GWAS with an internal replication sample, which is not a check of a finding from an earlier published study.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "selected for replication (stage 2)",
+    "reasoning": "The paper uses a two-stage GWAS with an internal replication sample, which is not a check of a finding from an earlier published study.",
+    "schema_error": null
+  },
+  {
+    "id": "H013",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2822,
+      "out": 112
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"other\"],\"evidence_quote\":\"Our objectives were to estimate detection probabilities\",\"reasoning\":\"The paper aims to estimate detection probabilities and survey timing effects in marsh songbirds, not to re-test a specific previously reported finding.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "Our objectives were to estimate detection probabilities",
+    "reasoning": "The paper aims to estimate detection probabilities and survey timing effects in marsh songbirds, not to re-test a specific previously reported finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H014",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2785,
+      "out": 301
+    },
+    "raw": "{\"classification\":\"replication\",\"confident\":true,\"categories\":[\"measurement_validation\",\"context_transfer\"],\"evidence_quote\":\"To further study the recovery rate of GIN eggs from cattle faeces, this study was conducted in two laboratories, one in Belgium and one in Italy to evaluate the sensitivity, accuracy, precision and reproducibility of the Mini-FLOTAC and McMaster techniques\",\"reasoning\":\"The paper re-tests and re-validates an already published diagnostic technique using new spiked samples in two laboratories, which fits measurement validation and context transfer.\"}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "measurement_validation",
+      "context_transfer"
+    ],
+    "evidence_quote": "To further study the recovery rate of GIN eggs from cattle faeces, this study was conducted in two laboratories, one in Belgium and one in Italy to evaluate the sensitivity, accuracy, precision and reproducibility of the Mini-FLOTAC and McMaster techniques",
+    "reasoning": "The paper re-tests and re-validates an already published diagnostic technique using new spiked samples in two laboratories, which fits measurement validation and context transfer.",
+    "schema_error": null
+  },
+  {
+    "id": "H015",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2630,
+      "out": 140
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"builds_on_literature\"],\"evidence_quote\":\"The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enteroviruses\",\"reasoning\":\"The abstract describes an original evolutionary analysis of enterovirus sequences and does not state an aim to re-test a specific previously reported finding.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "builds_on_literature"
+    ],
+    "evidence_quote": "The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enteroviruses",
+    "reasoning": "The abstract describes an original evolutionary analysis of enterovirus sequences and does not state an aim to re-test a specific previously reported finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H016",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2618,
+      "out": 183
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"terminology_only\",\"builds_on_literature\"],\"evidence_quote\":\"Enterovirus protein 3C (or 3CD for some species) binds replicative element oriL to initiate replication.\",\"reasoning\":\"The abstract reports an original evolutionary analysis of enterovirus sequences and uses replication in the biological sense, not as an aim to re-test a specific published finding.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only",
+      "builds_on_literature"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds replicative element oriL to initiate replication.",
+    "reasoning": "The abstract reports an original evolutionary analysis of enterovirus sequences and uses replication in the biological sense, not as an aim to re-test a specific published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H017",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2876,
+      "out": 122
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"terminology_only\"],\"evidence_quote\":\"allows replication of the Ethiopian experience\",\"reasoning\":\"The abstract is a commentary on lessons from Ethiopia's health progress and uses replication in an ordinary policy-transfer sense rather than aiming to re-test a specific published finding.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "allows replication of the Ethiopian experience",
+    "reasoning": "The abstract is a commentary on lessons from Ethiopia's health progress and uses replication in an ordinary policy-transfer sense rather than aiming to re-test a specific published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H018",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2618,
+      "out": 146
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"builds_on_literature\"],\"evidence_quote\":\"The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enteroviruses\",\"reasoning\":\"The paper analyzes viral sequence variation and co-evolution patterns rather than aiming to re-test a specific previously published finding.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "builds_on_literature"
+    ],
+    "evidence_quote": "The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enteroviruses",
+    "reasoning": "The paper analyzes viral sequence variation and co-evolution patterns rather than aiming to re-test a specific previously published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H019",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2630,
+      "out": 112
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"terminology_only\"],\"evidence_quote\":\"Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.\",\"reasoning\":\"The abstract uses replication in the biological sense of viral genome replication and analyzes sequence variability, not a re-test of a previously published study's finding.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "Enterovirus protein 3C (or 3CD for some species) binds the replicative element oriL to initiate replication.",
+    "reasoning": "The abstract uses replication in the biological sense of viral genome replication and analyzes sequence variability, not a re-test of a previously published study's finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H020",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2630,
+      "out": 94
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"terminology_only\",\"builds_on_literature\"],\"evidence_quote\":\"The replication of enteroviruses features low fidelity\",\"reasoning\":\"The abstract uses replication in the virological sense and reports an evolutionary analysis, not an attempt to re-test a specific prior finding.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only",
+      "builds_on_literature"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The abstract uses replication in the virological sense and reports an evolutionary analysis, not an attempt to re-test a specific prior finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H021",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2369,
+      "out": 261
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"other\"],\"evidence_quote\":\"Reproducibility of prognostic results was confirmed for new ACS cases.\",\"reasoning\":\"The abstract describes developing and checking prognostic models within new ACS cases, not re-testing a specific earlier published finding from another study.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "Reproducibility of prognostic results was confirmed for new ACS cases.",
+    "reasoning": "The abstract describes developing and checking prognostic models within new ACS cases, not re-testing a specific earlier published finding from another study.",
+    "schema_error": null
+  },
+  {
+    "id": "H022",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2612,
+      "out": 151
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"terminology_only\"],\"evidence_quote\":\"replication of the hip fracture unit service model may potentially afford significant clinical and financial gains\",\"reasoning\":\"The paper reports a before-and-after service evaluation of a local hip fracture unit and only mentions replication in the ordinary sense of spreading the model, not as an aim to re-test a specific earlier published finding.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "replication of the hip fracture unit service model may potentially afford significant clinical and financial gains",
+    "reasoning": "The paper reports a before-and-after service evaluation of a local hip fracture unit and only mentions replication in the ordinary sense of spreading the model, not as an aim to re-test a specific earlier published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H023",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2618,
+      "out": 233
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"builds_on_literature\",\"terminology_only\"],\"evidence_quote\":\"The replication of enteroviruses features low fidelity\",\"reasoning\":\"The abstract describes a new comparative sequence analysis of viral co-evolution and uses replication only in the biological sense, not as a re-test of a specific earlier published finding.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "builds_on_literature",
+      "terminology_only"
+    ],
+    "evidence_quote": "The replication of enteroviruses features low fidelity",
+    "reasoning": "The abstract describes a new comparative sequence analysis of viral co-evolution and uses replication only in the biological sense, not as a re-test of a specific earlier published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H024",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2566,
+      "out": 117
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"terminology_only\"],\"evidence_quote\":\"the replication of valued objects\",\"reasoning\":\"The abstract uses replication in an ordinary museum/collection-making sense, not to describe a study aiming to re-test an earlier published finding.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "terminology_only"
+    ],
+    "evidence_quote": "the replication of valued objects",
+    "reasoning": "The abstract uses replication in an ordinary museum/collection-making sense, not to describe a study aiming to re-test an earlier published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H025",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2618,
+      "out": 155
+    },
+    "raw": "{\n  \"classification\": \"none\",\n  \"confident\": true,\n  \"categories\": [\"builds_on_literature\"],\n  \"evidence_quote\": \"The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enteroviruses\",\n  \"reasoning\": \"The paper performs an original comparative sequence analysis of enteroviruses to study co-evolution, not a stated re-test of a specific previously reported finding.\"\n}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "builds_on_literature"
+    ],
+    "evidence_quote": "The aim of this work was to understand co-evolution patterns of two interacting replication machinery elements in enteroviruses",
+    "reasoning": "The paper performs an original comparative sequence analysis of enteroviruses to study co-evolution, not a stated re-test of a specific previously reported finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H026",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2520,
+      "out": 225
+    },
+    "raw": "{\n  \"classification\": \"replication\",\n  \"confident\": true,\n  \"categories\": [\"measurement_validation\", \"context_transfer\"],\n  \"evidence_quote\": \"This study aims to assess the applicability and reproducibility of the GP atlas on a sample of the eastern Utter Pradesh (UP) population.\",\n  \"reasoning\": \"The paper explicitly aims to re-evaluate an already published atlas in a new population, which is a qualifying measurement validation and context-transfer replication.\"\n}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "measurement_validation",
+      "context_transfer"
+    ],
+    "evidence_quote": "This study aims to assess the applicability and reproducibility of the GP atlas on a sample of the eastern Utter Pradesh (UP) population.",
+    "reasoning": "The paper explicitly aims to re-evaluate an already published atlas in a new population, which is a qualifying measurement validation and context-transfer replication.",
+    "schema_error": null
+  },
+  {
+    "id": "H027",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2557,
+      "out": 134
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"builds_on_literature\"],\"evidence_quote\":\"few studies have sought to validate\",\"reasoning\":\"The paper tests general sequence-stratigraphic assumptions and hypotheses rather than aiming to re-test a specific previously published finding.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "builds_on_literature"
+    ],
+    "evidence_quote": "few studies have sought to validate",
+    "reasoning": "The paper tests general sequence-stratigraphic assumptions and hypotheses rather than aiming to re-test a specific previously published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H028",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2591,
+      "out": 203
+    },
+    "raw": "{\"classification\":\"none\",\"confident\":true,\"categories\":[\"other\"],\"evidence_quote\":\"followed by the replication of the top SNPs in an additional set of 185 patients\",\"reasoning\":\"The paper uses a discovery/replication design within the same study to test newly identified SNP associations, which is internal replication rather than a check of an earlier published finding.\"}",
+    "classification": "none",
+    "confident": true,
+    "categories": [
+      "other"
+    ],
+    "evidence_quote": "followed by the replication of the top SNPs in an additional set of 185 patients",
+    "reasoning": "The paper uses a discovery/replication design within the same study to test newly identified SNP associations, which is internal replication rather than a check of an earlier published finding.",
+    "schema_error": null
+  },
+  {
+    "id": "H029",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2602,
+      "out": 172
+    },
+    "raw": "{\"classification\":\"replication\",\"confident\":true,\"categories\":[\"clearly_declared\",\"context_transfer\"],\"evidence_quote\":\"This research was a replication of original research conducted in 1981 by Dr. H. Wohlfarth\",\"reasoning\":\"The abstract explicitly says the study was a replication of earlier research and re-tested the same effects in a different classroom setting with new participants.\"}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared",
+      "context_transfer"
+    ],
+    "evidence_quote": "This research was a replication of original research conducted in 1981 by Dr. H. Wohlfarth",
+    "reasoning": "The abstract explicitly says the study was a replication of earlier research and re-tested the same effects in a different classroom setting with new participants.",
+    "schema_error": null
+  },
+  {
+    "id": "H030",
+    "bucket": "heldout",
+    "error": null,
+    "error_detail": null,
+    "usage": {
+      "in": 2470,
+      "out": 115
+    },
+    "raw": "{\"classification\":\"replication\",\"confident\":true,\"categories\":[\"clearly_declared\",\"context_transfer\"],\"evidence_quote\":\"this pilot study, a replication of a study that originated in Australia\",\"reasoning\":\"The abstract explicitly says the pilot study is a replication of an earlier Australian study and re-tests the same simulation strategy in a new context.\"}",
+    "classification": "replication",
+    "confident": true,
+    "categories": [
+      "clearly_declared",
+      "context_transfer"
+    ],
+    "evidence_quote": "this pilot study, a replication of a study that originated in Australia",
+    "reasoning": "The abstract explicitly says the pilot study is a replication of an earlier Australian study and re-tests the same simulation strategy in a new context.",
+    "schema_error": null
+  }
+]

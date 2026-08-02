@@ -30,7 +30,9 @@ SETS = {
 }
 
 PENDING = {"F140"}
-TAGS = ("v32", "v33")
+# v32 is the checked-in v3.2 run; v32r is the same prompt re-run in the same session as
+# v33, so v32-vs-v32r measures run-to-run variance and v32r-vs-v33 isolates the clause.
+TAGS = ("v32", "v32r", "v33")
 
 PRICE = {FL: (0.3e-6, 2.5e-6), GPT: (0.75e-6, 4.5e-6)}
 PROV = {FL: "Gemini API", GPT: "OpenAI"}
@@ -126,8 +128,13 @@ def main() -> None:
              "apart from the settled misses. A schema or API error counts as no answer, so it "
              "can never contribute to a discard.")
     L.append("")
-    L.append("These cases are derivation data (see `README.md`), so every number is in-sample. "
-             "The v3.2 columns are the checked-in `voter_v32_*` files, not a re-run.")
+    L.append("These cases are derivation data (see `README.md`), so every number is in-sample.")
+    L.append("")
+    L.append("**Three runs, not two.** `v32` is the checked-in `voter_v32_*` result files. "
+             "`v32r` is the *same* v3.2 prompt re-run against the same two models in the same "
+             "session as `v33`. Neither model is deterministic, so `v32` vs `v32r` measures "
+             "run-to-run variance and `v32r` vs `v33` is the comparison that isolates the "
+             "clause.")
     L.append("")
 
     hard_neg = [(s, i) for s in ("human", "heldout")
@@ -140,6 +147,7 @@ def main() -> None:
           f"{sum(1 for s, _ in hard_neg if s == 'heldout')} held-out).", "",
           "| gate | prompt | settled misses | pending (F140) | hard-neg discard |",
           "| --- | --- | --- | --- | --- |"]
+    soft: dict[str, tuple[int, int, list[str]]] = {}
     for gname, gate in GATES:
         for t in TAGS:
             miss, pend = [], []
@@ -153,6 +161,24 @@ def main() -> None:
                      if gate([data[(t, m, s)].get(i) for m in MODELS]))
             L.append(f"| {gname} | {t} | {len(miss)} | {len(pend)} | "
                      f"{hn}/{len(hard_neg)} = {hn / len(hard_neg):.1%} |")
+            if gate is g_softqual:
+                soft[t] = (len(miss), hn, miss)
+    L.append("")
+    L.append(f"**Against the acceptance bar** — zero settled misses and a hard-negative "
+             f"discard rate within a point of the 88.6% the checked-in v3.2 files give — "
+             f"v3.3 lands at {soft['v33'][0]} settled miss"
+             f"{'' if soft['v33'][0] == 1 else 'es'} "
+             f"({', '.join(soft['v33'][2]) or 'none'}) and "
+             f"{soft['v33'][1]}/{len(hard_neg)} = {soft['v33'][1] / len(hard_neg):.1%}. "
+             f"The v3.2 control run measured here misses "
+             f"{soft['v32r'][0]} ({', '.join(soft['v32r'][2]) or 'none'}) and discards "
+             f"{soft['v32r'][1]}/{len(hard_neg)} = "
+             f"{soft['v32r'][1] / len(hard_neg):.1%} — so the same prompt, re-run, also "
+             f"clears neither figure. Both differences sit inside the run-to-run movement "
+             f"tabulated in section 3, and the case each run misses is a different one. "
+             f"These numbers do not license a claim that the clause costs throughput; they "
+             f"do show that a single run of 390 abstracts cannot resolve a difference this "
+             f"small.")
     L.append("")
 
     # ---------------------------------------------------------------- misses per set
@@ -208,47 +234,54 @@ def main() -> None:
 
     # ---------------------------------------------------------- 3. what moved
     L += ["## 3. Every case whose gate outcome moved", "",
-          "The clause is meant to keep overlapping-sample re-tests. This table is every "
-          "case where the shipped gate's verdict differs between v3.2 and v3.3.", ""]
-    moved: list[str] = []
-    for s in SETS:
-        for i in cases[s]:
-            a = g_softqual([data[("v32", m, s)].get(i) for m in MODELS])
-            b = g_softqual([data[("v33", m, s)].get(i) for m in MODELS])
-            if a == b:
-                continue
-            cells = " | ".join(
-                f"{(data[(t, m, s)].get(i) or {}).get('raw_class')}@"
-                f"{(data[(t, m, s)].get(i) or {}).get('confident')}"
-                for m in MODELS for t in TAGS)
-            moved.append(f"| {i} | {s} | {truth[s].get(i)} | {cells} | "
-                         f"{'DISC' if a else 'kept'}->{'DISC' if b else 'kept'} | "
-                         f"{cases[s][i].get('title', '')[:80].replace('|', '/')} |")
-    if moved:
-        L += ["| id | set | truth | "
-              + " | ".join(f"{SHORT[m]} v32 | {SHORT[m]} v33" for m in MODELS)
-              + " | gate v32 -> v33 | title |",
-              "| --- | --- | --- | " + " | ".join("---" for _ in range(2 * len(MODELS) + 2))
-              + " |"] + moved
-    else:
-        L.append("None — the shipped gate reaches the same verdict on all 390 cases under "
-                 "both prompts.")
-    L.append("")
+          "The clause is meant to keep overlapping-sample re-tests. Each table below is "
+          "every case where the shipped gate's verdict differs between two runs — first "
+          "the same prompt twice (variance), then the prompt change itself.", ""]
+    for a_tag, b_tag, caption in (
+            ("v32", "v32r", "### v3.2 against itself — run-to-run variance"),
+            ("v32r", "v33", "### v3.2 against v3.3, same session — the clause")):
+        L += [caption, ""]
+        moved: list[str] = []
+        for s in SETS:
+            for i in cases[s]:
+                a = g_softqual([data[(a_tag, m, s)].get(i) for m in MODELS])
+                b = g_softqual([data[(b_tag, m, s)].get(i) for m in MODELS])
+                if a == b:
+                    continue
+                cells = " | ".join(
+                    f"{(data[(t, m, s)].get(i) or {}).get('raw_class')}@"
+                    f"{(data[(t, m, s)].get(i) or {}).get('confident')}"
+                    for m in MODELS for t in (a_tag, b_tag))
+                moved.append(f"| {i} | {s} | {truth[s].get(i)} | {cells} | "
+                             f"{'DISC' if a else 'kept'}->{'DISC' if b else 'kept'} | "
+                             f"{cases[s][i].get('title', '')[:80].replace('|', '/')} |")
+        if moved:
+            L += ["| id | set | truth | "
+                  + " | ".join(f"{SHORT[m]} {a_tag} | {SHORT[m]} {b_tag}" for m in MODELS)
+                  + f" | gate {a_tag} -> {b_tag} | title |",
+                  "| --- | --- | --- | "
+                  + " | ".join("---" for _ in range(2 * len(MODELS) + 2)) + " |"] + moved
+        else:
+            L.append("None — the shipped gate reaches the same verdict on all 390 cases in "
+                     "both runs.")
+        L.append("")
 
     # ------------------------------------------------- 4. per-model verdict changes
     L += ["### Per-model verdict changes (any direction)", "",
-          "| model | set | n | verdict changed | of which no -> qualifying | "
+          "| comparison | model | set | n | verdict changed | of which no -> qualifying | "
           "qualifying -> no | confident flipped |",
-          "| --- | --- | --- | --- | --- | --- | --- |"]
-    for m in MODELS:
-        for s in SETS:
-            a, b = data[("v32", m, s)], data[("v33", m, s)]
-            ids = [i for i in cases[s] if i in a and i in b]
-            ch = [i for i in ids if a[i]["verdict"] != b[i]["verdict"]]
-            up = sum(1 for i in ch if a[i]["verdict"] == "no" and b[i]["verdict"] == "yes")
-            dn = sum(1 for i in ch if a[i]["verdict"] == "yes" and b[i]["verdict"] == "no")
-            cf = sum(1 for i in ids if a[i]["confident"] != b[i]["confident"])
-            L.append(f"| {SHORT[m]} | {s} | {len(ids)} | {len(ch)} | {up} | {dn} | {cf} |")
+          "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for a_tag, b_tag in (("v32", "v32r"), ("v32r", "v33")):
+        for m in MODELS:
+            for s in SETS:
+                a, b = data[(a_tag, m, s)], data[(b_tag, m, s)]
+                ids = [i for i in cases[s] if i in a and i in b]
+                ch = [i for i in ids if a[i]["verdict"] != b[i]["verdict"]]
+                up = sum(1 for i in ch if a[i]["verdict"] == "no" and b[i]["verdict"] == "yes")
+                dn = sum(1 for i in ch if a[i]["verdict"] == "yes" and b[i]["verdict"] == "no")
+                cf = sum(1 for i in ids if a[i]["confident"] != b[i]["confident"])
+                L.append(f"| {a_tag} -> {b_tag} | {SHORT[m]} | {s} | {len(ids)} | {len(ch)} "
+                         f"| {up} | {dn} | {cf} |")
     L.append("")
 
     # ---------------------------------------------------------------- 5. sens/spec
@@ -310,25 +343,26 @@ def main() -> None:
     L.append("")
 
     # ---------------------------------------------------------------- 6. tokens
-    L += ["## 5. Token usage and estimated spend — the v3.3 run", "",
-          "Counts read from the API responses of the v3.3 runs made here (390 cases per "
-          "model: 300 FLoRA positives, 60 human, 30 held-out).", "",
-          "| provider | model | v33 in | v33 out | est. cost |",
-          "| --- | --- | --- | --- | --- |"]
+    L += ["## 5. Token usage and estimated spend — the runs made here", "",
+          "Counts read from the API responses of the `v33` and `v32r` runs (390 cases per "
+          "model per run: 300 FLoRA positives, 60 human, 30 held-out).", "",
+          "| provider | model | run | in | out | est. cost |",
+          "| --- | --- | --- | --- | --- | --- |"]
     tot = 0.0
     t_in = t_out = 0
-    for m in MODELS:
-        ti = to = 0
-        for s in SETS:
-            for r in data[("v33", m, s)].values():
-                ti += r["usage"].get("in", 0)
-                to += r["usage"].get("out", 0)
-        cost = ti * PRICE[m][0] + to * PRICE[m][1]
-        tot += cost
-        t_in += ti
-        t_out += to
-        L.append(f"| {PROV[m]} | {SHORT[m]} | {ti:,} | {to:,} | ${cost:.2f} |")
-    L.append(f"| **total** | | **{t_in:,}** | **{t_out:,}** | **${tot:.2f}** |")
+    for t in ("v33", "v32r"):
+        for m in MODELS:
+            ti = to = 0
+            for s in SETS:
+                for r in data[(t, m, s)].values():
+                    ti += r["usage"].get("in", 0)
+                    to += r["usage"].get("out", 0)
+            cost = ti * PRICE[m][0] + to * PRICE[m][1]
+            tot += cost
+            t_in += ti
+            t_out += to
+            L.append(f"| {PROV[m]} | {SHORT[m]} | {t} | {ti:,} | {to:,} | ${cost:.2f} |")
+    L.append(f"| **total** | | | **{t_in:,}** | **{t_out:,}** | **${tot:.2f}** |")
     L.append("")
     L.append("Prices are the OpenRouter catalogue rates read on 2026-08-01 (flash-lite "
              "$0.30/$2.50, gpt-5.4-mini $0.75/$4.50 per million prompt/completion tokens); "

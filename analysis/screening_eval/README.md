@@ -284,6 +284,11 @@ pipeline's own sources would firm it up.
 | `prompt_v32.txt` | v3.1 plus the binary `confident` field. Results in `report_v32.md` and `gate_sweep_v32.md`. |
 | `prompt_v33.txt` | **the shipped prompt.** v3.2 plus one sentence in WHAT QUALIFIES (item 7): partial overlap with the original's data does not disqualify a re-test. Results in `report_v33.md`, produced by `score_v33.py` over the two shipped voters under the shipped gate. |
 
+The v3.3 evaluation carries a control the earlier ones did not: `voter_v32r_*` is
+`prompt_v32.txt` re-run against the same two models in the same session as `voter_v33_*`.
+Neither model is deterministic, so `v32` vs `v32r` is run-to-run variance and `v32r` vs `v33`
+is the prompt change. On these 390 cases the two are the same size — see `report_v33.md` §3.
+
 Truth sets: `human_truth.json` (first pass) → `human_truth_revised.json` (the coder's recodes)
 → **`human_truth_v32.json`** (current; 50 `no` / 10 `yes`). Held-out: `heldout_truth.json` →
 **`heldout_truth_v32.json`** (current; 20 `no` / 10 `yes`, after the instrument-boundary
