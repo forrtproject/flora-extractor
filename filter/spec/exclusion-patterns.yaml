@@ -34,7 +34,7 @@ patterns:
     description: "molecular biology structural terms"
 
   - id: BIOLOGICAL_OF
-    regex: '\breplication of (?:the\s+)?(?:\w+[-\s]+){0,3}(?:dna|rna|mrna|cdna|viral|\w*virus(?:es)?|bacteri\w+|mycobacteri\w+|pathogens?|parasites?|cells?|cellular|chromosomes?|plasmids?|genomes?|genomic|hiv|sars[-\s]?cov[-\s]?2?|influenza|phages?|prions?|mitochondrial|organoids?)\b'
+    regex: '\breplication of (?:the\s+)?(?:(?!(?:study|studies|experiments?|effects?|findings?|results?|analys[ei]s|papers?|trials?|surveys?)\b)\w+[-\s]+){0,3}(?:(?:dna|rna|mrna|cdna|viral|\w*virus(?:es)?|bacteri\w+|mycobacteri\w+|pathogens?|prions?|phages?|chromosomes?|plasmids?|genomes?|genomic|hiv|sars[-\s]?cov[-\s]?2?|influenza|mitochondrial|organoids?)\b|(?:cells?|cellular|parasites?)\b(?=\s*(?:[.,;:)\]]|$|\b(?:in|by|during|within|with|and|or|is|are|was|were|from|to|at|under)\b)))'
     flags: [i]
     description: >
       "replication of <organism>" word order. BIOLOGICAL only covers "<organism>
@@ -43,6 +43,18 @@ patterns:
       501 rows Stage 3 later screened out as not-a-replication. Up to three filler
       words are allowed before the organism ("Replication of Oncolytic Herpes
       Simplex Virus").
+
+      cell/cellular/parasite are split out and must be the HEAD of the phrase —
+      followed by punctuation, end, or a preposition/verb. They have common
+      non-biological collocations, and with a three-word filler window the
+      unrestricted form killed genuine replications outright: "a direct replication
+      of the classic CELL PHONE driving study" and "a conceptual replication of the
+      PARASITE STRESS theory of values" both became false_positive, which is
+      terminal. The unambiguous organism terms need no such restriction.
+
+      The filler window also refuses study-nouns, so "a replication of the original
+      STUDY in cells" keeps its real head ("study") and survives. Without that, a
+      replication merely CONDUCTED in biological material was excluded.
 
   - id: EDITORIAL_ARTIFACT
     regex: '^\s*(?:review for|decision letter for|peer review #|faculty opinions recommendation of|correction to|author response)\b'
@@ -53,9 +65,17 @@ patterns:
       that is not the study.
 
   - id: DATA_AVAILABILITY
-    regex: '\b(?:data|code|scripts?|files?|materials?|repositor\w+|replication package)\b[^.]{0,60}?\bto\s+(?:replicate|reproduce)\b'
+    regex: '\b(?:data|code|scripts?|files?|materials?|repositor\w+|replication package)\b(?=[^.\n]{0,200}\b(?:available|provided|deposited|archived|posted|shared|supplement\w*|repositor\w+|osf|github|dataverse|zenodo|figshare|doi\.org)\b)[^.\n]{0,80}?\bto\s+(?:replicate|reproduce)\b'
     flags: [i]
     description: >
-      Dataverse/OSF/GitHub boilerplate — "data and code to reproduce the results in
-      this paper" — describes the paper's OWN reproducibility package, not a
-      reproduction of someone else's study.
+      Dataverse/OSF/GitHub boilerplate — "data and code are available on OSF to
+      reproduce the results in this paper" — describes the paper's OWN
+      reproducibility package, not a reproduction of someone else's study.
+
+      An availability anchor (available/deposited/OSF/GitHub/...) is REQUIRED, and is
+      looked for anywhere in the same sentence — it may follow the verb, as in "data
+      and code to reproduce the results in this paper are on OSF". Without the anchor
+      the pattern matched ordinary methods prose: "Data from the published experiment
+      were used to replicate the main result" is a genuine reproduction and was being
+      made false_positive, which is terminal. Every gap excludes newlines as well as
+      full stops, so it cannot bridge the title/abstract join.

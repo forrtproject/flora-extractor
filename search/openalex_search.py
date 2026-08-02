@@ -83,8 +83,8 @@ SEARCH_PHRASES = [
     # needed); "reanalyze"/"reanalyzed" both stem to one query and are not listed
     # twice. "reanalysis of the original" (170) is a strict subset of "reanalysis"
     # and is deliberately NOT listed alongside it — see issue #128.
-    # phrase_yield() reports "reanalysis" as degenerate, which is correct and
-    # intended: it is a one-word sweep, not a phrase that lost its stopwords.
+    # phrase_yield() does NOT flag these: "degenerate" means a phrase that silently
+    # lost its stopwords, not a term deliberately written as one word.
     "reanalysis",
     "re-analysis",
 ]

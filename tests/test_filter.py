@@ -33,11 +33,21 @@ def test_phrase_detection_excludes_code():
 
 def test_qualifier_phrases_match_plurals():
     """``\\b`` after "replication" fails on the "s" of "replications", so every
-    singular-only qualifier pattern silently missed the plural for years."""
-    for text in ("Two conceptual replications of Smith (2010).",
-                 "We report direct replications of the original effect.",
-                 "Three independent replications of Jones (2015)."):
-        assert find_replication_phrase_span(text) is not None, text
+    singular-only qualifier pattern silently missed the plural for years.
+
+    Examples deliberately avoid the substring "replications of": the generic
+    ``\\breplications? of\\b`` pattern is checked first and would satisfy a weaker
+    assertion even if the qualifier patterns were deleted. Asserting the matched
+    phrase is what actually pins these patterns.
+    """
+    for text, want in (
+            ("The authors conducted two conceptual replications.", "conceptual replications"),
+            ("We report direct replications in a new sample.", "direct replications"),
+            ("Three exact replications were preregistered.", "exact replications"),
+            ("Two cross-cultural replications followed.", "cross-cultural replications")):
+        hit = find_replication_phrase_span(text)
+        assert hit is not None, text
+        assert hit[0] == want, (text, hit[0])
 
 
 def test_biological_replication_of_word_order_excluded():
@@ -309,3 +319,50 @@ def test_phrase_guard_is_scoped_to_its_phrase():
     hit = find_replication_phrase_span(text)
     assert hit is not None          # a row-level exclusion would have killed it
     assert hit[0] != "we replicated"  # ... but the guarded phrase is skipped
+
+
+def test_biological_of_does_not_kill_modifier_collocations():
+    """cell/parasite have common non-biological collocations. With a three-word
+    filler window the unrestricted BIOLOGICAL_OF made these false_positive, which
+    is terminal — they are genuine replications, so the organism word must be the
+    HEAD of the phrase, not a modifier."""
+    for text in ("A direct replication of the classic cell phone driving study.",
+                 "A conceptual replication of the parasite stress theory of values."):
+        assert is_non_scholarly_context(text) is None, text
+        assert find_replication_phrase_span(text) is not None, text
+
+
+def test_biological_of_still_excludes_head_position_organisms():
+    for text in ("Restriction of Replication of Oncolytic Herpes Simplex Virus.",
+                 "The replication of enteroviruses features low fidelity.",
+                 "We studied the replication of cells in culture.",
+                 "Inhibition of the replication of the parasite in host tissue."):
+        assert is_non_scholarly_context(text) == "BIOLOGICAL_OF", text
+
+
+def test_phrase_guard_is_scoped_to_the_matching_sentence():
+    """A guard judges its phrase's own context. Searching the whole title+abstract
+    let one stray token anywhere veto every occurrence of the phrase."""
+    # GWAS vocabulary in a LATER sentence must not veto the replication claim.
+    hit = find_replication_phrase_span(
+        "We replicated Smith (2010). We also conducted a GWAS of the sample.")
+    assert hit is not None and hit[0] == "we replicated"
+    # A later legitimate occurrence survives an earlier guarded one.
+    hit = find_replication_phrase_span(
+        "We replicated one SNP in the GWAS. In study 2, we replicated Smith (2010).")
+    assert hit is not None and hit[0] == "we replicated"
+    # The guarded sense itself is still suppressed.
+    assert find_replication_phrase_span(
+        "We replicated one SNP (rs133885) from 585 SNPs in the genome-wide cohort.") is None
+
+
+def test_data_availability_requires_an_availability_anchor():
+    """Without one it matched ordinary methods prose and made genuine reproductions
+    false_positive, which is terminal."""
+    for text in ("Data from the published experiment were used to replicate the main result.",
+                 "We used the original data to reproduce the findings of Smith (2010).",
+                 "Data and code from the original experiment\nWe aim to reproduce the result."):
+        assert is_non_scholarly_context(text) is None, text
+    for text in ("Data and code are available on OSF to reproduce the results in this paper.",
+                 "All materials are deposited in a repository to replicate the analyses."):
+        assert is_non_scholarly_context(text) == "DATA_AVAILABILITY", text

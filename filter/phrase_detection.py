@@ -23,6 +23,8 @@ from typing import Optional
 
 import yaml
 
+from shared.utils import sentence_spans
+
 # Patterns are intentionally compiled WITHOUT a global counterpart — JS's /g
 # flag carries lastIndex across calls (LESSONS.md #15 in the SciMeto repo).
 # Python's ``re`` API is stateless, so this just means we use ``search``.
@@ -137,6 +139,19 @@ def _load_exclusion_regexes() -> list[tuple[str, re.Pattern]]:
 NON_SCHOLARLY_REPLICATION_CONTEXTS: list[tuple[str, re.Pattern]] = _load_exclusion_regexes()
 
 
+def _sentence_around(text: str, pos: int) -> str:
+    """The sentence containing *pos*, for evaluating a phrase guard.
+
+    A guard must judge the phrase's own context. Searching the whole title+abstract
+    let one stray token anywhere veto every occurrence: "We replicated Smith (2010).
+    We also conducted a GWAS." lost the replication claim to the second sentence.
+    """
+    for start, end in sentence_spans(text):
+        if start <= pos < end:
+            return text[start:end]
+    return text
+
+
 def is_non_scholarly_context(text: str) -> Optional[str]:
     """Return the matched exclusion pattern id, or None if no exclusion fires."""
     if not text:
@@ -160,12 +175,15 @@ def find_replication_phrase_span(text: str,
     if not ignore_exclusions and is_non_scholarly_context(text):
         return None
     for regex in REPLICATION_PHRASES:
-        m = regex.search(text)
-        if m:
-            guard = PHRASE_GUARDS.get(regex.pattern)
-            if guard is not None and guard.search(text):
-                continue
-            return m.group(0).lower(), m.start(), m.end()
+        guard = PHRASE_GUARDS.get(regex.pattern)
+        if guard is None:
+            m = regex.search(text)
+            if m:
+                return m.group(0).lower(), m.start(), m.end()
+            continue
+        for m in regex.finditer(text):
+            if not guard.search(_sentence_around(text, m.start())):
+                return m.group(0).lower(), m.start(), m.end()
     return None
 
 
@@ -180,11 +198,13 @@ def is_reproduction_only(text: str) -> bool:
 
     def _hits(regex: re.Pattern) -> bool:
         """A guarded-out phrase is not a hit here either, or a row could be called
-        reproduction on the strength of a phrase the span finder already skipped."""
+        reproduction on the strength of a phrase the span finder already skipped.
+        Scoped per occurrence, exactly as find_replication_phrase_span does."""
         guard = PHRASE_GUARDS.get(regex.pattern)
-        if guard is not None and guard.search(text):
-            return False
-        return bool(regex.search(text))
+        if guard is None:
+            return bool(regex.search(text))
+        return any(not guard.search(_sentence_around(text, m.start()))
+                   for m in regex.finditer(text))
 
     repro_hits = [r for r in REPRODUCTION_PHRASES if _hits(r)]
     if not repro_hits:
