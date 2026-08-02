@@ -250,3 +250,62 @@ def test_rule_filter_row_plus_verdict_fits_the_filtered_schema():
     for col in ("filter_status", "filter_method", "filter_evidence", "filter_confidence"):
         assert col in out
     assert list(pd.DataFrame([out]).reindex(columns=FILTERED_COLS).columns) == FILTERED_COLS
+
+
+def test_curated_source_bypasses_keyword_filter():
+    """A curated-list row with no replication vocabulary at all — the I4R comment
+    genre — must still reach Stage 3 rather than being dropped as false_positive."""
+    row = _row("A comment on Combs et al. (2023)",
+               "We examine the effect of anonymous cross-party interaction on polarization.")
+    row["source"] = "i4r"
+    out = classify_row(row)
+    assert out["filter_status"] == "needs_review"
+    assert "curated_source:i4r" in out["filter_evidence"]
+
+
+def test_curated_source_still_drops_non_article_doi():
+    """The bypass trusts the list about the topic, not about the DOI: a data record
+    on a curated list is still not an article."""
+    row = _row("A comment on Smith et al. (2020)", "Some text.")
+    row["source"] = "i4r"
+    row["doi_r"] = "10.6084/m9.figshare.4213113.v1"
+    out = classify_row(row)
+    assert out["filter_status"] == "false_positive"
+    assert out["filter_evidence"] == "exclusion:figshare_data_record"
+
+
+def test_uncurated_source_still_keyword_filtered():
+    row = _row("A comment on Combs et al. (2023)",
+               "We examine the effect of anonymous cross-party interaction.")
+    row["source"] = "openalex"
+    assert classify_row(row)["filter_status"] == "false_positive"
+
+
+def test_reanalysis_is_a_reproduction_phrase():
+    text = "A re-analysis of Smith (2010) using the original data."
+    assert find_replication_phrase_span(text) is not None
+    assert is_reproduction_only(text)
+
+
+def test_computationally_reproducible_matches():
+    """The genre says "computationally reproducible" as often as "computational
+    reproduction"; the narrower "computational " prefix missed the adverb form."""
+    assert find_replication_phrase_span(
+        "The main results were computationally reproducible.") is not None
+
+
+def test_phrase_guard_suppresses_gwas_we_replicated():
+    """A GWAS discovery/replication-cohort design is not a study replication."""
+    gwas = ("We replicated one SNP (rs133885) from 585 SNPs previously reported "
+            "to be associated with general mathematical ability.")
+    assert find_replication_phrase_span(gwas) is None
+
+
+def test_phrase_guard_is_scoped_to_its_phrase():
+    """The guard must suppress only its own phrase — another phrase in the same
+    text still matches, unlike a row-level exclusion."""
+    text = ("We replicated the SNP association across the genome-wide cohort. "
+            "This was also a direct replication of Smith (2010).")
+    hit = find_replication_phrase_span(text)
+    assert hit is not None          # a row-level exclusion would have killed it
+    assert hit[0] != "we replicated"  # ... but the guarded phrase is skipped
