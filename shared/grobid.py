@@ -568,9 +568,61 @@ def process_pdf_with_grobid(pdf_path: Path,
         return None
 
 
+def _tei_localname(el) -> str:
+    """Lowercased local name of an element (``""`` for comments and PIs).
+
+    Matching on the lowercased local name is what lets one parser serve both TEI
+    dialects we see: the local GROBID server's camelCase, namespaced TEI, and the
+    copy OpenAlex stores, which was round-tripped through an HTML parser and so
+    arrives HTML-lowercased (``listbibl``, ``biblstruct``, ``persname``) inside an
+    ``<html><body>…`` wrapper.
+    """
+    tag = getattr(el, "tag", None)
+    if not isinstance(tag, str):
+        return ""
+    return tag.rsplit("}", 1)[-1].lower()
+
+
+def _tei_root(root):
+    """The TEI element itself, unwrapping OpenAlex's ``<html><body><tei>`` shell.
+
+    Descending to the TEI element first matters: the HTML wrapper contributes a
+    ``<body>`` of its own, and a bare local-name search would take that for the
+    TEI body and never fall back to ``<text>``.
+    """
+    if _tei_localname(root) == "tei":
+        return root
+    for el in root.iter():
+        if _tei_localname(el) == "tei":
+            return el
+    return root
+
+
+def _tei_find(node, name: str):
+    """First descendant-or-self with local name *name*, else None."""
+    for el in node.iter():
+        if _tei_localname(el) == name:
+            return el
+    return None
+
+
+def _tei_findall(node, name: str) -> list:
+    """All descendants-or-self with local name *name*."""
+    return [el for el in node.iter() if _tei_localname(el) == name]
+
+
 def parse_tei_sections(tei_xml: str) -> dict:
-    """Legacy: parse GROBID TEI-XML. Kept for import compatibility."""
-    out = {"abstract": "", "intro": "", "methods": "", "references": []}
+    """Parse GROBID TEI-XML into sections and references.
+
+    One code path for both dialects (see ``_tei_localname``). The local GROBID
+    server returns a ``<body>`` with ``<head>`` elements, so intro and methods can
+    be picked out by heading. OpenAlex's HTML-mangled copy has neither body nor
+    heads, so what is recoverable there is the abstract, the references, and
+    ``raw_text`` (the whole ``<text>`` element) — intro and methods stay empty
+    rather than being guessed at from a document with no headings.
+    """
+    out: dict = {"abstract": "", "intro": "", "methods": "", "references": [],
+                 "raw_text": ""}
     if not tei_xml:
         return out
     try:
@@ -579,17 +631,23 @@ def parse_tei_sections(tei_xml: str) -> dict:
         def _text_of(node) -> str:
             return re.sub(r"\s+", " ", "".join(node.itertext())).strip()
 
-        root = etree.fromstring(tei_xml.encode("utf-8"))
+        root = _tei_root(etree.fromstring(tei_xml.encode("utf-8")))
 
-        ab = root.find(".//tei:abstract", TEI_NS)
+        ab = _tei_find(root, "abstract")
         if ab is not None:
             out["abstract"] = _text_of(ab)
 
-        body = root.find(".//tei:body", TEI_NS)
-        if body is not None:
-            for div in body.findall(".//tei:div", TEI_NS):
-                head = div.find("tei:head", TEI_NS)
-                head_text = _text_of(head).lower() if head is not None else ""
+        # <body> when the parse kept it, otherwise the enclosing <text>.
+        container = _tei_find(root, "body")
+        if container is None:
+            container = _tei_find(root, "text")
+        if container is not None:
+            out["raw_text"] = _text_of(container)
+            for div in _tei_findall(container, "div"):
+                head = next((c for c in div if _tei_localname(c) == "head"), None)
+                if head is None:
+                    continue
+                head_text = _text_of(head).lower()
                 text = _text_of(div)
                 if any(k in head_text for k in ("introduction", "intro", "background")):
                     if not out["intro"]:
@@ -599,32 +657,39 @@ def parse_tei_sections(tei_xml: str) -> dict:
                     if not out["methods"]:
                         out["methods"] = text
 
-        for bib in root.findall(".//tei:listBibl//tei:biblStruct", TEI_NS):
-            ref: dict = {"authors": [], "year": None, "title": "", "raw_ref": ""}
-            for title_el in bib.findall(".//tei:title", TEI_NS):
-                if title_el.get("level", "") in ("a", "m"):
-                    ref["title"] = _text_of(title_el)
+        # Only biblStructs inside a listBibl: the teiHeader carries one for the
+        # paper itself, which is not a reference.
+        for bibl_list in _tei_findall(root, "listbibl"):
+            for bib in _tei_findall(bibl_list, "biblstruct"):
+                ref: dict = {"authors": [], "year": None, "title": "", "raw_ref": ""}
+                titles = _tei_findall(bib, "title")
+                for title_el in titles:
+                    if title_el.get("level", "") in ("a", "m"):
+                        ref["title"] = _text_of(title_el)
+                        break
+                if not ref["title"] and titles:
+                    ref["title"] = _text_of(titles[0])
+                for author in _tei_findall(bib, "author"):
+                    pers = _tei_find(author, "persname")
+                    if pers is None:
+                        continue
+                    sn = _tei_find(pers, "surname")
+                    fn = _tei_find(pers, "forename")
+                    if sn is not None:
+                        surname  = _text_of(sn)
+                        forename = _text_of(fn) if fn is not None else ""
+                        ref["authors"].append(
+                            f"{surname}, {forename[0]}." if forename else surname
+                        )
+                for date_el in _tei_findall(bib, "date"):
+                    if date_el.get("type") != "published":
+                        continue
+                    m = re.search(r"(\d{4})", date_el.get("when", ""))
+                    if m:
+                        ref["year"] = int(m.group(1))
                     break
-            if not ref["title"]:
-                t = bib.find(".//tei:title", TEI_NS)
-                if t is not None:
-                    ref["title"] = _text_of(t)
-            for author in bib.findall(".//tei:author", TEI_NS):
-                sn = author.find("tei:persName/tei:surname",  TEI_NS)
-                fn = author.find("tei:persName/tei:forename", TEI_NS)
-                if sn is not None:
-                    surname  = _text_of(sn)
-                    forename = _text_of(fn) if fn is not None else ""
-                    ref["authors"].append(
-                        f"{surname}, {forename[0]}." if forename else surname
-                    )
-            date_el = bib.find(".//tei:date[@type='published']", TEI_NS)
-            if date_el is not None:
-                m = re.search(r"(\d{4})", date_el.get("when", ""))
-                if m:
-                    ref["year"] = int(m.group(1))
-            ref["raw_ref"] = _text_of(bib)
-            out["references"].append(ref)
+                ref["raw_ref"] = _text_of(bib)
+                out["references"].append(ref)
     except Exception as e:
         log.warning("TEI parse error: %s", e)
     return out

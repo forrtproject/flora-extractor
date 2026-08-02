@@ -21,6 +21,7 @@ Public API:
     download_pdf(url, doi, min_bytes) → dict
         keys: success, path, source, reason
 """
+import gzip
 import json
 import re
 import time
@@ -30,8 +31,8 @@ from typing import Optional
 import requests
 
 from .config import (
-    OA_CACHE_DIR, OA_XML_CACHE_DIR, PDF_CACHE_DIR, RESEARCHER_EMAIL,
-    SERPAPI_KEY, SERPAPI_KEYS, UNPAYWALL_RATE_SEC, log,
+    OA_CACHE_DIR, OA_XML_CACHE_DIR, OPENALEX_API_KEYS, PDF_CACHE_DIR,
+    RESEARCHER_EMAIL, SERPAPI_KEY, SERPAPI_KEYS, UNPAYWALL_RATE_SEC, log,
 )
 from .openalex_keys import headers as oa_headers
 from .utils import clean_doi, cache_key
@@ -333,6 +334,25 @@ def openalex_xml_has_content(oa_xml: "dict | None") -> bool:
                for name in sections if name != "references")
 
 
+def _decode_openalex_xml(response: "requests.Response") -> str:
+    """Text of a content.openalex.org GROBID-XML response, gunzipped if need be.
+
+    The endpoint serves a gzip *file* (Content-Type: application/gzip,
+    Content-Disposition: …grobid.xml.gz) with no Content-Encoding header, so
+    requests does not decompress it and ``response.text`` is mojibake — which
+    lxml rejects and parse_tei_sections silently turns into an empty shell. The
+    magic bytes are the reliable signal; the content type is the belt-and-braces.
+    """
+    try:
+        payload = response.content or b""
+        ctype   = str(response.headers.get("Content-Type", "") or "").lower()
+        if payload[:2] == b"\x1f\x8b" or "gzip" in ctype:
+            return gzip.decompress(payload).decode("utf-8", errors="replace")
+    except Exception as e:  # not gzip after all, or a mocked response object
+        log.debug("OpenAlex XML gunzip fell through: %s", e)
+    return response.text
+
+
 def get_openalex_fulltext(openalex_id: str) -> "dict | None":
     """
     Fetch pre-parsed GROBID XML from OpenAlex content API for a work.
@@ -348,6 +368,12 @@ def get_openalex_fulltext(openalex_id: str) -> "dict | None":
     Never speculatively hits content.openalex.org. A content-free result is None,
     and is not cached: it is not an answer about the paper, it is a broken fetch or
     parse, and caching it made the breakage permanent and invisible.
+
+    COST: the content endpoint is metered — X-RateLimit-Cost-USD: 0.01 per
+    download (100 credits against a $1/day free tier). Hence the two guards below:
+    the tier is skipped outright without an OpenAlex key (no key means a 401 that
+    still costs a request and yields nothing), and every successful fetch is
+    cached, so a work is paid for once.
     """
     if not openalex_id:
         return None
@@ -368,6 +394,10 @@ def get_openalex_fulltext(openalex_id: str) -> "dict | None":
                 return cached
             log.warning("OpenAlex XML cache for %s is a content-free shell — "
                         "ignoring it and re-fetching", oa_id)
+
+    if not OPENALEX_API_KEYS:
+        log.info("No OpenAlex API key — skipping the GROBID-XML tier for %s", oa_id)
+        return None
 
     # Step 1 — check has_content flag
     time.sleep(0.1)
@@ -404,7 +434,7 @@ def get_openalex_fulltext(openalex_id: str) -> "dict | None":
         if r2.status_code != 200:
             log.debug("OpenAlex XML download failed (%s) for %s", r2.status_code, oa_id)
             return None
-        xml_text = r2.text
+        xml_text = _decode_openalex_xml(r2)
     except Exception as e:
         log.debug("OpenAlex XML download exception for %s: %s", oa_id, e)
         return None
