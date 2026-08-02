@@ -1,21 +1,21 @@
 # Pre-screen evaluation — findings (issue #130)
 
-Run 2026-08-02. Shipped configuration: prompt `p7` (= `_PRESCREEN_PROMPT` in
-`shared/prompts.py`), voters `qwen/qwen3-30b-a3b-instruct-2507` +
-`mistralai/mistral-small-24b-instruct-2501` via OpenRouter. Population: the 751 rows of
-the eval sets that Stage 2 does not already kill (see `README.md`).
+Run 2026-08-02 and 2026-08-03. Shipped configuration: prompt `p7` (= `_PRESCREEN_PROMPT`
+in `shared/prompts.py`), voters `qwen/qwen3-30b-a3b-instruct-2507` +
+`mistralai/mistral-small-24b-instruct-2501` via OpenRouter. Population: the rows of the
+eval sets that Stage 2 does not already kill (see `README.md`).
 
-| | measured | 95% CI |
+| | the models alone | net of the override |
 | --- | --: | --: |
-| screen-confirmed negatives discarded (n=184) | 87% | 81–91% |
-| …after the hard-signal override rescues 43 of them | **64%** | 56–70% |
-| curated negatives discarded (n=400) | 46% | 41–51% |
-| …after the override rescues 140 of them | **11%** | 8–14% |
-| gold positives lost (n=567) | **0** | 0.00–0.67% |
+| screen-confirmed negatives discarded (n=184) | 87% | **60%** |
+| curated negatives discarded (n=400) | 46% | **7%** |
+| gold positives lost (n=567) | 4 | **0** (95% CI 0.00–0.67%) |
 
-The two negative buckets disagree by a factor of six on what the tier nets, and the gap
-is the override's doing, not the models' — see *What the tier actually saves depends on
-the bucket*.
+Two things to read off this table. The tier loses no gold positive, but only the override
+makes that true — the two voters' errors are 37.8× more correlated than independence, so
+the AND gate is not the safety mechanism its shape implies. And the two negative buckets
+disagree by a factor of eight on what the tier nets, because the override fires on 91% of
+one and 36% of the other; the live saving is bracketed, not measured, until the shadow run.
 
 ## The question has to be answerable with "no"
 
@@ -63,6 +63,11 @@ Through the AND gate on the shipped pair:
 
 `p7` is the only framing aggressive enough to lose gold positives at all — and all four
 it would lose carry an explicit replication phrase, so the override rescues every one.
+
+Every comparative table in this report — across prompts, models and pairings — is
+computed on the 184 screen-confirmed negatives with the **pre-widening** override, which
+is what keeps the rows comparable to each other. The shipped configuration's current
+absolute numbers are the ones in the headline table.
 
 ## The model matters as much as the prompt
 
@@ -219,44 +224,41 @@ The four gold positives the AND gate would discard, and the phrase that saves ea
 | GP395 | 10.1089/cap.2024.0078 | "Replication of the" |
 | GP527 | 10.1128/jvi.00068-12 | "replication of the" |
 
-So the measured loss with the override on is **0 of 567**. The override also fires on 31%
+So the measured loss with the override on is **0 of 567**. The override also fires on 36%
 of the confirmed negatives, and that is the right price: a needless rescue costs one
 $0.0018 screen call, a missed one costs a replication study permanently. The gap between
-87% and 64% is exactly this.
+87% and 60% is exactly this.
 
-It also means the safety margin now rests more heavily on a hand-written regex than it
-did under a milder prompt — 43 rescues rather than 27. A phrasing the regex does not know
-is the tier's live failure mode.
+The safety margin therefore rests on a hand-written regex, and a phrasing it does not
+know is the tier's live failure mode. That is what the next two sections are about.
 
 ### What the tier actually saves depends on the bucket
 
-Running the 400 curated negatives under `p7` (run 2026-08-03, closing the last coverage
-gap) gives a very different net saving from the screen-confirmed bucket, and the reason
-is worth understanding before anyone widens the override:
+Running the 400 curated negatives under `p7` gives a very different net saving from the
+screen-confirmed bucket:
 
 | bucket | n | AND-discard | net of override | override fires on |
 | --- | --: | --: | --: | --: |
-| screen-confirmed negatives | 184 | 87% | **64%** | 31% |
-| curated negatives | 400 | 46% | **11%** | **83%** |
-| gold positives (FLoRA) | 539 | 1% | 0% | 90% |
+| screen-confirmed negatives | 184 | 87% | **60%** | 36% |
+| curated negatives | 400 | 46% | **7%** | **91%** |
+| gold positives (FLoRA) | 539 | 1% | 0% | 99% |
 
 The models are not much worse on the curated bucket than the headline suggests — they
-still AND-discard 46% of it. What removes the saving is the override: it fires on 332 of
-those 400 rows, so 140 of the 183 discards are rescued and never happen. These are the
-old pipeline's keyword-harvest false positives — molecular-biology "DNA replication",
+still AND-discard 46% of it. What removes the saving is the override: it fires on 91% of
+those rows, so 155 of the 183 discards are rescued and never happen. These are the old
+pipeline's keyword-harvest false positives — molecular-biology "DNA replication",
 engineering "replication of the geometry", papers that merely mention replicating — so
 they are *enriched for replication vocabulary by construction*, which is exactly what the
 override keys on. The screen-confirmed bucket, drawn from the current pipeline's own
-population, carries that vocabulary in only 31% of rows.
+population, carries that vocabulary in 36% of rows.
 
-Two things follow. First, the live net saving is bracketed by 11% and 64%, not pinned at
-64%, and where it lands depends on how much of the real Stage 3 population reads like
-each bucket — a question only the shadow run answers. Second, and more consequentially
-for the outstanding work: **widening the override is not the free action the per-row
-price implies.** At $0.0018 a needless rescue it is cheap per row, but a pattern that
-fires on a vocabulary-rich population can erase a large share of the tier's benefit — on
-the curated bucket the existing patterns already erase three quarters of it. Coverage on
-the positives has to be bought against measured firing on negatives, not assumed free.
+Two things follow. First, the live net saving is bracketed by 7% and 60%, and where it
+lands depends on how much of the real Stage 3 population reads like each bucket — a
+question only the shadow run answers. Second: **the override is where the tier's benefit
+goes.** At $0.0018 a needless rescue a single pattern is cheap, but on a vocabulary-rich
+population the set of them erases most of the saving. Coverage on the positives is bought
+directly out of it, which is why the next section prices every proposed pattern against
+both.
 
 ### Measured on 7,505 papers, it was catching four in five
 
@@ -310,17 +312,17 @@ real cost lever.
 | | per 49,800-row pass |
 | --- | --: |
 | tier cost | $2.25 |
-| screen calls avoided (37% of rows) | $32.35 |
-| **net** | **~$30** |
+| screen calls avoided (35% of rows) | $30.35 |
+| **net** | **~$28** |
 
-Against a ~$87 screening bill. Better than the ~$15 of the first configuration, and still
-not a number worth taking any risk for on its own — the case for the tier is #129.
+Against a ~$87 screening bill — a number not worth taking any risk for on its own; the
+case for the tier is #129.
 
-The 37% assumes the live mix behaves like the screen-confirmed bucket. Scaling by the
-curated bucket's net rate instead (11% rather than 64%) the tier avoids ~6% of rows,
-saves ~$5.60 and nets about **$3** a pass — it pays for itself and little more. The true
-figure is somewhere between $3 and $30, and the shadow run measures it directly on the
-real population.
+That row assumes the live mix behaves like the screen-confirmed bucket. Scaling by the
+curated bucket's net rate instead (7% rather than 60%) the tier avoids ~4% of rows, saves
+~$3.50 and nets about **$1** a pass — it pays for itself and no more. The true figure is
+somewhere between $1 and $28, and the shadow run measures it directly on the real
+population.
 
 ## What this evaluation cannot tell you
 
@@ -333,7 +335,7 @@ representative, and it is not:
   already in FLoRA. The marginal, oddly-phrased papers that only keyword search finds are
   what a small model misses, and they are structurally absent.
 - **The negatives are labelled by the system under test.** The 184 "screen-confirmed"
-  negatives carry the validated screen's own error rate, so 64% is agreement with the big
+  negatives carry the validated screen's own error rate, so 60% is agreement with the big
   screen, not accuracy against truth.
 - **These rows are derivation data.** They are the population that motivated the issue,
   and `p7` was chosen on them. The effect size (87% vs 1%) is far too large for a
@@ -363,7 +365,7 @@ not are exactly the ones this tier must not lose.
 ## Recommendation
 
 The tier ships **on** (`PRESCREEN_ENABLED=1`): #129 makes the snapshot scan the only path
-into Stage 3, and that population cannot be screened at full price. The $30 at today's
+into Stage 3, and that population cannot be screened at full price. The ~$28 at today's
 volume was never the argument.
 
 `PRESCREEN_MODE=shadow` records every verdict and acts on none. It exists because one

@@ -30,8 +30,8 @@ longer has the scanner.
 So the justification for on-by-default is not currently in the codebase. This is not a
 decision to reverse unilaterally — the user may well be planning to re-land #129 — but
 **confirm it with them before the tier discards anything in a production run.** Without
-#129 the whole tier nets somewhere between $3 and $30 per corpus pass (the two negative
-buckets disagree by six-fold; see `REPORT.md`), which nobody thinks is worth a terminal
+#129 the whole tier nets somewhere between $1 and $28 per corpus pass (the two negative
+buckets disagree by eight-fold; see `REPORT.md`), which nobody thinks is worth a terminal
 discard mechanism. With #129 the same rates scale to hundreds or low thousands.
 
 If it needs turning off: `PRESCREEN_ENABLED=0`, or better `PRESCREEN_MODE=shadow`, which
@@ -50,7 +50,7 @@ never reach `csv_to_db`, and are reopened only by `--rescreen`.
 Shipped config: prompt `p7` (`_PRESCREEN_PROMPT`), voters
 `qwen/qwen3-30b-a3b-instruct-2507` + `mistralai/mistral-small-24b-instruct-2501`.
 Measured: 87% of screen-confirmed negatives discarded, **60%** net of the widened
-override (64% before it), 11% of the curated-negative bucket, 0/567 gold positives lost
+override (64% before it), 7% of the curated-negative bucket, 0/567 gold positives lost
 (95% CI 0.00–0.67%).
 
 ## The four findings that should shape any further work
@@ -65,7 +65,7 @@ override (64% before it), 11% of the curated-negative bucket, 0/567 gold positiv
 3. **The regex override is load-bearing.** It caught all four joint misses. One model
    plus the regex loses 1 of 567 against the pair's 0. The second model is insurance
    against provider drift, not the primary defence.
-4. **The override is also where the tier's benefit goes.** It fires on 83% of the
+4. **The override is also where the tier's benefit goes.** It fires on 91% of the
    curated-negative bucket and 36% of the screen-confirmed one, so a widened override
    directly buys safety with saving. Every pattern change needs both rates measured.
 
@@ -111,7 +111,7 @@ text; the misses are vocabulary misses, not position misses).
 Both shipped voters ran the 400 curated negatives under `p7`. The result did not confirm
 the 64% headline; it bracketed it. Net of the override the tier discards **7%** of that
 bucket against **60%** of the screen-confirmed one (11% and 64% before the override was
-widened), because the override fires on 83% of curated negatives against 36% of
+widened), because the override fires on 91% of curated negatives against 36% of
 screen-confirmed ones. See *What the tier actually saves depends on the bucket* in
 `REPORT.md`.
 
@@ -130,7 +130,7 @@ two correlated LLM systems agree.
 
 It is open because it is not a desk task: it needs a real Stage 3 pass over fresh rows,
 which spends Gemini and OpenAI screen budget, so estimate and clear the cost first. It
-also answers the two questions everything above leaves hanging — where in the $3–$30
+also answers the two questions everything above leaves hanging — where in the $1–$28
 band the tier actually lands, and whether tier B is worth adding.
 
 ### 4. ~~Re-check `inclusionai/ling-2.6-flash`~~ — DONE 2026-08-03
