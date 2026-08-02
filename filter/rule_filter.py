@@ -14,6 +14,9 @@ Per RULEBOOK §Filter:
       with high confidence.
     - When a phrase is present but no author-year cite is found, the row is
       ``needs_review`` for the LLM stage to decide.
+    - A bare replication STEM in the TITLE with no phrase anywhere is also
+      ``needs_review``: titles are short and topical, so the stem means something
+      there that it does not mean inside a long abstract.
     - If only reproduction-flavoured phrases fire, the status is ``reproduction``
       with the same author-year cite gating.
 
@@ -24,21 +27,9 @@ filter_method, filter_evidence, filter_confidence) for one candidate row.
 """
 
 from shared.config import CURATED_SOURCES
-from shared.openalex_client import extract_author_year_patterns
 from shared.utils import non_article_doi, sentence_spans
 
-from filter.phrase_detection import (
-    find_replication_phrase_span,
-    is_non_scholarly_context,
-    is_reproduction_only,
-)
-
-
-def _author_year_cites(text: str, year: int | None) -> list:
-    """Author-year citations in *text*. strict_bare drops single_bare false matches
-    (months, "Study 2019", date ranges) that would otherwise auto-accept a row."""
-    return (extract_author_year_patterns(text, max_year=year, strict_bare=True)
-            if year else extract_author_year_patterns(text, strict_bare=True))
+from filter.phrase_detection import _author_year_cites, keyword_verdict
 
 
 def classify_row(row: dict) -> dict:
@@ -49,7 +40,6 @@ def classify_row(row: dict) -> dict:
     except (ValueError, TypeError):
         year = None
     doi = str(row.get("doi_r") or "")
-    text = f"{row.get('title_r') or ''}\n{row.get('abstract_r') or ''}".strip()
 
     # Hard-exclude non-article DOIs (figshare data records, peer-review objects) — #17.
     doi_excl = non_article_doi(doi)
@@ -77,42 +67,37 @@ def classify_row(row: dict) -> dict:
             "filter_confidence": "high",
         }
 
-    # Non-scholarly contexts (DNA replication, code/data, robustness, ...).
-    excl = is_non_scholarly_context(text)
-    phrase_match = find_replication_phrase_span(text)
+    # THE keyword decision — the same call Stage 1's snapshot gate makes, so a row
+    # Stage 1 admits is exactly a row this function does not call false_positive.
+    verdict = keyword_verdict(str(row.get("title_r") or ""),
+                              str(row.get("abstract_r") or ""), year)
+    text = verdict.text
 
-    if excl:
-        # #44 targeted readmission: exclusion patterns misfire on in-scope computational
-        # reproductions ("replicated the analysis code of Smith (2019)"). The exclusion
-        # gate suppresses phrase detection, so re-check the phrase ignoring exclusions;
-        # when a replication phrase AND a specific author-year cite are BOTH present,
-        # hand it to the LLM (needs_review) instead of hard-rejecting and losing recall.
-        rescue_phrase = find_replication_phrase_span(text, ignore_exclusions=True)
-        if rescue_phrase is not None and _author_year_cites(text, year):
-            return {
-                "filter_status": "needs_review",
-                "filter_method": "rule_based",
-                "filter_evidence": f"exclusion:{excl}; phrase+cite present — LLM review",
-                "filter_confidence": "medium",
-            }
+    if verdict.outcome == "negative":
         return {
             "filter_status": "false_positive",
             "filter_method": "rule_based",
-            "filter_evidence": f"exclusion:{excl}",
+            "filter_evidence": verdict.reason,
             "filter_confidence": "high",
         }
 
-    if phrase_match is None:
+    if verdict.outcome == "ambiguous":
+        # Two populations: the #44 exclusion+cite readmission, and a bare replication
+        # stem in the TITLE with no phrase anywhere. The latter used to be
+        # false_positive here while Stage 1 admitted it — measured at 629 rows per
+        # 30,000 of candidates.csv, written by Stage 1 and then skipped by Stage 3
+        # (which ignores false_positive rows entirely). They now reach Stage 3,
+        # where the cheap pre-screen (shared/prescreen.py, #130) is the tier meant to
+        # absorb them before the expensive validated screen.
         return {
-            "filter_status": "false_positive",
+            "filter_status": "needs_review",
             "filter_method": "rule_based",
-            "filter_evidence": "no replication phrase detected",
-            "filter_confidence": "high",
+            "filter_evidence": verdict.reason,
+            "filter_confidence": "medium",
         }
-    phrase, phrase_start, _phrase_end = phrase_match
 
-    is_repro = is_reproduction_only(text)
-    base_status = "reproduction" if is_repro else "replication"
+    phrase, phrase_start = verdict.phrase, verdict.phrase_start
+    base_status = "reproduction" if verdict.is_reproduction else "replication"
 
     # Specific-target gate: at least one author–year citation must be present.
     cited = _author_year_cites(text, year)

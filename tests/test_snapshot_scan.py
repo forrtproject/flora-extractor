@@ -509,6 +509,58 @@ def test_a_defective_record_does_not_stop_the_pool(snap_env, monkeypatch):
     ss.scan_snapshot(files=[parquet], pilot_csv=snap_env.tmp / "pilot.csv", survivor_pool=pool)
 
     assert list(pd.read_parquet(pool)["id"]) == [f"https://openalex.org/W{i}" for i in (1, 2, 3, 4)]
+# The anti-drift seam: Stage 1's admission and Stage 2's non-rejection are the same
+# keyword decision, so they cannot disagree about any text. Written as a table
+# rather than a property so the near-misses are visible.
+_GATE_CASES = [
+    # (title, abstract, admitted / kept)
+    ("A direct replication of the anchoring effect",
+     "We report a direct replication of Smith (2010).", True),
+    ("We replicate prior findings",
+     "We replicate prior findings in a new population, naming no target.", True),
+    # title-stem only: Stage 1's old private arm, now shared
+    ("Reproducibility of the X effect",
+     "Bees forage over long distances when the hive is disturbed.", True),
+    # exclusion + phrase + cite: the #44 rescue
+    ("A computational reproduction",
+     "We replicated the code of Smith (2019) and re-ran every analysis.", True),
+    # exclusion, nothing to rescue
+    ("Origins of DNA replication in yeast",
+     "We map replication forks and origin firing across the genome.", False),
+    # a stem in the abstract alone is not a signal
+    ("Foraging patterns in bees",
+     "Replicability was not assessed in this observational field study.", False),
+    ("Notes on honeybee foraging",
+     "Several replications were run independently of the pilot.", False),
+    ("A field experiment on consumer choice", "Prices were randomised by store.", False),
+]
+
+
+@pytest.mark.parametrize("title,abstract,expected", _GATE_CASES)
+def test_stage1_admits_exactly_what_stage2_does_not_reject(snap_env, title, abstract, expected):
+    """One keyword definition, two callers. Given the same title/abstract and no
+    curated-source or non-article-DOI bypass, Stage 1 admits a row exactly when
+    Stage 2 does not call it false_positive."""
+    from filter.rule_filter import classify_row
+
+    admitted = ss._admit(False, title, abstract)
+    status = classify_row({"doi_r": "10.1/x", "title_r": title, "abstract_r": abstract,
+                           "year_r": "2020", "source": "openalex"})["filter_status"]
+
+    assert admitted is expected
+    assert admitted is (status != "false_positive")
+
+
+def test_title_stem_only_row_now_reaches_stage_three(snap_env):
+    """The 750-per-30k population: admitted by Stage 1 on a bare title stem, and no
+    longer thrown away by Stage 2 before Stage 3 ever sees it."""
+    from filter.rule_filter import classify_row
+
+    title, abstract = "Reproducibility of the X effect", "Bees forage over long distances."
+    assert ss._admit(False, title, abstract) is True
+    out = classify_row({"doi_r": "10.1/x", "title_r": title, "abstract_r": abstract,
+                        "year_r": "2020", "source": "openalex"})
+    assert out["filter_status"] == "needs_review"
 
 
 # ---------------------------------------------------------------------------
