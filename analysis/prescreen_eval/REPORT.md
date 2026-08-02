@@ -75,8 +75,15 @@ On identical text (`p4`), single-voter discard rates across the cheap field:
 another, and price does not predict behaviour — the most expensive model tested is
 mid-table.
 
-Two practical traps. `qwen/qwen3.7-flash` emits ~550 output tokens per call, which makes
-it one of the dearer options despite a cheap headline rate. `inclusionai/ling-2.6-flash`
+**Reasoning models are the trap here, and the headline price hides it.** This task wants
+one word back; a model that thinks first pays for the thinking as output tokens. Measured
+per call on this prompt: `qwen/qwen3.5-9b` emits **1,832** output tokens, taking a
+$0.10/M model to **$0.336 per 1,000 rows — 11× the shipped pair** — and 30% of its
+replies still overran a 3,000-token cap. `qwen/qwen3.7-flash` emits ~550 and
+`deepseek/deepseek-v4-flash` ~100, against 9 for the models that ship. Judge these on
+measured output tokens, never on the advertised input rate.
+
+One more trap. `inclusionai/ling-2.6-flash`
 — the cheapest thing here at $0.0055/1k and the issue's first choice — has a single
 OpenRouter endpoint (Novita) that returned 429 for every call under every routing mode,
 with credit on the account. Worth re-measuring if that clears; it is one env var.
