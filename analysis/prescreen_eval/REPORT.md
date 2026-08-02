@@ -1,6 +1,6 @@
 # Pre-screen evaluation — findings (issue #130)
 
-Run 2026-08-02. Voters: `google/gemini-2.5-flash-lite` + `mistralai/mistral-nemo` via
+Run 2026-08-02. Voters: `mistralai/mistral-nemo` + `google/gemini-2.5-flash-lite` via
 OpenRouter. Prompt: `prompt_p4.txt`, which is `_PRESCREEN_PROMPT` in `shared/prompts.py`.
 
 ## Summary
@@ -91,7 +91,22 @@ missing is the second benefit estimate on the curated-negative bucket.
 **`inclusionai/ling-2.6-flash` could not be evaluated.** It returned HTTP 429 for every
 call through OpenRouter on 2026-08-02, at every concurrency from 1 to 10 and with and
 without cheapest-provider pinning. Whatever it scores, it cannot gate a corpus, so
-`PRESCREEN_VOTER1_MODEL` defaults to `google/gemini-2.5-flash-lite` instead.
+`mistralai/mistral-nemo` and `google/gemini-2.5-flash-lite` are the shipped pair. Ling is
+half the price of nemo again and remains the better voter if its availability recovers;
+swapping it back in is one env var, and it should be re-measured when that happens.
+
+**What the tier costs to run**, from the measured 525 input / 8 output tokens per row.
+Voter 2 is asked only about the rows voter 1 rejects (~55%), so voter 1 runs on every row
+and the cheaper model belongs in that slot — the ordering is worth more than it looks:
+
+| pair (voter 1 first) | $/1,000 rows | per 49,800-row pass |
+| --- | --: | --: |
+| nemo → flash-lite (shipped) | $0.041 | $2.04 |
+| flash-lite → nemo (same verdicts) | $0.062 | $3.08 |
+| ling → nemo, if ling recovers | $0.010 | $0.50 |
+
+Against a ~$87 screening bill that saves ~$15, all three are rounding errors. The
+ordering is right on principle rather than because the money matters.
 
 **Zero observed misses is not a bounded miss rate.** The 95% interval on 0/567 still
 reaches 0.67%. Bounding the true rate below 0.5% needs ~600 gold positives with zero

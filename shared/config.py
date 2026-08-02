@@ -143,11 +143,17 @@ SCREEN_VOTER2_MODEL = os.getenv("SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
 # Deliberately separate from SCREEN_VOTER2_MODEL: changing a pre-screen model must
 # never silently alter the validated screen's cached verdicts.
 PRESCREEN_ENABLED = os.getenv("PRESCREEN_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
-# Not inclusionai/ling-2.6-flash, which issue #130 measured: on 2026-08-02 it returned
-# 429 for every call through OpenRouter at any concurrency and any routing, so it cannot
-# gate a corpus however well it classifies.
-PRESCREEN_VOTER1_MODEL = os.getenv("PRESCREEN_VOTER1_MODEL", "google/gemini-2.5-flash-lite")
-PRESCREEN_VOTER2_MODEL = os.getenv("PRESCREEN_VOTER2_MODEL", "mistralai/mistral-nemo")
+# Order matters for cost, not for the verdict: the gate discards only when BOTH voters
+# say no, so voter 2 is asked only about the rows voter 1 rejects. Voter 1 therefore runs
+# on every row and the cheaper model belongs in that slot — nemo first rather than
+# flash-lite first is $2.04 vs $3.08 per corpus pass for identical answers.
+#
+# Not inclusionai/ling-2.6-flash, which is 2x cheaper again ($0.010/M in): issue #130
+# measured it returning 429 for every call through OpenRouter on 2026-08-02, at any
+# concurrency and any routing. If its availability recovers it is the better voter, and
+# swapping it in is one env var.
+PRESCREEN_VOTER1_MODEL = os.getenv("PRESCREEN_VOTER1_MODEL", "mistralai/mistral-nemo")
+PRESCREEN_VOTER2_MODEL = os.getenv("PRESCREEN_VOTER2_MODEL", "google/gemini-2.5-flash-lite")
 # Below this many characters of abstract there is not enough text for a 3B-class model
 # to be trusted with a terminal verdict, so the row bypasses the pre-screen.
 PRESCREEN_MIN_ABSTRACT_CHARS = int(os.getenv("PRESCREEN_MIN_ABSTRACT_CHARS", "200"))
