@@ -1,0 +1,4 @@
+cases_live_goldneg_screen.json: 184 cases, 175 cached, 9 to call
+  -> pre_p7_deepseek_deepseek-v4-flash-0731_live_goldneg_screen.json: {'no': 176, 'yes': 8}  api_errors=0  tokens in=101606 out=18958
+cases_live_goldneg_screen.json: 184 cases, 179 cached, 5 to call
+  -> pre_p7_meta-llama_llama-3.2-3b-instruct_live_goldneg_screen.json: {'no': 174, 'yes': 10}  api_errors=0  tokens in=105046 out=1656

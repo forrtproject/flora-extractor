@@ -1,0 +1,2394 @@
+[
+ {
+  "id": "NS001",
+  "doi": "10.1001/jamaophthalmol.2018.5646",
+  "usage": {
+   "in": 747,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS002",
+  "doi": "10.1002/ajmg.b.32782",
+  "usage": {
+   "in": 641,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of a",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS003",
+  "doi": "10.1002/ar.23681",
+  "usage": {
+   "in": 840,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS004",
+  "doi": "10.1002/cam4.2163",
+  "usage": {
+   "in": 513,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS005",
+  "doi": "10.1002/cncy.22451",
+  "usage": {
+   "in": 553,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS006",
+  "doi": "10.1002/dc.24621",
+  "usage": {
+   "in": 578,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS007",
+  "doi": "10.1002/mds.28597",
+  "usage": {
+   "in": 773,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS008",
+  "doi": "10.1007/s11306-021-01775-6",
+  "usage": {
+   "in": 453,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS009",
+  "doi": "10.1016/j.aprim.2018.10.004",
+  "usage": {
+   "in": 763,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS010",
+  "doi": "10.1016/j.cjca.2016.10.032",
+  "usage": {
+   "in": 719,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS011",
+  "doi": "10.1016/j.contraception.2017.04.004",
+  "usage": {
+   "in": 853,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS012",
+  "doi": "10.1016/j.ebiom.2016.03.014",
+  "usage": {
+   "in": 1003,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS013",
+  "doi": "10.1016/j.ebiom.2019.01.024",
+  "usage": {
+   "in": 250,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "Replication of a",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS014",
+  "doi": "10.1016/j.ebiom.2019.04.014",
+  "usage": {
+   "in": 902,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS015",
+  "doi": "10.1016/j.ebiom.2021.103499",
+  "usage": {
+   "in": 938,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS016",
+  "doi": "10.1016/j.isci.2019.03.002",
+  "usage": {
+   "in": 367,
+   "out": 16
+  },
+  "error": "",
+  "raw": "```json\n{\n  \"maybe_replication\": \"yes\"\n}\n```",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NS017",
+  "doi": "10.1016/j.jalz.2016.06.104",
+  "usage": {
+   "in": 795,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS018",
+  "doi": "10.1016/j.jalz.2016.06.425",
+  "usage": {
+   "in": 819,
+   "out": 16
+  },
+  "error": "",
+  "raw": "```json\n{\n  \"maybe_replication\": \"no\"\n}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS019",
+  "doi": "10.1016/j.jalz.2017.07.131",
+  "usage": {
+   "in": 781,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"yes\"}\n```",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NS020",
+  "doi": "10.1016/j.jalz.2019.06.2782",
+  "usage": {
+   "in": 771,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS021",
+  "doi": "10.1016/j.juro.2017.02.1611",
+  "usage": {
+   "in": 812,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS022",
+  "doi": "10.1016/j.medengphy.2017.09.001",
+  "usage": {
+   "in": 395,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS023",
+  "doi": "10.1016/j.neuroimage.2021.117950",
+  "usage": {
+   "in": 610,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS024",
+  "doi": "10.1016/j.neuroimage.2021.118733",
+  "usage": {
+   "in": 409,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS025",
+  "doi": "10.1016/j.pt.2016.12.002",
+  "usage": {
+   "in": 770,
+   "out": 16
+  },
+  "error": "",
+  "raw": "```json\n{\n  \"maybe_replication\": \"no\"\n}\n```",
+  "hard_signal": "Replication of a",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS026",
+  "doi": "10.1016/j.rvsc.2020.03.007",
+  "usage": {
+   "in": 664,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS027",
+  "doi": "10.1016/j.sciaf.2021.e01017",
+  "usage": {
+   "in": 658,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS028",
+  "doi": "10.1016/s2214-109x(17)30385-6",
+  "usage": {
+   "in": 844,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS029",
+  "doi": "10.1016/s2666-7568(21)00207-5",
+  "usage": {
+   "in": 779,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS030",
+  "doi": "10.1017/9781316271735.004",
+  "usage": {
+   "in": 647,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "tried to replicate",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS031",
+  "doi": "10.1021/acscombsci.8b00158",
+  "usage": {
+   "in": 436,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS032",
+  "doi": "10.1051/matecconf/201817603001",
+  "usage": {
+   "in": 275,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS033",
+  "doi": "10.1073/pnas.1917222117",
+  "usage": {
+   "in": 256,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS034",
+  "doi": "10.1080/03071375.2021.1903239",
+  "usage": {
+   "in": 331,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "reproduce the results of",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS035",
+  "doi": "10.1080/0895769x.2017.1344119",
+  "usage": {
+   "in": 225,
+   "out": 16
+  },
+  "error": "",
+  "raw": "```json\n{\n  \"maybe_replication\": \"yes\"\n}\n```",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NS036",
+  "doi": "10.1080/1350486x.2019.1598276",
+  "usage": {
+   "in": 341,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"yes\"}\n```",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NS037",
+  "doi": "10.1080/20567790.2016.1155364",
+  "usage": {
+   "in": 820,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS038",
+  "doi": "10.1088/1361-6498/ab9509",
+  "usage": {
+   "in": 422,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS039",
+  "doi": "10.1089/aut.2019.0081",
+  "usage": {
+   "in": 459,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS040",
+  "doi": "10.1089/end.2019.0559",
+  "usage": {
+   "in": 700,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "exact replication",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS041",
+  "doi": "10.1089/vim.2019.0020",
+  "usage": {
+   "in": 429,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"yes\"}\n```",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NS042",
+  "doi": "10.1093/fs/knw267",
+  "usage": {
+   "in": 864,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS043",
+  "doi": "10.1093/isr/viab042",
+  "usage": {
+   "in": 348,
+   "out": 16
+  },
+  "error": "",
+  "raw": "```json\n{\n  \"maybe_replication\": \"no\"\n}\n```",
+  "hard_signal": "replication of a",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS044",
+  "doi": "10.1093/neuros/nyz464",
+  "usage": {
+   "in": 545,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS045",
+  "doi": "10.1093/rheumatology/key075.321",
+  "usage": {
+   "in": 706,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS046",
+  "doi": "10.1096/fj.180901ufm",
+  "usage": {
+   "in": 779,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS047",
+  "doi": "10.1097/dad.0000000000001513",
+  "usage": {
+   "in": 439,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS048",
+  "doi": "10.1097/ee9.0000000000000001",
+  "usage": {
+   "in": 727,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS049",
+  "doi": "10.1097/tp.0000000000002860",
+  "usage": {
+   "in": 812,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS050",
+  "doi": "10.1101/066084",
+  "usage": {
+   "in": 679,
+   "out": 16
+  },
+  "error": "",
+  "raw": "```json\n{\n  \"maybe_replication\": \"no\"\n}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS051",
+  "doi": "10.1101/19011049",
+  "usage": {
+   "in": 561,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS052",
+  "doi": "10.1101/2021.01.05.425339",
+  "usage": {
+   "in": 734,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS053",
+  "doi": "10.1101/2021.06.02.446680",
+  "usage": {
+   "in": 504,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS054",
+  "doi": "10.1101/2021.11.16.21266121",
+  "usage": {
+   "in": 667,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS055",
+  "doi": "10.1101/255141",
+  "usage": {
+   "in": 593,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS056",
+  "doi": "10.1101/291237",
+  "usage": {
+   "in": 396,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS057",
+  "doi": "10.1103/physrevb.102.035126",
+  "usage": {
+   "in": 719,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "reproduce the results of",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS058",
+  "doi": "10.1109/agro-geoinformatics.2019.8820589",
+  "usage": {
+   "in": 377,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS059",
+  "doi": "10.1109/bibm52615.2021.9669278",
+  "usage": {
+   "in": 320,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS060",
+  "doi": "10.1109/columbiancc.2016.7750781",
+  "usage": {
+   "in": 354,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS061",
+  "doi": "10.1109/icps52420.2021.9670280",
+  "usage": {
+   "in": 447,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS062",
+  "doi": "10.1109/sgcf.2019.8782302",
+  "usage": {
+   "in": 329,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS063",
+  "doi": "10.1111/cts.12593",
+  "usage": {
+   "in": 666,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS064",
+  "doi": "10.1111/jfcj.12121",
+  "usage": {
+   "in": 351,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS065",
+  "doi": "10.1111/jjns.12393",
+  "usage": {
+   "in": 488,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS066",
+  "doi": "10.1111/jofo.12265",
+  "usage": {
+   "in": 755,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS067",
+  "doi": "10.1111/jth.15403",
+  "usage": {
+   "in": 738,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "we have to replicate",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS068",
+  "doi": "10.1113/ep089482",
+  "usage": {
+   "in": 600,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS069",
+  "doi": "10.1113/jp281472",
+  "usage": {
+   "in": 843,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication experiment",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS070",
+  "doi": "10.1115/1.4044072",
+  "usage": {
+   "in": 368,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS071",
+  "doi": "10.1116/1.5067269",
+  "usage": {
+   "in": 475,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS072",
+  "doi": "10.1117/12.2583654",
+  "usage": {
+   "in": 335,
+   "out": 16
+  },
+  "error": "",
+  "raw": "```json\n{\n  \"maybe_replication\": \"no\"\n}\n```",
+  "hard_signal": "direct replication",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS073",
+  "doi": "10.1136/sextrans-2017-053264.671",
+  "usage": {
+   "in": 537,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS074",
+  "doi": "10.1145/3343031.3351165",
+  "usage": {
+   "in": 369,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS075",
+  "doi": "10.1155/2019/6397425",
+  "usage": {
+   "in": 448,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS076",
+  "doi": "10.1155/2021/4494389",
+  "usage": {
+   "in": 513,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS077",
+  "doi": "10.1158/1538-7445.am2017-1318",
+  "usage": {
+   "in": 849,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS078",
+  "doi": "10.1158/1538-7445.am2018-3361",
+  "usage": {
+   "in": 857,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of a",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS079",
+  "doi": "10.1158/1538-7755.disp15-b19",
+  "usage": {
+   "in": 914,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of a",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS080",
+  "doi": "10.11606/issn.1678-4456.bjvras.2019.154854",
+  "usage": {
+   "in": 561,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of a",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS081",
+  "doi": "10.1164/ajrccm-conference.2021.203.1_meetingabstracts.a2478",
+  "usage": {
+   "in": 852,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS082",
+  "doi": "10.1175/jcli-d-19-0446.1",
+  "usage": {
+   "in": 460,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS083",
+  "doi": "10.1177/1073191119831789",
+  "usage": {
+   "in": 393,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS084",
+  "doi": "10.1177/1948550616676878",
+  "usage": {
+   "in": 341,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replicated this effect",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS085",
+  "doi": "10.1182/blood.v130.suppl_1.2891.2891",
+  "usage": {
+   "in": 825,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS086",
+  "doi": "10.1186/s12889-019-6421-1",
+  "usage": {
+   "in": 483,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS087",
+  "doi": "10.1186/s12903-020-01162-y",
+  "usage": {
+   "in": 648,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS088",
+  "doi": "10.1186/s13071-020-04107-0",
+  "usage": {
+   "in": 710,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS089",
+  "doi": "10.1201/9781003134572-25",
+  "usage": {
+   "in": 318,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS090",
+  "doi": "10.1249/01.mss.0000536103.89809.16",
+  "usage": {
+   "in": 719,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "Replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS091",
+  "doi": "10.1249/fit.0000000000000415",
+  "usage": {
+   "in": 692,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS092",
+  "doi": "10.1299/jsmedmc.2017.119",
+  "usage": {
+   "in": 358,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS093",
+  "doi": "10.1308/rcsann.2018.0220",
+  "usage": {
+   "in": 544,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS094",
+  "doi": "10.13140/rg.2.2.15941.04327",
+  "usage": {
+   "in": 394,
+   "out": 16
+  },
+  "error": "",
+  "raw": "```json\n{\n  \"maybe_replication\": \"no\"\n}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS095",
+  "doi": "10.1353/vpr.2018.0055",
+  "usage": {
+   "in": 763,
+   "out": 16
+  },
+  "error": "",
+  "raw": "```json\n{\n  \"maybe_replication\": \"no\"\n}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS096",
+  "doi": "10.1371/journal.pone.0224969",
+  "usage": {
+   "in": 478,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS097",
+  "doi": "10.1371/journal.pone.0225287",
+  "usage": {
+   "in": 571,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"yes\"}\n```",
+  "hard_signal": "reproduce the results of",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NS098",
+  "doi": "10.14456/tjst.2016.8",
+  "usage": {
+   "in": 1539,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS099",
+  "doi": "10.15123/uel.89y1v",
+  "usage": {
+   "in": 521,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS100",
+  "doi": "10.1520/mpc20190175",
+  "usage": {
+   "in": 399,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS101",
+  "doi": "10.15342/ijms.2021.400",
+  "usage": {
+   "in": 544,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS102",
+  "doi": "10.15406/mojph.2016.04.00103",
+  "usage": {
+   "in": 487,
+   "out": 16
+  },
+  "error": "",
+  "raw": "```json\n{\n  \"maybe_replication\": \"no\"\n}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS103",
+  "doi": "10.15829/1560-4071-2006-3-41-48",
+  "usage": {
+   "in": 274,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS104",
+  "doi": "10.17236/sat00225",
+  "usage": {
+   "in": 514,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS105",
+  "doi": "10.17617/2.3182239",
+  "usage": {
+   "in": 801,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS106",
+  "doi": "10.18322/pvb.2019.28.04.29-41",
+  "usage": {
+   "in": 529,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS107",
+  "doi": "10.18485/esptoday.2019.7.2.2",
+  "usage": {
+   "in": 362,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS108",
+  "doi": "10.20897/femenc/9743",
+  "usage": {
+   "in": 446,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS109",
+  "doi": "10.21203/rs.3.rs-128390/v1",
+  "usage": {
+   "in": 672,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS110",
+  "doi": "10.2147/jpr.s184504",
+  "usage": {
+   "in": 776,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS111",
+  "doi": "10.21608/ejp.2019.126144",
+  "usage": {
+   "in": 437,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS112",
+  "doi": "10.2172/1494180",
+  "usage": {
+   "in": 406,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS113",
+  "doi": "10.2174/9781681082295116030005",
+  "usage": {
+   "in": 456,
+   "out": 16
+  },
+  "error": "",
+  "raw": "```json\n{\n  \"maybe_replication\": \"no\"\n}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS114",
+  "doi": "10.22037/ghfbb.v0i0.1302",
+  "usage": {
+   "in": 578,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS115",
+  "doi": "10.22038/ijorl.2019.38094.2252",
+  "usage": {
+   "in": 605,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS116",
+  "doi": "10.22328/2079-5343-2020-11-2-58-65",
+  "usage": {
+   "in": 492,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS117",
+  "doi": "10.2334/josnusd.18-0097",
+  "usage": {
+   "in": 480,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS118",
+  "doi": "10.2337/db20-0219",
+  "usage": {
+   "in": 501,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS119",
+  "doi": "10.23668/psycharchives.2393",
+  "usage": {
+   "in": 724,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication study",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS120",
+  "doi": "10.24158/fik.2018.8.28",
+  "usage": {
+   "in": 330,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS121",
+  "doi": "10.2478/cttr-2020-0010",
+  "usage": {
+   "in": 478,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS122",
+  "doi": "10.2478/ebtj-2021-0002",
+  "usage": {
+   "in": 427,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS123",
+  "doi": "10.25073/2588-1132/vnumps.4372",
+  "usage": {
+   "in": 1200,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS124",
+  "doi": "10.25097/rep.n26.2017.03",
+  "usage": {
+   "in": 397,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"yes\"}\n```",
+  "hard_signal": "replication of a",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NS125",
+  "doi": "10.2523/iptc-21238-ms",
+  "usage": {
+   "in": 750,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS126",
+  "doi": "10.25560/74576",
+  "usage": {
+   "in": 670,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "not replicated",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS127",
+  "doi": "10.25777/jwxa-c533",
+  "usage": {
+   "in": 744,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS128",
+  "doi": "10.26021/9268",
+  "usage": {
+   "in": 713,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS129",
+  "doi": "10.26226/morressier.596648e4d462b80290b52040",
+  "usage": {
+   "in": 535,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS130",
+  "doi": "10.26565/2410-7360-2019-51-14",
+  "usage": {
+   "in": 713,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS131",
+  "doi": "10.26603/ijspt20190927",
+  "usage": {
+   "in": 581,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS132",
+  "doi": "10.29035/ucmaule.59.56",
+  "usage": {
+   "in": 413,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS133",
+  "doi": "10.29413/abs.2020-5.6.36",
+  "usage": {
+   "in": 593,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS134",
+  "doi": "10.30849/rip/ijp.v49i1.11",
+  "usage": {
+   "in": 325,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS135",
+  "doi": "10.31234/osf.io/92w6f",
+  "usage": {
+   "in": 472,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of Study",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS136",
+  "doi": "10.31234/osf.io/bp36q",
+  "usage": {
+   "in": 421,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of Study",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS137",
+  "doi": "10.31234/osf.io/kmx75",
+  "usage": {
+   "in": 309,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "direct replication",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS138",
+  "doi": "10.31390/gradschool_dissertations.4337",
+  "usage": {
+   "in": 424,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS139",
+  "doi": "10.32641/rchped.v90i4.880",
+  "usage": {
+   "in": 512,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS140",
+  "doi": "10.32803/rise.v2i2.1879",
+  "usage": {
+   "in": 367,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS141",
+  "doi": "10.3389/fmed.2021.730494",
+  "usage": {
+   "in": 713,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS142",
+  "doi": "10.3389/fvets.2020.00491",
+  "usage": {
+   "in": 533,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS143",
+  "doi": "10.3390/app10041389",
+  "usage": {
+   "in": 584,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS144",
+  "doi": "10.3390/h8020102",
+  "usage": {
+   "in": 314,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS145",
+  "doi": "10.3390/ijerph17217709",
+  "usage": {
+   "in": 453,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS146",
+  "doi": "10.3390/ijerph18020405",
+  "usage": {
+   "in": 610,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS147",
+  "doi": "10.3390/ijerph18179311",
+  "usage": {
+   "in": 455,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS148",
+  "doi": "10.3390/ijms21020514",
+  "usage": {
+   "in": 527,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS149",
+  "doi": "10.3390/medicina55040100",
+  "usage": {
+   "in": 496,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS150",
+  "doi": "10.3390/molecules24030577",
+  "usage": {
+   "in": 430,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"yes\"}\n```",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NS151",
+  "doi": "10.3390/molecules25102289",
+  "usage": {
+   "in": 464,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS152",
+  "doi": "10.3390/toxics9090201",
+  "usage": {
+   "in": 419,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS153",
+  "doi": "10.3390/v12121456",
+  "usage": {
+   "in": 437,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS154",
+  "doi": "10.3397/1/376836",
+  "usage": {
+   "in": 508,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS155",
+  "doi": "10.35458/gse.v1i1.9",
+  "usage": {
+   "in": 346,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS156",
+  "doi": "10.37514/jwa-j.2019.3.1.07",
+  "usage": {
+   "in": 784,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS157",
+  "doi": "10.3760/cma.j.issn.1006-7884.2019.06.006",
+  "usage": {
+   "in": 648,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS158",
+  "doi": "10.3760/cma.j.issn.1674-4756.2016.23.014",
+  "usage": {
+   "in": 599,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS159",
+  "doi": "10.3828/sfftv.2021.27",
+  "usage": {
+   "in": 530,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS160",
+  "doi": "10.3926/jiem.2745",
+  "usage": {
+   "in": 765,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS161",
+  "doi": "10.3969/j.issn.1001-5256.2016.09.015",
+  "usage": {
+   "in": 641,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS162",
+  "doi": "10.4102/jamba.v13i1.1040",
+  "usage": {
+   "in": 744,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS163",
+  "doi": "10.4236/ojped.2020.102036",
+  "usage": {
+   "in": 253,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS164",
+  "doi": "10.4324/9780429504402-9",
+  "usage": {
+   "in": 343,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS165",
+  "doi": "10.4324/9781003089988-2",
+  "usage": {
+   "in": 395,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS166",
+  "doi": "10.4324/9781003139324-4",
+  "usage": {
+   "in": 482,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS167",
+  "doi": "10.4324/9781315591742",
+  "usage": {
+   "in": 424,
+   "out": 16
+  },
+  "error": "",
+  "raw": "```json\n{\n  \"maybe_replication\": \"no\"\n}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS168",
+  "doi": "10.46356/jakk.v4i1.169",
+  "usage": {
+   "in": 800,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS169",
+  "doi": "10.48550/arxiv.1905.05057",
+  "usage": {
+   "in": 605,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"yes\"}\n```",
+  "hard_signal": "Replication of the",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NS170",
+  "doi": "10.4992/jjpsy.90.18233",
+  "usage": {
+   "in": 369,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS171",
+  "doi": "10.51196/srz.17.7",
+  "usage": {
+   "in": 377,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS172",
+  "doi": "10.5210/ojphi.v9i1.7696",
+  "usage": {
+   "in": 818,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS173",
+  "doi": "10.5281/zenodo.437143",
+  "usage": {
+   "in": 419,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS174",
+  "doi": "10.5281/zenodo.4888176",
+  "usage": {
+   "in": 820,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS175",
+  "doi": "10.53596/jta.v28i1.372",
+  "usage": {
+   "in": 707,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of our",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS176",
+  "doi": "10.55124/ijim.v1i1.51",
+  "usage": {
+   "in": 749,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS177",
+  "doi": "10.5599/admet.979",
+  "usage": {
+   "in": 370,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"yes\"}\n```",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NS178",
+  "doi": "10.63201/znoi8972",
+  "usage": {
+   "in": 429,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"yes\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "NS179",
+  "doi": "10.7554/elife.59384.sa2",
+  "usage": {
+   "in": 788,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS180",
+  "doi": "10.7717/peerj.8827",
+  "usage": {
+   "in": 480,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS181",
+  "doi": "10.7759/cureus.12426",
+  "usage": {
+   "in": 642,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS182",
+  "doi": "10.7860/jcdr/2021/49092.15359",
+  "usage": {
+   "in": 748,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of a",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS183",
+  "doi": "10.7916/d8zg8871",
+  "usage": {
+   "in": 608,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "systematic replication",
+  "verdict": "no",
+  "reason": ""
+ },
+ {
+  "id": "NS184",
+  "doi": "10.9734/bpi/caprd/v4/13551d",
+  "usage": {
+   "in": 538,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"no\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "no",
+  "reason": ""
+ }
+]

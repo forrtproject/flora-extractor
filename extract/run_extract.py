@@ -21,7 +21,7 @@ import pandas as pd
 from shared.config import (
     BASE_DIR, DATA_DIR, GEMINI_API_KEYS,
     OA_XML_CACHE_DIR, OPENAI_API_KEY, OPENROUTER_API_KEY, PARSE_CACHE_DIR,
-    PDF_CACHE_DIR, PRESCREEN_ENABLED, log,
+    PDF_CACHE_DIR, PRESCREEN_ENABLED, PRESCREEN_MODE, log,
 )
 from shared import token_counter
 from shared.prescreen import prescreen, prescreen_voters
@@ -1283,9 +1283,9 @@ def _check_screen_providers(no_llm: bool) -> None:
             "Set them in .env, or run with --no-llm to skip every LLM stage."
         )
     # The pre-screen fails open, so a missing key would cost only its savings and not
-    # the run — but silently paying full price for every row because a key is unset is
-    # not something to discover from a token bill. Checked separately from the screen's
-    # keys: the tier is optional and its providers are its own.
+    # the run — but since #129 the tier is on by default and the population depends on
+    # it, so silently paying full price for every row is not something to discover from
+    # a token bill. Checked separately from the screen's keys: its providers are its own.
     if PRESCREEN_ENABLED:
         pre_missing = sorted({env for provider, _ in prescreen_voters()
                               for env in [("OPENROUTER_API_KEY" if provider == "openrouter"
@@ -1704,9 +1704,10 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
         # Recorded on the Series, so every producer downstream carries it: _base_row
         # builds from filter_row.to_dict() and the tier's effect on a row that
         # PROCEEDED is otherwise invisible.
+        shadow = PRESCREEN_MODE == "shadow"
         row["prescreen_verdict"] = (f"bypass:{pre['bypass']}" if pre["bypass"]
-                                    else pre["verdict"])
-        if pre["verdict"] == "discard":
+                                    else ("shadow:" if shadow else "") + pre["verdict"])
+        if pre["verdict"] == "discard" and not shadow:
             log.info("[%s] pre-screen: %s", doi_r, pre["evidence"])
             return [_prescreen_row(row, pre)]
 

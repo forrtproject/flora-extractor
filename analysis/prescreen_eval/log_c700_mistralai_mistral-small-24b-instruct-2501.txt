@@ -1,0 +1,12 @@
+cases_live_goldneg_screen.json: 184 cases, 0 cached, 184 to call
+  100/184
+  -> pre_p7c700_mistralai_mistral-small-24b-instruct-2501_live_goldneg_screen.json: {'no': 174, 'yes': 10}  api_errors=0  tokens in=85576 out=1788
+cases_live_goldpos_flora.json: 539 cases, 0 cached, 539 to call
+  100/539
+  200/539
+  300/539
+  400/539
+  500/539
+  -> pre_p7c700_mistralai_mistral-small-24b-instruct-2501_live_goldpos_flora.json: {'yes': 504, 'no': 35}  api_errors=0  tokens in=246095 out=5323
+cases_live_goldpos_repro.json: 28 cases, 0 cached, 28 to call
+  -> pre_p7c700_mistralai_mistral-small-24b-instruct-2501_live_goldpos_repro.json: {'yes': 28}  api_errors=0  tokens in=12867 out=280

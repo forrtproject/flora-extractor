@@ -111,6 +111,33 @@ nemo also proved the least reliable under concurrency here — 429s, occasional 
 content, occasional unparseable replies. That costs savings rather than papers, since
 every non-answer proceeds, but it makes it a poor voter 1.
 
+## The AND gate is not two independent opinions
+
+The tier's safety story is "both voters have to agree, so a single model's blind spot
+cannot lose a paper". Measured over the 567 gold positives, that story is largely false:
+
+| | count | rate |
+| --- | --: | --: |
+| qwen3-30b misses | 5 | 0.88% |
+| mistral-small misses | 12 | 2.12% |
+| **both miss the same paper** | **4** | **0.71%** |
+| expected if errors were independent | 0.11 | — |
+
+The voters fail together **37.8× more often than independence predicts**. When qwen
+misses a gold positive, mistral-small misses the same one 80% of the time, against a
+2.1% base rate. Four of qwen's five misses are joint.
+
+That is not surprising in hindsight — the two models see the same prompt, the same
+truncated abstract and similar instruction tuning — but it means the AND gate supplies
+much less protection than its shape implies, and a second voter cannot be assumed to
+catch the first one's failures. **The deterministic override, not the pair, is what
+carries the safety**: it caught all four joint misses, and without it the measured loss
+would be 4 of 567 rather than 0.
+
+Two consequences worth holding on to. Adding a third cheap voter would buy less than the
+arithmetic suggests. And the regex's coverage is the thing to invest in and to watch,
+because it is load-bearing rather than a backstop.
+
 ## The override is what carries the safety
 
 The four gold positives the AND gate would discard, and the phrase that saves each:
@@ -171,12 +198,43 @@ representative, and it is not:
 rests on one negative bucket. `p6` and `p3` were not run on the positives, having been
 ruled out on the negative side.
 
+## Rejected: shortening the input
+
+Input is 583 of the ~592 tokens per row, so truncating the abstract is the only real cost
+lever. Cutting it from 3,000 to 700 characters saves ~45% of input and costs far more
+than it saves:
+
+| model | in/call | negatives | gold positives lost |
+| --- | --: | --: | --: |
+| qwen3-30b @ 3000 | 583 | 89% | 0.9% |
+| qwen3-30b @ 700 | 310 | 91% | **3.8%** |
+| mistral-small @ 3000 | 734 | 96% | 2.0% |
+| mistral-small @ 700 | 465 | 95% | **6.5%** |
+
+Roughly a 3× increase in positive loss for $1 per corpus pass. The evidence that a paper
+re-tests something is not reliably in the opening sentences, and the papers where it is
+not are exactly the ones this tier must not lose.
+
 ## Recommendation
 
-Ship the tier, leave `PRESCREEN_ENABLED` off, and do not turn it on for $30.
+The tier ships **on** (`PRESCREEN_ENABLED=1`): #129 makes the snapshot scan the only path
+into Stage 3, and that population cannot be screened at full price. The $30 at today's
+volume was never the argument.
 
-Before enabling it, run it in **shadow**: record `prescreen_verdict` on every row, act on
-no discard, and count how often it would have discarded a row the validated screen then
-kept. That is an incremental loss rather than a miss against a gold list, it needs no gold
-labels, it is measurable in the thousands on the live population, and it is the only
-number that should decide this. Revisit when #129 settles the corpus size.
+`PRESCREEN_MODE=shadow` records every verdict and acts on none. It exists because one
+question remains unanswered by any evidence here: how often the tier would discard a row
+the validated screen goes on to keep. That is an incremental loss rather than a miss
+against a gold list, it needs no gold labels, and it is measurable in the thousands on
+the live population. Running the first pass of the new corpus in shadow costs the tier's
+own $0.045/1,000 rows and settles the question that the gold-positive sets structurally
+cannot.
+
+Two things to watch once it is discarding, both following from the correlated-failure
+result above:
+
+- **Sample `data/prescreen_discard.csv` by hand, regularly.** Nothing else in the
+  pipeline ever looks at those rows again, and agreement between two correlated models is
+  not evidence they were right.
+- **Treat the regex as load-bearing.** It is what caught every joint miss. A phrase it
+  does not know is the tier's live failure mode, and any edit to it should be followed by
+  `--rescreen` over the discards so a widened override reopens what a narrower one lost.

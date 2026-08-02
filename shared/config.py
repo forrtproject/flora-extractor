@@ -133,16 +133,32 @@ OPENROUTER_HEAVY_MODEL = os.getenv("OPENROUTER_HEAVY_MODEL", "qwen/qwen3.5-35b-a
 SCREEN_VOTER2_MODEL = os.getenv("SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
 
 # ── Stage 3 cheap pre-screen (issue #130) ─────────────────────────────────────
-# An optional tier in front of the validated screen: two very small models that can
-# only DISCARD, and only when both agree the row is clearly out of scope. Everything
-# else — one keep, an unreadable reply, an API failure — falls through to the screen
-# unchanged, so the tier can lose papers but can never add them.
+# A tier in front of the validated screen: two very small models that can only DISCARD,
+# and only when both agree the row is clearly out of scope. Everything else — one keep,
+# an unreadable reply, an API failure — falls through to the screen unchanged, so the
+# tier can lose papers but can never add them.
 #
-# Default OFF. A pre-screen discard is terminal and never reaches a human, so the
-# validated screen's measured zero-settled-miss property does not extend to it.
+# ON by default: #129 makes the snapshot scan the only path into Stage 3, and that
+# population cannot be screened at full price. The trade is deliberate and it is not
+# free. A pre-screen discard is terminal — the row never reaches the validated screen,
+# never reaches csv_to_db, never reaches a human — so the screen's measured
+# zero-settled-miss property does not extend to the tier in front of it. Measured loss
+# is 0 of 567 gold positives, but the 95% bound on zero misses is still 0.67%, and
+# those positives are the well-described ones. PRESCREEN_ENABLED=0 runs the validated
+# screen alone; --rescreen reopens anything a bad version discarded.
+#
 # Deliberately separate from SCREEN_VOTER2_MODEL: changing a pre-screen model must
 # never silently alter the validated screen's cached verdicts.
-PRESCREEN_ENABLED = os.getenv("PRESCREEN_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+PRESCREEN_ENABLED = os.getenv("PRESCREEN_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+# "discard" acts on the verdict; "shadow" records it on the row and passes every paper
+# to the validated screen anyway. Shadow exists because the safety case has one measured
+# hole: the two voters' errors are 37.8x more correlated than independence (when one
+# misses a gold positive the other misses it 80% of the time), so the AND gate supplies
+# far less protection than its shape suggests and the deterministic override is doing
+# the work. A shadow pass over fresh rows is what turns "the screen would have kept
+# this" into a number, without spending a single paper to learn it.
+PRESCREEN_MODE = os.getenv("PRESCREEN_MODE", "discard").strip().lower()
 # Both measured on the full eval and both reliable under concurrency: 8/8 clean replies,
 # 9 output tokens, ~$0.027 per 1,000 rows each. The model matters as much as the prompt —
 # on identical text, discard rates across the cheap field ran from 15% to 97%.
