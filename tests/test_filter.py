@@ -309,13 +309,3 @@ def test_phrase_guard_is_scoped_to_its_phrase():
     hit = find_replication_phrase_span(text)
     assert hit is not None          # a row-level exclusion would have killed it
     assert hit[0] != "we replicated"  # ... but the guarded phrase is skipped
-
-
-def test_climate_reanalysis_is_guarded():
-    """"Reanalysis" is a gridded-dataset term of art in climate science, not a
-    re-examination of a study."""
-    assert find_replication_phrase_span(
-        "Reanalysis of atmospheric circulation for the Black Sea-Caspian region. "
-        "We use the ERA5 reanalysis dataset.") is None
-    assert find_replication_phrase_span(
-        "A reanalysis of Smith (2010) using the authors' original data.") is not None

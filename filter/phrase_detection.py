@@ -106,17 +106,16 @@ PHRASE_GUARDS: dict[str, re.Pattern] = {
         r"\b(?:gwas|genome[-\s]wide|snps?|alleles?|genotyp\w+|haplotype|"
         r"linkage disequilibrium|minor allele frequency|loci|polymorphism\w*|"
         r"replication cohort|discovery cohort|exome)\b", re.IGNORECASE),
-    # "Reanalysis" is a term of art in climate science (ERA5/NCEP reanalysis
-    # products are gridded datasets, not re-examinations of a study) and in
-    # historical linguistics. Removes a fifth of the phrase's corpus noise at no
-    # cost on any labelled set. The rest of its noise is diffuse and stays.
-    r"\bre-?analys[ei]s of\b": re.compile(
-        r"\b(?:era-?5|era-?interim|ncep|merra|jra-?55|cfsr|"
-        r"reanalys[ei]s (?:dataset|product|data)|atmospher\w+|meteorolog\w+|"
-        r"tropospher\w+|stratospher\w+|sea surface|wind (?:field|speed)|"
-        r"climate model|syntactic reanalysis|grammaticali\w+|morphosyntax)\b",
-        re.IGNORECASE),
 }
+# NOT guarded: "re-analysis of". Its noise has no compact shape. Over ~1,280
+# corpus rows the object after "of" is "data" (260), "studies" (50), "evidence"
+# (40) and then a flat tail of 50+ domain nouns at ~10 each — climate is 2% of it,
+# so a climate word list was fitting 4 rows of a 20-row sample, not the phenomenon.
+# An object blacklist cannot work either: "data" is the commonest object and is
+# ambiguous ("re-analysis of data from Smith (2010)" vs "...from the Framingham
+# cohort"). Requiring a same-sentence author-year cite keeps only 5% and discards
+# real work, including the Davey et al. re-analysis of the Kenya deworming trial.
+# The discrimination is semantic, so it belongs to Stage 3's screen, not here.
 
 
 def _load_exclusion_regexes() -> list[tuple[str, re.Pattern]]:
