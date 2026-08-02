@@ -140,6 +140,60 @@ def pdf_serve_url(doi_r: str, result: dict) -> str:
     return f"/pdf/{expected.name}" if expected.exists() else ""
 
 
+# ── Titles that are really citation strings ──────────────────────────────────
+# A reference parsed out of a PDF without GROBID structure arrives as the raw
+# citation line — "[2] L.J.T. Balter, et al., Low-grade inflammation decreases
+# emotion recognition …, Brain Behav. Immun. 73 (2018) 216–221." — and a numbering
+# marker or an author list in front of the title names no paper that a title search,
+# a validator or doi_verify's Jaccard comparison can match. Two rules below: strip
+# what is demonstrably not part of the title, and refuse what is left when it is
+# still a fragment of the citation rather than a title.
+
+# Shorter than this, once normalised, is boilerplate ("n/a", "unknown") — not a title.
+MIN_USABLE_TITLE = 10
+
+# "[2] ", "(2) ", "3. " — entry numbering in Vancouver/numeric reference lists.
+_REF_MARKER_RE = re.compile(r"^\s*(?:[\[(]\d{1,3}[\])][.,)]?|\d{1,3}\.)\s+")
+
+_INITIALS = r"(?:[A-Z]\.[-\s]*){1,4}"
+# One author in a numeric-style list, up to its separator: "L.J.T. Balter, ",
+# "Moieni M.R., " or "et al., ". Requires the separator, so a title's first words
+# are never mistaken for a name.
+_AUTHOR_CHUNK_RE = re.compile(
+    rf"^(?:et\.?\s*al\.?"
+    rf"|{_INITIALS}(?:[A-Z][\w'’\-]+\s+)?[A-Z][\w'’\-]+"
+    rf"|[A-Z][\w'’\-]+,?\s+{_INITIALS})\s*(?:[,;&]|\band\b)\s*")
+
+# A citation cut off mid-author-list: "… , M.R", "… , J.".
+_TRUNCATED_AUTHORS_RE = re.compile(r",\s*(?:[A-Z]\.){1,3}[A-Z]?\s*$")
+
+_TITLE_NORM_RE = re.compile(r"[^a-z0-9]+")
+
+
+def clean_citation_title(title: str) -> str:
+    """Strip a reference-entry marker and any leading author list off *title*.
+
+    Returns the title portion of a raw citation string; a title that is already a
+    title comes back unchanged. Never strips everything away — a string that is
+    nothing but authors is returned as-is for `usable_title()` to reject.
+    """
+    text = _REF_MARKER_RE.sub("", str(title or "")).strip()
+    while True:
+        match = _AUTHOR_CHUNK_RE.match(text)
+        if not match or not text[match.end():].strip():
+            return text
+        text = text[match.end():].strip()
+
+
+def usable_title(title: str) -> bool:
+    """True when *title* can stand for a paper: long enough, and not a citation
+    fragment (a leading author list, or a citation truncated mid-initials)."""
+    text = _REF_MARKER_RE.sub("", str(title or "")).strip()
+    if len(_TITLE_NORM_RE.sub(" ", text.lower()).strip()) < MIN_USABLE_TITLE:
+        return False
+    return not (_AUTHOR_CHUNK_RE.match(text) or _TRUNCATED_AUTHORS_RE.search(text))
+
+
 _ABBREV_RE = re.compile(
     r"\b(?:et al|e\.g|i\.e|vs|Dr|Mr|Mrs|Ms|Prof|Fig|No|Vol|pp|cf)\."
     r"|(?<!\w)\b[A-Z]\.",

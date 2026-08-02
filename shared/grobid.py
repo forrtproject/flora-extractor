@@ -28,6 +28,7 @@ import requests
 
 from .config import GEMINI_MODEL, GROBID_CACHE_DIR, GROBID_RATE_SEC, GROBID_SERVER, log
 from .prompts import PDF_IMAGE_REFERENCES_PROMPT, PDF_REFERENCES_PROMPT, prompt_version
+from .utils import clean_citation_title, usable_title
 
 # ── pdfminer import (installed lazily) ───────────────────────────────────────
 
@@ -187,9 +188,19 @@ def _parse_references_block(block: str) -> list[dict]:
         # Title: text after closing ")" of year group, stripped of leading punct
         post_year = entry[(m_year.end() if m_year else 0):]
         post_year = re.sub(r"^[\s\.\,\)]+", "", post_year)
-        # First sentence ending at ". Capital" is the title
-        title_m = re.match(r"(.{10,}?)[\.?!]\s+[A-Z]", post_year)
-        ref["title"] = (title_m.group(1) if title_m else post_year[:200]).strip()
+        # Numeric (Vancouver) references put the year last, so there is no year match
+        # to cut at and post_year is still the whole citation: "[2] L.J.T. Balter, et
+        # al., Low-grade inflammation …". The entry marker and the author list are
+        # demonstrably not the title, so they go before the sentence split runs.
+        post_year = clean_citation_title(post_year)
+        # First sentence ending at ". Capital" is the title — but the period after an
+        # author's initial ("M. Moieni, M.R") is not a sentence end, so the character
+        # before it must be part of a word.
+        title_m = re.match(r"(.{10,}?[a-z0-9)\]])[\.?!]\s+[A-Z]", post_year)
+        title = (title_m.group(1) if title_m else post_year[:200]).strip()
+        # What is still a citation fragment names no paper. Keeping it would put a
+        # raw author list into title_o and send a title search after it.
+        ref["title"] = title if usable_title(title) else ""
 
         # Skip entries with no useful information
         if not ref["title"] and not ref["year"]:

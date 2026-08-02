@@ -312,3 +312,34 @@ class TestDirectRefsCacheIdentity:
         src = inspect.getsource(grobid._extract_refs_via_pdf_images)
         assert "_pdf_fingerprint(pdf_path)" in src
         assert "GEMINI_MODEL" in src
+
+
+class TestNumericReferenceTitles:
+    """REGRESSION (doi_r 10.1016/j.physbeh.2021.113324, PR #122 acceptance run): a
+    numeric-style reference list has no "(year)" to cut the title at, so every parsed
+    title was the raw citation line — "[2] L.J.T. Balter, et al., Low-grade
+    inflammation decrea…" — and one was a bare fragment, "[3] M. Moieni, M.R".
+    Both reached title_o."""
+
+    _BLOCK = (
+        "References\n"
+        "[2] L.J.T. Balter, et al., Low-grade inflammation decreases emotion "
+        "recognition - Evidence from the vaccination model of inflammation, "
+        "Brain Behav. Immun. 73 (2018) 216-221.\n"
+        "[3] M. Moieni, M.R\n"
+    )
+
+    def _refs(self) -> list[dict]:
+        from shared.grobid import _parse_references_block
+        return _parse_references_block(self._BLOCK)
+
+    def test_entry_marker_and_author_list_are_not_the_title(self):
+        titles = [r["title"] for r in self._refs() if r["title"]]
+        assert titles, "the substantive reference must survive"
+        assert titles[0].startswith("Low-grade inflammation decreases emotion recognition")
+        assert "[2]" not in titles[0] and "Balter" not in titles[0]
+
+    def test_a_citation_fragment_yields_no_title(self):
+        """The truncated entry may be dropped or kept, but it must never carry the
+        author list as its title."""
+        assert not [r for r in self._refs() if "Moieni" in r["title"]]
