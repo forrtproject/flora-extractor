@@ -141,9 +141,50 @@ catch the first one's failures. **The deterministic override, not the pair, is w
 carries the safety**: it caught all four joint misses, and without it the measured loss
 would be 4 of 567 rather than 0.
 
-Two consequences worth holding on to. Adding a third cheap voter would buy less than the
-arithmetic suggests. And the regex's coverage is the thing to invest in and to watch,
-because it is load-bearing rather than a backstop.
+### What the second voter actually buys
+
+Dropping to one model and keeping the override:
+
+| configuration | neg discarded (net) | positives lost (net) | $/pass |
+| --- | --: | --: | --: |
+| qwen alone + regex | 64% | 1 | $1.48 |
+| mistral-small alone + regex | **68%** | 1 | $1.49 |
+| ministral-14b alone + regex | 66% | 1 | $5.90 |
+| llama-3.1-8b alone + regex | 65% | 2 | $1.49 |
+| nemo alone + regex | 66% | 6 | $0.51 |
+| **qwen + mistral-small (shipped)** | 64% | **0** | $2.25 |
+
+The second voter's measured contribution is **one paper in 567**, and it *costs* four
+percentage points of discard rate and $0.77 a pass. On these rows the ensemble is close
+to redundant: one sane model plus the regex gets the same safety to within a single
+paper, and mistral-small alone would discard more.
+
+### So does this argue for a different pair, or against the ensemble?
+
+**Not for a different pair.** Every pairing tested lands at zero net loss once the
+override runs, and the joint-miss count only moves between 2 and 8 before it. The 37.8×
+figure is also partly an artefact of both voters being *good*: low individual error rates
+make the expected joint count tiny (0.11), so any overlap at all reads as a large
+multiple. Pairs that score a "better" ratio do so because one member is much worse —
+`mistral-small + llama-3.2-3b` is 1.5× independent only because llama-3.2-3b misses 219
+positives. The ratio flatters bad pairs and should not drive the choice.
+
+**Partly against the ensemble, honestly.** The AND gate is not doing what its shape
+claims, and the report should not have implied it was. Two reasons to keep it anyway, and
+neither is visible in the table above:
+
+- These are the *easy* positives. The one-paper gap between "pair" and "single model" is
+  measured where both models do well; on the marginal, oddly-phrased papers this tier
+  actually gates, the models' errors have more room to diverge and the second vote has
+  more to catch.
+- A second voter is the only defence against one provider's behaviour drifting. Model
+  identifiers do not change when serving does, and a silent shift in a single-model gate
+  would go straight into terminal discards.
+
+$0.77 a pass is a low price for those two. But the framing changes: **the regex is the
+safety mechanism and the second model is insurance**, not the other way round. Invest in
+the override's coverage, watch the per-voter "no" rates for drift, and do not expect a
+third voter to add much.
 
 ## The override is what carries the safety
 

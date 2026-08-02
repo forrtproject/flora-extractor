@@ -147,8 +147,10 @@ together 37.8x more often than independence predicts: when one misses a paper th
 misses the same one 80% of the time, against a 2.1% base rate. Four of five misses are
 joint. The deterministic override caught all four, so the safety rests on a hand-written
 regex rather than on two opinions — and that regex was written after seeing those misses.
-A phrasing it does not know is the live failure mode, and adding a third cheap voter
-would buy far less than the arithmetic suggests.
+A phrasing it does not know is the live failure mode. Dropping to one voter and keeping
+the override costs exactly one paper in 567 and gains four points of discard rate, so the
+second model is insurance against provider drift and against this eval's easy-positive
+bias — not the safety mechanism it was presented as. A third voter would add less still.
 
 Two limits of the evidence in `analysis/prescreen_eval/REPORT.md` are structural and no
 larger run of the same design would fix them:
