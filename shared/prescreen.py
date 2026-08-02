@@ -65,6 +65,38 @@ _SIGNAL_PATTERNS = (
     # the large coordinated efforts, which name themselves
     r"\bmany\s?labs\b",
     r"\breproducibility\s+project\b",
+
+    # Everything below was derived from the vocabulary of 7,505 FLoRA papers rather than
+    # from the four misses that motivated the block above, and measured on a held-out
+    # half those patterns were never shown: recall 80% -> 94%, for ~$7 of extra screen
+    # calls per corpus pass. Evidence: analysis/prescreen_eval/OVERRIDE_EVAL.md.
+    r"\b(?:stud(?:y|ies)|paper|article|experiments?|analys[ei]s|work|note|report|research"
+    r"|investigation|manuscript)\s+(?:\w+\s+){0,2}replicat(?:e|es|ed|ing)\b",
+    r"\b(?:results?|findings?|effects?|data)\s+(?:\w+\s+){0,1}replicat(?:e|es|ed)\b",
+    r"\breplicat(?:e|es|ed|ing|ion|ions)\s+and\s+(?:extend|expand|generali[sz]|elaborat|explor)\w*"
+    r"|\b(?:extend|expand)\w*\s+and\s+replicat\w+",
+    r"\breplicat(?:e|es|ed|ing)\s+(?:the\s+|their\s+|these\s+|a\s+|an\s+)?"
+    r"(?:previous|prior|earlier|original|published|key|main|core|central)\b",
+    r"\breplicat(?:e|es|ed|ing)\s+(?:the\s+|their\s+|these\s+|our\s+|its\s+|his\s+|her\s+|a\s+|an\s+)?"
+    r"(?:findings?|results?|effects?|analys[ei]s|procedures?|estimates?|experiments?|stud(?:y|ies))\b",
+    r"\breplicating\b",
+    r"\b(?:narrow|wide|long|partial|approximate|full|successful|unsuccessful|failed"
+    r"|methodological|experimental|attempted|scientific|near|quasi|constructive"
+    r"|cross-?cultural|cross-?national|online|field|lab(?:oratory)?)[\s-]+replicat(?:ion|ions)\b",
+    r"\b(?:aim|goal|purpose|objective)[^.]{0,40}\breplicat",
+    r"\b(?:failure|failures|attempt|attempts|attempting|efforts?)\s+to\s+replicat",
+    r"\b(?:did|does|do|was|were|could|can|would|is|are)\s+not\s+(?:be\s+)?replicat(?:e|ed)\b",
+    r"\breplication\s+(?:analys[ei]s|sample|cohort|data\s?sets?|set|stage|phase|series"
+    r"|trial|attempt|effort|package|material)",
+    r"\b(?:identification|discovery|fine-?mapping|detection|association|validation"
+    r"|extension|confirmation)\s+and\s+replication\b",
+    r"\breproduc(?:e|es|ed|ing|tion)\s+(?:the|their|these|his|her|its|our|previously|original)\s+"
+    r"(?:published\s+)?(?:results?|findings?|analys[ei]s|estimates?|numbers?|tables?|figures?"
+    r"|work|stud(?:y|ies)|experiments?)\b",
+    r"\breplicated\s+in\s+(?:a|an|the|two|three|our|independent|separate)\b",
+    r"\breplications?\s+of\s+[^.;:]{0,60}?(?:\(?(?:19|20)\d{2}\)?|et\s+al)",
+    r"\breplications?\s+of\s+(?:the\s+|a\s+|an\s+|their\s+|this\s+|that\s+|these\s+|our\s+)?"
+    r"(?:previous|prior|earlier|original|published|previously|older|existing|classic|seminal|key)",
 )
 
 _SIGNAL_RE = re.compile("|".join(f"(?:{p})" for p in _SIGNAL_PATTERNS), re.IGNORECASE)

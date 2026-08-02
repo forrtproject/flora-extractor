@@ -21,7 +21,17 @@ from shared.schema import EXTRACTED_COLS
     ("We replicated and extended the counterdispositional findings of Fleeson (2002).", True),
     ("We reproduce the results of Doe (2015) using the original data.", True),
     ("A direct replication of Smith et al.", True),
+    # Measured on 7,505 FLoRA papers, the original patterns missed one in five. These
+    # four phrasings are the highest-recall gaps they left (OVERRIDE_EVAL.md); the last
+    # is the paper a cheaper voter pair discarded before they were added.
+    ("This study replicates the association in an independent cohort.", True),
+    ("Replicating the effect proved harder than expected.", True),
+    ("A replication of Fleeson (2002) in a student sample.", True),
+    ("In a replication of previous results, correlations revealed good stability.", True),
     ("This study examines the effect of market concentration on firm entry.", False),
+    # The line held against tier C: the same eleven characters in a molecular sense must
+    # not bypass, or the override disables the tier it protects.
+    ("We characterise the replication of viral DNA in infected cells.", False),
 ])
 def test_hard_signal_catches_papers_that_state_their_design(text, expected):
     """The Suiter case: an abstract that says "systematic replication study" was

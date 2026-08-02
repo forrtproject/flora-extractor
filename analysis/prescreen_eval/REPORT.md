@@ -89,10 +89,26 @@ replies still overran a 3,000-token cap. `qwen/qwen3.7-flash` emits ~550 and
 `deepseek/deepseek-v4-flash` ~100, against 9 for the models that ship. Judge these on
 measured output tokens, never on the advertised input rate.
 
-One more trap. `inclusionai/ling-2.6-flash`
-— the cheapest thing here at $0.0055/1k and the issue's first choice — has a single
-OpenRouter endpoint (Novita) that returned 429 for every call under every routing mode,
-with credit on the account. Worth re-measuring if that clears; it is one env var.
+`inclusionai/ling-2.6-flash` — the cheapest thing here at $0.0055/1k and the issue's
+first choice — was unmeasurable on 2026-08-02: its single OpenRouter endpoint (Novita)
+returned 429 to every call under every routing mode. It answered normally on 2026-08-03
+and has now been run on all four buckets.
+
+| voter | discards, screen-confirmed | discards, curated | gold positives lost alone |
+| --- | --: | --: | --: |
+| `ling-2.6-flash` | 96% | 82% | 29/567 (5.1%) |
+| `qwen3-30b-a3b` | 89% | 49% | 5/567 |
+| `mistral-small-24b` | 96% | 82% | 12/567 |
+
+It discards as aggressively as mistral-small at a fifth of the price, and paired with
+mistral-small it now loses no gold positive and nets marginally more than the shipped
+pair (24.7% vs 23.6% over both negative buckets). It is not shipped for the reason nemo
+is not: alone it misses one gold positive in twenty, five times qwen's rate, and the
+paper the pair would have lost before the override was widened (`10.1111/j.1469-8986.2010.01022.x`,
+"In a replication of previous results") was saved by a pattern added the same day. That
+is a configuration whose zero rests on the regex having just been extended, not on either
+voter being sound. The shipped pair is two individually sane voters; ling is the obvious
+candidate if the tier's cost ever becomes the binding constraint.
 
 ### Which pair to run
 
@@ -241,6 +257,45 @@ price implies.** At $0.0018 a needless rescue it is cheap per row, but a pattern
 fires on a vocabulary-rich population can erase a large share of the tier's benefit — on
 the curated bucket the existing patterns already erase three quarters of it. Coverage on
 the positives has to be bought against measured firing on negatives, not assumed free.
+
+### Measured on 7,505 papers, it was catching four in five
+
+The override's perfect score above is on the 567 rows that motivated its patterns, so it
+was re-measured against every FLoRA replication and reproduction with a usable abstract —
+7,505 papers, 13× the derivation set — and 1,333 non-replications that genuinely reach
+Stage 3. Full analysis: `OVERRIDE_EVAL.md`.
+
+It fired on **79.9%** of the positives. One FLoRA paper in five states its design in
+words the regex did not recognise, so the tier's primary safety mechanism had a hole a
+fifth as wide as its coverage. Five of the seventeen patterns contributed zero unique
+matches, and the reproduction/re-analysis block turned out to be written from the
+vocabulary reproductions *ought* to use: `re-analysis of the original/published` matched
+one paper in 7,505.
+
+Sixteen patterns were derived from the missed half of that corpus and reported on a
+held-out half they were never shown. They are now shipped in `_SIGNAL_PATTERNS`:
+
+| | override recall on positives | fires on screen-confirmed negatives |
+| --- | --: | --: |
+| before | 79.9% | 30.6% |
+| **after** | **94.7%** (held-out 94.1%) | 36.1% |
+
+The price is ~$7 per corpus pass in screen calls the tier no longer avoids — about a
+quarter of what it was saving, and it takes the shipped pair's net discard on the
+screen-confirmed bucket from 64% to 60%. That is the trade the tier exists to make in the
+right direction: the discard is terminal, so recall on positives is not commensurable
+with dollars.
+
+Two boundaries were tested and declined. Widening `replication of` to a list of
+study-like objects buys +1.1 points of recall for $6; it is defensible and was left out.
+The bare phrase `replication of` buys the remaining 4 points for **$44** — half the
+Stage 3 screening budget — because "replication of DNA", "replication of HIV" and
+"replication of the model" are the same eleven characters. At that firing rate the
+pre-screen would be disabled by regex rather than configured.
+
+What no regex reaches: 43 of the 7,505 positives contain no `replicat*`, `reproduc*` or
+`re-analy*` at all. Replications that never say so are the standing argument for keeping
+a model in front of the discard.
 
 Stage 2's own verdict cannot serve as the override: 98% of rows reaching Stage 3 carry
 `filter_status = replication` at `high` confidence, including **all 184** screen-confirmed

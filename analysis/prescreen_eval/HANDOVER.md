@@ -47,10 +47,11 @@ never reach `csv_to_db`, and are reopened only by `--rescreen`.
 
 Shipped config: prompt `p7` (`_PRESCREEN_PROMPT`), voters
 `qwen/qwen3-30b-a3b-instruct-2507` + `mistralai/mistral-small-24b-instruct-2501`.
-Measured: 87% of screen-confirmed negatives discarded, 64% net of the override,
-0/567 gold positives lost (95% CI 0.00–0.67%).
+Measured: 87% of screen-confirmed negatives discarded, **60%** net of the widened
+override (64% before it), 11% of the curated-negative bucket, 0/567 gold positives lost
+(95% CI 0.00–0.67%).
 
-## The three findings that should shape any further work
+## The four findings that should shape any further work
 
 1. **The question must be answerable with "no".** "Could this paper be re-testing an
    earlier study?" is unanswerable under partial information and discarded 1–5%. Asking
@@ -62,42 +63,42 @@ Measured: 87% of screen-confirmed negatives discarded, 64% net of the override,
 3. **The regex override is load-bearing.** It caught all four joint misses. One model
    plus the regex loses 1 of 567 against the pair's 0. The second model is insurance
    against provider drift, not the primary defence.
+4. **The override is also where the tier's benefit goes.** It fires on 83% of the
+   curated-negative bucket and 36% of the screen-confirmed one, so a widened override
+   directly buys safety with saving. Every pattern change needs both rates measured.
 
 ## Outstanding work, in priority order
 
-### 1. Test and expand the override (started, NOT finished)
+### 1. ~~Test and expand the override~~ — DONE 2026-08-03, with a residue
 
-This is the highest-value remaining task and it is where I was interrupted. Rationale:
-the override is load-bearing (finding 3) and was hand-written *after looking at the
-misses it needed to catch*, so its measured perfection is partly circular.
+Built and measured on 7,505 FLoRA papers and 1,333 live Stage-3 negatives
+(`build_override_sets.py`, `eval_override.py`, `OVERRIDE_EVAL.md`; no LLM calls, all
+rerunnable). The circularity worry was justified: the override was firing on **79.9%** of
+positives, not the ~100% its 567-row score implied.
 
-The plan, which nothing has been written for yet:
+Sixteen patterns derived on the dev half of the misses and reported on a held-out half
+are now **in `shared/prescreen.py`**: recall 79.9% → 94.7%, negatives 30.6% → 36.1%, for
+~$7 a pass. Tier B (`replication of <study-like object>`, +1.1 points for $6) was left
+out as the marginal call; tier C (bare `replication of`, +4 points for **$44** and half
+the screen-confirmed negatives) was rejected — at that firing rate the regex disables the
+tier.
 
-- Build `override_positives.json`: every FLoRA replication/reproduction paper with a
-  title AND abstract, from `data/all_replications.csv`, `data/flora.csv`,
-  `data/flora_entry_sheet.csv`, `data/reproductions.csv` (cp1252), deduped on
-  `clean_doi`. **Not** restricted to the Stage-3 population — the point is FLoRA-wide
-  recall, so this should be thousands of papers, not the 567 already used.
-- Build `override_negatives.json`: non-replications that DO reach Stage 3
-  (`filter_status != false_positive` in `filtered.csv`), from `not_a_replication.csv`
-  (`link_method == not_a_replication`) and the `false_positive` DOIs in
-  `all_replications.csv`. Up to ~5,000. Tag each with its bucket.
-- Backfill abstracts and build the negatives in **one** streaming pass over
-  `filtered.csv` (4.9 GB, ~6 min, `csv.field_size_limit`, never load it into memory).
-- Measure, per individual pattern in `_SIGNAL_PATTERNS`: hit rate on positives (recall)
-  and on negatives (the cost — each hit is one needless $0.0018 screen call).
-- Propose additions. **Derive them on one half of the positives and report only the
-  held-out half**, or the numbers are meaningless. `README.md` explains the split rule.
+What is left, in descending value:
 
-Watch for: a pattern with high positive recall AND high negative hit rate is not
-automatically bad — a needless override costs $0.0018, a missed one costs a paper. Bias
-toward inclusion and say what the false-positive rate costs in dollars. But see task 2:
-the aggregate cost is no longer small, so report each pattern's negative firing rate as a
-share of the tier's remaining benefit, not only in cents.
+- **The residue is still mostly vocabulary.** After tier A, ~88% of the remaining dev-half
+  misses still contain a replication-family word. Another mining round would pay.
+- **Reconsider tier B** if the shadow run shows the tier is saving more than expected.
+- **The dead patterns.** #2, #13, #14, #15, #16 contribute zero unique matches. Harmless,
+  but `re-analysis of the original/published` matching 1 paper in 7,505 says the
+  reproduction vocabulary in the override was imagined rather than observed. Rewrite it
+  from data if reproductions matter.
+- **43 positives contain no `replicat*`/`reproduc*`/`re-analy*` at all.** No regex reaches
+  them. This is the standing argument for the second voter.
 
-Sources worth mining that are NOT the current eval set, per codex's review: reproduction
-and re-analysis vocabulary (which differs sharply from replication vocabulary),
-non-English abstracts, and phrases appearing late in abstracts rather than at the start.
+Closed avenues, so nobody spends a day on them: **non-English vocabulary is a dead end**
+(4 hits in 7,505 positives, 0 among the misses — `filtered.csv` abstracts are English),
+and **late-position phrases need nothing** (`hard_signal()` already searches the whole
+text; the misses are vocabulary misses, not position misses).
 
 ### 2. ~~Run the curated-negative bucket under `p7`~~ — DONE 2026-08-03
 
@@ -121,12 +122,14 @@ the very screen under test. Codex's strongest point: also human-review a random 
 rows where the pre-screen AND the screen both say discard — otherwise you only learn that
 two correlated LLM systems agree.
 
-### 4. Re-check `inclusionai/ling-2.6-flash`
+### 4. ~~Re-check `inclusionai/ling-2.6-flash`~~ — DONE 2026-08-03
 
-Cheapest model in the field ($0.0055/1k, 3× cheaper than what ships) and never
-evaluated: it has a single OpenRouter endpoint (Novita) that returned 429 to every call
-on 2026-08-02, under every routing mode, with credit on the account. If it ever answers,
-it is worth a full run — one env var to swap in, then re-measure.
+The Novita endpoint answers again; all four buckets are run. It discards as hard as
+mistral-small (96% / 82%) at a fifth of the price, and `ling + mistral-small` now loses
+no gold positive and nets marginally more than the shipped pair. It is **not** swapped in:
+alone it misses one gold positive in twenty, five times qwen's rate, and its zero rests on
+a regex pattern added the same day. Keep it as the candidate for the day the tier's own
+cost becomes the binding constraint — one env var. Details in `REPORT.md`.
 
 ## Gotchas that cost me time
 
@@ -160,8 +163,11 @@ it is worth a full run — one env var to swap in, then re-measure.
 | file | what |
 | --- | --- |
 | `REPORT.md` | the findings, with all the numbers |
+| `OVERRIDE_EVAL.md` | the override measured on 7,505 papers; which patterns pay, which were rejected |
 | `README.md` | how to run the harness, the population, the split rule |
 | `CASESETS.md` | how the four buckets were built and their caveats |
+| `override_positives.json`, `override_negatives.json` | the 7,505 / 1,333 override corpora |
+| `build_override_sets.py`, `eval_override.py` | build and score them; no LLM calls, ~6 min |
 | `cases_live_*.json` | the eval population (rows that actually reach Stage 3) |
 | `pre_<prompt>_<model>_<set>.json` | one voter's answers; resumable, delete to re-run |
 | `eval_prescreen.py` | runner: `<model> <prompt.txt> <caseset.json…> [--workers=N] [--chars=N]` |
