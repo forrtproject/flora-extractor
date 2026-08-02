@@ -2,6 +2,9 @@
 rule_filter.py — Stage 2 rule-based classifier.
 
 Per RULEBOOK §Filter:
+    - Rows from a curated source (``shared.config.CURATED_SOURCES``) skip keyword
+      discovery entirely and go to ``needs_review``: a human already listed the
+      paper as a replication or reproduction, so phrase matching can only lose it.
     - A paper passes as ``replication`` only when both an explicit replication
       phrase AND a specific author-year citation are present.
     - Vague phrases like "we replicate prior findings on X" become
@@ -20,6 +23,7 @@ filter_method, filter_evidence, filter_confidence) for one candidate row.
 ``screen`` on the rows its front-door screen passes.
 """
 
+from shared.config import CURATED_SOURCES
 from shared.openalex_client import extract_author_year_patterns
 from shared.utils import non_article_doi, sentence_spans
 
@@ -54,6 +58,22 @@ def classify_row(row: dict) -> dict:
             "filter_status": "false_positive",
             "filter_method": "rule_based",
             "filter_evidence": f"exclusion:{doi_excl}",
+            "filter_confidence": "high",
+        }
+
+    # Curated-source bypass. A human already put this paper on a replication or
+    # reproduction list, so keyword discovery has nothing to add and can only lose
+    # it — I4R reproductions are titled "A comment on Smith et al. (2023)" and carry
+    # no replication vocabulary. The row goes to Stage 3's screen to be settled.
+    # Checked after non_article_doi so a peer-review object on a curated list is
+    # still dropped: the bypass trusts the list about the topic, not about the DOI
+    # pointing at an article.
+    source = str(row.get("source") or "").strip().lower()
+    if source in CURATED_SOURCES:
+        return {
+            "filter_status": "needs_review",
+            "filter_method": "rule_based",
+            "filter_evidence": f"curated_source:{source}; keyword filter bypassed",
             "filter_confidence": "high",
         }
 

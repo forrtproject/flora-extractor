@@ -136,6 +136,18 @@ SCREEN_VOTER2_MODEL = os.getenv("SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
 # FLORA_USE_ENGINE=1 (or true/yes/on) opts into the YAML-spec engine source.
 FLORA_USE_ENGINE = os.getenv("FLORA_USE_ENGINE", "").strip().lower() in {"1", "true", "yes", "on"}
 
+# ── Stage 2 curated sources ───────────────────────────────────────────────────
+# Rows from these sources were put on a curated replication/reproduction list by a
+# human, so Stage 2's keyword discovery can only lose them: an I4R reproduction
+# titled "A comment on Smith et al. (2023)" carries no replication vocabulary at
+# all. They bypass phrase matching and go straight to needs_review for Stage 3's
+# screen — the validated decider — to settle.
+CURATED_SOURCES = frozenset(
+    s.strip().lower()
+    for s in os.getenv("CURATED_SOURCES", "i4r,bob_reed,backfill_old_pipeline").split(",")
+    if s.strip()
+)
+
 # ── External servers ──────────────────────────────────────────────────────────
 GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")
 

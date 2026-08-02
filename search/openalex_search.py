@@ -76,6 +76,17 @@ SEARCH_PHRASES = [
     "preregistered replication",
     "exact replication",
     "systematic replication",
+    # Re-analysis of a prior study's own data is a reproduction, and nothing here
+    # searched for it — a re-analysis that never says "replication" was never
+    # fetched at all. Measured 2026-08-02: "reanalysis" 90,393 works, "re-analysis"
+    # 15,225 (OpenAlex tokenises the hyphenated form differently, so both are
+    # needed); "reanalyze"/"reanalyzed" both stem to one query and are not listed
+    # twice. "reanalysis of the original" (170) is a strict subset of "reanalysis"
+    # and is deliberately NOT listed alongside it — see issue #128.
+    # phrase_yield() does NOT flag these: "degenerate" means a phrase that silently
+    # lost its stopwords, not a term deliberately written as one word.
+    "reanalysis",
+    "re-analysis",
 ]
 
 # Concept-based search — catches papers classified by OpenAlex's own ML as
@@ -149,10 +160,19 @@ COVERAGE_FROM_YEAR = 1990
 #     "could not reproduce" 6,381 vs reversed 1,133                       phrase ok
 #     "did not replicate"   2,409 vs reversed 414                         phrase ok
 #
-# So only "of" is confirmed dropped; "we"/"not"/"did"/"could" are NOT — do not add words
-# here on intuition, measure them first (scripts in the issue #68 thread). Under-flagging
-# is safe, over-flagging puts a false warning on a phrase that works.
-_OA_STOPWORDS = {"of"}
+# Re-measured 2026-08-02 while evaluating "a comment on" as a discovery phrase: the
+# articles and "on" are dropped too, so that phrase is exactly the one-word query
+# "comment" (1.2M works) and cannot be searched as a phrase at all.
+#     "a comment on" = "on comment a" = "a comment on the" = "comment" → 1,209,811 DEGENERATE
+#     "reanalysis of" = "of reanalysis" = "reanalysis"                 →    90,393 DEGENERATE
+#
+# The reversal test says NOTHING about a single-word label — reversing one word is the
+# identity, so it always "matches". Only apply it to multi-word phrases.
+#
+# "we"/"not"/"did"/"could" are still NOT dropped — do not add words here on intuition,
+# measure them first (scripts in the issue #68 thread). Under-flagging is safe,
+# over-flagging puts a false warning on a phrase that works.
+_OA_STOPWORDS = {"of", "a", "an", "the", "on"}
 
 
 def _content_tokens(phrase: str) -> list[str]:
@@ -226,7 +246,13 @@ def phrase_yield() -> dict:
             "incomplete": a["incomplete"],
             "expected_partial": a["no_api_total"] > 0,
             "years_missing": missing,
-            "degenerate": len(_content_tokens(label)) < 2 and not label.startswith("concept:"),
+            # Degenerate means "written as a phrase, but stopword removal left one
+            # content word, so no phrase matching happens" — a silent trap. A term
+            # written as ONE word is just a one-word sweep doing what it says, so
+            # requiring len(label.split()) > 1 keeps "reanalysis" out of the flag.
+            "degenerate": (len(label.split()) > 1
+                           and len(_content_tokens(label)) < 2
+                           and not label.startswith("concept:")),
             "source": "concept" if label.startswith("concept:") else "phrase",
         })
     rows.sort(key=lambda r: -r["fetched"])

@@ -281,6 +281,11 @@ class TestPhraseYieldCoverage:
         for p in ("direct replication", "we replicated", "could not reproduce",
                   "did not replicate"):
             assert rows[p]["degenerate"] is False, p
+        # A term written as ONE word is a one-word sweep doing exactly what it says,
+        # not a phrase that silently lost its stopwords. "non-replication" likewise:
+        # it is one word (5,263 works, nothing like bare "replication" at 1.3M).
+        for p in ("reanalysis", "re-analysis", "non-replication"):
+            assert rows[p]["degenerate"] is False, p
 
 
 @pytest.mark.skipif(
