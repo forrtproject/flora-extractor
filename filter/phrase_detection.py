@@ -106,6 +106,16 @@ PHRASE_GUARDS: dict[str, re.Pattern] = {
         r"\b(?:gwas|genome[-\s]wide|snps?|alleles?|genotyp\w+|haplotype|"
         r"linkage disequilibrium|minor allele frequency|loci|polymorphism\w*|"
         r"replication cohort|discovery cohort|exome)\b", re.IGNORECASE),
+    # "Reanalysis" is a term of art in climate science (ERA5/NCEP reanalysis
+    # products are gridded datasets, not re-examinations of a study) and in
+    # historical linguistics. Removes a fifth of the phrase's corpus noise at no
+    # cost on any labelled set. The rest of its noise is diffuse and stays.
+    r"\bre-?analys[ei]s of\b": re.compile(
+        r"\b(?:era-?5|era-?interim|ncep|merra|jra-?55|cfsr|"
+        r"reanalys[ei]s (?:dataset|product|data)|atmospher\w+|meteorolog\w+|"
+        r"tropospher\w+|stratospher\w+|sea surface|wind (?:field|speed)|"
+        r"climate model|syntactic reanalysis|grammaticali\w+|morphosyntax)\b",
+        re.IGNORECASE),
 }
 
 

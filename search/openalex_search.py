@@ -149,10 +149,16 @@ COVERAGE_FROM_YEAR = 1990
 #     "could not reproduce" 6,381 vs reversed 1,133                       phrase ok
 #     "did not replicate"   2,409 vs reversed 414                         phrase ok
 #
-# So only "of" is confirmed dropped; "we"/"not"/"did"/"could" are NOT — do not add words
-# here on intuition, measure them first (scripts in the issue #68 thread). Under-flagging
-# is safe, over-flagging puts a false warning on a phrase that works.
-_OA_STOPWORDS = {"of"}
+# Re-measured 2026-08-02 while evaluating "a comment on" as a discovery phrase: the
+# articles and "on" are dropped too, so that phrase is exactly the one-word query
+# "comment" (1.2M works) and cannot be searched as a phrase at all.
+#     "a comment on" = "on comment a" = "a comment on the" = "comment" → 1,209,811 DEGENERATE
+#     "reanalysis of" = "of reanalysis" = "reanalysis"                 →    90,393 DEGENERATE
+#
+# "we"/"not"/"did"/"could" are still NOT dropped — do not add words here on intuition,
+# measure them first (scripts in the issue #68 thread). Under-flagging is safe,
+# over-flagging puts a false warning on a phrase that works.
+_OA_STOPWORDS = {"of", "a", "an", "the", "on"}
 
 
 def _content_tokens(phrase: str) -> list[str]:
