@@ -101,8 +101,9 @@ Never change a column name without updating `schema.py` and notifying all teams.
 `/` routes to OpenRouter, otherwise OpenAI direct) — each answer the validated v3.2
 schema: `classification` ∈ {replication, reproduction, both, none, unclear}, boolean
 `confident`, `categories` (11-value enum), `evidence_quote`, `reasoning`. Prompt:
-`_CLASSIFY_PROMPT` in `shared/prompts.py` (evaluated copy:
-`analysis/screening_eval/prompt_v32.txt`; evidence: `analysis/screening_eval/report_v32.md`).
+`_CLASSIFY_PROMPT` in `shared/prompts.py`, now at v3.3 — v3.2 plus the
+partial-overlap rule (evaluated copy: `analysis/screening_eval/prompt_v33.txt`;
+evidence: `analysis/screening_eval/report_v33.md`, with `report_v32.md` behind it).
 
 **The gate is `screen_gate()`, defined once** (G-softqual, 89% hard-negative discard,
 zero settled misses):

@@ -83,6 +83,9 @@ What counts as a target:
   cited for background, motivation or context is NOT a target.
 - Do NOT include a study because it is topically similar, prominent, frequently
   cited, or the only option offered.
+- Replication chains: when the finding has already been re-tested by others, the
+  target is the study closest to this paper in the chain — the one it actually
+  re-tests — not the chain's original source.
 
 How to count:
 - One entry per original PAPER, not per test. Several studies from the same original
@@ -313,6 +316,7 @@ Each of the following qualifies:
 4. Measurement re-validation. Re-testing, re-validating, translating or adapting an already published instrument, scale, test or clinical procedure qualifies, including when this is done in a new population, language or setting, and including when the stated aim is that instrument's reliability, test-retest, inter-rater agreement or reproducibility in that new population, language or setting.
 5. Comment or reply with its own analysis. A comment, reply or letter that presents its own re-analysis of a published result qualifies.
 6. Author self-declaration. If the authors explicitly identify the study itself as a replication or reproduction, accept that framing and use the type they declare. Merely using related vocabulary in one of the non-qualifying senses below is not a self-declaration. Author self-declaration applies only when the declared target is earlier published research in another paper; a declared "replication" whose target is elsewhere in this same paper is an internal replication.
+7. Partial data overlap. Sharing some observations with the original does not disqualify: a re-test that extends the original sample, adds a later wave, or partially overlaps the original data still qualifies when checking the earlier finding is an aim of the paper.
 
 WHAT DOES NOT QUALIFY
 
@@ -463,6 +467,20 @@ OUTCOME CATEGORIES
 Remember: "uninformative" is the authors' verdict about their study; "cannot_be_determined" is
 our verdict about our evidence.
 
+CODING RULES
+
+- A manipulation check or preliminary test that failed, so that the hypothesis could not be
+  tested, is "failure" — not "uninformative" and not "cannot_be_determined". A manipulation
+  check that succeeded followed by a failed main test is also "failure".
+- If the paper's title focuses on one specific effect and that effect did not replicate, code
+  "failure", whatever other checks succeeded.
+- A close replication that works alongside a conceptual replication that does not is "mixed".
+- Code the central finding the replication was designed to test. Robustness checks and
+  exploratory analyses around it may be left out of the verdict.
+- Where this paper reports several of its own studies against the original named below,
+  aggregate them into one verdict, following the authors' own judgment where they state one;
+  results that conflict with each other are "mixed".
+
 Examples:
 
 1. "Study x used method A to study reasons for 911 calls in city 1. Here, we replicate this
@@ -602,6 +620,11 @@ Rules that apply to both axes:
   the finding by other means, so code axis 2 independently.
 - Both axes concern re-analysis of the original data. New data collected in a fresh sample is
   a replication, not a robustness check, and does not belong on axis 2.
+- Both axes concern the central finding this paper set out to check, not incidental or
+  exploratory analyses around it.
+- Where the paper reports several of its own re-analyses against the original named below,
+  settle each axis over them together rather than picking one, following the authors' own
+  judgment where they state one.
 
 Judge this paper's own reproduction attempt, not results it reports for other studies in its
 background or literature review. Base every judgment only on the evidence below.
