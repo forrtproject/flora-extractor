@@ -154,6 +154,32 @@ def test_a_bypassed_row_costs_nothing_and_still_says_so(tmp_path, monkeypatch):
     assert out[0]["prescreen_verdict"] == "bypass:hard_signal:direct replication"
 
 
+def test_shadow_mode_records_the_verdict_without_acting_on_it(tmp_path, monkeypatch):
+    """The measured safety case rests on the regex, not on the two voters — their errors
+    are 37.8x more correlated than independence. Shadow mode is how that gets checked
+    against fresh rows without spending a paper to learn it."""
+    import extract.run_extract as rx
+
+    monkeypatch.setattr(ps, "LLM_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(rx, "PRESCREEN_ENABLED", True)
+    monkeypatch.setattr(rx, "PRESCREEN_MODE", "shadow")
+    row = pd.Series({"doi_r": "10.1/x", "title_r": "Market entry",
+                     "abstract_r": "We estimate the effect of concentration. " * 8,
+                     "filter_status": "replication", "source": "openalex"})
+    screen = {"resolution_method": "llm_refscreen_failed", "screen_verdict": "",
+              "votes": [], "categories": [], "llm_error": "boom",
+              "llm_reasoning": "", "llm_model": "m"}
+    with patch.object(ps, "call_openrouter", return_value=({"maybe_replication": "no"}, "")), \
+         patch.object(rx, "classify_replication", return_value=screen) as screened:
+        out = rx._process_row(row, "10.1/x", no_llm=False, no_pdf=True,
+                              no_reproductions=False, resolved_only=False,
+                              recalibrate_outcomes=False)
+
+    screened.assert_called_once()                       # the paper still reached the screen
+    assert out[0]["link_method"] != "prescreen_discard"
+    assert out[0]["prescreen_verdict"] == "shadow:discard"
+
+
 def test_no_llm_never_pre_screens(monkeypatch):
     """--no-llm means no LLM stage runs, and the pre-screen is one."""
     import extract.run_extract as rx

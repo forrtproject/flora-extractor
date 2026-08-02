@@ -1,0 +1,366 @@
+[
+ {
+  "id": "GR001",
+  "doi": "10.1002/jae.1191",
+  "usage": {
+   "in": 423,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"yes\"}\n```",
+  "hard_signal": "replication and extension",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR004",
+  "doi": "10.1002/jae.2493",
+  "usage": {
+   "in": 456,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"yes\"}\n```",
+  "hard_signal": "reproduce the results of",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR005",
+  "doi": "10.1002/jae.2591",
+  "usage": {
+   "in": 459,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR007",
+  "doi": "10.1002/jae.2677",
+  "usage": {
+   "in": 478,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "Replication of the",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR011",
+  "doi": "10.1002/jae.2850",
+  "usage": {
+   "in": 481,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"yes\"}\n```",
+  "hard_signal": "replication of the",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR021",
+  "doi": "10.1017/psrm.2017.44",
+  "usage": {
+   "in": 427,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR023",
+  "doi": "10.1017/s0003055418000254",
+  "usage": {
+   "in": 423,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR024",
+  "doi": "10.1037/a0027687",
+  "usage": {
+   "in": 447,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicated",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR025",
+  "doi": "10.1037/cep0000387",
+  "usage": {
+   "in": 457,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication study",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR028",
+  "doi": "10.1080/00220388.2013.807501",
+  "usage": {
+   "in": 437,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "attempt to replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR034",
+  "doi": "10.1093/cje/bet075",
+  "usage": {
+   "in": 492,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR035",
+  "doi": "10.1093/hropen/hoaa047",
+  "usage": {
+   "in": 481,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication of the",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR041",
+  "doi": "10.1177/1091142114539751",
+  "usage": {
+   "in": 502,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"yes\"}\n```",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR042",
+  "doi": "10.1177/1091142114553785",
+  "usage": {
+   "in": 465,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we both replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR043",
+  "doi": "10.1177/1091142115605380",
+  "usage": {
+   "in": 446,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR044",
+  "doi": "10.1177/1091142117690437",
+  "usage": {
+   "in": 498,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR045",
+  "doi": "10.1177/10911421221101690",
+  "usage": {
+   "in": 453,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "We replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR047",
+  "doi": "10.1177/2053168014559094",
+  "usage": {
+   "in": 428,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR048",
+  "doi": "10.1177/2053168018764876",
+  "usage": {
+   "in": 444,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication of a",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR051",
+  "doi": "10.1186/s12916-020-01518-9",
+  "usage": {
+   "in": 485,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "we attempt to replicate",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR057",
+  "doi": "10.1371/journal.pone.0233948",
+  "usage": {
+   "in": 483,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication study",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR058",
+  "doi": "10.1371/journal.pone.0332478",
+  "usage": {
+   "in": 432,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication study",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR059",
+  "doi": "10.1515/econ-2022-0109",
+  "usage": {
+   "in": 489,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "Replication of A",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR062",
+  "doi": "10.18718/81781.12",
+  "usage": {
+   "in": 480,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"yes\"}\n```",
+  "hard_signal": "replication study",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR065",
+  "doi": "10.2307/2938748",
+  "usage": {
+   "in": 440,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"yes\"}\n```",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR070",
+  "doi": "10.3389/fnsys.2025.1547276",
+  "usage": {
+   "in": 439,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication studies",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR072",
+  "doi": "10.5018/economics-ejournal.ja.2018-3",
+  "usage": {
+   "in": 447,
+   "out": 13
+  },
+  "error": "",
+  "raw": "```json\n{\"maybe_replication\": \"yes\"}\n```",
+  "hard_signal": "",
+  "verdict": "yes",
+  "reason": ""
+ },
+ {
+  "id": "GR074",
+  "doi": "10.7759/cureus.34566",
+  "usage": {
+   "in": 475,
+   "out": 9
+  },
+  "error": "",
+  "raw": "{\"maybe_replication\": \"yes\"}",
+  "hard_signal": "replication of our",
+  "verdict": "yes",
+  "reason": ""
+ }
+]

@@ -75,3 +75,14 @@ def client(app):
         with c.session_transaction() as sess:
             sess["reviewer_id"] = "tester"
         yield c
+
+
+@pytest.fixture(autouse=True)
+def _prescreen_off_unless_asked(monkeypatch):
+    """The cheap pre-screen (issue #130) is on in production, and it sits in front of
+    every Stage 3 row. A test about the validated screen, the ladder or the budget would
+    otherwise reach the pre-screen's providers first and fail for a reason it is not
+    about. Tests that exercise the tier set PRESCREEN_ENABLED on the module themselves.
+    """
+    import extract.run_extract as _run_extract
+    monkeypatch.setattr(_run_extract, "PRESCREEN_ENABLED", False, raising=False)

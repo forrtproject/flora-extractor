@@ -28,37 +28,46 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from shared.prescreen import hard_signal  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
-ABSTRACT_CHARS = 3000
+ABSTRACT_CHARS = 3000   # overridable with --chars=N, to price the input side
 
 
-def build_prompt(template: str, title: str, abstract: str) -> str:
+def build_prompt(template: str, title: str, abstract: str, chars: int = 0) -> str:
     return (template.replace("{title}", title or "(not available)")
-                    .replace("{abstract}", (abstract or "(not available)")[:ABSTRACT_CHARS]))
+                    .replace("{abstract}", (abstract or "(not available)")[:chars or ABSTRACT_CHARS]))
 
 
-def call_chat(model: str, prompt: str) -> tuple[Optional[str], Optional[str], dict]:
+def call_chat(model: str, prompt: str,
+              max_tokens: int = 200) -> tuple[Optional[str], Optional[str], dict]:
     if "/" in model:
         url = "https://openrouter.ai/api/v1/chat/completions"
         hdr = {"Content-Type": "application/json",
                "Authorization": f"Bearer {os.environ.get('OPENROUTER_API_KEY', '')}"}
         payload = {"model": model, "messages": [{"role": "user", "content": prompt}],
-                   "temperature": 0, "max_tokens": 200,
+                   "temperature": 0, "max_tokens": max_tokens,
                    "provider": {"sort": "price"}}
     else:
         url = "https://api.openai.com/v1/chat/completions"
         hdr = {"Content-Type": "application/json",
                "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY', '')}"}
         payload = {"model": model, "messages": [{"role": "user", "content": prompt}],
-                   "max_completion_tokens": 200, "temperature": 0}
+                   "max_completion_tokens": max_tokens, "temperature": 0}
     req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=hdr)
-    with urllib.request.urlopen(req, timeout=120) as r:
+    with urllib.request.urlopen(req, timeout=180) as r:
         d = json.load(r)
     u = d.get("usage") or {}
     usage = {"in": u.get("prompt_tokens", 0), "out": u.get("completion_tokens", 0)}
     choices = d.get("choices") or []
     if not choices:
         return None, f"no choices: {json.dumps(d)[:200]}", usage
-    return (choices[0].get("message") or {}).get("content"), None, usage
+    choice = choices[0]
+    content = (choice.get("message") or {}).get("content")
+    # A reasoning model spends the budget thinking and emits its answer last, so a cap
+    # sized for "yes"/"no" cuts it off mid-thought and returns empty content. Scoring
+    # that as an unreadable reply blames the model for the harness — it reads as a
+    # model that cannot follow the schema when it simply was not allowed to finish.
+    if not content and choice.get("finish_reason") == "length":
+        usage["truncated"] = True
+    return content, None, usage
 
 
 def call(model: str, prompt: str, retries: int = 6) -> tuple[Optional[str], Optional[str], dict]:
@@ -67,7 +76,13 @@ def call(model: str, prompt: str, retries: int = 6) -> tuple[Optional[str], Opti
     would be scored as 'no answer' and silently deflate the discard rate."""
     for attempt in range(retries):
         try:
-            return call_chat(model, prompt)
+            text, err, usage = call_chat(model, prompt)
+            # Give a model that ran out of room a second, generous attempt rather than
+            # recording its silence as a failure to follow the schema.
+            if usage.get("truncated"):
+                text, err, usage = call_chat(model, prompt, max_tokens=3000)
+                usage["needed_room"] = True
+            return text, err, usage
         except urllib.error.HTTPError as e:
             msg = e.read().decode()[:200]
             if attempt < retries - 1:
@@ -109,7 +124,7 @@ def parse(text: str) -> dict:
 
 
 def run_set(model: str, template: str, tag: str, case_path: Path,
-            limit: int, workers: int) -> None:
+            limit: int, workers: int, chars: int = 0) -> None:
     cases = json.loads(case_path.read_text())
     if limit:
         cases = cases[:limit]
@@ -124,7 +139,7 @@ def run_set(model: str, template: str, tag: str, case_path: Path,
     print(f"{case_path.name}: {len(cases)} cases, {len(done)} cached, {len(todo)} to call")
 
     def one(case: dict) -> dict:
-        prompt = build_prompt(template, case.get("title", ""), case.get("abstract", ""))
+        prompt = build_prompt(template, case.get("title", ""), case.get("abstract", ""), chars)
         text, err, usage = call(model, prompt)
         rec = {"id": case["id"], "doi": case.get("doi", ""), "usage": usage,
                "error": err or "", "raw": (text or "")[:600],
@@ -163,8 +178,10 @@ def main() -> None:
         else Path(prompt_file).read_text()
     tag = Path(prompt_file).stem.replace("prompt_", "")
     for cf in case_files:
-        run_set(model, template, tag, HERE / cf if not Path(cf).is_absolute() else Path(cf),
-                int(opts.get("--limit", 0)), int(opts.get("--workers", 8)))
+        chars = int(opts.get("--chars", 0))
+        run_set(model, template, tag + (f"c{chars}" if chars else ""), 
+                HERE / cf if not Path(cf).is_absolute() else Path(cf),
+                int(opts.get("--limit", 0)), int(opts.get("--workers", 8)), chars)
 
 
 if __name__ == "__main__":

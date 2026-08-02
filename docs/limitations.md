@@ -136,11 +136,19 @@ intuition — `we`, `not`, `did` and `could` were each measured *not* to be drop
 
 ## (g) The cheap pre-screen trades a measured property for money (issue #130)
 
-`shared/prescreen.py` is off by default and should stay off until someone decides the
-trade deliberately. `screen_gate()` has a measured *zero* settled misses; a pre-screen
-discard is terminal — the row never reaches the validated screen, never reaches
-`csv_to_db`, never reaches a human — so nothing about the screen's property extends to
-the tier in front of it.
+`shared/prescreen.py` is ON by default (decided 2026-08-03: #129 makes the snapshot scan
+the only path into Stage 3, and that population cannot be screened at full price).
+`screen_gate()` has a measured *zero* settled misses; a pre-screen discard is terminal —
+the row never reaches the validated screen, never reaches `csv_to_db`, never reaches a
+human — so nothing about the screen's property extends to the tier in front of it.
+
+**The AND gate is weaker than it looks.** Over 567 gold positives the two voters fail
+together 37.8x more often than independence predicts: when one misses a paper the other
+misses the same one 80% of the time, against a 2.1% base rate. Four of five misses are
+joint. The deterministic override caught all four, so the safety rests on a hand-written
+regex rather than on two opinions — and that regex was written after seeing those misses.
+A phrasing it does not know is the live failure mode, and adding a third cheap voter
+would buy far less than the arithmetic suggests.
 
 Two limits of the evidence in `analysis/prescreen_eval/REPORT.md` are structural and no
 larger run of the same design would fix them:
@@ -154,9 +162,11 @@ larger run of the same design would fix them:
   search finds are exactly what a 3B-class model misses and are structurally absent
   from the set, so the measured rate is a lower bound for the stratum that matters.
 
-**Revisit obligation:** before enabling this in production, run it in shadow — verdict
-recorded, discard not acted on — over fresh rows and count how often it would discard a
-row the validated screen went on to keep. That quantity is the real cost, it is
+**Revisit obligation:** run `PRESCREEN_MODE=shadow` over the first pass of the new
+corpus — verdict recorded, discard not acted on — and count how often it would discard a
+row the validated screen went on to keep. Sample `data/prescreen_discard.csv` by hand
+regularly once it is discarding: nothing else ever looks at those rows again, and
+agreement between two correlated models is not evidence they were right. That quantity is the real cost, it is
 measurable in the thousands without any gold labels, and it is the only number that
 should decide this. Re-check the economics at the same time: measured over
 `data/filtered.csv` on 2026-08-02, 49,800 of 2,581,092 rows reach Stage 3, so the whole
