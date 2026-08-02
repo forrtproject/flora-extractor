@@ -32,9 +32,14 @@ import yaml
 # but naming them once makes the shared membership explicit.
 _REPRODUCTION_ANCHORED: list[re.Pattern] = [
     re.compile(r"\breproductions? of ['\"“‘]", re.IGNORECASE),
-    re.compile(r"\bcomputational reproduc\w+\b", re.IGNORECASE),
+    # "comput\w*" not "computational": the genre says "computationally reproducible"
+    # at least as often as "computational reproduction".
+    re.compile(r"\bcomput\w*\s+reproduc\w+\b", re.IGNORECASE),
     re.compile(r"\brobustness\s+(?:replicabilit\w+|reproducibilit\w+|replication)\b", re.IGNORECASE),
     re.compile(r"\breproduc\w+\s+(?:and|&)\s+(?:replicat|extend|extension)\w*\b", re.IGNORECASE),
+    # Re-analysis of a prior study's data is a reproduction. Cost-free on every
+    # labelled set and the largest single gain on the curated reproduction list.
+    re.compile(r"\bre-?analys[ei]s of\b", re.IGNORECASE),
 ]
 
 # Every "<qualifier> replication" pattern carries an explicit ``s?``: ``\b`` after
@@ -85,6 +90,25 @@ REPLICATION_PHRASES: list[re.Pattern] = [
 REPRODUCTION_PHRASES: list[re.Pattern] = list(_REPRODUCTION_ANCHORED)
 
 
+# Phrase-scoped negative contexts, keyed by pattern source. A phrase whose guard
+# fires is skipped while every OTHER phrase in the same text can still match —
+# unlike the row-level patterns in exclusion-patterns.yaml, which kill the row.
+# That distinction matters: the measurement-reliability vocabulary below makes
+# "reproducibility of" worthless but says nothing about "a direct replication of
+# Smith (2010)" in the same abstract.
+PHRASE_GUARDS: dict[str, re.Pattern] = {
+    # "We replicated one SNP (rs133885) from 585 SNPs previously reported..." — a
+    # GWAS discovery/replication-cohort design, not a replication of a study.
+    # Removes 59 curated negatives at zero cost on either gold set. The same guard
+    # on "replication stud(y|ies)" costs 28 human-gold papers to remove 18
+    # negatives, so it is deliberately scoped to this one phrase.
+    r"\bwe replicated\b": re.compile(
+        r"\b(?:gwas|genome[-\s]wide|snps?|alleles?|genotyp\w+|haplotype|"
+        r"linkage disequilibrium|minor allele frequency|loci|polymorphism\w*|"
+        r"replication cohort|discovery cohort|exome)\b", re.IGNORECASE),
+}
+
+
 def _load_exclusion_regexes() -> list[tuple[str, re.Pattern]]:
     spec_path = Path(__file__).parent / "spec" / "exclusion-patterns.yaml"
     with spec_path.open("r", encoding="utf-8") as f:
@@ -129,6 +153,9 @@ def find_replication_phrase_span(text: str,
     for regex in REPLICATION_PHRASES:
         m = regex.search(text)
         if m:
+            guard = PHRASE_GUARDS.get(regex.pattern)
+            if guard is not None and guard.search(text):
+                continue
             return m.group(0).lower(), m.start(), m.end()
     return None
 
@@ -141,11 +168,20 @@ def is_reproduction_only(text: str) -> bool:
     """
     if not text:
         return False
-    repro_hits = [r for r in REPRODUCTION_PHRASES if r.search(text)]
+
+    def _hits(regex: re.Pattern) -> bool:
+        """A guarded-out phrase is not a hit here either, or a row could be called
+        reproduction on the strength of a phrase the span finder already skipped."""
+        guard = PHRASE_GUARDS.get(regex.pattern)
+        if guard is not None and guard.search(text):
+            return False
+        return bool(regex.search(text))
+
+    repro_hits = [r for r in REPRODUCTION_PHRASES if _hits(r)]
     if not repro_hits:
         return False
     other_hits = [
         r for r in REPLICATION_PHRASES
-        if r not in REPRODUCTION_PHRASES and r.search(text)
+        if r not in REPRODUCTION_PHRASES and _hits(r)
     ]
     return not other_hits
