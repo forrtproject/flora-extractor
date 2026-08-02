@@ -5,9 +5,20 @@ test_analysis_overlap.py — Test suite for Task 2 overlap analysis.
 import pandas as pd
 import pytest
 from pathlib import Path
+
+from shared.config import DATA_DIR
 from analysis.data_loader import load_candidates, load_filtered, load_all_replications
 
+# The pipeline CSVs are gitignored and only exist on a machine that has run the
+# stages (or copied them from the shared drive), so the loader tests are skipped
+# rather than failed on a fresh checkout.
+_INPUT_CSVS = ("candidates.csv", "filtered.csv", "all_replications.csv")
+needs_pipeline_data = pytest.mark.skipif(
+    not all((DATA_DIR / name).exists() for name in _INPUT_CSVS),
+    reason=f"needs {', '.join(_INPUT_CSVS)} in {DATA_DIR}")
 
+
+@needs_pipeline_data
 def test_load_candidates_returns_dataframe():
     """Load candidates.csv and verify it has required columns."""
     df = load_candidates()
@@ -20,6 +31,7 @@ def test_load_candidates_returns_dataframe():
     ), f"Missing: {required_cols - set(df.columns)}"
 
 
+@needs_pipeline_data
 def test_load_filtered_returns_dataframe():
     """Load filtered.csv and verify it has required columns."""
     df = load_filtered()
@@ -30,6 +42,7 @@ def test_load_filtered_returns_dataframe():
     assert required_cols.issubset(set(df.columns))
 
 
+@needs_pipeline_data
 def test_load_all_replications_returns_dataframe():
     """Load all_replications.csv and verify it has required columns."""
     df = load_all_replications()
@@ -41,6 +54,7 @@ def test_load_all_replications_returns_dataframe():
     assert required_cols.issubset(set(df.columns))
 
 
+@needs_pipeline_data
 def test_load_candidates_normalizes_doi():
     """Loaded candidates should have normalized DOIs."""
     df = load_candidates()

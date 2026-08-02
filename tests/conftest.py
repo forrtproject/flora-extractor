@@ -1,8 +1,39 @@
+import os
+import socket
+from pathlib import Path
+
 import pytest
 
 import shared.llm_client as _llm_client
 from shared import token_usage as _token_usage
 from validate.app import create_app
+
+_LIVE_DIR = Path(__file__).resolve().parent / "live"
+
+_BLOCKED_MSG = ("Network access blocked in tests — put live tests in "
+                "tests/live/ behind TEST_LIVE_API=1")
+
+
+@pytest.fixture(autouse=True)
+def _no_network(request, monkeypatch):
+    """Fail any test that opens a real socket instead of mocking its API call.
+
+    A mock that stops matching the code it stands in for silently starts calling
+    the real API: the suite still passes, but it now costs money, needs keys and
+    depends on a third party being up. Blocking connect() turns that into a loud
+    failure at the moment the call escapes. Tests under tests/live/ are meant to
+    reach the network, and TEST_LIVE_API=1 is how the suite asks for them.
+    """
+    if os.getenv("TEST_LIVE_API"):
+        return
+    if _LIVE_DIR in Path(str(request.node.path)).resolve().parents:
+        return
+
+    def _blocked(self, address, *args, **kwargs):
+        raise RuntimeError(f"{_BLOCKED_MSG} (attempted: {address!r})")
+
+    monkeypatch.setattr(socket.socket, "connect", _blocked)
+    monkeypatch.setattr(socket.socket, "connect_ex", _blocked)
 
 
 @pytest.fixture(autouse=True)
