@@ -6,6 +6,18 @@ the inputs, the output schema, the decision rules, and a small number of
 structural requirements for the eventual prompt. Wording and style are left to
 the prompt writer.
 
+**Current version: v3.3** — `_CLASSIFY_PROMPT` in `shared/prompts.py`, evaluated
+copy `analysis/screening_eval/prompt_v33.txt`, evidence
+`analysis/screening_eval/report_v33.md`. Two things changed since the version
+this document was first written against:
+
+- **v3.2** replaced the three-level `confidence` field with a binary `confident`
+  (sections 3 and 4.5 below carry the binary field).
+- **v3.3** adds the partial-overlap rule (section 4.2, item 7): sharing
+  observations with the original does not disqualify a re-test. This aligns the
+  screen with FLoRA, which allows a replication to overlap the original's data —
+  the "Overlapping observations" decision in the redesign document's section 5.
+
 ---
 
 ## 1. Purpose and stakes
@@ -50,7 +62,7 @@ after, no code fences, no commentary. Exactly these five fields:
 | Field | Allowed values | Meaning |
 | --- | --- | --- |
 | `classification` | `replication`, `reproduction`, `both`, `none`, `unclear` | What the paper is. Use `both` when the paper both re-analyses earlier data and collects new data to re-test the finding. Use `unclear` when the abstract genuinely does not settle the question either way. Use `none` when the paper does not qualify. |
-| `confidence` | `high`, `medium`, `low` | Confidence in the `classification` value, governed by section 4.5. |
+| `confident` | `true`, `false` | Whether the model would stake the `classification` on the abstract as written, governed by section 4.5. |
 | `categories` | JSON array of one or more values from the list below | Every pattern the paper fits, in list order. |
 | `evidence_quote` | short exact quote from the title or abstract, or an empty string | The wording that drove the decision. Must be copied verbatim from the title or abstract; empty if nothing supports a quote. |
 | `reasoning` | one sentence | Why this classification follows. |
@@ -118,6 +130,10 @@ each is a case a naive reading might reject:
 6. **Author self-declaration.** When the authors explicitly describe their study
    as a replication or reproduction, accept that framing rather than
    second-guessing it, and classify the paper as the type they declare.
+7. **Partial data overlap.** Sharing some observations with the original does not
+   disqualify: a re-test that extends the original sample, adds a later wave, or
+   partially overlaps the original data still qualifies when checking the earlier
+   finding is an aim of the paper.
 
 ### 4.3 Exclusions
 
@@ -179,21 +195,22 @@ decides how confidently the model may act.
 
 ### 4.5 Confidence calibration
 
-Because `classification: none` at `confidence: high` permanently discards the
+Because `classification: none` at `confident: true` permanently discards the
 paper, the prompt must impose an asymmetric standard:
 
-- Assign **high confidence to `none` only when the abstract clearly describes a
+- Answer **`confident: true` on `none` only when the abstract clearly describes a
   purpose that does not qualify** — for example an unambiguous instance of one
   of the non-qualifying senses, a first validation, or a plainly incidental
   agreement with prior work.
 - An abstract that describes checking a specific reported finding **but does not
-  name the source study is not grounds for a high-confidence `none`.** Such a
-  paper should be classified as qualifying, with source identification left to a
-  later pipeline stage.
+  name the source study is not grounds for a confident `none`.** Such a paper
+  should be classified as qualifying, with source identification left to a later
+  pipeline stage.
 - When the abstract genuinely does not settle the question in either direction,
   use `unclear` rather than forcing `none`.
-- Reserve `high` confidence generally for cases the abstract states plainly; use
-  `medium` or `low` when the judgement rests on inference.
+- Answer `confident: true` generally for cases the abstract states plainly;
+  answer `confident: false` when the judgement rests on inference, or when a
+  different reading of the same sentences would change the answer.
 
 ---
 
@@ -217,7 +234,7 @@ its wording:
    entire response, with no surrounding text, explanation or formatting.
 4. **Placeholders.** The prompt must consume the paper via the `{title}` and
    `{abstract}` placeholders.
-5. **State the stakes.** The prompt must tell the model that a high-confidence
+5. **State the stakes.** The prompt must tell the model that a confident
    `none` discards the paper permanently and that the target study is identified
    later, since both facts are load-bearing for section 4.5.
 6. **Every rule in section 4 must appear.** Grouping, ordering within the rules

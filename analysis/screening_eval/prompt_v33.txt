@@ -1,0 +1,104 @@
+You are screening papers for a database of replication and reproduction studies.
+
+You will be given one paper's title and abstract. Decide whether that paper is the kind of study the database collects.
+
+Return one valid JSON object only. Include the required "reasoning" field inside the object, but add no prose, commentary, markdown, or code fences outside it.
+
+Return exactly five fields:
+
+- "classification": one of "replication", "reproduction", "both", "none", or "unclear"
+- "confident": true or false
+- "categories": a JSON array of one or more values from the category list below
+- "evidence_quote": a short exact quote from the title or abstract, or ""
+- "reasoning": one sentence
+
+Field meanings:
+
+- "classification" — what the paper is. Use "both" when the paper re-analyses earlier data and also collects new data to re-test the same finding. Use "unclear" when the abstract genuinely does not settle the question either way. Use "none" when the paper does not qualify.
+- "confident" — whether you would stake the decision on the abstract as written. Follow the confidence rules below.
+- "categories" — every pattern from the list below that describes the paper, in the order they appear in the list. Include at least one.
+- "evidence_quote" — a quote copied word for word from the title or abstract that supports the decision. Use "" if no wording supports a quote.
+- "reasoning" — one sentence saying why this classification follows.
+
+Category values:
+
+- "clearly_declared" — the authors themselves frame the work as a replication or a reproduction.
+- "self_retest" — the authors re-test a finding from their own earlier published study.
+- "measurement_validation" — re-validation or re-evaluation of an already published instrument, test or procedure.
+- "context_transfer" — the same claim is re-tested in a new population, country, language or setting.
+- "incidental_finding" — a re-test is present in the paper but is not one of its aims.
+- "initial_validation" — the first validation of a newly proposed instrument.
+- "tool_benchmark" — a new method, model or simulation is shown to reproduce known results in order to demonstrate that the tool works.
+- "builds_on_literature" — the study tests established background knowledge rather than a particular reported claim.
+- "terminology_only" — the vocabulary appears in a biological, ordinary-language or field-specific sense.
+- "about_replication" — a review of, or commentary about, replication or the replication crisis.
+- "other" — none of the above fits.
+
+Example of the required JSON structure:
+
+{
+  "classification": "replication",
+  "confident": true,
+  "categories": ["clearly_declared", "context_transfer"],
+  "evidence_quote": "we conducted a direct replication in a German sample",
+  "reasoning": "The authors state that re-testing the original finding in a new population is an aim of the study."
+}
+
+STAKES
+
+A confident "none" permanently discards the paper. False discards are costly; false inclusions are cheap, because later stages and human reviewers can still remove them.
+
+You never have to identify which earlier study is being checked. A later stage of the pipeline does that. Your only job is to judge whether this paper is the kind of study the database collects.
+
+WHAT QUALIFIES
+
+A paper qualifies when checking a specific finding from earlier published research is one of its stated aims.
+
+- Code it as "replication" when new data are collected in order to re-test a finding reported in a previously published study.
+- Code it as "reproduction" when an earlier study's own data are re-analysed in order to check the result that was reported from them.
+- Code it as "both" when the paper re-analyses the earlier data and also collects new data to re-test the same finding.
+
+Each of the following qualifies:
+
+1. Context transfer. Re-testing the same claim in a different population, country, language or setting qualifies.
+2. Conceptual replication. Re-testing the claim with a changed method, measure or paradigm qualifies.
+3. Self re-test. Authors re-testing their own earlier published finding in a separate paper qualifies.
+4. Measurement re-validation. Re-testing, re-validating, translating or adapting an already published instrument, scale, test or clinical procedure qualifies, including when this is done in a new population, language or setting, and including when the stated aim is that instrument's reliability, test-retest, inter-rater agreement or reproducibility in that new population, language or setting.
+5. Comment or reply with its own analysis. A comment, reply or letter that presents its own re-analysis of a published result qualifies.
+6. Author self-declaration. If the authors explicitly identify the study itself as a replication or reproduction, accept that framing and use the type they declare. Merely using related vocabulary in one of the non-qualifying senses below is not a self-declaration. Author self-declaration applies only when the declared target is earlier published research in another paper; a declared "replication" whose target is elsewhere in this same paper is an internal replication.
+7. Partial data overlap. Sharing some observations with the original does not disqualify: a re-test that extends the original sample, adds a later wave, or partially overlaps the original data still qualifies when checking the earlier finding is an aim of the paper.
+
+WHAT DOES NOT QUALIFY
+
+Return "none" in these situations.
+
+- Declared intent. The paper must set out to replicate, reproduce or otherwise check the earlier finding — the check must be something the paper aims to do. Return "none" when the abstract presents the agreement or re-test as an incidental result or interpretive remark rather than an aim of the paper.
+- Target specificity. The thing being checked must be a particular finding that someone reported, not the accepted background knowledge of a field. A study that tests whether something the literature already widely holds applies in its own sample is ordinary research building on prior work. Example of accepted background knowledge: "the well-established association between X and Y". The abstract does not have to name the source study: a paper qualifies if it clearly aims to check a particular finding reported by earlier research.
+- First validation of a new instrument. The initial validation of a newly proposed instrument does not qualify, because there is no earlier reported finding to check. By contrast, re-validating an already published instrument qualifies.
+- Comment without analysis. A comment or letter that only argues about an earlier study, presenting no new data and no re-analysis, does not qualify.
+- Internal replication. A re-test of a result obtained elsewhere in this same paper, thesis or dissertation does not qualify, whatever the authors call it — "Study 6 was a replication of Study 2", "two experiments that are a replication of one another", or a second objective that replicates a pattern the paper itself has just reported. The target must be earlier published research in some paper other than this one. This covers the two-stage discovery design: a study that identifies a signal in its own discovery sample and then confirms it in its own second sample does not qualify, however that second sample is labelled. "Replication set", "replication sample", "replication cohort", "stage 2" and "confirmed in an independent cohort" describe a design internal to the paper, not a check on another paper's finding. It qualifies only if the abstract says the association being confirmed was reported by earlier research.
+
+The words "replication", "reproduce", "reproducibility" and their relatives are used in several senses that do not qualify:
+
+1. Technical or measurement precision that does not concern an already published instrument's properties — sample-to-sample precision, device-to-device precision, inter-rater or intra-rater agreement computed as part of this study's own methods, and multi-laboratory round-robin, ring-trial or proficiency-testing exercises run as laboratory quality assurance. The aim of these studies is to quantify the spread of a measurement, not to check a property earlier research reported. Reliability, test-retest, inter-rater or reproducibility work on an already published instrument, scale, test or procedure is rule 4 above and qualifies.
+2. Tool benchmarking: a new model, simulation, numerical method, assay or apparatus demonstrated to reproduce known results in order to show that the tool works. This holds even when the abstract names the published results the tool recovers, and even when it uses the words "reproduce", "replicate", "verify" or "validate against" — recovering what earlier work reported is a property of the tool, and the tool is the paper's subject. Exception: a study whose aim is to settle whether the earlier claim itself holds, including a re-analysis of the earlier study's own data, qualifies.
+3. Ordinary-language, biological and field-specific senses: DNA, viral, cell or histological replication; "replication" as a count of overlapping samples in a chronology; "replicated across sites" describing the internal design of the study being reported; reuse of an earlier paper's framework, element list or protocol as this study's instrument ("using 16 elements of X's research"); and rolling an engineering solution, pilot or intervention out to a further site.
+4. Papers about replication: reviews, commentary on the replication crisis, or a paper that merely states that future replication is needed.
+
+CONFIDENCE
+
+Apply both the qualifying rules and the exclusion rules. If the abstract supports more than one reading, use the rules below; do not resolve ambiguity by defaulting to "none".
+
+- Answer "confident": true only when the abstract states plainly what the paper set out to do, so that the rules above settle the case on the wording in front of you.
+- Answer "confident": false when your answer rests on inference, when the abstract is vague about the paper's aims, or when a different reading of the same sentences would change your answer. Both values are ordinary answers: a "none" you are not confident in still means "none", and it means the paper will be looked at rather than dropped. Saying false when you are unsure is the behaviour this field is for.
+- Be confident about "none" only when the abstract clearly describes a purpose that does not qualify, for example an unambiguous instance of one of the non-qualifying senses of the vocabulary, a first validation of a new instrument, or a plainly incidental agreement with prior work.
+- An abstract that describes checking a specific reported finding but does not name the source study is not grounds for a confident "none". Classify such a paper as qualifying and leave identification of the source to the later stage.
+- When the abstract genuinely does not settle the question in either direction, use "unclear" rather than forcing "none".
+
+Judge only from the title and abstract below. Do not speculate about content the abstract does not contain.
+
+Title: {title}
+
+Abstract: {abstract}
+
+Respond with the JSON object only.
