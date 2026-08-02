@@ -12,8 +12,9 @@ and what will bite you.
 - **PR #139** carries everything after it, on branch `issue-130-prescreen-followup`
   (cherry-picked onto `origin/main`; the old `worktree-issue-130-prescreen` branch is
   superseded): on-by-default + shadow mode + the correlated-failure finding, the corrected
-  reasoning-model cost figure, what the second voter buys, and this handover. The 26
-  pre-screen tests pass on that base. Awaiting review.
+  reasoning-model cost figure, what the second voter buys, the override measured on 7,505
+  papers and widened by 16 patterns, the last negative bucket, `ling-2.6-flash`, and this
+  handover. Full suite green (974 passed, 25 skipped). Awaiting review.
 
 ## Read this before touching the default
 
@@ -29,8 +30,9 @@ longer has the scanner.
 So the justification for on-by-default is not currently in the codebase. This is not a
 decision to reverse unilaterally — the user may well be planning to re-land #129 — but
 **confirm it with them before the tier discards anything in a production run.** Without
-#129 the whole tier nets ~$30 per corpus pass, which nobody thinks is worth a terminal
-discard mechanism. With #129 it is ~$2,100.
+#129 the whole tier nets somewhere between $3 and $30 per corpus pass (the two negative
+buckets disagree by six-fold; see `REPORT.md`), which nobody thinks is worth a terminal
+discard mechanism. With #129 the same rates scale to hundreds or low thousands.
 
 If it needs turning off: `PRESCREEN_ENABLED=0`, or better `PRESCREEN_MODE=shadow`, which
 records every verdict and acts on none.
@@ -67,7 +69,11 @@ override (64% before it), 11% of the curated-negative bucket, 0/567 gold positiv
    curated-negative bucket and 36% of the screen-confirmed one, so a widened override
    directly buys safety with saving. Every pattern change needs both rates measured.
 
-## Outstanding work, in priority order
+## Outstanding work
+
+**One thing is genuinely open: the shadow run (§3).** Everything else on this list is
+done, and is kept below because the findings, not the tasks, are what the next person
+needs. The residue of §1 is the best follow-on if the shadow run is blocked.
 
 ### 1. ~~Test and expand the override~~ — DONE 2026-08-03, with a residue
 
@@ -103,17 +109,17 @@ text; the misses are vocabulary misses, not position misses).
 ### 2. ~~Run the curated-negative bucket under `p7`~~ — DONE 2026-08-03
 
 Both shipped voters ran the 400 curated negatives under `p7`. The result did not confirm
-the 64% headline; it bracketed it. Net of the override the tier discards **11%** of that
-bucket against 64% of the screen-confirmed one, because the override fires on 83% of
-curated negatives against 31% of screen-confirmed ones. See *What the tier actually saves
-depends on the bucket* in `REPORT.md`.
+the 64% headline; it bracketed it. Net of the override the tier discards **7%** of that
+bucket against **60%** of the screen-confirmed one (11% and 64% before the override was
+widened), because the override fires on 83% of curated negatives against 36% of
+screen-confirmed ones. See *What the tier actually saves depends on the bucket* in
+`REPORT.md`.
 
-This changes the framing of task 1 below: a wider override is not free. On a
-vocabulary-rich population the existing patterns already erase three quarters of the
-tier's saving, so every proposed addition needs its negative firing rate measured, not
-waved through at $0.0018 a row.
+This is why §1's additions were priced against negatives as carefully as positives: on a
+vocabulary-rich population the override erases most of the tier's saving, so no pattern
+gets waved through at $0.0018 a row.
 
-### 3. The shadow run — the only thing that settles this
+### 3. The shadow run — the only thing that settles this, and the only thing still open
 
 `PRESCREEN_MODE=shadow` over fresh rows, then count how often the tier would have
 discarded a row the validated screen went on to keep. Everything measured so far uses
@@ -121,6 +127,11 @@ gold positives that are the *easy*, canonical FLoRA entries, and negatives label
 the very screen under test. Codex's strongest point: also human-review a random sample of
 rows where the pre-screen AND the screen both say discard — otherwise you only learn that
 two correlated LLM systems agree.
+
+It is open because it is not a desk task: it needs a real Stage 3 pass over fresh rows,
+which spends Gemini and OpenAI screen budget, so estimate and clear the cost first. It
+also answers the two questions everything above leaves hanging — where in the $3–$30
+band the tier actually lands, and whether tier B is worth adding.
 
 ### 4. ~~Re-check `inclusionai/ling-2.6-flash`~~ — DONE 2026-08-03
 
@@ -140,9 +151,12 @@ cost becomes the binding constraint — one env var. Details in `REPORT.md`.
   `tests/test_apa_resolver.py` fail for this reason on main too — they are pre-existing,
   not yours.
 - **API keys** are in `~/.claude/api_keys.env`, not `.env`. `set -a; source …; set +a`.
-- **OpenRouter credits**: ~$9 left of $35 at handover. The whole eval so far cost well
-  under $1; a depleted balance returns **HTTP 402**, which is easy to misread as a model
-  problem.
+- **OpenRouter credits**: $9.25 left of $35 (checked 2026-08-03, `GET /api/v1/credits`).
+  The whole pre-screen eval has cost well under $1 of that; a depleted balance returns
+  **HTTP 402**, which is easy to misread as a model problem.
+- **A 429 wall can be temporary.** `inclusionai/ling-2.6-flash` returned 429 to every call
+  on 2026-08-02 under every routing mode and answered normally the next day. Retry a
+  written-off model before concluding it is unusable.
 - **Keep `--workers` at 3–4.** Cheapest-provider routing pins one upstream provider that
   429s aggressively above that. High concurrency across several models at once is what
   stalled several runs.
