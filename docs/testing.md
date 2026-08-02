@@ -93,18 +93,19 @@ Run with:
 TEST_LIVE_API=1 python -m pytest tests/live/
 ```
 
-## Known pre-existing failures
+## The no-network guard
 
-These tests fail due to a behaviour change in `extract/code_outcome.py` (the fallback outcome was changed from `uninformative` to `cannot_be_determined`). They are pre-existing failures unrelated to the dashboard/validation refactor:
+`tests/conftest.py` has an autouse fixture that patches `socket.socket.connect`
+(and `connect_ex`) to raise, so any test that escapes its mocks and opens a real
+connection fails immediately instead of silently calling a live API. It stands
+down for tests under `tests/live/` and whenever `TEST_LIVE_API` is set.
 
-- `test_a_cli_flags.py::TestNoLlmExtractOutcome::test_no_llm_skips_llm_and_returns_uninformative_when_no_keyword`
-- `test_extract.py::TestExtractOutcome::test_llm_failure_returns_uninformative`
-- `test_extract.py::TestExtractOutcome::test_invalid_llm_outcome_normalised`
-- `test_extract.py::TestRunExtract::test_false_positives_pass_through_unchanged`
+If a test trips the guard, mock at the boundary the code actually calls
+(`requests.get`, the client function) rather than exempting the test.
 
-Two `test_search.py` tests fail because the `fake_get()` mock is missing the `headers` keyword argument added to `openalex_search.py`'s `_get_page()` function. Update the mock signature to fix:
+## Tests that need pipeline data
 
-```python
-def fake_get(url, params, headers=None, timeout=30):
-    ...
-```
+`tests/test_analysis_overlap.py` and one test in `tests/test_apa_resolver.py`
+read the gitignored CSVs in `data/` (`candidates.csv`, `filtered.csv`,
+`all_replications.csv`). They skip when those files are absent, so a fresh
+checkout runs green.

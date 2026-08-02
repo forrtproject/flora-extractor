@@ -6,6 +6,8 @@ Tests Task 6 implementation: CrossRef API + CSV fallback for missing DOI resolut
 
 import pandas as pd
 import pytest
+
+from shared.config import DATA_DIR
 from analysis.apa_resolver import (
     load_missing_dois,
     format_apa_reference,
@@ -13,6 +15,8 @@ from analysis.apa_resolver import (
 )
 
 
+@pytest.mark.skipif(not (DATA_DIR / "filtered.csv").exists(),
+                    reason=f"needs filtered.csv in {DATA_DIR}")
 def test_load_missing_dois_returns_dataframe():
     """Should load replications without DOI from filtered.csv + extracted.csv."""
     df = load_missing_dois()
