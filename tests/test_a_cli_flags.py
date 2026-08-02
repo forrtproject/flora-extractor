@@ -13,13 +13,15 @@ from extract.code_outcome import extract_outcome
 class TestNoLlmExtractOutcome:
     def test_no_llm_skips_llm_and_returns_cannot_be_determined_when_no_keyword(self):
         """With no_llm=True and no keyword match, returns cannot_be_determined without calling LLM."""
-        result = extract_outcome(
-            "10.1234/test",
-            abstract_r="We conducted a study across multiple labs.",
-            fulltext="",
-            title_r="Multi-site study",
-            no_llm=True,
-        )
+        with patch("extract.code_outcome.call_llm") as mock_llm:
+            result = extract_outcome(
+                "10.1234/test",
+                abstract_r="We conducted a study across multiple labs.",
+                fulltext="",
+                title_r="Multi-site study",
+                no_llm=True,
+            )
+        mock_llm.assert_not_called()
         assert result["outcome"] == "cannot_be_determined"
         assert result["out_quote_source"] == ""
 
@@ -33,17 +35,6 @@ class TestNoLlmExtractOutcome:
             no_llm=True,
         )
         assert result["outcome"] == "failure"
-
-    def test_no_llm_does_not_call_llm_client(self):
-        with patch("extract.code_outcome.call_llm") as mock_llm:
-            extract_outcome(
-                "10.1234/test3",
-                abstract_r="Results were ambiguous and unclear.",
-                fulltext="",
-                title_r="Study",
-                no_llm=True,
-            )
-        mock_llm.assert_not_called()
 
 
 # ── --extracted-test flag tests ───────────────────────────────────────────────

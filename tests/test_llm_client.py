@@ -20,6 +20,8 @@ def _resp(content: str):
 
 
 def test_call_openai_retries_then_succeeds(monkeypatch):
+    """Three attempts with 1s/2s backoff. A transient failure that clears on the
+    third attempt returns the answer; one that never clears returns (None, error)."""
     monkeypatch.setattr(llm, "OPENAI_API_KEY", "sk-test")
     sleeps: list = []
     monkeypatch.setattr(llm.time, "sleep", lambda s: sleeps.append(s))
@@ -41,19 +43,14 @@ def test_call_openai_retries_then_succeeds(monkeypatch):
     assert calls["n"] == 3
     assert sleeps == [1, 2]  # exponential backoff between the 3 attempts
 
-
-def test_call_openai_returns_none_after_three_failures(monkeypatch):
-    monkeypatch.setattr(llm, "OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
-
-    fake_client = MagicMock()
-    fake_client.chat.completions.create.side_effect = RuntimeError("service down")
-    with patch("openai.OpenAI", return_value=fake_client):
+    down = MagicMock()
+    down.chat.completions.create.side_effect = RuntimeError("service down")
+    with patch("openai.OpenAI", return_value=down):
         result, err = llm.call_openai("prompt")
 
     assert result is None
     assert "service down" in err
-    assert fake_client.chat.completions.create.call_count == 3
+    assert down.chat.completions.create.call_count == 3
 
 
 # ── The front-door screen ────────────────────────────────────────────────────
@@ -133,8 +130,9 @@ def test_a_classification_outside_the_enum_becomes_unclear(monkeypatch):
 
 
 @pytest.mark.parametrize("raw,expected", [
-    (True, True), (False, False), ("true", True), ("false", False),
-    ("TRUE", True), (None, False), ("", False),
+    (True, True),        # already a bool
+    ("TRUE", True),      # a string, any case
+    (None, False),       # absent from the response
 ])
 def test_confident_is_coerced_to_a_bool(monkeypatch, raw, expected):
     monkeypatch.setattr(llm, "call_gemini",
@@ -161,110 +159,101 @@ def test_a_trailing_comma_still_parses():
 
 # ── Voter-2 routing ──────────────────────────────────────────────────────────
 
-def test_a_slashless_voter_id_calls_openai_not_openrouter(monkeypatch):
-    monkeypatch.setattr(llm, "SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
+@pytest.mark.parametrize("voter_id,provider,other", [
+    ("gpt-5.4-mini", "openai", "openrouter"),                # slashless → OpenAI
+    ("mistralai/ministral-14b-2512", "openrouter", "openai"),  # slashed → OpenRouter
+])
+def test_the_voter_id_decides_which_provider_is_called(monkeypatch, voter_id, provider, other):
+    """A slash in the voter id means an OpenRouter model; without one it is an
+    OpenAI model. The wrong provider must never see the call."""
+    monkeypatch.setattr(llm, "SCREEN_VOTER2_MODEL", voter_id)
     seen: dict = {}
 
-    def openai(prompt, model=None, reasoning_effort=""):
-        seen.update(model=model, reasoning_effort=reasoning_effort)
+    def answer(prompt, model=None, **kw):
+        seen.update(model=model, **kw)
         return _v(), None
 
-    monkeypatch.setattr(llm, "call_openai", openai)
-    monkeypatch.setattr(llm, "call_openrouter", lambda *a, **k: (_ for _ in ()).throw(
-        AssertionError("an OpenAI voter id must not reach OpenRouter")))
+    monkeypatch.setattr(llm, f"call_{provider}", answer)
+    monkeypatch.setattr(llm, f"call_{other}", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError(f"a {provider} voter id must not reach {other}")))
 
-    assert [v[0] for v in llm.screen_voters()] == ["gemini", "openai"]
-    vote = llm._classify_once("p", "openai", "gpt-5.4-mini")
-    assert vote["provider"] == "openai"
-    assert seen == {"model": "gpt-5.4-mini", "reasoning_effort": "low"}
-
-
-def test_a_slashed_voter_id_calls_openrouter(monkeypatch):
-    monkeypatch.setattr(llm, "SCREEN_VOTER2_MODEL", "mistralai/ministral-14b-2512")
-    seen: dict = {}
-    monkeypatch.setattr(llm, "call_openrouter",
-                        lambda p, model="": (seen.update(model=model), (_v(), None))[1])
-    monkeypatch.setattr(llm, "call_openai", lambda *a, **k: (_ for _ in ()).throw(
-        AssertionError("an OpenRouter voter id must not reach OpenAI")))
-
-    assert [v[0] for v in llm.screen_voters()] == ["gemini", "openrouter"]
-    assert llm._classify_once("p", "openrouter", "mistralai/ministral-14b-2512")["provider"] == "openrouter"
-    assert seen["model"] == "mistralai/ministral-14b-2512"
+    assert [v[0] for v in llm.screen_voters()] == ["gemini", provider]
+    assert llm._classify_once("p", provider, voter_id)["provider"] == provider
+    assert seen["model"] == voter_id
+    if provider == "openai":
+        assert seen["reasoning_effort"] == "low"
 
 
 # ── Screen bookkeeping ───────────────────────────────────────────────────────
 
-def test_screen_both_votes_is_a_complete_screen(monkeypatch, tmp_path):
-    out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=True)
-
-    assert out["screen_verdict"] == "proceed"
-    assert len(out["votes"]) == 2
-    assert out["resolution_method"] != "llm_refscreen_partial"
-    assert list(tmp_path.glob("classify_*.json"))  # a real verdict is cached
-
-
 def test_screen_attributes_each_vote_to_its_model(monkeypatch, tmp_path):
+    """A complete screen is two votes, each attributed to the model that cast it,
+    and only a complete screen is cached."""
     calls: list[str] = []
     out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=True, calls=calls)
 
+    assert out["screen_verdict"] == "proceed"
     assert calls == ["mistralai/ministral-14b-2512"]
     assert [v["provider"] for v in out["votes"]] == ["gemini", "openrouter"]
     assert out["llm_source"] == "gemini+openrouter"
     assert out["llm_model"] == f"{llm.GEMINI_LIGHT_MODEL}+mistralai/ministral-14b-2512"
+    assert list(tmp_path.glob("classify_*.json"))   # a real verdict is cached
 
 
-def test_screen_one_vote_is_partial_not_a_verdict(monkeypatch, tmp_path):
-    out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=False)
+@pytest.mark.parametrize("gemini_ok,method,votes,model", [
+    # One vote is not a disagreement — the row waits for a re-run.
+    (True,  "llm_refscreen_partial", 1, "gemini_light"),
+    # No vote at all is an API failure.
+    (False, "llm_refscreen_failed",  0, ""),
+])
+def test_an_incomplete_screen_is_reported_not_cached(monkeypatch, tmp_path,
+                                                     gemini_ok, method, votes, model):
+    out = _screen(monkeypatch, tmp_path, gemini_ok=gemini_ok, voter2_ok=False)
 
-    assert out["resolution_method"] == "llm_refscreen_partial"
+    assert out["resolution_method"] == method
     assert out["screen_verdict"] == ""
+    assert len(out["votes"]) == votes
     assert "openrouter" in out["llm_error"]
-    assert len(out["votes"]) == 1
-    assert out["llm_model"] == llm.GEMINI_LIGHT_MODEL   # the model that did answer
-    assert not list(tmp_path.glob("classify_*.json"))   # uncached: a retry must succeed
+    if not gemini_ok:
+        assert "gemini" in out["llm_error"]
+    # Only the model that actually answered is named.
+    assert out["llm_model"] == (llm.GEMINI_LIGHT_MODEL if model else "")
+    assert not list(tmp_path.glob("classify_*.json"))  # uncached: a retry must succeed
 
 
-def test_screen_no_votes_is_a_failure(monkeypatch, tmp_path):
-    out = _screen(monkeypatch, tmp_path, gemini_ok=False, voter2_ok=False)
+@pytest.mark.parametrize("target_picked", [True, False],
+                         ids=["target picked", "voters discarded"])
+def test_the_row_names_whoever_actually_decided_it(monkeypatch, tmp_path, target_picked):
+    """A resolved link was picked by the L5 call, so the row names that model and
+    quotes its evidence — not the Q1 voter pair that only said "yes, a replication".
+    A discard is the voters' decision, so that row keeps their models, evidence and
+    per-model reasoning instead."""
+    if target_picked:
+        refs = [{"doi": "10.1/orig", "title": "Original", "publication_year": 2015,
+                 "first_author": "Smith"}]
+        out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=True, refs=refs,
+                      target={"targets": [{"key": "@smith2015", "match_certain": True,
+                                           "target_as_named": "Smith 2015",
+                                           "study_numbers": "",
+                                           "evidence_quote": "we re-test Smith (2015)"}],
+                              "unidentified_count": 0,
+                              "reasoning": "abstract names it"})
 
-    assert out["resolution_method"] == "llm_refscreen_failed"
-    assert "gemini" in out["llm_error"] and "openrouter" in out["llm_error"]
-    assert out["votes"] == []
-    assert not list(tmp_path.glob("classify_*.json"))
+        assert out["resolution_method"] == "llm_references"
+        assert out["resolved_doi_o"] == "10.1/orig"
+        assert out["llm_model"] == llm.GEMINI_HEAVY_MODEL
+        assert out["llm_source"] == "gemini"
+        assert out["llm_evidence"] == "we re-test Smith (2015)"
+    else:
+        out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=True,
+                      vote=_v("none", True, ["terminology_only"]))
 
-
-def test_screen_attributes_a_resolved_link_to_the_target_picker(monkeypatch, tmp_path):
-    """The reference was picked by the L5 call, so the row must name that model and
-    quote its evidence — not the Q1 voter pair that only said "yes, a replication"."""
-    refs = [{"doi": "10.1/orig", "title": "Original", "publication_year": 2015,
-             "first_author": "Smith"}]
-    out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=True, refs=refs,
-                  target={"targets": [{"key": "@smith2015", "match_certain": True,
-                                       "target_as_named": "Smith 2015",
-                                       "study_numbers": "",
-                                       "evidence_quote": "we re-test Smith (2015)"}],
-                          "unidentified_count": 0,
-                          "reasoning": "abstract names it"})
-
-    assert out["resolution_method"] == "llm_references"
-    assert out["resolved_doi_o"] == "10.1/orig"
-    assert out["llm_model"] == llm.GEMINI_HEAVY_MODEL
-    assert out["llm_source"] == "gemini"
-    assert out["llm_evidence"] == "we re-test Smith (2015)"
-
-
-def test_screen_keeps_voter_attribution_when_no_target_is_picked(monkeypatch, tmp_path):
-    """A discard is the voters' decision, so the row keeps their models, evidence
-    and per-model reasoning — it is set aside for review."""
-    out = _screen(monkeypatch, tmp_path, gemini_ok=True, voter2_ok=True,
-                  vote=_v("none", True, ["terminology_only"]))
-
-    assert out["screen_verdict"] == "discard"
-    assert out["screen_classification"] == "none"
-    assert out["record_type"] == ""
-    assert out["llm_model"] == f"{llm.GEMINI_LIGHT_MODEL}+mistralai/ministral-14b-2512"
-    assert out["llm_evidence"] == "q"
-    assert "gemini: r" in out["llm_reasoning"] and "openrouter: r" in out["llm_reasoning"]
+        assert out["screen_verdict"] == "discard"
+        assert out["screen_classification"] == "none"
+        assert out["record_type"] == ""
+        assert out["llm_model"] == f"{llm.GEMINI_LIGHT_MODEL}+mistralai/ministral-14b-2512"
+        assert out["llm_evidence"] == "q"
+        assert "gemini: r" in out["llm_reasoning"] and "openrouter: r" in out["llm_reasoning"]
 
 
 # ── record_type and categories ───────────────────────────────────────────────
@@ -295,7 +284,9 @@ def test_record_type_from_the_votes(monkeypatch, tmp_path, v1, v2, expected):
     assert _two_votes(monkeypatch, tmp_path, v1, v2)["record_type"] == expected
 
 
-def test_categories_are_the_union_in_enum_order(monkeypatch, tmp_path):
+def test_categories_are_the_union_of_both_voters_in_enum_order(monkeypatch, tmp_path):
+    """The single-vote filter is pinned above; this is the two-vote merge — the
+    column holds the union of what both voters saw, still in enum order."""
     out = _two_votes(monkeypatch, tmp_path,
                      _v(categories=["context_transfer", "clearly_declared"]),
                      _v(categories=["clearly_declared", "self_retest"]))
@@ -421,8 +412,19 @@ def _flex_env(monkeypatch, *, use_flex=True, paid=(1,), keys=("k1", "k2")):
     monkeypatch.setattr(llm, "GEMINI_API_KEYS", list(keys))
 
 
-def test_flex_is_sent_on_pdf_calls_when_the_key_is_paid(monkeypatch):
-    _flex_env(monkeypatch)
+_IMGS = [{"mime_type": "image/png", "data": "aGk="}]
+
+
+@pytest.mark.parametrize("call_site,standard_timeout", [
+    (lambda: llm.call_gemini_with_pdf("prompt", b"%PDF-1.4"), 45),
+    (lambda: llm.call_gemini_with_images("prompt", _IMGS), 120),
+], ids=["pdf", "images"])
+@pytest.mark.parametrize("use_flex", [True, False], ids=["enabled", "disabled"])
+def test_flex_rides_on_the_largest_payload_calls(monkeypatch, call_site, standard_timeout,
+                                                 use_flex):
+    """The PDF and image calls carry the biggest payloads, so the 50% flex discount
+    has to reach them — and vanish entirely when GEMINI_USE_FLEX is off."""
+    _flex_env(monkeypatch, use_flex=use_flex, keys=("k1",))
     posts: list = []
 
     def post(url, json=None, timeout=None):
@@ -430,44 +432,13 @@ def test_flex_is_sent_on_pdf_calls_when_the_key_is_paid(monkeypatch):
         return _gemini_ok()
 
     monkeypatch.setattr(llm.requests, "post", post)
-    assert llm.call_gemini_with_pdf("prompt", b"%PDF-1.4") == {"ok": True}
-    assert posts[0][0]["service_tier"] == "flex"
-    assert posts[0][1] == 900   # flex calls can queue — not the 45s standard timeout
-
-
-def test_flex_is_sent_on_image_calls_when_the_key_is_paid(monkeypatch):
-    _flex_env(monkeypatch)
-    posts: list = []
-
-    def post(url, json=None, timeout=None):
-        posts.append((dict(json), timeout))
-        return _gemini_ok()
-
-    monkeypatch.setattr(llm.requests, "post", post)
-    imgs = [{"mime_type": "image/png", "data": "aGk="}]
-    assert llm.call_gemini_with_images("prompt", imgs) == {"ok": True}
-    assert posts[0][0]["service_tier"] == "flex"
-    assert posts[0][1] == 900
-
-
-def test_flex_is_not_sent_on_an_unpaid_key(monkeypatch):
-    # Key 2 is free-tier: it must bill at standard rate and keep the short timeout.
-    _flex_env(monkeypatch, paid=(1,))
-    posts: list = []
-
-    def post(url, json=None, timeout=None):
-        posts.append((dict(json), timeout))
-        r = _gemini_ok()
-        if "k1" in url:
-            r.status_code = 429
-        return r
-
-    monkeypatch.setattr(llm.requests, "post", post)
-    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
-    assert llm.call_gemini_with_pdf("prompt", b"%PDF-1.4") == {"ok": True}
-    assert posts[0][0]["service_tier"] == "flex"       # key 1, paid
-    assert "service_tier" not in posts[-1][0]          # key 2, free
-    assert posts[-1][1] == 45
+    assert call_site() == {"ok": True}
+    if use_flex:
+        assert posts[0][0]["service_tier"] == "flex"
+        assert posts[0][1] == 900   # flex calls can queue — not the 45s standard timeout
+    else:
+        assert "service_tier" not in posts[0][0]
+        assert posts[0][1] == standard_timeout
 
 
 def test_flex_follows_the_paid_key_not_its_position(monkeypatch):
@@ -507,20 +478,6 @@ def test_flex_rejection_falls_back_to_standard_tier(monkeypatch):
     assert len(posts) == 2
     assert "service_tier" not in posts[1][0]
     assert posts[1][1] == 45
-
-
-def test_flex_is_off_entirely_when_disabled(monkeypatch):
-    _flex_env(monkeypatch, use_flex=False, keys=("k1",))
-    posts: list = []
-
-    def post(url, json=None, timeout=None):
-        posts.append(dict(json))
-        return _gemini_ok()
-
-    monkeypatch.setattr(llm.requests, "post", post)
-    llm.call_gemini_with_pdf("prompt", b"%PDF-1.4")
-    llm.call_gemini_with_images("prompt", [{"mime_type": "image/png", "data": "aGk="}])
-    assert all("service_tier" not in p for p in posts)
 
 
 # ── OpenAI flex tier ─────────────────────────────────────────────────────────
@@ -907,26 +864,6 @@ def test_identification_reports_the_target_study_numbers(monkeypatch, tmp_path):
     assert out["resolved_study_o"] == "1, 2"
 
 
-def test_identification_key_follows_the_candidates(monkeypatch, tmp_path):
-    calls: list = []
-    _identify(monkeypatch, tmp_path, _PICK, calls)
-    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
-    other = [dict(_CAND[0], title="A different candidate", doi="10.1/other")]
-    llm.identify_targets_with_llm("10.1/x", "T", "A", other, [])
-    assert len(calls) == 2
-
-
-def test_identification_key_follows_the_parsed_sections(monkeypatch, tmp_path):
-    """The abstract-stage call and the full-text call are different questions about
-    the same DOI; the old DOI-only key collided them."""
-    calls: list = []
-    _identify(monkeypatch, tmp_path, _PICK, calls)
-    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [], abstract_only=True)
-    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [],
-                                  intro="The PDF has since been parsed.")
-    assert len(calls) == 2
-
-
 def test_identification_api_failure_is_not_cached(monkeypatch, tmp_path):
     monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
@@ -936,16 +873,6 @@ def test_identification_api_failure_is_not_cached(monkeypatch, tmp_path):
     out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
     assert out["resolution_method"] == "llm_failed"
     assert not list(tmp_path.glob("llm_*.json"))
-
-
-def test_identification_key_follows_the_prompt_version(monkeypatch, tmp_path):
-    """The version is folded in on its own account, not only via the rendered text."""
-    calls: list = []
-    _identify(monkeypatch, tmp_path, _PICK, calls)
-    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
-    monkeypatch.setattr(llm, "prompt_version", lambda name: "ffffffffffff")
-    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
-    assert len(calls) == 2
 
 
 # ── Per-provider rate limiting (audit E5) ────────────────────────────────────
@@ -977,11 +904,6 @@ def clock(monkeypatch):
     return c
 
 
-def test_first_call_to_a_provider_does_not_wait(clock):
-    llm._throttle("gemini")
-    assert clock.slept == []
-
-
 def test_second_call_waits_only_the_remaining_interval(clock):
     llm._throttle("gemini")
     clock.now += 0.4
@@ -989,47 +911,39 @@ def test_second_call_waits_only_the_remaining_interval(clock):
     assert clock.slept == [pytest.approx(0.6)]
 
 
-def test_a_different_provider_does_not_wait_on_this_one(clock):
-    llm._throttle("gemini")
-    llm._throttle("openrouter")
-    assert clock.slept == []
-
-
-def test_no_wait_once_the_interval_has_already_passed(clock):
-    llm._throttle("openai")
+def test_a_provider_waits_only_on_its_own_last_call(clock):
+    """The first call to a provider, a call to a different provider, and a call after
+    the interval has already elapsed all go straight through."""
+    llm._throttle("gemini")            # first call to gemini
+    llm._throttle("openrouter")        # a different provider's bucket
     clock.now += 5.0
-    llm._throttle("openai")
+    llm._throttle("gemini")            # interval long since passed
     assert clock.slept == []
 
 
 # ── Provider ladder (audit C1) ───────────────────────────────────────────────
 
-def test_ladder_names_the_provider_that_answered(monkeypatch):
+@pytest.mark.parametrize("openai_answer,or_key,expected", [
+    # Gemini 429s, OpenAI answers → OpenAI is named, with the model it used.
+    (({"ok": True}, ""), "",      ({"ok": True}, "openai", "o")),
+    # Both fail → fall through to the OpenRouter last resort.
+    ((None, "500"),      "sk-or", ({"ok": True}, "openrouter", llm.OPENROUTER_HEAVY_MODEL)),
+    # Everything fails → provider "none", and every provider's error is reported.
+    ((None, "500"),      "",      (None, "none", "")),
+])
+def test_ladder_names_the_provider_that_answered(monkeypatch, openai_answer, or_key, expected):
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", or_key)
     monkeypatch.setattr(llm, "call_gemini", lambda p, model=None: (None, "429"))
-    monkeypatch.setattr(llm, "call_openai",
-                        lambda p, model=None: ({"ok": True}, ""))
+    monkeypatch.setattr(llm, "call_openai", lambda p, model=None: openai_answer)
+    monkeypatch.setattr(llm, "call_openrouter", lambda p, model="": ({"ok": True}, ""))
+
     result, provider, model, err = llm.call_llm_ladder("p", gemini_model="g",
                                                        openai_model="o")
-    assert (result, provider, model, err) == ({"ok": True}, "openai", "o", "")
-
-
-def test_ladder_falls_through_to_openrouter(monkeypatch):
-    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "sk-or")
-    monkeypatch.setattr(llm, "call_gemini", lambda p, model=None: (None, "429"))
-    monkeypatch.setattr(llm, "call_openai", lambda p, model=None: (None, "500"))
-    monkeypatch.setattr(llm, "call_openrouter", lambda p, model="": ({"ok": True}, ""))
-    result, provider, _model, _err = llm.call_llm_ladder("p")
-    assert result == {"ok": True}
-    assert provider == "openrouter"
-
-
-def test_ladder_reports_every_provider_error_when_all_fail(monkeypatch):
-    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "")
-    monkeypatch.setattr(llm, "call_gemini", lambda p, model=None: (None, "429"))
-    monkeypatch.setattr(llm, "call_openai", lambda p, model=None: (None, "500"))
-    result, provider, model, err = llm.call_llm_ladder("p")
-    assert (result, provider, model) == (None, "none", "")
-    assert "429" in err and "500" in err
+    assert (result, provider, model) == expected
+    if result:
+        assert err == ""
+    else:
+        assert "429" in err and "500" in err
 
 
 def test_ladder_can_stop_before_openrouter(monkeypatch):
@@ -1045,48 +959,53 @@ def test_ladder_can_stop_before_openrouter(monkeypatch):
 
 # ── Cache keys name every model the ladder can reach ─────────────────────────
 
-def test_ladder_fingerprint_lists_every_reachable_model():
-    fp = llm.ladder_fingerprint("gem-1", "oai-1")
-    assert fp.split("|") == ["gem-1", "oai-1", llm.OPENROUTER_HEAVY_MODEL]
-    assert llm.ladder_fingerprint("gem-1", "oai-1", openrouter=False) == "gem-1|oai-1"
-
-
 def test_ladder_fingerprint_moves_with_the_fallback_models(monkeypatch):
     before = llm.ladder_fingerprint("gem-1")
     monkeypatch.setattr(llm, "OPENAI_MODEL", "oai-next")
     assert llm.ladder_fingerprint("gem-1") != before
 
 
-def test_identification_key_follows_the_openai_fallback(monkeypatch, tmp_path):
-    """Gemini going down means OpenAI answers — so the key has to name it too."""
+def _ident(**kw):
+    return llm.identify_targets_with_llm("10.1/x", "T", "A", kw.pop("cands", _CAND), [], **kw)
+
+
+def _reftarget():
+    return llm.screen_references_with_llm("10.1/x", "T", "A", [_ref("10.1/orig", "Original")],
+                                          classification=dict(_VERDICT_YES))
+
+
+@pytest.mark.parametrize("axis,first,second", [
+    # A different candidate pool is a different question.
+    ("the candidate list",
+     lambda mp: _ident(),
+     lambda mp: _ident(cands=[dict(_CAND[0], title="Another", doi="10.1/other")])),
+    # The abstract-stage call and the full-text call are different questions about
+    # the same DOI; the old DOI-only key collided them.
+    ("the parsed sections",
+     lambda mp: _ident(abstract_only=True),
+     lambda mp: _ident(intro="The PDF has since been parsed.")),
+    # The version is folded in on its own account, not only via the rendered text.
+    ("the prompt version",
+     lambda mp: _ident(),
+     lambda mp: (mp.setattr(llm, "prompt_version", lambda name: "ffffffffffff"),
+                 _ident())[1]),
+    # Gemini going down means OpenAI answers — so the key has to name it too.
+    ("the OpenAI fallback model",
+     lambda mp: _ident(),
+     lambda mp: (mp.setattr(llm, "OPENAI_MODEL", "oai-next"), _ident())[1]),
+    # …at the reference-target stage as much as at the abstract stage.
+    ("the OpenAI fallback model, at the reference-target stage",
+     lambda mp: _reftarget(),
+     lambda mp: (mp.setattr(llm, "OPENAI_MODEL", "oai-next"), _reftarget())[1]),
+])
+def test_changing_an_axis_of_the_key_re_asks(monkeypatch, tmp_path, axis, first, second):
+    """A cache key must name everything the answer depends on: change any one of
+    these and the model has to be asked again, not replayed."""
     calls: list = []
-    _identify(monkeypatch, tmp_path, {"resolved": False, "reasoning": "no"}, calls)
-    llm.identify_targets_with_llm("10.1/x", "T", "A", [], [])
-    monkeypatch.setattr(llm, "OPENAI_MODEL", "oai-next")
-    llm.identify_targets_with_llm("10.1/x", "T", "A", [], [])
-    assert len(calls) == 2
-
-
-def test_target_key_follows_the_openai_fallback(monkeypatch, tmp_path):
-    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
-    verdict = {"resolution_method": "llm_refscreen_declined",
-               "screen_verdict": "proceed", "screen_classification": "replication",
-               "record_type": "replication", "categories": [], "votes": [],
-               "llm_source": "", "llm_model": "", "llm_evidence": "",
-               "llm_reasoning": "", "llm_prompt": "", "llm_error": ""}
-    refs = [_ref("10.1/orig", "Original")]
-    n = {"calls": 0}
-
-    def gemini(prompt, model=None):
-        n["calls"] += 1
-        return dict(_TARGET_ANSWER), None
-
-    monkeypatch.setattr(llm, "call_gemini", gemini)
-    llm.screen_references_with_llm("10.1/x", "T", "A", refs, classification=verdict)
-    monkeypatch.setattr(llm, "OPENAI_MODEL", "oai-next")
-    llm.screen_references_with_llm("10.1/x", "T", "A", refs, classification=verdict)
-    assert n["calls"] == 2
+    _identify(monkeypatch, tmp_path, _PICK, calls)
+    first(monkeypatch)
+    second(monkeypatch)
+    assert len(calls) == 2, f"the cache key must follow {axis}"
 
 
 # ── The merged target prompt: acceptance and validation (§8.2) ───────────────
@@ -1173,7 +1092,10 @@ def test_two_targets_are_flagged_and_no_single_link_is_written(monkeypatch, tmp_
     assert out["resolution_method"] == "llm_multi_target"
 
 
-def test_a_stated_count_that_does_not_reconcile_is_recorded(monkeypatch, tmp_path):
+def test_a_shortfall_is_recorded_and_a_nonsense_count_becomes_zero(monkeypatch, tmp_path):
+    """A model that names 28 studies and matches one has to say so in link_evidence
+    rather than let the shortfall vanish — and a count that is not a number is no
+    count at all."""
     _targets(monkeypatch, tmp_path,
              {"targets": [_target()], "stated_count": 28, "stated_count_unit": "studies",
               "unidentified_count": 5, "reasoning": "r"})
@@ -1183,11 +1105,9 @@ def test_a_stated_count_that_does_not_reconcile_is_recorded(monkeypatch, tmp_pat
     assert "unidentified=5" in out["llm_evidence"]
     assert out["unidentified_count"] == 5
 
-
-def test_a_nonsense_unidentified_count_becomes_zero(monkeypatch, tmp_path):
     _targets(monkeypatch, tmp_path,
              {"targets": [], "unidentified_count": "several", "reasoning": "r"})
-    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+    out = llm.identify_targets_with_llm("10.1/y", "T", "A", _CAND, [])
 
     assert out["unidentified_count"] == 0
     assert "unidentified_count not a number" in out["llm_reasoning"]

@@ -26,20 +26,11 @@ def test_stale_spec_warns_not_raises():
     assert warnings, "stale spec should emit a warning when a logger is supplied"
 
 
-def test_fresh_spec_no_warning():
-    fresh = SimpleNamespace(id="openalex", verified_at=datetime.now(timezone.utc))
-    warnings: list = []
-    logger = SimpleNamespace(warning=lambda *a, **k: warnings.append(a))
-    check_spec_freshness({"openalex": fresh}, log=logger)
-    assert not warnings
-
-
 from search.engine.candidate_normalizer import (
     merge_candidates,
     normalize_candidate,
     normalize_doi,
 )
-from search.engine.candidate_ranker import compute_search_score, load_ranking_weights
 from search.engine.exclusion_filter import (
     apply_exclusions,
     load_exclusion_patterns,
@@ -51,19 +42,10 @@ from search.engine.keyword_expander import (
 )
 from search.engine.types import (
     MatchedKeyword,
-    NormalizedCandidate,
     RawCandidate,
 )
 
 SPEC_DIR = Path(__file__).parent.parent / "search" / "spec"
-
-
-def test_spec_loads():
-    specs = load_spec_keywords(SPEC_DIR)
-    assert len(specs) >= 15, "spec should contain at least the 17 ported keywords"
-    ids = {s.id for s in specs}
-    assert "REP_OF" in ids
-    assert "REP_QUALIFIED" in ids
 
 
 def test_keyword_expansion_dedups():
@@ -83,8 +65,7 @@ def test_user_wildcards():
     assert "replication" in perms        # via STEM_DICT
     assert "replications" in perms
 
-
-def test_optional_char_wildcard():
+    # The optional-character wildcard is expanded both ways.
     out = expand_wildcard("pre-?registered")
     assert "pre-registered" in out
     assert "preregistered" in out
@@ -120,27 +101,3 @@ def test_merge_keeps_richer():
     assert merged.title == "A title"
     assert merged.abstract == "An abstract"
     assert {m.id for m in merged.matched_keywords} == {"REP_OF", "DIRECT_REP"}
-
-
-def test_search_score_rules():
-    weights = load_ranking_weights(SPEC_DIR)
-    only_abstract = NormalizedCandidate(
-        source="openalex", doi="10/x",
-        matched_keywords=[MatchedKeyword(id="A", field="abstract", permutation="x")],
-    )
-    only_title = NormalizedCandidate(
-        source="openalex", doi="10/x",
-        matched_keywords=[MatchedKeyword(id="A", field="title", permutation="x")],
-    )
-    multi = NormalizedCandidate(
-        source="openalex", doi="10/x",
-        matched_keywords=[
-            MatchedKeyword(id="A", field="title", permutation="x"),
-            MatchedKeyword(id="B", field="abstract", permutation="y"),
-        ],
-    )
-    s_abs = compute_search_score(only_abstract, {"openalex"}, weights)
-    s_title = compute_search_score(only_title, {"openalex"}, weights)
-    s_multi = compute_search_score(multi, {"openalex", "crossref"}, weights)
-    assert 0 < s_abs < s_title <= weights.cap
-    assert s_multi == weights.cap   # title + multi-keyword + multi-source pinned

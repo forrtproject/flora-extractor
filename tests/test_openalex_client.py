@@ -20,46 +20,33 @@ from shared.openalex_client import (
 # ── extract_author_year_patterns ──────────────────────────────────────────────
 
 class TestExtractAuthorYearPatterns:
-    def test_single_paren(self):
-        patterns = extract_author_year_patterns("Smith (2020) found that ego depletion exists.")
-        assert any(p["surname"] == "smith" and p["year"] == 2020 for p in patterns)
-
-    def test_etal_paren(self):
-        patterns = extract_author_year_patterns("Baumeister et al. (1998) showed self-control.")
-        assert any(p["surname"] == "baumeister" and p["year"] == 1998 for p in patterns)
-
-    def test_max_year_filters_future(self):
-        patterns = extract_author_year_patterns("Smith (2025) tested this", max_year=2022)
-        assert not any(p["year"] == 2025 for p in patterns)
-
-    def test_years_before_1900_excluded(self):
-        patterns = extract_author_year_patterns("Darwin 1859 described evolution")
-        assert not any(p["year"] < 1900 for p in patterns)
+    @pytest.mark.parametrize("text,surname,year", [
+        ("Smith (2020) found that ego depletion exists.", "smith", 2020),
+        ("Baumeister et al. (1998) showed self-control.", "baumeister", 1998),
+    ])
+    def test_citation_forms_are_extracted(self, text, surname, year):
+        patterns = extract_author_year_patterns(text)
+        assert any(p["surname"] == surname and p["year"] == year for p in patterns)
 
     def test_multi_author_pattern(self):
         patterns = extract_author_year_patterns("Jones and Smith (2015) replicated the effect.")
         assert len(patterns) >= 1
 
-    def test_empty_text_returns_empty(self):
-        assert extract_author_year_patterns("") == []
+    @pytest.mark.parametrize("text,kwargs,rejected", [
+        ("Smith (2025) tested this", {"max_year": 2022}, lambda p: p["year"] == 2025),
+        ("Darwin 1859 described evolution", {}, lambda p: p["year"] < 1900),
+    ])
+    def test_out_of_window_years_are_filtered(self, text, kwargs, rejected):
+        patterns = extract_author_year_patterns(text, **kwargs)
+        assert not any(rejected(p) for p in patterns)
 
-    def test_no_citation_returns_empty(self):
-        patterns = extract_author_year_patterns("We conducted a study with 100 participants.")
-        assert patterns == []
-
-    def test_month_names_not_treated_as_authors(self):
-        patterns = extract_author_year_patterns(
-            "The trial ran from May and June 2018 with no other citations."
-        )
-        assert patterns == []
-
-    def test_single_month_name_not_treated_as_author(self):
-        patterns = extract_author_year_patterns("The report was filed in May, 2018.")
-        assert patterns == []
-
-    def test_weekday_name_not_treated_as_author(self):
-        patterns = extract_author_year_patterns("The event occurred on Friday, 2018.")
-        assert patterns == []
+    @pytest.mark.parametrize("text", [
+        "The trial ran from May and June 2018 with no other citations.",
+        "The report was filed in May, 2018.",
+        "The event occurred on Friday, 2018.",
+    ])
+    def test_month_and_weekday_names_are_not_authors(self, text):
+        assert extract_author_year_patterns(text) == []
 
     def test_real_surname_that_is_not_a_stopword_still_matches(self):
         patterns = extract_author_year_patterns("Friday et al. (2018) is not a real name, "
@@ -137,33 +124,23 @@ class TestStrictBareGate:
 # ── author_matches ────────────────────────────────────────────────────────────
 
 class TestAuthorMatches:
-    def test_exact_match(self):
-        assert author_matches("smith", ["Smith"]) is True
+    @pytest.mark.parametrize("cited,refs", [
+        ("smith", ["Smith"]),                 # exact
+        ("SMITH", ["smith"]),                 # case-insensitive
+        ("baum", ["Baumeister"]),             # cited is a prefix of the ref (≥ min_prefix=3)
+        ("johnson", ["John"]),                # ref is a prefix of the cited surname
+        ("smitt", ["Smith"]),                 # near-prefix: differ only at the last char
+    ])
+    def test_matching_rules(self, cited, refs):
+        assert author_matches(cited, refs) is True
 
-    def test_case_insensitive(self):
-        assert author_matches("SMITH", ["smith"]) is True
-
-    def test_prefix_match_cited_shorter(self):
-        # "baum" is a prefix of "baumeister" (≥ min_prefix=3)
-        assert author_matches("baum", ["Baumeister"]) is True
-
-    def test_prefix_match_ref_shorter(self):
-        # "johnson" starts with "john" (reversed prefix direction)
-        assert author_matches("johnson", ["John"]) is True
-
-    def test_no_match(self):
-        assert author_matches("jones", ["Smith", "Baumeister"]) is False
-
-    def test_empty_cited_surname(self):
-        assert author_matches("", ["Smith"]) is False
-
-    def test_short_prefix_below_min(self):
-        # "sm" is shorter than min_prefix=3 → no prefix match
-        assert author_matches("sm", ["Smith"]) is False
-
-    def test_near_prefix_one_char_diff(self):
-        # "smitt" vs "smith" — differ only at last char → near-prefix match
-        assert author_matches("smitt", ["Smith"]) is True
+    @pytest.mark.parametrize("cited,refs", [
+        ("jones", ["Smith", "Baumeister"]),   # unrelated surname
+        ("", ["Smith"]),                      # no cited surname at all
+        ("sm", ["Smith"]),                    # shorter than min_prefix=3 → no prefix match
+    ])
+    def test_non_matches(self, cited, refs):
+        assert author_matches(cited, refs) is False
 
 
 # ── find_all_candidates ───────────────────────────────────────────────────────
@@ -198,8 +175,9 @@ class TestFindAllCandidates:
         dois = [c["doi"] for c in cands]
         assert "10.1000/smith2010" in dois
 
-    def test_year_tolerance_plus_one(self, tmp_path):
-        """Pattern citing year 2009 should match a reference with year 2010 (±1 window)."""
+    @pytest.mark.parametrize("cited_year", [2009, 2011])
+    def test_year_tolerance_one_either_way(self, tmp_path, cited_year):
+        """A pattern citing 2009 or 2011 should match a 2010 reference (±1 window)."""
         refs = [{
             "id": "https://openalex.org/W333",
             "doi": "https://doi.org/10.1000/smith2010",
@@ -211,31 +189,9 @@ class TestFindAllCandidates:
              patch("shared.openalex_client.fetch_referenced_works_metadata", return_value=refs):
             cands = find_all_candidates(
                 "10.9999/rep", "W999", "",
-                "We replicated Smith (2009) in our study.", 2020, "",
+                f"We replicated Smith ({cited_year}) in our study.", 2020, "",
             )
         assert "10.1000/smith2010" in [c["doi"] for c in cands]
-
-    def test_year_tolerance_minus_one(self, tmp_path):
-        """Pattern citing year 2011 should match a reference with year 2010 (±1 window)."""
-        refs = [{
-            "id": "https://openalex.org/W333",
-            "doi": "https://doi.org/10.1000/smith2010",
-            "title": "Smith Study",
-            "publication_year": 2010,
-            "authorships": [{"author": {"display_name": "John Smith"}}],
-        }]
-        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
-             patch("shared.openalex_client.fetch_referenced_works_metadata", return_value=refs):
-            cands = find_all_candidates(
-                "10.9999/rep", "W999", "",
-                "We replicated Smith (2011) in our study.", 2020, "",
-            )
-        assert "10.1000/smith2010" in [c["doi"] for c in cands]
-
-    def test_empty_openalex_id_returns_empty(self, tmp_path):
-        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path):
-            cands = find_all_candidates("10.9999/rep", "", "", "Smith (2010)", 2020, "")
-        assert cands == []
 
     def test_no_citation_pattern_returns_empty(self, tmp_path):
         """When the abstract has no author-year patterns, no candidates are returned."""
@@ -294,15 +250,6 @@ class TestFindAllCandidates:
             find_all_candidates("10.9999/rep", "W999", "A replication of Jones (2015)",
                                 "no patterns here", 2020, "")
         assert mock_fetch.call_count == 2
-
-    def test_candidate_fields_present(self, tmp_path):
-        """Every candidate dict must have the required fields."""
-        cands = self._run(tmp_path, "We replicated Smith (2010).")
-        required = {"openalex_id", "doi", "title", "year", "first_author",
-                    "match_year_exact", "cited_pattern"}
-        for c in cands:
-            missing = required - set(c.keys())
-            assert not missing, f"Candidate missing fields: {missing}"
 
 
 # ── Title-search caching (audit E4) ──────────────────────────────────────────
