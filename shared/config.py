@@ -132,6 +132,26 @@ OPENROUTER_HEAVY_MODEL = os.getenv("OPENROUTER_HEAVY_MODEL", "qwen/qwen3.5-35b-a
 # An id containing "/" is routed to OpenRouter, anything else to OpenAI direct.
 SCREEN_VOTER2_MODEL = os.getenv("SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
 
+# ── Stage 3 cheap pre-screen (issue #130) ─────────────────────────────────────
+# An optional tier in front of the validated screen: two very small models that can
+# only DISCARD, and only when both agree the row is clearly out of scope. Everything
+# else — one keep, an unreadable reply, an API failure — falls through to the screen
+# unchanged, so the tier can lose papers but can never add them.
+#
+# Default OFF. A pre-screen discard is terminal and never reaches a human, so the
+# validated screen's measured zero-settled-miss property does not extend to it.
+# Deliberately separate from SCREEN_VOTER2_MODEL: changing a pre-screen model must
+# never silently alter the validated screen's cached verdicts.
+PRESCREEN_ENABLED = os.getenv("PRESCREEN_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+# Not inclusionai/ling-2.6-flash, which issue #130 measured: on 2026-08-02 it returned
+# 429 for every call through OpenRouter at any concurrency and any routing, so it cannot
+# gate a corpus however well it classifies.
+PRESCREEN_VOTER1_MODEL = os.getenv("PRESCREEN_VOTER1_MODEL", "google/gemini-2.5-flash-lite")
+PRESCREEN_VOTER2_MODEL = os.getenv("PRESCREEN_VOTER2_MODEL", "mistralai/mistral-nemo")
+# Below this many characters of abstract there is not enough text for a 3B-class model
+# to be trusted with a terminal verdict, so the row bypasses the pre-screen.
+PRESCREEN_MIN_ABSTRACT_CHARS = int(os.getenv("PRESCREEN_MIN_ABSTRACT_CHARS", "200"))
+
 # ── Stage 1 engine source ─────────────────────────────────────────────────────
 # FLORA_USE_ENGINE=1 (or true/yes/on) opts into the YAML-spec engine source.
 FLORA_USE_ENGINE = os.getenv("FLORA_USE_ENGINE", "").strip().lower() in {"1", "true", "yes", "on"}

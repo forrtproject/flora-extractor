@@ -211,9 +211,14 @@ indefinitely. `--rescreen` reopens exactly those rows — the whole paper, so a
 multi-original paper is re-screened as a unit — and leaves every other resolved row
 carried forward.
 
-Rows `sanity_check` has already moved out to `data/not_a_replication.csv` or
-`data/screen_disagreement.csv` are no longer in `extracted.csv` and are therefore
-re-processed by any run, with or without the flag. Their verdicts are still pinned by
+The optional cheap pre-screen's discards (`prescreen_discard`) are reopened by the same
+flag, and this is the only way back: turning `PRESCREEN_ENABLED` off does **not** revisit
+rows it already discarded, because a resume treats a set-aside row as settled.
+
+Rows `sanity_check` has already moved out to `data/not_a_replication.csv`,
+`data/screen_disagreement.csv` or `data/prescreen_discard.csv` are no longer in
+`extracted.csv`, but a resume reads those files and treats every key in them as settled
+— so without the flag they are skipped, not re-processed. Their verdicts are also pinned by
 the screen cache, but that cache is keyed on the screening prompt's version, both
 voter models and the abstract itself — so changing a voter or the prompt makes a
 re-screen actually re-vote, with nothing to bump by hand.
@@ -286,7 +291,9 @@ Rows land in the **first** bucket they match: `screen_disagreement` →
 value); `outcome == not_a_replication` and non-article `doi_r` →
 `not_a_replication.csv`; self-links → `unresolved_self_links.csv`;
 `doi_o_verification == mismatch` → `unresolved_doi_mismatch.csv`; `llm_title_search`
-→ `provisional_title_search.csv`; `target_pending` → `target_pending.csv`; and with
+→ `provisional_title_search.csv`; `target_pending` → `target_pending.csv`;
+`link_method == prescreen_discard` → `prescreen_discard.csv` (ahead of the outcome rule,
+so the cheap pre-screen's discards never mix into the validated screen's file); and with
 `--deep`, fabricated `doi_o` → `fabricated_original_doi.csv`. `cannot_be_determined`
 rows stay in `extracted.csv`.
 

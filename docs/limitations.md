@@ -133,3 +133,31 @@ the precision burden entirely onto Stage 2.
 (and say so in the technical report) or replace them with genuine
 multi-content-word phrases. Do not extend `openalex_search._OA_STOPWORDS` on
 intuition — `we`, `not`, `did` and `could` were each measured *not* to be dropped.
+
+## (g) The cheap pre-screen trades a measured property for money (issue #130)
+
+`shared/prescreen.py` is off by default and should stay off until someone decides the
+trade deliberately. `screen_gate()` has a measured *zero* settled misses; a pre-screen
+discard is terminal — the row never reaches the validated screen, never reaches
+`csv_to_db`, never reaches a human — so nothing about the screen's property extends to
+the tier in front of it.
+
+Two limits of the evidence in `analysis/prescreen_eval/REPORT.md` are structural and no
+larger run of the same design would fix them:
+
+- **The miss rate cannot be bounded tightly enough.** The exact 95% interval on a
+  point estimate of 2 misses in 833 gold positives is 0.03%–0.87%. Bounding the true
+  rate below 0.5% would need roughly 1,450 independent gold positives with the same two
+  misses, and the FLoRA database does not contain that many that also reach Stage 3.
+- **The gold positives are the easy positives.** They are canonical, well-described
+  replications already in FLoRA. The marginal, oddly-phrased papers that only keyword
+  search finds are exactly what a 3B-class model misses and are structurally absent
+  from the set, so the measured rate is a lower bound for the stratum that matters.
+
+**Revisit obligation:** before enabling this in production, run it in shadow — verdict
+recorded, discard not acted on — over fresh rows and count how often it would discard a
+row the validated screen went on to keep. That quantity is the real cost, it is
+measurable in the thousands without any gold labels, and it is the only number that
+should decide this. Re-check the economics at the same time: measured over
+`data/filtered.csv` on 2026-08-02, 49,800 of 2,581,092 rows reach Stage 3, so the whole
+screening bill is ~$87 and the most this tier can save today is ~$50.

@@ -362,6 +362,49 @@ def build_classify_prompt(study_r: str, abstract_r: str) -> str:
             .replace("{abstract}", (abstract_r or "(not available)")[:4000]))
 
 
+# ── The cheap pre-screen (issue #130) ────────────────────────────────────────
+# Issue #130 expected the opposite of what was measured. The hypothesis was that a
+# minimal, positively framed question would beat the production screen's enumerated
+# exclusions, because a long conditional list gives a small model more ways to talk
+# itself into "clearly out". Measured over 184 screen-confirmed negatives, the minimal
+# question discarded 5% and 1% (the two voters) — safe and useless. Naming what does
+# NOT count is what makes a small model able to discard anything at all: 58% and 50%
+# on the same rows, at a gold-positive loss the hard-signal override then rescued.
+# See analysis/prescreen_eval/REPORT.md.
+#
+# The answer is one field. A reasoning field was measured too and only bought output
+# cost and parse-failure surface.
+_PRESCREEN_PROMPT = """You are screening papers for a database of replication and
+reproduction studies.
+
+A paper qualifies if it collects new data to re-test a finding reported in a previously
+published study, or re-analyses that study's data to check the reported result. Re-testing
+in a different population, country or sample still counts.
+
+A paper does not qualify if it merely uses the words "replicate" or "reproduce" in passing,
+if it evaluates or adapts a measurement instrument or procedure without re-testing a
+published finding, or if the words carry an everyday rather than a methodological sense.
+
+Does this paper qualify, or might it?
+
+Answer "yes" if it qualifies or might qualify.
+Answer "no" only if the abstract makes clear it does not.
+
+TITLE: {title}
+
+ABSTRACT: {abstract}
+
+Respond with ONLY a JSON object:
+{"maybe_replication": "<yes|no>"}
+"""
+
+
+def build_prescreen_prompt(title: str, abstract: str) -> str:
+    return (_PRESCREEN_PROMPT
+            .replace("{title}", title or "(not available)")
+            .replace("{abstract}", (abstract or "(not available)")[:3000]))
+
+
 # ── L8–L11 — outcome coding ──────────────────────────────────────────────────
 # Two prompts, not four: the vocabulary (replication vs reproduction) is a genuinely
 # different document, the pass (abstract-only vs full-text escalation) is a handful of

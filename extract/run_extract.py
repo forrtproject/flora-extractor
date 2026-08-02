@@ -21,9 +21,10 @@ import pandas as pd
 from shared.config import (
     BASE_DIR, DATA_DIR, GEMINI_API_KEYS,
     OA_XML_CACHE_DIR, OPENAI_API_KEY, OPENROUTER_API_KEY, PARSE_CACHE_DIR,
-    PDF_CACHE_DIR, log,
+    PDF_CACHE_DIR, PRESCREEN_ENABLED, log,
 )
 from shared import token_counter
+from shared.prescreen import prescreen, prescreen_voters
 from shared.llm_client import (
     _clean_study_numbers, classify_replication, screen_voters,
 )
@@ -46,6 +47,7 @@ from shared.schema import (
     LINK_METHOD_VALUES,
     OUTCOME_CATEGORIES,
     RESOLVED_LINK_METHODS,
+    SCREEN_SET_ASIDE_FILES as _SCREEN_SET_ASIDE_FILES,
     make_pair_id,
 )
 from shared.utils import (bare_work_id, cache_key, citation_fragment,
@@ -625,6 +627,13 @@ def _outcome_without_coding(link_method: str, link: dict) -> "dict | None":
         return _skip("not_a_replication", "high", "abstract",
                      str(link.get("llm_reasoning", "") or ""),
                      str(link.get("llm_model", "") or ""))
+    if link_method == "prescreen_discard":
+        # The cheap tier's own verdict, and the only thing that ever read this paper.
+        # Confidence is low whatever the models said: two 3B-class answers are not the
+        # validated pair, which is exactly why the row is quarantined separately.
+        return _skip("not_a_replication", "low", "abstract",
+                     str(link.get("llm_reasoning", "") or ""),
+                     str(link.get("llm_model", "") or ""))
     if link_method == "llm_title_search":
         return _skip("cannot_be_determined", "low", "",
                      "provisional link from a title search — outcome not coded "
@@ -928,11 +937,20 @@ def _extract_row_key(row: "dict | pd.Series") -> str:
 # Verdicts the classification screen reaches on its own, without ever seeing full text.
 # They are the rows a changed voter pair or prompt would decide differently, so
 # --rescreen reopens exactly these and nothing else.
-SCREEN_SET_ASIDE_METHODS = {"not_a_replication", "screen_disagreement"}
+SCREEN_SET_ASIDE_METHODS = {"not_a_replication", "screen_disagreement",
+                            # The cheap pre-screen's discards belong here for the same
+                            # reason: they were settled from the abstract alone, and a
+                            # changed pre-screen prompt, model pair or bypass list would
+                            # decide them differently. --rescreen is what makes an
+                            # over-aggressive pre-screen version recoverable rather than
+                            # permanent — turning PRESCREEN_ENABLED off does NOT reopen
+                            # them, because a resume treats a set-aside row as settled.
+                            "prescreen_discard"}
 
 # Where sanity_check parks the screen's own verdicts (see extract/sanity_check.py).
 # A resumed run must read them too, or every screened-out paper is screened again.
-SCREEN_SET_ASIDE_FILES = ("not_a_replication.csv", "screen_disagreement.csv")
+# Defined in shared/schema.py because sanity_check purges keys from the same files.
+SCREEN_SET_ASIDE_FILES = _SCREEN_SET_ASIDE_FILES
 
 
 def _screen_set_aside_keys(data_dir) -> set[str]:
@@ -1039,7 +1057,8 @@ def _guard_original_link(row: dict) -> dict:
     # the paper never replicated anything. Asking it for a doi_o would rewrite the
     # row to target_pending and --resolved-only would then discard the finding.
     if row.get("link_method") in {"target_pending", "api_error", "no_original_found",
-                                  "not_a_replication", "screen_disagreement"}:
+                                  "not_a_replication", "screen_disagreement",
+                                  "prescreen_discard"}:
         return row
 
     doi_r = clean_doi(str(row.get("doi_r", "") or ""))
@@ -1132,7 +1151,7 @@ def _verify_row(row: dict) -> dict:
     link_confidence on mismatch, and appends the verification note to
     link_evidence.
     """
-    if row.get("link_method") in {"target_pending", "api_error"}:
+    if row.get("link_method") in {"target_pending", "api_error", "prescreen_discard"}:
         row["doi_o_verification"] = "skipped"
         return row
 
@@ -1263,6 +1282,21 @@ def _check_screen_providers(no_llm: bool) -> None:
             f"Stage 3 needs both reference-screen providers; missing: {', '.join(missing)}. "
             "Set them in .env, or run with --no-llm to skip every LLM stage."
         )
+    # The pre-screen fails open, so a missing key would cost only its savings and not
+    # the run — but silently paying full price for every row because a key is unset is
+    # not something to discover from a token bill. Checked separately from the screen's
+    # keys: the tier is optional and its providers are its own.
+    if PRESCREEN_ENABLED:
+        pre_missing = sorted({env for provider, _ in prescreen_voters()
+                              for env in [("OPENROUTER_API_KEY" if provider == "openrouter"
+                                           else "OPENAI_API_KEY")]
+                              if not _SCREEN_KEYS[env]()})
+        if pre_missing:
+            raise RuntimeError(
+                f"PRESCREEN_ENABLED is set but the pre-screen cannot call its models; "
+                f"missing: {', '.join(pre_missing)}. Set them in .env, or unset "
+                "PRESCREEN_ENABLED to run the validated screen alone."
+            )
 
 
 def _merge_duplicate_originals(rows: list[dict], doi_r: str) -> list[dict]:
@@ -1458,6 +1492,24 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
     return [_apply_outcome(result_row, outcome)]
 
 
+def _prescreen_row(filter_row: pd.Series, pre: dict) -> dict:
+    """The row to write when the cheap pre-screen ends the paper before the screen votes.
+
+    Deliberately NOT built through _front_door_row: that function speaks the validated
+    screen's vocabulary (votes, categories, record_type) and a pre-screen answer has
+    none of it. What this row must carry instead is who ended it — the paper is never
+    seen again by the screen or by a human, so the models and their answers are the
+    whole audit trail.
+    """
+    link = {"resolution_method": "prescreen_discard",
+            "llm_evidence": pre.get("evidence", ""),
+            "llm_model": pre.get("models", ""),
+            "llm_reasoning": pre.get("evidence", "")}
+    return _merge_row(filter_row, link,
+                      _outcome_without_coding("prescreen_discard", link),
+                      "single_original", "low", 1, 1)
+
+
 def _front_door_row(filter_row: pd.Series, screen: dict) -> "dict | None":
     """The row to write when the classification screen ends the paper, else None.
 
@@ -1640,6 +1692,23 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
         log.info("[%s] --no-reproductions: writing target_pending", doi_r)
         return [_empty_row(row, "single_original", "low",
                            link_method="target_pending")]
+
+    # ── Ahead of the front door: the optional cheap pre-screen (issue #130) ──
+    # Two very small models, allowed only to discard and only when both agree, in
+    # front of a screen that costs ~40x more per row. Off unless PRESCREEN_ENABLED:
+    # its discards are terminal and it does not inherit the validated gate's measured
+    # zero-settled-miss property. Everything it cannot settle falls straight through.
+    if PRESCREEN_ENABLED and not no_llm:
+        pre = prescreen(doi_r, str(row.get("title_r", "") or ""),
+                        str(row.get("abstract_r", "")), str(row.get("source", "") or ""))
+        # Recorded on the Series, so every producer downstream carries it: _base_row
+        # builds from filter_row.to_dict() and the tier's effect on a row that
+        # PROCEEDED is otherwise invisible.
+        row["prescreen_verdict"] = (f"bypass:{pre['bypass']}" if pre["bypass"]
+                                    else pre["verdict"])
+        if pre["verdict"] == "discard":
+            log.info("[%s] pre-screen: %s", doi_r, pre["evidence"])
+            return [_prescreen_row(row, pre)]
 
     # ── Front door: is this a replication at all? ────────────────────────
     # 58% of the rows that reach the classification screen are discarded there.
@@ -1942,11 +2011,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--rescreen", action="store_true",
         help="With --resume (or --extracted-test): also re-process rows a previous run "
-             "set aside on the classification screen's verdict (not_a_replication, "
-             "screen_disagreement), so a changed voter pair or prompt decides them again. "
-             "Rows already moved into data/not_a_replication.csv or "
-             "data/screen_disagreement.csv by sanity_check are re-processed anyway, since "
-             "they are no longer in extracted.csv.",
+             "settled from the abstract alone — the classification screen's verdicts "
+             "(not_a_replication, screen_disagreement) and the optional cheap "
+             "pre-screen's discards (prescreen_discard) — so a changed voter pair, "
+             "prompt or bypass list decides them again. This is the ONLY way back: a "
+             "resume without it treats every key in data/not_a_replication.csv, "
+             "data/screen_disagreement.csv and data/prescreen_discard.csv as settled and "
+             "skips the paper, and turning PRESCREEN_ENABLED off does not reopen "
+             "anything it already discarded.",
     )
     parser.add_argument(
         "--resolved-only", action="store_true",
