@@ -366,3 +366,109 @@ def test_data_availability_requires_an_availability_anchor():
     for text in ("Data and code are available on OSF to reproduce the results in this paper.",
                  "All materials are deposited in a repository to replicate the analyses."):
         assert is_non_scholarly_context(text) == "DATA_AVAILABILITY", text
+
+
+# --- #137: vocabulary holes (American reanalysis, negative/passive replicate,
+# --- reproduce-side verbs, adverb insertion, reproduction-of results nouns) ---
+
+
+def test_american_reanalyze_admitted():
+    """"reanalyzed"/"reanalyzing" reached neither stage: the token gate has no
+    ``reanalyz`` stem and Stage B required "re-analysis OF"."""
+    for text in ("Reanalyzing the deworming data.",
+                 "We reanalyzed the original trial data.",
+                 "A re-analyzed subset of the published cohort."):
+        assert find_replication_phrase_span(text) is not None, text
+        assert is_reproduction_only(text), text
+    # British spelling with "of" — the pre-existing behaviour, unchanged.
+    assert find_replication_phrase_span("A re-analysis of Smith (2010).") is not None
+    assert find_replication_phrase_span("Re-analyses of the published data.") is not None
+    # Near miss: a different re- word that merely starts with "rean".
+    assert find_replication_phrase_span("Reanalgesia protocols after surgery.") is None
+
+
+def test_negative_and_passive_replicate_forms():
+    """A failed replication is exactly what FLoRA wants; the list caught only
+    "failed to replicate" and "did not replicate"."""
+    for text in ("The effect does not replicate in a large preregistered sample.",
+                 "The original finding was not replicated.",
+                 "These effects were not replicated in either sample.",
+                 "The result could not be replicated.",
+                 "The association cannot be replicated with the published data.",
+                 "We were unable to replicate the anchoring effect.",
+                 "Failure to replicate the ego-depletion effect.",
+                 "Our inability to replicate the result is discussed."):
+        hit = find_replication_phrase_span(text)
+        assert hit is not None, text
+        assert not is_reproduction_only(text), text
+    # Near miss: the negation is genuinely biological, and the row-level
+    # exclusion still kills it rather than the new phrase rescuing it.
+    bio = "DNA replication was not replicated in the mutant strain."
+    assert is_non_scholarly_context(bio) == "BIOLOGICAL"
+    assert find_replication_phrase_span(bio) is None
+
+
+def test_reproduce_side_vocabulary_admitted():
+    """Rows saying "reproduce the results" passed Stage A on the ``reproduc``
+    token and were then silently dropped by Stage B."""
+    for text in ("We reproduce the original results using the authors' data.",
+                 "We could not reproduce the reported estimates.",
+                 "The authors failed to reproduce the main findings.",
+                 "We sought to reproduce the published figures.",
+                 "We successfully reproduced the analysis.",
+                 "We attempted to reproduce every table in the paper."):
+        assert find_replication_phrase_span(text) is not None, text
+        assert is_reproduction_only(text), text
+
+
+def test_reproduce_does_not_fire_on_biological_reproduction():
+    """Anchored on a results noun, a first-person subject or a failure framing —
+    never on a bare "reproduce"."""
+    for text in ("The species reproduces successfully in captivity each spring.",
+                 "Cows that reproduce early have a higher lifetime yield.",
+                 "Viral genomes reproduce rapidly inside host cells.",
+                 "Sexual reproduction of corals under thermal stress."):
+        assert find_replication_phrase_span(text) is None, text
+
+
+def test_adverb_insertion_in_first_person_replicate():
+    """"we replicated" missed "we closely/partially/conceptually replicated"."""
+    for text in ("We closely replicated the classic paradigm in a new sample.",
+                 "We conceptually replicate Smith's original demonstration.",
+                 "We partially replicated the reported interaction."):
+        hit = find_replication_phrase_span(text)
+        assert hit is not None, text
+    # The GWAS guard applies to the adverb form exactly as to "we replicated".
+    assert find_replication_phrase_span(
+        "We directly replicated one SNP from the genome-wide association study.") is None
+
+
+def test_reproduction_of_results_noun_arm():
+    for text in ("A reproduction of the results of Smith (2010).",
+                 "CODECHECK certificate: reproduction of the analysis.",
+                 "Independent reproductions of the published estimates."):
+        assert find_replication_phrase_span(text) is not None, text
+        assert is_reproduction_only(text), text
+    # Bare "reproduction of" stays unadmitted: measured at 807 exclusive hits per
+    # 4.2M rows, dominated by social/biological reproduction and R0.
+    for text in ("Reproduction of the social order in schools.",
+                 "The Reproduction of Mothering.",
+                 "The Work of Art in the Age of Mechanical Reproduction.",
+                 "The basic reproduction number of influenza."):
+        assert find_replication_phrase_span(text) is None, text
+
+
+def test_quote_form_reproduction_of_unchanged():
+    """The quote-required arm is kept as measured (4 hits, 0 exclusive)."""
+    hit = find_replication_phrase_span('A reproduction of "The Stroop Effect" paradigm.')
+    assert hit is not None
+    assert hit[0] == 'reproduction of "'
+
+
+def test_biological_abstract_matches_no_new_pattern():
+    """Regression: none of the #137 additions fire on ordinary biology."""
+    text = ("Viral load and reproduction in host cells. Sexual reproduction of the "
+            "parasite was observed under thermal stress, and the organisms reproduce "
+            "rapidly. We measured reproductive output and the basic reproduction "
+            "number over three seasons.")
+    assert find_replication_phrase_span(text, ignore_exclusions=True) is None

@@ -160,6 +160,28 @@ SNAPSHOT_HTTP_RETRIES = int(os.getenv("SNAPSHOT_HTTP_RETRIES", "3"))
 # also bounds how much of a large partition is ever held in memory.
 SNAPSHOT_BATCH_ROWS = int(os.getenv("SNAPSHOT_BATCH_ROWS", "50000"))
 SNAPSHOT_HTTP_TIMEOUT = int(os.getenv("SNAPSHOT_HTTP_TIMEOUT", "60"))
+# Compression for the Stage A survivor pool. The pool is the artifact that makes a
+# Stage B vocabulary change a local re-run instead of a 725 GB rescan, so it is kept
+# small and portable; zstd is the best size/speed trade pyarrow ships by default.
+SNAPSHOT_POOL_COMPRESSION = os.getenv("SNAPSHOT_POOL_COMPRESSION", "zstd")
+# Where that pool lives. Deliberately NOT in the mkdir loop above: the pool is a
+# few GB and is often pointed at an external or shared disk, so importing config
+# must not create it (or fail on an unmounted path) for the runs that never touch
+# it — the scanner and search/pool_sync.py create it when they write.
+SNAPSHOT_POOL_DIR = Path(os.getenv("FLORA_POOL_DIR") or (CACHE_DIR / "snapshot_pool"))
+# Private Hugging Face dataset repo the pool is shared through (search/pool_sync.py).
+# Empty by default — pool_sync says which variable to set rather than guessing a repo.
+FLORA_POOL_REPO = os.getenv("FLORA_POOL_REPO", "")
+# Files per Hugging Face commit when pushing. One commit per file would put a single
+# pool push (~2,446 files) past the "few thousand commits" at which HF says repo UX
+# degrades, so uploads are batched into multi-file commits.
+FLORA_HF_COMMIT_BATCH = int(os.getenv("FLORA_HF_COMMIT_BATCH", "100"))
+# Where a prebuilt candidates artifact (chunked parquet + manifest.json) is written
+# and pulled into. Like the pool, not created at import time.
+SNAPSHOT_BUILD_DIR = Path(os.getenv("FLORA_BUILD_DIR") or (CACHE_DIR / "snapshot_build"))
+# Rows per parquet chunk in that artifact: dozens of files, not thousands, and each
+# one small enough to read into memory whole while merging.
+SNAPSHOT_BUILD_CHUNK_ROWS = int(os.getenv("SNAPSHOT_BUILD_CHUNK_ROWS", "100000"))
 
 # ── External servers ──────────────────────────────────────────────────────────
 GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")

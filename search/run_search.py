@@ -377,6 +377,7 @@ def run_search(
     max_records_per_phrase: Optional[int] = None,
     sources: "Optional[set[str]]" = None,
     snapshot_max_files: Optional[int] = None,
+    snapshot_survivor_pool: "Optional[Path]" = None,
 ) -> pd.DataFrame:
     """Run Stage 1 discovery sources and merge results into ``candidates.csv``.
 
@@ -407,6 +408,9 @@ def run_search(
     snapshot_max_files : int, optional
         Cap on the number of snapshot parquet partitions scanned in this call.
         Only meaningful when ``openalex_snapshot`` is explicitly requested.
+    snapshot_survivor_pool : Path, optional
+        Directory for the Stage A survivor pool.  Storing it turns any later
+        Stage B vocabulary change into ``--admit-from-pool`` instead of a rescan.
 
     Returns
     -------
@@ -462,6 +466,7 @@ def run_search(
             to_year=to_year,
             merge_fn=_merge_into_candidates_csv,
             index_loader=_load_or_build_candidates_index,
+            survivor_pool=snapshot_survivor_pool,
         )
         log.info("Stage 1: snapshot scan merged %d new rows into candidates.csv", n_merged)
     else:
@@ -727,6 +732,26 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--survivor-pool",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Persist every Stage A survivor (with its text) as a parquet dataset "
+            "under PATH while scanning. Costs a few GB and makes any later Stage B "
+            "vocabulary change a local --admit-from-pool run instead of a rescan."
+        ),
+    )
+    parser.add_argument(
+        "--admit-from-pool",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Re-run the current Stage B admission over the survivor pool at PATH, "
+            "merge what it admits into candidates.csv, then exit. No snapshot reads. "
+            "Use --dry-run to see the counts without writing."
+        ),
+    )
+    parser.add_argument(
         "--list-concepts",
         metavar="QUERY",
         default=None,
@@ -761,7 +786,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="With --dedup-candidates: print counts without modifying any files.",
+        help=(
+            "With --dedup-candidates or --admit-from-pool: print counts without "
+            "modifying any files."
+        ),
     )
     return parser.parse_args()
 
@@ -815,6 +843,19 @@ if __name__ == "__main__":
             print(f"Harvest complete: {len(cached_batch)} rows processed.")
         raise SystemExit(0)
 
+    if args.admit_from_pool:
+        from search.snapshot_scan import admit_from_pool
+
+        log.info("Pool re-admission: applying the current Stage B to %s ...",
+                 args.admit_from_pool)
+        admit_from_pool(
+            Path(args.admit_from_pool),
+            merge_fn=_merge_into_candidates_csv,
+            index_loader=_load_or_build_candidates_index,
+            dry_run=args.dry_run,
+        )
+        raise SystemExit(0)
+
     if args.snapshot_pilot:
         from search.snapshot_scan import scan_snapshot
 
@@ -824,6 +865,7 @@ if __name__ == "__main__":
             max_files=args.snapshot_max_files,
             from_year=args.from_year,
             to_year=args.to_year,
+            survivor_pool=Path(args.survivor_pool) if args.survivor_pool else None,
         )
         print(f"Snapshot pilot complete: {n_rows} rows written to {args.snapshot_pilot}")
         raise SystemExit(0)
@@ -855,6 +897,8 @@ if __name__ == "__main__":
                 max_records_per_phrase=args.max_per_phrase,
                 sources=set(args.sources) if args.sources else None,
                 snapshot_max_files=args.snapshot_max_files,
+                snapshot_survivor_pool=(Path(args.survivor_pool)
+                                        if args.survivor_pool else None),
             )
     finally:
         if _do_refresh:

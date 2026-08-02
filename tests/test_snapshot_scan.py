@@ -176,13 +176,13 @@ def test_ledger_round_trip_and_needs_scan(snap_env):
     """A done file is skipped, a rewritten file (new content_length) is rescanned, and
     a file left 'merging' by a crash is unfinished business, not done work."""
     url = "https://openalex.s3.amazonaws.com/data/parquet/works/a/part_0000.parquet"
-    ss.save_ledger({"gate_fingerprint": "abc", "files": {
+    ss.save_ledger({"stage_a_fingerprint": "abc", "files": {
         url: {"content_length": 500, "record_count": 9, "status": "done"},
     }})
 
     ledger = ss.load_ledger()
     assert ledger["files"][url]["content_length"] == 500
-    assert ledger["gate_fingerprint"] == "abc"
+    assert ledger["stage_a_fingerprint"] == "abc"
 
     assert ss._needs_scan(url, {"content_length": 500}, ledger) is False
     assert ss._needs_scan(url, {"content_length": 999}, ledger) is True
@@ -228,7 +228,8 @@ def test_crash_between_csv_and_index_append_adds_no_duplicates(snap_env, monkeyp
     assert n_merged == 0, "a rescan after a crash must add nothing"
     assert len(pd.read_csv(snap_env.candidates)) == before
     assert ss.load_ledger()["files"][parquet]["status"] == "done"
-    assert ss.load_ledger().get("gate_fingerprint"), "A8: the ledger records which gate produced it"
+    assert ss.load_ledger().get("stage_a_fingerprint"), \
+        "A8: the ledger records which gate produced it"
 
 
 def test_merge_failure_raises_and_leaves_the_ledger_mid_merge(snap_env):
@@ -266,13 +267,14 @@ def test_merge_failure_raises_and_leaves_the_ledger_mid_merge(snap_env):
     assert ss.load_ledger()["files"][parquet]["status"] == "done"
 
 
-def test_old_gate_fingerprint_is_never_overwritten(snap_env, caplog):
+def test_old_stage_a_fingerprint_is_never_overwritten(snap_env, caplog):
     """The mismatch warning must keep firing every run until the user deletes the
     ledger — scanning one file under the new gate does not make the files marked done
     under the old one any less stale."""
     old_files = {f"https://openalex.s3.amazonaws.com/old_{i}.parquet":
                  {"content_length": 10 + i, "status": "done", "kept": 0} for i in range(3)}
-    ss.save_ledger({"snapshot_date": "", "gate_fingerprint": "OLD-GATE", "files": old_files})
+    ss.save_ledger({"snapshot_date": "", "stage_a_fingerprint": "OLD-GATE",
+                    "stage_b_fingerprint": ss.stage_b_fingerprint(), "files": old_files})
 
     parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", [
         _record(doi="https://doi.org/10.1/a", title="A direct replication of Smith (2009)"),
@@ -285,9 +287,29 @@ def test_old_gate_fingerprint_is_never_overwritten(snap_env, caplog):
     assert any("DIFFERENT gate" in r.message for r in caplog.records), \
         "the mismatch must be reported"
     ledger = ss.load_ledger()
-    assert ledger["gate_fingerprint"] == "OLD-GATE"
+    assert ledger["stage_a_fingerprint"] == "OLD-GATE"
     assert ledger["files"][parquet]["status"] == "done"
     assert all(ledger["files"][u]["status"] == "done" for u in old_files)
+
+
+def test_stage_b_change_asks_for_re_admission_not_a_rescan(snap_env, caplog):
+    """The whole point of the pool: a phrase-list change is re-runnable locally, so it
+    must NOT print the loud 'delete the ledger and rescan' warning that a Stage A
+    change prints — only a mild pointer at --admit-from-pool."""
+    ss.save_ledger({"snapshot_date": "", "stage_a_fingerprint": ss.stage_a_fingerprint(),
+                    "stage_b_fingerprint": "OLD-PHRASES", "files": {}})
+    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", [
+        _record(doi="https://doi.org/10.1/a", title="A direct replication of Smith (2009)"),
+    ])
+
+    with caplog.at_level("INFO"):
+        ss.scan_snapshot(files=[parquet], merge_fn=rs._merge_into_candidates_csv,
+                         index_loader=rs._load_or_build_candidates_index)
+
+    assert not any("DIFFERENT gate" in r.message for r in caplog.records), \
+        "a Stage B change must never demand a 725 GB rescan"
+    assert any("--admit-from-pool" in r.message for r in caplog.records)
+    assert ss.stage_a_fingerprint() != ss.stage_b_fingerprint()
 
 
 def test_explicit_files_never_fetch_the_manifest(snap_env, monkeypatch):
@@ -458,3 +480,224 @@ def test_pilot_dedups_against_its_own_csv(snap_env):
     assert ss.scan_snapshot(files=[parquet], pilot_csv=pilot) == 0
     assert len(pd.read_csv(pilot, encoding="utf-8-sig")) == 1
     assert not snap_env.ledger.exists(), "pilot mode must not write the production ledger"
+
+
+# ---------------------------------------------------------------------------
+# The Stage A survivor pool
+# ---------------------------------------------------------------------------
+
+_POOL_RECORDS = [
+    _record(work_id="https://openalex.org/W1", doi="https://doi.org/10.1/a", oa_url="https://example.org/a.pdf",
+            title="A direct replication of Smith (2009)"),
+    _record(work_id="https://openalex.org/W2", doi="https://doi.org/10.1/b", oa_url="https://example.org/b.pdf",
+            title="Foraging patterns in bees",
+            abstract=_inverted("We assess the reproducibility of the original result")),
+    _record(work_id="https://openalex.org/W3", doi="https://doi.org/10.1/c", oa_url="https://example.org/c.pdf",
+            title="Nectar chemistry in alpine meadows",
+            abstract=_inverted("We describe how bees find flowers"),
+            concepts=("https://openalex.org/C12590798",)),
+    # Stage A keeps this one (the raw index has both words), Stage B rejects it.
+    _record(work_id="https://openalex.org/W4", doi="https://doi.org/10.1/d", oa_url="https://example.org/d.pdf",
+            title="Notes on honeybee foraging",
+            abstract=_inverted("Several replications were run independently of the pilot")),
+    # Never a survivor: nothing for Stage A to see.
+    _record(work_id="https://openalex.org/W5", doi="https://doi.org/10.1/e", oa_url="https://example.org/e.pdf",
+            title="Wing morphology of bumblebees",
+            abstract=_inverted("We measured wings")),
+]
+
+
+def test_pool_stores_every_stage_a_survivor_with_why_it_survived(snap_env):
+    """The pool is what makes a Stage B change cheap, so it must hold every Stage A
+    survivor — including the ones Stage B rejects — and record which arm kept each."""
+    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
+    pool = snap_env.tmp / "pool"
+
+    ss.scan_snapshot(files=[parquet], pilot_csv=snap_env.tmp / "pilot.csv", survivor_pool=pool)
+
+    files = list(pool.glob("*.parquet"))
+    assert len(files) == 1, "one pool file per partition"
+    assert files[0].name == ss._pool_file_name(parquet)
+    assert not list(pool.glob("*.tmp")), "the temp file must not survive a clean run"
+
+    df = pd.read_parquet(files[0])
+    assert list(df.columns) == ss._POOL_SCHEMA.names
+    assert list(df["id"]) == [f"https://openalex.org/W{i}" for i in (1, 2, 3, 4)], \
+        "W5 has no Stage A signal; W4 survives Stage A even though Stage B rejects it"
+
+    by_id = df.set_index("id")
+    w1, w2, w3 = (by_id.loc[f"https://openalex.org/W{i}"] for i in (1, 2, 3))
+    assert (bool(w1.hit_token_title), bool(w1.hit_token_abstract), bool(w1.hit_concept)) \
+        == (True, False, False)
+    assert (bool(w2.hit_token_title), bool(w2.hit_token_abstract), bool(w2.hit_concept)) \
+        == (False, True, False)
+    assert (bool(w3.hit_token_title), bool(w3.hit_token_abstract), bool(w3.hit_concept)) \
+        == (False, False, True)
+
+    # The abstract is stored as reading-order text, not as the inverted index.
+    assert w2.abstract_text == "We assess the reproducibility of the original result"
+    assert json.loads(w1.authorships)[0]["author"]["display_name"] == "Alice Smith"
+
+
+def test_rescanning_a_partition_overwrites_its_pool_file(snap_env):
+    """A partition re-read after a crash must replace its pool file — a second copy
+    would double every one of its rows on the next re-admission."""
+    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
+    pool = snap_env.tmp / "pool"
+    pilot = snap_env.tmp / "pilot.csv"
+
+    ss.scan_snapshot(files=[parquet], pilot_csv=pilot, survivor_pool=pool)
+    first = pd.read_parquet(pool)
+    ss.scan_snapshot(files=[parquet], pilot_csv=pilot, survivor_pool=pool)
+
+    assert len(list(pool.glob("*.parquet"))) == 1
+    assert len(pd.read_parquet(pool)) == len(first) == 4
+
+
+def test_admit_from_pool_admits_exactly_what_the_scanner_admits(snap_env, monkeypatch):
+    """The seam the whole feature rests on: re-admission from the pool and the scan's
+    own admission are one code path, so they cannot drift apart."""
+    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
+    pool = snap_env.tmp / "pool"
+    pilot = snap_env.tmp / "pilot.csv"
+
+    ss.scan_snapshot(files=[parquet], pilot_csv=pilot, survivor_pool=pool)
+    scanned = pd.read_csv(pilot, encoding="utf-8-sig").fillna("")
+
+    merged: list[pd.DataFrame] = []
+
+    def capture(df, path, enrich=True):
+        assert enrich is False, "pool rows carry OpenAlex's own abstract"
+        merged.append(df)
+        return len(df)
+
+    n = ss.admit_from_pool(pool, merge_fn=capture, index_loader=lambda p: set())
+
+    readmitted = pd.concat(merged, ignore_index=True).fillna("")
+    assert n == len(readmitted) == len(scanned) == 2
+    assert list(readmitted["doi_r"]) == list(scanned["doi_r"])
+    for col in CANDIDATES_COLS:
+        assert list(readmitted[col].astype(str)) == list(scanned[col].astype(str)), col
+
+
+def test_admit_from_pool_dry_run_writes_nothing(snap_env):
+    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
+    pool = snap_env.tmp / "pool"
+    ss.scan_snapshot(files=[parquet], pilot_csv=snap_env.tmp / "pilot.csv", survivor_pool=pool)
+
+    def explode(df, path, enrich=True):
+        raise AssertionError("a dry run must not merge anything")
+
+    assert ss.admit_from_pool(pool, merge_fn=explode, index_loader=lambda p: set(),
+                              dry_run=True) == 2
+
+
+def test_admit_from_pool_cli_flag_is_wired(monkeypatch, tmp_path):
+    """--admit-from-pool is an early-exit mode: it must reach admit_from_pool with the
+    path and the dry-run flag, and never start a search run."""
+    import runpy
+
+    calls = []
+    fake = types.ModuleType("search.snapshot_scan")
+    fake.admit_from_pool = lambda path, **kw: calls.append((path, kw)) or 0
+    fake.scan_snapshot = lambda **kw: pytest.fail("--admit-from-pool must not scan")
+    monkeypatch.setitem(sys.modules, "search.snapshot_scan", fake)
+    monkeypatch.setattr(sys, "argv",
+                        ["run_search", "--admit-from-pool", str(tmp_path / "pool"), "--dry-run"])
+
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_module("search.run_search", run_name="__main__")
+
+    assert exc.value.code == 0
+    assert len(calls) == 1
+    assert calls[0][0] == tmp_path / "pool"
+    assert calls[0][1]["dry_run"] is True
+
+
+# ---------------------------------------------------------------------------
+# The prebuilt candidates artifact
+# ---------------------------------------------------------------------------
+
+
+def _ledger_with(files: dict) -> dict:
+    return {"snapshot_date": "2026-07-01", "files": files}
+
+
+_LEDGER = _ledger_with({"https://example.org/part_0000.parquet":
+                        {"content_length": 100, "record_count": 10, "kept": 2}})
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda m: m.setattr(ss, "ROW_BUILDER_VERSION", "v99", raising=False),
+    lambda m: m.setattr(ss, "stage_a_fingerprint", lambda: "other-a"),
+    lambda m: m.setattr(ss, "stage_b_fingerprint", lambda: "other-b"),
+])
+def test_build_hash_moves_with_the_code_that_makes_the_rows(snap_env, monkeypatch, mutate):
+    """A build is downloaded BY its hash, so anything that changes a row must change it."""
+    before = ss.build_hash(_LEDGER)
+    mutate(monkeypatch)
+    assert ss.build_hash(_LEDGER) != before
+
+
+@pytest.mark.parametrize("ledger", [
+    _ledger_with({"https://example.org/part_0000.parquet":
+                  {"content_length": 101, "record_count": 10, "kept": 2}}),   # partition rewritten
+    _ledger_with({"https://example.org/part_0000.parquet":
+                  {"content_length": 100, "record_count": 10, "kept": 3}}),   # different admission
+    {"snapshot_date": "2026-08-01", "files": _LEDGER["files"]},               # newer snapshot
+])
+def test_build_hash_moves_with_what_the_scan_consumed_and_kept(snap_env, ledger):
+    assert ss.build_hash(ledger) != ss.build_hash(_LEDGER)
+
+
+def test_build_hash_is_stable_for_the_same_inputs(snap_env):
+    reordered = {"snapshot_date": "2026-07-01",
+                 "files": dict(reversed(list(_LEDGER["files"].items())))}
+    assert ss.build_hash(_LEDGER) == ss.build_hash(reordered) == ss.build_hash(_LEDGER)
+
+
+def test_build_candidates_rows_are_what_admit_from_pool_admits(snap_env, monkeypatch):
+    """The anti-drift seam: a shared build must hold exactly the rows a collaborator's
+    own --admit-from-pool would have produced, row for row."""
+    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
+    pool = snap_env.tmp / "pool"
+    ss.scan_snapshot(files=[parquet], pilot_csv=snap_env.tmp / "pilot.csv", survivor_pool=pool)
+
+    admitted: list[pd.DataFrame] = []
+    ss.admit_from_pool(pool, merge_fn=lambda df, path, enrich=True: admitted.append(df) or len(df),
+                       index_loader=lambda p: set())
+
+    manifest = ss.build_candidates(pool, snap_env.tmp / "build")
+    built = pd.concat([pd.read_parquet(snap_env.tmp / "build" / c["name"])
+                       for c in manifest["chunks"]], ignore_index=True).fillna("")
+    expected = pd.concat(admitted, ignore_index=True).fillna("")
+
+    assert manifest["rows"] == len(built) == len(expected) == 2
+    for col in CANDIDATES_COLS:
+        assert list(built[col].astype(str)) == list(expected[col].astype(str)), col
+
+
+def test_build_candidates_chunks_and_counts_them_honestly(snap_env):
+    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
+    pool = snap_env.tmp / "pool"
+    ss.scan_snapshot(files=[parquet], pilot_csv=snap_env.tmp / "pilot.csv", survivor_pool=pool)
+
+    out = snap_env.tmp / "build"
+    manifest = ss.build_candidates(pool, out, chunk_rows=1)
+
+    assert [c["name"] for c in manifest["chunks"]] == ["candidates-0000.parquet",
+                                                       "candidates-0001.parquet"]
+    for chunk in manifest["chunks"]:
+        assert len(pd.read_parquet(out / chunk["name"])) == chunk["rows"] == 1
+    assert manifest["rows"] == sum(c["rows"] for c in manifest["chunks"])
+    assert manifest["build_hash"] == ss.build_hash()
+    assert (manifest["stage_a_fingerprint"], manifest["stage_b_fingerprint"],
+            manifest["row_builder_version"]) == (ss.stage_a_fingerprint(),
+                                                 ss.stage_b_fingerprint(),
+                                                 ss.ROW_BUILDER_VERSION)
+    assert json.loads((out / "manifest.json").read_text(encoding="utf-8")) == manifest
+
+    # A rebuild must not leave the previous build's chunks behind for the push to
+    # carry along under the new manifest.
+    ss.build_candidates(pool, out, chunk_rows=10)
+    assert sorted(p.name for p in out.glob("*.parquet")) == ["candidates-0000.parquet"]

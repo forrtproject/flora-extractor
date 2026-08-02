@@ -118,6 +118,92 @@ do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2026 
 python -m search.run_search --harvest-only
 ```
 
+### The OpenAlex snapshot scan and its survivor pool
+
+The bulk-parquet scan is explicit opt-in and takes 13–21 hours over 725 GB.
+`--survivor-pool` writes every Stage A survivor to local parquet (~2–3 GB, one
+file per partition) so a later Stage B vocabulary change is re-run locally
+instead of rescanned.
+
+```bash
+# Full snapshot scan, keeping the survivor pool
+python -m search.run_search --source openalex_snapshot --survivor-pool cache/snapshot_pool
+
+# Re-run the CURRENT Stage B admission over a stored pool (no snapshot reads)
+python -m search.run_search --admit-from-pool cache/snapshot_pool
+python -m search.run_search --admit-from-pool cache/snapshot_pool --dry-run
+```
+
+### Sharing the corpus and the pool
+
+Both artifacts live in one **private** Hugging Face dataset repo. Set `HF_TOKEN`
+and `FLORA_POOL_REPO` in `.env`. Uploads go up in batched commits
+(`FLORA_HF_COMMIT_BATCH`, default 100 files per commit) — one commit per file
+would push the repo past the few-thousand-commit mark where HF says repo UX
+degrades.
+
+**Collaborator workflow — two commands, nothing to rebuild:**
+
+```bash
+python -m search.pool_sync --pull-build   # prebuilt corpus → data/candidates.csv
+python -m filter.run_filter               # → filtered.csv
+```
+
+`--pull-build` downloads the latest prebuilt candidates artifact (chunked
+parquet, `builds/<build_hash>/`) and merges it into `data/candidates.csv` through
+the normal dedup/index path. It takes minutes, against the ~45–60 the pool route
+costs (~10–20 min to pull 2,446 pool files, ~15 min of Stage B, plus index/dedup
+and CSV time). If the build was made under a different Stage B fingerprint or
+row-builder version than your checkout, the merge still runs but warns loudly:
+those rows are someone else's admission decisions.
+
+```bash
+python -m search.pool_sync --pull-build                     # newest build
+python -m search.pool_sync --pull-build --build-hash 9f3c…  # a specific one
+python -m search.pool_sync --pull-build --dry-run           # what it would merge
+```
+
+**Publishing a build** (whoever ran the scan, after a scan or a Stage B change):
+
+```bash
+python -m search.pool_sync --build-candidates   # pool → cache/snapshot_build
+python -m search.pool_sync --push-build         # → builds/<hash>/, updates latest.json
+```
+
+The build's `manifest.json` carries `build_hash` — a content hash of the snapshot
+date, both gate fingerprints, what the ledger consumed and kept, and
+`ROW_BUILDER_VERSION` — so a build is addressed by exactly what produced it and a
+new build never overwrites an old one. **Retention:** old builds accumulate under
+`builds/` and nothing prunes them; `builds/latest.json` only names the current
+one. Delete superseded `builds/<hash>/` folders by hand when the repo grows.
+
+**Power-user route — the survivor pool**, for changing the admission vocabulary
+rather than consuming the corpus. Pool files are stored **year-sharded** on the
+remote (`part-2016-06-24-part_0000.parquet` → `2016/…`) and flat locally; both
+directions skip files already present at the same size, so an interrupted
+transfer is resumed by re-running the command.
+
+```bash
+# Upload the local pool (creates the private repo on first push)
+python -m search.pool_sync --push
+python -m search.pool_sync --push --dry-run
+
+# Download the whole pool, or only some partition years
+python -m search.pool_sync --pull
+python -m search.pool_sync --pull --years 2019,2021-2023
+python -m search.pool_sync --pull --pool-dir /mnt/big/pool --repo my-org/flora-survivor-pool
+
+# Then re-admit locally under YOUR vocabulary
+python -m search.run_search --admit-from-pool cache/snapshot_pool
+```
+
+A push writes `pool_manifest.json` at the repo root recording the Stage A gate,
+snapshot date and ledger the pool was scanned under. Pushing over a pool scanned
+under a **different** Stage A fingerprint is refused (`--force` overrides) — the
+mixture would be complete under neither gate and nothing downstream could tell.
+Pulling one only warns: taking a colleague's pool is legitimate, doing so
+unknowingly is not.
+
 **Output:** `data/candidates.csv`
 
 ---
