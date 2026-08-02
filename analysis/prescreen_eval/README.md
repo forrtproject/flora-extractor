@@ -39,7 +39,7 @@ them carry Stage 2's *high-confidence* `replication` verdict — including every
 
 ```bash
 set -a; source ~/.claude/api_keys.env; set +a
-python3 eval_prescreen.py <model-id> prompt_p3.txt cases_live_goldneg_screen.json --workers=3
+python3 eval_prescreen.py <model-id> prompt_p7.txt cases_live_goldneg_screen.json --workers=3
 python3 score_prescreen.py p7 qwen/qwen3-30b-a3b-instruct-2507 mistralai/mistral-small-24b-instruct-2501 \
         --split=dev --bypass=all --losses
 ```
