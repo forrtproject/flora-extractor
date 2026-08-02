@@ -7,6 +7,7 @@
 | [setup.md](setup.md) | Installation, environment variables, running the pipeline |
 | [architecture.md](architecture.md) | Module map, key design decisions, caching, error handling |
 | [cli-reference.md](cli-reference.md) | All CLI commands with flags for every stage |
+| [aws-snapshot-scan.md](aws-snapshot-scan.md) | Runbook: the full OpenAlex snapshot scan on EC2, published to Hugging Face |
 | [csv-schema.md](csv-schema.md) | Column definitions for all four pipeline CSVs |
 | [dashboard-guide.md](dashboard-guide.md) | How to use the Pipeline + Validation dashboard tabs |
 | [supabase-schema.md](supabase-schema.md) | Supabase table schemas used by the validation monitoring tab |

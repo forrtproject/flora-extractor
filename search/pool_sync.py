@@ -45,6 +45,7 @@ a pipeline-only dependency and read-only/web deployments must not need it.
 """
 
 import argparse
+import datetime
 import json
 import re
 import shutil
@@ -236,6 +237,51 @@ def pool_manifest(ledger: Optional[dict] = None) -> dict:
         "ledger_kept": sum(int((e or {}).get("kept") or 0) for e in files.values()),
         "ledger_hash": ledger_hash(ledger),
     }
+
+
+def check_access(repo: Optional[str] = None) -> dict:
+    """Prove, before anything expensive runs, that this box can publish to the repo.
+
+    A snapshot scan takes hours and its whole value is the artifact at the end, so the
+    worst possible failure is discovering a bad or read-scoped token after the scan.
+    Nothing short of an actual write proves write access — an existing repo answers
+    ``create_repo(exist_ok=True)`` happily for a read token — so this commits a tiny
+    ``preflight.json`` naming who checked, when, and under which Stage A gate.
+
+    Returns the identity/repo facts it established; raises with instructions otherwise.
+    """
+    import huggingface_hub as hf  # pipeline-only: read-only deployments never install it
+
+    repo_id = _resolve_repo(repo)
+    token = _require_token(hf)
+    api = hf.HfApi(token=token)
+
+    try:
+        who = api.whoami()
+    except Exception as exc:  # noqa: BLE001 — boundary: turn 401 into instructions
+        raise RuntimeError(f"Hugging Face rejected HF_TOKEN ({exc}). Create a token with "
+                           "write access at https://huggingface.co/settings/tokens.") from exc
+
+    payload = {
+        "checked_at": datetime.datetime.now(
+            datetime.timezone.utc).isoformat(timespec="seconds"),
+        "by": who.get("name", "?"),
+        "stage_a_fingerprint": stage_a_fingerprint(),
+    }
+    try:
+        api.create_repo(repo_id, repo_type=_REPO_TYPE, private=True, exist_ok=True)
+        api.create_commit(
+            repo_id=repo_id, repo_type=_REPO_TYPE,
+            operations=[hf.CommitOperationAdd(
+                path_in_repo="preflight.json",
+                path_or_fileobj=json.dumps(payload, indent=1).encode("utf-8"))],
+            commit_message="Pre-flight write check")
+    except Exception as exc:  # noqa: BLE001 — boundary: turn 401/403 into instructions
+        raise RuntimeError(_auth_hint(repo_id, exc)) from exc
+
+    log.info("Hugging Face pre-flight OK: %s can write to %s (private dataset)",
+             payload["by"], repo_id)
+    return {"repo": repo_id, **payload}
 
 
 def push_pool(pool_dir: Path, repo: Optional[str] = None, dry_run: bool = False,
@@ -587,6 +633,9 @@ def main() -> None:
     direction.add_argument("--push-build", action="store_true",
                            help="Upload the artifact in --build-dir to builds/<hash>/ "
                                 "and point builds/latest.json at it.")
+    direction.add_argument("--check-access", action="store_true",
+                           help="Prove this machine can write to the dataset repo (commits a "
+                                "small preflight.json). Run BEFORE a long scan.")
     direction.add_argument("--pull-build", action="store_true",
                            help="Download a prebuilt corpus (latest, or --build-hash) and "
                                 "merge it into data/candidates.csv.")
@@ -619,7 +668,10 @@ def main() -> None:
     if args.force and not args.push:
         parser.error("--force applies to --push only")
 
-    if args.push:
+    if args.check_access:
+        info = check_access(repo=args.repo)
+        print(f"Hugging Face OK: {info['by']} can write to {info['repo']}")
+    elif args.push:
         n = push_pool(pool_dir, repo=args.repo, dry_run=args.dry_run, force=args.force)
         print(f"{'Would upload' if args.dry_run else 'Uploaded'} {n} pool file(s)")
     elif args.pull:

@@ -47,8 +47,12 @@ Usage (via Stage 1's orchestrator, explicit opt-in):
     python -m search.run_search --source openalex_snapshot --survivor-pool data/pool
     python -m search.run_search --snapshot-pilot data/snapshot_pilot.csv --snapshot-max-files 3
     python -m search.run_search --admit-from-pool data/pool [--dry-run]
+
+Progress of a running scan (read-only, safe to run concurrently):
+    python -m search.snapshot_scan --status
 """
 
+import argparse
 import datetime
 import hashlib
 import json
@@ -74,6 +78,7 @@ from shared.config import (
     SNAPSHOT_HTTP_RETRIES,
     SNAPSHOT_HTTP_TIMEOUT,
     SNAPSHOT_POOL_COMPRESSION,
+    SNAPSHOT_POOL_DIR,
     log,
 )
 from shared.row_key import row_keys
@@ -86,7 +91,15 @@ SOURCE_TAG_SNAPSHOT = "openalex_snapshot"
 
 # Stage A. Deliberately loose stems, not phrases — see _gate_mask for why this
 # runs against the raw inverted-index JSON and therefore cannot use phrases.
-_TOKEN_GATE = r"(?i)replicat|replicab|reproduc|reanalys|re-analys|reanalyz|re-analyz"
+# Non-English stems earn their place by reaching works the English stems do not:
+# 111 of 112 Korean 재검증 works and 10 of 11 반복검증 are invisible to the English
+# gate. Membership here only decides what enters the survivor pool; whether a row
+# becomes a candidate is Stage B's call.
+_TOKEN_GATE = (
+    r"(?i)replicat|replicab|reproduc|reanalys|re-analys|reanalyz|re-analyz"
+    r"|replikat|réplicat|replicaci|replicaç|replicazion|reproduç|reproduzi"
+    r"|追試|반복검증|재검증"
+)
 _TOKEN_RE = re.compile(_TOKEN_GATE)
 
 _SCAN_COLUMNS = ["id", "doi", "title", "display_name", "publication_year", "type",
@@ -1100,3 +1113,174 @@ def admit_from_pool(pool_path: Path, merge_fn: Optional[Callable] = None,
         print(f"  merged into candidates.csv            {total_merged:,}\n")
 
     return counters["admitted"] if dry_run else total_merged
+
+
+# ---------------------------------------------------------------------------
+# Status — how far along is a running scan?
+# ---------------------------------------------------------------------------
+
+# Files whose timestamps the throughput estimate is measured over. A scan that was
+# stopped and resumed has an idle gap between two files somewhere in its ledger, and
+# averaging over the whole ledger would charge that gap to the current run; a recent
+# window is almost always inside one run.
+_RATE_WINDOW_FILES = 50
+
+
+def _parse_ts(value: "object") -> Optional[datetime.datetime]:
+    try:
+        return datetime.datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _humanize(seconds: float) -> str:
+    """A duration as ``4h 12m`` / ``12m 30s`` — the granularity a watcher reads at."""
+    seconds = int(max(seconds, 0))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m"
+    if minutes:
+        return f"{minutes}m {secs:02d}s"
+    return f"{secs}s"
+
+
+def scan_status(pool_dir: Optional[Path] = None) -> dict:
+    """What the ledger says about progress, without touching the network or the scan.
+
+    Read-only by construction — it opens the cached manifest, the ledger and the pool
+    directory and nothing else — so it is safe to run against a scan in flight. The
+    manifest is read from cache only: fetching one would be a network call from a
+    command whose whole point is to observe, and before the first scan there is
+    nothing to observe anyway.
+
+    Throughput and the ETA are measured over the last ``_RATE_WINDOW_FILES`` files by
+    ``scanned_at``, in manifest bytes rather than files, because partitions differ in
+    size and the job is network-bound.
+    """
+    pool_dir = SNAPSHOT_POOL_DIR if pool_dir is None else pool_dir
+
+    manifest: dict = {}
+    if _MANIFEST_PATH.exists():
+        try:
+            with open(_MANIFEST_PATH, encoding="utf-8") as f:
+                manifest = json.load(f)
+        except Exception:  # noqa: BLE001 — a corrupt cache is "totals unknown", not a crash
+            log.warning("Corrupt cached manifest at %s — totals unavailable", _MANIFEST_PATH)
+
+    all_files = _manifest_files(manifest) if manifest else []
+    total_bytes = sum(int((m.get("content_length") or 0)) for _, m in all_files)
+    total_records = sum(int((m.get("record_count") or 0)) for _, m in all_files)
+
+    ledger = load_ledger()
+    entries = ledger.get("files", {}) or {}
+    done = {u: e for u, e in entries.items() if (e or {}).get("status") == "done"}
+    in_flight = [u for u, e in entries.items() if (e or {}).get("status") != "done"]
+
+    done_bytes = sum(int((e.get("content_length") or 0)) for e in done.values())
+    done_records = sum(int((e.get("record_count") or 0)) for e in done.values())
+    kept = sum(int((e.get("kept") or 0)) for e in done.values())
+
+    stamped = sorted(((_parse_ts(e.get("scanned_at")), e) for e in done.values()
+                      if _parse_ts(e.get("scanned_at"))), key=lambda p: p[0])
+    window = stamped[-_RATE_WINDOW_FILES:]
+    bytes_per_sec = 0.0
+    if len(window) >= 2:
+        span = (window[-1][0] - window[0][0]).total_seconds()
+        # The first file of the window finished before the window started, so its bytes
+        # were not transferred during `span`.
+        moved = sum(int((e.get("content_length") or 0)) for _, e in window[1:])
+        if span > 0:
+            bytes_per_sec = moved / span
+
+    remaining_bytes = max(total_bytes - done_bytes, 0)
+    eta_seconds = remaining_bytes / bytes_per_sec if bytes_per_sec > 0 and total_bytes else None
+
+    pool_files = sorted(pool_dir.glob("*.parquet")) if pool_dir.exists() else []
+
+    return {
+        "files_done": len(done),
+        "files_total": len(all_files),
+        "files_in_flight": in_flight,
+        "bytes_done": done_bytes,
+        "bytes_total": total_bytes,
+        "records_done": done_records,
+        "records_total": total_records,
+        "rows_kept": kept,
+        "pool_dir": str(pool_dir),
+        "pool_files": len(pool_files),
+        "pool_bytes": sum(f.stat().st_size for f in pool_files),
+        "first_scanned_at": stamped[0][0].isoformat(timespec="seconds") if stamped else "",
+        "last_scanned_at": stamped[-1][0].isoformat(timespec="seconds") if stamped else "",
+        "bytes_per_sec": bytes_per_sec,
+        "eta_seconds": eta_seconds,
+        "snapshot_date": ledger.get("snapshot_date", "") or "",
+        "stage_a_fingerprint": ledger.get("stage_a_fingerprint", "") or "",
+        "stage_b_fingerprint": ledger.get("stage_b_fingerprint", "") or "",
+        "ledger_path": str(_LEDGER_PATH),
+    }
+
+
+def _print_status(status: dict) -> None:
+    pct = (100.0 * status["files_done"] / status["files_total"]) if status["files_total"] else 0.0
+    last = status["last_scanned_at"]
+    idle = ""
+    stamp = _parse_ts(last)
+    if stamp is not None:
+        now = datetime.datetime.now(stamp.tzinfo) if stamp.tzinfo else datetime.datetime.now()
+        idle = f"  ({_humanize((now - stamp).total_seconds())} ago)"
+
+    print(f"\n=== Snapshot scan status ({status['ledger_path']}) ===")
+    if not status["files_total"]:
+        print("  no cached manifest — totals unknown until a scan has fetched one")
+    print(f"  files consumed                        {status['files_done']:,}"
+          f" / {status['files_total']:,}  ({pct:.1f}%)")
+    print(f"  bytes consumed                        {status['bytes_done'] / 1e9:,.2f}"
+          f" / {status['bytes_total'] / 1e9:,.2f} GB")
+    print(f"  records scanned                       {status['records_done']:,}"
+          f" / {status['records_total']:,}")
+    print(f"  rows merged into candidates.csv       {status['rows_kept']:,}")
+    print(f"  survivor pool                         {status['pool_files']:,} file(s), "
+          f"{status['pool_bytes'] / 1e9:,.2f} GB  ({status['pool_dir']})")
+    if status["files_in_flight"]:
+        print(f"  file(s) mid-scan                      {len(status['files_in_flight'])} "
+              f"({'/'.join(status['files_in_flight'][0].split('/')[-2:])})")
+    print(f"  first / last file finished            {status['first_scanned_at'] or '—'} / "
+          f"{last or '—'}{idle}")
+    if status["bytes_per_sec"]:
+        print(f"  recent throughput                     "
+              f"{status['bytes_per_sec'] / 1e6:,.1f} MB/s "
+              f"(last {_RATE_WINDOW_FILES} files)")
+    if status["eta_seconds"] is not None:
+        print(f"  estimated time remaining              {_humanize(status['eta_seconds'])}")
+    print(f"  snapshot date                         {status['snapshot_date'] or '—'}")
+    print(f"  Stage A / Stage B fingerprint         "
+          f"{status['stage_a_fingerprint'][:12] or '—'} / "
+          f"{status['stage_b_fingerprint'][:12] or '—'}")
+    print(f"  this checkout                         {stage_a_fingerprint()[:12]} / "
+          f"{stage_b_fingerprint()[:12]}\n")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Read-only progress report for the OpenAlex snapshot scan. Safe to "
+                    "run at any time, including against a scan in flight — it reads the "
+                    "ledger, the cached manifest and the pool directory, and writes "
+                    "nothing. The scan itself is started from "
+                    "`python -m search.run_search --source openalex_snapshot`.")
+    parser.add_argument("--status", action="store_true",
+                        help="Print progress (the only action; implied when no flag is given).")
+    parser.add_argument("--json", action="store_true", help="Emit the status as JSON.")
+    parser.add_argument("--pool-dir", metavar="PATH", default=None,
+                        help=f"Survivor pool directory (default: {SNAPSHOT_POOL_DIR}).")
+    args = parser.parse_args()
+
+    status = scan_status(Path(args.pool_dir) if args.pool_dir else None)
+    if args.json:
+        print(json.dumps(status, indent=1))
+    else:
+        _print_status(status)
+
+
+if __name__ == "__main__":
+    main()

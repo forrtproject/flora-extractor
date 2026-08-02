@@ -132,7 +132,16 @@ python -m search.run_search --source openalex_snapshot --survivor-pool cache/sna
 # Re-run the CURRENT Stage B admission over a stored pool (no snapshot reads)
 python -m search.run_search --admit-from-pool cache/snapshot_pool
 python -m search.run_search --admit-from-pool cache/snapshot_pool --dry-run
+
+# How far along is a running scan? Read-only, safe to run concurrently with it:
+# files/bytes/records consumed vs the manifest, rows kept, recent throughput, ETA.
+python -m search.snapshot_scan --status
+python -m search.snapshot_scan --status --json
 ```
+
+Running the scan on a cloud instance in us-east-1 turns those 13–21 hours into 2–5
+and costs a couple of dollars: see [aws-snapshot-scan.md](aws-snapshot-scan.md) for
+the launch scripts and the runbook.
 
 ### Sharing the corpus and the pool
 
@@ -184,6 +193,9 @@ directions skip files already present at the same size, so an interrupted
 transfer is resumed by re-running the command.
 
 ```bash
+# Prove this machine can write to the repo BEFORE a long scan (commits preflight.json)
+python -m search.pool_sync --check-access
+
 # Upload the local pool (creates the private repo on first push)
 python -m search.pool_sync --push
 python -m search.pool_sync --push --dry-run

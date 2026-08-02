@@ -64,6 +64,30 @@ def bare_work_id(value: str) -> str:
 
 _NON_ARTICLE_DOI_RE = re.compile(r"/reviews/|/decisions/", re.IGNORECASE)
 
+# Prefixes belonging to data repositories that mint DOIs for deposits only — the
+# dataset that accompanies a paper, never the paper (issue #141). Each was confirmed
+# against DataCite: the prefix's registrant is a data repository and a sample of its
+# holdings is deposits throughout (Harvard Dataverse alone carries 816k DOIs, 642 of
+# them typed as text, and those are deposited codebooks, not journal articles).
+#
+# EXCLUDE-ONLY and deliberately incomplete. A prefix belongs here only when it is
+# positively identified — a mixed-content prefix would silently drop real papers, so
+# Zenodo (10.5281) is absent: CODECHECK certificates live there and the reproduction-of
+# arm admits them on purpose. Instances on prefixes not listed here are the title
+# rule's job, not this one's.
+_DATA_REPOSITORY_PREFIXES = frozenset({
+    "10.7910",   # Harvard Dataverse
+    "10.3886",   # ICPSR / openICPSR
+    "10.34894",  # DataverseNL
+    "10.18710",  # DataverseNO
+    "10.18170",  # Peking University Open Research Data Platform
+    "10.21979",  # DR-NTU (Data), NTU Singapore
+    "10.11587",  # AUSSDA — Austrian Social Science Data Archive
+    "10.15139",  # UNC Dataverse
+    "10.18738",  # Texas Data Repository
+    "10.2905",   # European Commission JRC Data Catalogue
+})
+
 
 def non_article_doi(doi: str) -> str:
     """Reason string if *doi* is a non-article object (not a study), else "".
@@ -72,15 +96,49 @@ def non_article_doi(doi: str) -> str:
     "/decisions/" segment marks a peer-review or editorial object
     (e.g. 10.7287/peerj.10325v0.1/reviews/2). Neither is the replication itself, so
     both are Stage-2 false positives (issue #17).
+
+    A DOI on a data-repository prefix (_DATA_REPOSITORY_PREFIXES) is the deposit that
+    accompanies a paper — "Replication Data for: …" — and carries the word replication
+    into the pipeline without being a study (issue #141). The deposit is evidence that
+    a replication exists, but the paper itself is in the corpus under its own DOI, so
+    discarding the deposit loses nothing.
     """
     doi = clean_doi(doi)
     if not doi:
         return ""
     if doi.startswith("10.6084/"):
         return "figshare_data_record"
+    if doi.split("/", 1)[0] in _DATA_REPOSITORY_PREFIXES:
+        return "data_repository_deposit"
     if _NON_ARTICLE_DOI_RE.search(doi):
         return "peer_review_object"
     return ""
+
+
+# "Replication Data for: X", "Replication data set for X", and the Dataverse volume
+# form "Vol. 16(2): Replication Data for: X". Anchored at the start and requiring the
+# noun phrase whole, so "Replication Data Analysis in Psychology" — a paper about
+# replication data — does not match.
+_DEPOSIT_TITLE_RE = re.compile(
+    r"^(?:vol\.\s*\d+\(\d+\):\s*)?replication data\s+(?:for|set)\b", re.IGNORECASE)
+
+
+def non_article_title(title: str) -> str:
+    """Reason string if *title* names a data deposit rather than a study, else "".
+
+    Second, independent check behind non_article_doi(): the prefix list catches the
+    repositories we enumerated, this catches instances on the ones we did not (issue
+    #141). Title evidence is weaker than DOI evidence, which is why the pattern is
+    anchored and narrow — a title merely mentioning replication data is a paper.
+
+    Deliberately does NOT match reproduction packages that are themselves the research
+    output — CODECHECK certificates, artifact-evaluation records, reproducibility
+    reports — which the reproduction-of arm (#137) admits on purpose.
+    """
+    title = str(title or "").strip()
+    if not title:
+        return ""
+    return "data_repository_deposit" if _DEPOSIT_TITLE_RE.match(title) else ""
 
 
 _NON_ARTICLE_TYPES = {

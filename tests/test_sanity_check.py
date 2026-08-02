@@ -99,7 +99,7 @@ def test_deep_quarantines_fabricated_doi(tmp_path, monkeypatch):
 def test_deep_quarantines_non_study_work_types(tmp_path, monkeypatch):
     monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
     monkeypatch.setattr(sc.time, "sleep", lambda *_: None)
-    types = {"10.7910/dvn/deposit": "dataset",
+    types = {"10.5281/zenodo.99999": "dataset",
              "10.7554/elife.12345.041": "peer-review",
              "10.1/study": "journal-article",
              "10.2/untyped": ""}
@@ -120,7 +120,7 @@ def test_deep_quarantines_non_study_work_types(tmp_path, monkeypatch):
     assert set(out["doi_r"]) == {"10.1/study", "10.2/untyped"}
     nar = set(pd.read_csv(tmp_path / "not_a_replication.csv", dtype=str,
                           keep_default_na=False)["doi_r"])
-    assert nar == {"10.7910/dvn/deposit", "10.7554/elife.12345.041"}
+    assert nar == {"10.5281/zenodo.99999", "10.7554/elife.12345.041"}
 
 
 def test_blank_doi_r_rows_do_not_collapse(tmp_path, monkeypatch):

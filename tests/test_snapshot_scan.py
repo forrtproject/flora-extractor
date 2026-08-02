@@ -701,3 +701,42 @@ def test_build_candidates_chunks_and_counts_them_honestly(snap_env):
     # carry along under the new manifest.
     ss.build_candidates(pool, out, chunk_rows=10)
     assert sorted(p.name for p in out.glob("*.parquet")) == ["candidates-0000.parquet"]
+
+
+# ---------------------------------------------------------------------------
+# Status
+# ---------------------------------------------------------------------------
+
+
+def test_status_counts_progress_and_never_fetches_the_manifest(snap_env, monkeypatch):
+    """--status reports done-vs-total from the cached manifest and the ledger only.
+
+    The whole point of the command is that it can be run against a scan in flight, so
+    it must read local state and make no call of its own — hence the network guard.
+    """
+    def _no_network(*a, **kw):
+        raise AssertionError("--status must not touch the network")
+
+    monkeypatch.setattr(ss.requests, "get", _no_network)
+
+    snap_env.manifest.write_text(json.dumps({"entries": [
+        {"url": "https://openalex.s3.amazonaws.com/works/updated_date=2024-01-01/part_0000.parquet",
+         "meta": {"content_length": 1_000, "record_count": 10}},
+        {"url": "https://openalex.s3.amazonaws.com/works/updated_date=2024-01-02/part_0000.parquet",
+         "meta": {"content_length": 3_000, "record_count": 30}},
+    ]}), encoding="utf-8")
+    snap_env.ledger.write_text(json.dumps({"snapshot_date": "2024-02-01", "files": {
+        "https://openalex.s3.amazonaws.com/works/updated_date=2024-01-01/part_0000.parquet":
+            {"content_length": 1_000, "record_count": 10, "status": "done", "kept": 7,
+             "scanned_at": "2024-02-02T00:00:00+00:00"},
+        "https://openalex.s3.amazonaws.com/works/updated_date=2024-01-02/part_0000.parquet":
+            {"content_length": 3_000, "record_count": 30, "status": "merging"},
+    }}), encoding="utf-8")
+
+    status = ss.scan_status(snap_env.tmp / "pool")
+
+    assert (status["files_done"], status["files_total"]) == (1, 2)
+    assert (status["bytes_done"], status["bytes_total"]) == (1_000, 4_000)
+    assert (status["records_done"], status["records_total"]) == (10, 40)
+    assert status["rows_kept"] == 7
+    assert len(status["files_in_flight"]) == 1
