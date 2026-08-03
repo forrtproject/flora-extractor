@@ -329,3 +329,14 @@ def test_get_page_rotates_key_on_budget_refusal(monkeypatch, tmp_path):
     monkeypatch.setattr(oa.requests, "get", fake_get)
     assert oa._get_page({"filter": "x"}) == {"results": []}
     assert seen_auth == ["Bearer k1", "Bearer k2"]
+
+
+def test_deduplicate_empty_frame_keeps_the_schema():
+    """A snapshot-only run hands dedup an empty combined frame; it must come back
+    empty WITH the canonical columns, not column-less (an object-dtype mask made
+    df[mask] select columns, which crashed the first production scan post-scan)."""
+    from search.deduplicate import deduplicate_candidates
+
+    out = deduplicate_candidates(pd.DataFrame(columns=CANDIDATES_COLS))
+    assert out.empty
+    assert list(out.columns) == CANDIDATES_COLS

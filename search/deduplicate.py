@@ -117,7 +117,9 @@ def _exclude_by_doi_pattern(df: pd.DataFrame) -> pd.DataFrame:
     peer-review/editorial-decision objects) — see shared.utils.non_article_doi,
     which is the single definition of that rule and which Stage 2 applies too."""
     before = len(df)
-    mask = ~df["doi_r"].apply(lambda d: bool(non_article_doi(str(d or ""))))
+    # astype(bool): on an empty frame apply() yields an object-dtype mask, and
+    # df[<object series>] selects COLUMNS, returning a frame with none at all.
+    mask = ~df["doi_r"].apply(lambda d: bool(non_article_doi(str(d or "")))).astype(bool)
     df = df[mask].reset_index(drop=True)
     removed = before - len(df)
     if removed:
@@ -387,6 +389,11 @@ def deduplicate_candidates(df: pd.DataFrame) -> pd.DataFrame:
     # Reindex to the canonical schema so downstream code sees a consistent
     # column set and order, even if some sources omitted some fields.
     df = df.reindex(columns=CANDIDATES_COLS)
+
+    # A snapshot-only run streams its rows straight into candidates.csv, so the
+    # combined frame of the OTHER sources is legitimately empty — nothing to do.
+    if df.empty:
+        return df
 
     # Apply passes from strongest identifier to weakest heuristic.
     df = _exclude_by_doi_pattern(df)
