@@ -1,0 +1,23 @@
+﻿candidate,scope,pattern,description,new_admits_in_scanned,scanned_rows,extra_admissions_per_million,projected_extra_admissions_510M_snapshot,gold_repro_reports_matched_of_93,gold_lost_reports_recovered_of_14
+C3_robustness_report,text,(?i)\brobustness\s+(?:report|check|analysis|reproduc\w+|replicat\w+)s?\b,robustness (report|check|analysis|reproducibility|replication),98,2892614,33.9,17291,4,3
+R4_robustness_reproducibility,text,(?i)\brobustness\s+(?:reproducib\w+|replicab\w+|replication)\b,"""robustness (reproducibility|replicability|replication)"" — ALREADY IN PRODUCTION",0,2892614,0.0,0,2,2
+R2_comment_on+cite+reprword,title,(?i)^\s*(?:a\s+)?comments?\s+on\b,R1 AND reproduc/replicat/robustness/re-analy in title+abstract,1,2892614,0.3,176,2,2
+R1_comment_on+cite,title,(?i)^\s*(?:a\s+)?comments?\s+on\b,"title ^""Comment(s) on"" AND author-year cite in title",45,2892614,15.6,7940,2,2
+C1_comment_on_title,title,(?i)^\s*(?:a\s+)?comments?\s+on\b,"title ^""(A) Comment(s) on"" — unrestricted I4R/econ comment genre",658,2892614,227.5,116098,2,2
+R11_recent_paper+cite+samejournal,text,(?i)\bin\s+a\s+recent\s+(?:paper|article|study|note)\s+(?:published\s+)?in\s+this\s+(?:journal|review)\b,"""in a recent paper published in this journal"" AND cite",1,2892614,0.3,176,1,1
+R7_reproducibility_of+cite,text,(?i)\breproducibilit(?:y|ies)\s+of\b,"""reproducibility of"" AND author-year cite",13,2892614,4.5,2294,1,1
+R9_recent_paper+cite,text,(?i)\bin\s+a\s+recent\s+(?:paper|article|study|note|contribution)\b,"""in a recent paper/article/study"" AND author-year cite",42,2892614,14.5,7410,1,1
+R10_this_note_comment+cite,text,(?i)\bthis\s+(?:note|comment|commentary)\b,"""this note/comment"" AND author-year cite",95,2892614,32.8,16762,3,1
+C9_reproducibility_of,text,(?i)\breproducibilit(?:y|ies)\s+of\b,"""reproducibility of""",154,2892614,53.2,27172,1,1
+C6_same_data,text,(?i)\b(?:author-provided|the\s+same|the\s+original|the\s+authors['’]?)\s+(?:data|code|replication\s+(?:files?|package))\b,the same/original/author-provided data|code|replication files,295,2892614,102.0,52050,6,1
+C2_correction_title,title,(?i)\b(?:a\s+)?correction\s+(?:to|of)\b|:\s*a\s+correction\b,"title ""correction to/of"" or "": a correction""",406,2892614,140.4,71635,2,1
+C5_revisit_title,title,(?i)\brevisit(?:ed|ing|s)?\b,title revisit(ed|ing|s),956,2892614,330.5,168677,3,1
+C7_i4r,text,(?i)\bInstitute\s+for\s+Replication\b|\bI4R\b,"""Institute for Replication"" | I4R (matched on the citation string)",0,2892614,0.0,0,0,0
+C10_replication_report,text,(?i)\breplication\s+report\b|\breproduction\s+report\b,"""replication report"" | ""reproduction report""",0,2892614,0.0,0,0,0
+R3_robustness_report,text,(?i)\brobustness\s+report\b,"""robustness report""",0,2892614,0.0,0,0,0
+R5_i4r_boilerplate,text,(?i)institute\s+for\s+replication|\bI4R\b,"""Institute for Replication"" | I4R in OpenAlex title+abstract",0,2892614,0.0,0,0,0
+R6_x_report,text,(?i)\b(?:reproduction|replication|reproducibility)\s+report\b,(reproduction|replication|reproducibility) report,0,2892614,0.0,0,0,0
+R8_correction_title+cite,title,(?i)\b(?:a\s+)?correction\s+(?:to|of)\b|:\s*a\s+correction\b,correction title AND cite AND reproduction word,0,2892614,0.0,0,1,0
+C11_using_original_data,text,(?i)\busing\s+(?:the\s+)?(?:same|original|author-provided|publicly\s+available)\s+data\b,"""using the same/original/public data""",29,2892614,10.0,5117,2,0
+C8_verify_results,text,(?i)\bverif(?:y|ies|ied|ication)\s+(?:the\s+)?(?:original|published|reported|main|key)?\s*(?:results?|findings?|estimates?|analys[ei]s)\b,verify/verification of the results,120,2892614,41.5,21173,0,0
+C4_reexamination_of,text,(?i)\bre-?examin(?:ation|ing|e|ed)\s+of\b,"""re-examination of""",165,2892614,57.0,29113,0,0

@@ -1,0 +1,749 @@
+{
+ "seed": 20260803,
+ "sample_n": 1000,
+ "picks": [
+  235,
+  286,
+  337,
+  388,
+  466,
+  517,
+  568,
+  619,
+  673,
+  724,
+  775,
+  826,
+  880,
+  937,
+  988,
+  1045,
+  1102,
+  1153,
+  1204,
+  1255,
+  1309,
+  1360,
+  1414,
+  1465,
+  1522,
+  1597,
+  1663,
+  1714,
+  1765,
+  1819,
+  1870,
+  1936,
+  1993,
+  2053,
+  2113,
+  2164,
+  2221,
+  2287,
+  2338,
+  2389
+ ],
+ "counters": {
+  "scanned": 10943785,
+  "stage_a": 113554,
+  "admitted": 29149,
+  "files_done": 40,
+  "part::235": 1,
+  "part::286": 1,
+  "part::337": 1,
+  "part::388": 1,
+  "part::466": 1,
+  "part::517": 1,
+  "part::568": 1,
+  "part::619": 1,
+  "part::673": 1,
+  "part::724": 1,
+  "part::775": 1,
+  "part::826": 1,
+  "part::880": 1,
+  "part::937": 1,
+  "part::988": 1,
+  "part::1045": 1,
+  "part::1102": 1,
+  "part::1153": 1,
+  "part::1204": 1,
+  "part::1255": 1,
+  "part::1309": 1,
+  "part::1360": 1,
+  "part::1414": 1,
+  "part::1465": 1,
+  "part::1522": 1,
+  "part::1597": 1,
+  "part::1663": 1,
+  "part::1714": 1,
+  "part::1765": 1,
+  "part::1819": 1,
+  "part::1870": 1,
+  "part::1936": 1,
+  "part::1993": 1,
+  "part::2053": 1,
+  "part::2113": 1,
+  "part::2164": 1,
+  "part::2221": 1,
+  "part::2287": 1,
+  "part::2338": 1,
+  "part::2389": 1
+ },
+ "pop": {
+  "positive": {
+   "n": 8027,
+   "has_abstract": 7185,
+   "has_doi": 6740,
+   "type::article": 3963,
+   "lang::en": 7460,
+   "hit_title_stem": 1968,
+   "hit_abstract_stem": 6976,
+   "hit_concept": 1096,
+   "is_reproduction": 4002,
+   "lang::ar": 1,
+   "lang::es": 12,
+   "type::preprint": 526,
+   "type::other": 1203,
+   "lang::de": 10,
+   "type::book-chapter": 81,
+   "lang::pt": 23,
+   "type::book": 18,
+   "gold_hit": 408,
+   "lang::ko": 14,
+   "lang::ja": 2,
+   "lang::it": 2,
+   "type::dissertation": 185,
+   "lang::uk": 1,
+   "lang::ru": 8,
+   "lang::id": 10,
+   "type::review": 130,
+   "lang::zh": 3,
+   "lang::sl": 1,
+   "type::peer-review": 89,
+   "type::dataset": 1699,
+   "lang::sv": 4,
+   "type::letter": 72,
+   "lang::(none)": 434,
+   "type::editorial": 19,
+   "type::erratum": 4,
+   "type::paratext": 9,
+   "type::report": 20,
+   "lang::fr": 9,
+   "lang::lv": 18,
+   "type::retraction": 3,
+   "lang::ca": 2,
+   "lang::cs": 1,
+   "lang::pl": 1,
+   "lang::kn": 1,
+   "lang::yi": 1,
+   "lang::nl": 2,
+   "lang::fi": 1,
+   "lang::hu": 2,
+   "lang::fa": 1,
+   "lang::ml": 1,
+   "lang::he": 1,
+   "type::software": 1,
+   "type::reference-entry": 1,
+   "type::supplementary-materials": 4,
+   "lang::tr": 1
+  },
+  "ambiguous": {
+   "n": 16408,
+   "has_abstract": 11184,
+   "has_doi": 12216,
+   "type::article": 9611,
+   "lang::en": 14114,
+   "hit_title_stem": 16356,
+   "hit_abstract_stem": 7521,
+   "hit_concept": 3060,
+   "is_reproduction": 0,
+   "lang::es": 724,
+   "lang::fr": 353,
+   "type::review": 419,
+   "type::dissertation": 553,
+   "lang::pt": 233,
+   "type::book": 141,
+   "lang::ja": 28,
+   "lang::de": 88,
+   "lang::ru": 26,
+   "type::other": 1896,
+   "lang::zh": 6,
+   "type::preprint": 377,
+   "lang::ca": 53,
+   "lang::ko": 7,
+   "lang::cs": 5,
+   "type::book-chapter": 612,
+   "lang::it": 15,
+   "lang::ro": 11,
+   "lang::id": 7,
+   "lang::sh": 2,
+   "type::erratum": 28,
+   "lang::nl": 29,
+   "lang::sv": 6,
+   "lang::pl": 4,
+   "type::reference-entry": 11,
+   "type::dataset": 2491,
+   "lang::war": 1,
+   "type::libguides": 21,
+   "lang::(none)": 651,
+   "type::retraction": 3,
+   "type::paratext": 21,
+   "gold_hit": 15,
+   "type::letter": 87,
+   "type::report": 32,
+   "type::editorial": 57,
+   "lang::th": 2,
+   "lang::hu": 5,
+   "type::standard": 4,
+   "type::peer-review": 41,
+   "lang::kn": 3,
+   "lang::no": 1,
+   "lang::ar": 2,
+   "lang::ceb": 3,
+   "lang::uk": 10,
+   "lang::sk": 1,
+   "lang::ms": 1,
+   "lang::tr": 2,
+   "lang::fa": 3,
+   "lang::fi": 2,
+   "lang::sr": 2,
+   "lang::sl": 2,
+   "lang::gl": 1,
+   "lang::lt": 2,
+   "lang::be": 1,
+   "lang::el": 2,
+   "type::supplementary-materials": 3
+  },
+  "concept": {
+   "n": 4714,
+   "has_abstract": 3383,
+   "has_doi": 4074,
+   "type::article": 2309,
+   "lang::en": 4157,
+   "hit_title_stem": 685,
+   "hit_abstract_stem": 2265,
+   "hit_concept": 4714,
+   "is_reproduction": 0,
+   "lang::ja": 8,
+   "type::book": 10,
+   "type::dissertation": 46,
+   "lang::es": 20,
+   "lang::ko": 8,
+   "type::review": 56,
+   "type::preprint": 120,
+   "lang::ru": 12,
+   "lang::th": 4,
+   "type::other": 468,
+   "type::dataset": 1540,
+   "lang::pt": 22,
+   "lang::it": 20,
+   "lang::sq": 3,
+   "lang::ceb": 5,
+   "type::book-chapter": 91,
+   "type::peer-review": 28,
+   "lang::km": 2,
+   "lang::zh": 21,
+   "lang::mr": 2,
+   "gold_hit": 32,
+   "type::letter": 8,
+   "type::paratext": 7,
+   "lang::de": 61,
+   "lang::id": 3,
+   "lang::fr": 56,
+   "lang::ta": 1,
+   "lang::vi": 2,
+   "lang::sv": 24,
+   "lang::pl": 5,
+   "lang::my": 1,
+   "lang::(none)": 196,
+   "type::erratum": 5,
+   "lang::nl": 7,
+   "lang::hr": 2,
+   "lang::cs": 3,
+   "lang::sl": 4,
+   "type::libguides": 1,
+   "lang::tt": 1,
+   "lang::no": 7,
+   "lang::fi": 9,
+   "lang::war": 1,
+   "lang::da": 3,
+   "lang::ca": 3,
+   "lang::eo": 1,
+   "type::report": 11,
+   "lang::sr": 2,
+   "lang::bn": 1,
+   "lang::af": 1,
+   "lang::uk": 4,
+   "lang::gl": 2,
+   "lang::fa": 6,
+   "lang::hu": 4,
+   "lang::ur": 1,
+   "lang::eu": 1,
+   "lang::hi": 4,
+   "type::reference-entry": 3,
+   "lang::si": 2,
+   "lang::sk": 2,
+   "lang::sh": 1,
+   "lang::ia": 1,
+   "lang::kn": 2,
+   "lang::tl": 1,
+   "lang::ml": 1,
+   "lang::ar": 1,
+   "lang::et": 1,
+   "type::editorial": 2,
+   "type::retraction": 2,
+   "type::software": 1,
+   "type::supplementary-materials": 6,
+   "lang::bs": 1,
+   "lang::la": 1
+  }
+ },
+ "year_deciles": {
+  "positive": [
+   1753,
+   2005,
+   2013,
+   2016,
+   2019,
+   2021,
+   2022,
+   2023,
+   2024,
+   2025,
+   2026
+  ],
+  "ambiguous": [
+   1649,
+   1994,
+   2005,
+   2011,
+   2015,
+   2017,
+   2019,
+   2021,
+   2023,
+   2025,
+   2027
+  ],
+  "concept": [
+   1753,
+   2000,
+   2009,
+   2013,
+   2016,
+   2017,
+   2019,
+   2020,
+   2023,
+   2025,
+   2027
+  ]
+ },
+ "year_missing": {
+  "positive": 44,
+  "ambiguous": 158,
+  "concept": 16
+ },
+ "gold_hits": {
+  "positive": [
+   {
+    "doi": "10.1111/dme.14198",
+    "title": "Analysing Policies to reduce Population Ageing induced Fiscal Pressure: An Evaluation of Policies to Reduce Fiscal Pressure Induced by Population Ageing in Australia"
+   },
+   {
+    "doi": "10.1037/pag0000669",
+    "title": "Federal aid and college success of students in the community college"
+   },
+   {
+    "doi": "10.17705/1atrr.00057",
+    "title": "Coordinating Interdependencies in an Open Source Software Project: A Replication of Lindberg, et al."
+   },
+   {
+    "doi": "10.1016/j.socec.2020.101617",
+    "title": "A field experiment on dishonesty: A registered replication of Azar et\u00a0al. (2013)"
+   },
+   {
+    "doi": "10.15616/bsl.2020.26.1.42",
+    "title": "Replication Study of Association between Forkhead Box O3 (<i>FOXO3</i>) Polymorphisms and Tuberculosis in Korean Population"
+   },
+   {
+    "doi": "10.1037/edu0000965",
+    "title": "What it takes to tutor\u2014A preregistered direct replication of the scaffolding experimental study by D. Wood et al. (1978)."
+   },
+   {
+    "doi": "10.1163/9789004304390_007",
+    "title": "Attitudes toward Human Rights and Religiosity among Adolescents in England and Wales: Replicating and Extending a Study in Turkey"
+   },
+   {
+    "doi": "10.1016/j.sbspro.2015.11.058",
+    "title": "Effects of Brand Love, Personality and Image on Word of Mouth; the Case of Local Fashion Brands Among Young Consumers"
+   },
+   {
+    "doi": "10.1080/10510974.2020.1720260",
+    "title": "College Student Perceptions of Frequency and Effectiveness of Use of Relevance Strategies: A Replication and Extension"
+   },
+   {
+    "doi": "10.1016/j.jrp.2021.104144",
+    "title": "Collective narcissism and explicit and implicit collective self-esteem revisited: A preregistered replication and extension"
+   },
+   {
+    "doi": "10.7208/chicago/9780226804781.003.0009",
+    "title": "8. Replication as Contested"
+   },
+   {
+    "doi": "10.1057/9780230307087_5",
+    "title": "Jeanette Winterson\u2019s Love Intervention: Rethinking the Future"
+   },
+   {
+    "doi": "10.1080/17439760.2017.1291851",
+    "title": "The subjective quality of episodic future thought and the experience of meaning in life"
+   },
+   {
+    "doi": "10.1093/abm/kay043",
+    "title": "The Internal Consistency and Validity of the Vaccination Attitudes Examination Scale: A Replication Study"
+   },
+   {
+    "doi": "10.1109/tkde.2014.2302291",
+    "title": "Temporal Workload-Aware Replicated Partitioning for Social Networks"
+   },
+   {
+    "doi": "10.2139/ssrn.2639454",
+    "title": "Robust Replication of Barrier-Style Claims on Price and Volatility"
+   },
+   {
+    "doi": "10.1016/s1120-1797(22)02263-3",
+    "title": "A STRANGE KIND OF RING SHAPED ARTIFACT ON A LOW DOSE PEDIATRIC CHEST CT EXAM: CASE STUDY AND REPLICATION OF THE ARTIFACT WITH A PHANTOM"
+   },
+   {
+    "doi": "10.1080/14783363.2018.1458609",
+    "title": "Investigating changes in TQM\u2019s effects on corporate social performance and financial performance over time"
+   },
+   {
+    "doi": "10.1037/amp0001385.supp",
+    "title": "Supplemental Material for The Prevalence of Direct Replication Articles in Top-Ranking Psychology Journals"
+   },
+   {
+    "doi": "10.1111/jsbm.12233",
+    "title": "Looking Upstream and Downstream in Entrepreneurial Cognition: Replicating and Extending the Busenitz and Barney (1997) Study"
+   },
+   {
+    "doi": "10.1167/19.10.220c",
+    "title": "Near-hand effects are robust: Three OSF pre-registered replications of visual biases in perihand space"
+   },
+   {
+    "doi": "10.1016/j.ijintrel.2019.07.006",
+    "title": "The effect of the normative context on intergroup discrimination: implications for the scientific value of exact and conceptual replications"
+   },
+   {
+    "doi": "10.1016/j.mee.2011.10.008",
+    "title": "Control of polymer recovery during replication of micro-optical elements with continuous relief in fused silica"
+   },
+   {
+    "doi": "10.1080/00224545.2021.1955652",
+    "title": "From conservatism to support for gay conversion therapy: the role of prejudice and beliefs about same-sex sexuality"
+   },
+   {
+    "doi": "10.1037/spq0000597.supp",
+    "title": "Supplemental Material for Independent Factor Structure Replication of the SAEBRS Teacher and Student Scales"
+   },
+   {
+    "doi": "10.1016/j.invent.2015.04.004",
+    "title": "An e-learning supported Train-the-Trainer program to implement a suicide practice guideline. Rationale, content and dissemination in Dutch mental health care"
+   },
+   {
+    "doi": "10.1130/gsatg166a.1",
+    "title": "Model for the eruption of the Old Faithful geyser, Yellowstone National Park"
+   },
+   {
+    "doi": "10.4324/9781315554426",
+    "title": "The Politics of Academic Autonomy in Latin America"
+   },
+   {
+    "doi": "10.2139/ssrn.2120063",
+    "title": "University of Michigan Bar Passage 2004-2006: A Failure to Replicate Professor Sander\u2019s Results, With Implications for Affirmative Action"
+   },
+   {
+    "doi": "10.1016/j.jaci.2010.12.846",
+    "title": "Replication of a Genetic Association between Polymorphisms in KCNMA1 and Asthma in Six Populations of African Ancestry"
+   },
+   {
+    "doi": "10.7910/dvn/2cljpa",
+    "title": "Replication Data for: \"Estimating Substantive Effects in Binary Outcome Panel Models: A Comparison\""
+   },
+   {
+    "doi": "10.1037/edu0000335.supp",
+    "title": "Supplemental Material for Improving Student Learning of Ratio, Proportion, and Percent: A Replication Study of Schema-Based Instruction"
+   },
+   {
+    "doi": "10.1080/08995605.2019.1645536",
+    "title": "Standardized assessment of relationship functioning in OEF/OIF Veterans with and without PTSD"
+   },
+   {
+    "doi": "10.1016/s0168-8278(15)31093-x",
+    "title": "P0890 : Novel cyclophilin inhibitor CPI-431-32 shows broad spectrum antiviral activity by blocking replication of HCV, HBV and HIV-1 viruses"
+   },
+   {
+    "doi": "10.1007/s11423-019-09674-3",
+    "title": "Project-based learning for middle school students monitoring standby power: replication of impact on stem knowledge and dispositions"
+   },
+   {
+    "doi": "10.5072/prism/27631",
+    "title": "Replication of Oil & Gas Projects: A Model for Achieving Predictability on Oil Sands' SAGD Plants"
+   },
+   {
+    "doi": "10.1145/3461778.3462095",
+    "title": "Learning from robotic artefacts: A quest for strong concepts in Human-Robot Interaction"
+   },
+   {
+    "doi": "10.1001/jama.2015.3435",
+    "title": "Association of HLA-DRB1 Haplotypes With Rheumatoid Arthritis Severity, Mortality, and Treatment Response"
+   },
+   {
+    "doi": "10.1080/00393630.2017.1298692",
+    "title": "The Replication of Veronese\u2019s<i>Wedding at Cana</i>and of Duchamp\u2019s<i>Bicycle Wheel</i>: Two Iconic Works as Their Surrogates"
+   },
+   {
+    "doi": "10.2139/ssrn.2770529",
+    "title": "Forward Premia in Electricity Markets with Fixed and Flexible Retail Rates: Replication and Extension"
+   },
+   {
+    "doi": "10.14814/phy2.13561",
+    "title": "Replication and discovery of musculoskeletal QTLs in LG/J and SM/J advanced intercross lines"
+   },
+   {
+    "doi": "10.1080/00220388.2013.858122",
+    "title": "The Impact of Microcredit on the Poor in Bangladesh: Revisiting the Evidence"
+   },
+   {
+    "doi": "10.7910/dvn/klte3l",
+    "title": "A Replication of \u201cAdministrative Burden, Social Construction, and Public Support for Government Programs\u201d"
+   },
+   {
+    "doi": "10.1016/j.evolhumbehav.2019.01.006",
+    "title": "Do \u2018watching eyes\u2019 influence antisocial behavior? A systematic review &amp; meta-analysis"
+   },
+   {
+    "doi": "10.48550/arxiv.2402.05709",
+    "title": "An Empirical Analysis of the Nostr Social Network: Decentralization, Availability, and Replication Overhead"
+   },
+   {
+    "doi": "10.1109/cloud.2016.0094",
+    "title": "Uploading and Replicating Internet of Things (IoT) Data on Distributed Cloud Storage"
+   },
+   {
+    "doi": "10.1002/jaba.211",
+    "title": "Teaching generatively: Learning about disorders and disabilities"
+   },
+   {
+    "doi": "10.1504/ijbm.2013.055961",
+    "title": "A multi-modal dataset, protocol and tools for adaptive biometric systems: a benchmarking study"
+   },
+   {
+    "doi": "10.5281/zenodo.7998416",
+    "title": "Replication Package for the paper \"AI-based Fault-proneness Metrics for Source Code Changes\""
+   },
+   {
+    "doi": "10.1109/weconf51603.2021.9470640",
+    "title": "Priority Maintenance with Replication of Wait-Critical Requests"
+   }
+  ],
+  "ambiguous": [
+   {
+    "doi": "10.1080/09658211.2023.2262188",
+    "title": "No evidence of fast mapping in healthy adults using an implicit memory measure: failures to replicate the lexical competition results of Coutanche and Thompson-Schill (2014)"
+   },
+   {
+    "doi": "10.2139/ssrn.2901327",
+    "title": "Illiquidity and Stock Returns: Cross-Section and Time-Series Effects: A Replication"
+   },
+   {
+    "doi": "10.48550/arxiv.1305.0040",
+    "title": "A note on replicating a CDS through a repo and an asset swap"
+   },
+   {
+    "doi": "10.17605/osf.io/bu3gm",
+    "title": "Spontaneous construction of causally relevant spatial models: Bulgarian replication of the model-type effect"
+   },
+   {
+    "doi": "10.7554/elife.26591.031",
+    "title": "Author response: The c-Jun N-terminal kinase pathway of a vector insect is activated by virus capsid protein and promotes viral replication"
+   },
+   {
+    "doi": "10.1016/j.brat.2023.104436",
+    "title": "What good are positive emotions for treatment? A replication test of whether trait positive emotionality predicts response to exposure therapy for social anxiety disorder"
+   },
+   {
+    "doi": "10.1016/j.nlm.2019.107105",
+    "title": "Limited replicability of drug-induced amnesia after contextual fear memory retrieval in rats"
+   },
+   {
+    "doi": "10.1371/journal.pone.0228871",
+    "title": "Variability in protein cargo detection in technical and biological replicates of exosome-enriched extracellular vesicles"
+   },
+   {
+    "doi": "10.1177/0022219418789376",
+    "title": "Examining the Impact of Group Size on the Treatment Intensity of a Tier 2 Mathematics Intervention Within a Systematic Framework of Replication"
+   },
+   {
+    "doi": "10.1002/jaba.750",
+    "title": "Evaluating the function of social interaction using time allocation as a dependent measure: A replication and extension"
+   },
+   {
+    "doi": "10.1007/s40617-023-00793-1",
+    "title": "A Comparison of Stimulus Set Sizes: Systematic Replication with Operant Analysis Acquisition Criteria"
+   },
+   {
+    "doi": "10.1007/s40732-024-00597-x",
+    "title": "Immediate Reinforcement Training Has Moderate Effect on Delay Discounting Behavior in Rats: A Systematic Replication"
+   },
+   {
+    "doi": "10.1007/s44217-024-00190-y",
+    "title": "Replication to first-year undergraduate students\u2019 knowledge of academic misconduct"
+   },
+   {
+    "doi": "10.1007/s10864-024-09564-6",
+    "title": "Applying \u201cMastery\u201d Criteria to Sets and Individual Operants: A Replication with Preschoolers with Disabilities"
+   },
+   {
+    "doi": "10.31234/osf.io/2bt6q",
+    "title": "Using simulation and resampling to improve the statistical power and reproducibility of psychological research"
+   }
+  ],
+  "concept": [
+   {
+    "doi": "10.17615/mp93-g711",
+    "title": "Loss of immune escape mutations during persistent HCV infection in pregnancy enhances replication of vertically transmitted viruses"
+   },
+   {
+    "doi": "10.1038/ni0813-877a",
+    "title": "Erratum: Corrigendum: SAMHD1 restricts the replication of human immunodeficiency virus type 1 by depleting the intracellular pool of deoxynucleoside triphosphates"
+   },
+   {
+    "doi": "10.1109/cloud.2013.55",
+    "title": "Data Replication for Distributed Graph Processing"
+   },
+   {
+    "doi": "10.1145/3135974.3135985",
+    "title": "Ginja"
+   },
+   {
+    "doi": "10.1098/rsos.240229/v2/review1",
+    "title": "Review for \"Do infants use cues of saliva-sharing to infer close relationships? A replication of Thomas &lt;i&gt;et al&lt;/i&gt; . (2022)\""
+   },
+   {
+    "doi": "10.1109/bigdatacongress.2018.00021",
+    "title": "Towards a Better Replica Management for Hadoop Distributed File System"
+   },
+   {
+    "doi": "10.1201/9780429125614-2",
+    "title": "Genome Organisation, Translation and Replication of Foot-and-Mouth Disease Virus RNA"
+   },
+   {
+    "doi": "10.1109/icoei.2017.8300788",
+    "title": "Improving replication results through directory server data replication"
+   },
+   {
+    "doi": "10.1098/rsos.240229/v3/response1",
+    "title": "Author response for \"Do infants use cues of saliva-sharing to infer close relationships? A replication of Thomas &lt;i&gt;et al&lt;/i&gt; . (2022)\""
+   },
+   {
+    "doi": "10.1098/rsos.220497/v2/review3",
+    "title": "Review for \"How strong is the rhythm of perception? A registered replication of Hickok &lt;i&gt;et al&lt;/i&gt; . (2015)\""
+   },
+   {
+    "doi": "10.7554/elife.26591.030",
+    "title": "Decision letter: The c-Jun N-terminal kinase pathway of a vector insect is activated by virus capsid protein and promotes viral replication"
+   },
+   {
+    "doi": "10.1016/j.virol.2017.11.022",
+    "title": "Coronaviruses and arteriviruses display striking differences in their cyclophilin A-dependence during replication in cell culture"
+   },
+   {
+    "doi": "10.1016/j.concog.2015.01.011",
+    "title": "Lost in time..."
+   },
+   {
+    "doi": "10.1016/j.antiviral.2020.104903",
+    "title": "Viperin protein inhibits the replication of caprine parainfluenza virus type 3 (CPIV 3) by interaction with viral N protein"
+   },
+   {
+    "doi": "10.1007/s00705-020-04571-0",
+    "title": "Retraction Note to: Comparative analysis of the replication of bovine herpesvirus 1(BHV1) and BHV5 in bovine-derived neuron-like cells"
+   },
+   {
+    "doi": "10.1016/j.meegid.2015.04.013",
+    "title": "Replication of genome wide association studies on hepatocellular carcinoma susceptibility loci of STAT4 and HLA-DQ in a Korean population"
+   },
+   {
+    "doi": "10.1016/j.vetmic.2010.09.009",
+    "title": "Potential role of viral surface glycoproteins in the replication of H3N2 triple reassortant influenza A viruses in swine and turkeys"
+   },
+   {
+    "doi": "10.1186/s41021-017-0081-0",
+    "title": "Generation, repair and replication of guanine oxidation products"
+   },
+   {
+    "doi": "10.1371/journal.ppat.1013630.s004",
+    "title": "TRIM45 does not affect the replication of VSV-EGFP virus."
+   },
+   {
+    "doi": "10.6084/m9.figshare.c.5083700.v1",
+    "title": "Supplementary material from \"Host circadian clocks do not set the schedule for the within-host replication of malaria parasites\""
+   },
+   {
+    "doi": "10.3389/fgene.2025.1544802.s010",
+    "title": "Image 9_Insights into the evolution and regulation of miRNAs from the view of their DNA replication temporal domains.jpeg"
+   },
+   {
+    "doi": "10.1371/journal.ppat.1003345.g006",
+    "title": "TLR3 expressed in 293-hTLR3 cells senses HCV replication in adjacent human hepatocytes."
+   },
+   {
+    "doi": "10.1007/s13760-022-01949-6",
+    "title": "Anti-CASPR2 myeloencephalitis with active replication of hepatitis B virus in the central nervous system: a case report"
+   },
+   {
+    "doi": "10.6084/m9.figshare.31857456.v1",
+    "title": "Additional file 2 of Role of O-linked glycosylation modification on internalization and replication of avian leukosis virus subgroup J"
+   },
+   {
+    "doi": "10.1002/jbmr.62",
+    "title": "Replication of previous genome-wide association studies of bone mineral density in premenopausal American women"
+   },
+   {
+    "doi": "10.1128/jvi.00429-15",
+    "title": "Thioredoxin 2 Is a Novel E2-Interacting Protein That Inhibits the Replication of Classical Swine Fever Virus"
+   },
+   {
+    "doi": "10.1186/s13071-025-06711-4",
+    "title": "Risk assessment of an Aedes flavivirus and its effect on pathogenic flavivirus replication in mosquitoes"
+   },
+   {
+    "doi": "10.1142/s1793048018500078",
+    "title": "Initial Phase of Replication of Plus-Stranded RNA Viruses"
+   },
+   {
+    "doi": "10.1007/s00705-024-06040-4",
+    "title": "Role of angiotensin II in cellular entry and replication of dengue virus"
+   },
+   {
+    "doi": "10.1080/22221751.2025.2470371",
+    "title": "SREBP2-dependent lipid droplet formation enhances viral replication and deteriorates lung injury in mice following IAV infection"
+   },
+   {
+    "doi": "10.1128/jvi.02022-15",
+    "title": "Identification of Viral and Host Proteins That Interact with Murine Gammaherpesvirus 68 Latency-Associated Nuclear Antigen during Lytic Replication: a Role for Hsc70 in Viral Replication"
+   },
+   {
+    "doi": "10.1145/3293611.3331568",
+    "title": "Linearizable State Machine Replication of State-Based CRDTs without Logs"
+   }
+  ]
+ },
+ "gold_hit_counts": {
+  "positive": 408,
+  "ambiguous": 15,
+  "concept": 32
+ },
+ "gold_corpus_size": 26983
+}
