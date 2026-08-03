@@ -35,10 +35,11 @@ OA_XML_CACHE_DIR     = CACHE_DIR / "openalex_xml"   # GROBID XML from content.op
 PARSE_CACHE_DIR      = CACHE_DIR / "parse"           # per-method parse results
 MARKITDOWN_CACHE_DIR = CACHE_DIR / "markdown"        # raw .md files from MarkItDown
 DOI_VERIFY_CACHE_DIR = CACHE_DIR / "doi_verify"      # CrossRef/OpenAlex DOI verification
+SNAPSHOT_CACHE_DIR   = CACHE_DIR / "snapshot"        # OpenAlex bulk-parquet manifest + scan ledger
 
 for _d in [DATA_DIR, PDF_CACHE_DIR, GROBID_CACHE_DIR, LLM_CACHE_DIR,
            OA_CACHE_DIR, OA_XML_CACHE_DIR, PARSE_CACHE_DIR, MARKITDOWN_CACHE_DIR,
-           DOI_VERIFY_CACHE_DIR]:
+           DOI_VERIFY_CACHE_DIR, SNAPSHOT_CACHE_DIR]:
     _d.mkdir(parents=True, exist_ok=True)
 
 # ── Input / output files ──────────────────────────────────────────────────────
@@ -181,6 +182,40 @@ CURATED_SOURCES = frozenset(
     for s in os.getenv("CURATED_SOURCES", "i4r,bob_reed,backfill_old_pipeline").split(",")
     if s.strip()
 )
+
+# ── OpenAlex snapshot (bulk parquet) ──────────────────────────────────────────
+# The public S3 bucket holding the whole corpus as column-projectable parquet.
+# Overridable so a mirror or a local copy can be pointed at without code changes.
+SNAPSHOT_BASE_URL = os.getenv("FLORA_SNAPSHOT_BASE_URL",
+                              "https://openalex.s3.amazonaws.com/data/parquet")
+# Attempts per partition file before it is skipped and reported at the end of the run.
+SNAPSHOT_HTTP_RETRIES = int(os.getenv("SNAPSHOT_HTTP_RETRIES", "3"))
+# Rows per pyarrow batch. Survivors are merged per batch (never per file), so this
+# also bounds how much of a large partition is ever held in memory.
+SNAPSHOT_BATCH_ROWS = int(os.getenv("SNAPSHOT_BATCH_ROWS", "50000"))
+SNAPSHOT_HTTP_TIMEOUT = int(os.getenv("SNAPSHOT_HTTP_TIMEOUT", "60"))
+# Compression for the Stage A survivor pool. The pool is the artifact that makes a
+# Stage B vocabulary change a local re-run instead of a 725 GB rescan, so it is kept
+# small and portable; zstd is the best size/speed trade pyarrow ships by default.
+SNAPSHOT_POOL_COMPRESSION = os.getenv("SNAPSHOT_POOL_COMPRESSION", "zstd")
+# Where that pool lives. Deliberately NOT in the mkdir loop above: the pool is a
+# few GB and is often pointed at an external or shared disk, so importing config
+# must not create it (or fail on an unmounted path) for the runs that never touch
+# it — the scanner and search/pool_sync.py create it when they write.
+SNAPSHOT_POOL_DIR = Path(os.getenv("FLORA_POOL_DIR") or (CACHE_DIR / "snapshot_pool"))
+# Private Hugging Face dataset repo the pool is shared through (search/pool_sync.py).
+# Empty by default — pool_sync says which variable to set rather than guessing a repo.
+FLORA_POOL_REPO = os.getenv("FLORA_POOL_REPO", "")
+# Files per Hugging Face commit when pushing. One commit per file would put a single
+# pool push (~2,446 files) past the "few thousand commits" at which HF says repo UX
+# degrades, so uploads are batched into multi-file commits.
+FLORA_HF_COMMIT_BATCH = int(os.getenv("FLORA_HF_COMMIT_BATCH", "100"))
+# Where a prebuilt candidates artifact (chunked parquet + manifest.json) is written
+# and pulled into. Like the pool, not created at import time.
+SNAPSHOT_BUILD_DIR = Path(os.getenv("FLORA_BUILD_DIR") or (CACHE_DIR / "snapshot_build"))
+# Rows per parquet chunk in that artifact: dozens of files, not thousands, and each
+# one small enough to read into memory whole while merging.
+SNAPSHOT_BUILD_CHUNK_ROWS = int(os.getenv("SNAPSHOT_BUILD_CHUNK_ROWS", "100000"))
 
 # ── External servers ──────────────────────────────────────────────────────────
 GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")

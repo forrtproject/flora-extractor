@@ -34,6 +34,16 @@ from shared.utils import sentence_spans
 # but naming them once makes the shared membership explicit.
 _REPRODUCTION_ANCHORED: list[re.Pattern] = [
     re.compile(r"\breproductions? of ['\"“‘]", re.IGNORECASE),
+    # The quote-required form above is kept as measured (4 hits / 4.2M rows, 0
+    # exclusive) but misses the computational-reproduction genre. A results-noun
+    # object reaches it at 14 exclusive hits / 4.2M. A BARE "reproductions? of"
+    # is deliberately NOT used: 807 exclusive hits, dominated by biological and
+    # *social* reproduction ("The Reproduction of Mothering") and epidemiological
+    # R₀ — 0 of 15 sampled were our sense (#137).
+    re.compile(r"\breproductions? of\s+(?:the\s+)?"
+               r"(?:(?:original|published|reported|previous|prior|main|key|core)\s+)?"
+               r"(?:results?|findings?|analys[ei]s|estimates?|figures?|tables?|"
+               r"stud(?:y|ies)|experiments?|data)\b", re.IGNORECASE),
     # "comput\w*" not "computational": the genre says "computationally reproducible"
     # at least as often as "computational reproduction".
     re.compile(r"\bcomput\w*\s+reproduc\w+\b", re.IGNORECASE),
@@ -41,7 +51,31 @@ _REPRODUCTION_ANCHORED: list[re.Pattern] = [
     re.compile(r"\breproduc\w+\s+(?:and|&)\s+(?:replicat|extend|extension)\w*\b", re.IGNORECASE),
     # Re-analysis of a prior study's data is a reproduction. Cost-free on every
     # labelled set and the largest single gain on the curated reproduction list.
-    re.compile(r"\bre-?analys[ei]s of\b", re.IGNORECASE),
+    # Broadened from "re-?analys[ei]s of" to cover the verb forms and the American
+    # spelling; a strict superset of the original, which stays admitted.
+    re.compile(r"\bre-?analy[sz](?:is|es|ed|ing|e)\s+of\b", re.IGNORECASE),
+    # Bare American spelling. "reanalysis" reaches Stage A on the "reanalys" stem
+    # and Stage B via the pattern above; "reanalyzed"/"reanalyzing" reached NEITHER
+    # (#137). No "of" is required because the token itself is already specific —
+    # unlike "reproduction", it has no biological or social homograph.
+    re.compile(r"\bre-?analyz\w+\b", re.IGNORECASE),
+    # --- reproduce-side verbs (#137 item 3) ---
+    # Never anchored on a bare "reproduce": that is biology. Each of these needs a
+    # results-noun object, a first-person subject, or a failure/attempt framing.
+    # The optional ``\w+ly`` slot is the adverb insertion of #137 item 4
+    # ("reproduce the results" / "reproduce exactly the reported estimates").
+    re.compile(r"\breproduc(?:e|es|ed|ing)\s+(?:\w+ly\s+)?(?:the\s+)?"
+               r"(?:original|published|reported|previous|prior|main|key|core|"
+               r"their|these|authors'?)?\s*"
+               r"(?:results?|findings?|estimates?|figures?|tables?|analys[ei]s)\b",
+               re.IGNORECASE),
+    # "try" is spelled out rather than stemmed: ``try\w*`` would miss "tried"/"tries"
+    # and ``tri\w*`` would swallow "trial", so the four inflections are listed the way
+    # ``attempt\w*`` covers its own on the replicate side. "trying to reproduce" was
+    # the hole.
+    re.compile(r"\b(?:fail\w*|unable|inabilit\w+|attempt\w*|sought|seek\w*|aim\w*|"
+               r"tr(?:y|ies|ied|ying))\s+to\s+reproduce\b", re.IGNORECASE),
+    re.compile(r"\bwe\s+(?:\w+ly\s+)?reproduced?\b", re.IGNORECASE),
 ]
 
 # Every "<qualifier> replication" pattern carries an explicit ``s?``: ``\b`` after
@@ -77,13 +111,32 @@ REPLICATION_PHRASES: list[re.Pattern] = [
     # --- reproduction vocabulary the list never covered ---
     # Anchored on purpose. A bare "reproduction of" matches animal breeding and
     # "social reproduction" far more often than a reproduction study (8% precision
-    # over 15,440 corpus rows), while these four cost nothing and score better on
-    # the curated reproduction list.
+    # over 15,440 corpus rows), while these anchored forms cost nothing and score
+    # better on the curated reproduction list.
     *_REPRODUCTION_ANCHORED,
     re.compile(r"\breplicat(?:e|es|ed|ing)\s+(?:the\s+)?"
                r"(?:previous|prior|original|earlier|main|key|core|published)?\s*"
                r"(?:findings?|results?|effects?|analys[ei]s|stud(?:y|ies))\b",
                re.IGNORECASE),
+    # --- negative and passive replicate forms (#137 item 2) ---
+    # The list already had "failed to replicate" and "did not replicate" and nothing
+    # else: a failed replication is exactly what FLoRA wants, and English expresses
+    # it half a dozen other ways. One alternation for the auxiliary+negation shapes
+    # ("does not replicate", "was not replicated", "could not be replicated",
+    # "cannot be replicated"), one for the noun/adjective framings.
+    # The perfect ("has not BEEN replicated") and "never" were the two holes: the
+    # auxiliary+negation shape is the same, but "been" is not "be" and "never" is not
+    # "not" — 803 rows of candidates.csv say it one of those two ways.
+    re.compile(r"\b(?:(?:d(?:oes|o|id)|w(?:as|ere)|is|are|ha[sd]|have|could|would|"
+               r"should|can|may|might)\s+(?:not|never)|cannot|can['’]t)\s+"
+               r"(?:(?:be|been)\s+)?replicat\w+\b", re.IGNORECASE),
+    re.compile(r"\b(?:unable|inabilit\w+|failure)\s+to\s+replicate\b", re.IGNORECASE),
+    # --- adverb insertion (#137 item 4) ---
+    # "we successfully/partially/closely/directly replicated". Kept as a separate
+    # pattern rather than widening "\bwe replicated\b" in place, so that phrase's
+    # PHRASE_GUARDS key (and its measured behaviour) is untouched; the new pattern
+    # carries the same GWAS guard below.
+    re.compile(r"\bwe\s+\w+ly\s+replicate[sd]?\b", re.IGNORECASE),
 ]
 
 # Subset that should be classified as ``reproduction`` rather than ``replication``
@@ -92,22 +145,26 @@ REPLICATION_PHRASES: list[re.Pattern] = [
 REPRODUCTION_PHRASES: list[re.Pattern] = list(_REPRODUCTION_ANCHORED)
 
 
+# "We replicated one SNP (rs133885) from 585 SNPs previously reported..." — a
+# GWAS discovery/replication-cohort design, not a replication of a study.
+# Removes 59 curated negatives at zero cost on either gold set. The same guard
+# on "replication stud(y|ies)" costs 28 human-gold papers to remove 18
+# negatives, so it is deliberately scoped to the first-person phrases.
+_GWAS_GUARD = re.compile(
+    r"\b(?:gwas|genome[-\s]wide|snps?|alleles?|genotyp\w+|haplotype|"
+    r"linkage disequilibrium|minor allele frequency|loci|polymorphism\w*|"
+    r"replication cohort|discovery cohort|exome)\b", re.IGNORECASE)
+
 # Phrase-scoped negative contexts, keyed by pattern source. A phrase whose guard
 # fires is skipped while every OTHER phrase in the same text can still match —
 # unlike the row-level patterns in exclusion-patterns.yaml, which kill the row.
-# That distinction matters: the measurement-reliability vocabulary below makes
+# That distinction matters: the measurement-reliability vocabulary makes
 # "reproducibility of" worthless but says nothing about "a direct replication of
 # Smith (2010)" in the same abstract.
 PHRASE_GUARDS: dict[str, re.Pattern] = {
-    # "We replicated one SNP (rs133885) from 585 SNPs previously reported..." — a
-    # GWAS discovery/replication-cohort design, not a replication of a study.
-    # Removes 59 curated negatives at zero cost on either gold set. The same guard
-    # on "replication stud(y|ies)" costs 28 human-gold papers to remove 18
-    # negatives, so it is deliberately scoped to this one phrase.
-    r"\bwe replicated\b": re.compile(
-        r"\b(?:gwas|genome[-\s]wide|snps?|alleles?|genotyp\w+|haplotype|"
-        r"linkage disequilibrium|minor allele frequency|loci|polymorphism\w*|"
-        r"replication cohort|discovery cohort|exome)\b", re.IGNORECASE),
+    r"\bwe replicated\b": _GWAS_GUARD,
+    # "We successfully replicated one SNP ..." is the same design with an adverb.
+    r"\bwe\s+\w+ly\s+replicate[sd]?\b": _GWAS_GUARD,
 }
 # NOT guarded: "re-analysis of". Its noise has no compact shape. Over ~1,280
 # corpus rows the object after "of" is "data" (260), "studies" (50), "evidence"

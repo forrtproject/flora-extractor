@@ -280,7 +280,9 @@ def _harvest_s2_cache() -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def _merge_into_candidates_csv(new_df: pd.DataFrame, out_path: "Path") -> None:
+def _merge_into_candidates_csv(
+    new_df: pd.DataFrame, out_path: "Path", enrich: bool = True
+) -> int:
     """Append only genuinely new rows from *new_df* into the candidates CSV.
 
     Uses a persistent index file (``cache/candidates_index.txt``) to check
@@ -297,7 +299,26 @@ def _merge_into_candidates_csv(new_df: pd.DataFrame, out_path: "Path") -> None:
         caller (``deduplicate_candidates``).
     out_path : Path
         Destination CSV path. Created if absent.
+    enrich : bool
+        Fill missing abstracts from CrossRef/S2 before writing.  The snapshot
+        source passes ``False``: its rows already carry OpenAlex's abstract, and
+        the blank ones are exactly the population OpenAlex never had — they are
+        served later by ``python -m search.fetch_abstracts --skip-openalex``.
+
+    Returns
+    -------
+    int
+        Number of rows actually appended to the CSV (0 when nothing was new).
     """
+    # Missing values in the identifier columns must reach row_keys() as "", never as
+    # NaN: a NaN key would be written into the persistent index and permanently
+    # shadow every later row that also lacks that identifier. Only these four
+    # columns are filled — a blanket fillna("") would turn numeric columns to text.
+    new_df = new_df.copy()
+    for col in ("doi_r", "openalex_id_r", "url_r", "title_r"):
+        if col in new_df.columns:
+            new_df[col] = new_df[col].fillna("")
+
     index = _load_or_build_candidates_index(out_path)
 
     # seen_in_batch tracks keys chosen from THIS batch so that within-batch
@@ -320,11 +341,12 @@ def _merge_into_candidates_csv(new_df: pd.DataFrame, out_path: "Path") -> None:
 
     if truly_new.empty:
         log.info("Merge: no new rows — candidates.csv unchanged (+0 from new batch)")
-        return
+        return 0
 
     # Fill missing abstracts from CrossRef/S2 before writing so candidates
     # always arrive with the best available abstract for the filter stage.
-    truly_new = enrich_abstracts(truly_new)
+    if enrich:
+        truly_new = enrich_abstracts(truly_new)
 
     log.info("Merge: appending %d new rows to candidates.csv (+%d from new batch)",
              len(truly_new), len(truly_new))
@@ -345,13 +367,17 @@ def _merge_into_candidates_csv(new_df: pd.DataFrame, out_path: "Path") -> None:
 
     log.info("Merge: index updated — %d new keys appended", len(new_keys))
 
+    return len(truly_new)
+
 
 # ---------------------------------------------------------------------------
 # Main orchestrator
 # ---------------------------------------------------------------------------
 
 
-_ALL_SOURCES = frozenset({"openalex", "semantic_scholar", "engine", "openalex_concept"})
+_ALL_SOURCES = frozenset(
+    {"openalex", "semantic_scholar", "engine", "openalex_concept", "openalex_snapshot"}
+)
 
 
 def run_search(
@@ -359,6 +385,8 @@ def run_search(
     to_year: Optional[int] = None,
     max_records_per_phrase: Optional[int] = None,
     sources: "Optional[set[str]]" = None,
+    snapshot_max_files: Optional[int] = None,
+    snapshot_survivor_pool: "Optional[Path]" = None,
 ) -> pd.DataFrame:
     """Run Stage 1 discovery sources and merge results into ``candidates.csv``.
 
@@ -383,15 +411,24 @@ def run_search(
         continue from that point.  ``None`` = unlimited.
     sources : set[str], optional
         Restrict fetching to these sources only.  Valid values:
-        ``openalex``, ``semantic_scholar``, ``engine``.
-        ``None`` = all enabled sources.
+        ``openalex``, ``semantic_scholar``, ``engine``, ``openalex_concept``,
+        ``openalex_snapshot``.  ``None`` = all enabled sources EXCEPT
+        ``openalex_snapshot``, which is explicit opt-in only (see below).
+    snapshot_max_files : int, optional
+        Cap on the number of snapshot parquet partitions scanned in this call.
+        Only meaningful when ``openalex_snapshot`` is explicitly requested.
+    snapshot_survivor_pool : Path, optional
+        Directory for the Stage A survivor pool.  Storing it turns any later
+        Stage B vocabulary change into ``--admit-from-pool`` instead of a rescan.
 
     Returns
     -------
     pd.DataFrame
         The new, deduplicated candidates merged into candidates.csv by this call
         (not the full file — reading that back would mean re-loading a
-        multi-million-row CSV just to report a count).
+        multi-million-row CSV just to report a count).  Snapshot rows are NOT
+        part of this DataFrame: the scanner streams and merges them per row-group
+        batch itself, and only reports how many rows it merged.
     """
     if sources is not None:
         sources = {s.lower().strip() for s in sources}
@@ -422,6 +459,27 @@ def run_search(
             _merge_into_candidates_csv(cached_batch, DATA_DIR / "candidates.csv")
     else:
         log.info("Cache harvest skipped (source filter excludes openalex and semantic_scholar)")
+
+    # Phase 1b: the OpenAlex bulk-parquet snapshot scan.  Unlike every other
+    # source this one is NEVER part of "all sources": a bare
+    # `python -m search.run_search` must not start a 400+ GB scan, so it runs
+    # only when --source openalex_snapshot is given explicitly.  The scanner
+    # streams its own per-batch merges, so its rows never join `frames`.
+    if sources is not None and "openalex_snapshot" in sources:
+        from search.snapshot_scan import scan_snapshot
+
+        log.info("Stage 1: scanning the OpenAlex parquet snapshot (explicit opt-in)...")
+        n_merged = scan_snapshot(
+            max_files=snapshot_max_files,
+            from_year=from_year,
+            to_year=to_year,
+            merge_fn=_merge_into_candidates_csv,
+            index_loader=_load_or_build_candidates_index,
+            survivor_pool=snapshot_survivor_pool,
+        )
+        log.info("Stage 1: snapshot scan merged %d new rows into candidates.csv", n_merged)
+    else:
+        log.info("Stage 1: OpenAlex snapshot skipped (explicit opt-in: --source openalex_snapshot)")
 
     # Phase 2: live fetch from each enabled source.
     frames: list[pd.DataFrame] = []
@@ -655,8 +713,51 @@ def _parse_args() -> argparse.Namespace:
         dest="sources",
         help=(
             "Only fetch from this source (repeatable for multiple). "
-            "Values: openalex, semantic_scholar, engine, openalex_concept. "
-            "Default: all sources."
+            "Values: openalex, semantic_scholar, engine, openalex_concept, "
+            "openalex_snapshot. Default: all sources EXCEPT openalex_snapshot — "
+            "the bulk parquet scan is explicit opt-in and never runs unless you "
+            "pass --source openalex_snapshot yourself."
+        ),
+    )
+    parser.add_argument(
+        "--snapshot-max-files",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Cap the number of snapshot parquet partitions scanned in this run "
+            "(used by --source openalex_snapshot and --snapshot-pilot). "
+            "Omit to scan every partition still missing from the ledger."
+        ),
+    )
+    parser.add_argument(
+        "--snapshot-pilot",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Pilot the snapshot scanner: write survivors to PATH (a standalone "
+            "CSV, candidates.csv untouched), print the gate report, then exit. "
+            "Honours --snapshot-max-files, --from-year and --to-year."
+        ),
+    )
+    parser.add_argument(
+        "--survivor-pool",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Persist every Stage A survivor (with its text) as a parquet dataset "
+            "under PATH while scanning. Costs a few GB and makes any later Stage B "
+            "vocabulary change a local --admit-from-pool run instead of a rescan."
+        ),
+    )
+    parser.add_argument(
+        "--admit-from-pool",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Re-run the current Stage B admission over the survivor pool at PATH, "
+            "merge what it admits into candidates.csv, then exit. No snapshot reads. "
+            "Use --dry-run to see the counts without writing."
         ),
     )
     parser.add_argument(
@@ -694,7 +795,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="With --dedup-candidates: print counts without modifying any files.",
+        help=(
+            "With --dedup-candidates or --admit-from-pool: print counts without "
+            "modifying any files."
+        ),
     )
     return parser.parse_args()
 
@@ -748,6 +852,33 @@ if __name__ == "__main__":
             print(f"Harvest complete: {len(cached_batch)} rows processed.")
         raise SystemExit(0)
 
+    if args.admit_from_pool:
+        from search.snapshot_scan import admit_from_pool
+
+        log.info("Pool re-admission: applying the current Stage B to %s ...",
+                 args.admit_from_pool)
+        admit_from_pool(
+            Path(args.admit_from_pool),
+            merge_fn=_merge_into_candidates_csv,
+            index_loader=_load_or_build_candidates_index,
+            dry_run=args.dry_run,
+        )
+        raise SystemExit(0)
+
+    if args.snapshot_pilot:
+        from search.snapshot_scan import scan_snapshot
+
+        log.info("Snapshot pilot: scanning into %s ...", args.snapshot_pilot)
+        n_rows = scan_snapshot(
+            pilot_csv=Path(args.snapshot_pilot),
+            max_files=args.snapshot_max_files,
+            from_year=args.from_year,
+            to_year=args.to_year,
+            survivor_pool=Path(args.survivor_pool) if args.survivor_pool else None,
+        )
+        print(f"Snapshot pilot complete: {n_rows} rows written to {args.snapshot_pilot}")
+        raise SystemExit(0)
+
     if args.reset_cursors:
         _reset_openalex_cursors()
         _reset_s2_offsets()
@@ -774,6 +905,9 @@ if __name__ == "__main__":
                 to_year=args.to_year,
                 max_records_per_phrase=args.max_per_phrase,
                 sources=set(args.sources) if args.sources else None,
+                snapshot_max_files=args.snapshot_max_files,
+                snapshot_survivor_pool=(Path(args.survivor_pool)
+                                        if args.survivor_pool else None),
             )
     finally:
         if _do_refresh:

@@ -30,6 +30,41 @@ def test_row_keys_doi_less_row_still_uses_title():
     assert keys == ["title:only a title"]
 
 
+def test_row_keys_treats_nan_as_missing():
+    """A pandas 3 str-dtype column stores missing entries as float NaN, and
+    `nan or ""` is truthy — so every URL-less row used to key on the literal
+    "url:nan" and collide with every other URL-less row."""
+    keys = _row_keys({"doi_r": "10.1/abc", "openalex_id_r": float("nan"),
+                      "url_r": float("nan"), "title_r": float("nan")})
+    assert keys == ["10.1/abc"]
+
+    assert _row_keys({"doi_r": float("nan"), "openalex_id_r": None,
+                      "url_r": None, "title_r": "Only A Title"}) == ["title:only a title"]
+    assert _row_keys({c: float("nan") for c in
+                      ("doi_r", "openalex_id_r", "url_r", "title_r")}) == []
+
+
+def test_merge_keeps_every_row_when_url_r_is_mixed_null(tmp_path, monkeypatch):
+    """The snapshot scanner emits url_r=None whenever OpenAlex has no OA/landing URL;
+    pandas turns the mixed column into str-dtype NaNs. Before the fix the first
+    URL-less row claimed "url:nan" and silently swallowed all the others."""
+    monkeypatch.setattr(rs.CANDIDATES_INDEX, "path", tmp_path / "candidates_index.txt")
+    monkeypatch.setattr(rs, "enrich_abstracts", lambda df: df)
+
+    rows = [{**{c: "" for c in CANDIDATES_COLS}, "doi_r": f"10.1/{i}",
+             "title_r": f"Paper {i}",
+             "url_r": "https://example.org/p.pdf" if i == 0 else None}
+            for i in range(5)]
+    df = pd.DataFrame(rows, columns=CANDIDATES_COLS)
+
+    out = tmp_path / "candidates.csv"
+    assert rs._merge_into_candidates_csv(df, out) == 5
+    assert len(pd.read_csv(out)) == 5
+
+    index_keys = (tmp_path / "candidates_index.txt").read_text().split()
+    assert "url:nan" not in index_keys
+
+
 def test_build_candidates_index_matches_row_keys_scoping(tmp_path, monkeypatch):
     """#53 follow-up: build_candidates_index() (what --rebuild-index calls) had its
     own unconditional title-key logic, separate from _row_keys() and never updated

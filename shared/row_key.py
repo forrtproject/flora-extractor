@@ -16,7 +16,23 @@ stores all of them, so a duplicate is caught via any identifier);
 store.
 """
 
+import math
+
 from shared.utils import clean_doi
+
+
+def _text(value: object) -> str:
+    """*value* as a string, with missing values as "".
+
+    A pandas 3 str-dtype column holds missing entries as float NaN, and
+    ``float("nan") or ""`` is truthy — so ``str(row.get(...) or "")`` yielded the
+    literal "nan" and every URL-less row collided on the single key ``url:nan``.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, float) and math.isnan(value):
+        return ""
+    return str(value)
 
 
 def row_keys(row: "dict") -> list[str]:
@@ -29,16 +45,16 @@ def row_keys(row: "dict") -> list[str]:
     and the second is silently dropped.
     """
     keys: list[str] = []
-    doi = clean_doi(str(row.get("doi_r", "") or ""))
+    doi = clean_doi(_text(row.get("doi_r", "")))
     if doi:
         keys.append(doi)
-    oa = str(row.get("openalex_id_r", "") or "").strip()
+    oa = _text(row.get("openalex_id_r", "")).strip()
     if oa:
         keys.append(f"oa:{oa}")
-    url = str(row.get("url_r", "") or "").strip()
+    url = _text(row.get("url_r", "")).strip()
     if url:
         keys.append(f"url:{url}")
-    title = str(row.get("title_r", "") or "").lower().strip()
+    title = _text(row.get("title_r", "")).lower().strip()
     if title and not keys:
         keys.append(f"title:{title}")
     return keys
