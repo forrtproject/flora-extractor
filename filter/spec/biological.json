@@ -1,0 +1,17 @@
+{
+  "id": "biological",
+  "description": "\"<organism> replication\" \u2014 biology, not psychology. The named-pathogen terms (hiv, sars-cov-2, influenza, <x>virus) were added because the original dna/rna/viral/virus list missed titles like \"Suppression of HIV-1 Replication\". Loaded back into keyword_verdict() as pattern id BIOLOGICAL (filter/phrase_detection.py).",
+  "match": {
+    "text_regex": "\\b(?:dna|rna|mrna|cdna|viral|\\w*virus(?:es)?|hiv|sars[-\\s]?cov[-\\s]?2?|influenza|bacteri\\w+|mycobacteri\\w+|pathogens?|parasites?|prions?|phages?|cell|cellular|chromosome|plasmid|genome|genomic|mitochondrial)\\s+replication\\b"
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 545,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "trusted",
+      "rationale": "'<organism> replication' is molecular biology by construction. In production in keyword_verdict() and in Stage 1's scan; no counter-example has been reported in any sampled audit."
+    }
+  ]
+}

@@ -266,6 +266,51 @@ Operational sequence: run the abstract backfill → `reset_backfilled --apply` �
 `--apply` to write. Do **not** run it while `run_filter` or `fetch_abstracts` is
 writing.
 
+### The filter engine
+
+Issue #146's declarative routing layer: one engine applies the spec bundle in
+`filter/spec/` to the survivor pool and routes every row into a pile. It reads the
+pool parquet directly, not `candidates.csv`, and its design contract is
+[filter-engine.md](filter-engine.md).
+
+```bash
+# What the bundle currently says — one line per spec, plus the bundle hash
+python -m filter.engine specs
+
+# Prove the two backends (Python re / pyarrow) agree before trusting a run
+python -m filter.engine verify --pool cache/snapshot_pool --sample-files 3
+
+# Route the pool: mints a release id, writes cache/engine/releases/<id>.json,
+# fills the DuckDB store, prints the pile counts
+python -m filter.engine route --pool cache/snapshot_pool
+
+# What one rule moves, what already covered it, and whether it is measured
+python -m filter.engine diagnose --spec dataset-type --pool cache/snapshot_pool
+
+# Materialize a pile as a Stage 3 CSV, with an immutable manifest beside it
+python -m filter.engine export --pile screen_expensive --out data/engine_expensive.csv \
+    --pool cache/snapshot_pool --from-year 2011
+
+# Releases on disk and the pile counts each of them routed
+python -m filter.engine status
+```
+
+| Command | What it does |
+| ------- | ------------ |
+| `specs` | Lists the loaded bundle (id, pile, precedence, shadow, measurement levels), the bundle hash, the engine version and the export schema version. Fails loudly if any spec is invalid. |
+| `verify` | Runs both backends over the first batch of up to `--sample-files` pool files and prints every (spec, row) they disagree on. **Exit 1 on any mismatch** — it is meant for CI and for the check before a long run. |
+| `route` | Computes the routing release id from its six inputs, records the release, and streams the pool through the bundle into the store. Idempotent per release: re-running replaces that release's rows rather than duplicating them. |
+| `diagnose` | Routes the pool with and without `--spec` and reports rows moved per (pile without → pile with), overlap against every other rule (exclusive hits vs already-covered), a seeded readable sample, the holdout state and the spec's `measured` evidence. |
+| `export` | Writes one pile as `FILTERED_COLS` + `ENGINE_EXPORT_COLS`, `utf-8-sig`, plus `<out>.manifest.json` (release, pile, rows, sha256). `--pile pending` is refused, and an existing manifest is never overwritten. |
+| `status` | Every release found beside the store, with its creation time and pile counts. |
+
+`--spec-dir` (before the subcommand) points at a different bundle; `--store`
+defaults to `cache/engine/engine.duckdb` and is **disposable** — deleting it costs
+a `route` and nothing else, because routing is a pure function of pool, specs,
+aliases and engine version. `route` takes the pool's provenance from
+`--pool-manifest-hash`, else the local snapshot ledger, else the literal
+`unmanifested` (an honest "unknown", not a claim about which pool this was).
+
 ---
 
 ## Stage 3 — Extract

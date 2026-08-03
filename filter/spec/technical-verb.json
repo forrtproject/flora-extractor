@@ -1,0 +1,17 @@
+{
+  "id": "technical-verb",
+  "description": "verb form of technical replication Loaded back into keyword_verdict() as pattern id TECHNICAL_VERB (filter/phrase_detection.py).",
+  "match": {
+    "text_regex": "\\breplicat(?:e|ed|ing)\\s+(?:the )?(?:apparatus|code|dataset|data|database|model|method|pipeline|protocol|software|simulation)\\b"
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 540,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "trusted",
+      "rationale": "Verb form of technical-object; same rescue applies."
+    }
+  ]
+}

@@ -28,8 +28,9 @@ no-phrase bucket before treating the accepted set as complete.
 
 ## (b) Exclusion-pattern misfires
 
-The `TECHNICAL_OBJECT` and `TECHNICAL_VERB` patterns in
-[`filter/spec/exclusion-patterns.yaml`](../filter/spec/exclusion-patterns.yaml)
+The `TECHNICAL_OBJECT` and `TECHNICAL_VERB` patterns — now the specs
+[`technical-object`](../filter/spec/technical-object.json) and
+[`technical-verb`](../filter/spec/technical-verb.json) —
 match phrases such as *"replicated the analysis code of Smith (2019)"*. Some of these
 are genuinely **in-scope computational reproductions**, which the pipeline treats as
 in-scope. The patterns are kept because they

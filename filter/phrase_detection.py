@@ -5,16 +5,17 @@ Replication-phrase detection — port of SciMeto's
 Two regex sets:
     REPLICATION_PHRASES                    — strong replication signals
     NON_SCHOLARLY_REPLICATION_CONTEXTS     — DNA / code / fork etc., loaded from
-                                             filter/spec/exclusion-patterns.yaml
-                                             so the data stays portable across
-                                             SciMeto and flora-extractor.
+                                             the seven exclusion specs in the
+                                             filter/spec/ bundle, so one edit
+                                             moves both this rule and the engine.
 
 If a non-scholarly context fires, the row is treated as not-a-replication even
 when a replication phrase also appears.
 
 Intentionally NO ``re.compile`` flag for ``re.M`` or ``re.S`` — the TS source
-uses default flags too. ``re.IGNORECASE`` is set per-pattern via the YAML flags
-list.
+uses default flags too. ``re.IGNORECASE`` is set on every exclusion pattern —
+spec regexes are case-insensitive by default, so the pyarrow and ``re`` backends
+cannot diverge on case.
 """
 
 import re
@@ -22,8 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-import yaml
-
+from filter.engine.spec import load_specs
 from shared.openalex_client import extract_author_year_patterns
 from shared.utils import sentence_spans
 
@@ -193,22 +193,36 @@ PHRASE_GUARDS: dict[str, re.Pattern] = {
 # The discrimination is semantic, so it belongs to Stage 3's screen, not here.
 
 
+# The seven exclusion patterns, in the order the former exclusion-patterns.yaml
+# listed them. Order is load-bearing: ``is_non_scholarly_context`` reports the
+# FIRST pattern that fires, and that id reaches filter_evidence. The engine's own
+# ordering is by precedence and is a different question, so it is not reused here.
+_EXCLUSION_SPEC_IDS = ("biological", "technical-object", "technical-verb",
+                       "structural", "biological-of", "editorial-artifact",
+                       "data-availability")
+
+
 def _load_exclusion_regexes() -> list[tuple[str, re.Pattern]]:
-    spec_path = Path(__file__).parent / "spec" / "exclusion-patterns.yaml"
-    with spec_path.open("r", encoding="utf-8") as f:
-        doc = yaml.safe_load(f)
+    """The exclusion patterns as (legacy id, compiled) pairs, from the spec bundle.
+
+    Two of the seven need a lookaround that RE2 forbids, so their specs carry a
+    decomposed RE2 match for the vectorized engine AND the exact original under
+    ``pyre_regex``. This loader takes the original wherever it exists, which is
+    what keeps ``keyword_verdict`` byte-identical to the YAML era while the
+    engine evaluates the (wider, and therefore shadow) decomposition.
+    """
+    specs = {s.id: s for s in load_specs(Path(__file__).parent / "spec")}
     out: list[tuple[str, re.Pattern]] = []
-    for p in doc.get("patterns", []):
-        flags = 0
-        for flag in p.get("flags", []):
-            if flag.lower() == "i":
-                flags |= re.IGNORECASE
-        out.append((p["id"], re.compile(p["regex"], flags)))
+    for spec_id in _EXCLUSION_SPEC_IDS:
+        match = specs[spec_id].match
+        pattern = match.pyre_regex or match.text_regex
+        out.append((spec_id.upper().replace("-", "_"),
+                    re.compile(pattern, re.IGNORECASE)))
     return out
 
 
-# Compiled once at import. The YAML file is small (~6 patterns) and immutable
-# across a run; reloading on every call would be wasteful.
+# Compiled once at import. The bundle is small and immutable across a run;
+# reloading on every call would be wasteful.
 NON_SCHOLARLY_REPLICATION_CONTEXTS: list[tuple[str, re.Pattern]] = _load_exclusion_regexes()
 
 

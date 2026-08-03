@@ -1,0 +1,25 @@
+{
+  "id": "data-availability",
+  "description": "Dataverse/OSF/GitHub boilerplate \u2014 \"data and code are available on OSF to reproduce the results in this paper\" \u2014 describes the paper's OWN reproducibility package, not a reproduction of someone else's study. An availability anchor (available/deposited/OSF/GitHub/...) is REQUIRED, and is looked for anywhere in the same sentence \u2014 it may follow the verb, as in \"data and code to reproduce the results in this paper are on OSF\". Without the anchor the pattern matched ordinary methods prose: \"Data from the published experiment were used to replicate the main result\" is a genuine reproduction and was being made false_positive, which is terminal. Every gap excludes newlines as well as full stops, so it cannot bridge the title/abstract join. SHADOW: the original requires the availability anchor to sit in the SAME sentence as the noun (a lookahead RE2 cannot express). The decomposition ANDs the two clauses row-wide, which widens the discard, so the spec is shadow until a proximity-capable backend exists; keyword_verdict() keeps the exact original via pyre_regex. Loaded back into keyword_verdict() as pattern id DATA_AVAILABILITY (filter/phrase_detection.py).",
+  "match": {
+    "all_of": [
+      {
+        "text_regex": "\\b(?:data|code|scripts?|files?|materials?|repositor\\w+|replication package)\\b[^.\\n]{0,80}?\\bto\\s+(?:replicate|reproduce)\\b"
+      },
+      {
+        "text_regex": "\\b(?:data|code|scripts?|files?|materials?|repositor\\w+|replication package)\\b[^.\\n]{0,200}\\b(?:available|provided|deposited|archived|posted|shared|supplement\\w*|repositor\\w+|osf|github|dataverse|zenodo|figshare|doi\\.org)\\b"
+      }
+    ],
+    "pyre_regex": "\\b(?:data|code|scripts?|files?|materials?|repositor\\w+|replication package)\\b(?=[^.\\n]{0,200}\\b(?:available|provided|deposited|archived|posted|shared|supplement\\w*|repositor\\w+|osf|github|dataverse|zenodo|figshare|doi\\.org)\\b)[^.\\n]{0,80}?\\bto\\s+(?:replicate|reproduce)\\b"
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 550,
+  "shadow": true,
+  "measured": [
+    {
+      "level": "trusted",
+      "rationale": "The pattern itself is in production in keyword_verdict(); only its RE2 decomposition is unmeasured, which is why the spec is shadow."
+    }
+  ]
+}

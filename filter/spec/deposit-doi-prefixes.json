@@ -1,0 +1,40 @@
+{
+  "id": "deposit-doi-prefixes",
+  "description": "A DOI on a data-repository prefix is the deposit that accompanies a paper \u2014 \"Replication Data for: ...\" \u2014 and carries the word replication into the pipeline without being a study (issue #141). The deposit is evidence that a replication exists, but the paper itself is in the corpus under its own DOI, so discarding the deposit loses nothing. figshare (10.6084) is a regex rather than a prefix entry because non_article_doi() matches it on the \"10.6084/\" boundary. EXCLUDE-ONLY and deliberately incomplete: a prefix belongs here only when its registrant is positively identified as a data repository, which is why Zenodo (10.5281) is absent \u2014 CODECHECK certificates live there and the reproduction arm admits them.",
+  "match": {
+    "any_of": [
+      {
+        "doi_prefix": [
+          "10.11587",
+          "10.15139",
+          "10.18170",
+          "10.18710",
+          "10.18738",
+          "10.21979",
+          "10.2905",
+          "10.34894",
+          "10.3886",
+          "10.7910"
+        ]
+      },
+      {
+        "doi_regex": "^10\\.6084/"
+      }
+    ]
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 960,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "human",
+      "precision": 0.995,
+      "n": 282,
+      "sample": "30k-candidates-2026-07",
+      "date": "2026-08-01",
+      "owner": "flora-extractor",
+      "rationale": "Hand-check of the deposits these prefixes contributed; each prefix was separately confirmed against DataCite as belonging to a deposit-only registrant."
+    }
+  ]
+}

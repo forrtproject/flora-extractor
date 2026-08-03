@@ -1,0 +1,94 @@
+{
+  "id": "phrase-replication",
+  "description": "The REPLICATION_PHRASES of filter/phrase_detection.py minus the reproduction-anchored subset: precise first-person, negation, qualifier and attempt framings of a replication claim. One clause per original pattern so a diagnostics run can attribute a hit. Routes to the cheap discard-only tier rather than admitting: a phrase without a cite is a claim about replication as often as it is a replication.",
+  "match": {
+    "any_of": [
+      {
+        "text_regex": "\\breplications? of\\b"
+      },
+      {
+        "text_regex": "\\bwe replicated\\b"
+      },
+      {
+        "text_regex": "\\bwe replicate\\b"
+      },
+      {
+        "text_regex": "\\bdirect replications?\\b"
+      },
+      {
+        "text_regex": "\\bconceptual replications?\\b"
+      },
+      {
+        "text_regex": "\\bregistered replications?\\b"
+      },
+      {
+        "text_regex": "\\bfailed to replicate\\b"
+      },
+      {
+        "text_regex": "\\bdid not replicate\\b"
+      },
+      {
+        "text_regex": "\\bregistered report of\\b"
+      },
+      {
+        "text_regex": "\\b(?:close|high[-\\s]powered|pre[-\\s]?registered|large[-\\s]scale)\\s+replications?\\b"
+      },
+      {
+        "text_regex": "\\battempt\\w*\\s+to\\s+replicate\\b"
+      },
+      {
+        "text_regex": "\\baim\\w*\\s+to\\s+replicate\\b"
+      },
+      {
+        "text_regex": "\\bset\\s+out\\s+to\\s+replicate\\b"
+      },
+      {
+        "text_regex": "\\bsuccess\\w*\\s+replicat\\w*\\b"
+      },
+      {
+        "text_regex": "\\bwe\\s+(?:conducted|performed|carried\\s+out)\\s+a\\s+replication\\b"
+      },
+      {
+        "text_regex": "\\b(?:many-?labs?|multi-?site)\\s+replications?\\b"
+      },
+      {
+        "text_regex": "\\breplicat\\w*\\s+(?:and|&)\\s+exten\\w*\\b"
+      },
+      {
+        "text_regex": "\\breplication\\s+stud(?:y|ies)\\b"
+      },
+      {
+        "text_regex": "\\bstudy\\s+replicate[sd]\\b"
+      },
+      {
+        "text_regex": "\\bour\\s+replications?\\b"
+      },
+      {
+        "text_regex": "\\bexact\\s+replications?\\b"
+      },
+      {
+        "text_regex": "\\breplication\\s+attempts?\\b"
+      },
+      {
+        "text_regex": "\\bcross-?(?:cultural|national|lab(?:oratory)?)\\s+replications?\\b"
+      },
+      {
+        "text_regex": "\\breplicat(?:e|es|ed|ing)\\s+(?:the\\s+)?(?:previous|prior|original|earlier|main|key|core|published)?\\s*(?:findings?|results?|effects?|analys[ei]s|stud(?:y|ies))\\b"
+      },
+      {
+        "text_regex": "\\b(?:(?:d(?:oes|o|id)|w(?:as|ere)|is|are|ha[sd]|have|could|would|should|can|may|might)\\s+(?:not|never)|cannot|can['\u2019]t)\\s+(?:(?:be|been)\\s+)?replicat\\w+\\b"
+      },
+      {
+        "text_regex": "\\b(?:unable|inabilit\\w+|failure)\\s+to\\s+replicate\\b"
+      },
+      {
+        "text_regex": "\\bwe\\s+\\w+ly\\s+replicate[sd]?\\b"
+      }
+    ]
+  },
+  "pile": "screen_cheap",
+  "vocabulary": "replication",
+  "precedence": 260,
+  "shadow": false,
+  "measured": []
+}

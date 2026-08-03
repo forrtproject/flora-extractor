@@ -1,0 +1,26 @@
+{
+  "id": "biological-of",
+  "description": "\"replication of <organism>\" word order. BIOLOGICAL only covers \"<organism> replication\", so virology abstracts phrased \"the replication of enteroviruses\" passed the filter \u2014 one duplicated cluster of these accounted for 106 of the 501 rows Stage 3 later screened out as not-a-replication. Up to three filler words are allowed before the organism (\"Replication of Oncolytic Herpes Simplex Virus\"). cell/cellular/parasite are split out and must be the HEAD of the phrase \u2014 followed by punctuation, end, or a preposition/verb. They have common non-biological collocations, and with a three-word filler window the unrestricted form killed genuine replications outright: \"a direct replication of the classic CELL PHONE driving study\" and \"a conceptual replication of the PARASITE STRESS theory of values\" both became false_positive, which is terminal. The unambiguous organism terms need no such restriction. The filler window also refuses study-nouns, so \"a replication of the original STUDY in cells\" keeps its real head (\"study\") and survives. Without that, a replication merely CONDUCTED in biological material was excluded. SHADOW: the original refuses study-nouns inside the three-word filler with a negative lookahead, which RE2 cannot express; dropping it widens the discard ('replication of the original study of DNA repair' would now match). The cell/cellular/parasite head restriction IS preserved faithfully by consuming what the original looked ahead at. keyword_verdict() keeps the exact original via pyre_regex. Loaded back into keyword_verdict() as pattern id BIOLOGICAL_OF (filter/phrase_detection.py).",
+  "match": {
+    "any_of": [
+      {
+        "text_regex": "\\breplication of (?:the\\s+)?(?:\\w+[-\\s]+){0,3}(?:dna|rna|mrna|cdna|viral|\\w*virus(?:es)?|bacteri\\w+|mycobacteri\\w+|pathogens?|prions?|phages?|chromosomes?|plasmids?|genomes?|genomic|hiv|sars[-\\s]?cov[-\\s]?2?|influenza|mitochondrial|organoids?)\\b"
+      },
+      {
+        "text_regex": "\\breplication of (?:the\\s+)?(?:\\w+[-\\s]+){0,3}(?:cells?|cellular|parasites?)\\b\\s*(?:[.,;:)\\]]|$|(?:in|by|during|within|with|and|or|is|are|was|were|from|to|at|under)\\b)"
+      }
+    ],
+    "pyre_regex": "\\breplication of (?:the\\s+)?(?:(?!(?:study|studies|experiments?|effects?|findings?|results?|analys[ei]s|papers?|trials?|surveys?)\\b)\\w+[-\\s]+){0,3}(?:(?:dna|rna|mrna|cdna|viral|\\w*virus(?:es)?|bacteri\\w+|mycobacteri\\w+|pathogens?|prions?|phages?|chromosomes?|plasmids?|genomes?|genomic|hiv|sars[-\\s]?cov[-\\s]?2?|influenza|mitochondrial|organoids?)\\b|(?:cells?|cellular|parasites?)\\b(?=\\s*(?:[.,;:)\\]]|$|\\b(?:in|by|during|within|with|and|or|is|are|was|were|from|to|at|under)\\b)))"
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 543,
+  "shadow": true,
+  "measured": [
+    {
+      "level": "downstream",
+      "n": 501,
+      "rationale": "One duplicated virology cluster phrased 'the replication of <organism>' accounted for 106 of the 501 rows Stage 3 later screened out as not-a-replication \u2014 the measurement that motivated the pattern. It says nothing about the widened RE2 form, which is why this spec is shadow."
+    }
+  ]
+}

@@ -32,6 +32,22 @@ FILTER_ADDED_COLS = [
 ]
 FILTERED_COLS = CANDIDATES_COLS + FILTER_ADDED_COLS
 
+# ── Filter-engine export: filtered.csv + routing provenance (issue #146/#148) ─
+# What the pool knew must survive into the materialized artifact: the OpenAlex work
+# type and concept hit the row was kept for, and which rule routed it under which
+# release. Appended AFTER FILTERED_COLS, so Stage 3 — which reads by name and
+# ignores trailing columns — is unaffected.
+ENGINE_EXPORT_COLS = [
+    "oa_type",           # str — OpenAlex work type from the pool row (`type`)
+    "hit_concept",       # str — whether Stage A kept the row on a concept match
+    "route_rule",        # str — id of the spec that won the pile ("" when pending)
+    "route_precedence",  # str — that spec's precedence
+    "matched_rules",     # str — |-joined; match by substring/split, never equality
+    "pending_reason",    # str — unevaluated | no_filter_matched | no_text | budget_blocked
+    "release_id",        # str — the routing release the pile came from
+]
+ENGINE_EXPORTED_COLS = FILTERED_COLS + ENGINE_EXPORT_COLS
+
 # ── Stage 3 output: extracted.csv ────────────────────────────────────────────
 # All FILTERED_COLS + the following:
 EXTRACT_ADDED_COLS = [

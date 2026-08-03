@@ -1,0 +1,17 @@
+{
+  "id": "concept-replication",
+  "description": "OpenAlex concepts C12590798 (Replication (statistics)) and C9893847 (Reproducibility) \u2014 the Stage 1 harvest arm. Divergence 1 in docs/filter-engine.md: Stage 2 wrote a concept-only row `false_positive` TERMINALLY; here it routes to the cheap discard-only tier instead, because a concept is a topical signal and a rule that cannot admit must not be allowed to kill.",
+  "match": {
+    "fields": {
+      "concept_ids": [
+        "C12590798",
+        "C9893847"
+      ]
+    }
+  },
+  "pile": "screen_cheap",
+  "vocabulary": null,
+  "precedence": 220,
+  "shadow": false,
+  "measured": []
+}

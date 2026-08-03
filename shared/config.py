@@ -36,10 +36,11 @@ PARSE_CACHE_DIR      = CACHE_DIR / "parse"           # per-method parse results
 MARKITDOWN_CACHE_DIR = CACHE_DIR / "markdown"        # raw .md files from MarkItDown
 DOI_VERIFY_CACHE_DIR = CACHE_DIR / "doi_verify"      # CrossRef/OpenAlex DOI verification
 SNAPSHOT_CACHE_DIR   = CACHE_DIR / "snapshot"        # OpenAlex bulk-parquet manifest + scan ledger
+ENGINE_CACHE_DIR     = CACHE_DIR / "engine"          # filter-engine routing releases + DuckDB store
 
 for _d in [DATA_DIR, PDF_CACHE_DIR, GROBID_CACHE_DIR, LLM_CACHE_DIR,
            OA_CACHE_DIR, OA_XML_CACHE_DIR, PARSE_CACHE_DIR, MARKITDOWN_CACHE_DIR,
-           DOI_VERIFY_CACHE_DIR, SNAPSHOT_CACHE_DIR]:
+           DOI_VERIFY_CACHE_DIR, SNAPSHOT_CACHE_DIR, ENGINE_CACHE_DIR]:
     _d.mkdir(parents=True, exist_ok=True)
 
 # ── Input / output files ──────────────────────────────────────────────────────

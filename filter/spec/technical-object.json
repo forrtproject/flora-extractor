@@ -1,0 +1,17 @@
+{
+  "id": "technical-object",
+  "description": "code/data/method replication (both 'replication of X' and 'X replication' forms), not psychological Loaded back into keyword_verdict() as pattern id TECHNICAL_OBJECT (filter/phrase_detection.py).",
+  "match": {
+    "text_regex": "\\b(?:replication of (?:the )?(?:apparatus|code|dataset|data|database|model|method|pipeline|protocol|software|simulation)|(?:apparatus|code|dataset|data|database|model|method|pipeline|protocol|software|simulation)\\s+replication)\\b"
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 541,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "trusted",
+      "rationale": "'replication of the code/dataset/pipeline' names a technical artifact, not a study. Rows that are genuine computational reproductions carry a phrase AND a cite and are readmitted by exclusion-rescue (#44) at precedence 650."
+    }
+  ]
+}
