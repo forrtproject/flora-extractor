@@ -401,6 +401,34 @@ def test_reproduce_side_vocabulary_admitted():
         assert is_reproduction_only(text), text
 
 
+def test_perfect_and_never_negations_admitted():
+    """"has not BEEN replicated" / "have never been replicated" — the same
+    auxiliary+negation shape the arm already covers, but "been" is not "be" and
+    "never" is not "not". 803 rows of candidates.csv say it one of those ways."""
+    for text in ("The original finding has not been replicated.",
+                 "These effects have never been replicated in a preregistered sample.",
+                 "The result had not been replicated prior to this study.",
+                 "The effect is never replicated outside the lab."):
+        hit = find_replication_phrase_span(text)
+        assert hit is not None, text
+        assert not is_reproduction_only(text), text
+    # The pre-existing shapes are unchanged.
+    assert find_replication_phrase_span("The original finding was not replicated.") is not None
+
+
+def test_trying_to_reproduce_admitted():
+    """``tri(?:ed|es)|try`` had no "trying"; ``attempt\\w*`` covers its own forms."""
+    for text in ("In trying to reproduce the analysis we hit missing data.",
+                 "We tried to reproduce the published estimates.",
+                 "Anyone who tries to reproduce this will need the raw data."):
+        assert find_replication_phrase_span(text) is not None, text
+        assert is_reproduction_only(text), text
+    # Near miss: "trial to reproduce" is not the phrase, and a bare "trial" must
+    # not reach the arm through a stem.
+    assert find_replication_phrase_span(
+        "A clinical trial of assisted reproduction in older mothers.") is None
+
+
 def test_reproduce_does_not_fire_on_biological_reproduction():
     """Anchored on a results noun, a first-person subject or a failure framing —
     never on a bare "reproduce"."""

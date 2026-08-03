@@ -151,7 +151,73 @@ def _require_token(hf) -> str:
     return token
 
 
-def _auth_hint(repo: str, exc: Exception) -> str:
+class RemoteReadError(RuntimeError):
+    """A remote file could not be read AND its absence was not established.
+
+    The distinction matters at exactly one place — the Stage A gate check in
+    ``push_pool`` — where "there is no manifest" and "I could not read the manifest"
+    lead to opposite actions.
+    """
+
+
+def _status_of(exc: Exception) -> Optional[int]:
+    """The HTTP status behind *exc*, when it carries a response."""
+    code = getattr(getattr(exc, "response", None), "status_code", None)
+    return int(code) if isinstance(code, int) else None
+
+
+def _error_class(hf, name: str) -> tuple:
+    """``(cls,)`` for the huggingface_hub error *name*, or ``()`` if this version
+    does not expose it. Looked up on the passed module so the class identity always
+    matches the one that raised."""
+    for holder in (getattr(hf, "errors", None), getattr(hf, "utils", None), hf):
+        cls = getattr(holder, name, None)
+        if isinstance(cls, type) and issubclass(cls, BaseException):
+            return (cls,)
+    return ()
+
+
+def _is_absent(hf, exc: Exception) -> bool:
+    """True only when the Hub actually said the entry is not there.
+
+    ``LocalEntryNotFoundError`` subclasses ``EntryNotFoundError`` but means the Hub
+    could not be reached at all, and ``GatedRepoError`` subclasses
+    ``RepositoryNotFoundError`` but means this token may not look — neither
+    establishes anything about what the repo holds, so both are excluded first.
+    """
+    if isinstance(exc, _error_class(hf, "LocalEntryNotFoundError")
+                  + _error_class(hf, "GatedRepoError")):
+        return False
+    absent = (_error_class(hf, "EntryNotFoundError")
+              + _error_class(hf, "RepositoryNotFoundError")
+              + _error_class(hf, "RevisionNotFoundError"))
+    return isinstance(exc, absent) or _status_of(exc) == 404
+
+
+def _is_auth_error(hf, exc: Exception) -> bool:
+    """Whether *exc* is the kind of failure a different HF_TOKEN would fix.
+
+    ``RepositoryNotFoundError`` counts: a private repo this token cannot see is
+    reported as missing, so "no such repo" and "not yours" are the same answer.
+    """
+    if _status_of(exc) in (401, 403):
+        return True
+    return isinstance(exc, _error_class(hf, "GatedRepoError")
+                      + _error_class(hf, "RepositoryNotFoundError")
+                      + _error_class(hf, "DisabledRepoError")
+                      + _error_class(hf, "LocalTokenNotFoundError"))
+
+
+def _auth_hint(hf, repo: str, exc: Exception) -> str:
+    """The message to raise for *exc* — with the token advice only when it applies.
+
+    A 503 and a 403 need different things from the operator, and sending someone
+    after their token while the Hub is down costs them the one thing they had:
+    knowing what actually failed.
+    """
+    if not _is_auth_error(hf, exc):
+        return (f"Hugging Face request to {repo!r} failed "
+                f"({type(exc).__name__}: {exc}).")
     return (f"Hugging Face refused access to {repo!r} ({exc}). Check that HF_TOKEN belongs "
             f"to an account with access to this private repo, and that it has write "
             f"permission if you are pushing.")
@@ -168,7 +234,8 @@ def _remote_sizes(api, repo: str) -> dict[str, int]:
     try:
         entries = api.list_repo_tree(repo, repo_type=_REPO_TYPE, recursive=True)
     except Exception as exc:  # noqa: BLE001 — a missing repo is the first-push case
-        log.info("Could not list %s (%s) — treating the remote as empty", repo, exc)
+        log.warning("Could not list %s (%s) — treating the remote as empty, so nothing "
+                    "will be skipped and every file transfers again", repo, exc)
         return {}
     sizes: dict[str, int] = {}
     for entry in entries:
@@ -198,15 +265,17 @@ def _upload_batched(api, hf, repo_id: str, uploads: list[tuple[str, Union[Path, 
                               commit_message=f"{message} ({start + 1}-{start + len(batch)} "
                                              f"of {len(uploads)})")
         except Exception as exc:  # noqa: BLE001 — boundary: turn 401/403 into instructions
-            raise RuntimeError(_auth_hint(repo_id, exc)) from exc
+            raise RuntimeError(_auth_hint(hf, repo_id, exc)) from exc
         log.info("%s: %d/%d file(s) committed", message, start + len(batch), len(uploads))
 
 
 def _read_remote_json(hf, repo_id: str, remote_path: str, token: Optional[str]) -> Optional[dict]:
-    """Fetch a small JSON file from the repo, or None when it is not there.
+    """Fetch a small JSON file from the repo, or None when it is genuinely not there.
 
-    A missing file is the normal first-push/first-build case, not an error — and an
-    unreadable one must not block a transfer that would otherwise work.
+    A missing file is the normal first-push/first-build case, not an error. Any OTHER
+    failure — a 503, a rate limit, a dropped connection, malformed JSON — says nothing
+    about what the repo holds, and reading it as "not there" is what would let a
+    transient blip walk a push straight past the Stage A gate check. Those raise.
     """
     try:
         with tempfile.TemporaryDirectory() as tmp:
@@ -214,9 +283,14 @@ def _read_remote_json(hf, repo_id: str, remote_path: str, token: Optional[str]) 
                                       repo_type=_REPO_TYPE, token=token, local_dir=tmp)
             with open(path, encoding="utf-8") as f:
                 return json.load(f)
-    except Exception as exc:  # noqa: BLE001 — absent or unreadable, both mean "no manifest"
-        log.debug("No readable %s in %s (%s)", remote_path, repo_id, exc)
-        return None
+    except Exception as exc:  # noqa: BLE001 — boundary: absence vs. any other failure
+        if _is_absent(hf, exc):
+            log.debug("No %s in %s (%s)", remote_path, repo_id, exc)
+            return None
+        raise RemoteReadError(
+            f"Could not read {remote_path} from {repo_id} ({type(exc).__name__}: {exc}). "
+            "That is not evidence it is absent, so nothing was assumed about it — "
+            "retry once Hugging Face answers.") from exc
 
 
 def pool_manifest(ledger: Optional[dict] = None) -> dict:
@@ -277,7 +351,7 @@ def check_access(repo: Optional[str] = None) -> dict:
                 path_or_fileobj=json.dumps(payload, indent=1).encode("utf-8"))],
             commit_message="Pre-flight write check")
     except Exception as exc:  # noqa: BLE001 — boundary: turn 401/403 into instructions
-        raise RuntimeError(_auth_hint(repo_id, exc)) from exc
+        raise RuntimeError(_auth_hint(hf, repo_id, exc)) from exc
 
     log.info("Hugging Face pre-flight OK: %s can write to %s (private dataset)",
              payload["by"], repo_id)
@@ -290,12 +364,13 @@ def push_pool(pool_dir: Path, repo: Optional[str] = None, dry_run: bool = False,
 
     Files already on the remote at the same size are skipped, so this is safe to
     re-run after an interrupted push and cheap to re-run after a partial rescan.
-    Uploads go up in batched commits (``_upload_batched``), alongside a
+    Uploads go up in batched commits (``_upload_batched``), preceded by the
     ``pool_manifest.json`` recording the gate this pool was scanned under.
 
     A remote manifest naming a DIFFERENT Stage A fingerprint stops the push unless
     *force*: mixing two gates' survivors gives a pool that is complete under neither,
-    and nothing downstream could tell. Returns the number of files uploaded (or,
+    and nothing downstream could tell. A manifest that cannot be READ stops it too —
+    an unanswered Hub is not an empty repo. Returns the number of files uploaded (or,
     under *dry_run*, that would be).
     """
     import huggingface_hub as hf  # pipeline-only: read-only deployments never install it
@@ -311,10 +386,17 @@ def push_pool(pool_dir: Path, repo: Optional[str] = None, dry_run: bool = False,
         try:
             api.create_repo(repo_id, repo_type=_REPO_TYPE, private=True, exist_ok=True)
         except Exception as exc:  # noqa: BLE001 — boundary: turn 401/403 into instructions
-            raise RuntimeError(_auth_hint(repo_id, exc)) from exc
+            raise RuntimeError(_auth_hint(hf, repo_id, exc)) from exc
 
     manifest = pool_manifest()
-    remote_manifest = _read_remote_json(hf, repo_id, _POOL_MANIFEST, token)
+    try:
+        remote_manifest = _read_remote_json(hf, repo_id, _POOL_MANIFEST, token)
+    except RemoteReadError as exc:
+        raise RuntimeError(
+            f"{exc} Until {_POOL_MANIFEST} can be read, this push cannot tell whether "
+            f"{repo_id} already holds a pool scanned under a different Stage A gate, so "
+            "it refuses rather than risk overwriting one. Re-run the same command; it "
+            "resumes.") from exc
     if remote_manifest:
         theirs = remote_manifest.get("stage_a_fingerprint")
         if theirs and theirs != manifest["stage_a_fingerprint"]:
@@ -341,9 +423,18 @@ def push_pool(pool_dir: Path, repo: Optional[str] = None, dry_run: bool = False,
 
     uploaded = len(uploads)
     if not dry_run:
+        # The manifest goes up FIRST, in its own commit, because it is the CLAIM on
+        # this repo. Written last, an interrupted first push leaves a large pool with
+        # no fingerprint at all, and the next push from a different Stage A gate finds
+        # nothing to conflict with and mixes itself in. Manifest-first inverts the
+        # failure: what an interruption leaves is a fingerprinted but incomplete pool,
+        # which re-running this same command completes and a conflicting gate's push
+        # is now correctly refused against.
         if remote_manifest != manifest:
-            uploads.append((_POOL_MANIFEST,
-                            json.dumps(manifest, indent=1).encode("utf-8")))
+            _upload_batched(api, hf, repo_id,
+                            [(_POOL_MANIFEST,
+                              json.dumps(manifest, indent=1).encode("utf-8"))],
+                            "Pool manifest")
         if uploads:
             _upload_batched(api, hf, repo_id, uploads, "Pool push")
 
@@ -394,7 +485,7 @@ def pull_pool(pool_dir: Path, repo: Optional[str] = None,
                                                       token=token)
                         if f.endswith(".parquet")]
     except Exception as exc:  # noqa: BLE001 — boundary: turn 401/403 into instructions
-        raise RuntimeError(_auth_hint(repo_id, exc)) from exc
+        raise RuntimeError(_auth_hint(hf, repo_id, exc)) from exc
 
     if years is not None:
         wanted = {str(y) for y in years}
@@ -404,7 +495,15 @@ def pull_pool(pool_dir: Path, repo: Optional[str] = None,
             f"No pool files in {repo_id}"
             + (f" for year(s) {', '.join(str(y) for y in years)}" if years else ""))
 
-    _warn_on_gate_mismatch(_read_remote_json(hf, repo_id, _POOL_MANIFEST, token), repo_id)
+    try:
+        remote_manifest = _read_remote_json(hf, repo_id, _POOL_MANIFEST, token)
+    except RemoteReadError as exc:
+        # A pull writes nothing anyone else depends on, so an unreadable manifest
+        # costs provenance, not correctness — say so and carry on.
+        log.warning("%s Pulling without knowing which Stage A gate this pool was "
+                    "scanned under.", exc)
+        remote_manifest = None
+    _warn_on_gate_mismatch(remote_manifest, repo_id)
 
     sizes = _remote_sizes(api, repo_id)
     pool_dir.mkdir(parents=True, exist_ok=True)
@@ -424,7 +523,7 @@ def pull_pool(pool_dir: Path, repo: Optional[str] = None,
                                      repo_type=_REPO_TYPE, token=token,
                                      local_dir=str(pool_dir))
         except Exception as exc:  # noqa: BLE001 — boundary: turn 401/403 into instructions
-            raise RuntimeError(_auth_hint(repo_id, exc)) from exc
+            raise RuntimeError(_auth_hint(hf, repo_id, exc)) from exc
         # local_dir reproduces the remote's year folder; the pool itself is flat,
         # because admit_from_pool globs one directory.
         got_path = Path(got)
@@ -479,7 +578,7 @@ def push_build(build_dir: Path, repo: Optional[str] = None, dry_run: bool = Fals
         try:
             api.create_repo(repo_id, repo_type=_REPO_TYPE, private=True, exist_ok=True)
         except Exception as exc:  # noqa: BLE001 — boundary: turn 401/403 into instructions
-            raise RuntimeError(_auth_hint(repo_id, exc)) from exc
+            raise RuntimeError(_auth_hint(hf, repo_id, exc)) from exc
 
     remote = _remote_sizes(api, repo_id)
     prefix = f"{_BUILDS_PREFIX}/{build}"
@@ -587,7 +686,7 @@ def pull_build(build_dir: Path, repo: Optional[str] = None, build_hash: Optional
                                      repo_type=_REPO_TYPE, token=token,
                                      local_dir=str(build_dir))
         except Exception as exc:  # noqa: BLE001 — boundary: turn 401/403 into instructions
-            raise RuntimeError(_auth_hint(repo_id, exc)) from exc
+            raise RuntimeError(_auth_hint(hf, repo_id, exc)) from exc
         # local_dir reproduces the remote's builds/<hash>/ folder; keep the build flat.
         local = build_dir / name
         if Path(got).resolve() != local.resolve():

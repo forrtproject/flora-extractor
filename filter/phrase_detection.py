@@ -69,8 +69,12 @@ _REPRODUCTION_ANCHORED: list[re.Pattern] = [
                r"their|these|authors'?)?\s*"
                r"(?:results?|findings?|estimates?|figures?|tables?|analys[ei]s)\b",
                re.IGNORECASE),
+    # "try" is spelled out rather than stemmed: ``try\w*`` would miss "tried"/"tries"
+    # and ``tri\w*`` would swallow "trial", so the four inflections are listed the way
+    # ``attempt\w*`` covers its own on the replicate side. "trying to reproduce" was
+    # the hole.
     re.compile(r"\b(?:fail\w*|unable|inabilit\w+|attempt\w*|sought|seek\w*|aim\w*|"
-               r"tri(?:ed|es)|try)\s+to\s+reproduce\b", re.IGNORECASE),
+               r"tr(?:y|ies|ied|ying))\s+to\s+reproduce\b", re.IGNORECASE),
     re.compile(r"\bwe\s+(?:\w+ly\s+)?reproduced?\b", re.IGNORECASE),
 ]
 
@@ -120,9 +124,12 @@ REPLICATION_PHRASES: list[re.Pattern] = [
     # it half a dozen other ways. One alternation for the auxiliary+negation shapes
     # ("does not replicate", "was not replicated", "could not be replicated",
     # "cannot be replicated"), one for the noun/adjective framings.
+    # The perfect ("has not BEEN replicated") and "never" were the two holes: the
+    # auxiliary+negation shape is the same, but "been" is not "be" and "never" is not
+    # "not" — 803 rows of candidates.csv say it one of those two ways.
     re.compile(r"\b(?:(?:d(?:oes|o|id)|w(?:as|ere)|is|are|ha[sd]|have|could|would|"
-               r"should|can|may|might)\s+not|cannot|can['’]t)\s+"
-               r"(?:be\s+)?replicat\w+\b", re.IGNORECASE),
+               r"should|can|may|might)\s+(?:not|never)|cannot|can['’]t)\s+"
+               r"(?:(?:be|been)\s+)?replicat\w+\b", re.IGNORECASE),
     re.compile(r"\b(?:unable|inabilit\w+|failure)\s+to\s+replicate\b", re.IGNORECASE),
     # --- adverb insertion (#137 item 4) ---
     # "we successfully/partially/closely/directly replicated". Kept as a separate

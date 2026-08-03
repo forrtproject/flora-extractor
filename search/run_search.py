@@ -310,6 +310,15 @@ def _merge_into_candidates_csv(
     int
         Number of rows actually appended to the CSV (0 when nothing was new).
     """
+    # Missing values in the identifier columns must reach row_keys() as "", never as
+    # NaN: a NaN key would be written into the persistent index and permanently
+    # shadow every later row that also lacks that identifier. Only these four
+    # columns are filled — a blanket fillna("") would turn numeric columns to text.
+    new_df = new_df.copy()
+    for col in ("doi_r", "openalex_id_r", "url_r", "title_r"):
+        if col in new_df.columns:
+            new_df[col] = new_df[col].fillna("")
+
     index = _load_or_build_candidates_index(out_path)
 
     # seen_in_batch tracks keys chosen from THIS batch so that within-batch

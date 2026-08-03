@@ -49,10 +49,26 @@ read -rs HF_TOKEN && export HF_TOKEN             # typed, not stored in shell hi
 bash scripts/aws_launch.sh
 ```
 
-That prints the instance id, the public IP, and the four commands below. Optional
-knobs (all environment variables, all with defaults): `INSTANCE_TYPE`, `VOLUME_GB`,
-`REGION`, `REPO_REF`, `BUILD_CANDIDATES`, `SHUTDOWN_WHEN_DONE`, `SPOT`, `SUBNET_ID`,
-`SECURITY_GROUP_ID`, `SSH_CIDR`.
+That prints the instance id, the public IP, and the four commands below. It refuses to
+launch when an instance tagged `Name=flora-snapshot-scan` is already pending or running
+in the region, naming that instance id — set `FORCE_NEW=1` if a second concurrent scan
+is really what you want.
+
+Optional knobs, all environment variables:
+
+| Knob | Default | |
+| ---- | ------- | - |
+| `INSTANCE_TYPE` | `c7i.xlarge` | 4 vCPU; more cores buy nothing (see Cost) |
+| `VOLUME_GB` | `100` | root volume; the pre-flight floor is 25 GB free |
+| `REGION` | `us-east-1` | where the OpenAlex bucket is — moving it costs egress |
+| `REPO_REF` | `main` | branch, tag or SHA the instance scans with |
+| `BUILD_CANDIDATES` | `1` | also build and push the prebuilt candidates artifact |
+| `SHUTDOWN_WHEN_DONE` | `0` | power off (not terminate) after a successful publish |
+| `SPOT` | `0` | `1` is cheaper but loses the scan on a reclaim (see Cost) |
+| `FORCE_NEW` | `0` | `1` launches even if a scan instance is already running |
+| `NAME_TAG` | `flora-snapshot-scan` | the `Name` tag, and the duplicate-launch key |
+| `SUBNET_ID` / `SECURITY_GROUP_ID` | (default VPC) | set if you have no default VPC |
+| `SSH_CIDR` | your current public IP `/32` | only used for a script-created SG |
 
 On the instance:
 
@@ -72,7 +88,8 @@ The scan runs in a tmux session named `flora`, so closing SSH does not stop it
 `scripts/aws_snapshot_scan.sh` runs as user-data (and can be run by hand on any fresh
 Ubuntu box with `sudo -E bash scripts/aws_snapshot_scan.sh`):
 
-1. Refuses to continue without `RESEARCHER_EMAIL`, `HF_TOKEN`, `FLORA_POOL_REPO`.
+1. Refuses to continue without `RESEARCHER_EMAIL`, `HF_TOKEN`, `FLORA_POOL_REPO` —
+   reading any it is missing back out of `.env`, so a re-run needs no secrets.
 2. Installs `git tmux python3 python3-venv`, clones the repo at `REPO_REF`, builds a
    venv, `pip install -r requirements.txt`.
 3. Writes `.env` (mode 600) from those environment variables.
@@ -117,12 +134,16 @@ More vCPUs do not shorten the scan: it is one sequential process reading one
 partition at a time, so `c7i.xlarge` is the right default and a bigger instance
 mostly buys network burst it does not use.
 
-**Spot** (`SPOT=1`) is ~70% cheaper and safe from a data standpoint — the ledger
-checkpoints per manifest file and the pool is committed per partition before a file is
-marked done, so a reclaim loses at most one partition's work. What it is not is
-*unattended*: a reclaimed instance is gone, and somebody has to relaunch it. For an
-overnight-to-morning run where nobody is watching, on-demand's ~$1 of extra cost is
-the cheaper option.
+**Spot** (`SPOT=1`) is ~70% cheaper and **loses the whole scan if it is reclaimed**. The
+ledger, the survivor pool and `candidates.csv` all live on the instance's root volume,
+which is `DeleteOnTermination`; a reclaim terminates the instance, so the volume and
+every hour of scanning on it are gone and the next launch starts from an empty ledger.
+The per-partition checkpointing protects against a *process* dying, not against the box
+disappearing.
+
+For a one-shot unattended run, use the default **on-demand**: the ~$1 of extra cost is
+less than one restarted scan. Spot only makes sense if you are watching the run, are
+willing to start over, or have set up a volume that survives the instance.
 
 ## Checking progress mid-run
 
@@ -168,6 +189,12 @@ Re-run the same command. There is nothing else to do:
 ```bash
 sudo -E bash /opt/flora/aws_snapshot_scan.sh          # same bootstrap, resumes the scan
 ```
+
+You do not have to supply the token again: the script reads `RESEARCHER_EMAIL`,
+`HF_TOKEN` and `FLORA_POOL_REPO` back out of `/opt/flora/flora-extractor/.env` (mode
+600) whenever they are absent from the environment. Values you *do* pass win over the
+file, which is how you fix a bad token — `sudo HF_TOKEN=hf_… bash
+/opt/flora/aws_snapshot_scan.sh`.
 
 - The ledger records each manifest file as `done` only after its rows are merged and
   its pool file is committed, so a killed process re-reads at most one partition.
@@ -227,7 +254,9 @@ aws ec2 terminate-instances --region us-east-1 --instance-ids i-0123456789abcdef
 ```
 
 The root volume is `DeleteOnTermination`, so that removes the `.env` holding the token
-along with everything else. If `aws_launch.sh` created the `flora-snapshot-ssh`
+along with everything else. **Then revoke the HF token** — until the instance is gone
+its user-data copy is readable by anyone on the box, and revoking is the only step that
+does not depend on the teardown having happened. If `aws_launch.sh` created the `flora-snapshot-ssh`
 security group and you do not want it kept:
 
 ```bash
@@ -241,15 +270,21 @@ Leave it at `0` unless you are willing to verify the result from Hugging Face al
 ## Secrets and blast radius
 
 - `HF_TOKEN` and `RESEARCHER_EMAIL` reach the instance **in EC2 user-data**, which is
-  stored unencrypted in instance metadata and readable by anything that can reach
-  169.254.169.254 from the box. `aws_launch.sh` sets `HttpTokens=required` (IMDSv2)
-  and `HttpPutResponseHopLimit=1`, so a container or a stray SSRF cannot trivially
-  read it, but a root shell on the instance can. On the instance the token is written
-  only to `/opt/flora/flora-extractor/.env`, mode 600, root-owned, and is never echoed
-  or logged.
+  stored unencrypted in instance metadata. `aws_launch.sh` sets `HttpTokens=required`
+  (IMDSv2) and `HttpPutResponseHopLimit=1`, which stops a container or a plain
+  GET-based SSRF — but **any local user on the instance can still read the token**, not
+  just root: IMDSv2 needs only a `PUT` to 169.254.169.254 for a session token, which is
+  an unprivileged HTTP request, and user-data is served to it in plaintext. Treat
+  anyone with a shell on the box as holding the token.
+- On disk the token is written only to `/opt/flora/flora-extractor/.env` (mode 600,
+  root-owned) and is never echoed or logged. The self-copy at
+  `/opt/flora/aws_snapshot_scan.sh` has the injected `export HF_TOKEN=…` line stripped
+  out, so `.env` is the only file that holds it.
 - Consequence: use a **fine-grained HF token scoped to write only this one dataset
-  repo**, and revoke it after the run. That way the worst case of a compromised
-  instance is someone writing to the pool repo.
+  repo** — the worst case of a compromised instance is then someone writing to the pool
+  repo — and **revoke the token when the run is done**. That is a required step, not a
+  nicety: the copy in user-data outlives the scan for as long as the instance exists,
+  and terminating the instance is what removes it.
 - Nothing is committed to git: `.env` is gitignored and the scripts never write
   secrets into the checkout.
 - The AWS side needs no instance profile at all — the OpenAlex bucket is public, not

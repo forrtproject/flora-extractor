@@ -248,22 +248,20 @@ def stage_b_fingerprint() -> str:
     ])
 
 
-def ledger_hash(ledger: dict, with_kept: bool = False) -> str:
+def ledger_hash(ledger: dict) -> str:
     """Stable hash of what the ledger says was consumed.
 
     ``{url -> content_length}``, sorted by url so the hash does not move with the
-    order files happened to be scanned in. *with_kept* also folds in each file's
-    admitted-row count, which is what makes the hash name the OUTPUT of a scan and
-    not merely its input — see ``build_hash``.
+    order files happened to be scanned in.
+
+    Each entry's ``kept`` count is deliberately left out. It records how many rows
+    the merge appended after deduplicating against the local candidates.csv, so two
+    machines that consumed the same bytes and admitted the same rows still report
+    different ``kept`` values. The ledger keeps it for reporting (``--status``); no
+    identity is built on it — see ``build_hash``.
     """
     files = ledger.get("files", {}) or {}
-    parts = []
-    for url in sorted(files):
-        entry = files.get(url) or {}
-        part = f"{url}\t{entry.get('content_length')}"
-        if with_kept:
-            part += f"\t{entry.get('kept')}"
-        parts.append(part)
+    parts = [f"{url}\t{(files.get(url) or {}).get('content_length')}" for url in sorted(files)]
     return _fingerprint(parts)
 
 
@@ -280,16 +278,21 @@ def build_hash(ledger: Optional[dict] = None) -> str:
     """Content hash of a prebuilt candidates artifact: everything its rows depend on.
 
     Five inputs, one per thing that can change an admitted row: the snapshot date,
-    the Stage A gate, what the ledger actually consumed and kept, the Stage B
-    admission rule, and the row builder. Two builds with the same hash hold the same
-    rows; anything else must produce a different hash, because the hash is what a
-    collaborator downloads a corpus by.
+    the Stage A gate, what the ledger actually consumed, the Stage B admission rule,
+    and the row builder. Two builds with the same hash hold the same rows; anything
+    else must produce a different hash, because the hash is what a collaborator
+    downloads a corpus by.
+
+    The ledger's ``kept`` counts are deliberately NOT folded in. They record how many
+    rows the merge appended after dedup against whatever candidates.csv the scanning
+    machine happened to hold, so folding them in would give byte-identical builds
+    different hashes on two machines — the one thing the hash exists to rule out.
     """
     ledger = load_ledger() if ledger is None else ledger
     return _fingerprint([
         ledger.get("snapshot_date", "") or "",
         stage_a_fingerprint(),
-        ledger_hash(ledger, with_kept=True),
+        ledger_hash(ledger),
         stage_b_fingerprint(),
         ROW_BUILDER_VERSION,
     ])
@@ -389,8 +392,13 @@ def _concept_mask(batch: pa.RecordBatch) -> pa.Array:
     col = batch.column("concepts")
     if pa.types.is_string(col.type) or pa.types.is_large_string(col.type):
         # Some snapshot builds ship concepts as a JSON string rather than a list
-        # of structs; an id substring test is exact enough for opaque OpenAlex ids.
-        pattern = "|".join(re.escape(c) for c in sorted(_CONCEPT_IDS_BARE))
+        # of structs. The id must be anchored on the closing quote of the JSON
+        # string value it ends: unanchored, C9893847 also matches C98938470 —
+        # a different concept — and a concept hit bypasses Stage B entirely.
+        # (Anchoring the left side would need a lookbehind, which RE2 — pyarrow's
+        # engine — does not have; ids are prefix-free in practice because they all
+        # start at a "C" that no id contains elsewhere.)
+        pattern = "|".join(re.escape(c) + '"' for c in sorted(_CONCEPT_IDS_BARE))
         return pc.fill_null(pc.match_substring_regex(col, pattern), False)
 
     if not pa.types.is_list(col.type) and not pa.types.is_large_list(col.type):
@@ -454,6 +462,21 @@ def _maybe_json(value: "object") -> "object":
     return value
 
 
+def _abstract_text(value: "object") -> Optional[str]:
+    """Reading-order abstract text for a snapshot ``abstract_inverted_index`` value.
+
+    The snapshot ships the index as a JSON string, and a few records hold something
+    that is valid JSON but not a ``{word: [positions]}`` object — a list, a bare
+    string, a number. ``_reconstruct_abstract`` raises AttributeError on those, which
+    used to look like a failed partition READ and cost the other ~200k records in it.
+    A record with no usable index simply has no abstract.
+    """
+    parsed = _maybe_json(value)
+    if not isinstance(parsed, dict):
+        return None
+    return _reconstruct_abstract(parsed)
+
+
 def _row_from_snapshot(rec: dict, abstract: Optional[str] = None) -> dict:
     """Convert one snapshot record into the shared candidate-row schema.
 
@@ -478,7 +501,7 @@ def _row_from_snapshot(rec: dict, abstract: Optional[str] = None) -> dict:
         "doi_r":         clean_doi(rec.get("doi") or ""),
         "title_r":       rec.get("display_name") or rec.get("title"),
         "abstract_r":    abstract if abstract is not None
-                         else _reconstruct_abstract(_maybe_json(rec.get("abstract_inverted_index"))),
+                         else _abstract_text(rec.get("abstract_inverted_index")),
         "year_r":        year,
         "authors_r":     authors,
         "journal_r":     journal,
@@ -656,6 +679,9 @@ def _recover_stale_index(candidates_path: Path, ledger: dict) -> None:
     by ``load_or_build``) yet missing the rows just written. Rescanning that file
     would duplicate them. A file left at ``status: merging`` is exactly that
     signal, so the index is rebuilt from the CSV once before anything is rescanned.
+    The rebuild goes through ``KeyIndex.build``, which replaces the memoised copy the
+    merge reads — a rebuild that only fixed the file on disk would be no recovery at
+    all within one process.
     """
     if not any(e.get("status") == "merging" for e in ledger.get("files", {}).values()):
         return
@@ -668,6 +694,11 @@ def _recover_stale_index(candidates_path: Path, ledger: dict) -> None:
             CANDIDATES_INDEX.build(candidates_path)
     except Exception as exc:  # noqa: BLE001 — recovery is best-effort, never fatal
         log.warning("Could not rebuild candidates index (%s) — rescan may duplicate rows", exc)
+
+
+# Per-record parse defects are logged individually up to this many, then only counted:
+# a partition can hold a systematic defect, and one line per record would bury the run.
+_MAX_ROW_ERROR_LOGS = 20
 
 
 class _MergeFailed(Exception):
@@ -711,19 +742,32 @@ def _batch_rows(batch: pa.RecordBatch, from_year: Optional[int], to_year: Option
     pool_records: list[dict] = []
     for rec, concept_hit, title_hit, abstract_hit in zip(
             kept.to_pylist(), concept_flags, title_flags, abstract_flags):
-        abstract = _reconstruct_abstract(_maybe_json(rec.get("abstract_inverted_index"))) or ""
-        if pool is not None:
-            pool_records.append(_pool_record(rec, abstract, bool(title_hit),
-                                             bool(abstract_hit), bool(concept_hit)))
-        year = rec.get("publication_year")
-        if year is not None:
-            if from_year is not None and year < from_year:
-                continue
-            if to_year is not None and year > to_year:
-                continue
-        row = _row_if_admitted(rec, bool(concept_hit), counters, abstract=abstract)
-        if row is not None:
-            rows.append(row)
+        # A malformed RECORD costs that record and nothing else. The retry/skip
+        # handler around the partition read exists for transport failures, where
+        # reading again can succeed; a record the snapshot ships with a field we
+        # cannot parse fails identically on every retry, and letting it out of here
+        # would discard the ~200k sound records around it under the report of a
+        # successful scan.
+        try:
+            abstract = _abstract_text(rec.get("abstract_inverted_index")) or ""
+            if pool is not None:
+                pool_records.append(_pool_record(rec, abstract, bool(title_hit),
+                                                 bool(abstract_hit), bool(concept_hit)))
+            year = rec.get("publication_year")
+            if year is not None:
+                if from_year is not None and year < from_year:
+                    continue
+                if to_year is not None and year > to_year:
+                    continue
+            row = _row_if_admitted(rec, bool(concept_hit), counters, abstract=abstract)
+            if row is not None:
+                rows.append(row)
+        except Exception as exc:  # noqa: BLE001 — one unparseable record, not a read failure
+            counters["row_errors"] += 1
+            if counters["row_errors"] <= _MAX_ROW_ERROR_LOGS:
+                log.warning("Snapshot record skipped (%s): %s", rec.get("id"), exc)
+            elif counters["row_errors"] == _MAX_ROW_ERROR_LOGS + 1:
+                log.warning("Further malformed snapshot records will only be counted.")
 
     if pool is not None:
         pool.write(pool_records)
@@ -760,8 +804,15 @@ def scan_snapshot(max_files: Optional[int] = None,
     A partition that cannot be READ is retried and then skipped, but a failure of
     the merge or of the pilot write propagates out of this function immediately —
     it leaves local state half-written, which is not something a retry can repair.
+    A single malformed RECORD is neither: it is logged, skipped, and the rest of its
+    partition is consumed (see ``_batch_rows``).
     *merge_fn* / *index_loader* are injected by ``run_search`` so the two modules
     do not import each other at module level; when absent they are imported lazily.
+
+    *merge_fn* is called once per pyarrow batch — thousands of times over a full
+    scan — and each call begins by loading the candidates index. That load is
+    memoised inside ``KeyIndex`` (``shared/csv_index.py``); without it a 7M-key
+    index would be re-read from disk for every batch.
 
     *survivor_pool* persists every Stage A survivor under that directory, one
     parquet file per partition, so that Stage B can later be re-run over the pool
@@ -826,11 +877,15 @@ def scan_snapshot(max_files: Optional[int] = None,
 
     counters = {"scanned": 0, "stage_a": 0, "stage_a_token": 0, "stage_a_concept": 0,
                 "precise": 0, "default_rule": 0, "admitted": 0, "no_abstract": 0,
-                "already_in_candidates": 0, "pooled": 0}
+                "already_in_candidates": 0, "pooled": 0, "row_errors": 0}
     total_merged = 0
     skipped: list[str] = []
 
     for i, (url, meta) in enumerate(targets, 1):
+        # What the ledger said about this partition before this attempt. A partition is
+        # re-targeted when the manifest rewrote it, and a failed rescan must leave the
+        # earlier completed record standing rather than erase what WAS consumed.
+        previous_entry = ledger.get("files", {}).get(url) if pilot_csv is None else None
         if pilot_csv is None:
             ledger["files"][url] = {**meta, "status": "merging"}
             # Only ever set on a fresh ledger: overwriting a mismatching fingerprint
@@ -891,9 +946,15 @@ def scan_snapshot(max_files: Optional[int] = None,
                     if pool is not None:
                         pool.abandon()
                     if pilot_csv is None:
-                        # Never leave a skipped file in the ledger: it was not consumed,
-                        # and "merging" would trigger an index rebuild on every later run.
-                        ledger["files"].pop(url, None)
+                        # Never leave a skipped file at "merging": it was not consumed,
+                        # and "merging" would trigger an index rebuild on every later
+                        # run. What it said BEFORE this attempt still holds, though —
+                        # a rewritten partition whose rescan failed is still on record
+                        # as consumed at its old size, and will be re-targeted again.
+                        if previous_entry is not None:
+                            ledger["files"][url] = previous_entry
+                        else:
+                            ledger["files"].pop(url, None)
                         save_ledger(ledger)
                     break
                 wait = 2 ** attempt
@@ -916,6 +977,9 @@ def scan_snapshot(max_files: Optional[int] = None,
     if skipped:
         log.warning("Snapshot scan finished with %d unreadable file(s), left unscanned:\n%s",
                     len(skipped), "\n".join(skipped))
+    if counters["row_errors"]:
+        log.warning("Snapshot scan skipped %d malformed record(s); their partitions were "
+                    "otherwise consumed in full.", counters["row_errors"])
 
     if survivor_pool is not None:
         log.info("Snapshot survivor pool: %d rows, %.1f MB at %s (stage_a=%s stage_b=%s)",
@@ -1037,7 +1101,7 @@ def build_candidates(pool_dir: Path, out_dir: Path,
         "stage_b_fingerprint": stage_b_fingerprint(),
         "row_builder_version": ROW_BUILDER_VERSION,
         "snapshot_date": ledger.get("snapshot_date", "") or "",
-        "ledger_hash": ledger_hash(ledger, with_kept=True),
+        "ledger_hash": ledger_hash(ledger),
         "pool_files": len(files),
         "rows": sum(c["rows"] for c in chunks),
         "chunk_rows": chunk_rows,

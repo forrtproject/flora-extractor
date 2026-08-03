@@ -33,7 +33,7 @@ umask 077
 : "${FLORA_POOL_REPO:=}"         # e.g. forrtproject/flora-survivor-pool (private dataset)
 # Optional
 : "${REPO_URL:=https://github.com/forrtproject/flora-extractor.git}"
-: "${REPO_REF:=feat/snapshot-scan}"     # branch, tag or commit SHA to scan with
+: "${REPO_REF:=main}"            # branch, tag or commit SHA to scan with
 : "${WORK_DIR:=/opt/flora}"
 : "${LOG_DIR:=/var/log/flora}"
 : "${BUILD_CANDIDATES:=1}"       # 1 = also build and push the prebuilt candidates artifact
@@ -51,9 +51,46 @@ LOCK="$WORK_DIR/scan.lock"
 DONE_MARKER="$WORK_DIR/DONE"
 
 log()  { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"; }
-die()  { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] FATAL: $*" >&2; exit 1; }
+
+# One loud block for both failure paths, because the thing a maintainer must not
+# miss in a screenful of scan output is that the box is still billing.
+fail_loud() {
+  echo "" >&2
+  echo "########## FLORA SNAPSHOT SCAN FAILED ##########" >&2
+  echo "## $*" >&2
+  echo "## THE INSTANCE IS STILL RUNNING and still billing — nothing here" >&2
+  echo "## terminates it. Read $LOG, then terminate it yourself:" >&2
+  echo "##   aws ec2 terminate-instances --region <region> --instance-ids <id>" >&2
+  echo "###############################################" >&2
+}
+
+die()  { fail_loud "$*"; echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] FATAL: $*" >&2; exit 1; }
+
+# set -E already propagates ERR into functions and subshells, but nothing was
+# trapping it, so an unguarded failure died silently mid-log. `exit` does not fire
+# ERR, so this covers exactly the failures `die` does not.
+trap 'fail_loud "unhandled failure at line $LINENO (exit $?): $BASH_COMMAND"' ERR
 
 # ── Phases ────────────────────────────────────────────────────────────────────
+
+load_env_fallback() {
+  # Resume path. After the first bootstrap the token lives in $CHECKOUT/.env (mode
+  # 600) and nowhere else — not in the self-copy of this script, not in the shell
+  # that re-runs it. require_inputs happens before any python, so shared/config.py's
+  # own .env loading is too late to satisfy it; read the file here instead.
+  #
+  # Fills BLANKS ONLY: a re-run that passes a corrected token must win over the
+  # stale value on disk.
+  local f="$CHECKOUT/.env" key val
+  [ -f "$f" ] || return 0
+  for key in RESEARCHER_EMAIL HF_TOKEN FLORA_POOL_REPO FLORA_POOL_DIR; do
+    if [ -z "${!key}" ]; then
+      val="$(sed -n "s/^${key}=//p" "$f" | head -1)"
+      if [ -n "$val" ]; then export "$key=$val"; fi
+    fi
+  done
+  return 0
+}
 
 require_inputs() {
   [ -n "$RESEARCHER_EMAIL" ] || die "RESEARCHER_EMAIL is not set. OpenAlex asks for a contact address; set it and re-run."
@@ -142,7 +179,7 @@ PYEOF
   local free_gb
   free_gb=$(df -BG --output=avail "$WORK_DIR" | tail -1 | tr -dc '0-9')
   log "Free disk at $WORK_DIR: ${free_gb} GB"
-  [ "${free_gb:-0}" -ge 25 ] || die "Only ${free_gb} GB free at $WORK_DIR. The snapshot is streamed, but the pool (~3 GB), candidates.csv and its index need room — give the volume at least 50 GB."
+  [ "${free_gb:-0}" -ge 25 ] || die "Only ${free_gb} GB free at $WORK_DIR. The snapshot is streamed, but the pool (~3 GB), candidates.csv and its index need room — 25 GB free is the floor, and VOLUME_GB=100 is the recommended size."
 }
 
 run_pipeline() {
@@ -191,10 +228,13 @@ run_pipeline() {
 
 retry() {
   local attempts="$1"; shift
+  # Capture the command BEFORE the loop: inside it, "$1" is the interpreter path,
+  # which named the wrong thing in every failure message.
+  local what="$*"
   local n=1
   until "$@"; do
     if [ "$n" -ge "$attempts" ]; then
-      die "Command failed after $attempts attempts: $1 … (the scan itself is safe on disk; re-run this script to retry publishing)"
+      die "Command failed after $attempts attempts: $what (the scan itself is safe on disk; re-run this script to retry publishing)"
     fi
     log "Attempt $n/$attempts failed — retrying in $(( n * 30 ))s"
     sleep $(( n * 30 ))
@@ -247,7 +287,9 @@ case "${1:-}" in
 esac
 
 # Inputs first: a missing token is the cheapest possible failure and must not wait
-# behind a root check, an apt run or a clone.
+# behind a root check, an apt run or a clone. On a resume the environment is empty
+# and everything comes back from $CHECKOUT/.env.
+load_env_fallback
 require_inputs
 [ "$(id -u)" -eq 0 ] || die "Run as root (sudo -E bash $0) — it installs packages and writes to $WORK_DIR."
 
@@ -265,8 +307,20 @@ write_env
 
 # Keep a copy of THIS script next to the checkout, so `--run` and `status` have a
 # stable path whether the original came from user-data or a git checkout.
-cp -f "$0" "$SELF_COPY"
-chmod 700 "$SELF_COPY"
+#
+# The `export HF_TOKEN=…` line aws_launch.sh injects at the top of the user-data
+# script is stripped out: the token belongs in .env (mode 600) and nowhere else, and
+# a second copy of it on disk is a second thing to worry about. A resume reads it
+# back through load_env_fallback.
+#
+# Skipped when we ARE the self-copy (the documented resume command runs this file):
+# `cp -f x x` fails, and redirecting into the script bash is still reading corrupts
+# the run.
+if [ "$(readlink -f "$0")" != "$(readlink -f "$SELF_COPY")" ]; then
+  grep -v '^export HF_TOKEN=' "$0" > "$SELF_COPY.tmp"
+  mv -f "$SELF_COPY.tmp" "$SELF_COPY"
+  chmod 700 "$SELF_COPY"
+fi
 
 preflight
 start_detached

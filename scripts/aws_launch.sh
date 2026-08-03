@@ -3,8 +3,10 @@
 # Launch ONE EC2 instance that runs the full OpenAlex snapshot scan unattended and
 # publishes the result to the private Hugging Face dataset repo. Run this LOCALLY.
 #
-#   KEY_NAME=my-keypair HF_TOKEN=hf_… FLORA_POOL_REPO=my-org/flora-survivor-pool \
-#   RESEARCHER_EMAIL=you@example.com bash scripts/aws_launch.sh
+#   export KEY_NAME=my-keypair FLORA_POOL_REPO=my-org/flora-survivor-pool
+#   export RESEARCHER_EMAIL=you@example.com
+#   read -rs HF_TOKEN && export HF_TOKEN     # typed, never in your shell history
+#   bash scripts/aws_launch.sh
 #
 # It creates: one instance, and (only if you do not name one) one security group
 # allowing SSH from your current public IP. Nothing else. The bootstrap script
@@ -34,17 +36,18 @@ INSTANCE_TYPE="${INSTANCE_TYPE:-c7i.xlarge}"
 # is generous slack at ~$0.01 for the life of the run — undersizing it is the one
 # failure that wastes the whole scan, oversizing it costs cents.
 VOLUME_GB="${VOLUME_GB:-100}"
-REPO_REF="${REPO_REF:-feat/snapshot-scan}"     # branch/tag/SHA the instance scans with
+REPO_REF="${REPO_REF:-main}"                   # branch/tag/SHA the instance scans with
 REPO_URL="${REPO_URL:-https://github.com/forrtproject/flora-extractor.git}"
 BUILD_CANDIDATES="${BUILD_CANDIDATES:-1}"      # also build + push the prebuilt corpus
 SHUTDOWN_WHEN_DONE="${SHUTDOWN_WHEN_DONE:-0}"  # 1 = power off after publishing (see runbook)
-SPOT="${SPOT:-0}"                              # 1 = spot instance (~70% cheaper, interruptible)
+SPOT="${SPOT:-0}"                              # 1 = spot instance (~70% cheaper, LOSES the scan if reclaimed)
 NAME_TAG="${NAME_TAG:-flora-snapshot-scan}"
 # Leave empty to use the default VPC's default subnet and a security group this script
 # creates. Set them if your account has no default VPC or you want an existing SG.
 SUBNET_ID="${SUBNET_ID:-}"
 SECURITY_GROUP_ID="${SECURITY_GROUP_ID:-}"
 SSH_CIDR="${SSH_CIDR:-}"                       # default: your current public IP /32
+FORCE_NEW="${FORCE_NEW:-0}"                    # 1 = launch even if one is already running
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOOTSTRAP="$HERE/aws_snapshot_scan.sh"
@@ -62,6 +65,22 @@ aws sts get-caller-identity --region "$REGION" >/dev/null \
 
 aws ec2 describe-key-pairs --region "$REGION" --key-names "$KEY_NAME" >/dev/null \
   || die "Key pair '$KEY_NAME' does not exist in $REGION."
+
+# ── One scan at a time ────────────────────────────────────────────────────────
+# A second launch is almost always a re-run of this command after losing the first
+# instance's output, not a deliberate second scan. Two boxes doing the same 2–5 hour
+# job double the bill and race each other's pushes to the same HF repo.
+if [ "$FORCE_NEW" != "1" ]; then
+  EXISTING="$(aws ec2 describe-instances --region "$REGION" \
+    --filters "Name=tag:Name,Values=$NAME_TAG" \
+              "Name=instance-state-name,Values=pending,running" \
+    --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || echo "")"
+  EXISTING="$(echo "$EXISTING" | tr -s '[:space:]' ' ' | sed 's/^ *//;s/ *$//')"
+  [ -z "$EXISTING" ] || die "An instance tagged Name=$NAME_TAG is already pending/running in $REGION: $EXISTING
+  Check it first (ssh in, 'sudo bash /opt/flora/aws_snapshot_scan.sh status'), then either
+  terminate it (aws ec2 terminate-instances --region $REGION --instance-ids $EXISTING)
+  or set FORCE_NEW=1 if you really want a second scan."
+fi
 
 # ── The ref must exist on the REMOTE ─────────────────────────────────────────
 # The instance clones from GitHub, so uncommitted or unpushed local work is invisible
@@ -140,8 +159,14 @@ UD_BYTES="$(wc -c < "$USER_DATA")"
 
 MARKET_OPTS=()
 if [ "$SPOT" = "1" ]; then
-  # One-time spot request: interruption is safe (the ledger resumes) but the instance
-  # is gone, so somebody has to relaunch. Default is on-demand for this reason.
+  # One-time spot request. A reclaim TERMINATES the instance, and the root volume is
+  # DeleteOnTermination — so the ledger, the survivor pool and candidates.csv go with
+  # it and the next launch starts from zero. Spot is for a run somebody is watching
+  # and willing to restart from scratch; for a one-shot unattended scan use the
+  # default on-demand, where ~$1 of extra cost buys the whole scan back.
+  echo "WARNING: SPOT=1 — a spot reclaim terminates the instance and DELETES the root"
+  echo "         volume, losing everything scanned so far. On-demand is the default"
+  echo "         for a one-shot run."
   MARKET_OPTS=(--instance-market-options 'MarketType=spot')
 fi
 SUBNET_OPTS=()

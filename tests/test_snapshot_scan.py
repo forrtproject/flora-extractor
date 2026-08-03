@@ -267,6 +267,33 @@ def test_merge_failure_raises_and_leaves_the_ledger_mid_merge(snap_env):
     assert ss.load_ledger()["files"][parquet]["status"] == "done"
 
 
+def test_a_failed_rescan_leaves_the_previous_record_standing(snap_env, monkeypatch, caplog):
+    """OpenAlex rewrites partitions in place, so a done file is re-targeted when its
+    content_length moves. If that rescan cannot be read, dropping the ledger entry would
+    erase the record of the bytes that WERE consumed — and with it the rows already in
+    candidates.csv, which a later run would then merge a second time."""
+    url = "https://openalex.s3.amazonaws.com/works/updated_date=2024-01-01/part_0000.parquet"
+    done = {"content_length": 100, "record_count": 10, "status": "done", "kept": 7,
+            "scanned_at": "2024-02-02T00:00:00+00:00"}
+    ss.save_ledger({"snapshot_date": "2024-02-01",
+                    "stage_a_fingerprint": ss.stage_a_fingerprint(),
+                    "stage_b_fingerprint": ss.stage_b_fingerprint(),
+                    "files": {url: done}})
+
+    monkeypatch.setattr(ss, "fetch_manifest", lambda: {
+        "meta": {"updated_date": "2024-03-01"},
+        "entries": [{"url": url, "meta": {"content_length": 200, "record_count": 20}}]})
+    monkeypatch.setattr(ss.time, "sleep", lambda s: None)
+    monkeypatch.setattr(ss, "_open_parquet", lambda u: (_ for _ in ()).throw(OSError("no route")))
+
+    with caplog.at_level("ERROR"):
+        assert ss.scan_snapshot(merge_fn=rs._merge_into_candidates_csv,
+                                index_loader=rs._load_or_build_candidates_index) == 0
+
+    assert ss.load_ledger()["files"][url] == done, \
+        "a failed rescan must not erase what the previous scan consumed"
+
+
 def test_old_stage_a_fingerprint_is_never_overwritten(snap_env, caplog):
     """The mismatch warning must keep firing every run until the user deletes the
     ledger — scanning one file under the new gate does not make the files marked done
@@ -360,6 +387,20 @@ def test_gate_is_order_blind_but_stage_b_is_not(snap_env):
     assert ss._admit(False, rec["title"], reconstructed) is False
 
 
+def test_concept_ids_do_not_match_longer_ids_in_the_json_branch(snap_env):
+    """Some snapshot builds ship `concepts` as a JSON string, matched by regex. An
+    unanchored id is a prefix of longer ids — C9893847 inside C98938470 — and a concept
+    hit bypasses Stage B, so the false hit would enter candidates.csv unchallenged."""
+    real = sorted(ss._CONCEPT_IDS_BARE)[0]
+    longer = pa.table({"concepts": [json.dumps(
+        [{"id": f"https://openalex.org/{real}0", "display_name": "Other", "score": 0.9}])]})
+    exact = pa.table({"concepts": [json.dumps(
+        [{"id": f"https://openalex.org/{real}", "display_name": "Concept", "score": 0.9}])]})
+
+    assert _mask(ss._concept_mask(longer)) == [False]
+    assert _mask(ss._concept_mask(exact)) == [True]
+
+
 def test_concept_hit_without_any_token(snap_env):
     """The concept arm is the recall arm: a paper OpenAlex classifies as Replication
     keeps its place even when neither title nor abstract says any replication word.
@@ -374,6 +415,100 @@ def test_concept_hit_without_any_token(snap_env):
     # Nothing in the text admits it — the concept hit alone bypasses Stage B.
     assert ss._admit(False, rec["title"], "We describe how bees find flowers") is False
     assert ss._admit(True, rec["title"], "We describe how bees find flowers") is True
+
+
+def test_the_candidates_index_is_not_reloaded_for_every_batch(snap_env, monkeypatch, caplog):
+    """The merge runs once per pyarrow batch — thousands of times over a full scan — and
+    each merge starts by loading the candidates index. At 7M keys that is ~1.4s and a GB
+    of RSS per call, so it must be read from disk once, not per batch."""
+    monkeypatch.setattr(ss, "SNAPSHOT_BATCH_ROWS", 1)
+    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", [
+        _record(work_id=f"https://openalex.org/W{i}", doi=f"https://doi.org/10.1/{i}",
+                oa_url=f"https://example.org/{i}.pdf",
+                title=f"A direct replication of Smith ({2000 + i})")
+        for i in range(1, 6)
+    ])
+
+    with caplog.at_level("INFO"):
+        assert ss.scan_snapshot(files=[parquet], merge_fn=rs._merge_into_candidates_csv,
+                                index_loader=rs._load_or_build_candidates_index) == 5
+
+    reads = [r for r in caplog.records if "index loaded" in r.getMessage()]
+    assert len(reads) <= 1, f"the index was re-read from disk {len(reads)} times"
+
+
+# ---------------------------------------------------------------------------
+# Malformed records
+# ---------------------------------------------------------------------------
+
+def test_an_inverted_index_that_is_not_a_dict_is_no_abstract(snap_env):
+    """The snapshot ships the index as a JSON string, and a few records hold valid JSON
+    that is not a {word: [positions]} object. Reconstructing it raised AttributeError,
+    which the partition-read handler mistook for a transport failure."""
+    for junk in ("[1, 2, 3]", '"an abstract"', "0", "not json at all"):
+        rec = _record(title="A direct replication of Smith (2009)", abstract=junk)
+        assert ss._abstract_text(rec["abstract_inverted_index"]) is None
+        assert ss._row_from_snapshot(rec)["abstract_r"] is None
+
+
+def test_a_defective_record_costs_one_row_not_the_partition(snap_env, monkeypatch, caplog):
+    """A per-record parse defect fails identically on every retry, so retrying and then
+    skipping the partition throws away its other ~200k sound records — under a run that
+    reports success. The record is dropped; the partition is consumed."""
+    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", [
+        _record(work_id="https://openalex.org/W1", doi="https://doi.org/10.1/a",
+                oa_url="https://example.org/a.pdf",
+                title="A direct replication of Smith (2009)"),
+        _record(work_id="https://openalex.org/W2", doi="https://doi.org/10.1/b",
+                oa_url="https://example.org/b.pdf",
+                title="A direct replication of Jones (2011)"),
+        _record(work_id="https://openalex.org/W3", doi="https://doi.org/10.1/c",
+                oa_url="https://example.org/c.pdf",
+                title="A direct replication of Brown (2013)"),
+    ])
+
+    opens = []
+    real_open = ss._open_parquet
+    monkeypatch.setattr(ss, "_open_parquet", lambda url: opens.append(url) or real_open(url))
+
+    real_admit = ss._row_if_admitted
+
+    def explode_on_w2(rec, concept_hit, counters, abstract=None):
+        if rec.get("id") == "https://openalex.org/W2":
+            raise AttributeError("'list' object has no attribute 'items'")
+        return real_admit(rec, concept_hit, counters, abstract=abstract)
+
+    monkeypatch.setattr(ss, "_row_if_admitted", explode_on_w2)
+
+    with caplog.at_level("WARNING"):
+        merged = ss.scan_snapshot(files=[parquet], merge_fn=rs._merge_into_candidates_csv,
+                                  index_loader=rs._load_or_build_candidates_index)
+
+    assert merged == 2, "the two sound records must still be admitted"
+    assert len(opens) == 1, "a record defect is not a read failure — no retry"
+    assert ss.load_ledger()["files"][parquet]["status"] == "done"
+    assert list(pd.read_csv(snap_env.candidates)["doi_r"]) == ["10.1/a", "10.1/c"]
+    assert any("https://openalex.org/W2" in r.getMessage() for r in caplog.records), \
+        "the skipped record must be named"
+
+
+def test_a_defective_record_does_not_stop_the_pool(snap_env, monkeypatch):
+    """The pool holds Stage A survivors, and one unreadable record must not cost the
+    others their place in it — a truncated pool would silently narrow re-admission."""
+    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
+    pool = snap_env.tmp / "pool"
+
+    real_admit = ss._row_if_admitted
+
+    def explode_on_w2(rec, concept_hit, counters, abstract=None):
+        if rec.get("id") == "https://openalex.org/W2":
+            raise ValueError("malformed record")
+        return real_admit(rec, concept_hit, counters, abstract=abstract)
+
+    monkeypatch.setattr(ss, "_row_if_admitted", explode_on_w2)
+    ss.scan_snapshot(files=[parquet], pilot_csv=snap_env.tmp / "pilot.csv", survivor_pool=pool)
+
+    assert list(pd.read_parquet(pool)["id"]) == [f"https://openalex.org/W{i}" for i in (1, 2, 3, 4)]
 
 
 # ---------------------------------------------------------------------------
@@ -643,11 +778,23 @@ def test_build_hash_moves_with_the_code_that_makes_the_rows(snap_env, monkeypatc
     _ledger_with({"https://example.org/part_0000.parquet":
                   {"content_length": 101, "record_count": 10, "kept": 2}}),   # partition rewritten
     _ledger_with({"https://example.org/part_0000.parquet":
-                  {"content_length": 100, "record_count": 10, "kept": 3}}),   # different admission
+                  {"content_length": 100, "record_count": 10, "kept": 2},
+                  "https://example.org/part_0001.parquet":
+                  {"content_length": 50, "record_count": 5, "kept": 1}}),     # one more partition
     {"snapshot_date": "2026-08-01", "files": _LEDGER["files"]},               # newer snapshot
 ])
-def test_build_hash_moves_with_what_the_scan_consumed_and_kept(snap_env, ledger):
+def test_build_hash_moves_with_what_the_scan_consumed(snap_env, ledger):
     assert ss.build_hash(ledger) != ss.build_hash(_LEDGER)
+
+
+def test_build_hash_ignores_the_kept_counts(snap_env):
+    """``kept`` is what the merge appended after dedup against the LOCAL candidates.csv,
+    so a colleague who already held some of these rows records a different number for
+    the same partition. Folding it in would give byte-identical builds different hashes
+    on two machines — the one thing a content hash exists to rule out."""
+    other_kept = _ledger_with({"https://example.org/part_0000.parquet":
+                               {"content_length": 100, "record_count": 10, "kept": 0}})
+    assert ss.build_hash(other_kept) == ss.build_hash(_LEDGER)
 
 
 def test_build_hash_is_stable_for_the_same_inputs(snap_env):
