@@ -15,3 +15,21 @@ from that checkout. All snapshot measurements use real parquet partitions from t
 
 The pilot samples feed the pre-commitment screen pilot described in issue #144
 (screen all three arms, human-label random samples of proceeders AND discards).
+
+## Caveat on the gold corpus: `allrep_llm` is not ground truth
+
+Every "gold positive" number in these reports is measured against the 7,505-paper
+`override_positives.json`, which draws from four sources — and **4,681 of those papers
+(62%) come from the `allrep_llm` bucket: the old pipeline's own LLM verdicts, never
+human-confirmed.** Human curation (`entry_sheet` 1,551, `flora_db` 1,266) is 38%.
+
+Auditing one slice (the 59 genetics papers the keyword filter rejects, see
+`gwas_scope_classification.csv`) found 14 rows that fail FLoRA's own coding rule — 6
+two-stage internal designs, 8 molecular-sense papers — and **all 14 came from
+`allrep_llm`**. Human-curated rows made none of those errors.
+
+So "recall against gold" is, for the majority of the corpus, agreement with a superseded
+LLM prompt. Treat every recall figure here (the 443 negatives / 5.9%, the 319 vocabulary
+misses, the 121 exclusion kills) as an upper bound on the real miss count, and restrict
+to the human-curated buckets — or report the two strata separately — before tuning
+filter rules on these numbers.
