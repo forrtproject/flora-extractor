@@ -178,8 +178,8 @@ INSTANCE_ID="$(aws ec2 run-instances --region "$REGION" \
   --instance-type "$INSTANCE_TYPE" \
   --key-name "$KEY_NAME" \
   --security-group-ids "$SECURITY_GROUP_ID" \
-  "${SUBNET_OPTS[@]}" \
-  "${MARKET_OPTS[@]}" \
+  ${SUBNET_OPTS[@]+"${SUBNET_OPTS[@]}"} \
+  ${MARKET_OPTS[@]+"${MARKET_OPTS[@]}"} \
   --block-device-mappings "[{\"DeviceName\":\"$ROOT_DEVICE\",\"Ebs\":{\"VolumeSize\":$VOLUME_GB,\"VolumeType\":\"gp3\",\"DeleteOnTermination\":true,\"Encrypted\":true}}]" \
   --metadata-options 'HttpTokens=required,HttpPutResponseHopLimit=1,HttpEndpoint=enabled' \
   --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$NAME_TAG}]" \
