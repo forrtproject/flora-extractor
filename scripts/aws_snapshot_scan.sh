@@ -106,7 +106,9 @@ install_system_deps() {
   # Only touches apt when something is actually missing, so a re-run costs nothing.
   local missing=0
   for cmd in git tmux python3 flock; do command -v "$cmd" >/dev/null || missing=1; done
-  python3 -c "import venv" >/dev/null 2>&1 || missing=1
+  # "import venv" succeeds on Ubuntu's bare python3; it is ensurepip that lives in
+  # the separate python3-venv package and that "python3 -m venv" actually needs.
+  python3 -c "import venv, ensurepip" >/dev/null 2>&1 || missing=1
   if [ "$missing" -eq 0 ]; then log "System dependencies already present"; return; fi
 
   log "Installing system dependencies (apt)"
