@@ -1331,6 +1331,30 @@ python -m extract.audit_dois --apply  # write corrections</pre>
           <div id="ext-year-chart"><div class="null-note">Loading…</div></div>
         </div>
 
+        <div class="stat-card">
+          <h3>LLM Token Usage</h3>
+          <p style="font-size:10px;color:var(--text-faint);margin:0 0 8px">
+            Every LLM call's reported usage, from <code>cache/token_usage.json</code>.
+            Input and output are kept apart because they are priced differently
+            (thinking models bill hidden reasoning as output), and provider is its own
+            level because a model id does not name the provider it was reached through.
+          </p>
+          <div id="token-total" style="font-size:11px"><span class="null-note">Loading…</span></div>
+          <table class="mini-table" id="token-table" style="margin-top:8px">
+            <thead><tr>
+              <th>Provider</th>
+              <th>Model</th>
+              <th class="num" style="text-align:right">Input</th>
+              <th class="num" style="text-align:right">Output</th>
+              <th class="num" style="text-align:right">Total</th>
+            </tr></thead>
+            <tbody id="token-tbody">
+              <tr><td colspan="5" class="null-note" style="padding:12px">Loading…</td></tr>
+            </tbody>
+          </table>
+          <div id="token-days" style="margin-top:10px"></div>
+        </div>
+
         <div class="stat-card" style="padding:14px 16px">
           <h3>How it works — data flow</h3>
           <div class="flow-chart" style="gap:2px">
@@ -2540,6 +2564,64 @@ document.querySelectorAll('#phrase-table th[data-sort]').forEach(th => {
   th.addEventListener('click', () => { _phraseSort = th.dataset.sort; drawPhraseTable(); });
 });
 
+// ── Stage 3 LLM token usage ──────────────────────────────────────────────────
+async function loadTokenUsage() {
+  const d = await fetch('/api/dashboard/token-usage').then(r=>r.json());
+  const rows = d.rows || [], days = d.days || [];
+
+  if (!rows.length) {
+    $('token-total').innerHTML =
+      '<span class="null-note">No LLM token usage recorded yet.</span>';
+    $('token-tbody').innerHTML =
+      '<tr><td colspan="5" class="null-note" style="padding:12px">No usage recorded.</td></tr>';
+    $('token-days').innerHTML = '';
+    return;
+  }
+
+  $('token-total').innerHTML =
+    `Cumulative: <strong>${fmt(d.total)}</strong> tokens ` +
+    `(<strong>${fmt(d.in)}</strong> in · <strong>${fmt(d.out)}</strong> out) ` +
+    `over <strong>${fmt(days.length)}</strong> day(s) with recorded usage.` +
+    (d.openai_daily_budget
+      ? ` OpenAI daily cap: <strong>${fmt(d.openai_daily_budget)}</strong> tokens.`
+      : ' OpenAI daily cap disabled.');
+
+  $('token-tbody').innerHTML = rows.map(r => `<tr>
+      <td>${esc(r.provider)}</td>
+      <td><span style="font-family:monospace">${esc(r.model)}</span></td>
+      <td class="num">${fmt(r.in)}</td>
+      <td class="num">${fmt(r.out)}</td>
+      <td class="num"><strong>${fmt(r.total)}</strong></td>
+    </tr>`).join('') + `<tr>
+      <td colspan="2"><strong>Cumulative</strong></td>
+      <td class="num"><strong>${fmt(d.in)}</strong></td>
+      <td class="num"><strong>${fmt(d.out)}</strong></td>
+      <td class="num"><strong>${fmt(d.total)}</strong></td>
+    </tr>`;
+
+  // Recent days first. Days with no usage are absent from the record, so the list
+  // is the days that actually spent something — never a zero-filled calendar.
+  $('token-days').innerHTML = days.slice(0, 14).map(day => `
+    <details style="margin-bottom:2px">
+      <summary style="cursor:pointer;font-size:11px">
+        <strong>${esc(day.day)}</strong> — ${fmt(day.total)} tokens
+        (${fmt(day.in)} in · ${fmt(day.out)} out)
+      </summary>
+      <table class="mini-table" style="margin:4px 0 8px">
+        <tbody>${day.rows.map(r => `<tr>
+          <td>${esc(r.provider)}</td>
+          <td><span style="font-family:monospace">${esc(r.model)}</span></td>
+          <td class="num" style="text-align:right">${fmt(r.in)}</td>
+          <td class="num" style="text-align:right">${fmt(r.out)}</td>
+          <td class="num" style="text-align:right"><strong>${fmt(r.total)}</strong></td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </details>`).join('') +
+    (days.length > 14
+      ? `<div class="null-note">Showing the 14 most recent of ${fmt(days.length)} recorded days.</div>`
+      : '');
+}
+
 // ── Load pipeline / CSV stats ────────────────────────────────────────────────
 async function loadPipeline() {
   const csv = await fetch('/api/dashboard/csv-stats').then(r=>r.json());
@@ -3259,6 +3341,7 @@ async function loadAll() {
   _valLoaded=false; _analysisLoaded=false; _phraseRows=null;
   try {
     await loadPipeline();
+    await loadTokenUsage();
     const activeTab=document.querySelector('.tab-btn.active')?.dataset?.tab;
     if (activeTab==='search')       await loadPhrases();
     if (activeTab==='supabase')     await loadValidation();
