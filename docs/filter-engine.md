@@ -339,6 +339,58 @@ checkpointed identifiers, and the chunk write skips work ids the overlay already
 covers, so an interrupted run re-fetches nothing and cannot write a work into a
 second chunk.
 
+## The #147 policy entries
+
+Issue #147's four measured keyword fixes ship as spec content, not as edits to
+`keyword_verdict()`. Each carries a `measured` entry naming both sides of its
+measurement, the corpus that is its denominator, and — per #151 — the fact that
+62% of the 7,505-paper gold corpus is `allrep_llm` output that was never
+human-confirmed, so every recall figure below is an upper bound.
+
+| change | spec(s) | shipped as | measured |
+| --- | --- | --- | --- |
+| Phrase morphology (bundle T2) | `phrase-replication`, `phrase-with-cite` | five arms added to the phrase `any_of` of both files | 186 of 319 no-phrase gold misses, +9.3 admissions/M (+0.6%), 0 goldneg_screen |
+| Title-phrase rescue | `title-phrase-rescue` (new, 645) | title phrase AND an abstract-only technical exclusion → `screen_cheap` | 12 gold, ~102 rows over 510M, 0 gold-negative |
+| TECHNICAL_* narrowing | `technical-object`, `technical-verb` | object lists lose model/method/data/dataset | 18 + 13 gold, ~3.5k rows, 0 gold-negative; frees 3 of the 5 lost indexed reproductions |
+| GWAS scope ruling | `biological-of` (BO1), `phrase-with-cite` (G1−) | genome-wide exempted; the guard stands down on a prior-report cue | 20 gold / ~204 rows; 12 gold, all qualifying, 0 internal, 0 extra rows |
+
+Four things about this band are worth stating rather than rediscovering.
+
+**Two rescues now sit in the 600s.** `exclusion-rescue` (650) asks for a phrase
+plus a named author-year cite anywhere in the row; `title-phrase-rescue` (645)
+asks for a phrase in the TITLE and no cite at all. Both route to `screen_cheap`,
+so where both match the pile is identical and only `route_rule` differs;
+`exclusion-rescue` wins because a named cite is the stronger evidence.
+
+**The rescue is scoped to the two non-shadow technical exclusions.** The measured
+bundle was TV3+TO4+DA1, but `data-availability` is shadow and discards nothing,
+so a rescue from it could only pull a row DOWN from `screen_expensive`. What
+ships is TV3+TO4, worth 12 gold rather than the issue's 15.
+
+**The 500s exclusions are shared with Stage 1.** `filter/phrase_detection.py::
+_load_exclusion_regexes()` reads these same files, so narrowing
+`technical-object`/`technical-verb` and applying BO1 to `biological-of`'s
+`pyre_regex` changes Stage 1's admission too, and `stage_b_fingerprint()` moves
+with it. That is the intended effect — it is how the lost reproductions and the
+GWAS-locus genre re-enter the scan.
+
+**T2 is engine-only, and that is sufficient.** `REPLICATION_PHRASES` is a Python
+constant rather than a spec, so the five new arms do not reach `keyword_verdict()`.
+They do not need to: every T2 shape contains the `replicat` stem, so Stage A's
+token gate keeps those rows in the survivor pool, and the pool — not
+candidates.csv — is what the engine routes.
+
+`biological-of` remains shadow after BO1. The exemption itself is expressible
+without lookaround (the character after the organism token is consumed rather
+than looked ahead at, with the Unicode dash range U+2010–U+2015 in the class,
+because gold rows write "Genome‐Wide"), but the spec's study-noun refusal inside
+the filler window still is not, and that is what keeps its RE2 decomposition
+wider than the original.
+
+Every same-sentence regex leaves 11–16 genuinely qualifying GWAS replications
+unreachable: they attribute the prior report in a different sentence from the
+"we replicated…" claim. That is a screen judgment, not a keyword one.
+
 ## Milestone 4 — the claimed LLM tiers and the Stage 3 switch
 
 Rules route; only these tiers admit. Two runners in `filter/engine/tiers.py`, one
