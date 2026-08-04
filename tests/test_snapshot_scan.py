@@ -429,12 +429,12 @@ _GATE_CASES = [
     ("Reproducibility of the X effect",
      "Bees forage over long distances when the hive is disturbed.",
      True, "pending"),
-    # reproduction-signal, live pending #155
+    # reproduction-signal is shadow, so a reproduction-only row is claimed by no
+    # live rule and lands in the coverage gap
     ("A computational reproduction",
      "We re-ran the authors' code and reproduced the published results.",
-     True, "screen_cheap"),
-    # both vocabularies in one row: replication-claim (700) outranks
-    # reproduction-signal (262), so the two-voter screen is what settles it
+     True, "pending"),
+    # both vocabularies in one row: replication-claim is live and claims it
     ("A computational reproduction",
      "We replicated the code of Smith (2019) and re-ran every analysis.",
      True, "screen_expensive"),

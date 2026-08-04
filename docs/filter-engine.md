@@ -4,7 +4,7 @@ Design and contract for the issue #146 architecture, milestone 1: one engine app
 declarative filter specs to the survivor pool and routes every row into a pile.
 Rules route and discard; only LLM tiers admit. This document is the authority for
 module interfaces; `filter/spec/CONVENTIONS.md` is the authority for policy
-(precedence bands, pile→status mapping, measurement levels).
+(precedence, pile→status mapping, measurement levels).
 
 ## Semantics (from issue #146)
 
@@ -139,13 +139,11 @@ Lives in `filter/spec/conventions.json` (machine-read by `export.py`), explained
 
 A pile substitutes the rule's vocabulary for its own status only where its policy
 sets `vocabulary_names_status` — true for both screen piles, false for `discard` and
-`needs_human`. In the **current bundle** only the cheap rules name one.
-`replication-claim`, the sole `screen_expensive` rule, leaves `vocabulary` null on
-purpose — admission to the two-voter screen asks for attention rather than settling
-what the row is — so its rows reach `filtered.csv` as `needs_review`/high, while
-`replication-signal`, `replication-probe` and `reproduction-signal` export their
-vocabulary at `screen_cheap`/medium. That is a property of the bundle, not of the
-mapping.
+`needs_human`. Whether a rule names a vocabulary is the rule's own decision,
+recorded in its spec: `replication-claim` leaves it null on purpose — admission to
+the two-voter screen asks for attention rather than settling what the row is — so
+its rows reach `filtered.csv` as `needs_review`/high, while a cheap rule that names
+its vocabulary exports it at `screen_cheap`/medium.
 
 `filter_method` is always `engine:<release_id_prefix>`; `filter_evidence` is
 `rule:<id>` plus the matched evidence (phrase, prefix, type…) the backend recorded.
@@ -201,44 +199,34 @@ Match semantics:
 
 ## The shipped bundle (rule book v2)
 
-Eight specs, designed in `redesign/rulebook_v2.html` and measured there. The book
-is a **whitelist**: nothing is screened unless a positive rule admits it, which is
-why there is no exclusion band and no rescue band. The nineteen specs it replaced
+Nine specs, designed in `redesign/rulebook_v2.html` and measured there. The book
+is a **whitelist**: nothing is screened unless a positive rule admits it, so
+there are no exclusion or rescue rules. The nineteen specs it replaced
 — the six vocabulary exclusions, the two rescues, the four phrase/stem rules and
 the identifier/type rules it absorbed — are archived with their patterns and
 evidence in [`filter/spec/rule_ideas.md`](../filter/spec/rule_ideas.md).
 
-Precedence bands per `CONVENTIONS.md`: 900s definitional discards · 700s strong
-admission · 500s metadata-derived discards · 300s weak admission · 200s
-carried-over `screen_cheap` · 100s probes.
-
 | spec | pile | prec. | shadow | content |
 | --- | --- | --- | --- | --- |
-| `not-a-paper-doi` | discard | 960 | | `/reviews/`\|`/decisions/` paths · terminal `.suppl` · 10 deposit-only registrants (figshare dropped, D1) |
+| `not-a-paper-doi` | discard | 960 | | `/reviews/`\|`/decisions/` paths · terminal `.suppl` |
+| `deposit-registrant` | discard | 958 | | 10 deposit-only registrants (figshare dropped, D1) |
 | `not-a-paper-title` | discard | 955 | | the start-anchored genre-plus-parent title pattern |
-| `no-codable-text` | discard | 940 | | `type ∈ {component, database, dataset, software, supplementary-materials}` — no abstract, no prose, nothing to code |
+| `not-a-report-type` | discard | 940 | | `type ∈ {component, database, dataset, software, supplementary-materials}` — not a report of a study |
 | `replication-claim` | screen_expensive | 700 | | 12 arms: the paper says IT is or did a replication. The only route to two voters |
-| `not-a-study-type` | discard | 500 | | `type ∈ {grant, libguides, paratext, peer-review, standard}` — a crosswalk, so admission outranks it |
+| `not-a-study-type` | discard | 500 | | `type ∈ {grant, libguides, paratext, peer-review, standard}` — a crosswalk that can be wrong about a real paper |
 | `replication-signal` | screen_cheap | 300 | ✓ | multilingual title stems · English title stem · concept ids · bare `replication of` |
-| `reproduction-signal` | screen_cheap | 262 | | the reproduction-anchored patterns, carried over unchanged pending #155 |
+| `reproduction-signal` | screen_cheap | 262 | ✓ | the reproduction-anchored patterns, carried over unchanged pending #155 |
 | `replication-probe` | screen_cheap | 100 | ✓ | unmeasured candidate vocabularies (revisiting, reconsidered, independent test, many-analyst …) |
 
-Each rule keeps one match clause per arm, so `filter_evidence` and the diagnostics
-attribute a hit to the arm that made it.
+Each rule keeps one match clause per arm for legibility and per-arm audit of the
+`measured` entries; the engine's attribution unit is the RULE — `matched_rules`
+records rule ids and `filter_evidence` the winning rule's first matched
+substring, so counting an individual arm means evaluating that arm's pattern
+separately.
 
-**The bundle is live at its ends and shadow in its middle.** The four discards,
-`replication-claim` and `reproduction-signal` are live; the two weak admission
-rules are not, because the cheap tier they feed is discard-only, so an unsized
-rule there costs recall rather than merely money. Until they are switched on, a
-row carrying only a weak signal lands in `pending`. The rationale and the
-switch-on order are policy — `filter/spec/CONVENTIONS.md`.
-
-**Discards and admission interleave on purpose.** A discard at 900+ says the
-object *is* not a paper or has no text, which is settled by inspection, so it
-outranks admission — a decision letter carries its parent's replication phrases.
-A discard at 500 rests on a registry crosswalk that can be wrong, so admission
-outranks it and a mistyped replication is screened rather than deleted. That
-ordering is what replaced the deleted rescue band.
+Why each rule outranks or yields to its neighbours is argued in its own
+`description`; the shadow flags are likewise per-rule decisions recorded in the
+specs. Rows no live rule claims land in `pending/no_filter_matched`.
 
 ## Known intended divergences from the retired keyword filter
 

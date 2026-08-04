@@ -19,7 +19,7 @@ says what a paper is, which is why a rule change costs a `route` re-run over the
 pool and never a rescan.
 
 Module contracts are in [filter-engine.md](../filter-engine.md); spec policy
-(precedence bands, pile → status mapping) is in `filter/spec/CONVENTIONS.md`. This
+(precedence, pile → status mapping) is in `filter/spec/CONVENTIONS.md`. This
 document is the flow.
 
 ## Step-by-step

@@ -1,0 +1,30 @@
+{
+  "id": "deposit-registrant",
+  "description": "A DOI on a deposit-only registrant is the data deposit that accompanies a paper — \"Replication Data for: …\" — carrying the word replication into the pipeline without being a study (#141). The deposit record itself is the wrong kind of entry: there is nothing in it to screen or code, whatever paper it accompanies. Whether that parent paper is in the corpus under its own DOI is a separate open issue (#157: record the parent DOI, check the pool, route the unlinked remainder to a human) and does not change what this record is. Each prefix was separately confirmed against DataCite. EXCLUDE-ONLY and deliberately incomplete: Zenodo (10.5281) is absent because it is a general-purpose registrant whose DOIs include CODECHECK certificates, and figshare (10.6084) was dropped for the same reason (D1) — it hosts preprints and technical reports, and was only ever on the list because `non_article_doi()` happened to match it on a prefix boundary. Split out of `not-a-paper-doi` so the registrant list and the path-pattern arms are audited on their own counts: this rule's claim rests on external facts about who mints what, theirs on the identifier's own structure. Above admission (`replication-claim`, 700) for the same reason as `not-a-paper-doi`: the deposit carries its parent's words, so its text is the very thing that must not admit it.",
+  "match": {
+    "doi_prefix": [
+      "10.11587",
+      "10.15139",
+      "10.18170",
+      "10.18710",
+      "10.18738",
+      "10.21979",
+      "10.2905",
+      "10.34894",
+      "10.3886",
+      "10.7910"
+    ]
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 958,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "trusted",
+      "date": "2026-08-04",
+      "owner": "flora-extractor",
+      "rationale": "Carried from the retired `deposit-doi-prefixes` spec minus figshare: each prefix was separately confirmed against DataCite as belonging to a registrant that mints DOIs for deposits only, so a DOI on it is a deposit record rather than a paper. That is the whole claim this discard rests on. The residual loss — a deposit that is the only trace of its replication — is the parent-recovery question, tracked as its own open issue (#157, proposal SS7). (An earlier `human, precision 0.995, n=282, sample 30k-candidates-2026-07` entry was removed in 2026-08: no such sample artifact exists in the repo or its history, and 0.995 is not an attainable proportion at n=282.)"
+    }
+  ]
+}

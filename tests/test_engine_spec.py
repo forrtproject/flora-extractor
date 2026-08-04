@@ -16,7 +16,7 @@ SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
 # This is the ONE place the shipped bundle's policy is written down: for every
 # rule id, where it routes, at what precedence, under which vocabulary, and
 # whether it is shadow. A deliberate policy change — flipping a rule to shadow
-# because its evidence turned out to be unsound, moving a precedence band — is a
+# because its evidence turned out to be unsound, moving a precedence — is a
 # one-line edit here with a readable diff, and it must not break any other test.
 # Tests elsewhere assert PATTERNS (does this regex claim this string) and
 # MECHANICS (against synthetic specs); neither may re-assert what lives here.
@@ -24,17 +24,19 @@ SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
 EXPECTED = {
     # id: (pile, precedence, vocabulary, shadow)
     "not-a-paper-doi": ("discard", 960, None, False),
+    "deposit-registrant": ("discard", 958, None, False),
     "not-a-paper-title": ("discard", 955, None, False),
-    "no-codable-text": ("discard", 940, None, False),
+    "not-a-report-type": ("discard", 940, None, False),
     "replication-claim": ("screen_expensive", 700, None, False),
     "not-a-study-type": ("discard", 500, None, False),
     "replication-signal": ("screen_cheap", 300, "replication", True),
-    "reproduction-signal": ("screen_cheap", 262, "reproduction", False),
+    "reproduction-signal": ("screen_cheap", 262, "reproduction", True),
     "replication-probe": ("screen_cheap", 100, "replication", True),
 }
 
 _ADMISSION = "replication-claim"
-_ABOVE_ADMISSION = ("not-a-paper-doi", "not-a-paper-title", "no-codable-text")
+_ABOVE_ADMISSION = ("not-a-paper-doi", "deposit-registrant", "not-a-paper-title",
+                    "not-a-report-type")
 _BELOW_ADMISSION = ("not-a-study-type",)
 
 

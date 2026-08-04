@@ -343,8 +343,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify = sub.add_parser("verify", help="Check the two backends agree on pool rows.")
     verify.add_argument("--pool", type=Path, default=SNAPSHOT_POOL_DIR)
-    verify.add_argument("--sample-files", type=int, default=3,
-                        help="Pool files to sample the first batch of (default 3).")
+    verify.add_argument("--sample-files", type=int, default=200,
+                        help="Pool files to sample the first batch of (default 200; "
+                             "the oldest partitions are tiny, so a small sample "
+                             "checks almost no rows).")
     verify.set_defaults(func=cmd_verify)
 
     route = sub.add_parser("route", help="Route the pool into a release in the store.")

@@ -264,7 +264,7 @@ def test_the_conventions_file_maps_every_pile_the_router_can_produce():
 def test_the_specs_command_lists_the_bundle(capsys):
     assert cli.main(["specs"]) == 0
     out = capsys.readouterr().out
-    assert "no-codable-text" in out and "bundle " in out
+    assert "not-a-report-type" in out and "bundle " in out
 
 
 def test_route_then_export_runs_end_to_end_and_then_refuses_a_touched_bundle(

@@ -82,7 +82,7 @@ def test_the_moved_sample_is_stable_under_its_seed(pool, spec_dir):
 
 def test_an_absent_holdout_is_reported_rather_than_assumed(pool):
     assert not (REAL_SPEC_DIR / "holdout.json").exists(), "update this test: #146-2 landed"
-    assert diagnose(pool, REAL_SPEC_DIR, "no-codable-text")["holdout"] == "not_constructed"
+    assert diagnose(pool, REAL_SPEC_DIR, "not-a-report-type")["holdout"] == "not_constructed"
 
 
 def test_a_discard_rule_reports_its_measurement_and_a_route_rule_does_not(pool, spec_dir):

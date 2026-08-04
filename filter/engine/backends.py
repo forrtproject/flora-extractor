@@ -1,16 +1,27 @@
-"""Two evaluators for a filter spec over the survivor pool, equal by construction.
+r"""Two evaluators for a filter spec over the survivor pool, equal by construction.
 
 `eval_spec_rows()` is Python `re` over row dicts; `eval_spec_batch()` is the same
 semantics in pyarrow compute. Neither is the reference: `verify_backends()` runs
 both over a corpus and reports every row they disagree on, which is what keeps a
 vectorized production run honest against a readable implementation.
 
-Two things make the equality achievable rather than merely hoped for. Specs are
-RE2-safe (`spec.re2_safe()`), so no pattern exists that only one engine can run;
-and both backends read the DECOMPOSED match, never the loader-only `pyre_regex`
+Three things make the equality achievable rather than merely hoped for. Specs
+are RE2-safe (`spec.re2_safe()`), so no pattern exists that only one engine can
+run; both backends read the DECOMPOSED match, never the loader-only `pyre_regex`
 key — that key is a record of the lookaround original the decomposition replaced,
 evaluated by nothing, and evaluating it here would divide the backends by
-construction.
+construction; and both read the same characters, because `_normalize()` /
+`_normalize_array()` fold the pool's encoding artifacts at the one seam per
+backend — every Unicode space separator to a plain space, the zero-width space
+and BOM away — so a phrase separated by U+00A0 reads the same to RE2's
+ASCII-only `\s` as to Python's Unicode one.
+
+One asymmetry survives and is not worth closing: Python's `\b`/`\w` are
+Unicode-aware where RE2's are ASCII, so a pattern edge landing on a non-Latin or
+mojibake character can still split the backends. `re.ASCII` would align those
+escapes and break Unicode case folding, which RE2 does perform — a far larger
+divergence than the handful of rows it would fix. `verify` samples the pool for
+what is left.
 """
 
 import re
@@ -31,6 +42,13 @@ _COMPILED: dict[str, re.Pattern] = {}
 
 
 def _compiled(pattern: str) -> re.Pattern:
+    """*pattern* compiled for the row backend.
+
+    Not `re.ASCII`, though RE2's `\\b`/`\\w`/`\\s` are ASCII-only and Python's are
+    not: the flag also makes `IGNORECASE` ASCII-only, while RE2's `(?i)` case-folds
+    Unicode, so an accented capital would stop matching its lowercase stem. Aligning
+    the class escapes that way costs far more rows than the asymmetry it fixes.
+    """
     rx = _COMPILED.get(pattern)
     if rx is None:
         rx = _COMPILED[pattern] = re.compile(pattern, re.IGNORECASE)
@@ -65,22 +83,36 @@ def _row_title(row: dict) -> str:
     # not — pyarrow's coalesce works that way and the backends must not differ.
     display_name = row.get("display_name")
     title = (display_name if display_name is not None else row.get("title")) or ""
-    return _nfc(title)
+    return _normalize(title)
 
 
 def _row_abstract(row: dict) -> str:
-    return _nfc(row.get("abstract_text") or "")
+    return _normalize(row.get("abstract_text") or "")
 
 
-def _nfc(text: str) -> str:
-    """NFC once, where text becomes matchable — the `nfd-stems` retirement.
+# The pool's common encoding artifacts, folded away where text becomes
+# matchable: every Unicode space separator (Zs) becomes a plain space, and the
+# zero-width space / BOM vanish. RE2's `\s` is ASCII-only while Python's is
+# not, so an abstract using U+00A0 as its word separator otherwise matches one
+# backend and not the other — and matches no spec's literal space in either.
+_FOLD = {**{cp: " " for cp in (0x00A0, 0x1680, *range(0x2000, 0x200B),
+                               0x202F, 0x205F, 0x3000)},
+         0x200B: None, 0xFEFF: None}
+_FOLD_RX = re.compile("[" + "".join(map(chr, _FOLD)) + "]")
 
-    OpenAlex does not normalise, so a title spelled "re" + U+0301 + "plicat"
-    matched no spec whose accented stem was written composed. That used to need a
-    second stem rule with the decomposed spellings next to every composed one;
-    normalising at the one seam per backend gives every rule the same text
-    instead. DOIs are not normalised — `clean_doi()` owns their canonical form.
+
+def _normalize(text: str) -> str:
+    """Encoding-artifact folding plus NFC, once, where text becomes matchable.
+
+    NFC is the `nfd-stems` retirement: OpenAlex does not normalise, so a title
+    spelled "re" + U+0301 + "plicat" matched no spec whose accented stem was
+    written composed. That used to need a second stem rule with the decomposed
+    spellings next to every composed one; normalising at the one seam per
+    backend gives every rule the same text instead. DOIs are not normalised —
+    `clean_doi()` owns their canonical form.
     """
+    if _FOLD_RX.search(text):
+        text = text.translate(_FOLD)
     return unicodedata.normalize("NFC", text)
 
 
@@ -183,9 +215,9 @@ def _block_evidence(block: MatchBlock, row: dict) -> str:
 class BatchContext:
     """The derived columns every spec in a batch reads, computed once.
 
-    `eval_all()` in route.py evaluates ~19 specs per batch; recomputing the
-    coalesced title, the joined text and the cleaned DOI for each of them would
-    be the dominant cost of a routing run.
+    `eval_all()` in route.py evaluates every spec in the bundle per batch;
+    recomputing the coalesced title, the joined text and the cleaned DOI for each
+    of them would be the dominant cost of a routing run.
     """
 
     def __init__(self, batch: pa.RecordBatch) -> None:
@@ -198,10 +230,10 @@ class BatchContext:
                 return batch.column(name)
             return pa.nulls(self.n, pa.string())
 
-        # NFC at the same seam as the row backend's `_nfc()` — see its docstring.
-        self.title = _nfc_array(
+        # Normalised at the same seam as the row backend's `_normalize()`.
+        self.title = _normalize_array(
             pc.fill_null(pc.coalesce(col("display_name"), col("title")), ""))
-        self.abstract = _nfc_array(pc.fill_null(col("abstract_text"), ""))
+        self.abstract = _normalize_array(pc.fill_null(col("abstract_text"), ""))
         self.text = pc.binary_join_element_wise(self.title, self.abstract, "\n")
         self.doi = _clean_doi_array(col("doi"))
         self.concepts = pc.fill_null(col("concepts"), "")
@@ -211,19 +243,20 @@ class BatchContext:
         return self.batch.column(name) if name in self.batch.schema.names else None
 
 
-def _nfc_array(col: pa.Array) -> pa.Array:
-    """`_nfc()` over a null-free string array, once per batch.
+def _normalize_array(col: pa.Array) -> pa.Array:
+    """`_normalize()` over a null-free string array, once per batch.
 
     Not `pc.utf8_normalize`: on pyarrow 25 it returns its input unchanged for
     NFC, so the two backends would part company on exactly the decomposed titles
     this exists for. The Python pass costs ~20 ms per 50k rows and is skipped
-    entirely when the batch is already composed, which almost every batch is.
+    entirely when the batch is already composed and artifact-free, which almost
+    every batch is.
     """
     values = col.to_pylist()
-    if all(unicodedata.is_normalized("NFC", value) for value in values):
+    if all(unicodedata.is_normalized("NFC", value) and not _FOLD_RX.search(value)
+           for value in values):
         return col
-    return pa.array([unicodedata.normalize("NFC", value) for value in values],
-                    type=pa.string())
+    return pa.array([_normalize(value) for value in values], type=pa.string())
 
 
 def _clean_doi_array(col: pa.Array) -> pa.Array:

@@ -1,0 +1,27 @@
+{
+  "id": "not-a-report-type",
+  "description": "The registry work type says the record is not a paper: a dataset, a software record, a database entry, a component or a supplementary object. Wrong entry type for FLoRA: not a report of a study — whatever such a record is the artifact OF, the record itself is not a study report and cannot become a FLoRA row. It sits above admission because these records carry their parent's phrases — a deposit titled \"Replication Data for: …\" fires admission arms while offering nothing to screen. Some of these records do carry description text, so this is a type claim, not a no-text claim. `component` and `database` are the two worth a second look (D4): a `component` can occasionally be an independently meaningful report. The residual risk is real: where a deposit is the ONLY record of a replication, that replication is lost. The mitigation would be a linkage worklist rather than an admission — record the deposit's parent DOI, check whether the parent is in the pool, route the unlinked remainder to a human — a separate open issue (#157).",
+  "match": {
+    "fields": {
+      "type": [
+        "component",
+        "database",
+        "dataset",
+        "software",
+        "supplementary-materials"
+      ]
+    }
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 940,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "trusted",
+      "date": "2026-08-04",
+      "owner": "flora-extractor",
+      "rationale": "Structural and scope, not statistical: every type on this list is a registry vocabulary term for a record that is not a paper, and the discard claims exactly that — wrong entry type, not off-topic and not text-free. A precision sample would answer a different question (how often such an object is the artifact OF a replication), which the scope ruling (maintainer, 2026-08-04) deliberately does not turn on. What a sample IS still owed for is the residual loss — the deposit that is the only record of its replication — a separate open issue (#157, parent recovery per proposal SS7). Supersedes the retired `dataset-type` spec, whose 2026-08-03 pilot evidence measured screen spend (69.8% of dataset rows proceed in the concept arm vs 12.5% for articles) rather than precision and therefore could not license a live discard."
+    }
+  ]
+}
