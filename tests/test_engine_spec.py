@@ -9,31 +9,35 @@ from filter.engine.spec import bundle_hash, load_specs, re2_safe, validate_spec
 
 SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
 
-# The starter bundle of docs/filter-engine.md, with the 500s band expanded to the
-# seven original exclusion-pattern ids.
+# ---------------------------------------------------------------------------
+# The policy table
+# ---------------------------------------------------------------------------
+#
+# This is the ONE place the shipped bundle's policy is written down: for every
+# rule id, where it routes, at what precedence, under which vocabulary, and
+# whether it is shadow. A deliberate policy change — flipping a rule to shadow
+# because its evidence turned out to be unsound, moving a precedence — is a
+# one-line edit here with a readable diff, and it must not break any other test.
+# Tests elsewhere assert PATTERNS (does this regex claim this string) and
+# MECHANICS (against synthetic specs); neither may re-assert what lives here.
+#
 EXPECTED = {
-    "deposit-doi-prefixes": ("discard", 960),
-    "non-article-doi": ("discard", 955),
-    "dataset-type": ("discard", 950),
-    "non-article-type": ("discard", 945),
-    "exclusion-rescue": ("screen_cheap", 650),
-    # #147 item 2: the second rescue, one band-neighbour below exclusion-rescue.
-    "title-phrase-rescue": ("screen_cheap", 645),
-    "editorial-artifact": ("discard", 555),
-    "data-availability": ("discard", 550),
-    "biological": ("discard", 545),
-    "structural": ("discard", 544),
-    "biological-of": ("discard", 543),
-    "technical-object": ("discard", 541),
-    "technical-verb": ("discard", 540),
-    "phrase-with-cite": ("screen_expensive", 350),
-    "phrase-reproduction": ("screen_cheap", 262),
-    "phrase-replication": ("screen_cheap", 260),
-    "title-stem": ("screen_cheap", 240),
-    "concept-replication": ("screen_cheap", 220),
-    "reproduce-verb-arms": ("screen_cheap", 210),
-    "nfd-stems": ("screen_cheap", 205),
+    # id: (pile, precedence, vocabulary, shadow)
+    "not-a-paper-doi": ("discard", 960, None, False),
+    "deposit-registrant": ("discard", 958, None, False),
+    "not-a-paper-title": ("discard", 955, None, False),
+    "not-a-report-type": ("discard", 940, None, False),
+    "replication-claim": ("screen_expensive", 700, None, False),
+    "not-a-study-type": ("discard", 500, None, False),
+    "replication-signal": ("screen_cheap", 300, "replication", True),
+    "reproduction-signal": ("screen_cheap", 262, "reproduction", True),
+    "replication-probe": ("screen_cheap", 100, "replication", True),
 }
+
+_ADMISSION = "replication-claim"
+_ABOVE_ADMISSION = ("not-a-paper-doi", "deposit-registrant", "not-a-paper-title",
+                    "not-a-report-type")
+_BELOW_ADMISSION = ("not-a-study-type",)
 
 
 def _valid_spec(**overrides) -> dict:
@@ -51,15 +55,33 @@ def _valid_spec(**overrides) -> dict:
     return spec
 
 
-def test_the_shipped_bundle_loads_with_the_documented_ids_piles_and_precedences():
+def test_the_shipped_bundle_matches_the_policy_table():
+    """Every rule's pile, precedence, vocabulary and shadow flag, in one place."""
     specs = load_specs(SPEC_DIR)
-    assert {s.id: (s.pile, s.precedence) for s in specs} == EXPECTED
+    assert {s.id: (s.pile, s.precedence, s.vocabulary, s.shadow)
+            for s in specs} == EXPECTED
 
 
 def test_specs_are_returned_highest_precedence_first():
     specs = load_specs(SPEC_DIR)
     assert [s.precedence for s in specs] == sorted((s.precedence for s in specs),
                                                    reverse=True)
+
+
+def test_admission_sits_between_the_two_kinds_of_discard():
+    """The definitional discards outrank admission; the metadata-crosswalk discard
+    does not, so a mistyped replication is screened rather than deleted."""
+    precedence = {s.id: s.precedence for s in load_specs(SPEC_DIR)}
+    for rule in _ABOVE_ADMISSION:
+        assert precedence[rule] > precedence[_ADMISSION], rule
+    for rule in _BELOW_ADMISSION:
+        assert precedence[rule] < precedence[_ADMISSION], rule
+
+
+def test_only_one_rule_routes_to_the_expensive_screen():
+    """`replication-claim` is the sole route to two voters."""
+    expensive = [s.id for s in load_specs(SPEC_DIR) if s.pile == "screen_expensive"]
+    assert expensive == [_ADMISSION]
 
 
 def test_a_duplicate_id_across_two_files_is_rejected(tmp_path):

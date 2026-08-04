@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FLoRA Extractor — Current State &amp; Way to Go Live (v4)</title>
+<style>
+:root { --ink:#1c2333; --muted:#5b6478; --accent:#1a5fb4; --rule:#e3e6ee; --bg:#fdfdfc;
+        --panel:#f4f6fa; --warn:#9a6a00; --bad:#b3261e; --good:#3a7d44; --code-bg:#f0f2f7; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink);
+       font:16px/1.65 "Avenir Next","Segoe UI",system-ui,sans-serif; }
+main { max-width:880px; margin:0 auto; padding:3rem 1.5rem 6rem; }
+h1 { font-size:1.9rem; line-height:1.25; margin:0 0 .3rem; }
+.subtitle { color:var(--muted); margin:0 0 2.2rem; font-size:1.02rem; }
+h2 { font-size:1.35rem; margin:3rem 0 .8rem; padding-top:1.2rem; border-top:2px solid var(--rule); }
+h3 { font-size:1.08rem; margin:1.8rem 0 .5rem; }
+p { margin:.6rem 0; }
+code { background:var(--code-bg); padding:.1em .35em; border-radius:4px; font-size:.88em;
+       font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace; }
+table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.92rem; }
+th,td { border:1px solid var(--rule); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+th { background:var(--panel); font-weight:600; }
+.tablewrap { overflow-x:auto; }
+.box { background:var(--panel); border-left:4px solid var(--accent);
+       padding:1rem 1.2rem; border-radius:0 8px 8px 0; margin:1.5rem 0; }
+.box.warn { border-left-color:var(--warn); }
+.box.bad { border-left-color:var(--bad); }
+.box p:first-child { margin-top:0; }
+ul, ol { margin:.6rem 0; padding-left:1.4rem; }
+li { margin:.35rem 0; }
+.tag { display:inline-block; font-size:.72rem; font-weight:700; padding:.12em .55em;
+       border-radius:999px; margin-right:.4rem; vertical-align:middle; color:#fff; }
+.t-live { background:var(--good); } .t-draft { background:var(--warn); }
+.t-dec { background:var(--accent); } .t-block { background:var(--bad); }
+.small { color:var(--muted); font-size:.9rem; }
+a { color:var(--accent); }
+</style>
+</head>
+<body>
+<main>
+
+<h1>FLoRA Extractor — Current State &amp; Way to Go Live <span class="small">(v4)</span></h1>
+<p class="subtitle">The pipeline after the 2026-08-04 end-to-end cleanliness review.
+Supersedes <code>current_state_v3.html</code>, whose §6 run-plan (rescreen, re-run, import)
+remains valid and is not restated here — this page covers what the review found, the honest
+state of the Stage-2 rule book, the pragmatic path to switching rules on, and the
+refactoring decisions the review surfaced.</p>
+
+<div class="box">
+<p><strong>In one paragraph.</strong> Four independent reviewers (three Claude audits plus a
+codex second opinion) went over the pipeline end to end. The code is in good shape — the
+filter engine, per-target adapter and screen survived review with no functional regressions —
+but the Stage-2 rule book was carrying validation numbers that do not survive scrutiny: the
+gold corpus behind every large-n claim is 62% unconfirmed old-pipeline LLM output
+(<a href="https://github.com/forrtproject/flora-extractor/issues/151">#151</a>), partly
+circular with the rules it was used to validate, and <em>no cited evidence artifact exists on
+<code>main</code></em>. This pass therefore reverted every statistically-claimed discard rule
+to draft (shadow), kept the six genuinely structural discards live, stripped the overclaims
+from the spec texts, deleted the dead code and legacy documentation the audits found, fixed
+~60 documentation defects (largely closing
+<a href="https://github.com/forrtproject/flora-extractor/issues/113">#113</a>'s classes), and
+restructured the engine tests so policy lives in one table. The suite is green:
+<strong>1,062 passed, zero failures</strong>. Everything is uncommitted in the working
+tree, awaiting review.</p>
+</div>
+
+<h2 id="pipeline">1 · The pipeline, in one screen</h2>
+
+<div class="tablewrap"><table>
+<tr><th>Stage</th><th>Command</th><th>What it does</th></tr>
+<tr><td>1 · search</td><td><code>python -m search.run_search</code></td>
+<td><strong>Searches; it does not filter.</strong> The snapshot scanner
+(<code>snapshot_scan.py</code>) runs the <strong>search gate</strong> — a vectorised token/stem
+match plus concept membership, the only affordable predicate over 510M snapshot rows — and
+every survivor enters the parquet <strong>survivor pool</strong>, shared via HF
+(<code>pool_sync.py</code>). No exclusion pattern runs here and nothing gates admission: the
+stem alternation is the OpenAlex search query, and it is the one deliberate exception to
+&ldquo;one rule set&rdquo;. <code>data/candidates.csv</code> is retired as an admission-gated
+corpus; the pool is the Stage 1 output.</td></tr>
+<tr><td>2 · filter engine</td><td><code>python -m filter.engine route&nbsp;/ screen&nbsp;/ handoff</code></td>
+<td>Declarative JSON specs route the pool into piles by precedence
+(<code>discard</code> / <code>screen_expensive</code> / <code>screen_cheap</code> /
+<code>needs_human</code> / <code>pending</code>). Rules route and discard; <em>only LLM tiers
+admit</em>. Verdicts are claimed and release-bound in the DuckDB/Postgres store;
+<code>handoff</code> writes Stage 3's input.</td></tr>
+<tr><td>3 · extract</td><td><code>python -m extract.run_extract</code></td>
+<td>Two-voter front-door screen (v3.3, gate <code>G-softqual</code>) → resolution ladder
+(cheapest first) → per-target adapter for multi-original papers → outcome coding (two
+prompts, one per vocabulary; reproductions on the two-axis grid). DOI verification on every
+written row; <code>sanity_check</code> quarantines to set-aside CSVs.</td></tr>
+<tr><td>4 · validate</td><td><code>python -m validate.app</code></td>
+<td>Read-only monitoring dashboard; human validation lives in the separate Supabase-backed
+repo, fed by <code>extract.csv_to_db</code> (blocked on the cross-repo migration,
+flora-validation#3).</td></tr>
+</table></div>
+
+<h2 id="found">2 · What the review found and changed <span class="small">(all uncommitted,
+2026-08-04)</span></h2>
+
+<h3>2.1 The validation numbers were not real</h3>
+<p>Three independent findings, mutually confirming:</p>
+<ul>
+<li><strong>Compromised gold.</strong> Every large-n <code>measured</code> claim
+(&ldquo;5.6M rows scored against the 7,505-paper gold corpus&rdquo;) used
+<code>override_positives.json</code>, of which 62.4% is the <em>old pipeline's own
+unconfirmed LLM verdicts</em> (#151) — and that bucket only contains rows the old keyword
+filter admitted, so the measurement is partly a rule agreeing with its own ancestor. The
+empirical bite: all 14 non-qualifying papers found in the audited genetics stratum came from
+the LLM bucket, none from the human-curated strata.</li>
+<li><strong>Unverifiable hand-checks.</strong> <code>deposit-doi-prefixes</code> claimed
+precision 0.995 on n=282 from a sample (<code>30k-candidates-2026-07</code>) that exists
+nowhere in the repo or its git history — and 0.995 is not an attainable proportion at n=282.
+<code>non-article-type</code>'s n=50 check measured the wrong estimand (recall of the type
+signal, not discard precision).</li>
+<li><strong>No evidence on <code>main</code>.</strong> The cited eval reports live only on
+the unmerged <code>analysis/stage-b-eval</code> branch (which predates the specs it would
+justify), the gold corpus only in an old worktree. Not one quoted figure is reproducible from
+any checkout.</li>
+</ul>
+
+<h3>2.2 The rule book was reset accordingly</h3>
+<p>Live autonomous discards are now exactly the rules whose justification is structural —
+true by construction, needing no sample. Everything with a statistical claim is a draft
+(<code>shadow: true</code>): it still evaluates and records matches on every run, but never
+affects a pile. Overclaiming <code>measured</code> text was rewritten honestly everywhere
+(exact snapshot counts kept; gold-recall figures removed or explicitly disclaimed per #151).
+New policy in <code>filter/spec/CONVENTIONS.md</code>: a <code>measured</code> entry must
+record its denominator's provenance, and unstratified <code>override_positives.json</code>
+figures are not acceptable evidence. Bundle <code>69dcfa41f2b4</code>; the next
+<code>route</code> mints a fresh release.</p>
+
+<div class="tablewrap"><table>
+<tr><th>State</th><th>Rules</th></tr>
+<tr><td><span class="tag t-live">LIVE</span> discard (structural, <code>trusted</code>)</td>
+<td><code>deposit-doi-prefixes</code> · <code>non-article-doi</code> ·
+<code>non-article-type</code> · <code>editorial-artifact</code> · <code>structural</code> ·
+<code>biological</code></td></tr>
+<tr><td><span class="tag t-live">LIVE</span> routing (cannot kill)</td>
+<td><code>phrase-with-cite</code> (sole route to the expensive screen) ·
+<code>phrase-replication</code> · <code>phrase-reproduction</code> ·
+<code>title-stem</code> · <code>concept-replication</code> · <code>exclusion-rescue</code></td></tr>
+<tr><td><span class="tag t-draft">DRAFT</span> (shadow — newly reverted)</td>
+<td><code>dataset-type</code> (its own spec admitted the audit was owed) ·
+<code>technical-object</code> · <code>technical-verb</code> (self-documented worst precision:
+15 of 17 &ldquo;gold positives&rdquo; it killed were real studies) ·
+<code>title-phrase-rescue</code> (only rescues from the technical pair — must move with
+them)</td></tr>
+<tr><td><span class="tag t-draft">DRAFT</span> (already shadow)</td>
+<td><code>biological-of</code> · <code>data-availability</code> (both RE2-widened) ·
+<code>reproduce-verb-arms</code> · <code>nfd-stems</code></td></tr>
+</table></div>
+
+<p class="small">The reverts take effect where it matters: Stage 2 routes the <strong>Stage A
+survivor pool</strong> (~5M rows), and <code>_pool_record()</code> pools every Stage A survivor
+before <code>_row_if_admitted()</code> is consulted, so a shadowed exclusion really does stop
+affecting which papers the pipeline can reach. Stage 1's <code>keyword_verdict()</code> still
+applies the patterns, but what it gates is admission into <code>data/candidates.csv</code> —
+which nothing in <code>filter/</code> or <code>extract/</code> reads. That two-evaluator,
+two-corpus split is analysed in <code>rulebook_review.html</code> §2.1 and is decision D9 below.
+Test policy now lives in one table (<code>tests/test_engine_spec.py</code>), with a standing
+invariant that the rescue can never be live while its targets are shadow.</p>
+
+<h3>2.3 Dead code, junk, and legacy documentation removed</h3>
+<ul>
+<li><strong>Code:</strong> <code>disambiguation.py</code>'s two resolvers (reimplemented in
+<code>link_original.py</code> long ago; CLAUDE.md's &ldquo;needs validation&rdquo; note was
+against dead code), four unused <code>empty_*_row()</code> constructors,
+<code>best_parse_method_name()</code>, <code>_is_headless_candidate()</code> +
+<code>_HEADLESS_DOMAINS</code>. <code>AUTONOMOUS_LEVELS</code> wired into the evidence gate
+instead of deleted (verified equivalent by enumeration).
+<code>ALL_REPLICATIONS_PATH</code> wired into the 8 modules that hand-built the path.</li>
+<li><strong>Tracked junk:</strong> <code>debug.log</code>, <code>cli.txt</code>,
+<code>graphify-out/</code> (5&nbsp;MB of stale generated output) — staged for deletion.</li>
+<li><strong>Docs:</strong> ~60 defects fixed across CLAUDE.md, README, and 13
+<code>docs/</code> files under #113's policy (<em>delete the copied value, point at its
+source; date-stamp real measurements</em>). <code>examples/</code> rewritten from the deleted
+<code>filter.run_filter</code> path to the engine CLI. The 1,990-line dashboard plan deleted;
+two 2026-06/07 specs archived with dated headers; <code>analysis/README.md</code> and
+<code>redesign/README.md</code> rewritten; the stale v3.2 prompt copy deleted. Phantom
+<code>pending_reason</code> values (<code>unevaluated</code>, <code>budget_blocked</code>)
+removed everywhere — the engine emits only <code>no_filter_matched</code> and
+<code>no_text</code>.</li>
+</ul>
+
+<div class="box bad">
+<p><strong>Incident, disclosed.</strong> While verifying the rewritten example script, a
+subagent let the demo default its output dir to <code>data/</code> and overwrote
+<code>data/candidates.csv</code> (gitignored, so unrecoverable from git) with a 5-row
+fixture. Recovery is two artifacts: the DVC zip on R2 (2026-07-26 state,
+<code>dvc pull data/candidates.zip.dvc</code>) plus
+<code>python -m search.pool_sync --pull-build</code> to merge the 2026-08-03 snapshot corpus
+back on top; the stale 268&nbsp;MB sidecar index must be deleted before the merge so it
+rebuilds. The demo now writes to <code>data/examples/</code>. <strong>Verify row count
+against the dashboard's last stats before trusting the restored file.</strong></p>
+</div>
+
+<h2 id="golive">3 · How to get going — first safe rules, then a validation path</h2>
+
+<div class="box">
+<p><strong>The position:</strong> the engine can run in production <em>today</em> on the six
+structural discards plus the routing rules — that configuration deletes only what is true by
+construction (deposit DOIs, review/decision objects, non-article registry types, molecular-biology
+terms of art) and routes everything else to the LLM tiers, which are the components that were
+actually validated (screen v3.3: 0 settled misses at the shipped gate). The cost of the
+reverts is purely money: rows the technical/dataset rules would have discarded now reach the
+cheap screen (~$0.001–2/row) instead of dying free. That is the right trade until the
+discards are honestly measured.</p>
+</div>
+
+<h3>3.1 Prerequisites (one-time, no API cost)</h3>
+<ol>
+<li><strong>Bring the evidence home.</strong> Merge <code>analysis/stage_b_eval/</code> from
+the <code>analysis/stage-b-eval</code> branch onto <code>main</code>, and commit
+<code>override_positives.json</code> (or a pointer + hash if too large) with its provenance
+table. A spec may only cite evidence a <code>main</code> checkout contains.</li>
+<li><strong>Build the honest gold set.</strong> Stratify the corpus per #151: the
+human-curated strata (<code>entry_sheet</code> 1,551 + <code>flora_db</code> 1,266 =
+2,817 papers) are the recall benchmark; the 4,681 <code>allrep_llm</code> rows are demoted to
+&ldquo;candidate positives&rdquo;. Grow the negative pools (74 + 14 rows is too small to
+bound anything).</li>
+<li><strong>Construct <code>filter/spec/holdout.json</code></strong> (reserved in the loader,
+never created): freeze a stratified sample now, before any tuning, so later promotions have
+an untouched test set.</li>
+</ol>
+
+<h3>3.2 The promotion recipe (per draft rule)</h3>
+<ol>
+<li>Run a routing release; the shadow rule records its matches at zero risk.</li>
+<li><code>python -m filter.engine diagnose &lt;rule&gt;</code> → export the rows the rule
+<em>would have</em> discarded.</li>
+<li>Sample ~100–200 of them, stratified by year/field. Human-code (or LLM-code with the model
+id recorded) against the FLoRA qualification rule.</li>
+<li>Write the result as the spec's <code>measured</code> entry — level, n, date, owner,
+sample id, and the denominator's provenance, per the new CONVENTIONS.md requirement. The
+artifact goes in <code>analysis/</code> on <code>main</code>.</li>
+<li>Un-shadow via a reviewed PR whose diff is the spec file + the policy-table line in
+<code>tests/test_engine_spec.py</code>. Suggested bar: ≥0.98 precision on n≥100 with zero
+qualifying papers killed, or an explicit maintainer sign-off on the residual.</li>
+</ol>
+
+<h3>3.3 Suggested order</h3>
+<ol>
+<li><strong><code>dataset-type</code></strong> — cheapest audit (deposit records are obvious
+at a glance), biggest routing volume, and its pilot already suggests the discards are right;
+it only ever lacked the sample.</li>
+<li><strong><code>technical-object</code> + <code>technical-verb</code> +
+<code>title-phrase-rescue</code></strong> — as one bundle (the rescue's scope is the pair).
+These need the careful audit: the #147 evidence says they were killing real computational
+reproductions before narrowing; post-narrowing precision is genuinely unknown.</li>
+<li><strong><code>biological-of</code>, <code>data-availability</code></strong> — only after
+deciding the <code>pyre_regex</code> question (their RE2 decompositions widen the discard;
+either accept the widening with a measurement or keep them Stage-1-only forever).</li>
+<li><strong><code>nfd-stems</code>, <code>reproduce-verb-arms</code></strong> — routing
+drafts; promote whenever their diagnose output looks sane, no audit bar needed (they cannot
+kill).</li>
+</ol>
+
+<div class="box" style="border-left-color:#3a7d44">
+<p><strong>Update — 2026-08-04, later the same day.</strong> The maintainer reviewed this page
+in the comment layer and 26 comments came back. Most of §4's decisions are now
+<em>settled and implemented</em>, so read the table below as a record rather than a queue —
+each resolved row says what was decided and what shipped. What changed in the tree since this
+page was written: the discredited gold corpus is <strong>deleted</strong> (not annotated) and
+<code>data/flora.csv</code> is the gold standard, with a free continuous recall monitor
+specified in <code>analysis/gold/README.md</code>; <strong>Stage 1 now only searches</strong> —
+no exclusion patterns, no admission gate, and the second rule set
+(<code>keyword_verdict()</code>, the phrase lists, the guards, the exclusion loader) is
+<strong>deleted</strong>, taking <code>filter/phrase_detection.py</code> from 392 lines to 27;
+the promotion bar is rebuilt on the rule of three; and the "Stage A/B" naming is gone. A
+parallel design pass also produced <code>rulebook_v2.html</code>, which proposes collapsing the
+book from 20 specs to 6 — see the note in <code>rulebook_review.html</code>. Suite: 1,062
+passed, zero failures.</p>
+</div>
+
+<h2 id="decisions">4 · Refactoring options that need decisions</h2>
+
+<div class="tablewrap"><table>
+<tr><th>#</th><th>Decision</th><th>Options and recommendation</th></tr>
+<tr><td>D1</td><td><span class="tag" style="background:#3a7d44">RESOLVED</span> <strong>Engine provenance is dropped
+at Stage 3.</strong> <code>handoff</code> writes <code>route_rule</code>,
+<code>matched_rules</code>, <code>pending_reason</code>, <code>release_id</code>;
+<code>EXTRACTED_COLS</code> excludes them, so <code>run_extract</code> drops all four and
+<code>csv_to_db</code> imports <code>release_id = NULL</code> — the Stage-2→validation
+lineage the engine exists to provide is severed.</td>
+<td>(a) add <code>ENGINE_EXPORT_COLS</code> to <code>EXTRACTED_COLS</code> so they pass
+through (schema change, ripples to the validation repo's migration — fold into
+flora-validation#3); (b) record release only in run metadata. <strong>Decided: link, don't duplicate</strong> — &ldquo;as long as they can be linked, no need to carry
+duplicated data&rdquo;. Shipped: no schema widening; <code>release_id</code> is a
+<code>--release-id</code> argument to <code>csv_to_db</code> (it names the whole handoff, one per
+<code>filtered.csv.manifest.json</code>, so it was never a row property); everything else joins on
+<code>work_id</code>, already in <code>record_metadata</code> and keyed <code>(release_id, work_id)</code>
+in <code>routing</code>.</td></tr>
+<tr><td>D2</td><td><span class="tag" style="background:#3a7d44">RESOLVED</span> <strong>Curated-source bypass absent
+from the engine's cheap tier.</strong> <code>prescreen_bypass()</code> protects
+<code>CURATED_SOURCES</code> rows, but the engine's <code>Work</code> has no
+<code>source</code> field, so the cheap tier could discard rows Stage 3's pre-screen would
+protect.</td>
+<td>Latent today (the survivor pool is snapshot-only), real the day curated rows enter the
+pool. Either add <code>source</code> to the pool schema + <code>Work</code> now, or record
+the constraint (&ldquo;curated rows must not enter the pool until this lands&rdquo;) in
+CONVENTIONS.md. <strong>Decided: add it</strong> (&ldquo;add indeed - and ensure this is correctly documented&rdquo;).
+Shipped: <code>Work.source</code> populated and passed to <code>prescreen_bypass()</code>. Note it is
+currently <em>inert</em> — the pool carries no <code>source</code> column, so nothing is lost today (every
+pool row is <code>openalex_snapshot</code>); it bites once curated rows can enter the pool (#150).</td></tr>
+<tr><td>D3</td><td><span class="tag t-dec">design</span><strong>Phrase policy still lives in
+two places.</strong> Only the seven exclusion patterns are single-sourced from the bundle;
+the inclusion phrases and guards are duplicated between
+<code>filter/phrase_detection.py</code> constants and the phrase specs, synced by hand, with
+a 7-case synthetic &ldquo;parity&rdquo; test overstating its coverage.</td>
+<td>(a) extend the spec-loader approach to inclusion phrases/guards (one edit moves both, as
+the exclusions already work); (b) generate the Python constants from the specs at import; (c)
+accept duplication with a real parity test over a large corpus sample.
+<strong>Recommend (a)</strong>, matching the established pattern.</td></tr>
+<tr><td>D4</td><td><span class="tag t-dec">design</span><strong><code>conventions.json</code>
+is half-decorative.</strong> <code>export.py</code> reads <code>piles</code> and
+<code>filter_method_prefix</code>; <code>precedence_bands</code> and
+<code>measurement_levels</code> are read by nothing (bands enforced by convention,
+levels hardcoded in <code>spec.py</code>).</td>
+<td>(a) make <code>validate_spec()</code> enforce bands and read levels from the JSON — the
+policy file becomes real; (b) slim the JSON to the two consumed keys and let CONVENTIONS.md
+carry the rest as prose. <strong>Recommend (a)</strong> — a spec outside its band should be
+a load error.</td></tr>
+<tr><td>D5</td><td><span class="tag" style="background:#3a7d44">RESOLVED</span> <strong>Evidence gate is
+shape-only.</strong> Any non-heuristic <code>measured</code> entry authorizes an autonomous
+discard — no n, date, owner, sample id, or artifact path required.</td>
+<td><strong>Decided: leave it</strong> — &ldquo;that's ok&rdquo;. No tightening of
+<code>validate_spec()</code>. The bar moved into the promotion recipe instead, where a human reads it,
+rather than into a schema check that can be satisfied mechanically.</td></tr>
+<tr><td>D6</td><td><span class="tag" style="background:#3a7d44">RESOLVED</span> <strong><code>search/external_lists.py</code></strong>
+— implemented I4R / Replication-Network scrapers, never wired into
+<code>run_search</code> (#46).</td>
+<td><strong>Decided: off main into a WIP PR</strong>. Shipped: deleted from main; preserved on the pushed
+branch <code>wip/external-lists-curated-harvest</code>, to be finalised against
+<a href="https://github.com/forrtproject/flora-extractor/issues/150">#150</a>.</td></tr>
+<tr><td>D7</td><td><span class="tag" style="background:#3a7d44">RESOLVED</span> <strong><code>search/engine/cli.py</code></strong>
+— standalone ingestion path writing <code>candidates_engine.csv</code>, bypassing merge/dedup/
+index; only caller is the example script.</td>
+<td><strong>Decided: delete</strong> — &ldquo;definitely don't maintain duplicates&rdquo;. Shipped.
+<code>examples/discover_example.*</code> still invoke it and need a follow-up edit.</td></tr>
+<tr><td>D8</td><td><span class="tag t-dec">docs</span><strong>Three competing doc
+indexes</strong> (README.md, docs/README.md, CLAUDE.md §Further Reference).</td>
+<td>Make <code>docs/README.md</code> the only index; the other two keep one pointer line.
+Cheap, do with the next docs commit.</td></tr>
+<tr><td>D9</td><td><span class="tag" style="background:#3a7d44">RESOLVED</span> <strong>Two rule evaluators over two
+corpora.</strong> Stage 1's <code>keyword_verdict()</code> (Python constants +
+<code>pyre_regex</code>) gates <code>data/candidates.csv</code>; the engine (spec bundle, RE2)
+routes the ~5M-row survivor pool. Nothing downstream reads
+<code>candidates.csv</code>. CLAUDE.md's &ldquo;one keyword decision, shared by Stage 1 and
+Stage 2&rdquo; is false — Stage 2 never calls it.</td>
+<td>Stage 1 keeps the Stage A search query (token/stem + concept — the only affordable predicate
+at 510M rows); every precision decision moves to the engine, with the keyword verdict
+<em>recorded</em> on the pool row rather than deciding admission. Retire
+<code>candidates.csv</code> as an admission-gated corpus. Terminal cheap rules stay terminal —
+that is what the 900s band already is — but as bundle rules, not a second Python copy
+(<code>_NON_ARTICLE_TYPES</code> etc. in <code>shared/utils.py</code>). Collapsing to one
+evaluator also deletes the <code>pyre_regex</code>/RE2 divergence class, which is what currently
+blocks <code>biological-of</code> and <code>data-availability</code> from promotion.
+<strong>Recommend adopting.</strong> Analysis: <code>rulebook_review.html</code> §2.1.</td></tr>
+</table></div>
+
+<h2 id="housekeeping">5 · Maintainer calls (files, not code)</h2>
+<ul>
+<li><strong><code>scratch_gate_lab.py</code> / <code>2</code> / <code>2b</code> +
+<code>scratch_gate_review.html</code></strong> (1,069 lines of gate measurement + rendered
+verdicts): if the review page's adopt/reject decisions were acted on in the Stage-1 gate,
+commit the set under <code>analysis/gate_lab/</code>; if they are superseded, delete all
+four. They are a matched set — don't split.</li>
+<li><strong><code>data/extracted-test-premerge-20260801.csv</code></strong>: every DOI is
+accounted for in other CSVs (checked at DOI level, not field level). Delete unless it was
+kept as a rollback point for the 2026-08-01 promote.</li>
+<li><strong><code>data/fulltext_provenance_audit.csv</code></strong>: a real finding record —
+commit it.</li>
+<li><strong><code>redesign/current_state*.html</code> lineage</strong>: v1 (tracked) carries
+live reviewer comment threads — keep. Commit v3 and this v4; v2 can go.</li>
+<li><strong>Issue #113</strong>: most Section A/B items are now fixed or mooted (the
+rule_filter findings died with the code; the docs classes were fixed under its own policy).
+Suggest a closing comment linking this page and the commit, keeping the policy paragraph as
+the standing rule — it is now also encoded in the docs themselves.</li>
+<li><strong>Lessons worth keeping</strong> (from the archived run brief, currently homeless —
+candidates for <code>docs/limitations.md</code>): never quote a rate over an unsegmented
+corpus (the 5.4% PDF-escalation figure was 92% on fresh rows); a silently-swallowed 429 reads
+as a real zero downstream; verify on disk, not by reading code; <code>--limit</code> counts
+processed rows, not scanned; OpenAlex free-text search bills 10× an ID lookup, so
+title-search fallbacks dominate cost; PDF acquisition returned nothing 62% of the time on the
+old corpus.</li>
+</ul>
+
+<h2 id="next">6 · Next steps, in order</h2>
+<ol>
+<li>Restore + verify <code>data/candidates.csv</code> (DVC pull → delete stale index →
+<code>pool_sync --pull-build</code> → row-count sanity check). <span class="tag t-block">in
+progress</span></li>
+<li>Review the working tree; commit as one or a few PRs (spec reset + tests · code cleanup ·
+docs). Nothing is committed yet.</li>
+<li>§3.1 prerequisites: evidence onto <code>main</code>, stratified gold, holdout.</li>
+<li>Decisions D1–D5 (D1 folds into the flora-validation migration, which remains the
+critical path for the import — v3 §6.9).</li>
+<li>First promotion: <code>dataset-type</code> by the §3.2 recipe.</li>
+<li>Resume v3's run plan (rescreen → full re-run) — unchanged by this review, except that
+re-routing under the new bundle happens first and the run uses the reduced live-rule set.</li>
+</ol>
+
+<p class="small">Sources: audits and codex review run 2026-08-04 against <code>main</code> @
+<code>b432e8d</code> + working tree; spec mechanics verified live
+(<code>filter.engine specs</code>: 20 specs, bundle <code>69dcfa41f2b4</code>); test suite
+1,102 passed / 1 skipped / 2 xfailed (5.5s); gold-corpus composition counted directly from
+<code>override_positives.json</code> (7,505 records). Companion history:
+<code>current_state_v3.html</code> (run plan), <code>screening_audit.html</code>,
+issues #113, #146–#151.</p>
+
+</main>
+<script>
+(function () {
+  window.HC_CONFIG = {
+    endpoint: 'https://script.google.com/macros/s/AKfycbyx858xfSCgHQ8RmbfbMsdzcmzrkNs_JZVmqeEBVrH-S6g8YJbI32CY7if-k8oTzg-eyQ/exec',
+    project: 'flora-extractor-current-state-v4'
+  };
+  var BASE = 'https://html-comments.surge.sh/';
+  var link = document.createElement('link');
+  link.rel = 'stylesheet'; link.href = BASE + 'html-comments.css';
+  document.head.appendChild(link);
+  var s = document.createElement('script');
+  s.src = BASE + 'html-comments.js';
+  document.head.appendChild(s);
+})();
+</script>
+</body>
+</html>

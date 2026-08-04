@@ -36,7 +36,6 @@ umask 077
 : "${REPO_REF:=main}"            # branch, tag or commit SHA to scan with
 : "${WORK_DIR:=/opt/flora}"
 : "${LOG_DIR:=/var/log/flora}"
-: "${BUILD_CANDIDATES:=1}"       # 1 = also build and push the prebuilt candidates artifact
 : "${PUSH_POOL:=1}"              # 1 = push the survivor pool to Hugging Face when done
 : "${SHUTDOWN_WHEN_DONE:=0}"     # 1 = `shutdown -h now` after a successful publish
 : "${TMUX_SESSION:=flora}"
@@ -181,12 +180,12 @@ PYEOF
   local free_gb
   free_gb=$(df -BG --output=avail "$WORK_DIR" | tail -1 | tr -dc '0-9')
   log "Free disk at $WORK_DIR: ${free_gb} GB"
-  [ "${free_gb:-0}" -ge 25 ] || die "Only ${free_gb} GB free at $WORK_DIR. The snapshot is streamed, but the pool (~3 GB), candidates.csv and its index need room — 25 GB free is the floor, and VOLUME_GB=100 is the recommended size."
+  [ "${free_gb:-0}" -ge 25 ] || die "Only ${free_gb} GB free at $WORK_DIR. The snapshot is streamed, but the pool (~3 GB) and its parquet writes need room — 25 GB free is the floor, and VOLUME_GB=100 is the recommended size."
 }
 
 run_pipeline() {
   # The long phase. Guarded by flock so a second invocation observes rather than
-  # competes: two scanners would fight over the same ledger and candidates.csv.
+  # competes: two scanners would fight over the same ledger and survivor pool.
   [ -x "$PY" ] || die "No virtualenv at $VENV — run the bootstrap first (sudo -E bash $0)."
   [ -f "$CHECKOUT/.env" ] || die "No $CHECKOUT/.env — run the bootstrap first, it writes the credentials."
   exec 9>"$LOCK"
@@ -197,7 +196,7 @@ run_pipeline() {
   started=$(date -u +%s)
 
   log "=== Snapshot scan starting (resumes automatically if a ledger exists) ==="
-  "$PY" -m search.run_search --source openalex_snapshot --survivor-pool "$FLORA_POOL_DIR"
+  "$PY" -m search.run_search --scan --survivor-pool "$FLORA_POOL_DIR"
   log "=== Snapshot scan finished ==="
   "$PY" -m search.snapshot_scan --status --pool-dir "$FLORA_POOL_DIR" || true
 
@@ -206,12 +205,6 @@ run_pipeline() {
     retry 3 "$PY" -m search.pool_sync --push
   fi
 
-  if [ "$BUILD_CANDIDATES" = "1" ]; then
-    log "Building the prebuilt candidates artifact"
-    "$PY" -m search.pool_sync --build-candidates
-    log "Pushing the prebuilt candidates artifact"
-    retry 3 "$PY" -m search.pool_sync --push-build
-  fi
 
   {
     echo "finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -334,6 +327,6 @@ Snapshot scan started.
   attach     : tmux attach -t $TMUX_SESSION
   status     : sudo bash $SELF_COPY status
   pool       : $FLORA_POOL_DIR
-  publishes  : $FLORA_POOL_REPO (pool$([ "$BUILD_CANDIDATES" = "1" ] && echo " + prebuilt candidates"))
+  publishes  : $FLORA_POOL_REPO (survivor pool)
   done marker: $DONE_MARKER
 EOF

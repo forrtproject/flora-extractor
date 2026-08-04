@@ -13,8 +13,13 @@ The dividing principle is that **rules route and discard, only LLM tiers admit**
 No spec can conclude that a paper is a replication; the most a spec does is send it
 to a tier that is allowed to decide, or discard it on measured precision.
 
+**Stage 2 owns every precision decision.** Stage 1 searches and admits generously
+through the search gate; the spec bundle in `filter/spec/` is the one rule set that
+says what a paper is, which is why a rule change costs a `route` re-run over the
+pool and never a rescan.
+
 Module contracts are in [filter-engine.md](../filter-engine.md); spec policy
-(precedence bands, pile → status mapping) is in `filter/spec/CONVENTIONS.md`. This
+(precedence, pile → status mapping) is in `filter/spec/CONVENTIONS.md`. This
 document is the flow.
 
 ## Step-by-step
@@ -87,9 +92,15 @@ written into it would be erased.
 
 The engine routes a work into a pile; `filter/spec/conventions.json` maps the pile
 to the `filter_status` / `filter_confidence` an exported row carries (`discard` →
-`false_positive` high; `screen_expensive` → the winning rule's vocabulary at high;
-`screen_cheap` → `needs_review` at medium; `needs_human` → `needs_review` at low;
-`pending` is not exported). `filter_method` is `engine:<release id prefix>` and
+`false_positive` high; `screen_expensive` → high; `screen_cheap` → medium;
+`needs_human` → `needs_review` low; `pending` is not exported). Both screen piles set
+`vocabulary_names_status`, so a row there takes the winning rule's `vocabulary` as its
+status and falls back to `needs_review` when the rule names none.
+`replication-claim`, the only `screen_expensive` rule, names none by design — an
+admission to the two-voter screen is a request for attention, not the verdict the
+screen exists to produce — so its rows export `needs_review`/high. The three cheap
+rules (`replication-signal`, `replication-probe`, `reproduction-signal`) do name
+theirs, at `screen_cheap`/medium. `filter_method` is `engine:<release id prefix>` and
 `filter_evidence` is `rule:<spec id>` plus what the backend matched — except on a
 row a live `screen_expensive` run typed, where `filter_method` is `screen`.
 
@@ -109,4 +120,4 @@ screens a row itself, and sets `filter_method = "screen"`.
 | `filter/engine/tiers.py` | The claimed, budget-gated LLM tiers and their dry run |
 | `filter/engine/handoff.py` | Both screen piles → `data/filtered.csv` for Stage 3 |
 | `filter/engine/claims.py` | The Supabase claims/verdicts client |
-| `filter/phrase_detection.py` | `keyword_verdict()` — Stage 1's admission gate, unchanged |
+| `filter/phrase_detection.py` | Stage 1's **search gate** vocabulary. Not part of Stage 2 — the engine evaluates the JSON specs itself and never calls it |

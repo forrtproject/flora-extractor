@@ -29,14 +29,7 @@
       "exported": false
     }
   },
-  "precedence_bands": [
-    {"from": 900, "to": 999, "name": "structural discards"},
-    {"from": 600, "to": 699, "name": "rescues"},
-    {"from": 500, "to": 599, "name": "vocabulary-exclusion discards"},
-    {"from": 300, "to": 399, "name": "screen_expensive routes"},
-    {"from": 200, "to": 299, "name": "screen_cheap routes"}
-  ],
-  "pending_reasons": ["unevaluated", "no_filter_matched", "no_text", "budget_blocked"],
+  "pending_reasons": ["no_filter_matched", "no_text"],
   "measurement_levels": {
     "human": {"may_discard": true},
     "llm:<model>": {"may_discard": true},

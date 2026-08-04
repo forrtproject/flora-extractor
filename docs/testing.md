@@ -15,33 +15,25 @@ python -m pytest tests/test_extract.py -v
 # Run by keyword
 python -m pytest tests/ -k "outcome"
 
-# With coverage
-python -m pytest tests/ --cov=. --cov-report=html
+# What is actually there, right now
+python -m pytest tests/ -q --co
 ```
+
+Coverage needs `pytest-cov`, which is **not** in `requirements.txt` — install it
+first (`pip install pytest-cov`) if you want `--cov=. --cov-report=html`.
 
 ## Test layout
 
-```
-tests/
-├── conftest.py                  — Flask app + client fixtures
-├── test_a_cli_flags.py          — CLI flag behaviour (--no-llm, --extracted-test)
-├── test_analysis_overlap.py     — analysis/ data loader + gap analysis
-├── test_apa_resolver.py         — APA reference resolver
-├── test_b_title_pattern.py      — title-pattern matching for original study linking
-├── test_c_openalex_xml.py       — OpenAlex XML fulltext fetcher
-├── test_d_pdf_parsing.py        — PDF parse methods + scoring
-├── test_disambiguation.py       — Jaccard scoring + same-author/year resolution
-├── test_extract.py              — Stage 3 orchestrator + outcome extraction
-├── test_engine_*.py             — Stage 2 filter engine (specs, routing, store,
-│                                  claims, overlay, tiers, diagnostics, supersede)
-├── test_filter.py               — the keyword vocabulary in filter/phrase_detection.py
-├── test_openalex_client.py      — OpenAlex API wrapper + find_all_candidates
-├── test_rule_analysis.py        — Filter rule analysis
-├── test_search.py               — Stage 1 search + OpenAlex pagination
-├── test_search_engine.py        — Search engine spec + keyword expansion
-├── test_supabase_client.py      — Supabase monitoring client (all mocked)
-└── test_validate.py             — Monitoring app routes (Flask test client)
-```
+44 test modules directly under `tests/`, plus 4 under `tests/live/`. The naming is
+one module per seam: `test_engine_*.py` for the Stage 2 filter engine,
+`test_search*.py` for Stage 1, `test_extract.py` and its neighbours for Stage 3,
+`test_validate.py` for the dashboard. `ls tests/` is the list — it is not
+reproduced here, because a copied listing goes stale the first time a module is
+added.
+
+As of **2026-08-04**, `python -m pytest tests/ -q --co` collects **1,105 tests** in
+about half a second. A collection count far below that means an import is failing,
+not that tests were deleted.
 
 ## Writing new tests
 

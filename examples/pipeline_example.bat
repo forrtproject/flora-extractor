@@ -1,24 +1,22 @@
 @echo off
 REM ============================================================================
 REM  pipeline_example.bat  --  walk through the full FLoRA Extractor pipeline,
-REM  with a particular focus on Stage 2 (filter), the SciMeto-classifier port
-REM  that landed on this branch.
+REM  with a particular focus on Stage 2, the declarative filter engine.
 REM
 REM  What this script does, in plain English:
 REM
 REM    1. Verifies your Python + dependency environment.
-REM    2. Stage 1: builds a candidates.csv. By default uses the bundled sample
-REM       at misc/sample_candidates.csv so the demo is reproducible and free.
-REM       Set LIVE_SEARCH=1 to fetch a small live window from OpenAlex / S2 /
-REM       I4R via Amy's per-source scripts instead.
-REM    3. Stage 2: runs `python -m filter.run_filter`, which applies the
-REM       rule-based classifier (phrase detection + author-year cite gate +
-REM       non-scholarly exclusion) and then the LLM uplift on rows the rules
-REM       left as needs_review.  If no LLM key is configured the LLM step is
-REM       a no-op (rows stay needs_review rather than getting fake verdicts).
-REM    4. Reports the breakdown of filter_status values so you can see how
-REM       the rule / LLM steps actually classified the sample.
-REM    5. Tells you the exact commands for Stage 3 (extract) and Stage 4
+REM    2. Stage 1: builds a candidates.csv. By default uses a synthetic
+REM       fixture so the demo is reproducible and free.  Set LIVE_SEARCH=1 to
+REM       fetch a small live window from OpenAlex / S2 / I4R instead.
+REM    3. Stage 2: `python -m filter.engine`.  The engine routes the SURVIVOR
+REM       POOL (parquet under cache\snapshot_pool) through the spec bundle in
+REM       filter\spec\ -- it does NOT read candidates.csv, so Stage 1's output
+REM       above cannot be chained into it.  The script always prints the
+REM       bundle (`specs`, offline and free); if a pool is present it also
+REM       routes it and dry-runs the expensive screen tier, which claims,
+REM       fetches and spends nothing.
+REM    4. Tells you the exact commands for Stage 3 (extract) and Stage 4
 REM       (validate web app), but does NOT run them automatically -- both are
 REM       LLM-heavy and live, so we don't want to surprise-bill anyone.
 REM
@@ -44,7 +42,10 @@ REM ---------------------------------------------------------------------------
 if "%LIVE_SEARCH%"==""   set LIVE_SEARCH=0
 if "%YEAR_FROM%"==""     set YEAR_FROM=2023
 if "%YEAR_TO%"==""       set YEAR_TO=2024
-if "%OUT_DIR%"==""       set OUT_DIR=data
+REM  data\examples, not data\: the demo must never overwrite a real
+REM  data\candidates.csv, which can be a million rows someone spent hours on.
+if "%OUT_DIR%"==""       set OUT_DIR=data\examples
+if "%POOL_DIR%"==""      set POOL_DIR=cache\snapshot_pool
 
 REM Move into the repo root regardless of where the user invoked this from.
 pushd "%~dp0\.."
@@ -61,8 +62,8 @@ echo ===========================================================================
 echo.
 
 REM ---------------------------------------------------------------------------
-REM  Step 0a: prerequisites.  Stage 2 needs pyyaml (loads filter\spec\
-REM  exclusion-patterns.yaml at import time).  Pandas is needed throughout.
+REM  Step 0a: prerequisites.  Stage 2 needs pyarrow + duckdb (the engine reads
+REM  parquet and caches routing in DuckDB).  Pandas is needed throughout.
 REM ---------------------------------------------------------------------------
 echo [Step 0a]  Checking Python and required packages...
 python -c "import sys, yaml, requests, pandas; print(f'  python {sys.version.split()[0]}'); print(f'  pyyaml {yaml.__version__}'); print(f'  requests {requests.__version__}'); print(f'  pandas {pandas.__version__}')" 2>&1
@@ -90,9 +91,9 @@ if not "%LIVE_SEARCH%"=="0" (
 )
 if "%GEMINI_API_KEY%"=="" if "%OPENAI_API_KEY%"=="" (
     echo   note  No GEMINI_API_KEY or OPENAI_API_KEY set.
-    echo         Stage 2 LLM uplift will be a no-op; rule filter still runs.
+    echo         Stage 2's LLM tiers cannot run; routing is fully offline.
 ) else (
-    echo   OK    LLM key configured -- needs_review rows will be uplifted.
+    echo   OK    LLM key configured -- the screen tiers can be run with --run.
 )
 
 echo.
@@ -102,23 +103,25 @@ REM accidentally get committed.
 if not exist "%OUT_DIR%" mkdir "%OUT_DIR%"
 
 echo Effective config:
-echo   LIVE_SEARCH = %LIVE_SEARCH%   (1 = call APIs; 0 = use misc/sample_candidates.csv)
+echo   LIVE_SEARCH = %LIVE_SEARCH%   (1 = call APIs; 0 = synthetic fixture)
 echo   YEAR_FROM   = %YEAR_FROM%
 echo   YEAR_TO     = %YEAR_TO%
 echo   OUT_DIR     = %OUT_DIR%
+echo   POOL_DIR    = %POOL_DIR%
 echo.
 
 REM ===========================================================================
 REM  Stage 1  --  build data\candidates.csv
 REM ===========================================================================
 echo ===============================================================================
-echo  Stage 1  ::  search  (-^> data\candidates.csv)
+echo  Stage 1  ::  search  (-^> %OUT_DIR%\candidates.csv)
 echo ===============================================================================
 echo.
 if "%LIVE_SEARCH%"=="0" (
     echo Using a synthetic 5-row fixture ^(examples\_make_fixture.py^).
-    echo The rows cover every Stage-2 path: clear replication, reproduction,
-    echo no-cite needs_review, DNA exclusion, and no-phrase false_positive.
+    echo The rows cover the range Stage 2 has to tell apart: clear replication,
+    echo reproduction, no-cite, DNA exclusion, and no-phrase.
+    set CANDIDATES=%OUT_DIR%\candidates.csv
     python examples\_make_fixture.py "%OUT_DIR%\candidates.csv"
     if errorlevel 1 (
         echo [ERROR] could not generate fixture.
@@ -126,9 +129,11 @@ if "%LIVE_SEARCH%"=="0" (
         exit /b 3
     )
 ) else (
-    echo Calling OpenAlex / Semantic Scholar / I4R via Amy's per-source scripts
+    echo Calling OpenAlex / Semantic Scholar / I4R via the per-source scripts
     echo with --from-year %YEAR_FROM% --to-year %YEAR_TO%.  Caching kicks in
     echo automatically; reruns within the cache TTL are free.
+    echo NOTE: a live run merges into the real data\candidates.csv.
+    set CANDIDATES=data\candidates.csv
     python -m search.run_search --from-year %YEAR_FROM% --to-year %YEAR_TO%
     if errorlevel 1 (
         echo [ERROR] Stage 1 live search failed.
@@ -136,46 +141,66 @@ if "%LIVE_SEARCH%"=="0" (
         exit /b 3
     )
 )
-for /f %%a in ('type "%OUT_DIR%\candidates.csv" ^| find /v /c ""') do set N1=%%a
+for /f %%a in ('type "!CANDIDATES!" ^| find /v /c ""') do set N1=%%a
 set /a N1-=1
 echo.
 echo Stage 1 produced %N1% candidate rows.
 echo.
 
 REM ===========================================================================
-REM  Stage 2  --  filter (rule + LLM)
+REM  Stage 2  --  the filter engine (`python -m filter.engine`)
 REM
-REM  filter\rule_filter.py is the SciMeto phrase-detection port:
+REM    -  `specs` lists the declarative bundle in filter\spec\ with its hash.
+REM       Offline: no pool, no keys, no spend.
+REM    -  `route` streams the survivor pool through the bundle and routes
+REM       every row into a pile (discard / screen_expensive / screen_cheap /
+REM       needs_human / pending).  Rules route and discard; only LLMs admit.
+REM    -  `screen --tier screen_expensive` is a DRY RUN unless you pass
+REM       --run: it prints the pile size and an estimate and spends nothing.
+REM    -  `handoff` writes the screen piles as Stage 3's data\filtered.csv.
 REM
-REM    -  Reads filter\spec\exclusion-patterns.yaml and drops rows whose
-REM       title+abstract matches a non-scholarly context (DNA replication,
-REM       code/data replication, replication fork/origin/stress/timing).
-REM    -  Detects 19 replication phrases (REPLICATION_PHRASES in
-REM       filter\phrase_detection.py).
-REM    -  Requires an explicit author-year citation in the same text for a
-REM       high-confidence "replication" or "reproduction" verdict.  Without
-REM       a cite, rows go to "needs_review".
-REM
-REM  filter\llm_filter.py then asks Gemini (then OpenAI) to classify the
-REM  remaining needs_review rows in JSON mode, with caching by hash of
-REM  title+abstract.  No keys = no LLM step = needs_review stays.
+REM  Design: docs\filter-engine.md.  Every flag: docs\cli-reference.md.
 REM ===========================================================================
 echo ===============================================================================
-echo  Stage 2  ::  filter  (rule_filter.py -^> llm_filter.py -^> data\filtered.csv)
+echo  Stage 2  ::  filter engine  (route -^> screen -^> handoff -^> data\filtered.csv)
 echo ===============================================================================
 echo.
+echo The bundle Stage 2 routes with (offline; no pool, no keys, no spend):
+echo.
 
-python -m filter.run_filter
+python -m filter.engine specs
 if errorlevel 1 (
-    echo [ERROR] Stage 2 failed.
+    echo [ERROR] could not load the spec bundle.
     popd
     exit /b 4
 )
 echo.
 
-REM Pull the filter_status counts directly from the CSV so the user can see
-REM the breakdown without opening the file.
-python -c "import pandas as pd; df = pd.read_csv(r'%OUT_DIR%\filtered.csv', encoding='utf-8-sig'); print(); print('filter_status breakdown:'); print(df['filter_status'].value_counts().to_string()); print(); print('first 5 rows (status, evidence):'); print(df[['doi_r','filter_status','filter_method','filter_evidence']].head().to_string(index=False))" 2>&1
+if exist "%POOL_DIR%" (
+    echo Pool found at %POOL_DIR% -- routing it into a release in the local store.
+    echo.
+    python -m filter.engine route --pool "%POOL_DIR%"
+    echo.
+    echo What the expensive ^(two-voter classify^) tier would cost over its pile.
+    echo No --run: nothing is claimed, fetched or spent.
+    echo.
+    python -m filter.engine screen --tier screen_expensive --pool "%POOL_DIR%"
+    echo.
+    echo To actually spend, and then to write Stage 3's input:
+    echo.
+    echo     python -m filter.engine screen --tier screen_expensive --run
+    echo     python -m filter.engine handoff --out %OUT_DIR%\filtered.csv
+) else (
+    echo No survivor pool at %POOL_DIR% -- Stage 2 has nothing to route.
+    echo Fetch one, then run the three commands:
+    echo.
+    echo     python -m search.pool_sync --pull
+    echo     python -m filter.engine route
+    echo     python -m filter.engine screen --tier screen_expensive --run
+    echo     python -m filter.engine handoff --out %OUT_DIR%\filtered.csv
+    echo.
+    echo Every flag: docs\cli-reference.md Stage 2.  Design: docs\filter-engine.md.
+)
 
 echo.
 
@@ -204,7 +229,7 @@ echo ===========================================================================
 echo.
 echo To launch the web app:
 echo.
-echo     python -m validate.import_csv
+echo     python -m extract.csv_to_db
 echo     python -m validate.app
 echo.
 echo Then open http://localhost:5001/.  The new tabs (since merge of #21):
@@ -220,15 +245,13 @@ REM ===========================================================================
 echo ===============================================================================
 echo  Summary
 echo ===============================================================================
-echo   Stage 1 candidates  ::  %N1% rows  --  %OUT_DIR%\candidates.csv
-echo   Stage 2 filtered    ::               --  %OUT_DIR%\filtered.csv
+echo   Stage 1 candidates  ::  %N1% rows  --  !CANDIDATES!
+echo   Stage 2 filtered    ::               --  %OUT_DIR%\filtered.csv (via handoff)
 echo.
-echo  Engine-based Stage 1 (the SciMeto Discover-UI port) lives on
-echo  feature/search.  Switch branches and run:
+echo  For the OR-bundled Stage 1 engine demo, run:
 echo      examples\discover_example.bat
-echo  to see the OR-bundled engine version that uses search\spec\*.yaml.
 echo.
-echo  Stage 2 internals: docs\scimeto_filter_port.md
+echo  Stage 2 internals: docs\filter-engine.md  --  all flags: docs\cli-reference.md
 echo ===============================================================================
 
 popd

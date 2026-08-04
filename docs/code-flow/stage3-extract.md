@@ -34,7 +34,8 @@ run_extract.py
     └── for each remaining row:
             │
             ├── FRONT DOOR — classify_replication(doi_r, title_r, abstract_r)
-            │       two models vote on the v3.2 schema; screen_gate() decides
+            │       (optional cheap PRE-SCREEN runs first — see below)
+            │       two models vote on the v3.3 schema; screen_gate() decides
             │       ├── gate says "discard"                → not_a_replication, row done
             │       ├── one vote answered                  → target_pending, row done
             │       ├── no votes answered                  → api_error, row done
@@ -69,9 +70,30 @@ aside on the screen's own verdict, wherever a previous run's rows are being read
 voter pair or prompt decides them again. Every other resolved row is carried forward
 untouched, and a multi-original paper is reopened as a unit.
 
+## The optional cheap pre-screen (`shared/prescreen.py`)
+
+Off unless `PRESCREEN_ENABLED` is set, and it sits in front of everything below. Two
+very small models (`PRESCREEN_VOTER1_MODEL`, `PRESCREEN_VOTER2_MODEL`, OpenRouter by
+default) answer one question with one field; voter 2 is asked only when voter 1 said
+"no", because once the row can no longer be discarded a second opinion changes nothing.
+
+The tier may only **discard**, and only on two explicit noes. One keep, an unrecognised
+label, an unreadable reply or a provider failure all pass the row through to the front
+door unchanged, and non-answers are never cached. Three classes of row are never
+pre-screened at all: text stating the design outright (`hard_signal()`), rows from a
+`CURATED_SOURCES` list, and rows with under `PRESCREEN_MIN_ABSTRACT_CHARS` of abstract.
+
+A discard writes `link_method = prescreen_discard`, is quarantined to its own
+`data/prescreen_discard.csv`, and is reopened only by `--rescreen` — turning
+`PRESCREEN_ENABLED` off does **not** reopen it. Evidence and the argument for leaving
+it off: `analysis/prescreen_eval/REPORT.md` and
+[limitations.md](../limitations.md) §(g).
+
 ## The front door (`shared/llm_client.classify_replication`)
 
-Two providers vote on the validated **v3.2** schema — `classification` ∈
+Two providers vote on the validated schema, at prompt version **v3.3** (v3.2 plus the
+partial-overlap rule; evaluated copy `analysis/screening_eval/prompt_v33.txt`, evidence
+`analysis/screening_eval/report_v33.md`) — `classification` ∈
 {`replication`, `reproduction`, `both`, `none`, `unclear`}, boolean `confident`, an
 array of `categories` from an 11-value enum, `evidence_quote`, `reasoning`:
 
@@ -331,17 +353,27 @@ resolved set are moved out to set-aside CSVs, **first match wins**, in this orde
 | Bucket | Destination | Rule |
 | ------ | ----------- | ---- |
 | `screen_disagreement` | `screen_disagreement.csv` | `link_method == screen_disagreement` — **historical rows only**; the front door no longer emits it |
-| `not_a_replication` | `not_a_replication.csv` | `outcome == not_a_replication` |
 | `non_article` | `not_a_replication.csv` | `doi_r` is a figshare data record / peer-review object |
-| `self_link` | `unresolved_self_links.csv` | `doi_o == doi_r` |
-| `doi_mismatch` | `unresolved_doi_mismatch.csv` | `doi_o_verification == mismatch` |
 | `title_search_provisional` | `provisional_title_search.csv` | `link_method == llm_title_search` |
 | `target_pending` | `target_pending.csv` | `link_method == target_pending` |
-| `fabricated_doi_o` | `fabricated_original_doi.csv` | `--deep` only: `doi_o` present but doi.org 404s |
+| `prescreen_discard` | `prescreen_discard.csv` | `link_method == prescreen_discard` — the cheap pre-screen's own discards, kept out of `not_a_replication.csv` |
+| `not_a_replication` | `not_a_replication.csv` | `outcome == not_a_replication` |
+| `self_link` | `unresolved_self_links.csv` | `doi_o == doi_r` |
+| `doi_mismatch` | `unresolved_doi_mismatch.csv` | `doi_o_verification == mismatch` |
 
-Order is load-bearing. Old `screen_disagreement` rows are claimed first so that one
-whose outcome happened to be coded `not_a_replication` cannot land in the agreed-no file
-and bias any precision computed over it.
+Two further buckets run after that list, on their own: `non_article_type`
+(→ `not_a_replication.csv`, when the registry types `doi_r` as a non-study object) and
+`fabricated_doi_o` (→ `fabricated_original_doi.csv`, `doi_o` present but registered
+nowhere).
+
+Order is load-bearing, and the principle is that **`link_method` rules come before the
+`outcome` rule**: where a row sits in the pipeline is a fact about its identity, while
+what its `outcome` column happens to say is a fact about a file's contents. So old
+`screen_disagreement` rows are claimed first — one whose outcome was coded
+`not_a_replication` must not land in the agreed-no file and bias any precision computed
+over it — and `prescreen_discard` is claimed before the outcome rule for the same
+reason: the pre-screen writes `outcome = not_a_replication` but is a weaker instrument
+than the validated voter pair, and mixing its discards in would corrupt that file.
 
 `cannot_be_determined` rows stay in `extracted.csv` — a linked original with an
 undecidable outcome is still a real record. Chronology errors, duplicate `pair_id`s and

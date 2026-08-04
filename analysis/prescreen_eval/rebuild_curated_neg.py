@@ -19,6 +19,7 @@ REPO = Path("/Users/lukaswallrich/Documents/Coding/flora-extractor")
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO))
 
+from shared.config import ALL_REPLICATIONS_PATH  # noqa: E402
 from shared.utils import clean_doi  # noqa: E402
 
 csv.field_size_limit(10_000_000)
@@ -26,7 +27,7 @@ CAP = 400
 
 
 def main() -> None:
-    with open(REPO / "data/all_replications.csv", newline="", encoding="utf-8-sig",
+    with open(ALL_REPLICATIONS_PATH, newline="", encoding="utf-8-sig",
               errors="replace") as fh:
         pool = {clean_doi((r.get("doi_r") or "").strip()): r
                 for r in csv.DictReader(fh)

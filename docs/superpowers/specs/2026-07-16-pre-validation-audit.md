@@ -1,6 +1,10 @@
 # Pre-Validation Audit — Design Spec
 **Date:** 2026-07-16
-**Status:** Approved for implementation
+**Status:** **SHIPPED** (verified 2026-08-04). `extract/audit_extracted.py` and
+`csv_to_db.py --audit-report` implement this spec, with the `--input` / `--report`
+/ `--doi` flags exactly as written below. Kept in place rather than archived
+because `docs/cli-reference.md` does not yet cover `audit_extracted`: this spec is
+still the only written reference for the check list and the two severities.
 
 ---
 

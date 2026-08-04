@@ -70,12 +70,19 @@ separately.
 
 The `--source` flag restricts which discovery tracks run. It can be repeated.
 
+The accepted values are `_ALL_SOURCES` in `search/run_search.py`:
+
 | Source value | What it searches |
 | --- | --- |
-| `openalex` | 37 keyword phrases via `title_and_abstract.search` |
+| `openalex` | The keyword phrases in `SEARCH_PHRASES` (`search/openalex_search.py`) via `title_and_abstract.search` |
 | `openalex_concept` | OpenAlex concept tags (`C12590798` Replication, `C9893847` Reproducibility) |
-| `semantic_scholar` | Same 37 phrases via Semantic Scholar bulk search |
+| `semantic_scholar` | The same `SEARCH_PHRASES` list, which `search/semantic_scholar_search.py` imports, via S2 bulk search |
+| `openalex_snapshot` | The bulk-parquet snapshot scan (opt-in; see below) |
 | `engine` | Internal engine source (requires `FLORA_USE_ENGINE=1`) |
+
+Default is every source **except** `openalex_snapshot`. `bob_reed` and `i4r` are
+`source` *column* values, not `--source` values: their scrapers live in
+`search/external_lists.py` and are not wired into `run_search` (issue #46).
 
 ```bash
 # Phrase-based sources — need the auto-advance loop
@@ -85,10 +92,6 @@ do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2026 
 # Concept-based source — single run or auto-advance loop (large result sets)
 python -m search.run_search --source openalex_concept --from-year 2011 --to-year 2026
 do { python -m search.run_search --auto-advance --source openalex_concept --from-year 2011 --to-year 2026 --max-per-phrase 10000 } until ($LASTEXITCODE -eq 2)
-
-# Curated external lists (single fetch, no loop needed)
-python -m search.run_search --source bob_reed
-python -m search.run_search --source i4r
 ```
 
 ### Concept ID management
@@ -106,32 +109,27 @@ Current verified IDs (as of 2026-06-23):
 - `C12590798` — Replication (statistics) — ~263k works
 - `C9893847` — Reproducibility — ~121k works
 
-### Skipping the cache harvest in auto-advance
+### Harvesting the cache separately
 
-The harvest step scans all cached JSON pages and can be slow on large caches. Skip it per-call with `--no-harvest` and run it separately on a schedule:
+The harvest step scans all cached JSON pages and can be slow on large caches. Run it
+on its own after a crash, or when an `--auto-advance` loop stopped on resource
+exhaustion before merging what it had fetched:
 
 ```bash
-# Run auto-advance without per-cycle harvest
-do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2026 --max-per-phrase 10000 --no-harvest } until ($LASTEXITCODE -eq 2)
-
-# Run harvest separately (weekly, or after a crash)
 python -m search.run_search --harvest-only
 ```
 
 ### The OpenAlex snapshot scan and its survivor pool
 
-The bulk-parquet scan is explicit opt-in and takes 13–21 hours over 725 GB.
-`--survivor-pool` writes every Stage A survivor to local parquet (~2–3 GB, one
-file per partition) so a later Stage B vocabulary change is re-run locally
-instead of rescanned.
+The bulk-parquet scan is Stage 1's main path and takes 13–21 hours over 725 GB.
+`--survivor-pool` writes every **search-gate** survivor to local parquet (~2–3 GB,
+one file per partition). That pool is Stage 1's output and Stage 2's input, so a
+rule change is a `filter.engine route` re-run over it rather than a rescan; only a
+change to the search gate itself costs the full scan.
 
 ```bash
-# Full snapshot scan, keeping the survivor pool
+# Full snapshot scan, writing the survivor pool
 python -m search.run_search --source openalex_snapshot --survivor-pool cache/snapshot_pool
-
-# Re-run the CURRENT Stage B admission over a stored pool (no snapshot reads)
-python -m search.run_search --admit-from-pool cache/snapshot_pool
-python -m search.run_search --admit-from-pool cache/snapshot_pool --dry-run
 
 # How far along is a running scan? Read-only, safe to run concurrently with it:
 # files/bytes/records consumed vs the manifest, rows kept, recent throughput, ETA.
@@ -143,55 +141,22 @@ Running the scan on a cloud instance in us-east-1 turns those 13–21 hours into
 and costs a couple of dollars: see [aws-snapshot-scan.md](aws-snapshot-scan.md) for
 the launch scripts and the runbook.
 
-### Sharing the corpus and the pool
+### Sharing the pool
 
-Both artifacts live in one **private** Hugging Face dataset repo. Set `HF_TOKEN`
-and `FLORA_POOL_REPO` in `.env`. Uploads go up in batched commits
+The pool lives in one **private** Hugging Face dataset repo. Set `HF_TOKEN` and
+`FLORA_POOL_REPO` in `.env`. Uploads go up in batched commits
 (`FLORA_HF_COMMIT_BATCH`, default 100 files per commit) — one commit per file
 would push the repo past the few-thousand-commit mark where HF says repo UX
 degrades.
 
-**Collaborator workflow — one command, nothing to rebuild:**
+**Collaborator workflow — one command:**
 
 ```bash
-python -m search.pool_sync --pull-build   # prebuilt corpus → data/candidates.csv
+python -m search.pool_sync --pull        # the survivor pool → Stage 2's input
 ```
 
-Stage 2 routes the **survivor pool**, not `candidates.csv`, so a collaborator who
-wants to run the filter engine pulls the pool as well (`--pull`, below); the
-prebuilt corpus is the Stage 1 artifact for everything else.
-
-`--pull-build` downloads the latest prebuilt candidates artifact (chunked
-parquet, `builds/<build_hash>/`) and merges it into `data/candidates.csv` through
-the normal dedup/index path. It takes minutes, against the ~45–60 the pool route
-costs (~10–20 min to pull 2,446 pool files, ~15 min of Stage B, plus index/dedup
-and CSV time). If the build was made under a different Stage B fingerprint or
-row-builder version than your checkout, the merge still runs but warns loudly:
-those rows are someone else's admission decisions.
-
-```bash
-python -m search.pool_sync --pull-build                     # newest build
-python -m search.pool_sync --pull-build --build-hash 9f3c…  # a specific one
-python -m search.pool_sync --pull-build --dry-run           # what it would merge
-```
-
-**Publishing a build** (whoever ran the scan, after a scan or a Stage B change):
-
-```bash
-python -m search.pool_sync --build-candidates   # pool → cache/snapshot_build
-python -m search.pool_sync --push-build         # → builds/<hash>/, updates latest.json
-```
-
-The build's `manifest.json` carries `build_hash` — a content hash of the snapshot
-date, both gate fingerprints, what the ledger consumed and kept, and
-`ROW_BUILDER_VERSION` — so a build is addressed by exactly what produced it and a
-new build never overwrites an old one. **Retention:** old builds accumulate under
-`builds/` and nothing prunes them; `builds/latest.json` only names the current
-one. Delete superseded `builds/<hash>/` folders by hand when the repo grows.
-
-**Power-user route — the survivor pool**, for changing the admission vocabulary
-rather than consuming the corpus. Pool files are stored **year-sharded** on the
-remote (`part-2016-06-24-part_0000.parquet` → `2016/…`) and flat locally; both
+Pool files are stored **year-sharded** on the remote
+(`part-2016-06-24-part_0000.parquet` → `2016/…`) and flat locally; both
 directions skip files already present at the same size, so an interrupted
 transfer is resumed by re-running the command.
 
@@ -207,19 +172,20 @@ python -m search.pool_sync --push --dry-run
 python -m search.pool_sync --pull
 python -m search.pool_sync --pull --years 2019,2021-2023
 python -m search.pool_sync --pull --pool-dir /mnt/big/pool --repo my-org/flora-survivor-pool
-
-# Then re-admit locally under YOUR vocabulary
-python -m search.run_search --admit-from-pool cache/snapshot_pool
 ```
 
-A push writes `pool_manifest.json` at the repo root recording the Stage A gate,
+A push writes `pool_manifest.json` at the repo root recording the search gate,
 snapshot date and ledger the pool was scanned under. Pushing over a pool scanned
-under a **different** Stage A fingerprint is refused (`--force` overrides) — the
+under a **different** gate fingerprint is refused (`--force` overrides) — the
 mixture would be complete under neither gate and nothing downstream could tell.
 Pulling one only warns: taking a colleague's pool is legitimate, doing so
 unknowingly is not.
 
-**Output:** `data/candidates.csv`
+The prebuilt-`candidates.csv` build commands (`--build-candidates`,
+`--push-build`, `--pull-build`) belonged to the admission-gated Stage 1 and are
+retired with it; the pool is the artifact to share.
+
+**Output:** the survivor pool (`cache/snapshot_pool`)
 
 ---
 
@@ -232,8 +198,11 @@ any more.
 
 Issue #146's declarative routing layer: one engine applies the spec bundle in
 `filter/spec/` to the survivor pool and routes every row into a pile. It reads the
-pool parquet directly, not `candidates.csv`, and its design contract is
+pool parquet directly, and its design contract is
 [filter-engine.md](filter-engine.md).
+
+**Stage 2 is where every precision decision lives.** Stage 1 searches and admits
+generously; the spec bundle is the one rule set that decides what a paper is.
 
 **Input:** the survivor pool (`cache/snapshot_pool`), plus an optional text overlay  
 **Output:** `data/filtered.csv`, written by `handoff`
@@ -269,6 +238,9 @@ python -m filter.engine screen --tier screen_expensive --run --limit 500 \
 python -m filter.engine screen --tier screen_cheap --run
 python -m filter.engine screen --tier screen_cheap --run --live
 
+# The pending/no_text rows, as a worklist for the abstract backfill
+python -m filter.engine worklist --out data/no_text_worklist.csv --pool cache/snapshot_pool
+
 # Write the file Stage 3 reads
 python -m filter.engine handoff --out data/filtered.csv --from-year 2011
 
@@ -284,6 +256,7 @@ python -m filter.engine status
 | `diagnose` | Routes the pool with and without `--spec` and reports rows moved per (pile without → pile with), overlap against every other rule (exclusive hits vs already-covered), a seeded readable sample, the holdout state and the spec's `measured` evidence. |
 | `export` | Writes one pile as `FILTERED_COLS` + `ENGINE_EXPORT_COLS`, `utf-8-sig`, plus `<out>.manifest.json` (release, pile, rows, sha256). `--pile pending` is refused, an existing manifest is never overwritten, and an export is refused outright when the spec bundle or alias file has changed since the release was routed — re-run `route` rather than looking for an override flag. `--pile needs_human` additionally prints the size of the queue it just wrote. |
 | `screen` | Runs one LLM tier (`--tier screen_cheap\|screen_expensive`) over that pile. **Dry run by default**: it prints the row count, the token-length distribution of the abstracts it would send and `N rows → tier X ≈ $Y`, and claims, fetches and spends nothing. `--run` claims the batch through the Supabase claims RPC *before* the first voter is asked, records one permanent verdict row per vote, and completes the claim; a claim conflict refuses without spending anything, and an exhausted token budget fails the claim and stops with the verdicts already written intact. |
+| `worklist` | Exports the release's `pending/no_text` rows (joined back to the pool for doi/title/year) as the worklist `filter.engine.backfill` reads. |
 | `handoff` | Writes the two screen piles — `screen_expensive` first, then `screen_cheap` — as the file Stage 3 reads, in `ENGINE_EXPORTED_COLS` order, minus the works a **live** tier run discarded, with a live `screen_expensive` record type written into `filter_status`. Unlike `export`, its manifest is rewritable: the handoff is a materialized view Stage 3 re-reads, not an immutable artifact. |
 | `status` | Every release found beside the store, with its creation time and pile counts. |
 
@@ -310,6 +283,24 @@ needs neither.
 verdicts to read, so the command says so and hands off the piles exactly as
 routed. It refuses, like `export`, when the spec bundle, alias file or overlay has
 moved since the release was routed.
+
+### Engine modules with their own entry points
+
+Three engine modules are run directly rather than as `filter.engine` subcommands.
+Each has `--help`; the one-liners are their own `description=`:
+
+```bash
+# Fill a text overlay for the routing worklist's no_text rows (#146 M3). Dry-run by default.
+python -m filter.engine.backfill --worklist W --overlay-dir D [--run] [--freeze]
+
+# Reconcile a routing change against the validation tables (#146 M5).
+# Writes lineage records only — never a validation row. Dry-run by default.
+python -m filter.engine.supersede --old <release> --new <release> [--run] [--reason …]
+
+# Postgres sizing for the engine state tables (#146 §8 decision 1): measures the
+# bytes one claimed row and one verdict actually cost.
+python -m filter.engine.sizing
+```
 
 ---
 
@@ -343,6 +334,31 @@ python -m extract.run_extract --no-skip-flora-validated
 
 **Input:** `data/filtered.csv`  
 **Output:** `data/extracted.csv` (or `data/extracted-test.csv` with `--extracted-test`)
+
+The examples above are a selection, not the flag list. For the complete, current set
+run:
+
+```bash
+python -m extract.run_extract --help
+```
+
+(the `argparse` block at the bottom of `extract/run_extract.py` is its source). The
+sections below explain the flags whose behaviour is not obvious from one help line.
+
+### Two flags that do not mean what they look like
+
+**`--limit N` counts rows *processed*, not rows scanned.** The counter increments
+after `_should_skip()` has passed a row, so a run over a file whose first 10,000
+rows are all skipped (already resolved, already in FLoRA, wrong year, wrong source)
+still processes N fresh rows — and reads far more than N. Use it to bound *spend*,
+never to bound how much of the input is touched, and never to reason about which
+rows a run saw.
+
+**`--extracted-test` without `--resume` truncates `data/extracted-test.csv`.** The
+first row written opens the file with mode `w`, and only `--resume` pre-loads the
+existing rows before that happens. A test run started without `--resume` therefore
+discards the previous test run's output rather than adding to it. `--extracted-test
+--resume` is the combination that accumulates.
 
 ### Re-screening set-aside rows
 
@@ -491,7 +507,8 @@ The app is read-only — it displays pipeline stats and pulls validation data fr
 python -m analysis.run_overlap_analysis
 
 # Rule analysis — audit filter rules and extraction link methods
-python -m analysis.run_overlap_analysis  # also produces rule_improvement_opportunities.csv
+# (writes analysis/rule_improvement_opportunities.csv)
+python -m analysis.rule_analysis
 
 # APA reference resolver
 python -m analysis.apa_resolver
@@ -530,12 +547,6 @@ python -m tools.recalibrate_outcomes --tail 50 --dry-run
 
 # Process only first N uncertain rows (for testing a prompt change)
 python -m tools.recalibrate_outcomes --limit 10 --dry-run
-
-# Load a plain DOI list as pipeline input
-python tools/load_doi_list.py path/to/dois.txt
-
-# Clean up duplicate sources in candidates.csv
-python tools/cleanup_sources.py
 
 # Drop superseded preprint versions (keep highest _v, or the version-less DOI) — issue #17
 python -m tools.dedup_preprint_versions --input data/extracted.csv            # dry-run

@@ -1,13 +1,18 @@
 """
-fetch_abstracts.py — Fetch missing abstracts for no-abstract rows in candidates.csv.
+fetch_abstracts.py — The five abstract sources, their order, and the contract
+that keeps a transient failure from being recorded as a definitive miss.
 
-Strategy (waterfall by identifier type):
+This module is a library of phase runners, not a command. Its one consumer is
+`filter.engine.backfill`, which supplies the worklist (from the routing table)
+and decides where the recovered text lands (an overlay chunk). Everything about
+HOW an abstract is fetched lives here so there is exactly one copy of it.
 
-  1. OpenAlex batch   — rows with openalex_id_r (305K rows → ~6,100 batch calls).
+Waterfall by identifier type, in the order a run should spend calls:
+
+  1. OpenAlex batch   — rows with an OpenAlex id, OA_BATCH_SIZE ids per call.
                         Near-zero yield when the corpus was itself discovered via
-                        OpenAlex (measured 2026-07-27: 0/200 random sample) — see
-                        --skip-openalex.
-  2. Europe PMC batch — rows with doi_r, 25 DOIs/call. No API key. Ordered ahead of
+                        OpenAlex (measured 2026-07-27: 0/200 random sample).
+  2. Europe PMC batch — rows with a DOI, 25 DOIs/call. No API key. Ordered ahead of
                         every other DOI phase: on 960 never-tried missing-abstract
                         DOIs sampled across this corpus's dominant prefixes
                         (2026-07-29) it recovered 47.7%, against Semantic Scholar's
@@ -17,71 +22,40 @@ Strategy (waterfall by identifier type):
                         deposits abstracts to CrossRef, and OpenAlex's abstract index
                         derives from that same deposit stream. Europe PMC indexes the
                         publisher record instead, so it sees what they do not.
-  3. Semantic Scholar batch — rows with doi_r, up to 500 DOIs/call (requires
+  3. Semantic Scholar batch — rows with a DOI, up to 500 DOIs/call (requires
                         S2_API_KEY in .env). Still worth running after Europe PMC:
                         the two are complementary, not nested — on the sample above
                         S2 added +10 Elsevier and +11 SSRN (10.2139) abstracts Europe
-                        PMC missed entirely (SSRN: EPMC 2%, S2 10%). Measured on a
-                        full production run over this corpus's entire 494,406-row S2
-                        target list (2026-07-27/28), ~49.8 DOIs/sec sustained at a
-                        14.5% hit rate (71,900 found), vs CrossRef's ~3/sec at ~0.6%
-                        on the rows it was tried on (an earlier ~9,900-row sample had
-                        suggested ~31%, which the full run showed was not
-                        representative — hit rate varies a lot across the corpus).
+                        PMC missed entirely (SSRN: EPMC 2%, S2 10%). Measured over a
+                        494,406-row target list (2026-07-27/28), ~49.8 DOIs/sec
+                        sustained at a 14.5% hit rate, vs CrossRef's ~3/sec at ~0.6%.
   4. CrossRef by DOI  — fallback for rows Phases 2-3 didn't resolve (one DOI/call;
                         CrossRef has no equivalent batch-by-DOI-list endpoint)
   5. Scopus by DOI    — Elsevier Abstract Retrieval API fallback (requires
-                        ELSEVIER_API_KEY; ~10k requests/week quota, so a run is
-                        capped by --scopus-limit)
+                        ELSEVIER_API_KEY; ~10k requests/week quota, so a caller
+                        should cap its Scopus phase)
 
-Rows whose DOI prefix registers datasets rather than articles (see
-_DATASET_PREFIXES) are dropped from the worklist entirely — they have no abstract
-to find, so every phase would spend calls confirming that forever.
+Rows whose DOI prefix registers datasets rather than articles (_DATASET_PREFIXES)
+should be dropped from a worklist entirely — they have no abstract to find, so
+every phase would spend calls confirming that forever.
 
 Results are cached per identifier in cache/abstracts/ — the durable, crash-safe
-store (paired with the checkpoint below). Memory is bounded: run() streams
-candidates.csv in 50k-row chunks to build a compact worklist of only the
-identifier fields for rows still missing an abstract (never the whole 4.7 GB
-file), runs the fetch phases against the per-identifier cache, and writes the
-recovered abstracts back with a final streamed merge into candidates.csv.tmp
-that is atomically renamed. There is no in-memory full DataFrame and no periodic
-full-file flush.
+store, paired with the checkpoint below. The two are shared across callers on
+purpose: a DOI one run already asked Europe PMC about is answered for free next
+time, and a miss recorded once is a miss nobody re-buys.
 
-Checkpoint (cache/fetch_abstracts_done.txt): one identifier per line (oa:<id as
-stored in CSV>, epmc:10.x/y, doi:10.x/y, s2:10.x/y, scopus:10.x/y). Each phase owns
-its own namespace, so adding one never invalidates another's progress. On restart,
-already-tried
-identifiers are skipped — even those that returned no abstract, so we don't re-hit
-the API for known misses.
-
-OpenAlex miss recovery
-----------------------
-An earlier bug in the OpenAlex batch join keyed the result dict on the full URL
-form of openalex_id_r ('https://openalex.org/W123') while the response was matched
-on the bare id ('W123'), so no batch row ever matched. Every OpenAlex row was
-therefore recorded as a miss and checkpointed as done, permanently suppressing
-recovery. The join is now normalised to the bare id on both sides. To re-attempt
-rows poisoned by the old bug, run with --retry-openalex-misses: it drops every
-'oa:' checkpoint entry whose cached abstract is absent or '__none__' and clears
-those poisoned cache files, so the fixed batch phase re-fetches them.
-
-Usage
------
-    python -m search.fetch_abstracts                       # full run
-    python -m search.fetch_abstracts --limit 1000          # first 1000 missing rows
-    python -m search.fetch_abstracts --reset               # clear checkpoint, start fresh
-    python -m search.fetch_abstracts --dry-run             # count missing rows, no API calls
-    python -m search.fetch_abstracts --retry-openalex-misses  # re-attempt bug-poisoned OA rows
-    python -m search.fetch_abstracts --scopus-limit 9000   # cap Scopus calls (weekly quota)
+Checkpoint (cache/fetch_abstracts_done.txt): one identifier per line (oa:<id>,
+epmc:10.x/y, doi:10.x/y, s2:10.x/y, scopus:10.x/y). Each phase owns its own
+namespace, so adding one never invalidates another's progress. On restart,
+already-tried identifiers are skipped — even those that returned no abstract, so
+we don't re-hit the API for known misses. A TRANSIENT failure is never
+checkpointed: only a definitive answer (text, or a confirmed absence) is.
 """
 
 from __future__ import annotations
 
-import argparse
 import json
-import os
 import re
-import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -89,27 +63,23 @@ from typing import Optional
 import requests
 
 from shared.config import (
-    CACHE_DIR, CROSSREF_RATE_SEC, DATA_DIR, ELSEVIER_API_KEY, ELSEVIER_INSTTOKEN,
-    EPMC_BATCH_SIZE, EPMC_RATE_SEC, OA_BATCH_SIZE, OPENALEX_RATE_SEC, RESEARCHER_EMAIL,
-    S2_API_KEY, S2_BATCH_RATE_SEC, S2_BATCH_SIZE, S2_RATE_SEC, SCOPUS_DEFAULT_LIMIT,
-    SCOPUS_RATE_SEC, log,
+    CACHE_DIR, ELSEVIER_INSTTOKEN, EPMC_BATCH_SIZE, EPMC_RATE_SEC, OA_BATCH_SIZE,
+    RESEARCHER_EMAIL, S2_BATCH_RATE_SEC, S2_BATCH_SIZE, log,
 )
 from shared.openalex_keys import headers as oa_headers, is_budget_refusal, rotate_key
-from shared.utils import clean_doi, cache_key
-from shared.dashboard_cache import _parquet_path, refresh as _dc_refresh
+from shared.utils import clean_doi, cache_key, reconstruct_abstract
 
 # ---------------------------------------------------------------------------
 # Paths and constants
 # ---------------------------------------------------------------------------
 
-CANDIDATES_PATH    = DATA_DIR / "candidates.csv"
 ABSTRACT_CACHE_DIR = CACHE_DIR / "abstracts"
 CHECKPOINT_PATH    = CACHE_DIR / "fetch_abstracts_done.txt"
 # Sidecar index of identifiers that resolved to a real abstract (mirrors the
 # candidates_index.txt / filtered_index.txt pattern). Building a phase's target list
 # means checking every row in the worklist (500k+) against results from earlier
 # phases; once abstracts/ passed ~500k files, doing that via a handful of per-row
-# file stats/reads (_lookup_cached_abstract) took ~2 hours — NTFS lookup cost in one
+# file stats/reads took ~2 hours — NTFS lookup cost in one
 # huge flat directory, not disk speed. This index lets that check happen in memory.
 FOUND_INDEX_PATH   = CACHE_DIR / "fetch_abstracts_found.txt"
 ABSTRACT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -163,29 +133,6 @@ def _write_abstract_cache(ident: str, abstract: Optional[str]) -> None:
         _append_found_index(ident)
 
 
-def _lookup_cached_abstract(oa_id: str, doi_r: str) -> Optional[str]:
-    """Return the recovered abstract for a row from the per-identifier cache.
-
-    Tries the same keys the phases write, in priority order — oa → epmc → doi →
-    s2 → scopus — and returns the first non-`__none__`, non-None hit. The `__none__`
-    sentinel means "tried, no abstract" and is treated as a miss. This is the
-    single source of truth for both the phase "still-missing" checks and the
-    final streamed write-back merge, so the write-back looks up exactly the keys
-    the phases wrote. Returns None if no key yields an abstract.
-    """
-    doi = clean_doi(str(doi_r or ""))
-    keys: list[str] = []
-    if oa_id:
-        keys.append(f"oa:{oa_id}")
-    if doi:
-        keys.extend([f"epmc:{doi}", f"doi:{doi}", f"s2:{doi}", f"scopus:{doi}"])
-    for k in keys:
-        val = _read_abstract_cache(k)
-        if val is not None and val != "__none__":
-            return val
-    return None
-
-
 def _append_found_index(ident: str) -> None:
     with open(FOUND_INDEX_PATH, "a", encoding="utf-8") as f:
         f.write(ident + "\n")
@@ -226,8 +173,10 @@ def _load_found_index() -> set[str]:
 
 
 def _already_resolved(oa_id: str, doi_r: str, found_index: set[str]) -> bool:
-    """In-memory equivalent of `_lookup_cached_abstract(...) is not None`, backed by
-    the found-index sidecar instead of per-row cache-file reads (see FOUND_INDEX_PATH).
+    """True when some earlier phase already recovered an abstract for this row.
+
+    Backed by the found-index sidecar rather than per-row cache-file reads (see
+    FOUND_INDEX_PATH): the same key order the phases write under, checked in memory.
     """
     doi = clean_doi(str(doi_r or ""))
     if oa_id and f"oa:{oa_id}" in found_index:
@@ -249,20 +198,6 @@ def _load_checkpoint() -> set[str]:
 def _append_checkpoint(ident: str) -> None:
     with open(CHECKPOINT_PATH, "a", encoding="utf-8") as f:
         f.write(ident + "\n")
-
-
-# ---------------------------------------------------------------------------
-# OpenAlex inverted-index decoder
-# ---------------------------------------------------------------------------
-
-def _reconstruct_abstract(inverted_index: Optional[dict]) -> Optional[str]:
-    if not inverted_index:
-        return None
-    positions: dict[int, str] = {}
-    for word, pos_list in inverted_index.items():
-        for pos in pos_list:
-            positions[pos] = word
-    return " ".join(positions[k] for k in sorted(positions)) if positions else None
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +240,7 @@ def _fetch_openalex_batch(oa_ids: list[str]) -> Optional[dict[str, Optional[str]
             resp.raise_for_status()
             for work in resp.json().get("results", []):
                 wid = work.get("id", "").replace("https://openalex.org/", "").strip()
-                abstract = _reconstruct_abstract(work.get("abstract_inverted_index"))
+                abstract = reconstruct_abstract(work.get("abstract_inverted_index"))
                 input_key = bare_to_input.get(wid)
                 if input_key is not None:
                     result[input_key] = abstract
@@ -590,243 +525,6 @@ def _fetch_scopus_abstract(doi: str, api_key: str) -> tuple[Optional[str], bool]
 
 
 # ---------------------------------------------------------------------------
-# OpenAlex miss recovery (undo the pre-bugfix poisoned checkpoint/cache)
-# ---------------------------------------------------------------------------
-
-def _drop_openalex_misses() -> int:
-    """Drop OpenAlex-phase miss entries from the checkpoint so they re-run.
-
-    A miss is an 'oa:' checkpoint line whose cached abstract is absent or the
-    '__none__' sentinel. Its poisoned cache file is deleted too, so the fixed
-    batch phase actually re-fetches it instead of reading the stale miss. Rows
-    that genuinely recovered an abstract are kept. Returns the number dropped.
-    """
-    if not CHECKPOINT_PATH.exists():
-        return 0
-    lines = [l.strip() for l in CHECKPOINT_PATH.read_text(encoding="utf-8").splitlines() if l.strip()]
-    kept: list[str] = []
-    dropped = 0
-    for line in lines:
-        if line.startswith("oa:"):
-            val = _read_abstract_cache(line)   # checkpoint line == abstract-cache ident
-            if val is None or val == "__none__":
-                p = _cache_path(line)
-                if p.exists():
-                    try:
-                        p.unlink()
-                    except Exception:
-                        pass
-                dropped += 1
-                continue
-        kept.append(line)
-    CHECKPOINT_PATH.write_text(("\n".join(kept) + "\n") if kept else "", encoding="utf-8")
-    return dropped
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-def enrich_abstracts(df: "pd.DataFrame") -> "pd.DataFrame":
-    """Fill missing abstracts in *df* in place using Europe PMC, then CrossRef, then S2.
-
-    Called by run_search._merge_into_candidates_csv before writing new rows so every
-    candidate arrives with the best available abstract. It runs the same phase
-    runners, per-identifier cache and checkpoint as the standalone ``run()`` command,
-    so results are shared across both code paths and neither re-pays for the other's
-    misses. Europe PMC goes first for the same reason it is Phase 2 there: it is the
-    only one of the three that covers the Elsevier/Springer records the others
-    structurally lack, and it needs no API key.
-
-    Scopus is deliberately absent — its weekly quota is worth spending deliberately
-    via ``fetch_abstracts --scopus-priority``, not incidentally during a merge.
-    """
-    def _missing_mask():
-        return df["abstract_r"].fillna("").str.strip() == ""
-
-    if not _missing_mask().any():
-        return df
-    n_missing = int(_missing_mask().sum())
-    log.debug("enrich_abstracts: %d rows have no abstract — trying Europe PMC + CrossRef + S2",
-              n_missing)
-
-    def _fetchable_doi(doi_r) -> str:
-        """Cleaned DOI for a row an abstract could actually exist for, else "".
-
-        A dataset DOI has no abstract anywhere, so asking any source for one only
-        buys a confirmed miss.
-        """
-        doi = clean_doi(str(doi_r or ""))
-        return "" if doi.split("/")[0] in _DATASET_PREFIXES else doi
-
-    def _dois_still_missing() -> list[str]:
-        dois = (_fetchable_doi(v) for v in df.loc[_missing_mask(), "doi_r"])
-        return [d for d in dict.fromkeys(dois) if d]
-
-    def _fill_from_cache(namespace: str) -> int:
-        filled = 0
-        for idx in df.index[_missing_mask()]:
-            doi = _fetchable_doi(df.at[idx, "doi_r"])
-            cached = _read_abstract_cache(f"{namespace}:{doi}") if doi else None
-            if cached and cached != "__none__":
-                df.at[idx, "abstract_r"] = cached
-                filled += 1
-        return filled
-
-    # The found-index sidecar only exists to speed up run()'s cross-phase skip
-    # checks over a 500k-row worklist; here the re-read of df after each phase does
-    # that job, so the runners get a throwaway set.
-    found_index: set[str] = set()
-
-    _run_batch_phase("enrich — Europe PMC", "epmc", _dois_still_missing(),
-                     EPMC_BATCH_SIZE, EPMC_RATE_SEC, _fetch_epmc_batch, found_index)
-    n_found = _fill_from_cache("epmc")
-
-    _run_item_phase("enrich — CrossRef", "doi", _dois_still_missing(), CROSSREF_RATE_SEC,
-                    _fetch_crossref_abstract, found_index, progress_every=2000)
-    n_found += _fill_from_cache("doi")
-
-    if S2_API_KEY:
-        _run_item_phase("enrich — S2", "s2", _dois_still_missing(), S2_RATE_SEC,
-                        lambda d: _fetch_s2_abstract(d, S2_API_KEY), found_index,
-                        progress_every=2000)
-        n_found += _fill_from_cache("s2")
-
-    log.info("enrich_abstracts: recovered %d / %d missing abstracts", n_found, n_missing)
-    return df
-
-
-def _build_worklist(dry_run: bool, limit: Optional[int]):
-    """Stream candidates to a compact worklist of rows still missing an abstract.
-
-    Returns (worklist, total_missing, has_oa, has_doi, n_dataset). The worklist is a
-    list of {"oa": stripped openalex_id_r, "doi_r": raw doi_r} dicts holding ONLY the
-    two identifier fields the phases need — never the full 10-column rows — so ~536k
-    missing rows stay well under a few hundred MB instead of the 4.7 GB whole-file
-    load. Under dry_run the worklist is left empty (counts only). The Parquet mirror
-    (already column-pruned and smaller) is a fast path; the CSV path MUST stream in
-    50k-row chunks to bound memory.
-
-    Rows whose DOI prefix is in _DATASET_PREFIXES are counted in total_missing (they
-    really are missing an abstract) but excluded from the worklist and from
-    has_oa/has_doi, which describe what is actually actionable.
-    """
-    import pandas as pd
-
-    needed = ["abstract_r", "doi_r", "openalex_id_r"]
-    pq_path = _parquet_path("candidates")
-    if pq_path.exists():
-        import pyarrow.parquet as pq
-        log.info("Building worklist from Parquet (streamed in row-group batches): %s", pq_path)
-        # A single pq.read_table(...).to_pandas() materialises every row at once — on
-        # this repo's 2.5 GB / 2.58M-row mirror that is a multi-hundred-MB-to-GB spike
-        # that OOM'd in practice (ArrowMemoryError), defeating the whole point of this
-        # function per its own docstring. iter_batches() yields one row-group (~50k
-        # rows here) at a time, so peak memory matches the CSV chunked path below.
-        chunks = (
-            batch.to_pandas()
-            for batch in pq.ParquetFile(pq_path).iter_batches(batch_size=50_000, columns=needed)
-        )
-    else:
-        log.info("Streaming candidates.csv (50k-row chunks) to build worklist...")
-        chunks = pd.read_csv(
-            CANDIDATES_PATH, dtype=str, encoding="utf-8-sig",
-            low_memory=False, usecols=needed, chunksize=50_000,
-        )
-
-    worklist: list[dict[str, str]] = []
-    total_missing = has_oa = has_doi = n_dataset = 0
-    limit_reached = False
-    for chunk in chunks:
-        chunk = chunk.fillna("")
-        m = chunk[chunk["abstract_r"].str.strip() == ""]
-        if m.empty:
-            continue
-        total_missing += len(m)
-
-        is_dataset = m["doi_r"].str.extract(_DOI_PREFIX_RE, expand=False).isin(_DATASET_PREFIXES)
-        n_dataset += int(is_dataset.sum())
-        m = m[~is_dataset]
-        if m.empty:
-            continue
-
-        oa_col  = m["openalex_id_r"].str.strip()
-        doi_col = m["doi_r"].str.strip()
-        has_oa  += int((oa_col != "").sum())
-        has_doi += int((doi_col != "").sum())
-        if dry_run:
-            continue
-        for oa, doi_r in zip(oa_col.tolist(), m["doi_r"].tolist()):
-            worklist.append({"oa": oa, "doi_r": doi_r})
-            if limit and len(worklist) >= limit:
-                limit_reached = True
-                break
-        if limit_reached:
-            break
-
-    return worklist, total_missing, has_oa, has_doi, n_dataset
-
-
-def _merge_abstracts_into_csv():
-    """Stream candidates.csv → candidates.csv.tmp, filling empty abstract_r cells
-    from the per-identifier cache, then atomically replace the original.
-
-    Reads in 50k-row chunks so the full 4.7 GB file is never held whole. For each
-    row whose abstract_r is empty, the abstract is looked up in the cache
-    (oa → doi → s2 → scopus priority). Column order and the original header are
-    preserved; the header is written utf-8-sig (BOM) on the first chunk and each
-    later chunk is appended utf-8 to avoid a mid-file BOM. Returns (filled,
-    still_missing).
-    """
-    import pandas as pd
-
-    tmp_path = CANDIDATES_PATH.parent / (CANDIDATES_PATH.name + ".tmp")
-    filled = still_missing = 0
-    first = True
-    for chunk in pd.read_csv(
-        CANDIDATES_PATH, dtype=str, encoding="utf-8-sig",
-        low_memory=False, chunksize=50_000,
-    ):
-        chunk = chunk.fillna("")
-        empty_mask = chunk["abstract_r"].str.strip() == ""
-        for idx in chunk.index[empty_mask.values]:
-            abstract = _lookup_cached_abstract(
-                chunk.at[idx, "openalex_id_r"].strip(), chunk.at[idx, "doi_r"]
-            )
-            if abstract is not None:
-                chunk.at[idx, "abstract_r"] = abstract
-                filled += 1
-            else:
-                still_missing += 1
-        chunk.to_csv(
-            tmp_path, index=False,
-            encoding="utf-8-sig" if first else "utf-8",
-            header=first, mode="w" if first else "a",
-        )
-        first = False
-
-    os.replace(tmp_path, CANDIDATES_PATH)
-    return filled, still_missing
-
-
-def _load_scopus_priority(path: Path) -> dict[str, int]:
-    """Map cleaned DOI → rank (file line order) from a priority-DOI file.
-
-    Lines are one DOI each; earlier lines get the Scopus quota first. Blank
-    lines and '#' comments are skipped.
-    """
-    ranks: dict[str, int] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        doi = clean_doi(line)
-        if doi and doi not in ranks:
-            ranks[doi] = len(ranks)
-    return ranks
-
-
-# ---------------------------------------------------------------------------
 # Phase runners — one contract for all five sources
 # ---------------------------------------------------------------------------
 
@@ -958,204 +656,3 @@ def _run_item_phase(label: str, namespace: str, dois: list[str], rate_sec: float
 
     log.info("%s complete. Abstracts found: %d", label, found)
     return found
-
-
-def run(dry_run: bool = False, limit: Optional[int] = None,
-        scopus_limit: int = SCOPUS_DEFAULT_LIMIT,
-        scopus_priority: Optional[Path] = None,
-        skip_openalex: bool = False) -> None:
-
-    if not CANDIDATES_PATH.exists():
-        sys.exit(f"ERROR: {CANDIDATES_PATH} not found.")
-
-    s2_key = S2_API_KEY
-    elsevier_key = ELSEVIER_API_KEY
-
-    # ------------------------------------------------------------------
-    # Build the worklist by streaming — never load the whole file (issue #65)
-    # ------------------------------------------------------------------
-    worklist, total_missing, has_oa, has_doi, n_dataset = _build_worklist(dry_run, limit)
-    log.info("Rows missing abstract: %d", total_missing)
-    if n_dataset:
-        log.info("  dataset DOIs (%s): %d  — no abstract exists, excluded from every phase",
-                 "/".join(sorted(_DATASET_PREFIXES)), n_dataset)
-
-    if dry_run:
-        log.info("  with openalex_id_r: %d  (OpenAlex batch)", has_oa)
-        log.info("  with doi_r:         %d  (Europe PMC / S2 / CrossRef / Scopus)", has_doi)
-        log.info("  no openalex_id_r:   %d", total_missing - n_dataset - has_oa)
-        log.info("DRY RUN — no API calls. Re-run without --dry-run to fetch.")
-        return
-
-    if total_missing == 0:
-        log.info("No rows missing an abstract — nothing to do.")
-        return
-
-    # ------------------------------------------------------------------
-    # Checkpoint — skip already-tried identifiers
-    # ------------------------------------------------------------------
-    done = _load_checkpoint()
-    if done:
-        log.info("Checkpoint: %d identifiers already tried — skipping.", len(done))
-    found_index = _load_found_index()
-    if limit:
-        log.info("--limit %d: processing first %d missing rows.", limit, len(worklist))
-
-    # Recovered abstracts land in the per-identifier cache (the durable store);
-    # the streamed write-back merge below reads them back into candidates.csv.
-    # No in-memory full DataFrame, no periodic full-file flushes.
-    n_found = 0
-
-    # ------------------------------------------------------------------
-    # Phase 1: OpenAlex batch (rows with openalex_id_r)
-    # ------------------------------------------------------------------
-    if skip_openalex:
-        # Rows found here were themselves DISCOVERED via OpenAlex (source =
-        # openalex/openalex_concept), so if OpenAlex never had an abstract at harvest
-        # time it essentially never gains one later — re-asking is asking the same well
-        # twice. Measured 2026-07-27: 0/200 random sample, 0/185,000 in a live run.
-        # --skip-openalex jumps straight to CrossRef/S2/Scopus, independent sources
-        # that can have text OpenAlex lacks. Nothing is stranded by skipping: Phase 2's
-        # target list is every row with a doi_r regardless of Phase 1's outcome (it
-        # checkpoints under a separate oa: namespace) — only oa-only, DOI-less rows
-        # (already near-0% recoverable here) go untried, and a later plain run still
-        # picks up exactly where Phase 1's checkpoint left off.
-        log.info("Phase 1 — OpenAlex batch: skipped (--skip-openalex).")
-    else:
-        n_found += _run_batch_phase(
-            "Phase 1 — OpenAlex batch", "oa",
-            [r["oa"] for r in worklist if r["oa"] and f"oa:{r['oa']}" not in done],
-            OA_BATCH_SIZE, OPENALEX_RATE_SEC, _fetch_openalex_batch, found_index,
-        )
-
-    # ------------------------------------------------------------------
-    # Phase 2: Europe PMC, BATCHED (rows still missing after Phase 1)
-    # ------------------------------------------------------------------
-    # First among the DOI phases, and unconditional — it needs no API key. On 960
-    # never-tried missing-abstract DOIs (2026-07-29) it recovered 47.7% where S2 got
-    # 8.5% and CrossRef 0.3%, because this corpus's gap is dominated by Elsevier and
-    # Springer, who do not deposit abstracts to CrossRef at all. Running it first
-    # leaves the keyed, slower, quota-bound phases a much smaller residual.
-    n_found += _run_batch_phase(
-        "Phase 2 — Europe PMC batch", "epmc",
-        _phase_targets(worklist, "epmc", done, found_index),
-        EPMC_BATCH_SIZE, EPMC_RATE_SEC, _fetch_epmc_batch, found_index,
-    )
-
-    # ------------------------------------------------------------------
-    # Phase 3: Semantic Scholar, BATCHED (rows still missing after Phase 2)
-    # ------------------------------------------------------------------
-    # Ordered ahead of CrossRef: a full production run (2026-07-27/28, 494,406 rows)
-    # measured S2's batch endpoint at ~49.8 DOIs/sec sustained, 14.5% hit rate, vs
-    # CrossRef's one-DOI-at-a-time ~3/sec at ~0.6% on the same corpus. It stays worth
-    # running after Europe PMC because the two overlap only partly — S2 is the only
-    # source that sees SSRN (10.2139), which Europe PMC does not index.
-    if not s2_key:
-        log.info("Phase 3 — S2: skipped (S2_API_KEY not set in .env).")
-    else:
-        n_found += _run_batch_phase(
-            "Phase 3 — Semantic Scholar batch", "s2",
-            _phase_targets(worklist, "s2", done, found_index),
-            S2_BATCH_SIZE, S2_BATCH_RATE_SEC,
-            lambda batch: _fetch_s2_batch(batch, s2_key), found_index,
-        )
-
-    # ------------------------------------------------------------------
-    # Phase 4: CrossRef by DOI (fallback for rows Phases 2-3 didn't resolve)
-    # ------------------------------------------------------------------
-    n_found += _run_item_phase(
-        "Phase 4 — CrossRef", "doi",
-        _phase_targets(worklist, "doi", done, found_index),
-        CROSSREF_RATE_SEC, _fetch_crossref_abstract, found_index,
-        progress_every=2000,
-    )
-
-    # ------------------------------------------------------------------
-    # Phase 5: Elsevier Scopus (fallback for rows still missing a DOI abstract)
-    # ------------------------------------------------------------------
-    if not elsevier_key:
-        log.info("Phase 5 — Scopus: skipped (ELSEVIER_API_KEY not set in .env).")
-    else:
-        scopus_targets = _phase_targets(worklist, "scopus", done, found_index)
-        if scopus_priority is not None:
-            # The weekly quota (~10k) is far smaller than the missing-abstract pool,
-            # so which rows get it matters. DOIs in the priority file (in file order)
-            # are tried first; everything else keeps worklist order after them
-            # (list.sort is stable, so equal-rank rows are not reshuffled).
-            ranks = _load_scopus_priority(scopus_priority)
-            scopus_targets.sort(key=lambda d: ranks.get(d, len(ranks)))
-            log.info("Phase 5 — Scopus priority: %d DOIs in %s, %d matched in queue.",
-                     len(ranks), scopus_priority,
-                     sum(1 for d in scopus_targets if d in ranks))
-        if scopus_limit and scopus_limit > 0:
-            scopus_targets = scopus_targets[:scopus_limit]
-            log.info("Phase 5 — Scopus weekly-quota cap: %s", scopus_limit)
-
-        def _fetch_scopus(doi: str) -> tuple[Optional[str], str]:
-            abstract, quota_exhausted = _fetch_scopus_abstract(doi, elsevier_key)
-            if quota_exhausted:
-                return None, "stop"
-            return (abstract, "ok") if abstract else (None, "empty")
-
-        n_found += _run_item_phase(
-            "Phase 5 — Scopus", "scopus", scopus_targets, SCOPUS_RATE_SEC,
-            _fetch_scopus, found_index, progress_every=500,
-        )
-
-    # ------------------------------------------------------------------
-    # Final write-back: streamed merge cache → candidates.csv, then Parquet mirror
-    # ------------------------------------------------------------------
-    filled, still_missing_final = _merge_abstracts_into_csv()
-    _dc_refresh("candidates")
-
-    log.info("=" * 60)
-    log.info("FETCH ABSTRACTS COMPLETE")
-    log.info("=" * 60)
-    log.info("Abstracts recovered:  %d", n_found)
-    log.info("Rows filled from cache: %d", filled)
-    log.info("Still missing:        %d", still_missing_final)
-    log.info("=" * 60)
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Fetch missing abstracts for candidates.csv. Resumable."
-    )
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Count missing rows by identifier type — no API calls.")
-    parser.add_argument("--limit", type=int, default=None, metavar="N",
-                        help="Process only the first N missing rows (testing).")
-    parser.add_argument("--reset", action="store_true",
-                        help="Clear the checkpoint and start fresh.")
-    parser.add_argument("--retry-openalex-misses", action="store_true",
-                        help="Drop OpenAlex-phase miss entries (and their poisoned "
-                             "cache files) from the checkpoint so the fixed batch "
-                             "phase re-attempts them, then continue the run.")
-    parser.add_argument("--scopus-limit", type=int, default=SCOPUS_DEFAULT_LIMIT, metavar="N",
-                        help="Max Scopus calls this run (weekly quota ~10k; "
-                             f"default {SCOPUS_DEFAULT_LIMIT}). 0 disables the cap.")
-    parser.add_argument("--scopus-priority", type=Path, default=None, metavar="FILE",
-                        help="File of DOIs (one per line, priority order) tried first "
-                             "in the Scopus phase, so the weekly quota goes to the rows "
-                             "that matter most.")
-    parser.add_argument("--skip-openalex", action="store_true",
-                        help="Skip Phase 1 (OpenAlex batch) and go straight to "
-                             "Europe PMC/S2/CrossRef/Scopus. Rows missing an abstract were "
-                             "themselves discovered via OpenAlex, so Phase 1 has near-0%% "
-                             "yield on this corpus (measured) — use this to spend time on "
-                             "the phases that actually find new abstracts. Safe: a later "
-                             "run without this flag resumes Phase 1 from its checkpoint.")
-    args = parser.parse_args()
-
-    if args.reset:
-        if CHECKPOINT_PATH.exists():
-            CHECKPOINT_PATH.unlink()
-            print(f"Checkpoint cleared: {CHECKPOINT_PATH}")
-        sys.exit(0)
-
-    if args.retry_openalex_misses:
-        n = _drop_openalex_misses()
-        print(f"Dropped {n} OpenAlex miss entries from checkpoint — they will be retried.")
-
-    run(dry_run=args.dry_run, limit=args.limit, scopus_limit=args.scopus_limit,
-        scopus_priority=args.scopus_priority, skip_openalex=args.skip_openalex)

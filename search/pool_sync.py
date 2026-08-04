@@ -1,31 +1,14 @@
 """
-Share the Stage A survivor pool through a private Hugging Face dataset repo.
+Share the survivor pool through a private Hugging Face dataset repo.
 
-The pool (``search/snapshot_scan.py``) is what turns a Stage B vocabulary change
-from a 13-21 hour, 725 GB rescan into a local ``--admit-from-pool`` run. It is
+The pool (``search/snapshot_scan.py``) is what turns a Stage 2 rule change
+from a 13-21 hour, 725 GB rescan into a local re-run over the pool. It is
 ~2-3 GB across ~2,446 parquet files — small enough to move, far too big to keep
 in git, and the thing nobody should have to reproduce. This module pushes it to
 a private HF dataset repo once and lets collaborators pull it back:
 
     python -m search.pool_sync --push
-    python -m search.pool_sync --pull                 # then --admit-from-pool
-
-Most collaborators want the CORPUS, not the freedom to re-admit it, and paying 15
-minutes of Stage B plus a 2-3 GB pool download for a result that is identical for
-everyone is waste. So the Stage B pass is done once and its output shared as a
-prebuilt candidates artifact — chunked parquet under ``builds/<build_hash>/`` with
-a manifest naming everything the rows depend on:
-
-    python -m search.pool_sync --build-candidates     # pool  -> build/
-    python -m search.pool_sync --push-build           # build -> builds/<hash>/
-    python -m search.pool_sync --pull-build           # -> merged into candidates.csv
-
-``build_hash`` names the snapshot date, both gate fingerprints, what the ledger
-consumed and the row-builder version, so a build is addressed by exactly what
-produced it. On pull, a build whose Stage B fingerprint or row-builder version
-differs from the local checkout is merged with a loud warning: the rows are then
-someone else's admission decisions, which is precisely what passing a CSV around
-would never have told you.
+    python -m search.pool_sync --pull
 
 Remote layout: the pool is FLAT on disk but SHARDED BY YEAR on the remote, using
 the partition date already in each file name —
@@ -51,31 +34,23 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Callable, Optional, Union
+from typing import Optional, Union
 
 from shared.config import (
-    DATA_DIR,
     FLORA_HF_COMMIT_BATCH,
     FLORA_POOL_REPO,
-    SNAPSHOT_BUILD_DIR,
     SNAPSHOT_POOL_DIR,
     log,
 )
 from search.snapshot_scan import (
-    ROW_BUILDER_VERSION,
-    build_candidates,
     ledger_hash,
     load_ledger,
-    stage_a_fingerprint,
-    stage_b_fingerprint,
+    search_gate_fingerprint,
 )
 
 _REPO_TYPE = "dataset"
 
 _POOL_MANIFEST = "pool_manifest.json"
-_BUILDS_PREFIX = "builds"
-_LATEST_BUILD = f"{_BUILDS_PREFIX}/latest.json"
-_BUILD_MANIFEST = "manifest.json"
 
 # part-<YYYY>-<MM>-<DD>-<stem>.parquet — the name _pool_file_name() builds.
 _POOL_NAME_RE = re.compile(r"^part-(\d{4})-\d{2}-\d{2}-")
@@ -154,7 +129,7 @@ def _require_token(hf) -> str:
 class RemoteReadError(RuntimeError):
     """A remote file could not be read AND its absence was not established.
 
-    The distinction matters at exactly one place — the Stage A gate check in
+    The distinction matters at exactly one place — the search gate check in
     ``push_pool`` — where "there is no manifest" and "I could not read the manifest"
     lead to opposite actions.
     """
@@ -275,7 +250,7 @@ def _read_remote_json(hf, repo_id: str, remote_path: str, token: Optional[str]) 
     A missing file is the normal first-push/first-build case, not an error. Any OTHER
     failure — a 503, a rate limit, a dropped connection, malformed JSON — says nothing
     about what the repo holds, and reading it as "not there" is what would let a
-    transient blip walk a push straight past the Stage A gate check. Those raise.
+    transient blip walk a push straight past the search gate check. Those raise.
     """
     try:
         with tempfile.TemporaryDirectory() as tmp:
@@ -296,15 +271,16 @@ def _read_remote_json(hf, repo_id: str, remote_path: str, token: Optional[str]) 
 def pool_manifest(ledger: Optional[dict] = None) -> dict:
     """What a pushed pool was built from — the sidecar that makes a mixed pool visible.
 
-    Two people scanning under different Stage A gates produce pool files that look
+    Two people scanning under different search gates produce pool files that look
     alike and are not: the rows one gate rejected were never written by either. The
     manifest is how the second push finds out before overwriting the first.
     """
     ledger = load_ledger() if ledger is None else ledger
     files = ledger.get("files", {}) or {}
     return {
-        "stage_a_fingerprint": stage_a_fingerprint(),
-        "stage_b_fingerprint": stage_b_fingerprint(),
+        # Key name frozen: it is the REMOTE format, and pools already pushed under it
+        # must keep comparing equal. The value is search_gate_fingerprint().
+        "stage_a_fingerprint": search_gate_fingerprint(),
         "snapshot_date": ledger.get("snapshot_date", "") or "",
         "ledger_files": len(files),
         "ledger_records": sum(int((e or {}).get("record_count") or 0) for e in files.values()),
@@ -320,7 +296,7 @@ def check_access(repo: Optional[str] = None) -> dict:
     worst possible failure is discovering a bad or read-scoped token after the scan.
     Nothing short of an actual write proves write access — an existing repo answers
     ``create_repo(exist_ok=True)`` happily for a read token — so this commits a tiny
-    ``preflight.json`` naming who checked, when, and under which Stage A gate.
+    ``preflight.json`` naming who checked, when, and under which search gate.
 
     Returns the identity/repo facts it established; raises with instructions otherwise.
     """
@@ -340,7 +316,7 @@ def check_access(repo: Optional[str] = None) -> dict:
         "checked_at": datetime.datetime.now(
             datetime.timezone.utc).isoformat(timespec="seconds"),
         "by": who.get("name", "?"),
-        "stage_a_fingerprint": stage_a_fingerprint(),
+        "stage_a_fingerprint": search_gate_fingerprint(),
     }
     try:
         api.create_repo(repo_id, repo_type=_REPO_TYPE, private=True, exist_ok=True)
@@ -367,7 +343,7 @@ def push_pool(pool_dir: Path, repo: Optional[str] = None, dry_run: bool = False,
     Uploads go up in batched commits (``_upload_batched``), preceded by the
     ``pool_manifest.json`` recording the gate this pool was scanned under.
 
-    A remote manifest naming a DIFFERENT Stage A fingerprint stops the push unless
+    A remote manifest naming a DIFFERENT search-gate fingerprint stops the push unless
     *force*: mixing two gates' survivors gives a pool that is complete under neither,
     and nothing downstream could tell. A manifest that cannot be READ stops it too —
     an unanswered Hub is not an empty repo. Returns the number of files uploaded (or,
@@ -394,7 +370,7 @@ def push_pool(pool_dir: Path, repo: Optional[str] = None, dry_run: bool = False,
     except RemoteReadError as exc:
         raise RuntimeError(
             f"{exc} Until {_POOL_MANIFEST} can be read, this push cannot tell whether "
-            f"{repo_id} already holds a pool scanned under a different Stage A gate, so "
+            f"{repo_id} already holds a pool scanned under a different search gate, so "
             "it refuses rather than risk overwriting one. Re-run the same command; it "
             "resumes.") from exc
     if remote_manifest:
@@ -402,12 +378,12 @@ def push_pool(pool_dir: Path, repo: Optional[str] = None, dry_run: bool = False,
         if theirs and theirs != manifest["stage_a_fingerprint"]:
             if not force:
                 raise RuntimeError(
-                    f"{repo_id} holds a pool scanned under a DIFFERENT Stage A gate "
+                    f"{repo_id} holds a pool scanned under a DIFFERENT search gate "
                     f"(remote {str(theirs)[:12]}, local {manifest['stage_a_fingerprint'][:12]}). "
                     "Pushing would mix two gates' survivors into one pool that is complete "
                     "under neither. Align the gate (_TOKEN_GATE / CONCEPT_IDS), push to a "
                     "different repo, or pass --force if you mean to replace the remote pool.")
-            log.warning("--force: pushing over a pool scanned under a different Stage A gate "
+            log.warning("--force: pushing over a pool scanned under a different search gate "
                         "(remote %s, local %s)", str(theirs)[:12],
                         manifest["stage_a_fingerprint"][:12])
 
@@ -425,7 +401,7 @@ def push_pool(pool_dir: Path, repo: Optional[str] = None, dry_run: bool = False,
     if not dry_run:
         # The manifest goes up FIRST, in its own commit, because it is the CLAIM on
         # this repo. Written last, an interrupted first push leaves a large pool with
-        # no fingerprint at all, and the next push from a different Stage A gate finds
+        # no fingerprint at all, and the next push from a different search gate finds
         # nothing to conflict with and mixes itself in. Manifest-first inverts the
         # failure: what an interruption leaves is a fingerprinted but incomplete pool,
         # which re-running this same command completes and a conflicting gate's push
@@ -445,7 +421,7 @@ def push_pool(pool_dir: Path, repo: Optional[str] = None, dry_run: bool = False,
 
 
 def _warn_on_gate_mismatch(remote_manifest: Optional[dict], repo_id: str) -> None:
-    """Say loudly when the remote pool was scanned under another Stage A gate.
+    """Say loudly when the remote pool was scanned under another search gate.
 
     A warning, not a refusal: pulling someone else's pool is a legitimate thing to
     want (it is the whole point of sharing one). What must never happen is doing it
@@ -456,13 +432,13 @@ def _warn_on_gate_mismatch(remote_manifest: Optional[dict], repo_id: str) -> Non
                  "scanned under.", _POOL_MANIFEST, repo_id)
         return
     theirs = remote_manifest.get("stage_a_fingerprint")
-    if theirs and theirs != stage_a_fingerprint():
+    if theirs and theirs != search_gate_fingerprint():
         log.warning(
-            "The pool in %s was scanned under a DIFFERENT Stage A gate (remote %s, your "
+            "The pool in %s was scanned under a DIFFERENT search gate (remote %s, your "
             "checkout %s). Its files hold the survivors of THEIR _TOKEN_GATE/CONCEPT_IDS, "
             "and the rows their gate rejected are in no pool at all — re-admitting it "
             "locally cannot recover them. Pulling anyway.",
-            repo_id, str(theirs)[:12], stage_a_fingerprint()[:12])
+            repo_id, str(theirs)[:12], search_gate_fingerprint()[:12])
 
 
 def pull_pool(pool_dir: Path, repo: Optional[str] = None,
@@ -500,7 +476,7 @@ def pull_pool(pool_dir: Path, repo: Optional[str] = None,
     except RemoteReadError as exc:
         # A pull writes nothing anyone else depends on, so an unreadable manifest
         # costs provenance, not correctness — say so and carry on.
-        log.warning("%s Pulling without knowing which Stage A gate this pool was "
+        log.warning("%s Pulling without knowing which search gate this pool was "
                     "scanned under.", exc)
         remote_manifest = None
     _warn_on_gate_mismatch(remote_manifest, repo_id)
@@ -525,7 +501,7 @@ def pull_pool(pool_dir: Path, repo: Optional[str] = None,
         except Exception as exc:  # noqa: BLE001 — boundary: turn 401/403 into instructions
             raise RuntimeError(_auth_hint(hf, repo_id, exc)) from exc
         # local_dir reproduces the remote's year folder; the pool itself is flat,
-        # because admit_from_pool globs one directory.
+        # because the pool row builder globs one directory.
         got_path = Path(got)
         if got_path.resolve() != local.resolve():
             shutil.move(str(got_path), str(local))
@@ -542,180 +518,13 @@ def pull_pool(pool_dir: Path, repo: Optional[str] = None,
     return downloaded
 
 
-# ---------------------------------------------------------------------------
-# Prebuilt candidates artifact
-# ---------------------------------------------------------------------------
-
-
-def _read_build_manifest(build_dir: Path) -> dict:
-    path = build_dir / _BUILD_MANIFEST
-    if not path.exists():
-        raise ValueError(f"No {_BUILD_MANIFEST} under {build_dir} — build the artifact first "
-                         "with `python -m search.pool_sync --build-candidates`.")
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
-
-
-def push_build(build_dir: Path, repo: Optional[str] = None, dry_run: bool = False) -> int:
-    """Upload a built candidates artifact to ``builds/<build_hash>/`` and point latest at it.
-
-    Builds are addressed by content hash, so a push never overwrites a build that
-    describes different rows; ``builds/latest.json`` is the only mutable name, and it
-    is what ``pull_build`` follows when no hash is given. Returns files uploaded.
-    """
-    import huggingface_hub as hf  # pipeline-only: read-only deployments never install it
-
-    repo_id = _resolve_repo(repo)
-    token = _require_token(hf)
-    manifest = _read_build_manifest(build_dir)
-    build = manifest["build_hash"]
-    chunks = sorted(build_dir.glob("candidates-*.parquet"))
-    if not chunks:
-        raise ValueError(f"No candidates-*.parquet under {build_dir}")
-
-    api = hf.HfApi(token=token)
-    if not dry_run:
-        try:
-            api.create_repo(repo_id, repo_type=_REPO_TYPE, private=True, exist_ok=True)
-        except Exception as exc:  # noqa: BLE001 — boundary: turn 401/403 into instructions
-            raise RuntimeError(_auth_hint(hf, repo_id, exc)) from exc
-
-    remote = _remote_sizes(api, repo_id)
-    prefix = f"{_BUILDS_PREFIX}/{build}"
-    uploads: list[tuple[str, Union[Path, bytes]]] = [
-        (f"{prefix}/{path.name}", path) for path in chunks
-        if remote.get(f"{prefix}/{path.name}") != path.stat().st_size]
-    uploaded = len(uploads)
-
-    if not dry_run:
-        uploads.append((f"{prefix}/{_BUILD_MANIFEST}",
-                        json.dumps(manifest, indent=1).encode("utf-8")))
-        latest = {"build_hash": build, "path": prefix,
-                  "created_at": manifest.get("created_at", ""),
-                  "rows": manifest.get("rows", 0),
-                  "snapshot_date": manifest.get("snapshot_date", "")}
-        uploads.append((_LATEST_BUILD, json.dumps(latest, indent=1).encode("utf-8")))
-        _upload_batched(api, hf, repo_id, uploads, "Build push")
-
-    log.info("Build push%s: %d chunk(s) uploaded, %d already present -> %s/%s",
-             " (dry run)" if dry_run else "", uploaded, len(chunks) - uploaded,
-             repo_id, prefix)
-    return uploaded
-
-
-def _warn_on_admission_mismatch(manifest: dict) -> None:
-    """Say loudly when a build was admitted under rules this checkout does not have.
-
-    This check is what makes a shared build safer than passing a CSV around: a CSV
-    says nothing about the vocabulary that produced it, whereas a build carries the
-    Stage B fingerprint and row-builder version it was made with, and merging one
-    into your candidates.csv is merging someone else's admission decisions.
-    """
-    if manifest.get("stage_b_fingerprint") not in (None, stage_b_fingerprint()):
-        log.warning(
-            "This corpus was ADMITTED UNDER DIFFERENT RULES than your checkout: build "
-            "Stage B %s, yours %s. The rows you are about to merge are what THEIR "
-            "REPLICATION_PHRASES/admission rule kept. Re-run `--admit-from-pool` over the "
-            "pool if you need your own vocabulary applied.",
-            str(manifest.get("stage_b_fingerprint"))[:12], stage_b_fingerprint()[:12])
-    if manifest.get("row_builder_version") not in (None, ROW_BUILDER_VERSION):
-        log.warning(
-            "This corpus was BUILT BY A DIFFERENT ROW BUILDER than your checkout: build "
-            "%s, yours %s. Column shapes or values may differ from what your code would "
-            "produce for the same works.",
-            manifest.get("row_builder_version"), ROW_BUILDER_VERSION)
-
-
-def pull_build(build_dir: Path, repo: Optional[str] = None, build_hash: Optional[str] = None,
-               dry_run: bool = False, merge_fn: Optional[Callable] = None) -> int:
-    """Download a prebuilt candidates artifact and merge it into candidates.csv.
-
-    The routine path for a collaborator who wants the corpus rather than the freedom
-    to re-admit it: minutes of download instead of a pool pull plus a local Stage B
-    pass. Rows go into ``data/candidates.csv`` through
-    ``_merge_into_candidates_csv(enrich=False)``, so dedup and the candidates index
-    stay exactly as correct as any other Stage 1 source. Returns rows merged.
-    """
-    import huggingface_hub as hf  # pipeline-only: read-only deployments never install it
-
-    repo_id = _resolve_repo(repo)
-    token = _require_token(hf)
-
-    if not build_hash:
-        latest = _read_remote_json(hf, repo_id, _LATEST_BUILD, token)
-        if not latest or not latest.get("build_hash"):
-            raise ValueError(
-                f"Could not read {_LATEST_BUILD} from {repo_id} — either nobody has pushed "
-                "a prebuilt corpus yet, or HF_TOKEN cannot read this private repo. Pull the "
-                "survivor pool instead (--pull, then "
-                "`python -m search.run_search --admit-from-pool`).")
-        build_hash = latest["build_hash"]
-
-    prefix = f"{_BUILDS_PREFIX}/{build_hash}"
-    manifest = _read_remote_json(hf, repo_id, f"{prefix}/{_BUILD_MANIFEST}", token)
-    if not manifest:
-        raise ValueError(f"No build {build_hash} in {repo_id} (expected {prefix}/"
-                         f"{_BUILD_MANIFEST}).")
-    _warn_on_admission_mismatch(manifest)
-
-    chunks = [c["name"] for c in manifest.get("chunks", [])]
-    if not chunks:
-        raise ValueError(f"Build {build_hash} in {repo_id} lists no chunks.")
-
-    log.info("Build %s: %d chunk(s), %s row(s), built %s from snapshot %s",
-             build_hash[:12], len(chunks), f"{manifest.get('rows', 0):,}",
-             manifest.get("created_at", "?"), manifest.get("snapshot_date", "?"))
-    if dry_run:
-        log.info("Build pull (dry run): nothing downloaded, nothing merged")
-        return 0
-
-    if merge_fn is None:
-        from search.run_search import _merge_into_candidates_csv as merge_fn
-    import pandas as pd  # noqa: PLC0415 — deferred with the rest of the merge path
-
-    build_dir = build_dir / build_hash
-    build_dir.mkdir(parents=True, exist_ok=True)
-    with open(build_dir / _BUILD_MANIFEST, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=1)
-
-    candidates_path = DATA_DIR / "candidates.csv"
-    merged = 0
-    for i, name in enumerate(chunks, 1):
-        try:
-            got = hf.hf_hub_download(repo_id=repo_id, filename=f"{prefix}/{name}",
-                                     repo_type=_REPO_TYPE, token=token,
-                                     local_dir=str(build_dir))
-        except Exception as exc:  # noqa: BLE001 — boundary: turn 401/403 into instructions
-            raise RuntimeError(_auth_hint(hf, repo_id, exc)) from exc
-        # local_dir reproduces the remote's builds/<hash>/ folder; keep the build flat.
-        local = build_dir / name
-        if Path(got).resolve() != local.resolve():
-            shutil.move(str(got), str(local))
-        df = pd.read_parquet(local)
-        merged += int(merge_fn(df, candidates_path, enrich=False) or 0)
-        log.info("Build pull %d/%d  %s  %d row(s), merged so far %d",
-                 i, len(chunks), name, len(df), merged)
-
-    print(f"\n=== Prebuilt candidates ({repo_id} {build_hash[:12]}) ===")
-    print(f"  chunks downloaded                     {len(chunks)}")
-    print(f"  rows in the build                     {manifest.get('rows', 0):,}")
-    print(f"  merged into candidates.csv            {merged:,}")
-    print(f"  build Stage B / row builder           {str(manifest.get('stage_b_fingerprint'))[:12]}"
-          f" / {manifest.get('row_builder_version')}")
-    print(f"  yours                                 {stage_b_fingerprint()[:12]}"
-          f" / {ROW_BUILDER_VERSION}\n")
-    return merged
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Share the Stage 1 snapshot artifacts through a private Hugging Face "
-            "dataset repo. --push/--pull move the Stage A survivor pool (year-sharded "
-            "remotely, flat locally) so a collaborator can run --admit-from-pool "
-            "without repeating the 13-21 hour scan; --build-candidates/--push-build/"
-            "--pull-build share the ADMITTED corpus itself, so the routine collaborator "
-            "pays neither the scan nor the local Stage B pass."),
+            "dataset repo. --push/--pull move the survivor pool (year-sharded "
+            "remotely, flat locally) so a collaborator can work over the pool "
+            "without repeating the 13-21 hour scan."),
         epilog=(
             "Repo id: --repo, else FLORA_POOL_REPO from .env. Token: HF_TOKEN from .env "
             f"(the repo is private). Default pool dir: {SNAPSHOT_POOL_DIR} "
@@ -726,27 +535,14 @@ def main() -> None:
                            help="Upload the local pool to the dataset repo.")
     direction.add_argument("--pull", action="store_true",
                            help="Download the pool from the dataset repo.")
-    direction.add_argument("--build-candidates", action="store_true",
-                           help="Run the current Stage B over the local pool and write a "
-                                "chunked, hashed candidates artifact to --build-dir.")
-    direction.add_argument("--push-build", action="store_true",
-                           help="Upload the artifact in --build-dir to builds/<hash>/ "
-                                "and point builds/latest.json at it.")
     direction.add_argument("--check-access", action="store_true",
                            help="Prove this machine can write to the dataset repo (commits a "
                                 "small preflight.json). Run BEFORE a long scan.")
-    direction.add_argument("--pull-build", action="store_true",
-                           help="Download a prebuilt corpus (latest, or --build-hash) and "
-                                "merge it into data/candidates.csv.")
     parser.add_argument("--pool-dir", metavar="PATH", default=None,
                         help=f"Local pool directory (default: {SNAPSHOT_POOL_DIR}).")
-    parser.add_argument("--build-dir", metavar="PATH", default=None,
-                        help=f"Local build directory (default: {SNAPSHOT_BUILD_DIR}).")
-    parser.add_argument("--build-hash", metavar="HASH", default=None,
-                        help="--pull-build only: a specific build instead of the latest.")
     parser.add_argument("--force", action="store_true",
                         help="--push only: push even though the remote pool was scanned "
-                             "under a different Stage A gate.")
+                             "under a different search gate.")
     parser.add_argument("--repo", metavar="ID", default=None,
                         help="Hugging Face dataset repo, e.g. my-org/flora-survivor-pool "
                              "(default: FLORA_POOL_REPO).")
@@ -758,12 +554,9 @@ def main() -> None:
     args = parser.parse_args()
 
     pool_dir = Path(args.pool_dir) if args.pool_dir else SNAPSHOT_POOL_DIR
-    build_dir = Path(args.build_dir) if args.build_dir else SNAPSHOT_BUILD_DIR
     years = parse_years(args.years) if args.years else None
     if years is not None and not args.pull:
         parser.error("--years applies to --pull only")
-    if args.build_hash and not args.pull_build:
-        parser.error("--build-hash applies to --pull-build only")
     if args.force and not args.push:
         parser.error("--force applies to --push only")
 
@@ -773,20 +566,9 @@ def main() -> None:
     elif args.push:
         n = push_pool(pool_dir, repo=args.repo, dry_run=args.dry_run, force=args.force)
         print(f"{'Would upload' if args.dry_run else 'Uploaded'} {n} pool file(s)")
-    elif args.pull:
+    else:
         n = pull_pool(pool_dir, repo=args.repo, years=years, dry_run=args.dry_run)
         print(f"{'Would download' if args.dry_run else 'Downloaded'} {n} pool file(s)")
-    elif args.build_candidates:
-        manifest = build_candidates(pool_dir, build_dir)
-        print(f"Built {manifest['rows']:,} row(s) in {len(manifest['chunks'])} chunk(s) "
-              f"at {build_dir} (build {manifest['build_hash'][:12]})")
-    elif args.push_build:
-        n = push_build(build_dir, repo=args.repo, dry_run=args.dry_run)
-        print(f"{'Would upload' if args.dry_run else 'Uploaded'} {n} build chunk(s)")
-    else:
-        n = pull_build(build_dir, repo=args.repo, build_hash=args.build_hash,
-                       dry_run=args.dry_run)
-        print(f"Merged {n:,} row(s) into candidates.csv")
 
 
 if __name__ == "__main__":

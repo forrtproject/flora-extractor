@@ -1,0 +1,27 @@
+{
+  "id": "not-a-study-type",
+  "description": "Registry work types for objects that are affirmatively not studies AND would have text if they were — a grant record, a peer review, a paratext, a library guide, a standard. The remainder of the old `_NON_ARTICLE_TYPES` list after the typeless-object types moved to not-a-report-type. The only thing standing between one of these rows and deletion is a metadata crosswalk, which can simply be wrong about a real paper. EXCLUDE-ONLY, never a require — `type` coverage is incomplete and inconsistent across CrossRef and OpenAlex, so an allow-list of good types would silently drop real replications. `letter` stays out of this list and out of not-a-report-type (maintainer ruling): major journals publish short replication reports as letters, and a letter has an abstract. `other` (the registries' catch-all, which includes ordinary articles), `data-paper` and `software-paper` (papers ABOUT data) are deliberately absent, as are `editorial` and `erratum` — adding those would be a decision, not a cleanup.",
+  "match": {
+    "fields": {
+      "type": [
+        "grant",
+        "libguides",
+        "paratext",
+        "peer-review",
+        "standard"
+      ]
+    }
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 500,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "trusted",
+      "date": "2026-08-04",
+      "owner": "flora-extractor",
+      "rationale": "Carried from the retired `non-article-type` spec. Structural: every type on this list is a registry work type for an object that is affirmatively not a study. The list is exclude-only, never a require, because `type` coverage is incomplete and inconsistent across CrossRef and OpenAlex. What the claim rests on is the registry vocabulary rather than a sampled rate — but the crosswalk is fallible in a way arms at 940+ are not, which is why admission at 700 outranks this rule and why proposal SS7/V1 puts it LAST in the audit order, as the discard whose failure mode is a wrong crosswalk. The hand-check of 50 provisionally-linked rows that found 23 non-studies (Dataverse/Zenodo/Mendeley deposits, eLife 'Author response' objects, each carrying a giveaway type) measured the RECALL of the type signal among known non-studies, not the precision of this discard, so it is recorded as motivation rather than as the evidence that licenses it."
+    }
+  ]
+}

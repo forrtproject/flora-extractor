@@ -1,0 +1,43 @@
+{
+  "id": "reproduction-signal",
+  "description": "WEAK ADMISSION, reproduction side: the counterpart of replication-signal in the other vocabulary, and the whole of the reproduction book until #155 replaces it. Anchored on purpose — a bare \"reproduction of\" matches animal breeding, social reproduction and epidemiological R₀ far more often than a reproduction study (8% precision over 15,440 corpus rows; 0 of 15 sampled bare hits were our sense, #137) — while these ten forms cost nothing and score better on the curated reproduction list. Patterns unchanged from v1, where the rule carried the id `phrase-reproduction`; renamed in the v2 rewrite so the bundle names rules by what they do (claim · signal · probe) rather than by how v1 implemented them. Shadow until its per-arm counts on the real pool exist: the #137 evidence sizes only the anchored-`of` arms, and the re-analysis and reproduce-the-results arms fire on ordinary scientific prose at volumes nothing has yet measured.",
+  "match": {
+    "any_of": [
+      {
+        "text_regex": "\\breproductions? of ['\\\"“‘]"
+      },
+      {
+        "text_regex": "\\breproductions? of\\s+(?:the\\s+)?(?:(?:original|published|reported|previous|prior|main|key|core)\\s+)?(?:results?|findings?|analys[ei]s|estimates?|figures?|tables?|stud(?:y|ies)|experiments?|data)\\b"
+      },
+      {
+        "text_regex": "\\bcomput\\w*\\s+reproduc\\w+\\b"
+      },
+      {
+        "text_regex": "\\brobustness\\s+(?:replicabilit\\w+|reproducibilit\\w+|replication)\\b"
+      },
+      {
+        "text_regex": "\\breproduc\\w+\\s+(?:and|&)\\s+(?:replicat|extend|extension)\\w*\\b"
+      },
+      {
+        "text_regex": "\\bre-?analy[sz](?:is|es|ed|ing|e)\\s+of\\b"
+      },
+      {
+        "text_regex": "\\bre-?analyz\\w+\\b"
+      },
+      {
+        "text_regex": "\\breproduc(?:e|es|ed|ing)\\s+(?:\\w+ly\\s+)?(?:the\\s+)?(?:original|published|reported|previous|prior|main|key|core|their|these|authors'?)?\\s*(?:results?|findings?|estimates?|figures?|tables?|analys[ei]s)\\b"
+      },
+      {
+        "text_regex": "\\b(?:fail\\w*|unable|inabilit\\w+|attempt\\w*|sought|seek\\w*|aim\\w*|tr(?:y|ies|ied|ying))\\s+to\\s+reproduce\\b"
+      },
+      {
+        "text_regex": "\\bwe\\s+(?:\\w+ly\\s+)?reproduced?\\b"
+      }
+    ]
+  },
+  "pile": "screen_cheap",
+  "vocabulary": "reproduction",
+  "precedence": 262,
+  "shadow": true,
+  "measured": []
+}

@@ -35,9 +35,10 @@ POLICY_FILES = ("conventions.json",)
 PILES = ("discard", "screen_expensive", "screen_cheap", "needs_human")
 VOCABULARIES = ("replication", "reproduction")
 
-# `heuristic` is deliberately absent: it records a guess, and a guess may not
-# discard autonomously (see CONVENTIONS.md). A heuristic-only discard must be
-# shadow.
+# Evidence levels that may discard a row on their own. `heuristic` is
+# deliberately absent: it records a guess, and a guess may not discard
+# autonomously (see CONVENTIONS.md) — a heuristic-only discard must be shadow.
+# `llm:<model>` counts as autonomous too, which `_is_autonomous()` adds.
 AUTONOMOUS_LEVELS = ("human", "downstream", "trusted")
 
 _SPEC_KEYS = frozenset({"id", "description", "match", "pile", "vocabulary",
@@ -51,12 +52,15 @@ _FIELD_KEYS = frozenset({"type", "publication_year", "concept_ids"})
 _MEASURED_KEYS = frozenset({"level", "precision", "n", "sample", "date",
                             "owner", "rationale"})
 
-# Loader-only extension. `filter/phrase_detection.py` still evaluates these two
-# patterns with Python `re`, where the original lookaround semantics survive; the
-# vectorized engine evaluates the RE2 decomposition next to it. Legal ONLY on a
-# match block that is actually decomposed (any_of/all_of/none_of non-empty), and
-# only at the top level of `match` — a flat spec that needs a `pyre_regex` is a
-# spec whose RE2 rewrite was never done.
+# Loader-only extension: a record, not a second evaluation. Two exclusion
+# patterns were originally written with a lookaround that RE2 forbids; the spec
+# carries the RE2 decomposition the engine actually runs, and `pyre_regex`
+# preserves the faithful original next to it so the decomposition's widening can
+# be read off the pair. Nothing evaluates it — `filter/phrase_detection.py`, the
+# last reader, is now the search vocabulary only. Legal ONLY on a match block
+# that is actually decomposed (any_of/all_of/none_of non-empty), and only at the
+# top level of `match` — a flat spec that needs a `pyre_regex` is a spec whose
+# RE2 rewrite was never done.
 PYRE_REGEX_KEY = "pyre_regex"
 
 
@@ -272,10 +276,14 @@ def _validate_measured(entries: Any, path: str, errors: list[str]) -> None:
             errors.append(f"{here}.rationale: required")
 
 
+def _is_autonomous(level: str) -> bool:
+    """True when *level* is evidence strong enough to discard without shadow."""
+    return level in AUTONOMOUS_LEVELS or (
+        level.startswith("llm:") and bool(level[4:].strip()))
+
+
 def _level_ok(level: str) -> bool:
-    if level.startswith("llm:"):
-        return bool(level[4:].strip())
-    return level in ("human", "downstream", "heuristic", "trusted")
+    return _is_autonomous(level) or level == "heuristic"
 
 
 def validate_spec(raw: dict) -> list[str]:
@@ -323,8 +331,8 @@ def validate_spec(raw: dict) -> list[str]:
         if not isinstance(measured, list) or not measured:
             errors.append(f"{label}: a discard spec needs a measured entry "
                           "or shadow: true")
-        elif all(isinstance(e, dict) and e.get("level") == "heuristic"
-                 for e in measured):
+        elif not any(isinstance(e, dict) and isinstance(e.get("level"), str)
+                     and _is_autonomous(e["level"]) for e in measured):
             errors.append(f"{label}: heuristic evidence may not discard "
                           "autonomously — measure it or set shadow: true")
     return errors

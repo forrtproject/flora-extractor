@@ -21,7 +21,13 @@ insert fails with a PostgREST "column does not exist" error; nothing is written 
 nothing is corrupted.
 
 Usage:
-    python -m extract.csv_to_db --input data/extracted.csv
+    python -m extract.csv_to_db --input data/extracted.csv [--release-id <id>]
+
+Engine lineage is LINKED, not copied. `extracted.csv` carries none of
+ENGINE_EXPORT_COLS, so this script writes `record_metadata.work_id` (the int64
+OpenAlex id) and everything the engine knows about the row — pile, winning rule,
+release — is recovered by joining that against the routing store. `--release-id`
+optionally stamps the handoff's release; see docs/supabase-schema.md.
 
 Required environment variables:
     SUPABASE_URL         — https://<project>.supabase.co
@@ -176,7 +182,8 @@ def _work_id_or_none(val) -> "int | None":
         return None
 
 
-def _build_metadata_row(record_id: str, row: pd.Series) -> dict:
+def _build_metadata_row(record_id: str, row: pd.Series,
+                        release_id: "str | None" = None) -> dict:
     return {
         "record_id":                  record_id,
         "pair_id":                    _s(row.get("pair_id")),
@@ -200,12 +207,26 @@ def _build_metadata_row(record_id: str, row: pd.Series) -> dict:
         "authors_o":                  _s(row.get("authors_o")),
         "journal_r":                  _s(row.get("journal_r")),
         "openalex_id_r":              _s(row.get("openalex_id_r")),
-        # Lineage (#146 M5): the engine identity and the routing release this row
-        # was sent under. `release_id` is a column engine handoff rows carry and
-        # legacy extracted.csv rows do not — absent means null, not empty string,
-        # because "no release" is what reconciliation must be able to see.
+        # Lineage (#146 M5). `work_id` is the durable half and the one
+        # reconciliation actually keys on: it is derived here from
+        # `openalex_id_r`, a column every extracted row carries.
+        #
+        # `release_id` is NOT read from the row. `EXTRACTED_COLS` is
+        # `["pair_id"] + FILTERED_COLS + EXTRACT_ADDED_COLS` and deliberately
+        # excludes `ENGINE_EXPORT_COLS`, so `extracted.csv` has no `release_id`
+        # column and never will — the engine's provenance is linked, not copied
+        # forward stage by stage. Reading `row.get("release_id")` here therefore
+        # only ever produced None while looking like it read data.
+        #
+        # The release is a property of the HANDOFF, not of an individual row:
+        # every row in one Stage 3 run came through one `filter.engine handoff`,
+        # whose `data/filtered.csv.manifest.json` names its `release_id`. Pass it
+        # with `--release-id` to stamp it; without it the column is null and the
+        # release is still recoverable after the fact by joining
+        # `record_metadata.work_id` against the engine's routing state — see
+        # docs/supabase-schema.md.
         "work_id":                    _work_id_or_none(row.get("openalex_id_r")),
-        "release_id":                 _s(row.get("release_id")) or None,
+        "release_id":                 release_id or None,
         "oa_work_id_r":               _s(row.get("oa_work_id_r")),
         "oa_work_id_o":               _s(row.get("oa_work_id_o")),
         "source":                     _s(row.get("source")),
@@ -253,7 +274,8 @@ def _load_existing_pair_ids(client: Client) -> set[str]:
 
 def run_import(csv_path: Path, dry_run: bool = False,
                audit_report: "Path | None" = None,
-               skip_flora: bool = True) -> None:
+               skip_flora: bool = True,
+               release_id: "str | None" = None) -> None:
     supabase_url = os.environ.get("SUPABASE_URL", "")
     supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
     if not supabase_url or not supabase_key:
@@ -344,7 +366,7 @@ def run_import(csv_path: Path, dry_run: bool = False,
         record_id = str(uuid.uuid4())
 
         unvalidated_row = _build_unvalidated_row(record_id, row)
-        metadata_row    = _build_metadata_row(record_id, row)
+        metadata_row    = _build_metadata_row(record_id, row, release_id)
         queue_rows      = _build_queue_rows(record_id)
 
         # These three inserts are not atomic. record_metadata is the dedup anchor
@@ -384,10 +406,18 @@ if __name__ == "__main__":
              "+ every row in flora.csv). ON by default; pass --no-skip-flora to "
              "import them anyway.",
     )
+    parser.add_argument(
+        "--release-id", default=None,
+        help="Routing release these rows were handed off under, stamped into "
+             "record_metadata.release_id. Read it from the `release_id` field of "
+             "data/filtered.csv.manifest.json (written by `filter.engine handoff`). "
+             "Omit for rows that did not come through the engine; work_id lineage "
+             "is written either way.",
+    )
     args = parser.parse_args()
 
     if not args.input.exists():
         raise FileNotFoundError(f"Input file not found: {args.input}")
 
     run_import(args.input, dry_run=args.dry_run, audit_report=args.audit_report,
-               skip_flora=args.skip_flora)
+               skip_flora=args.skip_flora, release_id=args.release_id)

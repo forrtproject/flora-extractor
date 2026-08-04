@@ -8,12 +8,11 @@ The monitoring dashboard lives at `http://localhost:5001/dashboard` (start with 
 
 | Tab | Stage | Data source |
 | --- | ----- | ----------- |
-| Search | Stage 1 | `data/candidates.csv` |
+| Search | Stage 1 | The survivor pool (`cache/snapshot_pool/`) + `data/dashboard/stats.json` |
 | Filter | Stage 2 | `data/filtered.csv` |
 | Extract | Stage 3 | `data/extracted.csv` |
 | Extract-Test | Stage 3 sandbox | `data/extracted-test.csv` |
 | Supabase | Stage 4 | Live Supabase API |
-| Old Pipeline | Analysis | `analysis/` output files |
 
 Stats are served via a 3-tier cascade (fastest to slowest):
 
@@ -27,22 +26,42 @@ See [parquet-cache.md](parquet-cache.md) for how the cache is generated and refr
 
 ## Search Tab (Stage 1)
 
+Stage 1's artifact is the **survivor pool**, a parquet dataset, not a CSV — so this
+tab reads the pool directly and has nothing to download.
+
 ### Search — stats
 
-| Card | What it shows | Clickable? |
-| ---- | ------------- | ---------- |
-| Total Candidates ↓ | Total rows in `candidates.csv` | Yes — downloads full file |
-| No DOI ↓ | Rows where `doi_r` is blank | Yes — downloads subset |
-| No DOI or URL ↓ | Rows where both `doi_r` and `url_r` are blank | Yes — downloads subset |
-| No Abstract ↓ | Rows where `abstract_r` is blank | Yes — downloads subset |
+| Card | What it shows | Source |
+| ---- | ------------- | ------ |
+| Survivors in Pool | Rows across all pool partitions | Parquet footers, read live |
+| Partitions | Pool files on disk (one per snapshot partition) | Live |
+| Pool on Disk | Total bytes of the pool | Live |
+| No DOI | Survivors with a blank or null `doi` | `stats.json` |
 
-All download cards call `/api/check/download?stage=candidates&…` and write the file to `data/dashboard/download/`.
+**Why the gate kept the row** — counts of the three `hit_*` booleans
+(`hit_token_title`, `hit_token_abstract`, `hit_concept`). A row can hit several arms,
+so these sum to more than the survivor count.
 
-**Source Breakdown** — count per discovery source (`openalex`, `semantic_scholar`, `engine`, …). Each row is a download link for that source's rows.
+**Survivors by Publication Year** — from the pool's `publication_year` column.
+
+The first three cards are cheap (parquet footers only) and are read on every request
+from whichever machine serves the dashboard. The last card and both breakdowns read
+columns off every partition, which is a refresh-time cost, so they are served from
+`data/dashboard/stats.json` — written by `dashboard_cache.refresh("pool")` on the
+machine that holds the pool.
+
+**When there is no pool.** The pool is several GB and gitignored, so a fresh checkout
+has none. The tab then shows an explicit "Survivor pool not available here" panel
+naming the directory it looked in and how to get one
+(`python -m search.pool_sync --pull`), and every card reads `—`. It never renders a
+zero, which would read as "the search found nothing".
 
 ### Search — docs panel
 
-Left panel covers: what Stage 1 does, all 3 sources, all 9 CLI flags, 5-pass deduplication logic, inclusion keywords (23 phrases), exclusion keywords applied by Stage 2, and all `candidates.csv` columns with examples.
+Left panel covers: what Stage 1 does, the two arms of the search gate, the CLI flags,
+how to pull the pool instead of scanning, and the pool's columns. It is hand-written
+copy, not generated from the code — where it disagrees with
+`search/run_search.py --help` or `_POOL_SCHEMA`, those win.
 
 ---
 
@@ -70,7 +89,23 @@ Left panel covers: what Stage 1 does, all 3 sources, all 9 CLI flags, 5-pass ded
 
 ### Filter — docs panel
 
-Covers: how Stage 2 works, full decision logic table (rule → LLM flow), the exact LLM prompt text, all 6 CLI flags, and all 14 `filtered.csv` columns (10 inherited + 4 added) with section dividers.
+The left panel explains what Stage 2 does and annotates the `filtered.csv` columns.
+
+**Stale panel copy.** The text still describes the pre-#152 Stage 2 — a per-row rule
+classifier with an LLM escalation, its prompt reproduced inline, and its CLI flags.
+None of that exists: Stage 2 is now the declarative filter engine
+(`python -m filter.engine …`), where rules route and discard and only LLM tiers admit.
+Read [filter-engine.md](filter-engine.md) and [cli-reference.md](cli-reference.md)
+instead, and treat the panel's Stage 2 prose as historical until it is rewritten.
+
+The column annotations are likewise a copy: `ENGINE_EXPORTED_COLS` in
+`shared/schema.py` is the actual set the handoff writes, and
+[csv-schema.md](csv-schema.md) is the maintained reference.
+
+The `false_positive` card counts rows that carry that status. Note that
+`filter.engine handoff` never writes one — `false_positive` is the `discard` pile's
+status and the handoff ships only the two screen piles — so on a file produced by the
+current engine that card reads zero.
 
 ---
 
@@ -119,12 +154,6 @@ Requires `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` in `.env`. Shows a configurat
 | Agreement | % of queue assignments completed |
 
 Also shows: validation progress bar, Correction Frequency bar chart (type / original DOI / outcome), Validated Outcomes donut, and a paginated Drilldown table filterable by outcome and field.
-
----
-
-## Old Pipeline Tab (Analysis)
-
-Shows gap analysis comparing `extracted.csv` against the FLoRA entry sheet. Run `python -m analysis.run_overlap_analysis` to generate the input data first.
 
 ---
 

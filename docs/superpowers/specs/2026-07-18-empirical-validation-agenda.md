@@ -1,5 +1,14 @@
 # Empirical Validation Agenda — Stages 1–3 (#52, #43, #44)
 
+> **Status note, 2026-08-04 — needs re-scoping before use.** PR #152 replaced Stage 2
+> with the filter engine, and two items below no longer describe anything that exists:
+> **G2** is defined over a `rule_filter` artifact (`filter_evidence='no replication
+> phrase detected'`), a column value the engine never writes — the equivalent
+> population is now a pile in a routing release and has to be re-specified against it;
+> and **§3.3** (targeted readmission of exclusion misfires) has shipped as the
+> `exclusion-rescue` and `title-phrase-rescue` specs in `filter/spec/`. The Stage 1 and
+> Stage 3 measurements are unaffected.
+
 **Status:** planned (no pipeline code changes yet)
 **Owners:** TBD (needs a labeller for the gold sets)
 **Tracks issues:** #52 (agenda), #43 (parse scoring), #44 (Stage-2 recall)

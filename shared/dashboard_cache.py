@@ -5,11 +5,18 @@ Each pipeline runner calls refresh(stage) at the end of its run (and in its
 finally block so partial progress is saved on Ctrl-C).  The dashboard API
 endpoints check for Parquet / stats.json before falling back to CSV reads.
 
+Stage 1's artifact is the survivor pool (``SNAPSHOT_POOL_DIR``), not a CSV: it is
+a directory of parquet partitions written by the snapshot scan, so it has no
+Parquet mirror and its stats are read from the pool itself. It is also several GB
+and gitignored, which means a checkout without it is normal — every pool function
+returns None rather than raising so the dashboard can say "not available here".
+
 Public API
 ----------
   write_parquet(stage)   read stage CSV → write data/dashboard/{stage}.parquet
-  update_stats(stage)    recompute counts from Parquet → update stats.json
+  update_stats(stage)    recompute counts → update stats.json
   refresh(stage)         write_parquet + update_stats (normal call site)
+  pool_totals()          cheap survivor-pool row/file/byte counts (footers only)
 """
 from __future__ import annotations
 
@@ -24,7 +31,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from shared.config import DATA_DIR
+from shared.config import DATA_DIR, SNAPSHOT_POOL_DIR
 
 log = logging.getLogger("flora.dashboard_cache")
 
@@ -32,11 +39,13 @@ DASHBOARD_DIR   = DATA_DIR / "dashboard"
 STATS_JSON_PATH = DASHBOARD_DIR / "stats.json"
 
 _STAGE_CSV: dict[str, Path] = {
-    "candidates":     DATA_DIR / "candidates.csv",
     "filtered":       DATA_DIR / "filtered.csv",
     "extracted":      DATA_DIR / "extracted.csv",
     "extracted-test": DATA_DIR / "extracted-test.csv",
 }
+
+# Stage 1 has no CSV — its stats come from the pool directory.
+POOL_STAGE = "pool"
 
 # Canonical outcome categories + pipeline-state markers (see shared/schema.py).
 _OUTCOME_KEYS = (
@@ -209,11 +218,10 @@ def _read_for_stats(stage: str) -> "pd.DataFrame | None":
     """Read only the columns needed for stats computation.
 
     For extracted/extracted-test (small files) loads the whole table at once.
-    candidates and filtered are potentially millions of rows — callers should
-    prefer _compute_large_stage_stats instead and only use this for small stages.
+    filtered is potentially millions of rows — callers should prefer
+    _compute_large_stage_stats instead and only use this for small stages.
     """
     _STATS_COLS: dict[str, list[str]] = {
-        "candidates":     ["doi_r", "url_r", "abstract_r", "source", "year_r"],
         "filtered":       ["doi_r", "url_r", "abstract_r", "year_r",
                            "filter_status", "filter_method", "filter_confidence",
                            "filter_evidence"],
@@ -246,8 +254,7 @@ def _read_for_stats(stage: str) -> "pd.DataFrame | None":
 
 
 def _compute_large_stage_stats(stage: str) -> "dict[str, Any] | None":
-    """Compute stats for large stages (candidates, filtered) without loading
-    the full DataFrame into memory.
+    """Compute stats for the filtered stage without loading it fully into memory.
 
     Strategy:
     - Read only lightweight columns (no abstract_r) in 100k-row chunks to get
@@ -261,63 +268,6 @@ def _compute_large_stage_stats(stage: str) -> "dict[str, Any] | None":
 
     if not pq_path.exists() and not csv_path.exists():
         return None
-
-    # ── Candidates ─────────────────────────────────────────────────────────
-    if stage == "candidates":
-        total = no_doi = no_doi_or_url = no_abstract = 0
-        src_counts: dict[str, int] = {}
-        year_counts: dict[str, int] = {}
-
-        def _process_cand_chunk(chunk: pd.DataFrame) -> None:
-            nonlocal total, no_doi, no_doi_or_url, no_abstract
-            chunk = chunk.fillna("")
-            total          += len(chunk)
-            doi_c           = chunk["doi_r"]      if "doi_r"      in chunk.columns else pd.Series([""] * len(chunk))
-            url_c           = chunk["url_r"]      if "url_r"      in chunk.columns else pd.Series([""] * len(chunk))
-            abs_c           = chunk["abstract_r"] if "abstract_r" in chunk.columns else pd.Series([""] * len(chunk))
-            src_c           = chunk["source"]     if "source"     in chunk.columns else pd.Series([""] * len(chunk))
-            no_doi          += int((doi_c == "").sum())
-            no_doi_or_url   += int(((doi_c == "") & (url_c == "")).sum())
-            no_abstract     += int((abs_c == "").sum())
-            for k, v in src_c.value_counts().items():
-                src_counts[str(k)] = src_counts.get(str(k), 0) + int(v)
-            if "year_r" in chunk.columns:
-                _merge_counts(year_counts, _year_counts(chunk["year_r"]))
-
-        try:
-            if pq_path.exists():
-                cols = ["doi_r", "url_r", "abstract_r", "source", "year_r"]
-                pf = pq.ParquetFile(pq_path)
-                existing = pf.schema_arrow.names
-                read_cols = [c for c in cols if c in existing]
-                for batch in pf.iter_batches(batch_size=100_000, columns=read_cols):
-                    _process_cand_chunk(batch.to_pandas())
-            else:
-                for chunk in pd.read_csv(csv_path, encoding="utf-8-sig", dtype=str,
-                                         chunksize=100_000, on_bad_lines="skip",
-                                         usecols=lambda c: c in ("doi_r","url_r","abstract_r","source","year_r")):
-                    _process_cand_chunk(chunk)
-        except Exception as exc:
-            log.warning("dashboard_cache: chunked candidates read failed: %s", exc)
-            return None
-
-        # Per-phrase yield lives in cache/openalex/, which is gitignored and so
-        # absent on deployments that ship only data/. Persisting it here means the
-        # dashboard can serve it from stats.json wherever it runs.
-        by_phrase: dict[str, Any] = {}
-        try:
-            from search.openalex_search import phrase_yield
-            by_phrase = phrase_yield()
-        except Exception as exc:
-            log.warning("dashboard_cache: phrase yield unavailable: %s", exc)
-
-        return {
-            "total": total, "no_doi": no_doi,
-            "no_doi_or_url": no_doi_or_url, "no_abstract": no_abstract,
-            "by_source": src_counts,
-            "by_year": year_counts,
-            "by_phrase": by_phrase,
-        }
 
     # ── Filtered ────────────────────────────────────────────────────────────
     if stage == "filtered":
@@ -425,27 +375,126 @@ def _compute_large_stage_stats(stage: str) -> "dict[str, Any] | None":
     return None  # not a large stage
 
 
-def compute_stage_stats(stage: str) -> "dict[str, Any] | None":
-    """Compute one stage's stats live from Parquet/CSV. None if there is no data.
+# ── Stage 1: the survivor pool ─────────────────────────────────────────────────
+# The pool is a flat directory of parquet partitions (search/snapshot_scan.py,
+# _POOL_SCHEMA). Two levels of detail, because they cost very different amounts:
+# pool_totals() reads only parquet footers and is safe on a web request, while
+# the breakdowns read columns off every partition and belong in a refresh.
+
+_POOL_STAT_COLUMNS = ("doi", "publication_year",
+                      "hit_token_title", "hit_token_abstract", "hit_concept")
+
+_TOTALS_TTL_SECONDS = 60.0
+_totals_memo: "tuple[float, str, dict[str, Any] | None] | None" = None
+
+
+def pool_files(pool_dir: Path = SNAPSHOT_POOL_DIR) -> list[Path]:
+    """The pool's parquet partitions, or [] when the pool is not on this machine."""
+    if not pool_dir.is_dir():
+        return []
+    return sorted(pool_dir.glob("*.parquet"))
+
+
+def pool_totals(pool_dir: Path = SNAPSHOT_POOL_DIR) -> "dict[str, Any] | None":
+    """Row / file / byte counts from parquet footers. None when there is no pool.
+
+    Memoised for a minute: the dashboard asks on every load and a few thousand
+    footer reads should not be repeated per request.
+    """
+    global _totals_memo
+    now = time.monotonic()
+    if _totals_memo and _totals_memo[1] == str(pool_dir) and now - _totals_memo[0] < _TOTALS_TTL_SECONDS:
+        return _totals_memo[2]
+
+    files = pool_files(pool_dir)
+    result: "dict[str, Any] | None"
+    if not files:
+        result = None
+    else:
+        rows = unreadable = 0
+        size = 0
+        for f in files:
+            try:
+                rows += pq.ParquetFile(f).metadata.num_rows
+                size += f.stat().st_size
+            except Exception:
+                unreadable += 1
+        result = {
+            "total":      rows,
+            "files":      len(files),
+            "bytes":      size,
+            "unreadable": unreadable,
+            "pool_dir":   str(pool_dir),
+        }
+    _totals_memo = (now, str(pool_dir), result)
+    return result
+
+
+def compute_pool_stats(pool_dir: Path = SNAPSHOT_POOL_DIR) -> "dict[str, Any] | None":
+    """Full survivor-pool stats: totals plus year and search-gate breakdowns.
+
+    Reads five narrow columns off every partition — seconds to minutes over a
+    full pool, so this is a refresh-time call, not a per-request one.
+    """
+    totals = pool_totals(pool_dir)
+    if totals is None:
+        return None
+
+    no_doi = 0
+    year_counts: dict[str, int] = {}
+    gate_hits = {"title": 0, "abstract": 0, "concept": 0}
+    for f in pool_files(pool_dir):
+        try:
+            pf = pq.ParquetFile(f)
+            cols = [c for c in _POOL_STAT_COLUMNS if c in pf.schema_arrow.names]
+            for batch in pf.iter_batches(batch_size=100_000, columns=cols):
+                df = batch.to_pandas()
+                if "doi" in df.columns:
+                    no_doi += int(df["doi"].isna().sum() + (df["doi"] == "").sum())
+                if "publication_year" in df.columns:
+                    _merge_counts(year_counts, _year_counts(df["publication_year"]))
+                for key, col in (("title",    "hit_token_title"),
+                                 ("abstract", "hit_token_abstract"),
+                                 ("concept",  "hit_concept")):
+                    if col in df.columns:
+                        gate_hits[key] += int(df[col].fillna(False).astype(bool).sum())
+        except Exception as exc:
+            log.warning("dashboard_cache: pool partition %s unreadable: %s", f.name, exc)
+
+    return {**totals, "no_doi": no_doi, "by_year": year_counts, "gate_hits": gate_hits}
+
+
+def compute_stage_stats(stage: str,
+                        pool_dir: "Path | None" = None) -> "dict[str, Any] | None":
+    """Compute one stage's stats live. None if there is no data.
 
     Same shape as the stage's entry in stats.json — the dashboard's slow path
     calls this instead of re-implementing the aggregations.
+
+    *pool_dir* applies to the pool stage only, and exists because a scan may be
+    told where to write with ``--survivor-pool``. Publishing the default
+    directory's numbers after scanning a different one would be silently wrong,
+    so the caller that knows which pool it wrote passes it. Readers that have no
+    such knowledge (the dashboard) omit it and get ``SNAPSHOT_POOL_DIR``.
     """
+    if stage == POOL_STAGE:
+        return compute_pool_stats(pool_dir or SNAPSHOT_POOL_DIR)
     if stage not in _STAGE_CSV:
         raise ValueError(f"Unknown stage: {stage!r}")
-    # candidates and filtered are too large to load fully into RAM
-    if stage in ("candidates", "filtered"):
+    # filtered is too large to load fully into RAM
+    if stage == "filtered":
         return _compute_large_stage_stats(stage)
     df = _read_for_stats(stage)
     return None if df is None else _compute_extracted_stats(df)
 
 
-def update_stats(stage: str) -> None:
+def update_stats(stage: str, pool_dir: "Path | None" = None) -> None:
     """Recompute counts for stage and merge into stats.json."""
-    new_stats = compute_stage_stats(stage)
+    new_stats = compute_stage_stats(stage, pool_dir=pool_dir)
     if new_stats is None:
         log.warning("dashboard_cache: no data to compute stats for %s", stage)
         return
+
 
     stage_key = stage.replace("-", "_")
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
@@ -468,8 +517,19 @@ def update_stats(stage: str) -> None:
 
 # ── Public entry point ─────────────────────────────────────────────────────────
 
-def refresh(stage: str) -> None:
-    """Write Parquet mirror then update stats.json for this stage."""
+def refresh(stage: str, pool_dir: "Path | None" = None) -> None:
+    """Write Parquet mirror then update stats.json for this stage.
+
+    The pool has no CSV and no mirror — it is already parquet — so refreshing it
+    is stats-only. *pool_dir* is honoured for the pool stage only; see
+    `compute_stage_stats` for why the writer, not the reader, names it.
+    """
+    if stage == POOL_STAGE:
+        try:
+            update_stats(POOL_STAGE, pool_dir=pool_dir)
+        except Exception as exc:
+            log.warning("dashboard_cache: update_stats failed for pool: %s", exc)
+        return
     if stage not in _STAGE_CSV:
         log.warning("dashboard_cache.refresh: unknown stage %r — skipping", stage)
         return

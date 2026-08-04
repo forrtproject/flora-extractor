@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FLoRA Extractor — Current State &amp; Work Plan (v3)</title>
+<style>
+:root { --ink:#1c2333; --muted:#5b6478; --accent:#1a5fb4; --rule:#e3e6ee; --bg:#fdfdfc;
+        --panel:#f4f6fa; --warn:#9a6a00; --bad:#b3261e; --good:#3a7d44; --code-bg:#f0f2f7; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink);
+       font:16px/1.65 "Avenir Next","Segoe UI",system-ui,sans-serif; }
+main { max-width:880px; margin:0 auto; padding:3rem 1.5rem 6rem; }
+h1 { font-size:1.9rem; line-height:1.25; margin:0 0 .3rem; }
+.subtitle { color:var(--muted); margin:0 0 2.2rem; font-size:1.02rem; }
+h2 { font-size:1.35rem; margin:3rem 0 .8rem; padding-top:1.2rem; border-top:2px solid var(--rule); }
+h3 { font-size:1.08rem; margin:1.8rem 0 .5rem; }
+p { margin:.6rem 0; }
+code { background:var(--code-bg); padding:.1em .35em; border-radius:4px; font-size:.88em;
+       font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace; }
+table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.92rem; }
+th,td { border:1px solid var(--rule); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+th { background:var(--panel); font-weight:600; }
+.tablewrap { overflow-x:auto; }
+.box { background:var(--panel); border-left:4px solid var(--accent);
+       padding:1rem 1.2rem; border-radius:0 8px 8px 0; margin:1.5rem 0; }
+.box p:first-child { margin-top:0; }
+ul, ol { margin:.6rem 0; padding-left:1.4rem; }
+li { margin:.35rem 0; }
+.tag { display:inline-block; font-size:.72rem; font-weight:700; padding:.12em .55em;
+       border-radius:999px; margin-right:.4rem; vertical-align:middle; color:#fff; }
+.t-ops { background:var(--good); } .t-dec { background:var(--warn); }
+.t-build { background:var(--accent); } .t-block { background:var(--bad); }
+.small { color:var(--muted); font-size:.9rem; }
+a { color:var(--accent); }
+</style>
+</head>
+<body>
+<main>
+
+<h1>FLoRA Extractor — Current State &amp; Work Plan <span class="small">(v3)</span></h1>
+<p class="subtitle">The pipeline as it stands on <code>main</code> (<code>1d456b6</code>,
+2026-08-02), the verification behind it, and every remaining step in one ordered plan (§6).
+Supersedes <code>current_state_v2.html</code>, whose §6 build brief is now executed: eight PRs
+(#120–#127) merged on 2026-08-02, each adversarially reviewed with all confirmed findings
+fixed before merge.</p>
+
+<div class="box">
+<p><strong>In one paragraph.</strong> The build phase of the redesign is complete. The
+per-target adapter has replaced the pre-redesign multi-original machinery; the prompt boundary
+is set (screen v3.3 + the FLoRA FAQ coding rules merged, so every screen/target/outcome
+verdict re-votes from here and no second invalidation looms); full-text provenance is recorded
+on every row; the OpenAlex XML full-text tier — silently broken and burning metered credits —
+is repaired and is now the cheapest working document source; both spend levers (Gemini and
+OpenAI flex) are implemented. The suite is green: <strong>941 passed, 20 skipped, zero
+failures</strong>. What remains is no longer building but running and deciding: the
+<code>--rescreen</code> over the set-asides (~$4), the cross-repo migration that unblocks the
+import, the full corpus re-run (~$35–65), and the measurements that were deliberately parked
+(§6).</p>
+</div>
+
+<h2 id="merged">1 · What merged since v2 (all 2026-08-02)</h2>
+
+<div class="tablewrap"><table>
+<tr><th>PR</th><th>What it is</th><th>Review outcome before merge</th></tr>
+<tr><td><a href="https://github.com/forrtproject/flora-extractor/pull/120">#120</a></td>
+<td>Stored evidence = sent evidence; <code>study_o</code> on the single path; int caps folded
+into <code>prompt_version()</code></td>
+<td>10 findings fixed — incl. the stored abstract being cut at a size never sent (the PR's own
+bug class, opposite sign) and <code>resolved_study_o</code> dropped on the reference rung</td></tr>
+<tr><td><a href="https://github.com/forrtproject/flora-extractor/pull/121">#121</a></td>
+<td>WP5: OpenAI flex tier + <code>GEMINI_THINKING_LEVEL</code> knob (cache-key-safe via
+<code>cache_model_id()</code>)</td>
+<td>Flex-refusal detection tightened to structured SDK errors; timeouts retry at standard tier
+so a served-but-lost flex call is never double-billed</td></tr>
+<tr><td><a href="https://github.com/forrtproject/flora-extractor/pull/122">#122</a></td>
+<td>WP1, the anchor: per-target adapter; <code>multi_original.py</code>, the match-type router
+and both dead prompts deleted (−2,640 lines); <code>study_r</code> end to end; the
+may-not-short-circuit gate</td>
+<td>9 findings fixed — gate/restore semantics (no resolution lost under <code>--no-llm</code>
+or transient failures; no restore against a contradicting answer), richest-target-list rule,
+post-verification dedup, and a conditional cache-key flag that keeps all existing outcome
+entries live</td></tr>
+<tr><td><a href="https://github.com/forrtproject/flora-extractor/pull/123">#123</a></td>
+<td><code>sanity_check</code> rule order: where a row stands (link_method) routes before what
+it says (outcome)</td>
+<td>The originally planned "keep abstract-sourced outcomes on rejection" was found
+<em>moot</em>: #122's guard-before-outcome ordering means a rejected row never has an outcome
+to clear. Only the routing hardening shipped</td></tr>
+<tr><td><a href="https://github.com/forrtproject/flora-extractor/pull/124">#124</a></td>
+<td>WP2: landing-page substitute deleted; <code>pdf_source</code> + <code>parse_method</code>
+columns; empty-XML guard</td>
+<td>Docs/disclosure fixes; the audit (§3) showed zero rows ever depended on the substitute</td></tr>
+<tr><td><a href="https://github.com/forrtproject/flora-extractor/pull/125">#125</a></td>
+<td>Reference-record title quality (Vancouver-style lists produced citation-string titles;
+one acceptance row had a truncated fragment at high confidence)</td>
+<td>5 findings fixed under a hard principle: cleaning may demote confidence, never remove a
+record from the <code>@key</code> namespace</td></tr>
+<tr><td><a href="https://github.com/forrtproject/flora-extractor/pull/126">#126</a></td>
+<td>WP3: screen v3.3 (overlap clause) + six FLoRA FAQ coding rules in the outcome prompts +
+chain rule in the target prompt. <strong>This merge defines the rescreen/re-run
+boundary.</strong></td>
+<td>Live eval ran (§3); merged on an explicit decision after a control arm showed the
+acceptance bar is not reproducible at n=390</td></tr>
+<tr><td><a href="https://github.com/forrtproject/flora-extractor/pull/127">#127</a></td>
+<td>OpenAlex XML full-text tier repaired (gzip payload decompressed; one dialect-tolerant TEI
+parser; <code>raw_text</code> feeds target + outcome evidence; key rotation on the metered
+endpoint)</td>
+<td>4 findings fixed — the recovered text initially never reached the prompts, and flattened
+text served bibliography as outcome evidence</td></tr>
+</table></div>
+
+<p class="small">Also from this session, not code: the WP4 reference-trim measurement (§3),
+the full-text provenance audit (<code>data/fulltext_provenance_audit.csv</code>, 138 rows),
+and a comment on
+<a href="https://github.com/forrtproject/flora-validation/issues/3">flora-validation#3</a>
+adding <code>pdf_source</code>/<code>parse_method</code> to the migration list.</p>
+
+<h2 id="pipeline">2 · What the pipeline now does differently</h2>
+
+<ul>
+<li><strong>Multi-original papers run through the per-target adapter.</strong> The target
+prompt's validated list is consumed directly: per target — key-record resolution, link guard,
+DOI verification, then one <code>extract_outcome</code> call (escalation,
+<code>record_type_check</code> veto and the reproduction grid all apply; the
+<code>multi_original</code> flag is in the outcome cache key only when set). One row per
+original <em>paper</em>; same-paper studies collapse with study numbers joined; after
+guard/verification the group is deduplicated by final <code>doi_o</code>, renumbered, and
+match type + confidence are settled from what was actually written. <code>study_r</code>
+(which study in the <em>replication</em> maps to this original) is populated on both link
+paths.</li>
+<li><strong>No rule ever asserts <code>multiple_original</code>.</strong> The match-type
+router is gone. A deterministic ladder rung may end a row only when title+abstract carry
+exactly one author-year pair and no study count; otherwise its pick is <em>withheld</em>, and
+restored at any exit where no enumerating LLM call succeeded (or where the call agreed with
+it). A transient API failure never converts a rule resolution into a loss, and a restore never
+overrides a contradicting answer.</li>
+<li><strong>Full-text provenance is on the row.</strong> <code>pdf_source</code> (acquisition
+tier) and <code>parse_method</code> (winning parser) are CSV columns, imported by
+<code>csv_to_db</code> once the DB has them. The landing-page HTML substitute is deleted; a
+content-free OpenAlex XML shell counts as no document.</li>
+<li><strong>The OpenAlex XML tier works and is the cheapest document source.</strong> The
+endpoint was alive all along; our client never gunzipped the payload and the parser assumed
+camelCase TEI where OpenAlex serves HTML-lowercased copies. Now one parser serves both
+dialects; body text (bibliography excluded, structure preserved) feeds the target prompt's
+INTRODUCTION block and outcome escalation. The endpoint is metered — $0.01/download against a
+$1/day free tier — so it is key-gated, rotated, and each work is fetched once and cached.
+Verified live: W2982430379 → 32 references, 28k chars, outcome evidence provenance
+<code>discussion</code>.</li>
+<li><strong>Prompts: screen v3.3 + FAQ rules.</strong> The overlap clause is in WHAT
+QUALIFIES; five FAQ outcome rules (failed manipulation check → failure; failing title effect →
+failure; conceptual close-but-fails → mixed; centrality; aggregation scope) are in the
+replication outcome prompt, the two shared ones in the reproduction prompt, and the
+replication-chain rule (nearest successor) in the target prompt. Three wording resolutions are
+flagged in <a href="https://github.com/forrtproject/flora-extractor/pull/126">PR #126</a> for
+maintainer confirmation.</li>
+<li><strong>Spend levers.</strong> Gemini flex on (<code>.env</code>). OpenAI flex
+implemented but <strong>default-off</strong> (<code>OPENAI_USE_FLEX</code>) — flipping it is a
+one-line action (§6.1). <code>GEMINI_THINKING_LEVEL</code> exists, default unset, awaiting its
+quality spot-check (§6.3); when set it is folded into the heavy-model cache keys.</li>
+</ul>
+
+<h2 id="trust">3 · Verification record</h2>
+
+<ul>
+<li><strong>Tests:</strong> 941 passed, 20 skipped, zero failures, fresh run on
+<code>main</code> @ <code>1d456b6</code> (6m40s). Every PR carried one test per new seam;
+review-round fixes came with regression tests.</li>
+<li><strong>Review process:</strong> every PR was adversarially reviewed before merge (codex
+second opinions throughout; independent executing reviewers on #120 and #122). Every single PR
+had confirmed findings; all were fixed and re-tested before merging. Two reviews materially
+changed course: #123 (the planned feature was moot) and #127 (the recovered text wasn't
+reaching consumers).</li>
+<li><strong>WP1 acceptance run (live):</strong> the two multi-original DOIs from the 2026-08-01
+shakedown re-extracted under the adapter. <code>10.1016/j.physbeh.2021.113324</code> → two
+per-target rows, enum-valid <code>out_quote_source</code>, binary confidence, outcomes coded
+per target; <code>10.13135/2384-8677/3380</code> → the designed fallback (2 targets named,
+none matchable to a record → one <code>target_pending</code> row with the shortfall in
+<code>link_evidence</code>). The run also exposed the reference-title defect fixed in #125.
+24.6k tokens.</li>
+<li><strong>Screen v3.3 evaluation (live, $2.83):</strong> under the shipped gate — v3.2
+checked-in: 0 settled misses, 88.6% hard-negative discard; v3.2 <em>re-run fresh as a control
+arm</em>: 1 miss (F155), 85.7%; v3.3: 1 miss (F285), 84.3%. Five gate outcomes flip between
+the two v3.2 runs — the acceptance bar ("zero misses, within a point of 89%") is not
+reproducible at 390 cases, and the clause's effect is inside that noise. v3.3 was merged on
+that argument; the eval set must grow before the next prompt change (§6.6). Report:
+<code>analysis/screening_eval/report_v33.md</code>.</li>
+<li><strong>WP4 reference-trim measurement (offline):</strong> at ≥1 shared non-stopword
+token, 29/29 measurable accepted targets survive — but 22 survive via the always-keep-candidates
+rule, the saving is only ~13% of the reference-rung prompt, and 199 of 227 in-scope rows were
+unmeasurable (caches predate the current generation). At ≥2 tokens a real target is lost.
+<strong>Parked</strong>: re-measure on a few hundred fresh rows before implementing
+(§6.8).</li>
+<li><strong>Full-text provenance audit (offline):</strong> all 138 <code>llm_fulltext</code>
+rows audited. Zero ever used the landing-page substitute. 21 of the pre-merge sandbox's 42
+were mislabelled resolutions caused by empty OpenAlex XML shells defeating the no-document
+guard (both now fixed); production's 93 predate the cache generation and are unprovable either
+way — the re-run (§6.4) resolves them under the fixed, provenance-recording code.</li>
+<li><strong>Known noise floor:</strong> the screen eval flips ~5 of 390 gate outcomes between
+identical-prompt runs. Treat any future single-run eval delta smaller than that as noise.</li>
+</ul>
+
+<h2 id="data">4 · Where the data stands <span class="small">(measured 2026-08-02, pandas row
+counts)</span></h2>
+
+<div class="tablewrap"><table>
+<tr><th>File</th><th>Rows</th><th>Standing</th></tr>
+<tr><td><code>data/extracted.csv</code></td><td>1,664</td><td>production; untouched today —
+still entirely pre-boundary (1,151 legacy links, old prompts, none of the seven new columns
+filled). The re-run (§6.4) supersedes it wholesale</td></tr>
+<tr><td><code>data/extracted-test.csv</code></td><td>2</td><td>the WP1 acceptance rows only.
+The sandbox rewrites its output each run, so the 2026-08-01 shakedown's 18 kept rows were
+overwritten by design; its screened set-asides survive below, and the 31&nbsp;Jul pre-merge
+sandbox remains archived as <code>extracted-test-premerge-20260801.csv</code></td></tr>
+<tr><td><code>data/not_a_replication.csv</code></td><td>501</td><td>screen discards (496 + 5
+shakedown)</td></tr>
+<tr><td><code>data/screen_disagreement.csv</code></td><td>125</td><td>legacy voter splits —
+~26% are real replications; review via §6.2's rescreen, never bulk-resolve</td></tr>
+<tr><td><code>data/target_pending.csv</code></td><td>30</td><td>screen-passed, unresolved
+(shakedown tail + 1 acceptance row)</td></tr>
+<tr><td><code>data/provisional_title_search.csv</code> (+ <code>_reviewed</code>)</td>
+<td>51 + 50</td><td>~50%-precision title-search links; the reviewed copy's verdicts still need
+confirming and folding back (§6.7)</td></tr>
+<tr><td>other set-asides</td><td>—</td><td><code>cannot_be_determined</code> 233,
+<code>pre_validation_audit</code> 442, <code>doi_audit_report</code> 96,
+<code>unresolved_doi_mismatch</code> 44, <code>fabricated_original_doi</code> 15,
+<code>unresolved_self_links</code> 9</td></tr>
+<tr><td><code>data/fulltext_provenance_audit.csv</code></td><td>138</td><td>per-row provenance
+verdicts (§3); reference material for the re-run comparison</td></tr>
+</table></div>
+
+<h2 id="cost">5 · Cost model <span class="small">(prices verified 2026-08-01; per-row numbers
+from the 50-row shakedown)</span></h2>
+
+<p>Budget <strong>$0.02–0.03 per fresh row</strong> (two-voter screen ~$0.005; ladder +
+outcome ~$0.013–0.025 depending on refscreen weight). Levers now in the code: Gemini flex
+<span class="tag t-ops">on</span>; OpenAI flex <span class="tag t-dec">implemented,
+off</span> (flip = §6.1, halves the OpenAI share); thinking level
+<span class="tag t-dec">implemented, unset</span> (potentially ~half of Gemini heavy-call
+spend, gated on §6.3's spot-check). OpenAlex XML now substitutes a $0.01 download for many PDF
+acquisitions and is cached per work.</p>
+
+<div class="tablewrap"><table>
+<tr><th>Scenario</th><th>Volume</th><th>Estimate</th></tr>
+<tr><td>Rescreen the set-asides (§6.2)</td><td>626 rows (501 + 125), ~100 proceeding</td>
+<td><strong>~$4</strong></td></tr>
+<tr><td>Full corpus re-run (§6.4) — every LLM verdict fresh by design</td>
+<td>~3,200 rows, ~75% proceeding</td>
+<td><strong>~$45–65</strong> (Gemini flex only) → <strong>~$35–50</strong> with OpenAI flex on
+→ <strong>~$20–30</strong> if the thinking lever also lands. OpenAI's ~25M tokens span 3–4
+days at the default 8M/day budget: raise <code>OPENAI_DAILY_TOKEN_BUDGET</code> or let the
+clean-stop resume across days</td></tr>
+<tr><td>Fresh Stage-2 intake, marginal</td><td>per 1,000 filtered rows</td>
+<td><strong>~$12–17</strong>; the false-positive share of that is what §6.5 measures</td></tr>
+</table></div>
+
+<h2 id="plan">6 · The work plan — every remaining step, in order</h2>
+
+<div class="box">
+<p><strong>The boundary rule, restated once.</strong> PR #126 re-voted everything: no
+LLM verdict on disk replays. That is spent — but it also means the <em>next</em> prompt edit
+re-votes the corpus again. So: any further prompt change (the flagged FAQ wordings, a v3.4
+clause, WP4's trim if adopted) must be bundled and land <em>before</em> the full re-run, or
+wait for the run after it. Steps 6.1–6.3 are cheap and reversible; 6.4 is the big spend and
+should come after 6.1–6.3 and any prompt bundle are settled.</p>
+</div>
+
+<h3>6.1 · Operational toggles <span class="tag t-ops">minutes, do first</span></h3>
+<ul>
+<li>Set <code>OPENAI_USE_FLEX=true</code> in <code>.env</code>. Verification: one sandbox row;
+the log shows <code>service_tier=flex</code> accepted or a clean structured-refusal fallback;
+token accounting records exactly one call.</li>
+<li><strong>Fix the key setup:</strong> the project <code>.env</code> currently holds no API
+keys — today's live runs needed <code>set -a; source ~/.claude/api_keys.env; set +a</code>
+first, and a bare <code>run_extract</code> aborts on missing <code>GEMINI_API_KEY</code>. Either
+copy the keys into <code>.env</code> or source the shared file in the run wrapper; verify with
+a one-row sandbox call.</li>
+<li>Decide <a href="https://github.com/forrtproject/flora-extractor/pull/119">PR #119</a>
+(test-suite trim, 140s → 13s): review and merge or close — it predates today's eight merges,
+so it needs a rebase and a check that none of the ~35 new seam tests are in its deletion
+set.</li>
+</ul>
+
+<h3>6.2 · The rescreen run <span class="tag t-build">~$4, one afternoon</span></h3>
+<p><code>--rescreen</code> over the 626 set-aside rows (501 discards + 125 legacy
+disagreements) under v3.3. This is the first live exercise of the merged code at modest scale,
+so it doubles as the shakedown for everything merged today. Fold in:</p>
+<ul>
+<li><strong>The thinking-level spot-check (§6.3)</strong> — run ~30 of these rows twice
+(default vs <code>GEMINI_THINKING_LEVEL=minimal</code>) and diff resolutions/outcomes.</li>
+<li><strong>WP4 re-measurement</strong> — the run writes fresh caches, so the trim survival
+question becomes measurable on hundreds of rows instead of 29.</li>
+</ul>
+<p><strong>Verify afterwards:</strong> zero <code>api_error</code> rows; the disagreement pile
+shrinks by roughly its real-replication quarter (spot-check 10 of the newly-proceeding rows by
+hand); <code>screen_categories</code> present on every screened row; <code>pdf_source</code> /
+<code>parse_method</code> filled wherever a document was read; any adapter (multi-target) rows
+carry per-target rows with valid enums; token spend within ~2× the $4 estimate.</p>
+
+<h3>6.3 · Thinking-level decision <span class="tag t-dec">gates ~30–50% of Gemini heavy
+spend</span></h3>
+<p>From the 6.2 spot-check: adopt <code>minimal</code> if resolution/outcome agreement is
+≳95% with no systematic degradation on full-text rows; otherwise leave unset and close the
+item. The knob is cache-key-safe either way. Record the decision here.</p>
+
+<h3>6.4 · The full corpus re-run <span class="tag t-dec">~$35–65, the big one</span></h3>
+<p>Re-extract <code>extracted.csv</code> + all set-asides (~3,200 rows) under the final
+prompts and code. What it buys, all at once: the 1,151 legacy rows screened for the first
+time; the restored outcome categories applied; <code>screen_categories</code>,
+<code>study_o</code>, <code>study_r</code>, <code>pdf_source</code>, <code>parse_method</code>
+on every row; the 9 stored reproductions recoded onto the 4×3 axes; the 93 unprovable
+<code>llm_fulltext</code> rows resolved with real provenance; multi-original papers on
+per-target rows. No FLoRA-validated DOI is in scope (verified in v2;
+<code>--skip-flora-validated</code> holds), so no spend goes to already-validated entries.</p>
+<p><strong>Before launching:</strong> 6.1 done; any prompt-wording fixes from the #126 flags
+bundled in; <code>OPENAI_DAILY_TOKEN_BUDGET</code> raised or multi-day resume accepted.
+<strong>Verify afterwards:</strong> <code>sanity_check</code> clean; <code>audit_dois</code>
+pass; outcome distribution compared against the old file (large shifts explained, not
+assumed); hand spot-check ~20 rows stratified by link method; the provenance columns audited
+against <code>cache/pdfs</code> the way §3's audit did.</p>
+
+<h3>6.5 · Stage-2 precision <span class="tag t-dec">largest structural lever</span></h3>
+<p>Measure the true false-positive share of current Stage-2 output (the ~50% figure is
+audit-era): sample ~200 rows of fresh filtered intake, run the screen, and hand-code the
+screen's discards/passes against the §3 benchmark discipline. Decide whether
+<code>rule_filter</code> can tighten without losing real replications. Until measured, every
+1,000-row intake carries an unknown multiplier on all downstream cost.</p>
+
+<h3>6.6 · Grow the evaluation set <span class="tag t-ops">human time, no API cost</span></h3>
+<p>The eval's noise floor (~5 flips / 390 cases between identical runs) now exceeds the effect
+size of any single prompt clause. Before the next screen edit: hand-code the offered ~30
+further cases (true replications + confirmed discards) and 2–3 meta-re-analysis cases (the §5
+residual from v2). Then re-baseline v3.3 with 3 runs to get a mean ± spread instead of a
+point.</p>
+
+<h3>6.7 · Housekeeping that needs a human</h3>
+<ul>
+<li>Confirm the verdicts in <code>provisional_title_search_reviewed.csv</code> (50 rows) and
+fold confirmed links back; the quarantine holds until then.</li>
+<li>The three FAQ-rule wording flags in
+<a href="https://github.com/forrtproject/flora-extractor/pull/126">PR #126</a> (repro-side
+aggregation without <code>mixed</code>; repro centrality carve-out; the chain-rule fragment) —
+confirm or adjust; an adjustment is a prompt edit and belongs in the 6.4 bundle.</li>
+<li><a href="https://github.com/forrtproject/flora-extractor/pull/114">PR #114</a> (FLoRA
+anchor / batch page): rework, not rebase — its one live question is whether the anchor block
+survives in the merged target prompt.</li>
+</ul>
+
+<h3>6.8 · Parked, with re-entry conditions</h3>
+<ul>
+<li><strong>WP4 reference-list trim:</strong> re-enter only if the 6.2 re-measurement shows
+~100% survival on ≥200 rows <em>and</em> the saving still matters after the XML tier and flex
+have cut costs; ship at ≥1 token with the always-keep-candidates rule, as a hashed module
+constant, inside a prompt-boundary bundle.</li>
+<li><strong><a href="https://github.com/forrtproject/flora-extractor/issues/93">#93</a>
+codebook columns</strong> (<code>publication_status_r</code>, <code>field</code>,
+<code>alt_id_*</code>, <code>ref_meta_r</code>/<code>doi_meta_r</code>) + preprint↔VoR
+resolution + export canonicalisation: one boundary, both directions, after 6.4.</li>
+<li><strong>Upstream OpenAlex XML coverage:</strong> the tier now works; whether OpenAlex
+<em>has</em> XML for enough of our corpus is unmeasured — the 6.4 run's
+<code>pdf_source</code> column answers it for free.</li>
+</ul>
+
+<h3>6.9 · The import path <span class="tag t-block">blocked cross-repo</span></h3>
+<p>Everything converges on the flora-validation migration
+(<a href="https://github.com/forrtproject/flora-extractor/issues/103">#103</a> +
+<a href="https://github.com/forrtproject/flora-validation/issues/3">flora-validation#3</a>).
+The complete column list the receiving tables need is now:
+<code>title_r</code>/<code>title_o</code>, <code>screen_categories</code>, the six
+reproduction-axis fields, real values in <code>study_r</code>, and <code>pdf_source</code> +
+<code>parse_method</code> on <code>record_metadata</code> (posted on the issue with
+<code>ALTER TABLE</code> statements, 2026-08-02). Do not run <code>csv_to_db</code> before it
+lands — PostgREST rejects the whole insert on an unknown column, and the tables insert in an
+order that can leave a partial import. <strong>Verify afterwards:</strong> a
+<code>csv_to_db</code> dry run over 10 rows, then the dashboard's check page shows the new
+columns.</p>
+
+<h2 id="seq">7 · The plan in one line each</h2>
+<ol>
+<li>Toggles + keys + PR #119 <span class="small">(6.1, minutes)</span></li>
+<li>Rescreen + spot-checks <span class="small">(6.2–6.3, ~$4)</span></li>
+<li>Migration lands cross-repo <span class="small">(6.9, independent — start it now)</span></li>
+<li>Prompt-flag confirmations bundled if needed <span class="small">(6.7)</span></li>
+<li>Full re-run + verification <span class="small">(6.4, ~$35–65)</span></li>
+<li>Import + validation flow live <span class="small">(6.9)</span></li>
+<li>Stage-2 precision; eval-set growth; parked items on their conditions
+<span class="small">(6.5, 6.6, 6.8)</span></li>
+</ol>
+
+<p class="small">Sources: code state and test run measured on <code>main</code> @
+<code>1d456b6</code>, 2026-08-02; data counts via pandas the same day; PR review evidence in
+the PR threads (#120–#127); eval evidence in <code>analysis/screening_eval/report_v33.md</code>;
+provenance evidence in <code>data/fulltext_provenance_audit.csv</code>; trim measurement in
+the session scratchpad (re-run per 6.2). Open items: #103, #93, #43, #12-closed-check, PR #114,
+PR #119, flora-validation#3, fred-data#134.</p>
+
+</main>
+<script>
+(function () {
+  window.HC_CONFIG = {
+    endpoint: 'https://script.google.com/macros/s/AKfycbyx858xfSCgHQ8RmbfbMsdzcmzrkNs_JZVmqeEBVrH-S6g8YJbI32CY7if-k8oTzg-eyQ/exec',
+    project: 'flora-extractor-current-state-v3'
+  };
+  var BASE = 'https://html-comments.surge.sh/';
+  var link = document.createElement('link');
+  link.rel = 'stylesheet'; link.href = BASE + 'html-comments.css';
+  document.head.appendChild(link);
+  var s = document.createElement('script');
+  s.src = BASE + 'html-comments.js';
+  document.head.appendChild(s);
+})();
+</script>
+</body>
+</html>

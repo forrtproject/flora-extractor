@@ -350,7 +350,7 @@ Respond with the JSON object only.
 
 
 def build_classify_prompt(study_r: str, abstract_r: str) -> str:
-    # .replace(), not .format(): the v3.2 text carries a literal JSON example.
+    # .replace(), not .format(): the prompt text carries a literal JSON example.
     return (_CLASSIFY_PROMPT
             .replace("{title}", study_r or "(not available)")
             .replace("{abstract}", (abstract_r or "(not available)")[:4000]))

@@ -552,9 +552,6 @@ a.leg-row:hover { background:var(--surface-2); }
     <button class="tab-btn" data-tab="supabase">
       <span class="tab-label-stage">Stage 4</span>Supabase
     </button>
-    <button class="tab-btn" data-tab="old-pipeline">
-      <span class="tab-label-stage">Analysis</span>Old Pipeline
-    </button>
     <span class="tab-strip-sep">Set&nbsp;aside</span>
     {% for key, spec in set_files.items() %}
     <button class="tab-btn" data-tab="set-{{ key }}">
@@ -574,33 +571,23 @@ a.leg-row:hover { background:var(--surface-2); }
       <div class="docs-panel">
         <div class="docs-card">
           <div class="docs-card-head">What Stage 1 does</div>
-          <p>Discovers candidate replication papers from two academic databases: <strong>OpenAlex</strong> and <strong>Semantic Scholar</strong>. OpenAlex is queried with <strong>37 search phrases</strong> plus <strong>concept-based search</strong> (OpenAlex ML concepts for Replication and Reproducibility). Semantic Scholar uses the top 10 phrases. New results are appended to <code>data/candidates.csv</code>; already-seen papers are skipped via a persistent dedup index.</p>
-          <p>Every run also <strong>harvests all cached API responses from disk</strong> first — pages downloaded in any previous run flow into the CSV automatically without re-fetching.</p>
-          <p><code>--auto-advance</code> processes one (source, phrase, year) combination per invocation, cycling through all phrases for all years. State is saved in <code>cache/search_state.json</code> and resumes across runs. Exit code 2 signals a full cycle completed with no new rows.</p>
+          <p>Stage 1 <strong>searches; it does not filter</strong>. <code>search/snapshot_scan.py</code> reads the whole OpenAlex bulk-parquet snapshot once — ~2,446 partitions, ~725 GB, ~510M works — and keeps every record the <strong>search gate</strong> admits. Survivors are written to the <strong>survivor pool</strong>, a parquet dataset of a few GB that is Stage 2's direct input.</p>
+          <p>There is no discovery by API query any more, and no <code>candidates.csv</code>: one scan over the corpus replaces a phrase list somebody had to think of, and the pool replaces the CSV that used to carry rows between stages.</p>
+          <p>Progress is checkpointed per partition in <code>cache/snapshot/ledger.json</code>, so an interrupted scan resumes where it stopped. A partition whose size changed on the manifest is rescanned — OpenAlex rewrites partitions in place.</p>
         </div>
 
         <div class="docs-card">
-          <div class="docs-card-head">Sources</div>
+          <div class="docs-card-head">The search gate — all of Stage 1's keyword logic</div>
+          <p>Vectorised in pyarrow over each batch. A record is admitted when <em>either</em> arm hits:</p>
           <table class="docs-table">
-            <thead><tr><th>Source</th><th>Description</th><th>Flag</th></tr></thead>
+            <thead><tr><th>Arm</th><th>What it tests</th></tr></thead>
             <tbody>
-              <tr>
-                <td class="col-name">openalex</td>
-                <td class="col-desc">OpenAlex API — queries 23 phrases, page-resumable via cursor files in <code>cache/openalex/</code></td>
-                <td class="col-desc">enabled by default</td>
-              </tr>
-              <tr>
-                <td class="col-name">semantic_scholar</td>
-                <td class="col-desc">Semantic Scholar API — same 23 phrases, offset-resumable via <code>cache/s2/</code></td>
-                <td class="col-desc">enabled by default</td>
-              </tr>
-              <tr>
-                <td class="col-name">engine</td>
-                <td class="col-desc">Internal engine (when <code>FLORA_USE_ENGINE=1</code>) — replaces OpenAlex and S2</td>
-                <td class="col-desc"><code>FLORA_USE_ENGINE=1</code></td>
-              </tr>
+              <tr><td class="col-name">token / stem</td><td class="col-desc">A broad replication stem alternation (<code>REPLICATION_STEM_PATTERN</code>, shared with Stage 2) over the title and over the <em>raw</em> abstract inverted-index JSON. Word order does not exist in that JSON, so this tests tokens, never phrases.</td></tr>
+              <tr><td class="col-name">concept</td><td class="col-desc">Membership of a replication concept (<code>C12590798</code> Replication (statistics), <code>C9893847</code> Reproducibility). The recall arm — catches papers with no stored abstract and papers that describe replication without saying the word.</td></tr>
             </tbody>
           </table>
+          <p style="margin-top:8px">No exclusion pattern and no precision test runs here. Everything else about a row — exclusions, phrase matching, rescues — is Stage 2's spec bundle. The gate keeps well under 1% of the corpus.</p>
+          <p>Consequence: <strong>a Stage 2 rule change is a local re-route over the pool, not a rescan.</strong> Only changing the gate itself costs the full 725 GB pass, which is why the gate carries its own fingerprint.</p>
         </div>
 
         <div class="docs-card">
@@ -608,122 +595,46 @@ a.leg-row:hover { background:var(--surface-2); }
           <table class="docs-table">
             <thead><tr><th style="white-space:nowrap">Flag</th><th>Default</th><th>Description</th></tr></thead>
             <tbody>
-              <tr><td class="col-name">--from-year YYYY</td><td>none</td><td class="col-desc">Earliest publication year to fetch (inclusive)</td></tr>
-              <tr><td class="col-name">--to-year YYYY</td><td>none</td><td class="col-desc">Latest publication year to fetch (inclusive)</td></tr>
-              <tr><td class="col-name">--max-per-phrase N</td><td>unlimited</td><td class="col-desc">Cap new rows per phrase per run; checkpoint saved so next run continues from this point</td></tr>
-              <tr><td class="col-name">--auto-advance</td><td>off</td><td class="col-desc">Process one (source, phrase, year) job per invocation; pair with --from-year, --to-year, --max-per-phrase; run repeatedly to cycle through all combinations</td></tr>
-              <tr><td class="col-name">--source SOURCE</td><td>all</td><td class="col-desc">Limit to one source (repeatable). Values: <code>openalex</code>, <code>semantic_scholar</code>, <code>engine</code></td></tr>
-              <tr><td class="col-name">--rebuild-index</td><td>off</td><td class="col-desc">Force rebuild of <code>cache/candidates_index.txt</code> from <code>candidates.csv</code>, then exit</td></tr>
-              <tr><td class="col-name">--harvest-only</td><td>off</td><td class="col-desc">Merge all cached OA/S2 pages into candidates.csv, then exit — no new API requests</td></tr>
-              <tr><td class="col-name">--no-harvest</td><td>off</td><td class="col-desc">Skip the per-cycle cache harvest in --auto-advance mode (useful when running --harvest-only separately on a schedule)</td></tr>
-              <tr><td class="col-name">--reset-cursors</td><td>off</td><td class="col-desc">Delete all OpenAlex cursor + S2 offset files and start from page 1 for every phrase</td></tr>
+              <tr><td class="col-name">--scan</td><td>—</td><td class="col-desc">The ledger-backed production scan over the full corpus. Resumable: partitions marked done in the ledger are skipped</td></tr>
+              <tr><td class="col-name">--snapshot-pilot PATH</td><td>—</td><td class="col-desc">Pilot mode: scan a few partitions into PATH (a CSV), keep no ledger, print the gate report</td></tr>
+              <tr><td class="col-name">--survivor-pool PATH</td><td><code>cache/snapshot_pool/</code></td><td class="col-desc">Directory the pool is written to — Stage 2's input. A scan that writes no pool produces nothing</td></tr>
+              <tr><td class="col-name">--snapshot-max-files N</td><td>all</td><td class="col-desc">Scan at most N partitions this run, then stop</td></tr>
+              <tr><td class="col-name">--from-year / --to-year</td><td>none</td><td class="col-desc">Publication-year bounds — pilot mode only</td></tr>
             </tbody>
           </table>
-          <pre class="cli-block" style="margin-top:10px"># Typical production loop (PowerShell)
-do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2024 --max-per-phrase 200
-} until ($LASTEXITCODE -eq 2)
+          <pre class="cli-block" style="margin-top:10px"># Production scan (resumable — re-run after any interruption)
+python -m search.run_search --scan
 
-# Quick test — 1 page per phrase, 2020 only
-python -m search.run_search --from-year 2020 --to-year 2020 --max-per-phrase 200
+# Pilot: a few partitions to a CSV, with the gate report
+python -m search.run_search --snapshot-pilot data/pilot.csv --snapshot-max-files 3
 
-# Merge only cached pages (no API calls)
-python -m search.run_search --harvest-only</pre>
+# Progress of a scan in flight
+python -m search.snapshot_scan --status [--json]</pre>
         </div>
 
         <div class="docs-card">
-          <div class="docs-card-head">5-pass deduplication</div>
-          <p>Applied to each new batch before it is appended to <code>candidates.csv</code>. Runs in <code>search/deduplicate.py</code>.</p>
+          <div class="docs-card-head">Getting the pool without scanning</div>
+          <p>The pool is shared through a private Hugging Face dataset repo (<code>search/pool_sync.py</code>) so nobody has to reproduce a 13–21 hour scan. It is sharded by year on the remote, and both directions are idempotent and resumable.</p>
+          <pre class="cli-block">python -m search.pool_sync --check-access   # prove write access before a long scan
+python -m search.pool_sync --pull           # ~2-3 GB survivor pool
+python -m search.pool_sync --push</pre>
+          <p style="margin-top:8px"><code>pool_manifest.json</code> records the search gate, snapshot date and ledger the pool was scanned under. Pushing over a pool scanned under a <em>different</em> gate fingerprint is refused: the mixture would be complete under neither gate and nothing downstream could tell.</p>
+        </div>
+
+        <div class="docs-card">
+          <div class="docs-card-head">Survivor pool columns</div>
+          <p style="font-size:10px;color:var(--text-faint);margin:0 0 6px">Authoritative: <code>_POOL_SCHEMA</code> in <code>search/snapshot_scan.py</code>. Enough to rebuild a paper row without the snapshot.</p>
           <table class="docs-table">
-            <thead><tr><th>Pass</th><th>What it removes</th></tr></thead>
+            <thead><tr><th>Column</th><th>Description</th></tr></thead>
             <tbody>
-              <tr><td class="col-name">0a — DOI patterns</td><td class="col-desc">figshare datasets (<code>10.6084/</code>) and PeerJ peer-review objects (<code>/reviews/</code> in DOI) — never scholarly papers</td></tr>
-              <tr><td class="col-name">0b — Versioned preprints</td><td class="col-desc">Lower-version preprint DOIs ending in <code>_v1</code>, <code>_v2</code> etc. Keeps the canonical or highest-version DOI; drops all older versions</td></tr>
-              <tr><td class="col-name">1 — Exact DOI</td><td class="col-desc">Duplicate DOIs after <code>clean_doi()</code> normalisation; keeps the row with more non-empty metadata fields (richness score)</td></tr>
-              <tr><td class="col-name">2 — Fuzzy title</td><td class="col-desc">DOI-less rows whose titles score ≥ 90 on RapidFuzz <code>token_sort_ratio</code>; keeps the richer row</td></tr>
-              <tr><td class="col-name">3 — FLoRA cross-check</td><td class="col-desc">Papers already catalogued in <code>data/flora_entry_sheet.csv</code> (<code>doi_r</code>) and <code>data/flora.csv</code> (<code>doi_r</code> + <code>doi_o</code>) are dropped — no need to re-extract them</td></tr>
-            </tbody>
-          </table>
-          <p style="margin-top:8px">The persistent <strong>candidates index</strong> (<code>cache/candidates_index.txt</code>) stores up to 4 keys per row (OA ID → DOI → URL → title) so duplicates from any identifier are caught without loading the full CSV into memory. Built automatically on first run; ~1s to load thereafter.</p>
-        </div>
-
-        <div class="docs-card">
-          <div class="docs-card-head">Search phrases — OpenAlex (37 phrases) + S2 (top 10)</div>
-          <p style="font-size:10px;color:var(--text-faint);margin:0 0 6px">OpenAlex also runs concept-based search: <code>C12590798</code> (Replication, statistics) and <code>C9893847</code> (Reproducibility). Semantic Scholar uses only the first 10 phrases below.</p>
-          <div class="kw-grid">
-            <span class="kw-pill">replication of</span>
-            <span class="kw-pill">direct replication</span>
-            <span class="kw-pill">close replication</span>
-            <span class="kw-pill">conceptual replication</span>
-            <span class="kw-pill">replication study</span>
-            <span class="kw-pill">reproduction study</span>
-            <span class="kw-pill">we replicated</span>
-            <span class="kw-pill">attempts to replicate</span>
-            <span class="kw-pill">registered replication report</span>
-            <span class="kw-pill">pre-registered replication</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">failed to replicate</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">did not replicate</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">we replicate</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">replicating the findings</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">could not reproduce</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">successfully replicated</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">reproducibility of</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">replication and extension</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">replicability of</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">attempt to replicate</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">failure to replicate</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">non-replication</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">reproducibility study</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">reproduce the findings</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">our results replicate</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">our findings replicate</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">results replicate the</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">confirm and replicate</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">replication across</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">cross-cultural replication</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">independent replication</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">partial replication</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">multi-site replication</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">multisite replication</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">preregistered replication</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">exact replication</span>
-            <span class="kw-pill" style="border-color:var(--border-2)">systematic replication</span>
-          </div>
-          <p style="font-size:10px;color:var(--text-faint);margin:6px 0 0">First 10 (normal border) are used by both OpenAlex and Semantic Scholar. Remaining 27 (faint border) are OpenAlex-only.</p>
-        </div>
-
-        <div class="docs-card">
-          <div class="docs-card-head">Exclusion patterns (applied by Stage 2 rule filter)</div>
-          <p style="font-size:10px;color:var(--text-faint);margin:0 0 6px">Loaded from the seven exclusion specs in <code>filter/spec/</code>. Any match → <code>false_positive</code>.</p>
-          <div class="kw-grid">
-            <span class="kw-pill excl">DNA/RNA replication</span>
-            <span class="kw-pill excl">viral/virus replication</span>
-            <span class="kw-pill excl">cell/cellular replication</span>
-            <span class="kw-pill excl">chromosome/plasmid replication</span>
-            <span class="kw-pill excl">replication fork</span>
-            <span class="kw-pill excl">replication origin</span>
-            <span class="kw-pill excl">replication stress</span>
-            <span class="kw-pill excl">replication timing</span>
-            <span class="kw-pill excl">code/software replication</span>
-            <span class="kw-pill excl">data/dataset replication</span>
-            <span class="kw-pill excl">model/method replication</span>
-            <span class="kw-pill excl">pipeline/protocol replication</span>
-          </div>
-        </div>
-
-        <div class="docs-card">
-          <div class="docs-card-head">candidates.csv columns</div>
-          <table class="docs-table">
-            <thead><tr><th>Column</th><th>Description</th><th>Example</th></tr></thead>
-            <tbody>
-              <tr><td class="col-name">doi_r</td><td class="col-desc">Replication paper DOI (cleaned via <code>clean_doi()</code>)</td><td class="col-desc">10.1126/science.1255484</td></tr>
-              <tr><td class="col-name">title_r</td><td class="col-desc">Paper title</td><td class="col-desc">Estimating the Reproducibility of Psychological Science</td></tr>
-              <tr><td class="col-name">abstract_r</td><td class="col-desc">Abstract text (may be blank if not indexed)</td><td class="col-desc">Reproducibility is a defining feature…</td></tr>
-              <tr><td class="col-name">year_r</td><td class="col-desc">Publication year</td><td class="col-desc">2015</td></tr>
-              <tr><td class="col-name">authors_r</td><td class="col-desc">Semicolon-separated author surnames</td><td class="col-desc">Open Science Collaboration</td></tr>
-              <tr><td class="col-name">journal_r</td><td class="col-desc">Journal or venue name</td><td class="col-desc">Science</td></tr>
-              <tr><td class="col-name">url_r</td><td class="col-desc">Landing page URL (used when DOI is absent)</td><td class="col-desc">https://osf.io/…</td></tr>
-              <tr><td class="col-name">openalex_id_r</td><td class="col-desc">OpenAlex work ID</td><td class="col-desc">W2170235581</td></tr>
-              <tr><td class="col-name">source</td><td class="col-desc">Discovery source</td><td class="col-desc">openalex | semantic_scholar | engine</td></tr>
+              <tr><td class="col-name">id</td><td class="col-desc">OpenAlex work ID</td></tr>
+              <tr><td class="col-name">doi</td><td class="col-desc">DOI as the snapshot holds it (cleaned downstream by <code>clean_doi()</code>)</td></tr>
+              <tr><td class="col-name">title, display_name</td><td class="col-desc">Title fields</td></tr>
+              <tr><td class="col-name">publication_year</td><td class="col-desc">Publication year (int)</td></tr>
+              <tr><td class="col-name">type</td><td class="col-desc">OpenAlex work type</td></tr>
+              <tr><td class="col-name">authorships, primary_location,<br>open_access, concepts</td><td class="col-desc">Nested snapshot fields, kept as JSON strings</td></tr>
+              <tr><td class="col-name">abstract_text</td><td class="col-desc">Abstract, already reconstructed from the inverted index</td></tr>
+              <tr><td class="col-name">hit_token_title,<br>hit_token_abstract, hit_concept</td><td class="col-desc">Why the gate kept this row — the three booleans behind the breakdown on the right</td></tr>
             </tbody>
           </table>
         </div>
@@ -731,114 +642,86 @@ python -m search.run_search --harvest-only</pre>
 
       <!-- Right: stats -->
       <div class="stats-panel">
-        <p style="font-size:10px;color:var(--text-faint);margin:0 0 6px">Click a card to download that subset as CSV.</p>
+        <div id="pool-missing-note" class="stat-card" style="display:none">
+          <h3>Survivor pool not available here</h3>
+          <p style="font-size:11px;color:var(--text-muted);margin:0">
+            No pool was found at <code id="pool-dir-missing">cache/snapshot_pool/</code>, and
+            <code>data/dashboard/stats.json</code> carries no pool figures from a machine that has one.
+            The pool is several GB and gitignored, so this is the normal state of a fresh checkout —
+            run <code>python -m search.pool_sync --pull</code> to fetch it, or
+            <code>python -m search.run_search --scan</code> to build it.
+          </p>
+        </div>
+
         <div class="kpi-row">
-          <a href="/api/dashboard/download?stage=candidates" class="kpi-card" title="Download candidates.csv">
-            <div class="kpi-num" id="k-candidates">—</div>
-            <div class="kpi-label">Total Candidates ↓</div>
-            <div class="kpi-sub">candidates.csv</div>
-          </a>
-          <a href="/api/check/download?stage=candidates&no_doi=1" class="kpi-card" title="Download rows with no DOI">
-            <div class="kpi-num" id="k-cand-no-doi" style="color:#f59e0b">—</div>
-            <div class="kpi-label">No DOI ↓</div>
-            <div class="kpi-sub">URL or title only</div>
-          </a>
-          <a href="/api/check/download?stage=candidates&no_doi_url=1" class="kpi-card" title="Download rows with no DOI or URL">
-            <div class="kpi-num" id="k-cand-no-doi-url" style="color:#dc2626">—</div>
-            <div class="kpi-label">No DOI or URL ↓</div>
-            <div class="kpi-sub">title-only rows</div>
-          </a>
-          <a href="/api/check/download?stage=candidates&no_abstract=1" class="kpi-card" title="Download rows with no abstract">
-            <div class="kpi-num" id="k-cand-no-abstract" style="color:#9ca3af">—</div>
-            <div class="kpi-label">No Abstract ↓</div>
-            <div class="kpi-sub">filter will use title only</div>
-          </a>
+          <div class="kpi-card">
+            <div class="kpi-num" id="k-pool-rows">—</div>
+            <div class="kpi-label">Survivors in Pool</div>
+            <div class="kpi-sub" id="k-pool-dir">survivor pool</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-num" id="k-pool-files">—</div>
+            <div class="kpi-label">Partitions</div>
+            <div class="kpi-sub">one file per snapshot partition</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-num" id="k-pool-size">—</div>
+            <div class="kpi-label">Pool on Disk</div>
+            <div class="kpi-sub">parquet, zstd</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-num" id="k-pool-no-doi" style="color:#f59e0b">—</div>
+            <div class="kpi-label">No DOI</div>
+            <div class="kpi-sub">OpenAlex ID only</div>
+          </div>
         </div>
 
         <div class="stats-two">
           <div class="stat-card">
-            <h3>Source Breakdown</h3>
-            <div id="search-source-breakdown"><div class="null-note">Loading…</div></div>
+            <h3>Why the gate kept the row</h3>
+            <p style="font-size:10px;color:var(--text-faint);margin:0 0 8px">
+              The three <code>hit_*</code> booleans. A row can hit several arms, so these sum to
+              more than the survivor count.
+            </p>
+            <div id="pool-gate-breakdown"><div class="null-note">Loading…</div></div>
           </div>
           <div class="stat-card">
-            <h3>Candidates by Publication Year</h3>
-            <div id="cand-year-chart"><div class="null-note">Loading…</div></div>
-          </div>
-        </div>
-
-        <div class="stat-card">
-          <h3>Yield per Search Phrase</h3>
-          <p style="font-size:10px;color:var(--text-faint);margin:0 0 8px">
-            Records fetched from OpenAlex per phrase, rebuilt from the cursor checkpoints in
-            <code>cache/openalex/</code>. These are <strong>pre-deduplication</strong> counts — a paper
-            matching three phrases is counted three times, so this column does not sum to Total Candidates.
-            <strong>Expected</strong> is OpenAlex's own result count for the same jobs. Everything here is
-            reconstructed from surviving cursor checkpoints in a <em>prunable</em> cache, so a low
-            number can mean a cleared checkpoint rather than unfetched recall — candidates.csv is the
-            authority on what was actually fetched.
-            <span id="phrase-total"></span>
-          </p>
-          <div class="table-scroll">
-            <table class="mini-table" id="phrase-table">
-              <thead><tr>
-                <th data-sort="phrase">Phrase</th>
-                <th data-sort="jobs" class="num" style="text-align:right">Jobs</th>
-                <th data-sort="fetched" class="num" style="text-align:right">Records ▼</th>
-                <th data-sort="expected" class="num" style="text-align:right">Expected</th>
-                <th style="width:22%">Share</th>
-              </tr></thead>
-              <tbody id="phrase-tbody">
-                <tr><td colspan="5" class="null-note" style="padding:12px">Loading…</td></tr>
-              </tbody>
-            </table>
+            <h3>Survivors by Publication Year</h3>
+            <div id="pool-year-chart"><div class="null-note">Loading…</div></div>
           </div>
         </div>
 
         <div class="stat-card" style="padding:14px 16px">
           <h3>How it works — data flow</h3>
           <div class="flow-chart" style="gap:2px">
-            <div class="flow-node-cli">python -m search.run_search --auto-advance \
-  --from-year 2011 --to-year 2026 --max-per-phrase 10000</div>
+            <div class="flow-node-cli">python -m search.run_search --scan</div>
             <div class="flow-arrow-down">↓</div>
             <div class="flow-node">
-              <div class="flow-node-head">Step 1 — Harvest cached pages</div>
-              All previously downloaded pages in <code>cache/openalex/</code> and <code>cache/s2/</code> are merged into the batch first — no new API calls needed for already-fetched pages.
+              <div class="flow-node-head">Step 1 — Manifest</div>
+              Fetch the snapshot manifest (cached in <code>cache/snapshot/</code>) and list its ~2,446 partitions with their content lengths.
+            </div>
+            <div class="flow-arrow-down">↓ partitions not yet done</div>
+            <div class="flow-node">
+              <div class="flow-node-head">Step 2 — Stream each partition</div>
+              Read only the columns the gate and the pool need, in batches, straight from S3 over HTTPS — the 725 GB is never stored locally.
             </div>
             <div class="flow-arrow-down">↓</div>
             <div class="flow-node">
-              <div class="flow-node-head">Step 2 — Fetch next job</div>
-              One <em>(source, phrase, year)</em> job per <code>--auto-advance</code> invocation. Cursor/offset saved after each page — interrupted runs resume exactly where they left off.<br>
-              <span style="font-size:10px;color:var(--text-faint)">OpenAlex: 37 phrases + 2 concepts · Semantic Scholar: top 10 phrases</span>
-            </div>
-            <div class="flow-arrow-down">↓</div>
-            <div class="flow-node">
-              <div class="flow-node-head">Step 3 — Abstract enrichment (if missing)</div>
+              <div class="flow-node-head">Step 3 — Search gate (vectorised)</div>
               <div style="margin-top:4px;display:flex;flex-direction:column;gap:3px">
-                <div><span class="flow-badge badge-green">1st</span> <strong>OpenAlex batch</strong> — 50 IDs per request via <code>filter=</code></div>
-                <div><span class="flow-badge badge-blue">2nd</span> <strong>CrossRef</strong> — by DOI, for those still missing</div>
-                <div><span class="flow-badge badge-gray">3rd</span> <strong>Semantic Scholar</strong> — final fallback (requires S2_API_KEY)</div>
+                <div><span class="flow-badge badge-green">arm 1</span> Replication stem alternation over title + raw inverted-index JSON</div>
+                <div><span class="flow-badge badge-blue">arm 2</span> Replication concept membership</div>
               </div>
-              Cached per identifier in <code>cache/abstracts/</code>; checkpoint in <code>cache/fetch_abstracts_done.txt</code>.
+              Either hit admits. Nothing is excluded here.
             </div>
-            <div class="flow-arrow-down">↓</div>
-            <div class="flow-node">
-              <div class="flow-node-head">Step 4 — 5-pass deduplication</div>
-              <div style="display:flex;flex-direction:column;gap:3px;margin-top:4px">
-                <div><span class="flow-badge badge-red">0a</span> Bad DOI patterns (figshare datasets, PeerJ review objects)</div>
-                <div><span class="flow-badge badge-red">0b</span> Versioned preprints — keep highest version, drop older <code>_v1</code>, <code>_v2</code></div>
-                <div><span class="flow-badge badge-orange">1</span> Exact DOI after <code>clean_doi()</code> normalisation</div>
-                <div><span class="flow-badge badge-orange">2</span> Fuzzy title ≥ 90 RapidFuzz <code>token_sort_ratio</code></div>
-                <div><span class="flow-badge badge-orange">3</span> FLoRA cross-check — skip DOIs already in <code>flora_entry_sheet.csv</code></div>
-              </div>
-            </div>
-            <div class="flow-arrow-down">↓ new rows only</div>
+            <div class="flow-arrow-down">↓ survivors only</div>
             <div class="flow-node" style="border-left:3px solid #16a34a">
-              <div class="flow-node-head">Step 5 — Write</div>
-              Rows appended to <code>candidates.csv</code> · Index keys added to <code>cache/candidates_index.txt</code> (up to 4 keys/row: OA ID → DOI → URL → title) · Parquet cache refreshed
+              <div class="flow-node-head">Step 4 — Write the pool</div>
+              One parquet file per partition, written to a temp name and committed on success · abstract reconstructed once, at write time · <code>hit_*</code> booleans recorded · ledger entry marked <code>done</code>.
             </div>
             <div class="flow-arrow-down">↓</div>
             <div class="flow-node" style="text-align:center;font-size:10px;color:var(--text-faint);border-style:dashed">
-              Exit code 2 = full cycle complete, no new rows — PowerShell loop terminates
+              Stage 2 (<code>python -m filter.engine route</code>) reads the pool directly — no CSV in between
             </div>
           </div>
         </div>
@@ -857,7 +740,7 @@ python -m search.run_search --harvest-only</pre>
       <div class="docs-panel">
         <div class="docs-card">
           <div class="docs-card-head">What Stage 2 does</div>
-          <p>Removes false positives and classifies candidates into <code>replication</code>, <code>reproduction</code>, <code>needs_review</code>, or <code>false_positive</code>. Reads <code>candidates.csv</code> in <strong>50 k-row chunks</strong> to avoid OOM on files with 1M+ rows.</p>
+          <p>Removes false positives and classifies candidates into <code>replication</code>, <code>reproduction</code>, <code>needs_review</code>, or <code>false_positive</code>. Routes the <strong>survivor pool</strong> (<code>cache/snapshot_pool/</code>) — Stage 1's parquet output — partition by partition; <code>handoff</code> writes Stage 3's input.</p>
           <p>Stage 2 is <strong>deterministic</strong>: the rule filter decides every row with no API calls, and rows it cannot decide stay <code>needs_review</code> and are written through unchanged — Stage 3's two-model front-door screen is the validated decider of "is this a replication at all". Results are streamed row-by-row to <code>filtered.csv</code> via a persistent index (<code>cache/filtered_index.txt</code>) so interrupted runs resume without reprocessing.</p>
         </div>
 
@@ -932,8 +815,7 @@ python -m search.run_search --harvest-only</pre>
             <tbody>
               <tr><td class="col-name">--from-year YYYY</td><td>none</td><td class="col-desc">Only process candidates where <code>year_r ≥ YYYY</code></td></tr>
               <tr><td class="col-name">--to-year YYYY</td><td>none</td><td class="col-desc">Only process candidates where <code>year_r ≤ YYYY</code></td></tr>
-              <tr><td class="col-name">--source SOURCE</td><td>all</td><td class="col-desc">Only process candidates from this source (<code>openalex</code>, <code>semantic_scholar</code>, …)</td></tr>
-              <tr><td class="col-name">--limit N</td><td>none</td><td class="col-desc">Stop after writing N new rows</td></tr>
+                            <tr><td class="col-name">--limit N</td><td>none</td><td class="col-desc">Stop after writing N new rows</td></tr>
               <tr><td class="col-name">--offset N</td><td>none</td><td class="col-desc">Skip the first N unprocessed rows before starting</td></tr>
               <tr><td class="col-name">--rebuild-index</td><td>off</td><td class="col-desc">Rebuild <code>cache/filtered_index.txt</code> from <code>filtered.csv</code>, then exit</td></tr>
             </tbody>
@@ -946,11 +828,11 @@ python -m filter.run_filter --rebuild-index     # rebuild index from filtered.cs
 
         <div class="docs-card">
           <div class="docs-card-head">filtered.csv — all columns</div>
-          <p style="font-size:11px;color:var(--text-faint);margin:0 0 8px">Inherits all candidates.csv columns plus the 4 added by Stage 2.</p>
+          <p style="font-size:11px;color:var(--text-faint);margin:0 0 8px">Inherits all 10 candidate-row columns (<code>CANDIDATES_COLS</code> in <code>shared/schema.py</code>) plus the 4 added by Stage 2.</p>
           <table class="docs-table">
             <thead><tr><th>Column</th><th>Description</th><th>Example</th></tr></thead>
             <tbody>
-              <tr style="background:var(--surface-2)"><td colspan="3" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Inherited from candidates.csv</td></tr>
+              <tr style="background:var(--surface-2)"><td colspan="3" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Inherited from the candidate row schema</td></tr>
               <tr><td class="col-name">doi_r</td><td class="col-desc">Replication paper DOI</td><td class="col-desc">10.1126/science.1255484</td></tr>
               <tr><td class="col-name">title_r</td><td class="col-desc">Paper title</td><td class="col-desc">Estimating the Reproducibility…</td></tr>
               <tr><td class="col-name">abstract_r</td><td class="col-desc">Abstract text (may be blank)</td><td class="col-desc">Reproducibility is a defining feature…</td></tr>
@@ -959,7 +841,7 @@ python -m filter.run_filter --rebuild-index     # rebuild index from filtered.cs
               <tr><td class="col-name">journal_r</td><td class="col-desc">Journal or venue name</td><td class="col-desc">Science</td></tr>
               <tr><td class="col-name">url_r</td><td class="col-desc">Landing page URL (used when DOI absent)</td><td class="col-desc">https://osf.io/…</td></tr>
               <tr><td class="col-name">openalex_id_r</td><td class="col-desc">OpenAlex work ID</td><td class="col-desc">W2170235581</td></tr>
-              <tr><td class="col-name">source</td><td class="col-desc">Discovery source</td><td class="col-desc">openalex | semantic_scholar</td></tr>
+              <tr><td class="col-name">source</td><td class="col-desc">Discovery source</td><td class="col-desc">openalex_snapshot</td></tr>
               <tr><td class="col-name">ref_r</td><td class="col-desc">Formatted reference string</td><td class="col-desc">Open Science Collaboration (2015). Science.</td></tr>
               <tr style="background:var(--surface-2)"><td colspan="3" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:5px 8px;letter-spacing:.4px">Added by Stage 2</td></tr>
               <tr><td class="col-name">filter_status</td><td class="col-desc">Classification result</td><td class="col-desc">replication | reproduction | false_positive | needs_review</td></tr>
@@ -1041,7 +923,7 @@ python -m filter.run_filter --rebuild-index     # rebuild index from filtered.cs
             <div class="flow-arrow-down">↓</div>
             <div class="flow-node">
               <div class="flow-node-head">Load + resume</div>
-              Reads <code>candidates.csv</code> in <strong>50k-row chunks</strong> (avoids OOM on 1M+ row files). Keys in <code>cache/filtered_index.txt</code> are skipped — run resumes from where it left off.
+              Reads the survivor pool parquet partition by partition. Keys already routed are skipped — a run resumes where it left off.
             </div>
             <div class="flow-arrow-down">↓ per row</div>
             <div class="flow-node" style="border-left:3px solid #dc2626">
@@ -1171,7 +1053,7 @@ python -m extract.audit_dois --apply  # write corrections</pre>
               <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Unique identifier</td></tr>
               <tr><td class="col-name">pair_id</td><td class="col-desc">Hash of (doi_r, doi_o) — unique row key for dedup and promote</td></tr>
               <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Inherited from filtered.csv</td></tr>
-              <tr><td class="col-name" style="font-size:9px">doi_r, title_r, abstract_r, year_r,<br>authors_r, journal_r, url_r,<br>openalex_id_r, source, ref_r</td><td class="col-desc">All 10 candidates.csv columns</td></tr>
+              <tr><td class="col-name" style="font-size:9px">doi_r, title_r, abstract_r, year_r,<br>authors_r, journal_r, url_r,<br>openalex_id_r, source, ref_r</td><td class="col-desc">All 10 candidate-row columns</td></tr>
               <tr><td class="col-name" style="font-size:9px">filter_status, filter_method,<br>filter_evidence, filter_confidence</td><td class="col-desc">All 4 Stage 2 filter columns</td></tr>
               <tr style="background:var(--surface-2)"><td colspan="2" style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-faint);padding:3px 8px;letter-spacing:.4px">Match classification — Stage 3</td></tr>
               <tr><td class="col-name">original_match_type</td><td class="col-desc">single_original | multiple_match | multiple_original</td></tr>
@@ -1720,377 +1602,6 @@ SUPABASE_SERVICE_KEY=eyJhbGc...</pre>
 
   <!-- ════════════════════════════════════════════════════════════════════════ -->
   <!-- OLD PIPELINE TAB ═══════════════════════════════════════════════════════ -->
-  <div class="tab-panel" id="tab-old-pipeline">
-
-    <!-- Header row: run button + generated time -->
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
-      <div>
-        <div style="font-size:13px;font-weight:700;color:var(--text)">Old Pipeline vs New Pipeline</div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">
-          Compares <code style="font-size:10px">all_replications.csv</code> (prior work) against
-          <code style="font-size:10px">candidates.csv</code> (new pipeline) to show coverage, gaps, and keyword differences.
-        </div>
-      </div>
-      <div style="margin-left:auto;display:flex;align-items:center;gap:10px;flex-shrink:0">
-        <span id="op-generated" style="font-size:10px;color:var(--text-faint)"></span>
-        <span id="op-regen-hint" style="font-size:10px;color:var(--text-faint);display:none">
-          Run: <code style="font-size:10px">python -m analysis.old_pipeline_compare</code>
-        </span>
-      </div>
-    </div>
-
-    <!-- ── Section A: Pipeline Overview (two panels) ───────────────────────── -->
-    <div class="compare-split" style="margin-bottom:16px">
-
-      <!-- OLD PIPELINE panel -->
-      <div class="stat-card" style="padding:0;overflow:hidden">
-        <div class="cmp-panel-head" style="background:#fef2f2;border-bottom-color:#fecaca">
-          <span style="color:#b91c1c;font-weight:800">OLD PIPELINE</span>
-          <span class="cmp-panel-file">data/all_replications.csv</span>
-        </div>
-        <div class="cmp-panel-body">
-
-          <!-- KPIs -->
-          <div class="kpi-row">
-            <div class="kpi-card" style="min-width:80px">
-              <div class="kpi-num" id="op-old-total" style="font-size:18px">—</div>
-              <div class="kpi-label">Total Rows</div>
-            </div>
-            <div class="kpi-card" style="min-width:80px;border-color:#bbf7d0">
-              <div class="kpi-num" id="op-old-tp" style="font-size:18px;color:#16a34a">—</div>
-              <div class="kpi-label">True Positives</div>
-              <div class="kpi-sub">replication + reproduction</div>
-            </div>
-            <div class="kpi-card" style="min-width:80px;border-color:#fecaca">
-              <div class="kpi-num" id="op-old-fp" style="font-size:18px;color:#dc2626">—</div>
-              <div class="kpi-label">False Positives</div>
-              <div class="kpi-sub">validation_status = FP</div>
-            </div>
-          </div>
-
-          <!-- TP type breakdown -->
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);margin-bottom:4px">TP Breakdown</div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap" id="op-old-tp-breakdown">
-            <span class="badge-green flow-badge">— replication</span>
-            <span class="badge-blue flow-badge">— reproduction</span>
-          </div>
-
-          <!-- Sources breakdown -->
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);margin:6px 0 4px">Sources / Pathway</div>
-          <div id="op-old-sources"><div class="null-note">Loading…</div></div>
-
-          <!-- Discovery method note -->
-          <div style="font-size:10px;color:var(--text-muted);border-top:1px solid var(--border);padding-top:8px;margin-top:2px">
-            Discovery: curated lists from 9 pathway sources — no keyword phrase search.
-            Rows come pre-labeled (replication / reproduction) or auto-classified via LLM.
-          </div>
-        </div>
-      </div>
-
-      <!-- NEW PIPELINE panel -->
-      <div class="stat-card" style="padding:0;overflow:hidden">
-        <div class="cmp-panel-head" style="background:#eff6ff;border-bottom-color:#bfdbfe">
-          <span style="color:#1d4ed8;font-weight:800">NEW PIPELINE</span>
-          <span class="cmp-panel-file">data/candidates.csv → filtered.csv</span>
-        </div>
-        <div class="cmp-panel-body">
-
-          <!-- KPIs -->
-          <div class="kpi-row">
-            <div class="kpi-card" style="min-width:80px">
-              <div class="kpi-num" id="op-new-cands" style="font-size:18px">—</div>
-              <div class="kpi-label">Candidates</div>
-              <div class="kpi-sub">after search</div>
-            </div>
-            <div class="kpi-card" style="min-width:80px;border-color:#bbf7d0">
-              <div class="kpi-num" id="op-new-tp" style="font-size:18px;color:#16a34a">—</div>
-              <div class="kpi-label">Filtered TP</div>
-              <div class="kpi-sub">replication + reproduction</div>
-            </div>
-            <div class="kpi-card" style="min-width:80px;border-color:#fecaca">
-              <div class="kpi-num" id="op-new-fp" style="font-size:18px;color:#dc2626">—</div>
-              <div class="kpi-label">Filtered FP</div>
-              <div class="kpi-sub">false_positive</div>
-            </div>
-          </div>
-
-          <!-- Sources breakdown -->
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);margin-bottom:4px">Sources</div>
-          <div id="op-new-sources"><div class="null-note">Loading…</div></div>
-
-          <!-- Keywords -->
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);margin:6px 0 4px">
-            Keyword Phrases (<span id="op-phrase-count">?</span>)
-          </div>
-          <div class="kw-grid" id="op-phrases"><span class="null-note">Loading…</span></div>
-
-          <!-- Concept IDs -->
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);margin:6px 0 4px">OpenAlex Concept IDs</div>
-          <div class="kw-grid" id="op-concepts"><span class="null-note">Loading…</span></div>
-        </div>
-      </div>
-    </div><!-- /compare-split A -->
-
-    <!-- ── Section B: Overlap Analysis ────────────────────────────────────── -->
-    <div class="stat-card" style="margin-bottom:16px">
-      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">
-        <h3 style="margin:0">Overlap Analysis</h3>
-        <span style="font-size:11px;color:var(--text-muted)">
-          How many old-pipeline TP papers did the new pipeline also discover?
-        </span>
-      </div>
-
-      <!-- Summary KPIs -->
-      <div class="kpi-row" style="margin-bottom:14px">
-        <div class="kpi-card" style="border-color:#bbf7d0">
-          <div class="kpi-num" id="op-ov-total-in" style="color:#16a34a">—</div>
-          <div class="kpi-label">Found in New</div>
-          <div class="kpi-sub">of <span id="op-ov-tp-total">?</span> old TP rows</div>
-        </div>
-        <div class="kpi-card" style="border-color:#fecaca">
-          <div class="kpi-num" id="op-ov-total-out" style="color:#dc2626">—</div>
-          <div class="kpi-label">Not Found (Gap)</div>
-          <div class="kpi-sub">missing from new pipeline</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-num" id="op-ov-pct">—</div>
-          <div class="kpi-label">Coverage</div>
-          <div class="kpi-sub">old TP recall in new pipeline</div>
-        </div>
-      </div>
-
-      <!-- Per-identifier breakdown bars -->
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);margin-bottom:8px">
-        Breakdown by identifier type
-      </div>
-
-      <div class="overlap-row" id="op-ov-doi-row">
-        <div class="overlap-label">
-          <span class="ol-title">DOI-identified rows</span>
-          <span class="ol-nums" id="op-ov-doi-nums">? / ?</span>
-          <span class="ol-pct" id="op-ov-doi-pct" style="color:#16a34a">—%</span>
-        </div>
-        <div class="overlap-bar">
-          <div class="overlap-bar-fill" id="op-ov-doi-fill" style="width:0%;background:#16a34a"></div>
-        </div>
-        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">
-          Matched by <code style="font-size:9px">doi_r</code> → new candidates index
-          <span class="overlap-gap-tag" id="op-ov-doi-gap"></span>
-        </div>
-      </div>
-
-      <div class="overlap-row" id="op-ov-oaid-row">
-        <div class="overlap-label">
-          <span class="ol-title">OA-ID-only rows (no DOI)</span>
-          <span class="ol-nums" id="op-ov-oaid-nums">? / ?</span>
-          <span class="ol-pct" id="op-ov-oaid-pct" style="color:#2563eb">—%</span>
-        </div>
-        <div class="overlap-bar">
-          <div class="overlap-bar-fill" id="op-ov-oaid-fill" style="width:0%;background:#2563eb"></div>
-        </div>
-        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">
-          Matched by <code style="font-size:9px">url_r</code> (openalex.org/W…) → new
-          <code style="font-size:9px">openalex_id_r</code> index
-          <span class="overlap-gap-tag" id="op-ov-oaid-gap"></span>
-        </div>
-      </div>
-
-      <div class="overlap-row" style="border-top:2px solid var(--border);padding-top:10px;margin-top:4px">
-        <div class="overlap-label">
-          <span class="ol-title" style="font-weight:800">TOTAL COVERAGE</span>
-          <span class="ol-nums" id="op-ov-total-nums" style="font-weight:700">? / ?</span>
-          <span class="ol-pct" id="op-ov-total-pct" style="font-size:14px;font-weight:800">—%</span>
-        </div>
-        <div class="overlap-bar" style="height:12px">
-          <div class="overlap-bar-fill" id="op-ov-total-fill" style="width:0%"></div>
-        </div>
-        <div style="font-size:10px;color:var(--text-muted);margin-top:3px">
-          Old pipeline TPs captured by new search
-          <span class="overlap-gap-tag" style="font-size:10px;padding:2px 8px" id="op-ov-total-gap"></span>
-        </div>
-      </div>
-    </div><!-- /tp-overlap -->
-
-    <!-- ── Section B2: FP Overlap Analysis ────────────────────────────────── -->
-    <div class="stat-card" style="margin-bottom:16px">
-      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">
-        <h3 style="margin:0">False Positive Overlap</h3>
-        <span style="font-size:11px;color:var(--text-muted)">
-          How many old-pipeline FP papers (<code style="font-size:10px">validation_status = false_positive</code>)
-          also appear in new candidates.csv?
-          <span style="color:#dc2626;font-weight:600">High count here = new pipeline is catching known noise — expected.</span>
-          <span style="color:#b45309;font-weight:600">Missing FPs = papers the new pipeline skipped entirely.</span>
-        </span>
-      </div>
-
-      <div class="kpi-row" style="margin-bottom:14px">
-        <div class="kpi-card">
-          <div class="kpi-num" id="op-fp-total" style="color:#7c3aed">—</div>
-          <div class="kpi-label">Old FP Total</div>
-          <div class="kpi-sub">in all_replications.csv</div>
-        </div>
-        <div class="kpi-card" style="border-color:#fde68a">
-          <div class="kpi-num" id="op-fp-in-new" style="color:#b45309">—</div>
-          <div class="kpi-label">In New Candidates</div>
-          <div class="kpi-sub">new pipeline caught them (expected FP)</div>
-        </div>
-        <div class="kpi-card" style="border-color:#e9d5ff">
-          <div class="kpi-num" id="op-fp-not-in-new" style="color:#7c3aed">—</div>
-          <div class="kpi-label">Not in New Candidates</div>
-          <div class="kpi-sub">new pipeline skipped these — good</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-num" id="op-fp-pct">—</div>
-          <div class="kpi-label">FP Capture Rate</div>
-          <div class="kpi-sub">lower = cleaner new search</div>
-        </div>
-      </div>
-
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);margin-bottom:8px">
-        Breakdown by identifier type
-      </div>
-
-      <div class="overlap-row">
-        <div class="overlap-label">
-          <span class="ol-title">DOI-identified FP rows</span>
-          <span class="ol-nums" id="op-fp-doi-nums">? / ?</span>
-          <span class="ol-pct" id="op-fp-doi-pct" style="color:#b45309">—%</span>
-        </div>
-        <div class="overlap-bar">
-          <div class="overlap-bar-fill" id="op-fp-doi-fill" style="width:0%;background:#f59e0b"></div>
-        </div>
-        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">
-          Old FP papers with a DOI that appear in new candidates index
-        </div>
-      </div>
-
-      <div class="overlap-row">
-        <div class="overlap-label">
-          <span class="ol-title">OA-ID-only FP rows (no DOI)</span>
-          <span class="ol-nums" id="op-fp-oaid-nums">? / ?</span>
-          <span class="ol-pct" id="op-fp-oaid-pct" style="color:#b45309">—%</span>
-        </div>
-        <div class="overlap-bar">
-          <div class="overlap-bar-fill" id="op-fp-oaid-fill" style="width:0%;background:#f59e0b"></div>
-        </div>
-        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">
-          Matched by OpenAlex ID (url_r) against new openalex_id_r index
-        </div>
-      </div>
-
-      <div class="overlap-row" style="border-top:2px solid var(--border);padding-top:10px;margin-top:4px">
-        <div class="overlap-label">
-          <span class="ol-title" style="font-weight:800">TOTAL FP IN NEW PIPELINE</span>
-          <span class="ol-nums" id="op-fp-total-nums" style="font-weight:700">? / ?</span>
-          <span class="ol-pct" id="op-fp-total-pct" style="font-size:14px;font-weight:800">—%</span>
-        </div>
-        <div class="overlap-bar" style="height:12px">
-          <div class="overlap-bar-fill" id="op-fp-total-fill" style="width:0%;background:#f59e0b"></div>
-        </div>
-        <div style="font-size:10px;color:var(--text-muted);margin-top:3px">
-          Old FPs present in new candidates — these will be caught by Stage 2 filtering
-        </div>
-      </div>
-    </div><!-- /fp-overlap -->
-
-    <!-- ── Section C: Missing Candidates — Gap List ───────────────────────── -->
-    <div class="stat-card" style="padding:0;overflow:hidden">
-      <div style="padding:10px 16px;border-bottom:1px solid var(--border);
-                  display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-        <span style="font-size:10px;font-weight:700;text-transform:uppercase;
-                     color:var(--text-faint);letter-spacing:.5px">Missing Candidates — Gap List</span>
-        <span style="font-size:11px;color:var(--text-muted)">
-          Old-pipeline TP papers <strong>not found</strong> in new candidates.csv
-        </span>
-        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-          <input type="text" id="gap-search" placeholder="Search DOI or title…"
-                 oninput="scheduleGapSearch()" style="font-size:11px;width:200px">
-          <span id="gap-count" style="font-size:11px;color:var(--text-faint);white-space:nowrap"></span>
-        </div>
-      </div>
-
-      <!-- Sub-tabs: TP DOI / TP URL / FP DOI / FP URL -->
-      <div class="gap-tab-strip" style="padding:0 14px">
-        <button class="gap-tab-btn active" data-gtab="tp-doi" onclick="switchGapTab('tp-doi')">
-          TP — DOI gaps <span id="op-gap-tp-doi-badge" class="flow-badge badge-red" style="font-size:9px">—</span>
-        </button>
-        <button class="gap-tab-btn" data-gtab="tp-url" onclick="switchGapTab('tp-url')">
-          TP — URL / OA-ID gaps <span id="op-gap-tp-url-badge" class="flow-badge badge-blue" style="font-size:9px">—</span>
-        </button>
-        <button class="gap-tab-btn" data-gtab="fp-doi" onclick="switchGapTab('fp-doi')">
-          FP — DOI gaps <span id="op-gap-fp-doi-badge" class="flow-badge badge-orange" style="font-size:9px">—</span>
-        </button>
-        <button class="gap-tab-btn" data-gtab="fp-url" onclick="switchGapTab('fp-url')">
-          FP — URL / OA-ID gaps <span id="op-gap-fp-url-badge" class="flow-badge badge-purple" style="font-size:9px">—</span>
-        </button>
-      </div>
-
-      <div class="gap-tab-panel active" id="gap-panel-tp-doi">
-        <div style="font-size:10px;color:var(--text-muted);padding:6px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)">
-          True Positive papers (replication / reproduction) that have a DOI but were <strong>not found</strong> in new candidates.csv
-        </div>
-        <table class="data-table">
-          <thead><tr>
-            <th style="width:200px">DOI</th><th>Title</th>
-            <th style="width:50px">Year</th><th style="width:120px">Source</th>
-          </tr></thead>
-          <tbody id="gap-tbody-tp-doi">
-            <tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
-          </tbody>
-        </table>
-        <div class="pager" id="gap-pager-tp-doi" style="padding:8px"></div>
-      </div>
-
-      <div class="gap-tab-panel" id="gap-panel-tp-url">
-        <div style="font-size:10px;color:var(--text-muted);padding:6px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)">
-          True Positive papers with no DOI (OA-ID only) that were <strong>not found</strong> in new candidates.csv
-        </div>
-        <table class="data-table">
-          <thead><tr>
-            <th style="width:280px">OA URL</th><th>Title</th>
-            <th style="width:50px">Year</th><th style="width:120px">Source</th>
-          </tr></thead>
-          <tbody id="gap-tbody-tp-url">
-            <tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
-          </tbody>
-        </table>
-        <div class="pager" id="gap-pager-tp-url" style="padding:8px"></div>
-      </div>
-
-      <div class="gap-tab-panel" id="gap-panel-fp-doi">
-        <div style="font-size:10px;color:var(--text-muted);padding:6px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)">
-          False Positive papers (validation_status = false_positive) with a DOI that were <strong>not found</strong> in new candidates.csv — the new pipeline cleanly skipped these
-        </div>
-        <table class="data-table">
-          <thead><tr>
-            <th style="width:200px">DOI</th><th>Title</th>
-            <th style="width:50px">Year</th><th style="width:120px">Source</th>
-          </tr></thead>
-          <tbody id="gap-tbody-fp-doi">
-            <tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
-          </tbody>
-        </table>
-        <div class="pager" id="gap-pager-fp-doi" style="padding:8px"></div>
-      </div>
-
-      <div class="gap-tab-panel" id="gap-panel-fp-url">
-        <div style="font-size:10px;color:var(--text-muted);padding:6px 14px;background:var(--surface-2);border-bottom:1px solid var(--border)">
-          False Positive papers with no DOI (OA-ID only) that were <strong>not found</strong> in new candidates.csv
-        </div>
-        <table class="data-table">
-          <thead><tr>
-            <th style="width:280px">OA URL</th><th>Title</th>
-            <th style="width:50px">Year</th><th style="width:120px">Source</th>
-          </tr></thead>
-          <tbody id="gap-tbody-fp-url">
-            <tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">Loading…</td></tr>
-          </tbody>
-        </table>
-        <div class="pager" id="gap-pager-fp-url" style="padding:8px"></div>
-      </div>
-    </div><!-- /gap list -->
-
-  </div><!-- /tab-old-pipeline -->
 
 
   <!-- ════════════════════════════════════════════════════════════════════════ -->
@@ -2151,9 +1662,7 @@ const $ = id => document.getElementById(id);
 
 // ── Tab switching (hash-based) ───────────────────────────────────────────────
 const TAB_LOADERS = {
-  'search':       () => loadPhrases(),
   'supabase':     () => { if (!_valLoaded)      loadValidation(); },
-  'old-pipeline': () => { if (!_analysisLoaded) loadAnalysis(); },
 };
 // Set tabs are generated from the server-side registry — register their loaders
 // by reading the panels rather than repeating the key list here.
@@ -2194,7 +1703,7 @@ window.addEventListener('hashchange', _tabFromHash);
 // tabs and leaves the stats panel owning the full width by default.
 (function wrapDocsDrawers(){
   const LABELS = {
-    'tab-search':       'Stage 1 reference — sources, search phrases, dedup passes, CLI flags',
+    'tab-search':       'Stage 1 reference — the search gate, the survivor pool, CLI flags',
     'tab-filter':       'Stage 2 reference — decision logic, phrase list, CLI flags',
     'tab-extract':      'Stage 3 reference — pipeline steps, column dictionary, CLI flags',
     'tab-extract-test': 'Stage 3 sandbox reference — test workflow and promote commands',
@@ -2466,102 +1975,57 @@ function renderRuleFlow(csv) {
     : '';
 }
 
-// ── Stage 1 phrase yield table ───────────────────────────────────────────────
-let _phraseRows = null, _phraseSort = 'fetched';
-async function loadPhrases() {
-  if (_phraseRows) return;
-  const data = await fetch('/api/dashboard/search-phrases').then(r=>r.json());
-  _phraseRows = data.rows || [];
+// ── Stage 1 — survivor pool ──────────────────────────────────────────────────
+// Row/file/byte counts come from the pool on THIS machine (parquet footers, cheap).
+// The year and gate breakdowns can only come from a stats.json written where the
+// pool lives, so they are shown when present and named as absent when not.
+function humanBytes(n) {
+  if (n == null) return '—';
+  const u = ['B','KB','MB','GB','TB'];
+  let i = 0, v = Number(n);
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return v.toFixed(v < 10 && i > 0 ? 1 : 0) + ' ' + u[i];
+}
 
-  const parts = [`Total fetched: <strong>${fmt(data.total_fetched)}</strong>`];
-  if (data.total_expected) {
-    const covPct = (data.total_fetched / data.total_expected) * 100;
-    parts.push(`of <strong>${fmt(data.total_expected)}</strong> reported by OpenAlex ` +
-               `(<strong>${covPct.toFixed(1)}%</strong> coverage)`);
+function renderPool(csv) {
+  const have = csv.pool_source && csv.pool_source !== 'none';
+  const note = $('pool-missing-note');
+  if (note) {
+    note.style.display = have ? 'none' : '';
+    if (!have && csv.pool_dir && $('pool-dir-missing')) $('pool-dir-missing').textContent = csv.pool_dir;
   }
-  if (data.expected_partial)
-    parts.push('<span style="color:var(--warn,#b45309)">some jobs predate coverage tracking, ' +
-               'so the expected column is an undercount — re-run to refresh</span>');
-  if (data.unattributed_files)
-    parts.push(`${data.unattributed_files} cursor file(s) could not be matched to a phrase`);
-  $('phrase-total').innerHTML = parts.join(' · ') + '.';
-  drawPhraseTable();
-}
 
-function yearGapLabel(years) {
-  if (!years || !years.length) return '';
-  // Contiguous runs read as ranges; that is the normal shape (a run that stopped early).
-  const runs = [];
-  let start = years[0], prev = years[0];
-  for (const y of years.slice(1)) {
-    if (y !== prev + 1) { runs.push([start, prev]); start = y; }
-    prev = y;
+  $('k-pool-rows').textContent   = fmt(csv.pool_count);
+  $('k-pool-files').textContent  = fmt(csv.pool_files);
+  $('k-pool-size').textContent   = humanBytes(csv.pool_bytes);
+  $('k-pool-no-doi').textContent = fmt(csv.pool_no_doi);
+  if (csv.pool_dir) $('k-pool-dir').textContent = csv.pool_dir;
+
+  const hits = csv.pool_gate_hits || {};
+  const rows = [['title','Title token'],['abstract','Abstract token'],['concept','Concept']]
+    .filter(([k]) => hits[k] != null);
+  $('pool-gate-breakdown').innerHTML = rows.length
+    ? rows.map(([k,label]) => `<div class="stat-row">
+        <span>${label}</span>
+        <span><strong>${fmt(hits[k])}</strong> <span class="stat-pct">${pct(hits[k], csv.pool_count)}</span></span>
+      </div>`).join('')
+    : '<div class="null-note">Not computed — run <code>python -m search.run_search --scan</code> ' +
+      'on the machine holding the pool to refresh <code>stats.json</code>.</div>';
+
+  // Pre-1950 rows are sparse noise that flattens the useful part of the axis.
+  if (csv.pool_by_year && Object.keys(csv.pool_by_year).length) {
+    renderYearChart($('pool-year-chart'), csv.pool_by_year, 1950);
+  } else {
+    $('pool-year-chart').innerHTML = '<div class="null-note">No per-year figures in stats.json.</div>';
   }
-  runs.push([start, prev]);
-  return runs.map(([a,b]) => a === b ? `${a}` : `${a}–${b}`).join(', ');
 }
-
-function drawPhraseTable() {
-  if (!_phraseRows) return;
-  const rows = [..._phraseRows].sort((a,b) =>
-    _phraseSort === 'phrase' ? a.phrase.localeCompare(b.phrase) : b[_phraseSort] - a[_phraseSort]);
-  const max = Math.max(1, ...rows.map(r => r.fetched));
-  $('phrase-tbody').innerHTML = rows.map(r => {
-    const cov = r.expected ? (r.fetched / r.expected) * 100 : null;
-    const covCell = cov === null
-      ? '<span class="null-note">—</span>'
-      : `${fmt(r.expected)} <span class="stat-pct">${cov.toFixed(0)}%</span>`;
-    const flags = [];
-    if (r.degenerate)
-      flags.push('<span class="flow-badge badge-red" title="OpenAlex drops the stopword, ' +
-                 'so this matches every paper containing the single remaining word — ' +
-                 'not a phrase match">not a phrase</span>');
-    if (r.incomplete)
-      flags.push(`<span class="flow-badge badge-orange" title="${r.incomplete} job(s) stopped ` +
-                 `mid-pagination">${r.incomplete} cut off</span>`);
-    if (r.years_missing && r.years_missing.length)
-      flags.push('<span class="flow-badge badge-gray" title="No cursor checkpoint survives for ' +
-                 'these years. cache/ is prunable, so this means missing provenance, not ' +
-                 'necessarily missing data — check candidates.csv for the actual rows.">' +
-                 `no checkpoint: ${yearGapLabel(r.years_missing)}</span>`);
-    return `<tr>
-      <td><span style="font-family:monospace">${esc(r.phrase)}</span>${
-        r.source === 'concept' ? ' <span class="flow-badge badge-purple">concept</span>' : ''}
-        ${flags.length ? '<div style="margin-top:3px">' + flags.join(' ') + '</div>' : ''}</td>
-      <td class="num">${fmt(r.jobs)}</td>
-      <td class="num">${fmt(r.fetched)}</td>
-      <td class="num">${covCell}</td>
-      <td><div class="yield-bar" style="width:${(r.fetched/max)*100}%"></div></td>
-    </tr>`;
-  }).join('');
-}
-
-document.querySelectorAll('#phrase-table th[data-sort]').forEach(th => {
-  th.addEventListener('click', () => { _phraseSort = th.dataset.sort; drawPhraseTable(); });
-});
 
 // ── Load pipeline / CSV stats ────────────────────────────────────────────────
 async function loadPipeline() {
   const csv = await fetch('/api/dashboard/csv-stats').then(r=>r.json());
 
-  // Search tab
-  $('k-candidates').textContent        = fmt(csv.candidates_count);
-  $('k-cand-no-doi').textContent       = fmt(csv.candidates_no_doi);
-  $('k-cand-no-doi-url').textContent   = fmt(csv.candidates_no_doi_or_url);
-  $('k-cand-no-abstract').textContent  = fmt(csv.candidates_no_abstract);
-  if (csv.candidates_source && $('search-source-breakdown')) {
-    const total = Object.values(csv.candidates_source).reduce((a,b)=>a+b,0);
-    $('search-source-breakdown').innerHTML = Object.entries(csv.candidates_source)
-      .sort((a,b)=>b[1]-a[1])
-      .map(([src,n])=>`<a class="stat-row" href="/api/check/download?stage=candidates&source=${encodeURIComponent(src)}" title="Download ${esc(src)} rows">
-        <span style="font-family:monospace;font-size:11px">${esc(src)}</span>
-        <span><strong>${fmt(n)}</strong> <span class="stat-pct">${pct(n,total)}</span> <span class="dl-hint">↓</span></span>
-      </a>`).join('');
-  } else if ($('search-source-breakdown')) {
-    $('search-source-breakdown').innerHTML = '<div class="null-note">Source breakdown not yet available.</div>';
-  }
-  // Pre-1950 rows are sparse noise that flattens the useful part of the axis.
-  renderYearChart($('cand-year-chart'), csv.candidates_by_year, 1950);
+  // Stage 1 — survivor pool
+  renderPool(csv);
 
   // Filter tab
   $('k-filtered').textContent = fmt(csv.filtered_count);
@@ -3031,238 +2495,14 @@ function toggleDrilldown(id) {
   const el=$(id); if (!el) return; el.classList.toggle('open');
 }
 
-// ── Old Pipeline tab ──────────────────────────────────────────────────────────
-let _analysisLoaded = false;
-let _gapSearchTimer = null;
-let _gapRows = { 'tp-doi': [], 'tp-url': [], 'fp-doi': [], 'fp-url': [] };
-let _gapTab = 'tp-doi';
-const GAP_PER_PAGE = 50;
-let _gapPage = { 'tp-doi': 1, 'tp-url': 1, 'fp-doi': 1, 'fp-url': 1 };
-
-async function loadAnalysis() {
-  _analysisLoaded = true;
-  try {
-    const data = await fetch('/api/dashboard/old-pipeline-analysis').then(r => r.json());
-
-    if (data.error) {
-      $('op-regen-hint').style.display = '';
-      return;
-    }
-
-    if (data.generated) $('op-generated').textContent = 'Last run: ' + data.generated;
-
-    // ── Old pipeline stats ────────────────────────────────────────────────
-    const op = data.old_pipeline || {};
-    $('op-old-total').textContent = fmt(op.total);
-    $('op-old-tp').textContent    = fmt(op.tp_total);
-    $('op-old-fp').textContent    = fmt(op.fp_total);
-    $('op-old-tp-breakdown').innerHTML =
-      `<span class="badge-green flow-badge">${fmt(op.tp_replication)} replication</span>` +
-      `<span class="badge-blue flow-badge">${fmt(op.tp_reproduction)} reproduction</span>`;
-
-    const oldSrc = op.by_source || {};
-    const oldSrcMax = Math.max(...Object.values(oldSrc), 1);
-    $('op-old-sources').innerHTML = Object.entries(oldSrc)
-      .sort((a,b) => b[1]-a[1])
-      .map(([src, cnt]) => {
-        const pct = ((cnt / oldSrcMax) * 100).toFixed(0);
-        return `<div class="bar-row">
-          <div class="bar-row-label">
-            <span class="src-name">${esc(src)}</span>
-            <span class="src-cnt">${cnt.toLocaleString()}</span>
-          </div>
-          <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:#b91c1c"></div></div>
-        </div>`;
-      }).join('') || '<div class="null-note">No source data</div>';
-
-    // ── New pipeline stats ────────────────────────────────────────────────
-    const np = data.new_pipeline || {};
-    const cands = np.candidates || {};
-    const filt  = np.filtered   || {};
-    $('op-new-cands').textContent = fmt(cands.total);
-    $('op-new-tp').textContent    = fmt(filt.tp);
-    $('op-new-fp').textContent    = fmt(filt.fp);
-
-    const newSrc = cands.by_source || {};
-    const newSrcMax = Math.max(...Object.values(newSrc), 1);
-    $('op-new-sources').innerHTML = Object.entries(newSrc)
-      .sort((a,b) => b[1]-a[1])
-      .map(([src, cnt]) => {
-        const pct = ((cnt / newSrcMax) * 100).toFixed(0);
-        return `<div class="bar-row">
-          <div class="bar-row-label">
-            <span class="src-name">${esc(src)}</span>
-            <span class="src-cnt">${cnt.toLocaleString()}</span>
-          </div>
-          <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:#1d4ed8"></div></div>
-        </div>`;
-      }).join('') || '<div class="null-note">No source data</div>';
-
-    const phrases = np.search_phrases || [];
-    $('op-phrase-count').textContent = phrases.length;
-    $('op-phrases').innerHTML = phrases.length
-      ? phrases.map(p => `<span class="kw-pill">${esc(p)}</span>`).join('')
-      : '<span class="null-note">—</span>';
-
-    const concepts = np.concept_ids || [];
-    $('op-concepts').innerHTML = concepts.length
-      ? concepts.map(c => `<span class="kw-pill">${esc(c)}</span>`).join('')
-      : '<span class="null-note">—</span>';
-
-    // ── Overlap stats ─────────────────────────────────────────────────────
-    const ov = data.overlap || {};
-    const tpTot   = ov.tp_total   || 0;
-    const totIn   = ov.total_in_new  || 0;
-    const totOut  = ov.total_not_in_new || 0;
-    const ovPct   = tpTot ? ((totIn / tpTot) * 100).toFixed(1) : '—';
-
-    $('op-ov-tp-total').textContent   = fmt(tpTot);
-    $('op-ov-total-in').textContent   = fmt(totIn);
-    $('op-ov-total-out').textContent  = fmt(totOut);
-    $('op-ov-pct').textContent        = ovPct + '%';
-
-    // DOI bar
-    const dRows = ov.doi_rows || 0, dIn = ov.doi_in_new || 0, dOut = ov.doi_not_in_new || 0;
-    const dPct  = dRows ? ((dIn / dRows) * 100).toFixed(1) : '—';
-    $('op-ov-doi-nums').textContent = `${fmt(dIn)} / ${fmt(dRows)}`;
-    $('op-ov-doi-pct').textContent  = dPct + '%';
-    $('op-ov-doi-fill').style.width = dRows ? Math.max(2,(dIn/dRows)*100)+'%' : '0%';
-    $('op-ov-doi-gap').textContent  = dOut ? `${fmt(dOut)} missing` : '';
-
-    // OA-ID bar
-    const uRows = ov.oaid_rows || 0, uIn = ov.oaid_in_new || 0, uOut = ov.oaid_not_in_new || 0;
-    const uPct  = uRows ? ((uIn / uRows) * 100).toFixed(1) : '—';
-    $('op-ov-oaid-nums').textContent = `${fmt(uIn)} / ${fmt(uRows)}`;
-    $('op-ov-oaid-pct').textContent  = uPct + '%';
-    $('op-ov-oaid-fill').style.width = uRows ? Math.max(2,(uIn/uRows)*100)+'%' : '0%';
-    $('op-ov-oaid-gap').textContent  = uOut ? `${fmt(uOut)} missing` : '';
-
-    // Total bar
-    const tPct = tpTot ? ((totIn / tpTot) * 100).toFixed(1) : '—';
-    $('op-ov-total-nums').textContent = `${fmt(totIn)} / ${fmt(tpTot)}`;
-    $('op-ov-total-pct').textContent  = tPct + '%';
-    $('op-ov-total-fill').style.width = tpTot ? Math.max(2,(totIn/tpTot)*100)+'%' : '0%';
-    $('op-ov-total-gap').textContent  = totOut ? `${fmt(totOut)} papers not found` : '';
-
-    // ── FP overlap ────────────────────────────────────────────────────────
-    const fp = (data.overlap || {}).fp || {};
-    const fpTot    = fp.total || 0;
-    const fpIn     = fp.total_in_new || 0;
-    const fpOut    = fp.total_not_in_new || 0;
-    const fpPct    = fpTot ? ((fpIn / fpTot) * 100).toFixed(1) : '—';
-
-    $('op-fp-total').textContent     = fmt(fpTot);
-    $('op-fp-in-new').textContent    = fmt(fpIn);
-    $('op-fp-not-in-new').textContent= fmt(fpOut);
-    $('op-fp-pct').textContent       = fpPct + '%';
-
-    const fpDRows = fp.doi_rows || 0, fpDIn = fp.doi_in_new || 0;
-    const fpDPct  = fpDRows ? ((fpDIn / fpDRows) * 100).toFixed(1) : '—';
-    $('op-fp-doi-nums').textContent = `${fmt(fpDIn)} / ${fmt(fpDRows)}`;
-    $('op-fp-doi-pct').textContent  = fpDPct + '%';
-    $('op-fp-doi-fill').style.width = fpDRows ? Math.max(2,(fpDIn/fpDRows)*100)+'%' : '0%';
-
-    const fpURows = fp.oaid_rows || 0, fpUIn = fp.oaid_in_new || 0;
-    const fpUPct  = fpURows ? ((fpUIn / fpURows) * 100).toFixed(1) : '—';
-    $('op-fp-oaid-nums').textContent = `${fmt(fpUIn)} / ${fmt(fpURows)}`;
-    $('op-fp-oaid-pct').textContent  = fpUPct + '%';
-    $('op-fp-oaid-fill').style.width = fpURows ? Math.max(2,(fpUIn/fpURows)*100)+'%' : '0%';
-
-    $('op-fp-total-nums').textContent = `${fmt(fpIn)} / ${fmt(fpTot)}`;
-    $('op-fp-total-pct').textContent  = fpPct + '%';
-    $('op-fp-total-fill').style.width = fpTot ? Math.max(2,(fpIn/fpTot)*100)+'%' : '0%';
-
-    // ── Gap rows ──────────────────────────────────────────────────────────
-    _gapRows['tp-doi'] = ov.gap_doi_rows || [];
-    _gapRows['tp-url'] = ov.gap_url_rows || [];
-    _gapRows['fp-doi'] = fp.gap_doi_rows || [];
-    _gapRows['fp-url'] = fp.gap_url_rows || [];
-    $('op-gap-tp-doi-badge').textContent = _gapRows['tp-doi'].length;
-    $('op-gap-tp-url-badge').textContent = _gapRows['tp-url'].length;
-    $('op-gap-fp-doi-badge').textContent = _gapRows['fp-doi'].length;
-    $('op-gap-fp-url-badge').textContent = _gapRows['fp-url'].length;
-    renderGapTable();
-
-  } catch(e) {
-    $('op-generated').textContent = 'Error: ' + e.message;
-    $('op-regen-hint').style.display = '';
-  }
-}
-
-function switchGapTab(tab) {
-  _gapTab = tab;
-  _gapPage[tab] = 1;
-  document.querySelectorAll('.gap-tab-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.gtab === tab));
-  document.querySelectorAll('.gap-tab-panel').forEach(p =>
-    p.classList.toggle('active', p.id === 'gap-panel-' + tab));
-  renderGapTable();
-}
-
-function renderGapTable() {
-  const tab      = _gapTab;
-  const isDoiTab = tab.endsWith('-doi');
-  const search   = ($('gap-search').value || '').trim().toLowerCase();
-  let rows = _gapRows[tab] || [];
-
-  if (search) {
-    rows = rows.filter(r =>
-      (r.doi_r   || '').toLowerCase().includes(search) ||
-      (r.url_r   || '').toLowerCase().includes(search) ||
-      (r.study_r || '').toLowerCase().includes(search)
-    );
-  }
-
-  const total   = rows.length;
-  const pages   = Math.max(1, Math.ceil(total / GAP_PER_PAGE));
-  const page    = Math.min(_gapPage[tab], pages);
-  _gapPage[tab] = page;
-  const start   = (page - 1) * GAP_PER_PAGE;
-  const slice   = rows.slice(start, start + GAP_PER_PAGE);
-
-  $('gap-count').textContent = total.toLocaleString() + ' entries';
-
-  const tbody = $(`gap-tbody-${tab}`);
-  const pager = $(`gap-pager-${tab}`);
-
-  if (!slice.length) {
-    tbody.innerHTML = `<tr><td colspan="4" class="null-note" style="text-align:center;padding:12px">
-      ${total === 0 && !search ? 'No gaps — full coverage!' : 'No results.'}
-    </td></tr>`;
-    pager.innerHTML = '';
-    return;
-  }
-
-  tbody.innerHTML = slice.map(r => {
-    const idCell = isDoiTab
-      ? `<td style="font-family:monospace;font-size:10px;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${esc(r.doi_r)}">${esc(r.doi_r||'—')}</td>`
-      : `<td style="font-size:10px;word-break:break-all;max-width:280px" title="${esc(r.url_r)}">${esc(r.url_r||'—')}</td>`;
-    return `<tr>
-      ${idCell}
-      <td style="font-size:11px">${esc(r.study_r||'—')}</td>
-      <td style="font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(r.year_r||'—')}</td>
-      <td style="font-size:10px;font-family:monospace;color:var(--text-muted)">${esc(r.pathway_source||'—')}</td>
-    </tr>`;
-  }).join('');
-
-  renderPager(pager, page, pages, p => { _gapPage[tab] = p; renderGapTable(); });
-}
-
-function scheduleGapSearch() {
-  clearTimeout(_gapSearchTimer);
-  _gapSearchTimer = setTimeout(() => { _gapPage[_gapTab] = 1; renderGapTable(); }, 300);
-}
-
 // ── Main loader ──────────────────────────────────────────────────────────────
 async function loadAll() {
   $('status').textContent='Loading…';
-  _valLoaded=false; _analysisLoaded=false; _phraseRows=null;
+  _valLoaded=false;
   try {
     await loadPipeline();
     const activeTab=document.querySelector('.tab-btn.active')?.dataset?.tab;
-    if (activeTab==='search')       await loadPhrases();
-    if (activeTab==='supabase')     await loadValidation();
-    if (activeTab==='old-pipeline') await loadAnalysis();
+    if (activeTab==='supabase') await loadValidation();
     $('status').textContent='Updated '+new Date().toLocaleTimeString();
   } catch(e) {
     $('status').textContent='Error: '+e.message;

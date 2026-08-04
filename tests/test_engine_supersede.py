@@ -66,14 +66,25 @@ def test_diff_releases_finds_rerouted_works_only():
 # ── the lineage csv_to_db writes ─────────────────────────────────────────────
 
 def test_metadata_row_carries_work_id_and_release_id():
-    """An engine handoff row pushes both halves of its lineage into record_metadata."""
-    out = csv_to_db._build_metadata_row("rec-1", pd.Series({
+    """Both halves of the lineage reach record_metadata, from their own sources.
+
+    `work_id` comes off the row; `release_id` does NOT, and never could —
+    `EXTRACTED_COLS` excludes the engine's export columns, so a Stage 3 row has
+    no release to read. The release names the whole handoff (one per
+    `filtered.csv.manifest.json`), so it is an argument to the import, not a
+    column: provenance is linked by `work_id`, not copied per row.
+    """
+    row = pd.Series({
         "pair_id": "p1",
         "openalex_id_r": "https://openalex.org/W2741809807",
-        "release_id": "rel-abc",
-    }))
+    })
+    out = csv_to_db._build_metadata_row("rec-1", row, release_id="rel-abc")
     assert out["work_id"] == 2741809807
     assert out["release_id"] == "rel-abc"
+
+    # A release carried on the row is ignored — it cannot be there legitimately.
+    stowaway = pd.Series({**row.to_dict(), "release_id": "rel-from-row"})
+    assert csv_to_db._build_metadata_row("rec-1", stowaway)["release_id"] is None
 
 
 def test_metadata_row_lineage_is_null_when_the_row_predates_the_engine():

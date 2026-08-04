@@ -86,12 +86,21 @@ PROCEED = "proceed"
 
 @dataclass(frozen=True)
 class Work:
-    """One routed work, with the text the tier will read."""
+    """One routed work, with the text the tier will read.
+
+    *source* is the discovery source, and it is here for one reason: the cheap tier
+    must not let a 3B model discard a row a human put on a curated replication list
+    (`prescreen_bypass`). The pool schema carries no source column today — every pool
+    row came from the OpenAlex snapshot — so it defaults to empty and the bypass
+    simply never fires; a pool that later carries curated rows must add the column in
+    `_pool_record()`/`_POOL_SCHEMA` (`search/snapshot_scan.py`) for this to bite.
+    """
     work_id: int
     doi: str
     title: str
     abstract: str
     pile: str
+    source: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +151,7 @@ def pile_works(con, release_id: str, pile: str, pool_dir: Path = SNAPSHOT_POOL_D
             # makes the expensive tier's call and Stage 3's front-door call the
             # SAME call, so Stage 3 replays this verdict from cache for free.
             works.append(Work(wid, clean_doi(record.get("doi") or ""), title,
-                              abstract, pile))
+                              abstract, pile, record.get("source") or ""))
             if limit is not None and len(works) >= limit:
                 return works
     return works
@@ -427,7 +436,7 @@ def _cheap_judge(work: Work) -> tuple[str, list[dict]]:
     # the design outright, text too short to judge, and a curated-list row. The
     # bypass is recorded as a verdict rather than skipped silently — deciding not
     # to ask is a decision, and it is also this work's checkpoint.
-    bypass = prescreen_bypass(work.title, work.abstract)
+    bypass = prescreen_bypass(work.title, work.abstract, work.source)
     if bypass:
         return PROCEED, [{
             "model": "prescreen_bypass", "verdict": PROCEED, "prompt_hash": version,

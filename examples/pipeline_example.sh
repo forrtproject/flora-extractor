@@ -10,7 +10,10 @@ set -euo pipefail
 LIVE_SEARCH="${LIVE_SEARCH:-0}"
 YEAR_FROM="${YEAR_FROM:-2023}"
 YEAR_TO="${YEAR_TO:-2024}"
-OUT_DIR="${OUT_DIR:-data}"
+# data/examples, not data/: the demo must never overwrite a real
+# data/candidates.csv, which can be a million rows someone spent hours building.
+OUT_DIR="${OUT_DIR:-data/examples}"
+POOL_DIR="${FLORA_POOL_DIR:-cache/snapshot_pool}"
 
 cd "$(dirname "$0")/.."
 mkdir -p "$OUT_DIR"
@@ -40,9 +43,9 @@ if [[ "$LIVE_SEARCH" != "0" ]]; then
 fi
 if [[ -z "${GEMINI_API_KEY:-}" && -z "${OPENAI_API_KEY:-}" ]]; then
     echo "  note  No GEMINI_API_KEY / OPENAI_API_KEY set."
-    echo "        Stage 2 LLM uplift will be a no-op; rule filter still runs."
+    echo "        Stage 2's LLM tiers cannot run; routing is fully offline."
 else
-    echo "  OK    LLM key configured — needs_review rows will be uplifted."
+    echo "  OK    LLM key configured — the screen tiers can be run with --run."
 fi
 
 echo
@@ -51,40 +54,66 @@ echo "  LIVE_SEARCH = $LIVE_SEARCH"
 echo "  YEAR_FROM   = $YEAR_FROM"
 echo "  YEAR_TO     = $YEAR_TO"
 echo "  OUT_DIR     = $OUT_DIR"
+echo "  POOL_DIR    = $POOL_DIR"
 echo
 
 echo "==============================================================================="
-echo " Stage 1  ::  search  (→ data/candidates.csv)"
+echo " Stage 1  ::  search  (→ $OUT_DIR/candidates.csv)"
 echo "==============================================================================="
 echo
 if [[ "$LIVE_SEARCH" == "0" ]]; then
     echo "Generating a 5-row synthetic fixture (examples/_make_fixture.py)."
-    python examples/_make_fixture.py "$OUT_DIR/candidates.csv"
+    CANDIDATES="$OUT_DIR/candidates.csv"
+    python examples/_make_fixture.py "$CANDIDATES"
 else
-    echo "Calling Amy's per-source scripts with --from-year $YEAR_FROM --to-year $YEAR_TO."
+    # run_search always writes the real data/candidates.csv, merging into it.
+    echo "Calling the per-source scripts with --from-year $YEAR_FROM --to-year $YEAR_TO."
+    echo "NOTE: a live run merges into the real data/candidates.csv."
+    CANDIDATES="data/candidates.csv"
     python -m search.run_search --from-year "$YEAR_FROM" --to-year "$YEAR_TO"
 fi
-N1=$(($(wc -l < "$OUT_DIR/candidates.csv") - 1))
+N1=$(($(wc -l < "$CANDIDATES") - 1))
 echo
 echo "Stage 1 produced $N1 candidate rows."
 echo
 
 echo "==============================================================================="
-echo " Stage 2  ::  filter  (rule_filter.py → llm_filter.py → data/filtered.csv)"
+echo " Stage 2  ::  filter engine  (route → screen → handoff → data/filtered.csv)"
 echo "==============================================================================="
 echo
-python -m filter.run_filter
+# Stage 2 is `python -m filter.engine`. It routes the SURVIVOR POOL (parquet)
+# through the declarative spec bundle in filter/spec/ — it does not read
+# candidates.csv, so the Stage 1 fixture above cannot be chained into it.
+echo "The bundle Stage 2 routes with (offline; no pool, no keys, no spend):"
 echo
-python - <<PY
-import pandas as pd
-df = pd.read_csv(r"$OUT_DIR/filtered.csv", encoding="utf-8-sig")
-print()
-print("filter_status breakdown:")
-print(df["filter_status"].value_counts().to_string())
-print()
-print("first 5 rows:")
-print(df[["doi_r","filter_status","filter_method","filter_evidence"]].head().to_string(index=False))
-PY
+python -m filter.engine specs
+echo
+
+if [[ -d "$POOL_DIR" ]]; then
+    echo "Pool found at $POOL_DIR — routing it into a release in the local store."
+    echo
+    python -m filter.engine route --pool "$POOL_DIR"
+    echo
+    echo "What the expensive (two-voter classify) tier would cost over its pile."
+    echo "No --run: nothing is claimed, fetched or spent."
+    echo
+    python -m filter.engine screen --tier screen_expensive --pool "$POOL_DIR"
+    echo
+    echo "To actually spend, and then to write Stage 3's input:"
+    echo
+    echo "    python -m filter.engine screen --tier screen_expensive --run"
+    echo "    python -m filter.engine handoff --out $OUT_DIR/filtered.csv"
+else
+    echo "No survivor pool at $POOL_DIR — Stage 2 has nothing to route."
+    echo "Fetch one, then run the three commands:"
+    echo
+    echo "    python -m search.pool_sync --pull"
+    echo "    python -m filter.engine route"
+    echo "    python -m filter.engine screen --tier screen_expensive --run"
+    echo "    python -m filter.engine handoff --out $OUT_DIR/filtered.csv"
+    echo
+    echo "Every flag: docs/cli-reference.md §Stage 2. Design: docs/filter-engine.md."
+fi
 echo
 
 echo "==============================================================================="
@@ -97,16 +126,15 @@ echo "==========================================================================
 echo " Stage 4  ::  validate  (Flask web app on http://localhost:5001)"
 echo "==============================================================================="
 echo
-echo "    python -m validate.import_csv"
+echo "    python -m extract.csv_to_db"
 echo "    python -m validate.app"
 echo
 echo "==============================================================================="
 echo " Summary"
 echo "==============================================================================="
-echo "  Stage 1 candidates :: $N1 rows  →  $OUT_DIR/candidates.csv"
-echo "  Stage 2 filtered   ::              →  $OUT_DIR/filtered.csv"
+echo "  Stage 1 candidates :: $N1 rows  →  $CANDIDATES"
+echo "  Stage 2 filtered   ::              →  $OUT_DIR/filtered.csv (via handoff)"
 echo
-echo " Engine-based Stage 1 (the SciMeto Discover-UI port) lives on feature/search."
-echo " Run examples/discover_example.sh there for the OR-bundled engine demo."
+echo " For the OR-bundled Stage 1 engine demo: examples/discover_example.sh"
 echo
-echo " Stage 2 internals: docs/scimeto_filter_port.md"
+echo " Stage 2 internals: docs/filter-engine.md · all flags: docs/cli-reference.md"

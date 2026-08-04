@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 #
-# Sync the large Stage 1/2 data files (candidates.csv ~4.7GB, filtered.csv ~4.3GB).
+# Sync the large Stage 2 data file (filtered.csv ~4.3GB), the Stage 3 input.
+#
+# candidates.csv is NOT here any more: Stage 1's output is the survivor pool, shared
+# via Hugging Face (`python -m search.pool_sync --pull`), not via DVC. The
+# candidates.zip DVC pointer is kept only so historical revisions stay resolvable.
 #
 # These are too big for git / GitHub LFS free tier, so they are stored — zipped —
 # in a Cloudflare R2 bucket and versioned with DVC. Only the small *.dvc pointer
@@ -29,19 +33,18 @@ export AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
 
 case "${1:-pull}" in
   pull)
-    dvc pull data/candidates.zip.dvc data/filtered.zip.dvc
+    dvc pull data/filtered.zip.dvc
     # python's zipfile is used instead of unzip/zip so no external archive tool
     # is required (Git Bash on Windows ships neither reliably).
-    ( cd data && python -m zipfile -e candidates.zip . && python -m zipfile -e filtered.zip . )
-    echo "✓ data/candidates.csv and data/filtered.csv ready"
+    ( cd data && python -m zipfile -e filtered.zip . )
+    echo "✓ data/filtered.csv ready. For the Stage 1 pool: python -m search.pool_sync --pull"
     ;;
   pack)
-    ( cd data && rm -f candidates.zip filtered.zip \
-        && python -m zipfile -c candidates.zip candidates.csv \
+    ( cd data && rm -f filtered.zip \
         && python -m zipfile -c filtered.zip filtered.csv )
-    dvc add data/candidates.zip data/filtered.zip
+    dvc add data/filtered.zip
     echo "✓ re-zipped and dvc-added. Next:"
-    echo "    git add data/candidates.zip.dvc data/filtered.zip.dvc"
+    echo "    git add data/filtered.zip.dvc"
     echo "    git commit -m 'Update Stage 1/2 data'"
     echo "    ./scripts/data.sh push"
     ;;

@@ -1,42 +1,33 @@
 """
 Stage 1 source: the OpenAlex bulk-parquet snapshot, scanned end to end.
 
-The API path (``search/openalex_search.py``) can only find works whose title or
-abstract matches a phrase we thought to write down. The snapshot is the whole
-corpus, so this scanner reads every work once and decides locally what to keep.
-It is an ADDITIVE source — rows land in ``data/candidates.csv`` with
-``source = "openalex_snapshot"`` through the same merge/dedup path as every
-other source, and nothing existing is removed or re-scored.
+A phrase search can only find works whose title or abstract matches a phrase we
+thought to write down. The snapshot is the whole corpus, so this scanner reads
+every work once and decides locally what to keep.
+Stage 1 IS this scan: every API-harvest source has been removed, and the
+survivor pool this writes is Stage 2's input.
 
-Two admission stages, both recall-oriented:
+One gate, recall-oriented — **the search gate** (vectorized, pyarrow): a broad
+token regex over title and the RAW abstract inverted-index JSON, OR membership of
+a replication concept. A work that trips either arm is a survivor; nothing else
+about it is judged here.
 
-Stage A (vectorized, pyarrow)  a broad token regex over title and the RAW
-    abstract inverted-index JSON, OR membership of a replication concept.
-Stage B (per row, Python)      ``keyword_verdict(title, abstract)`` from
-    ``filter/phrase_detection.py`` — admit on ``positive`` or ``ambiguous``.
-    Concept hits bypass Stage B entirely — that is the recall arm, mirroring
-    what the ``openalex_concept`` API source does today.
-
-Stage B calls the SAME function Stage 2's rule filter calls, so the two stages
-cannot disagree about the keywords: a row Stage 1 writes is exactly a row Stage 2
-does not call ``false_positive``. That means Stage B now applies the exclusion
-patterns and phrase guards too — a row killed by an exclusion is no longer
-written, because Stage 2 would have discarded it on arrival anyway. Stage 1 still
-does not judge anything the keyword rule does not: the substantive decision
-belongs to Stage 3's screen.
+Stage 1 only searches. It applies NO exclusion patterns and no phrase guards, and
+it does not import ``keyword_verdict``: every exclusion decision belongs to
+Stage 2's filter engine, which reads the survivor pool. That is the whole point —
+one rule set, in one place, over a pool that keeps everything the search found.
 
 Progress is checkpointed per manifest file in ``cache/snapshot/ledger.json`` so
 an interrupted 400+ GB scan resumes where it stopped.
 
 The survivor pool
 -----------------
-``--survivor-pool PATH`` persists EVERY Stage A survivor — before Stage B, before
-the year filter — as a parquet dataset, one file per manifest partition. Stage A
-keeps well under 1% of the corpus, so the pool is a few GB against 725 GB of
-snapshot: with it on disk, changing the Stage B vocabulary is a local re-run
-(``--admit-from-pool``) rather than a 13-21 hour rescan. Only a Stage A change
-(``_TOKEN_GATE`` or ``CONCEPT_IDS``) is expensive after this, which is why the
-gate fingerprint is split in two — see ``stage_a_fingerprint``.
+``--survivor-pool PATH`` persists EVERY survivor — before the year filter — as a
+parquet dataset, one file per manifest partition. The gate keeps well under 1% of
+the corpus, so the pool is a few GB against 725 GB of snapshot: with it on disk,
+every downstream decision is a local re-run over the pool rather than a 13-21 hour
+rescan. Only a change to the gate itself (``_TOKEN_GATE`` or ``CONCEPT_IDS``) is
+expensive after this — see ``search_gate_fingerprint``.
 
 Pool columns (``_POOL_SCHEMA``): the identity/metadata needed to rebuild a
 candidate row without the snapshot — ``id``, ``doi``, ``title``,
@@ -44,13 +35,12 @@ candidate row without the snapshot — ``id``, ``doi``, ``title``,
 ``primary_location``, ``open_access`` and ``concepts`` as JSON strings; the
 already-reconstructed ``abstract_text`` (reading-order plain text — smaller than
 the inverted index and it saves redoing the reconstruction); and the three
-booleans recording WHY Stage A kept the row: ``hit_token_title``,
+booleans recording WHY the gate kept the row: ``hit_token_title``,
 ``hit_token_abstract``, ``hit_concept``.
 
-Usage (via Stage 1's orchestrator, explicit opt-in):
-    python -m search.run_search --source openalex_snapshot --survivor-pool data/pool
+Usage (via Stage 1's entry point):
+    python -m search.run_search --scan --survivor-pool data/pool
     python -m search.run_search --snapshot-pilot data/snapshot_pilot.csv --snapshot-max-files 3
-    python -m search.run_search --admit-from-pool data/pool [--dry-run]
 
 Progress of a running scan (read-only, safe to run concurrently):
     python -m search.snapshot_scan --status
@@ -63,7 +53,7 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -73,11 +63,9 @@ import pyarrow.parquet as pq
 import requests
 
 from shared.config import (
-    DATA_DIR,
     RESEARCHER_EMAIL,
     SNAPSHOT_BASE_URL,
     SNAPSHOT_BATCH_ROWS,
-    SNAPSHOT_BUILD_CHUNK_ROWS,
     SNAPSHOT_CACHE_DIR,
     SNAPSHOT_HTTP_RETRIES,
     SNAPSHOT_HTTP_TIMEOUT,
@@ -87,17 +75,15 @@ from shared.config import (
 )
 from shared.row_key import row_keys
 from shared.schema import CANDIDATES_COLS
-from shared.utils import clean_doi
-from search.openalex_search import CONCEPT_IDS, _build_ref, _reconstruct_abstract
-from filter.phrase_detection import (NON_SCHOLARLY_REPLICATION_CONTEXTS, PHRASE_GUARDS,
-                                     REPLICATION_PHRASES, REPLICATION_STEM_PATTERN,
-                                     keyword_verdict)
+from shared.utils import clean_doi, reconstruct_abstract
+from filter.phrase_detection import CONCEPT_IDS, REPLICATION_STEM_PATTERN
 
 SOURCE_TAG_SNAPSHOT = "openalex_snapshot"
 
-# Stage A. Deliberately loose stems, not phrases — see _gate_mask for why this
-# runs against the raw inverted-index JSON and therefore cannot use phrases. The
-# same source string is what keyword_verdict tests the title with.
+# The search gate's vocabulary. Deliberately loose stems, not phrases — see
+# _gate_mask for why this runs against the raw inverted-index JSON and therefore
+# cannot use phrases. It is a SEARCH term list, the one thing Stage 1 and Stage 2
+# are allowed to share; no exclusion pattern is read here.
 _TOKEN_GATE = REPLICATION_STEM_PATTERN
 
 _SCAN_COLUMNS = ["id", "doi", "title", "display_name", "publication_year", "type",
@@ -122,10 +108,6 @@ _POOL_SCHEMA = pa.schema([
     ("hit_token_abstract", pa.bool_()),
     ("hit_concept", pa.bool_()),
 ])
-
-# Bumped whenever _admit's rule changes, so stage_b_fingerprint moves with it.
-_ADMISSION_RULE_VERSION = ("v2: keyword_verdict(title, abstract) in "
-                           "{positive, ambiguous}; concepts bypass")
 
 _CONCEPT_IDS_BARE = {c.replace("https://openalex.org/", "").strip() for c in CONCEPT_IDS}
 
@@ -225,35 +207,29 @@ def _fingerprint(parts: list[str]) -> str:
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
-def stage_a_fingerprint() -> str:
-    """Hash of the vectorized gate — the only part a rescan can change.
+def search_gate_fingerprint() -> str:
+    """Hash of the vectorized search gate — the only part a rescan can change.
 
-    A file marked done under one Stage A has not been read under another, and the
-    rows it rejected were never stored anywhere: recovering them means reading the
+    A file marked done under one gate has not been read under another, and the rows
+    it rejected were never stored anywhere: recovering them means reading the
     partition again. This is the fingerprint whose mismatch is loud.
+
+    Its INPUTS are unchanged from when this function was called
+    ``stage_a_fingerprint``, so the value is unchanged too and an in-flight scan
+    resumes across the rename. See ``ledger_gate_fingerprint``.
     """
     return _fingerprint([_TOKEN_GATE, "|".join(sorted(_CONCEPT_IDS_BARE))])
 
 
-def stage_b_fingerprint() -> str:
-    """Hash of the per-row admission — re-runnable offline once a pool exists.
+# The ledger key the gate fingerprint was persisted under before the rename. Read,
+# never written: a 510M-row scan checkpointed under this name must keep resuming.
+_LEGACY_GATE_KEY = "stage_a_fingerprint"
+_GATE_KEY = "search_gate_fingerprint"
 
-    Every row Stage B ever saw is in the survivor pool, so a mismatch here is a
-    local re-admission (``admit_from_pool``), not a rescan.
 
-    It hashes everything ``keyword_verdict`` consults — the phrases, the stem
-    alternation, the phrase guards and the exclusion patterns — plus the rule that
-    turns a verdict into an admission. Stage B stopped being "the phrase list" the
-    moment it started sharing the decision with Stage 2.
-    """
-    return _fingerprint([
-        "|".join(sorted(p.pattern for p in REPLICATION_PHRASES)),
-        REPLICATION_STEM_PATTERN,
-        "|".join(f"{k}={v.pattern}" for k, v in sorted(PHRASE_GUARDS.items())),
-        "|".join(f"{pid}={rx.pattern}"
-                 for pid, rx in sorted(NON_SCHOLARLY_REPLICATION_CONTEXTS)),
-        _ADMISSION_RULE_VERSION,
-    ])
+def ledger_gate_fingerprint(ledger: dict) -> Optional[str]:
+    """The gate fingerprint *ledger* records, under either the new or the old key."""
+    return ledger.get(_GATE_KEY) or ledger.get(_LEGACY_GATE_KEY)
 
 
 def ledger_hash(ledger: dict) -> str:
@@ -262,48 +238,13 @@ def ledger_hash(ledger: dict) -> str:
     ``{url -> content_length}``, sorted by url so the hash does not move with the
     order files happened to be scanned in.
 
-    Each entry's ``kept`` count is deliberately left out. It records how many rows
-    the merge appended after deduplicating against the local candidates.csv, so two
-    machines that consumed the same bytes and admitted the same rows still report
-    different ``kept`` values. The ledger keeps it for reporting (``--status``); no
-    identity is built on it — see ``build_hash``.
+    Each entry's ``kept`` count is deliberately left out: it is a per-run
+    observation, not part of what the ledger consumed. The ledger keeps it for
+    reporting (``--status``); no identity is built on it.
     """
     files = ledger.get("files", {}) or {}
     parts = [f"{url}\t{(files.get(url) or {}).get('content_length')}" for url in sorted(files)]
     return _fingerprint(parts)
-
-
-# Bumped whenever _row_from_snapshot changes the SHAPE or SEMANTICS of the row it
-# returns — a new/renamed/dropped column, a different value for the same input, a
-# changed `source` tag. Not bumped for comments, refactors, or anything that leaves
-# every produced row byte-identical. It exists so that a prebuilt candidates artifact
-# names the row builder that made it: a colleague whose checkout builds rows
-# differently is warned instead of quietly merging someone else's shapes.
-ROW_BUILDER_VERSION = "v1"
-
-
-def build_hash(ledger: Optional[dict] = None) -> str:
-    """Content hash of a prebuilt candidates artifact: everything its rows depend on.
-
-    Five inputs, one per thing that can change an admitted row: the snapshot date,
-    the Stage A gate, what the ledger actually consumed, the Stage B admission rule,
-    and the row builder. Two builds with the same hash hold the same rows; anything
-    else must produce a different hash, because the hash is what a collaborator
-    downloads a corpus by.
-
-    The ledger's ``kept`` counts are deliberately NOT folded in. They record how many
-    rows the merge appended after dedup against whatever candidates.csv the scanning
-    machine happened to hold, so folding them in would give byte-identical builds
-    different hashes on two machines — the one thing the hash exists to rule out.
-    """
-    ledger = load_ledger() if ledger is None else ledger
-    return _fingerprint([
-        ledger.get("snapshot_date", "") or "",
-        stage_a_fingerprint(),
-        ledger_hash(ledger),
-        stage_b_fingerprint(),
-        ROW_BUILDER_VERSION,
-    ])
 
 
 def load_ledger() -> dict:
@@ -316,8 +257,7 @@ def load_ledger() -> dict:
             return ledger
         except Exception:
             log.warning("Corrupt snapshot ledger at %s — starting fresh", _LEDGER_PATH)
-    return {"snapshot_date": "", "stage_a_fingerprint": stage_a_fingerprint(),
-            "stage_b_fingerprint": stage_b_fingerprint(), "files": {}}
+    return {"snapshot_date": "", _GATE_KEY: search_gate_fingerprint(), "files": {}}
 
 
 def save_ledger(ledger: dict) -> None:
@@ -345,7 +285,7 @@ def _needs_scan(url: str, meta: dict, ledger: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Stage A — vectorized gate
+# The search gate — vectorized
 # ---------------------------------------------------------------------------
 
 
@@ -365,14 +305,14 @@ def _as_string(arr: pa.Array) -> pa.Array:
 
 
 def _gate_masks(batch: pa.RecordBatch) -> tuple[pa.Array, pa.Array]:
-    """The two Stage A token masks, kept apart: ``(title_hit, abstract_hit)``.
+    """The two search-gate token masks, kept apart: ``(title_hit, abstract_hit)``.
 
     The abstract test runs on the RAW ``abstract_inverted_index`` JSON string, on
     purpose. An inverted index is a {word: [positions]} dictionary whose key order
     is arbitrary, so adjacent words are NOT adjacent in the JSON: a phrase regex
     over this text would match or miss by accident. Only single-token tests are
-    sound here. Phrases are Stage B's job, after _reconstruct_abstract() has put
-    the words back in order. Do not "optimise" this into a phrase match.
+    sound here. Phrases are Stage 2's job, over the reconstructed abstract_text the
+    pool stores. Do not "optimise" this into a phrase match.
     """
     title = pc.coalesce(_as_string(_column(batch, "display_name")),
                         _as_string(_column(batch, "title")))
@@ -383,13 +323,13 @@ def _gate_masks(batch: pa.RecordBatch) -> tuple[pa.Array, pa.Array]:
 
 
 def _gate_mask(batch: pa.RecordBatch) -> pa.Array:
-    """Stage A token mask: a replication stem in the title or anywhere in the abstract."""
+    """Search-gate token mask: a replication stem in the title or anywhere in the abstract."""
     title_hit, abstract_hit = _gate_masks(batch)
     return pc.or_(title_hit, abstract_hit)
 
 
 def _concept_mask(batch: pa.RecordBatch) -> pa.Array:
-    """Stage A concept mask: the work carries one of ``CONCEPT_IDS``.
+    """Search-gate concept mask: the work carries one of ``CONCEPT_IDS``.
 
     Snapshot concept ids are URL-form (``https://openalex.org/C12590798``) while
     ``CONCEPT_IDS`` holds bare ids, so ids are stripped before comparison.
@@ -402,7 +342,7 @@ def _concept_mask(batch: pa.RecordBatch) -> pa.Array:
         # Some snapshot builds ship concepts as a JSON string rather than a list
         # of structs. The id must be anchored on the closing quote of the JSON
         # string value it ends: unanchored, C9893847 also matches C98938470 —
-        # a different concept — and a concept hit bypasses Stage B entirely.
+        # a different concept — and a concept hit admits the work on its own.
         # (Anchoring the left side would need a lookbehind, which RE2 — pyarrow's
         # engine — does not have; ids are prefix-free in practice because they all
         # start at a "C" that no id contains elsewhere.)
@@ -426,34 +366,6 @@ def _concept_mask(batch: pa.RecordBatch) -> pa.Array:
 
 
 # ---------------------------------------------------------------------------
-# Stage B — per-row admission
-# ---------------------------------------------------------------------------
-
-
-def _admit(concept_hit: bool, title: str, abstract: str, year: Optional[int] = None,
-           verdict: "Optional[object]" = None) -> bool:
-    """Stage B: keep the row?
-
-    The text arm is ``keyword_verdict`` — the same keyword decision the filter
-    engine's spec bundle encodes — so a row Stage 1 writes is exactly a row the
-    engine does not route to ``discard``. Its ``ambiguous`` tier is what used to
-    be Stage 1's private title-token arm. The two are held together by
-    ``tests/test_snapshot_scan.py``'s parity test rather than by a shared call:
-    the engine evaluates JSON specs, Stage 1 runs Python regexes, and the
-    documented divergences live in ``docs/filter-engine.md``.
-
-    The concept arm has no phrase equivalent and stays a Stage 1 concern: it is
-    OpenAlex's own classification of the work, not anything in the text, so no
-    keyword rule can express it. It admits unconditionally, exactly as before.
-
-    *verdict* lets a caller that already computed the verdict (for the gate
-    counters) pass it in rather than run the regexes a second time.
-    """
-    v = verdict if verdict is not None else keyword_verdict(title, abstract, year)
-    return concept_hit or v.outcome in ("positive", "ambiguous")
-
-
-# ---------------------------------------------------------------------------
 # Row construction
 # ---------------------------------------------------------------------------
 
@@ -473,14 +385,30 @@ def _abstract_text(value: "object") -> Optional[str]:
 
     The snapshot ships the index as a JSON string, and a few records hold something
     that is valid JSON but not a ``{word: [positions]}`` object — a list, a bare
-    string, a number. ``_reconstruct_abstract`` raises AttributeError on those, which
+    string, a number. ``reconstruct_abstract`` raises AttributeError on those, which
     used to look like a failed partition READ and cost the other ~200k records in it.
     A record with no usable index simply has no abstract.
     """
     parsed = _maybe_json(value)
     if not isinstance(parsed, dict):
         return None
-    return _reconstruct_abstract(parsed)
+    return reconstruct_abstract(parsed)
+
+
+def _build_ref(authors_r: "str | None", year_r: "int | None", journal_r: "str | None") -> str:
+    """Build a FLoRA-style reference string: 'Surname · Year · Journal'.
+
+    Uses only the last-name component of the first author. Returns a partial
+    string (e.g. 'Smith · 2020') when journal is unavailable.
+    """
+    if not authors_r:
+        surname = ""
+    else:
+        first_author = str(authors_r).split(";")[0].strip()
+        parts = first_author.split()
+        surname = parts[-1] if parts else ""
+    segments = [s for s in [surname, str(year_r) if year_r else "", journal_r or ""] if s]
+    return " · ".join(segments)
 
 
 def _row_from_snapshot(rec: dict, abstract: Optional[str] = None) -> dict:
@@ -518,34 +446,22 @@ def _row_from_snapshot(rec: dict, abstract: Optional[str] = None) -> dict:
     }
 
 
-def _row_if_admitted(rec: dict, concept_hit: bool, counters: dict,
-                     abstract: Optional[str] = None) -> Optional[dict]:
-    """The candidate row for *rec*, or None when Stage B rejects it.
+def _admitted_row(rec: dict, counters: dict, abstract: Optional[str] = None) -> dict:
+    """The candidate row for *rec* — a search-gate survivor is admitted, full stop.
 
-    THE single admission site: the scanner and ``admit_from_pool`` both go through
+    THE single admission site: the scanner and the pool row builder both go through
     here, so a pool re-admission cannot drift from what the scan would have kept.
+    Nothing is rejected here because Stage 1 applies no exclusions; a row this
+    function produces is a row the search found, and Stage 2 decides its fate.
     """
     row = _row_from_snapshot(rec, abstract=abstract)
-    title = row["title_r"] or ""
-    abstract_text = row["abstract_r"] or ""
-
-    try:
-        year = int(row.get("year_r"))  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        year = None
-    verdict = keyword_verdict(title, abstract_text, year)
-    counters["keyword_positive"] += int(verdict.outcome == "positive")
-    counters["keyword_admits"] += int(verdict.outcome in ("positive", "ambiguous"))
-
-    if not _admit(concept_hit, title, abstract_text, verdict=verdict):
-        return None
     counters["admitted"] += 1
-    counters["no_abstract"] += int(not abstract_text)
+    counters["no_abstract"] += int(not (row["abstract_r"] or ""))
     return row
 
 
 # ---------------------------------------------------------------------------
-# Stage A survivor pool
+# The survivor pool
 # ---------------------------------------------------------------------------
 
 
@@ -558,7 +474,7 @@ def _json_str(value: "object") -> Optional[str]:
 
 def _pool_record(rec: dict, abstract: str, title_hit: bool,
                  abstract_hit: bool, concept_hit: bool) -> dict:
-    """One Stage A survivor in ``_POOL_SCHEMA`` form."""
+    """One search-gate survivor in ``_POOL_SCHEMA`` form."""
     year = rec.get("publication_year")
     return {
         "id":                 rec.get("id"),
@@ -590,7 +506,7 @@ def _pool_file_name(url: str) -> str:
 
 
 class _PoolWriter:
-    """Streams one partition's Stage A survivors into ``<name>.tmp``, then commits.
+    """Streams one partition's search-gate survivors into ``<name>.tmp``, then commits.
 
     The pool file must be complete before the partition's ledger entry flips to
     ``done``, or a crash mid-write would leave a truncated pool that a resumed scan
@@ -623,7 +539,7 @@ class _PoolWriter:
     def commit(self) -> int:
         """Close the temp file and put it in place. Returns the rows written.
 
-        A partition with no Stage A survivor at all leaves no file — and drops any
+        A partition with no survivor at all leaves no file — and drops any
         file an earlier scan of that same partition left, which would otherwise
         outlive the rows it was written from.
         """
@@ -681,43 +597,18 @@ def _write_pilot(df: pd.DataFrame, pilot_csv: Path) -> None:
         df.to_csv(pilot_csv, mode="w", index=False, encoding="utf-8-sig")
 
 
-def _recover_stale_index(candidates_path: Path, ledger: dict) -> None:
-    """Rebuild the candidates index if a previous run died mid-merge.
-
-    ``_merge_into_candidates_csv`` appends to the CSV and THEN to the index, so a
-    crash between the two leaves an index that is non-empty (and therefore trusted
-    by ``load_or_build``) yet missing the rows just written. Rescanning that file
-    would duplicate them. A file left at ``status: merging`` is exactly that
-    signal, so the index is rebuilt from the CSV once before anything is rescanned.
-    The rebuild goes through ``KeyIndex.build``, which replaces the memoised copy the
-    merge reads — a rebuild that only fixed the file on disk would be no recovery at
-    all within one process.
-    """
-    if not any(e.get("status") == "merging" for e in ledger.get("files", {}).values()):
-        return
-    log.warning("Snapshot ledger has a file left mid-merge — rebuilding candidates index "
-                "from %s before rescanning", candidates_path.name)
-    try:
-        from search.run_search import CANDIDATES_INDEX
-
-        if candidates_path.exists():
-            CANDIDATES_INDEX.build(candidates_path)
-    except Exception as exc:  # noqa: BLE001 — recovery is best-effort, never fatal
-        log.warning("Could not rebuild candidates index (%s) — rescan may duplicate rows", exc)
-
-
 # Per-record parse defects are logged individually up to this many, then only counted:
 # a partition can hold a systematic defect, and one line per record would bury the run.
 _MAX_ROW_ERROR_LOGS = 20
 
 
 class _MergeFailed(Exception):
-    """A local write (merge_fn or the pilot CSV) failed — never a retryable read error.
+    """The pilot CSV write failed — never a retryable read error.
 
-    Retrying a merge is unsafe: ``_merge_into_candidates_csv`` appends to the CSV
-    before the index, so a second attempt would run against a stale index and
-    duplicate rows. This wrapper carries such failures past the read-retry handler
-    so they propagate out of ``scan_snapshot`` with the ledger left at "merging".
+    Retrying it is unsafe: the rows it was appending are already recorded as seen
+    in memory, so a second attempt would write a partial duplicate. This wrapper
+    carries such failures past the read-retry handler so they propagate out of
+    ``scan_snapshot`` with the ledger left at "merging".
     """
 
 
@@ -725,9 +616,9 @@ def _batch_rows(batch: pa.RecordBatch, from_year: Optional[int], to_year: Option
                 counters: dict, pool: Optional["_PoolWriter"] = None) -> list[dict]:
     """Gate one batch and return the admitted candidate rows, updating *counters*.
 
-    Every Stage A survivor goes to *pool* when one is given — before the year filter
-    and before Stage B, because the pool exists precisely so that those two decisions
-    can be revisited without the snapshot.
+    Every survivor goes to *pool* when one is given — before the year filter, because
+    the pool exists precisely so that that decision can be revisited without the
+    snapshot.
     """
     counters["scanned"] += batch.num_rows
 
@@ -735,13 +626,13 @@ def _batch_rows(batch: pa.RecordBatch, from_year: Optional[int], to_year: Option
     token = pc.or_(title_token_mask, abstract_token_mask)
     concept = _concept_mask(batch)
     survivors = pc.or_(token, concept)
-    counters["stage_a_token"] += int(pc.sum(token).as_py() or 0)
-    counters["stage_a_concept"] += int(pc.sum(concept).as_py() or 0)
+    counters["gate_token"] += int(pc.sum(token).as_py() or 0)
+    counters["gate_concept"] += int(pc.sum(concept).as_py() or 0)
 
     n_survivors = int(pc.sum(survivors).as_py() or 0)
     if not n_survivors:
         return []
-    counters["stage_a"] += n_survivors
+    counters["gate_survivors"] += n_survivors
 
     kept = batch.filter(survivors)
     concept_flags = pc.filter(concept, survivors).to_pylist()
@@ -769,9 +660,7 @@ def _batch_rows(batch: pa.RecordBatch, from_year: Optional[int], to_year: Option
                     continue
                 if to_year is not None and year > to_year:
                     continue
-            row = _row_if_admitted(rec, bool(concept_hit), counters, abstract=abstract)
-            if row is not None:
-                rows.append(row)
+            rows.append(_admitted_row(rec, counters, abstract=abstract))
         except Exception as exc:  # noqa: BLE001 — one unparseable record, not a read failure
             counters["row_errors"] += 1
             if counters["row_errors"] <= _MAX_ROW_ERROR_LOGS:
@@ -789,20 +678,16 @@ def scan_snapshot(max_files: Optional[int] = None,
                   to_year: Optional[int] = None,
                   pilot_csv: Optional[Path] = None,
                   files: Optional[list[str]] = None,
-                  merge_fn: Optional[Callable] = None,
-                  index_loader: Optional[Callable] = None,
                   survivor_pool: Optional[Path] = None) -> int:
-    """Scan OpenAlex snapshot partitions and merge admitted rows into candidates.csv.
+    """Scan OpenAlex snapshot partitions and write every survivor to the pool.
 
     Production mode (``pilot_csv=None``) is ledger-backed and full-corpus: it scans
-    every manifest file not already marked done, merging each batch of survivors
-    straight into ``data/candidates.csv`` with enrichment bypassed (snapshot rows
-    already carry OpenAlex's own abstract; the blanks are exactly the population
-    OpenAlex never had, and are backfilled later by
-    ``python -m search.fetch_abstracts --skip-openalex``).
+    every manifest file not already marked done and writes the survivors to
+    *survivor_pool*, one parquet file per partition. The pool is the output —
+    Stage 2 reads it directly.
 
-    Pilot mode (``pilot_csv`` set) writes to that CSV instead, keeps NO ledger,
-    dedupes in memory against the pilot CSV, and prints a gate report. It is the
+    Pilot mode (``pilot_csv`` set) also writes the admitted rows to that CSV, keeps
+    NO ledger, dedupes in memory against it, and prints a gate report. It is the
     only mode where *from_year*/*to_year* apply — a production file marked done
     under a narrow year filter would be an unsound checkpoint, so year bounds are
     ignored (with a warning) outside pilot mode.
@@ -816,20 +701,13 @@ def scan_snapshot(max_files: Optional[int] = None,
     it leaves local state half-written, which is not something a retry can repair.
     A single malformed RECORD is neither: it is logged, skipped, and the rest of its
     partition is consumed (see ``_batch_rows``).
-    *merge_fn* / *index_loader* are injected by ``run_search`` so the two modules
-    do not import each other at module level; when absent they are imported lazily.
 
-    *merge_fn* is called once per pyarrow batch — thousands of times over a full
-    scan — and each call begins by loading the candidates index. That load is
-    memoised inside ``KeyIndex`` (``shared/csv_index.py``); without it a 7M-key
-    index would be re-read from disk for every batch.
+    *survivor_pool* persists every search-gate survivor under that directory, one
+    parquet file per partition, before the year filter — so a later gate-independent
+    question is answered locally instead of by a 13-21 hour rescan.
 
-    *survivor_pool* persists every Stage A survivor under that directory, one
-    parquet file per partition, so that Stage B can later be re-run over the pool
-    instead of over the snapshot (see ``admit_from_pool``).
-
-    Returns the number of rows actually merged (0 in pilot mode's terms is the
-    number of rows appended to the pilot CSV).
+    Returns the number of rows admitted (in pilot mode, the number appended to the
+    pilot CSV).
     """
     if pilot_csv is None and (from_year is not None or to_year is not None):
         log.warning("Snapshot production scan ignores --from-year/--to-year: the ledger "
@@ -848,7 +726,6 @@ def scan_snapshot(max_files: Optional[int] = None,
         else all_files
     n_available = len(files) if files is not None else len(all_files)
 
-    candidates_path = DATA_DIR / "candidates.csv"
     ledger: dict = {}
 
     if pilot_csv is not None:
@@ -856,23 +733,13 @@ def scan_snapshot(max_files: Optional[int] = None,
         if max_files is not None:
             targets = targets[:max_files]
         seen_keys = _pilot_keys(pilot_csv)
-        if index_loader is None:
-            from search.run_search import _load_or_build_candidates_index as index_loader
-        prod_index = index_loader(candidates_path)
     else:
-        if merge_fn is None:
-            from search.run_search import _merge_into_candidates_csv as merge_fn
         ledger = load_ledger()
-        if ledger.get("stage_a_fingerprint") not in (None, stage_a_fingerprint()):
+        if ledger_gate_fingerprint(ledger) not in (None, search_gate_fingerprint()):
             log.warning("Snapshot ledger was written under a DIFFERENT gate — files already "
                         "marked done were not scanned with the current tokens/concepts, and "
                         "the rows that gate rejected were never stored. "
                         "Delete %s to force a full rescan.", _LEDGER_PATH)
-        if ledger.get("stage_b_fingerprint") not in (None, stage_b_fingerprint()):
-            log.info("Snapshot ledger's Stage B admission differs from the current phrases. "
-                     "No rescan needed: re-run admission over the survivor pool with "
-                     "`python -m search.run_search --admit-from-pool <pool>`.")
-        _recover_stale_index(candidates_path, ledger)
         if files is None:
             ledger["snapshot_date"] = (manifest.get("meta") or {}).get("updated_date", "") \
                 or ledger.get("snapshot_date", "")
@@ -880,14 +747,12 @@ def scan_snapshot(max_files: Optional[int] = None,
         if max_files is not None:
             targets = targets[:max_files]
         seen_keys = set()
-        prod_index = set()
 
     log.info("Snapshot scan: %d of %d manifest files to read%s",
              len(targets), n_available, " (pilot)" if pilot_csv is not None else "")
 
-    counters = {"scanned": 0, "stage_a": 0, "stage_a_token": 0, "stage_a_concept": 0,
-                "keyword_positive": 0, "keyword_admits": 0, "admitted": 0, "no_abstract": 0,
-                "already_in_candidates": 0, "pooled": 0, "row_errors": 0}
+    counters = {"scanned": 0, "gate_survivors": 0, "gate_token": 0, "gate_concept": 0,
+                "admitted": 0, "no_abstract": 0, "pooled": 0, "row_errors": 0}
     total_merged = 0
     skipped: list[str] = []
 
@@ -898,11 +763,14 @@ def scan_snapshot(max_files: Optional[int] = None,
         previous_entry = ledger.get("files", {}).get(url) if pilot_csv is None else None
         if pilot_csv is None:
             ledger["files"][url] = {**meta, "status": "merging"}
-            # Only ever set on a fresh ledger: overwriting a mismatching fingerprint
-            # would silence the warning above from the first file scanned onwards,
-            # while most files on record were still scanned under the old gate.
-            ledger.setdefault("stage_a_fingerprint", stage_a_fingerprint())
-            ledger.setdefault("stage_b_fingerprint", stage_b_fingerprint())
+            # Only ever recorded on a ledger that names no gate at all: overwriting a
+            # mismatching fingerprint would silence the warning above from the first file
+            # scanned onwards, while most files on record were still scanned under the old
+            # gate. A ledger holding only the legacy key keeps it — the value is the same
+            # under either name, so rewriting it would gain nothing and could look like a
+            # gate change to an older checkout.
+            if ledger_gate_fingerprint(ledger) is None:
+                ledger[_GATE_KEY] = search_gate_fingerprint()
             save_ledger(ledger)
 
         pool = _PoolWriter(survivor_pool, url) if survivor_pool is not None else None
@@ -917,30 +785,22 @@ def scan_snapshot(max_files: Optional[int] = None,
                     rows = _batch_rows(batch, from_year, to_year, counters, pool=pool)
                     if not rows:
                         continue
-                    df = pd.DataFrame(rows, columns=CANDIDATES_COLS)
+                    file_merged += len(rows)
                     if pilot_csv is not None:
                         fresh = []
                         for row in rows:
                             keys = [k for k in row_keys(row) if k]
-                            counters["already_in_candidates"] += int(
-                                any(k in prod_index for k in keys))
                             if keys and any(k in seen_keys for k in keys):
                                 continue
                             seen_keys.update(keys)
                             fresh.append(row)
+                        file_merged -= len(rows) - len(fresh)
                         if fresh:
                             try:
                                 _write_pilot(pd.DataFrame(fresh, columns=CANDIDATES_COLS),
                                              pilot_csv)
                             except Exception as exc:
                                 raise _MergeFailed(url) from exc
-                            file_merged += len(fresh)
-                    else:
-                        try:
-                            merged = merge_fn(df, candidates_path, enrich=False)
-                        except Exception as exc:
-                            raise _MergeFailed(url) from exc
-                        file_merged += int(merged or 0)
                 break
             except _MergeFailed as failure:
                 # Out of the retry loop untouched, and with the ledger entry left at
@@ -992,9 +852,9 @@ def scan_snapshot(max_files: Optional[int] = None,
                     "otherwise consumed in full.", counters["row_errors"])
 
     if survivor_pool is not None:
-        log.info("Snapshot survivor pool: %d rows, %.1f MB at %s (stage_a=%s stage_b=%s)",
+        log.info("Snapshot survivor pool: %d rows, %.1f MB at %s (gate=%s)",
                  counters["pooled"], _pool_size_bytes(survivor_pool) / 1e6, survivor_pool,
-                 stage_a_fingerprint()[:12], stage_b_fingerprint()[:12])
+                 search_gate_fingerprint()[:12])
 
     if pilot_csv is not None:
         _print_pilot_report(counters, total_merged, len(targets), pilot_csv, survivor_pool)
@@ -1007,186 +867,16 @@ def _print_pilot_report(counters: dict, written: int, n_files: int, pilot_csv: P
     """Print the Phase 0 numbers the admission rule is meant to be judged on."""
     print(f"\n=== Snapshot pilot report ({n_files} file(s) -> {pilot_csv}) ===")
     print(f"  rows scanned                          {counters['scanned']:,}")
-    print(f"  Stage A survivors                     {counters['stage_a']:,}"
-          f"  (token {counters['stage_a_token']:,}, concept {counters['stage_a_concept']:,})")
-    print(f"  (i)   Stage A alone                   {counters['stage_a']:,}")
-    print(f"  (ii)  keyword verdict = positive      {counters['keyword_positive']:,}")
-    print(f"  (iii) positive or ambiguous           {counters['keyword_admits']:,}")
-    print(f"  admitted (iii or concept)             {counters['admitted']:,}")
+    print(f"  search-gate survivors                 {counters['gate_survivors']:,}"
+          f"  (token {counters['gate_token']:,}, concept {counters['gate_concept']:,})")
+    print(f"  admitted                              {counters['admitted']:,}")
     print(f"  admitted with no abstract             {counters['no_abstract']:,}")
-    print(f"  admitted already in candidates.csv    {counters['already_in_candidates']:,}")
     print(f"  rows written to pilot CSV             {written:,}")
     if survivor_pool is not None:
         print(f"  rows written to survivor pool         {counters['pooled']:,}")
         print(f"  survivor pool on disk                 "
               f"{_pool_size_bytes(survivor_pool) / 1e6:,.1f} MB  ({survivor_pool})")
-    print(f"  Stage A fingerprint                   {stage_a_fingerprint()[:12]}")
-    print(f"  Stage B fingerprint                   {stage_b_fingerprint()[:12]}\n")
-
-
-# ---------------------------------------------------------------------------
-# Re-admission from the pool
-# ---------------------------------------------------------------------------
-
-
-def _pool_files(pool_path: Path) -> list[Path]:
-    files = sorted(pool_path.glob("*.parquet"))
-    if not files:
-        raise ValueError(f"No pool parquet files under {pool_path}")
-    return files
-
-
-def _admitted_batches(files: list[Path], counters: dict, label: str):
-    """Yield the admitted rows of every pool batch, one list per parquet batch.
-
-    THE row-producing path for the pool: ``admit_from_pool`` and
-    ``build_candidates`` both consume this generator, so a shared build and a local
-    re-admission are incapable of disagreeing about what the pool admits.
-    """
-    for i, path in enumerate(files, 1):
-        pf = pq.ParquetFile(path)
-        for batch in pf.iter_batches(batch_size=SNAPSHOT_BATCH_ROWS):
-            rows: list[dict] = []
-            for rec in batch.to_pylist():
-                counters["scanned"] += 1
-                row = _row_if_admitted(rec, bool(rec.get("hit_concept")), counters,
-                                       abstract=rec.get("abstract_text") or "")
-                if row is not None:
-                    rows.append(row)
-            if rows:
-                yield rows
-        log.info("%s %d/%d  %s  admitted so far %d",
-                 label, i, len(files), path.name, counters["admitted"])
-
-
-def _pool_counters() -> dict:
-    return {"scanned": 0, "keyword_positive": 0, "keyword_admits": 0, "admitted": 0,
-            "no_abstract": 0, "already_in_candidates": 0}
-
-
-def build_candidates(pool_dir: Path, out_dir: Path,
-                     chunk_rows: Optional[int] = None,
-                     created_at: Optional[str] = None) -> dict:
-    """Run the current Stage B admission over *pool_dir* into a shareable artifact.
-
-    Writes ``candidates-0000.parquet`` … (zstd, ~``chunk_rows`` rows each) plus a
-    ``manifest.json`` naming the build. This is the 15-minute Stage B pass done ONCE,
-    so that every collaborator who only wants the corpus downloads its result instead
-    of the pool. The rows come from ``_admitted_batches`` — the same generator
-    ``admit_from_pool`` uses — so the artifact holds exactly what a local
-    re-admission would have produced.
-
-    Returns the manifest dict it wrote.
-    """
-    files = _pool_files(pool_dir)
-    chunk_rows = chunk_rows or SNAPSHOT_BUILD_CHUNK_ROWS
-    out_dir.mkdir(parents=True, exist_ok=True)
-    # A previous build's chunks would otherwise be pushed and merged alongside this
-    # one's, under this one's manifest — a corpus its build_hash does not describe.
-    for stale in out_dir.glob("candidates-*.parquet"):
-        stale.unlink()
-
-    ledger = load_ledger()
-    counters = _pool_counters()
-    chunks: list[dict] = []
-    buffer: list[dict] = []
-
-    def flush(rows_out: list[dict]) -> None:
-        name = f"candidates-{len(chunks):04d}.parquet"
-        pd.DataFrame(rows_out, columns=CANDIDATES_COLS).to_parquet(
-            out_dir / name, compression="zstd", index=False)
-        chunks.append({"name": name, "rows": len(rows_out)})
-
-    for rows in _admitted_batches(files, counters, "Candidates build"):
-        buffer.extend(rows)
-        while len(buffer) >= chunk_rows:
-            flush(buffer[:chunk_rows])
-            del buffer[:chunk_rows]
-    if buffer:
-        flush(buffer)
-
-    manifest = {
-        "build_hash": build_hash(ledger),
-        "stage_a_fingerprint": stage_a_fingerprint(),
-        "stage_b_fingerprint": stage_b_fingerprint(),
-        "row_builder_version": ROW_BUILDER_VERSION,
-        "snapshot_date": ledger.get("snapshot_date", "") or "",
-        "ledger_hash": ledger_hash(ledger),
-        "pool_files": len(files),
-        "rows": sum(c["rows"] for c in chunks),
-        "chunk_rows": chunk_rows,
-        "chunks": chunks,
-        "created_at": created_at or datetime.datetime.now(
-            datetime.timezone.utc).isoformat(timespec="seconds"),
-    }
-    with open(out_dir / "manifest.json", "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=1)
-
-    print(f"\n=== Candidates build ({len(files)} pool file(s) -> {out_dir}) ===")
-    print(f"  Stage A survivors in pool             {counters['scanned']:,}")
-    print(f"  admitted by the current Stage B       {counters['admitted']:,}")
-    print(f"  rows written                          {manifest['rows']:,}")
-    print(f"  parquet chunks                        {len(chunks)} "
-          f"(~{chunk_rows:,} rows each)")
-    print(f"  build hash                            {manifest['build_hash'][:12]}")
-    print(f"  Stage A / Stage B fingerprint         {stage_a_fingerprint()[:12]} / "
-          f"{stage_b_fingerprint()[:12]}")
-    print(f"  row builder                           {ROW_BUILDER_VERSION}\n")
-    return manifest
-
-
-def admit_from_pool(pool_path: Path, merge_fn: Optional[Callable] = None,
-                    index_loader: Optional[Callable] = None,
-                    dry_run: bool = False) -> int:
-    """Re-run the CURRENT Stage B admission over a stored survivor pool.
-
-    This is what a Stage B vocabulary change costs once the pool exists: minutes over
-    a few GB of local parquet instead of a 13-21 hour rescan of the snapshot. Rows go
-    through ``_row_if_admitted`` — the same admission the scanner uses — and into
-    ``candidates.csv`` through the same merge, so re-admitting an unchanged Stage B is
-    a no-op rather than a duplicate.
-
-    *dry_run* reports the counts and writes nothing; it uses *index_loader* to say how
-    many admitted rows candidates.csv already holds.
-    """
-    files = _pool_files(pool_path)
-
-    if merge_fn is None:
-        from search.run_search import _merge_into_candidates_csv as merge_fn
-    if index_loader is None:
-        from search.run_search import _load_or_build_candidates_index as index_loader
-
-    candidates_path = DATA_DIR / "candidates.csv"
-    index = index_loader(candidates_path) if dry_run else set()
-
-    counters = _pool_counters()
-    total_merged = 0
-
-    for rows in _admitted_batches(files, counters, "Pool re-admission"):
-        if dry_run:
-            counters["already_in_candidates"] += sum(
-                any(k in index for k in row_keys(row) if k) for row in rows)
-            continue
-        total_merged += int(merge_fn(pd.DataFrame(rows, columns=CANDIDATES_COLS),
-                                     candidates_path, enrich=False) or 0)
-
-    print(f"\n=== Pool re-admission ({len(files)} pool file(s) -> {pool_path}) ===")
-    print(f"  Stage A survivors in pool             {counters['scanned']:,}")
-    print(f"  keyword verdict = positive            {counters['keyword_positive']:,}")
-    print(f"  positive or ambiguous                 {counters['keyword_admits']:,}")
-    print(f"  admitted by the current Stage B       {counters['admitted']:,}")
-    print(f"  admitted with no abstract             {counters['no_abstract']:,}")
-    print(f"  survivor pool on disk                 "
-          f"{_pool_size_bytes(pool_path) / 1e6:,.1f} MB")
-    print(f"  Stage A fingerprint                   {stage_a_fingerprint()[:12]}")
-    print(f"  Stage B fingerprint                   {stage_b_fingerprint()[:12]}")
-    if dry_run:
-        print(f"  DRY RUN — already in candidates.csv   {counters['already_in_candidates']:,}")
-        print("  nothing written\n")
-    else:
-        print(f"  merged into candidates.csv            {total_merged:,}\n")
-
-    return counters["admitted"] if dry_run else total_merged
+    print(f"  search-gate fingerprint               {search_gate_fingerprint()[:12]}\n")
 
 
 # ---------------------------------------------------------------------------
@@ -1289,8 +979,7 @@ def scan_status(pool_dir: Optional[Path] = None) -> dict:
         "bytes_per_sec": bytes_per_sec,
         "eta_seconds": eta_seconds,
         "snapshot_date": ledger.get("snapshot_date", "") or "",
-        "stage_a_fingerprint": ledger.get("stage_a_fingerprint", "") or "",
-        "stage_b_fingerprint": ledger.get("stage_b_fingerprint", "") or "",
+        "search_gate_fingerprint": ledger_gate_fingerprint(ledger) or "",
         "ledger_path": str(_LEDGER_PATH),
     }
 
@@ -1313,7 +1002,7 @@ def _print_status(status: dict) -> None:
           f" / {status['bytes_total'] / 1e9:,.2f} GB")
     print(f"  records scanned                       {status['records_done']:,}"
           f" / {status['records_total']:,}")
-    print(f"  rows merged into candidates.csv       {status['rows_kept']:,}")
+    print(f"  rows admitted                         {status['rows_kept']:,}")
     print(f"  survivor pool                         {status['pool_files']:,} file(s), "
           f"{status['pool_bytes'] / 1e9:,.2f} GB  ({status['pool_dir']})")
     if status["files_in_flight"]:
@@ -1328,11 +1017,9 @@ def _print_status(status: dict) -> None:
     if status["eta_seconds"] is not None:
         print(f"  estimated time remaining              {_humanize(status['eta_seconds'])}")
     print(f"  snapshot date                         {status['snapshot_date'] or '—'}")
-    print(f"  Stage A / Stage B fingerprint         "
-          f"{status['stage_a_fingerprint'][:12] or '—'} / "
-          f"{status['stage_b_fingerprint'][:12] or '—'}")
-    print(f"  this checkout                         {stage_a_fingerprint()[:12]} / "
-          f"{stage_b_fingerprint()[:12]}\n")
+    print(f"  search-gate fingerprint               "
+          f"{status['search_gate_fingerprint'][:12] or '—'}")
+    print(f"  this checkout                         {search_gate_fingerprint()[:12]}\n")
 
 
 def main() -> None:
@@ -1341,7 +1028,7 @@ def main() -> None:
                     "run at any time, including against a scan in flight — it reads the "
                     "ledger, the cached manifest and the pool directory, and writes "
                     "nothing. The scan itself is started from "
-                    "`python -m search.run_search --source openalex_snapshot`.")
+                    "`python -m search.run_search --scan`.")
     parser.add_argument("--status", action="store_true",
                         help="Print progress (the only action; implied when no flag is given).")
     parser.add_argument("--json", action="store_true", help="Emit the status as JSON.")

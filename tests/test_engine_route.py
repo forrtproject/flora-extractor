@@ -1,8 +1,16 @@
 """Wave B: the two backends, routing, work ids and routing releases.
 
-One test per seam. The corpus below is crafted so every shipped spec — shadow
-ones included — claims at least one row: the backend-equality test is only worth
-running over rows that actually exercise the bundle.
+One test per seam, in two layers that do not overlap.
+
+The BACKEND tests run the shipped bundle, because backend equality is a claim
+about the shipped patterns and nothing else would exercise them: the corpus below
+is crafted so every shipped spec — shadow ones included — claims at least one
+row. They assert what a pattern matches, never where a row is routed.
+
+The ROUTING tests run the synthetic bundle of `tests/engine_bundle.py`, because
+precedence, the shadow contract and the `no_text` downgrade are properties of
+`route_batch()` rather than of any rule. Where the shipped rules route is
+asserted once, in the policy table of `tests/test_engine_spec.py`.
 """
 
 import json
@@ -15,9 +23,10 @@ import pytest
 from filter.engine.backends import eval_spec_batch, eval_spec_rows, verify_backends
 from filter.engine.release import read_release, routing_release, write_release
 from filter.engine.route import eval_all, route_batch
-from filter.engine.spec import load_specs
+from filter.engine.spec import FilterSpec, load_specs
 from filter.engine.workids import load_aliases, resolve, work_id
 from search.snapshot_scan import _POOL_SCHEMA
+from tests import engine_bundle
 
 SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
 
@@ -58,22 +67,25 @@ def _batch(rows: list[dict]) -> pa.RecordBatch:
 _CITE = "as reported by Smith et al. (2019)"
 
 CORPUS = [
-    # structural discards
+    # definitional discards (960 / 955 / 940)
     _row(work="https://openalex.org/W1", type_="dataset",
          title="Replication Data for: Bees", abstract="A direct replication of Smith (2019)."),
     _row(work="https://openalex.org/W2", doi="https://doi.org/10.7910/DVN/ABC",
          title="Replication Data for: Wasps", abstract="Deposit."),
-    _row(work="https://openalex.org/W3", doi="10.6084/m9.figshare.123",
-         title="Replication data", abstract="Figshare record."),
+    _row(work="https://openalex.org/W3", doi="10.1000/jexp.2019.4471.suppl",
+         title="Supplementary tables", abstract="Tables S1-S4."),
     _row(work="https://openalex.org/W4", doi="10.7287/peerj.10325v0.1/reviews/2",
          title="A replication of the Smith effect", abstract="Review object."),
     _row(work="https://openalex.org/W5", type_="peer-review",
          title="A replication of the Smith effect", abstract="Peer review."),
-    # 500s exclusions
     _row(work="https://openalex.org/W6",
          title="Review for: A replication of the Smith effect", abstract="Editorial."),
-    _row(work="https://openalex.org/W7", title="Open materials",
-         abstract="Data and code are available on OSF to reproduce the results in this paper."),
+    # the metadata-crosswalk discard (500)
+    _row(work="https://openalex.org/W7", type_="paratext",
+         title="Front matter", abstract="Contents of the replication special issue."),
+    # rows the deleted exclusion band used to claim: kept because they are the
+    # senses the whitelist must NOT admit, and a backend that started disagreeing
+    # on molecular or storage prose would be a real divergence
     _row(work="https://openalex.org/W8", title="DNA replication in yeast",
          abstract="Molecular biology."),
     _row(work="https://openalex.org/W9", title="Replication fork stalling",
@@ -82,35 +94,39 @@ CORPUS = [
          abstract="Virology."),
     _row(work="https://openalex.org/W11", title="Replication of the code",
          abstract="Software note."),
-    _row(work="https://openalex.org/W12", title="Replicated the dataset",
-         abstract="Software note."),
-    # the #44 rescue: an exclusion, a phrase and a cite
+    _row(work="https://openalex.org/W12", title="Open materials",
+         abstract="Data and code are available on OSF to reproduce the results in this paper."),
     _row(work="https://openalex.org/W13", title="Reanalysis of a classic finding",
          abstract=f"We replicated the code of Smith (2019); this is a replication "
                   f"of the original findings {_CITE}."),
-    # routing rules
+    # rule B, one row per shape the arms were measured on
     _row(work="https://openalex.org/W14", title="A direct replication of the Smith effect",
          abstract=f"We report a direct replication of the anchoring effect, {_CITE}."),
-    _row(work="https://openalex.org/W15", title="A direct replication",
-         abstract="We report a direct replication of the anchoring effect."),
+    _row(work="https://openalex.org/W15", title="A replication study of anchoring",
+         abstract="We failed to replicate the original result; our replication "
+                  "attempt could not be replicated either."),
+    # reproduction-signal, the one live admission rule
     _row(work="https://openalex.org/W16", title="Computational check",
          abstract="We reproduced the original results of the published analysis."),
+    # rule C: multilingual title stem, English title stem, concept, bare phrase
     _row(work="https://openalex.org/W17", title="Replikationsstudie über Bienen",
          abstract="Eine Untersuchung."),
     _row(work="https://openalex.org/W18", title="Anchoring in context",
          abstract="A study of judgement.", concepts=("C12590798",)),
-    # shadow arms
-    _row(work="https://openalex.org/W19", title="Réplication des abeilles",
+    _row(work="https://openalex.org/W19", title="Réplication des abeilles",
          abstract="Une etude."),
-    _row(work="https://openalex.org/W20", title="Cell biology",
-         abstract="The cells reproduce quickly."),
-    # GWAS guard: phrase and cite, but the expensive route is refused
-    _row(work="https://openalex.org/W21", title="A replication cohort study",
-         abstract=f"We replicated the SNP association in a replication cohort, {_CITE}."),
+    _row(work="https://openalex.org/W20", title="Bees and judgement",
+         abstract="This paper offers a replication of an earlier result."),
+    # rule D: one probe arm, so the shadow rule is exercised too
+    _row(work="https://openalex.org/W21", title="Revisiting the Tiebout hypothesis",
+         abstract="We repeated the analysis on a new panel of municipalities."),
+    # the GWAS shape the deleted guard existed for: no arm admits it now
+    _row(work="https://openalex.org/W22", title="A replication cohort study",
+         abstract=f"The SNP association held in a replication cohort, {_CITE}."),
     # no abstract, and a plain negative
-    _row(work="https://openalex.org/W22",
+    _row(work="https://openalex.org/W23",
          title="A direct replication of the Smith effect", abstract=None),
-    _row(work="https://openalex.org/W23", title="A study of bees", abstract="Bees are nice."),
+    _row(work="https://openalex.org/W24", title="A study of bees", abstract="Bees are nice."),
 ]
 
 
@@ -176,13 +192,16 @@ def test_the_two_backends_agree_on_non_ascii_text(specs):
     assert verify_backends(specs, table) == []
 
 
-def test_an_accented_surname_still_reads_as_a_citation(specs):
-    """The fix for the divergence above must not have removed the capability: a
-    non-ASCII author name in a cite is still a cite, in both backends."""
-    row = _row(title="A direct replication of the Müller effect",
-               abstract="We replicated the original findings, as reported by "
-                        "García et al. (2020).")
-    assert _routed(specs, [row])[0]["rule_id"] == "phrase-with-cite"
+def test_an_accented_name_does_not_part_the_backends_inside_an_arm(specs):
+    """`replication-claim`'s first arm is written with `\\w+`, which Python `re`
+    reads as Unicode-aware and RE2 as ASCII. An accented word in the gap must give
+    the same answer in both backends."""
+    rows = [_row(title="A replication of the Müller effect",
+                 abstract="We successivement répliqué; we thereby replicated the "
+                          "original findings of Müller.")]
+    spec = next(s for s in specs if s.id == "replication-claim")
+    assert eval_spec_rows(spec, rows) == [True]
+    assert eval_spec_batch(spec, _batch(rows)).to_pylist() == [True]
 
 
 def test_every_shipped_spec_claims_at_least_one_corpus_row(specs):
@@ -192,83 +211,101 @@ def test_every_shipped_spec_claims_at_least_one_corpus_row(specs):
     assert unexercised == []
 
 
-def test_the_backends_ignore_the_loader_only_pyre_regex(specs):
-    # biological-of ships a lookaround `pyre_regex` next to its RE2 decomposition;
-    # the decomposition is wider, and both backends must evaluate the wider one.
-    spec = next(s for s in specs if s.id == "biological-of")
+def test_the_backends_ignore_the_loader_only_pyre_regex():
+    """Both backends read the decomposition, never the loader-only `pyre_regex`.
+    No shipped rule carries the key, so the spec is built here."""
+    spec = FilterSpec.from_dict({
+        "id": "pyre-example",
+        "description": "the decomposition is wider than the lookaround original",
+        "match": {"any_of": [{"text_regex": r"\breplication of the original\b"}],
+                  "pyre_regex": r"\breplication of the original(?! study)\b"},
+        "pile": "screen_cheap",
+        "precedence": 250,
+    })
     rows = [_row(title="Replication of the original study of DNA repair", abstract="")]
     assert eval_spec_rows(spec, rows) == [True]
     assert eval_spec_batch(spec, _batch(rows)).to_pylist() == [True]
 
 
 # ---------------------------------------------------------------------------
-# Routing
+# Routing mechanics — synthetic bundle (tests/engine_bundle.py)
 # ---------------------------------------------------------------------------
 
 
-def _routed(specs, rows: list[dict]) -> list[dict]:
-    return route_batch(specs, _batch(rows)).to_pylist()
+@pytest.fixture(scope="module")
+def syn() -> list:
+    return engine_bundle.specs()
 
 
-def test_a_dataset_row_carrying_a_replication_phrase_discards_on_precedence(specs):
-    row = _row(type_="dataset", title="Replication Data for: Bees",
-               abstract="A direct replication of Smith (2019).")
-    routed = _routed(specs, [row])[0]
-    assert (routed["pile"], routed["rule_id"], routed["precedence"]) \
-        == ("discard", "dataset-type", 950)
+@pytest.fixture(scope="module")
+def syn_routed(syn) -> dict:
+    """The synthetic pool routed once, keyed by work id."""
+    batch = pa.Table.from_pylist(engine_bundle.POOL_ROWS,
+                                 schema=_POOL_SCHEMA).to_batches()[0]
+    return {row["work_id"]: row for row in route_batch(syn, batch).to_pylist()}
 
 
-def test_a_phrase_in_the_title_with_no_abstract_routes_pending_no_text(specs):
-    routed = _routed(specs, [_row(title="A direct replication of the Smith effect",
-                                  abstract=None)])[0]
-    assert (routed["pile"], routed["pending_reason"], routed["rule_id"]) \
-        == ("pending", "no_text", "phrase-replication")
+def test_every_row_lands_in_the_pile_its_bundle_sends_it_to(syn_routed):
+    """The whole routing table at once: four piles, a precedence conflict, a row
+    nothing claims and two rows with no abstract."""
+    assert {work: (row["pile"], row["rule_id"])
+            for work, row in syn_routed.items()} == engine_bundle.EXPECTED_ROUTING
 
 
-def test_a_deposit_doi_with_no_abstract_still_discards(specs):
-    routed = _routed(specs, [_row(doi="https://doi.org/10.7910/DVN/ABC",
-                                  title="Replication Data for: Wasps", abstract=None)])[0]
-    assert (routed["pile"], routed["pending_reason"], routed["rule_id"]) \
-        == ("discard", "", "deposit-doi-prefixes")
-    assert routed["evidence"] == "10.7910"
+def test_the_highest_precedence_match_wins_and_the_rest_are_still_recorded(syn_routed):
+    row = syn_routed[1]        # a dataset whose abstract also carries the phrase
+    assert (row["rule_id"], row["precedence"]) == ("syn-dataset", 950)
+    assert row["matched_rules"] == ["syn-dataset", "syn-replication"]
 
 
-def test_a_concept_only_row_routes_to_the_cheap_tier(specs):
-    routed = _routed(specs, [_row(title="Anchoring in context",
-                                  abstract="A study of judgement.",
-                                  concepts=("C12590798",))])[0]
-    assert (routed["pile"], routed["rule_id"]) == ("screen_cheap", "concept-replication")
-    assert routed["evidence"] == "concept_ids=C12590798"
+def test_a_shadow_spec_evaluates_and_is_never_a_match_a_winner_or_a_pile(syn, syn_routed):
+    """The shadow contract: syn-shadow outranks every routing rule and claims both
+    row 1 and row 6, and changes neither. Row 6 is claimed by nothing else, so if
+    shadow could route it would show here as a discard rather than as pending."""
+    batch = pa.Table.from_pylist(engine_bundle.POOL_ROWS,
+                                 schema=_POOL_SCHEMA).to_batches()[0]
+    evaluated = eval_all(syn, batch)["syn-shadow"].to_pylist()
+    assert [evaluated[0], evaluated[5]] == [True, True]
+    for row in syn_routed.values():
+        assert row["rule_id"] != "syn-shadow"
+        assert "syn-shadow" not in row["matched_rules"]
+    assert (syn_routed[6]["pile"], syn_routed[6]["pending_reason"]) \
+        == ("pending", "no_filter_matched")
 
 
-def test_the_same_row_without_the_concept_is_pending_rather_than_discarded(specs):
-    # Issue #148 regression: Stage 2 wrote the concept arm `false_positive`
-    # terminally. Nothing may discard a row for lacking a topical signal.
-    routed = _routed(specs, [_row(title="Anchoring in context",
-                                  abstract="A study of judgement.")])[0]
-    assert routed["pile"] == "pending"
-    assert routed["pending_reason"] == "no_filter_matched"
-    assert routed["rule_id"] == ""
+def test_a_row_no_rule_claims_is_pending_rather_than_discarded(syn_routed):
+    # Issue #148 regression: Stage 2 wrote the unclaimed arm `false_positive`
+    # terminally. Nothing may discard a row for lacking a signal.
+    row = syn_routed[6]
+    assert (row["pile"], row["pending_reason"], row["rule_id"]) \
+        == ("pending", "no_filter_matched", "")
 
 
-def test_matched_rules_lists_every_non_shadow_match_and_shadow_specs_never_win(specs):
-    row = _row(title="On the replication of enteroviruses",
-               abstract="We reproduced the original results of the published analysis.")
-    routed = _routed(specs, [row])[0]
-    shadow = {spec.id for spec in specs if spec.shadow}
-    assert routed["rule_id"] not in shadow
-    assert not shadow & set(routed["matched_rules"])
-    assert routed["matched_rules"] == ["phrase-reproduction", "phrase-replication",
-                                       "title-stem"]
-    # ...while the shadow arms did evaluate, for the evaluations table.
-    assert eval_all(specs, _batch([row]))["biological-of"].to_pylist() == [True]
+def test_an_empty_abstract_downgrades_a_screening_route_but_not_a_discard(syn_routed):
+    """Absence of evidence must not convert into a proceed — and must not convert
+    into a discard either, since a discard rule reads no abstract."""
+    screening, discarding = syn_routed[7], syn_routed[8]
+    assert (screening["pile"], screening["pending_reason"], screening["rule_id"]) \
+        == ("pending", "no_text", "syn-replication")
+    assert (discarding["pile"], discarding["pending_reason"], discarding["rule_id"]) \
+        == ("discard", "", "syn-deposit")
 
 
-def test_precomputed_evaluations_are_reused_rather_than_recomputed(specs):
-    batch = _batch([_row(type_="dataset", title="Replication Data for: Bees")])
-    evals = eval_all(specs, batch)
-    evals["dataset-type"] = pa.array([False])
-    assert route_batch(specs, batch, evals=evals).to_pylist()[0]["rule_id"] != "dataset-type"
+def test_the_winning_rule_reports_what_it_matched(syn_routed):
+    """Evidence is recovered for the winner only, in each of its two forms."""
+    assert syn_routed[8]["evidence"] == "10.7910"            # doi prefix
+    assert syn_routed[1]["evidence"] == "type=dataset"       # field
+    assert syn_routed[5]["evidence"] == "concept_ids=C12590798"
+    assert syn_routed[4]["evidence"] == "direct replication"  # regex
+
+
+def test_precomputed_evaluations_are_reused_rather_than_recomputed(syn):
+    batch = pa.Table.from_pylist([engine_bundle.POOL_ROWS[0]],
+                                 schema=_POOL_SCHEMA).to_batches()[0]
+    evals = eval_all(syn, batch)
+    evals["syn-dataset"] = pa.array([False])
+    assert route_batch(syn, batch, evals=evals).to_pylist()[0]["rule_id"] \
+        == "syn-replication"
 
 
 # ---------------------------------------------------------------------------
@@ -285,13 +322,13 @@ def test_work_id_parses_the_three_accepted_forms_and_rejects_junk():
             work_id(junk)
 
 
-def test_an_alias_rekeys_a_routed_row(specs, tmp_path):
+def test_an_alias_rekeys_a_routed_row(syn, tmp_path):
     path = tmp_path / "aliases.json"
     path.write_text(json.dumps({"version": 1, "aliases": {"7": 4210170740}}))
     aliases = load_aliases(path)
     assert resolve(7, aliases) == 4210170740
     assert resolve(8, aliases) == 8
-    routed = route_batch(specs, _batch([_row(work="https://openalex.org/W7")]),
+    routed = route_batch(syn, _batch([_row(work="https://openalex.org/W7")]),
                          aliases=aliases).to_pylist()[0]
     assert routed["work_id"] == 4210170740
 

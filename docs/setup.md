@@ -21,7 +21,17 @@ Edit `.env` and fill in at minimum:
 ```bash
 RESEARCHER_EMAIL=you@example.com   # for OpenAlex / Crossref politeness headers
 GEMINI_API_KEY=...                 # from https://aistudio.google.com
+OPENAI_API_KEY=...                 # Stage 3's second screen voter (default SCREEN_VOTER2_MODEL)
 ```
+
+**Only Stage 3 enforces anything.** `_check_screen_providers()` in
+`extract/run_extract.py` refuses to start unless *both* front-door screen voters have
+their key (that is `GEMINI_API_KEY` plus whichever of `OPENAI_API_KEY` /
+`OPENROUTER_API_KEY` the configured `SCREEN_VOTER2_MODEL` needs), and, when
+`PRESCREEN_ENABLED` is set, unless the pre-screen's providers do too — `--no-llm`
+skips both checks. Nothing else validates: `shared/config.py` only reads env, so a
+missing `RESEARCHER_EMAIL` silently falls back to `research@example.com`. Check `.env`
+against `.env.example` rather than relying on an error.
 
 ## GROBID (optional, recommended for Stage 3)
 
@@ -31,15 +41,21 @@ GROBID extracts structured references from PDFs, improving DOI resolution accura
 docker run -t --rm -p 8070:8070 lfoppiano/grobid:0.8.0
 ```
 
-Leave `GROBID_URL=http://localhost:8070` in `.env` (the default). If GROBID is not running, the pipeline logs a warning and falls back to abstract-only processing.
+**Keep `GROBID_URL=http://localhost:8070` in your `.env`.** That line is set by
+`.env.example`, but it is *not* the code default: `shared/config.py` falls back to
+the **public** server `https://kermitt2-grobid.hf.space`. Deleting or blanking the
+env line therefore does not disable GROBID — it starts uploading every PDF the
+pipeline acquires to a third-party host. If you do not want that, either run the
+local container or point `GROBID_URL` somewhere unreachable so the pipeline logs a
+warning and falls back to abstract-only processing.
 
 ## Running the pipeline
 
-Run the stages in order. Stage 2 reads the survivor pool parquet rather than a CSV;
-every other stage reads the previous stage's CSV output.
+Run the stages in order. Stage 1 writes the survivor pool (parquet) and Stage 2
+routes it; every stage after that reads the previous stage's CSV output.
 
 ```bash
-# Stage 1 — discover candidate papers
+# Stage 1 — discover candidate papers (search only; it applies no filters)
 python -m search.run_search
 
 # Stage 2 — route the survivor pool, screen what the rules could not settle,
@@ -63,15 +79,16 @@ If the shared-drive CSVs are available, you can skip Stages 1–2:
 
 | File | Description |
 |------|-------------|
-| `data/candidates.csv` | Stage 1 output — start here if discovered via OpenAlex |
+| the survivor pool (parquet) | Stage 1 output — pull it with `python -m search.pool_sync --pull` and run Stage 2 |
 | `data/filtered.csv` | Stage 2 output — start here to run Stage 3 immediately |
 | `data/extracted.csv` | Stage 3 output — load into web app for monitoring |
-| `data/flora_selected.csv` | 107 rows already in FLoRA — used for deduplication |
+| `data/FLoRA entry sheet - replication list.csv`, `data/flora.csv` | Rows already in FLoRA — the two files `shared/flora_skip.py` reads for `--skip-flora-validated` |
 
 ### Large data files (DVC + Cloudflare R2)
 
-`candidates.csv` (~4.7 GB) and `filtered.csv` (~4.3 GB) are far too large for git or
-the free GitHub LFS tier. They are stored **zipped** in a Cloudflare R2 bucket and
+`filtered.csv` (~4.3 GB) is far too large for git or the free GitHub LFS tier.
+(The survivor pool is shared separately, through Hugging Face — see
+[cli-reference.md](cli-reference.md).) It is stored **zipped** in a Cloudflare R2 bucket and
 versioned with [DVC](https://dvc.org); only the small `data/*.zip.dvc` pointer files
 are committed to git. The unzipped CSVs are gitignored working copies.
 
@@ -129,7 +146,7 @@ See `.env.example` for the full list with descriptions. Key variables:
 | `SCREEN_VOTER2_MODEL` | No | Screen voter 2 (default `gpt-5.4-mini`; an id containing `/` is routed to OpenRouter) |
 | `SUPABASE_URL` | No | Validation monitoring tab |
 | `SUPABASE_SERVICE_KEY` | No | Validation monitoring tab |
-| `GROBID_URL` | No | PDF reference extraction (default: localhost:8070) |
+| `GROBID_URL` | No | PDF reference extraction. **Code default is the public server `https://kermitt2-grobid.hf.space`**; `.env.example` sets `http://localhost:8070`. See the GROBID section above |
 | `GEMINI_MODEL` | No | Override Gemini model name |
 | `GEMINI_HEAVY_MODEL` | No | Override for DOI resolution (defaults to GEMINI_MODEL) |
 | `GEMINI_THINKING_LEVEL` | No | `minimal`/`high` on the heavy model; unset keeps the model default. Changes answers — it is part of the cache key |
