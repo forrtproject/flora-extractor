@@ -23,7 +23,7 @@ import json
 from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 import duckdb
 import numpy as np
@@ -94,23 +94,32 @@ def spec_hash(spec: FilterSpec) -> str:
 def build_routing(con: duckdb.DuckDBPyConnection, pool_dir: Path,
                   specs: list[FilterSpec], release_id: str,
                   aliases: Optional[dict[int, int]] = None,
-                  batch_size: int = 50_000) -> dict:
-    """Route every pool row under *specs* and persist it as *release_id*."""
+                  batch_size: int = 50_000,
+                  batches: Optional[Iterator[pa.RecordBatch]] = None) -> dict:
+    """Route every pool row under *specs* and persist it as *release_id*.
+
+    *batches* replaces this function's own read of the pool with a stream the
+    caller supplies — how `pool_reader.iter_pool_batches()` feeds it batches with
+    a text overlay coalesced in (M3). The store stays ignorant of overlays: it
+    routes whatever batches it is handed, and with *batches* absent it reads the
+    pool exactly as before. *pool_dir* is still read for the file count either
+    way, so a caller passing a stream passes the directory it streamed from.
+    """
     files = sorted(Path(pool_dir).glob("*.parquet"))
+    stream = batches if batches is not None else _iter_pool(files, batch_size)
     pool_rows = 0
     con.execute("BEGIN TRANSACTION")
     try:
         con.execute("DELETE FROM routing WHERE release_id = ?", [release_id])
         con.execute("DELETE FROM evaluations WHERE release_id = ?", [release_id])
         hashes = {spec.id: spec_hash(spec) for spec in specs}
-        for path in files:
-            for batch in pq.ParquetFile(path).iter_batches(batch_size=batch_size):
-                evals = eval_all(specs, batch)
-                routed = route_batch(specs, batch, aliases=aliases, evals=evals)
-                _insert_routing(con, routed, release_id)
-                _insert_evaluations(con, routed.column("work_id"), evals, hashes,
-                                    release_id)
-                pool_rows += routed.num_rows
+        for batch in stream:
+            evals = eval_all(specs, batch)
+            routed = route_batch(specs, batch, aliases=aliases, evals=evals)
+            _insert_routing(con, routed, release_id)
+            _insert_evaluations(con, routed.column("work_id"), evals, hashes,
+                                release_id)
+            pool_rows += routed.num_rows
         con.execute("COMMIT")
     except Exception:
         con.execute("ROLLBACK")
@@ -119,6 +128,11 @@ def build_routing(con: duckdb.DuckDBPyConnection, pool_dir: Path,
     piles = pile_counts(con, release_id)
     return {"rows": sum(piles.values()), "pool_rows": pool_rows, "piles": piles,
             "files": len(files)}
+
+
+def _iter_pool(files: list[Path], batch_size: int):
+    for path in files:
+        yield from pq.ParquetFile(path).iter_batches(batch_size=batch_size)
 
 
 def _insert_routing(con: duckdb.DuckDBPyConnection, routed: pa.Table,

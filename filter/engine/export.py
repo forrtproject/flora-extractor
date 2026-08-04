@@ -27,8 +27,7 @@ import json
 from pathlib import Path
 from typing import Optional
 
-import pyarrow.parquet as pq
-
+from filter.engine.pool_reader import iter_pool_batches, overlay_manifest_hash
 from filter.engine.spec import FilterSpec, bundle_hash, load_specs
 from filter.engine.workids import alias_release, resolve, work_id
 from shared.schema import ENGINE_EXPORTED_COLS
@@ -36,6 +35,10 @@ from shared.schema import ENGINE_EXPORTED_COLS
 SPEC_DIR = Path(__file__).resolve().parents[2] / "filter" / "spec"
 CONVENTIONS_PATH = SPEC_DIR / "conventions.json"
 ALIASES_FILENAME = "aliases.json"
+
+# "Don't check the overlay binding" — None cannot mean it, because a release
+# routed with no overlay legitimately expects None.
+_UNCHECKED: object = object()
 
 
 def load_conventions(path: Optional[Path] = None) -> dict:
@@ -51,6 +54,8 @@ def export_pile(con, pool_dir: Path, pile: str, out_csv: Path, release_id: str,
                 spec_dir: Path = SPEC_DIR,
                 expect_bundle_hash: Optional[str] = None,
                 expect_alias_release: Optional[str] = None,
+                overlay_dir: Optional[Path] = None,
+                expect_overlay_hash: object = _UNCHECKED,
                 created_at: str = "") -> dict:
     """Write *pile* of *release_id* to *out_csv* and its manifest beside it.
 
@@ -60,11 +65,13 @@ def export_pile(con, pool_dir: Path, pile: str, out_csv: Path, release_id: str,
     *aliases* must be the map `build_routing()` ran with, or the join misses the
     rows whose ids were canonicalised.
 
-    *expect_bundle_hash* / *expect_alias_release* come from the release record and
-    are checked against *spec_dir* before anything is written.
+    *expect_bundle_hash* / *expect_alias_release* / *expect_overlay_hash* come from
+    the release record and are checked against *spec_dir* / *overlay_dir* before
+    anything is written. Overlay text is coalesced into the exported rows exactly
+    as it was during routing — Stage 3 must see the text the pile decision saw.
     """
     _check_release_binding(spec_dir, release_id, expect_bundle_hash,
-                           expect_alias_release)
+                           expect_alias_release, overlay_dir, expect_overlay_hash)
     conventions = conventions or load_conventions()
     policy = (conventions.get("piles") or {}).get(pile)
     if policy is None:
@@ -87,23 +94,22 @@ def export_pile(con, pool_dir: Path, pile: str, out_csv: Path, release_id: str,
 
     rows: list[dict] = []
     seen: set[int] = set()
-    for path in sorted(Path(pool_dir).glob("*.parquet")):
-        for batch in pq.ParquetFile(path).iter_batches(batch_size=50_000):
-            for record in batch.to_pylist():
-                # One row per WORK, matching the store's key: an aliased pool row
-                # and its canonical row are one work and must export once.
-                resolved = resolve(work_id(record["id"]), aliases or {})
-                routed = routing.get(resolved)
-                if routed is None or resolved in seen:
-                    continue
-                seen.add(resolved)
-                year = record.get("publication_year")
-                if from_year is not None and (year is None or year < from_year):
-                    continue
-                if to_year is not None and (year is None or year > to_year):
-                    continue
-                rows.append(_export_row(record, routed, policy, prefix, release_id,
-                                        vocabularies.get(routed["rule_id"])))
+    for batch in iter_pool_batches(pool_dir, overlay_dir, aliases=aliases):
+        for record in batch.to_pylist():
+            # One row per WORK, matching the store's key: an aliased pool row
+            # and its canonical row are one work and must export once.
+            resolved = resolve(work_id(record["id"]), aliases or {})
+            routed = routing.get(resolved)
+            if routed is None or resolved in seen:
+                continue
+            seen.add(resolved)
+            year = record.get("publication_year")
+            if from_year is not None and (year is None or year < from_year):
+                continue
+            if to_year is not None and (year is None or year > to_year):
+                continue
+            rows.append(_export_row(record, routed, policy, prefix, release_id,
+                                    vocabularies.get(routed["rule_id"])))
 
     _write_csv(out_csv, rows)
     return _write_manifest(manifest_path, out_csv, release_id, pile, len(rows),
@@ -116,8 +122,18 @@ class StaleBundleError(RuntimeError):
 
 def _check_release_binding(spec_dir: Path, release_id: str,
                            expect_bundle_hash: Optional[str],
-                           expect_alias_release: Optional[str]) -> None:
+                           expect_alias_release: Optional[str],
+                           overlay_dir: Optional[Path] = None,
+                           expect_overlay_hash: object = _UNCHECKED) -> None:
     mismatches = []
+    if expect_overlay_hash is not _UNCHECKED:
+        # None is a real expectation here (routed with no overlay), so the
+        # unchecked case needs its own sentinel rather than reusing None.
+        actual = overlay_manifest_hash(overlay_dir) if overlay_dir else None
+        if actual != expect_overlay_hash:
+            mismatches.append(
+                f"overlay_hash: release {str(expect_overlay_hash)[:12]}, "
+                f"{overlay_dir or 'no overlay'} now {str(actual)[:12]}")
     if expect_bundle_hash:
         actual = bundle_hash(spec_dir)
         if actual != expect_bundle_hash:

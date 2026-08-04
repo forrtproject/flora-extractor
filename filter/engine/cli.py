@@ -27,6 +27,8 @@ from filter.engine.diagnostics import diagnose, render_text
 from filter.engine.export import (
     ALIASES_FILENAME, SPEC_DIR, StaleBundleError, export_pile,
 )
+from filter.engine.overlay import OverlayError, worklist
+from filter.engine.pool_reader import iter_pool_batches, overlay_manifest_hash
 from filter.engine.release import read_release, releases_dir, routing_release, write_release
 from filter.engine.spec import bundle_hash, load_specs
 from filter.engine.store import (
@@ -55,10 +57,11 @@ def _pool_manifest_hash(given: Optional[str]) -> str:
         return UNMANIFESTED
 
 
-def _release_inputs(spec_dir: Path, pool_manifest_hash: str) -> dict:
+def _release_inputs(spec_dir: Path, pool_manifest_hash: str,
+                    overlay_dir: Optional[Path] = None) -> dict:
     return {
         "pool_manifest_hash": pool_manifest_hash,
-        "overlay_hash": None,            # M3: text overlays
+        "overlay_hash": overlay_manifest_hash(overlay_dir) if overlay_dir else None,
         "bundle_hash": bundle_hash(spec_dir),
         "engine_version": ENGINE_VERSION,
         "alias_release": alias_release(spec_dir / ALIASES_FILENAME),
@@ -117,12 +120,21 @@ def cmd_verify(args) -> int:
 
 def cmd_route(args) -> int:
     specs = load_specs(args.spec_dir)
-    inputs = _release_inputs(args.spec_dir, _pool_manifest_hash(args.pool_manifest_hash))
+    try:
+        # An overlay dir holding chunks but no frozen manifest raises: routing
+        # must not bind a release id to bytes nobody named.
+        inputs = _release_inputs(args.spec_dir,
+                                 _pool_manifest_hash(args.pool_manifest_hash),
+                                 args.overlay)
+    except OverlayError as exc:
+        raise SystemExit(str(exc))
     release_id = routing_release(**inputs)
 
     con = open_store(args.store)
-    counters = build_routing(con, args.pool, specs, release_id,
-                             aliases=load_aliases(args.spec_dir / ALIASES_FILENAME))
+    aliases = load_aliases(args.spec_dir / ALIASES_FILENAME)
+    counters = build_routing(con, args.pool, specs, release_id, aliases=aliases,
+                             batches=iter_pool_batches(args.pool, args.overlay,
+                                                       aliases=aliases))
     # Only now: the release record is the claim that this release is routed, and
     # a build that raised must not leave that claim behind. The record lives
     # beside the store it describes, so a store pointed somewhere else does not
@@ -132,6 +144,8 @@ def cmd_route(args) -> int:
     print(f"release {release_id}")
     print(f"  pool {args.pool} — {counters['files']} file(s), "
           f"{counters['pool_rows']:,} pool row(s) -> {counters['rows']:,} work(s)")
+    if args.overlay:
+        print(f"  overlay {args.overlay} — {inputs['overlay_hash'][:12]}")
     for pile, count in sorted(pile_counts(con, release_id).items()):
         print(f"  {pile:<18} {count:,}")
     con.close()
@@ -161,14 +175,26 @@ def cmd_export(args) -> int:
                                aliases=load_aliases(args.spec_dir / ALIASES_FILENAME),
                                expect_bundle_hash=record.get("bundle_hash"),
                                expect_alias_release=record.get("alias_release"),
+                               overlay_dir=args.overlay,
+                               expect_overlay_hash=record.get("overlay_hash"),
                                created_at=_now())
-    except StaleBundleError as exc:
+    except (StaleBundleError, OverlayError) as exc:
         # An operator refusal, not a crash: the message IS the whole answer.
         raise SystemExit(str(exc))
     con.close()
     print(f"{manifest['rows']:,} row(s) -> {args.out}")
     print(f"  release {manifest['release_id']}  pile {manifest['pile']}")
     print(f"  sha256  {manifest['sha256']}")
+    return 0
+
+
+def cmd_worklist(args) -> int:
+    con = open_store(args.store)
+    release_id = _resolve_release(con, args.release)
+    rows = worklist(con, release_id, args.pool, Path(args.out),
+                    aliases=load_aliases(args.spec_dir / ALIASES_FILENAME))
+    con.close()
+    print(f"{rows:,} no_text work(s) -> {args.out}")
     return 0
 
 
@@ -225,6 +251,9 @@ def build_parser() -> argparse.ArgumentParser:
     route.add_argument("--pool-manifest-hash", default=None,
                        help="Pool provenance for the release id (default: the local "
                             "ledger's hash, else 'unmanifested').")
+    route.add_argument("--overlay", type=Path, default=None,
+                       help="Frozen text-overlay directory; its manifest hash "
+                            "enters the release id.")
     route.set_defaults(func=cmd_route)
 
     diagnose_cmd = sub.add_parser("diagnose", help="What one rule moves, covers and misses.")
@@ -242,7 +271,18 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Release to export (default: the store's only one).")
     export.add_argument("--from-year", type=int, default=None)
     export.add_argument("--to-year", type=int, default=None)
+    export.add_argument("--overlay", type=Path, default=None,
+                        help="The overlay the release was routed under (must match).")
     export.set_defaults(func=cmd_export)
+
+    worklist_cmd = sub.add_parser(
+        "worklist", help="Export the no_text rows as a backfill worklist.")
+    worklist_cmd.add_argument("--out", required=True)
+    worklist_cmd.add_argument("--pool", type=Path, default=SNAPSHOT_POOL_DIR)
+    worklist_cmd.add_argument("--store", type=Path, default=DEFAULT_STORE_PATH)
+    worklist_cmd.add_argument("--release", default=None,
+                              help="Release to read (default: the store's only one).")
+    worklist_cmd.set_defaults(func=cmd_worklist)
 
     status = sub.add_parser("status", help="Releases on disk and their pile counts.")
     status.add_argument("--store", type=Path, default=DEFAULT_STORE_PATH)
