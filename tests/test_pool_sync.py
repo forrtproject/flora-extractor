@@ -404,6 +404,26 @@ def test_pull_for_an_absent_year_says_so(tmp_path, monkeypatch):
         ps.pull_pool(tmp_path / "pool", repo="me/pool", years=[2031])
 
 
+def test_pull_leaves_the_prebuilt_build_artifact_alone(tmp_path, monkeypatch):
+    """The repo holds both artifacts and both are parquet, but only the year
+    shards are the pool. A build file pulled into the flat pool directory puts a
+    candidates-schema file where every pool consumer globs, and `route` dies on
+    the first one it reads — so the build is fetched by --pull-build, not here."""
+    pool = tmp_path / "pool"
+    calls = _fake_hub(monkeypatch, {
+        "2019/part-2019-01-01-part_0000.parquet": 6,
+        f"{ps._BUILDS_PREFIX}/abc123/candidates-0000.parquet": 9,
+    })
+
+    n = ps.pull_pool(pool, repo="me/pool")
+
+    assert n == 1
+    assert calls["downloaded"] == ["2019/part-2019-01-01-part_0000.parquet"]
+    assert [p.name for p in pool.glob("*.parquet")] == [
+        "part-2019-01-01-part_0000.parquet"]
+    assert not (pool / ps._BUILDS_PREFIX).exists()
+
+
 def test_a_failed_file_still_reaches_the_operator_as_an_auth_hint(tmp_path, monkeypatch):
     """Files download concurrently, so a failure surfaces from a worker thread.
     It must arrive as the same actionable RuntimeError a serial pull raised —

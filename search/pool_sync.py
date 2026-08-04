@@ -485,9 +485,15 @@ def pull_pool(pool_dir: Path, repo: Optional[str] = None,
     api = hf.HfApi(token=token)
 
     try:
+        # The repo holds the pool AND the prebuilt candidates artifact, which is
+        # also parquet. Only the year shards are the pool: a build file landing
+        # in the flat pool directory is a different schema in the directory every
+        # pool consumer globs, and `route` dies on the first one it reads.
+        # `--pull-build` is how a build is fetched, into its own directory.
         remote_files = [f for f in hf.list_repo_files(repo_id, repo_type=_REPO_TYPE,
                                                       token=token)
-                        if f.endswith(".parquet")]
+                        if f.endswith(".parquet")
+                        and not f.startswith(f"{_BUILDS_PREFIX}/")]
     except Exception as exc:  # noqa: BLE001 — boundary: turn 401/403 into instructions
         raise RuntimeError(_auth_hint(hf, repo_id, exc)) from exc
 
