@@ -20,6 +20,7 @@ DATA = REPO / "data"
 OUT = REPO / ".claude/worktrees/issue-130-prescreen/analysis/prescreen_eval"
 sys.path.insert(0, str(REPO))
 
+from shared.config import ALL_REPLICATIONS_PATH  # noqa: E402
 from shared.utils import clean_doi  # noqa: E402
 
 csv.field_size_limit(10_000_000)
@@ -47,7 +48,7 @@ def read_csv(path: Path, encoding: str = "utf-8-sig") -> list[dict]:
 
 
 def main() -> None:
-    allrep = read_csv(DATA / "all_replications.csv")
+    allrep = read_csv(ALL_REPLICATIONS_PATH)
     nar = read_csv(DATA / "not_a_replication.csv")
 
     def doi(row: dict, col: str = "doi_r") -> str:

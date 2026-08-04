@@ -11,7 +11,7 @@ Rows whose DOI has no `_v<N>` suffix are never touched unless they are the versi
 base of a group that also has `_v` rows. Runs on any stage CSV; dry-run by default.
 
     python -m tools.dedup_preprint_versions --input data/extracted.csv          # dry-run
-    python -m tools.dedup_preprint_versions --input data/candidates.csv --apply
+    python -m tools.dedup_preprint_versions --input data/filtered.csv --apply
 """
 from __future__ import annotations
 

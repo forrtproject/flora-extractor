@@ -19,7 +19,6 @@ from shared.dashboard_cache import DASHBOARD_DIR
 check_bp = Blueprint("check", __name__)
 
 _STAGES = {
-    "candidates":     DATA_DIR / "candidates.csv",
     "filtered":       DATA_DIR / "filtered.csv",
     "extracted":      DATA_DIR / "extracted.csv",
     "extracted-test": DATA_DIR / "extracted-test.csv",
@@ -27,7 +26,6 @@ _STAGES = {
 
 # Which column holds the "type/status" filter for each stage
 _TYPE_COL = {
-    "candidates":     None,
     "filtered":       "filter_status",
     "extracted":      "type",
     "extracted-test": "type",

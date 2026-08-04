@@ -4,7 +4,6 @@ routes/dashboard.py — Read-only monitoring dashboard.
 Routes:
   GET  /dashboard                        → dashboard page
   GET  /api/dashboard/csv-stats          → pipeline stats (stats.json → live compute)
-  GET  /api/dashboard/search-phrases     → per-phrase OpenAlex yield from cursor files
   GET  /api/dashboard/download           → stream a raw pipeline CSV as attachment
   GET  /api/dashboard/supabase-stats     → Supabase validation KPIs (cached 5 min)
   GET  /api/dashboard/supabase-analytics → coverage, per-field validator agreement,
@@ -15,17 +14,14 @@ Routes:
   GET  /api/dashboard/supabase-drilldown → paginated incorrect-DOI table
 """
 import datetime
-import re
 import shutil
 
 import pandas as pd
 from flask import Blueprint, jsonify, render_template, request, send_file
 
-from shared.config import DATA_DIR, BASE_DIR
+from shared.config import DATA_DIR
 from shared import supabase_client as supa
-from shared.dashboard_cache import compute_stage_stats, load_stats
-
-ANALYSIS_DIR = BASE_DIR / "analysis"
+from shared.dashboard_cache import compute_stage_stats, load_stats, pool_totals
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
@@ -56,7 +52,7 @@ def _stats_json_to_api(sj: dict, source: str = "stats_json") -> dict:
     Missing stages degrade to a null count rather than failing — the UI renders
     those tiles as "—".
     """
-    c  = sj.get("candidates")     or {}
+    p  = sj.get("pool")           or {}
     f  = sj.get("filtered")       or {}
     e  = sj.get("extracted")      or {}
     et = sj.get("extracted_test") or {}
@@ -72,11 +68,21 @@ def _stats_json_to_api(sj: dict, source: str = "stats_json") -> dict:
     toc  = et.get("by_outcome",       {})
     tmt  = et.get("by_match_type",    {})
 
+    # Stage 1's artifact is the survivor pool. `live` is the cheap footer-only
+    # read of the pool on THIS machine; the breakdowns can only come from a
+    # stats.json written where the pool lives. Both absent → the UI says so.
+    live = pool_totals()
     out: dict = {
-        # Candidates
-        "candidates_count":  c.get("total"),
-        "candidates_source": c.get("by_source", {}),
-        "candidates_by_year": c.get("by_year", {}),
+        # Survivor pool (Stage 1)
+        "pool_present":   live is not None,
+        "pool_count":     (live or p).get("total"),
+        "pool_files":     (live or p).get("files"),
+        "pool_bytes":     (live or p).get("bytes"),
+        "pool_dir":       (live or p).get("pool_dir"),
+        "pool_no_doi":    p.get("no_doi"),
+        "pool_by_year":   p.get("by_year", {}),
+        "pool_gate_hits": p.get("gate_hits", {}),
+        "pool_source":    "live" if live is not None else ("stats_json" if p else "none"),
         # Filtered
         "filtered_count":           f.get("total"),
         "filter_replication":       by_status.get("replication",    0),
@@ -90,10 +96,6 @@ def _stats_json_to_api(sj: dict, source: str = "stats_json") -> dict:
         "filter_by_rule_exit":      f.get("by_rule_exit",     {}),
         "filter_rule_exit_status":  f.get("rule_exit_status", {}),
         "filtered_by_year":         f.get("by_year",          {}),
-        # Candidates data quality
-        "candidates_no_doi":        c.get("no_doi",        0),
-        "candidates_no_doi_or_url": c.get("no_doi_or_url", 0),
-        "candidates_no_abstract":   c.get("no_abstract",   0),
         # Extracted
         "extracted_count":           e.get("total"),
         "target_pending_count":      e.get("target_pending_count", 0),
@@ -149,7 +151,9 @@ def api_csv_stats():
     """Return pipeline stats. Fast path: stats.json; slow path: live Parquet/CSV.
 
     The slow path calls dashboard_cache.compute_stage_stats so both paths share
-    one implementation of every aggregation.
+    one implementation of every aggregation. The pool is never computed here —
+    it is gigabytes of parquet, and _stats_json_to_api already overlays the cheap
+    footer-only count for the machine that has it.
     """
     sj = load_stats()
     missing = [s for s in _STAGE_FILES if not sj.get(s.replace("-", "_"))]
@@ -164,37 +168,6 @@ def api_csv_stats():
         return jsonify(_stats_json_to_api(sj, source="csv"))
 
     return jsonify(_stats_json_to_api(sj))
-
-
-@dashboard_bp.route("/api/dashboard/search-phrases")
-def api_search_phrases():
-    """Per-phrase OpenAlex yield.
-
-    Served from stats.json, which pipeline runs refresh and which is committed —
-    the cursor checkpoints it is derived from live in gitignored cache/openalex/
-    and do not exist on a deployed instance. Falls back to a live scan of that
-    cache when stats.json predates this field (e.g. a local checkout that has not
-    re-run the pipeline).
-    """
-    persisted = (load_stats().get("candidates") or {}).get("by_phrase")
-    # "coverage_from_year" is only written by the post-#68 phrase_yield. An older
-    # snapshot has no expected/incomplete/years_missing fields, and serving it would
-    # silently hide the very under-fetching this endpoint now exists to surface.
-    if persisted and persisted.get("rows") and "coverage_from_year" in persisted:
-        return jsonify({**persisted, "_source": "stats_json"})
-
-    from search.openalex_search import phrase_yield
-    live = phrase_yield()
-    if persisted and persisted.get("rows") and not live["total_fetched"]:
-        return jsonify({**persisted, "_source": "stats_json_legacy",
-                        "note": "stats.json predates coverage tracking and no cursor "
-                                "checkpoints are available — coverage columns are blank. "
-                                "Re-run the Stage 1 pipeline to refresh."})
-    if not live["total_fetched"]:
-        live["note"] = ("No cursor checkpoints found in cache/openalex/ and none "
-                        "recorded in stats.json — run the Stage 1 pipeline, or "
-                        "regenerate stats.json, to populate per-phrase yield.")
-    return jsonify({**live, "_source": "cursor_cache"})
 
 
 # ── Set-aside CSVs ────────────────────────────────────────────────────────────
@@ -383,7 +356,6 @@ def api_set_download():
 
 
 _STAGE_FILES = {
-    "candidates":     DATA_DIR / "candidates.csv",
     "filtered":       DATA_DIR / "filtered.csv",
     "extracted":      DATA_DIR / "extracted.csv",
     "extracted-test": DATA_DIR / "extracted-test.csv",
@@ -395,7 +367,7 @@ def api_dashboard_download():
     """Stream a raw pipeline CSV as a download attachment.
 
     Query params:
-      stage — candidates | filtered | extracted | extracted-test
+      stage — filtered | extracted | extracted-test
     """
     stage = request.args.get("stage", "extracted").strip()
     if stage not in _STAGE_FILES:
@@ -446,183 +418,6 @@ def api_supabase_corrections():
 def api_supabase_confusion():
     """Pipeline-coded vs human-final confusion matrices (outcome, type) — #72."""
     return jsonify(supa.get_confusion_matrices())
-
-
-@dashboard_bp.route("/api/dashboard/analysis-stats")
-def api_analysis_stats():
-    """Summary stats for the Analysis tab — gap KPIs, audit metrics, improvement opportunities."""
-    stats: dict = {}
-
-    # ── Gap summary from gap_summary.md ──────────────────────────────────────
-    summary: dict = {}
-    summary_path = ANALYSIS_DIR / "gap_summary.md"
-    if summary_path.exists():
-        try:
-            text = summary_path.read_text(encoding="utf-8")
-            for label, key in [
-                (r"Gaps with DOI:\s*(\d+)",              "doi_gaps"),
-                (r"Gaps URL-only[^:]*:\s*(\d+)",         "url_gaps"),
-                (r"Fuzzy-matched[^:]*:\s*(\d+)",         "fuzzy_gaps"),
-                (r"Total genuine gaps:\s*(\d+)",         "total_gaps"),
-                (r"Filter misclassifications\**:\s*(\d+)", "filter_misclassifications"),
-            ]:
-                m = re.search(label, text)
-                if m:
-                    summary[key] = int(m.group(1))
-            m = re.search(r"Generated:\s*(.+)", text)
-            if m:
-                summary["generated"] = m.group(1).strip()
-        except Exception:
-            pass
-    stats["gap_summary"] = summary
-
-    # ── Extraction audit from extraction_audit.md ─────────────────────────────
-    audit: dict = {}
-    audit_path = ANALYSIS_DIR / "extraction_audit.md"
-    if audit_path.exists():
-        try:
-            text = audit_path.read_text(encoding="utf-8")
-            for pattern, key in [
-                (r"Total extracted rows:\s*(\d+)",      "total_extracted"),
-                (r"Missing DOI[^:]*:\s*(\d+)",          "missing_doi"),
-                (r"API error count:\s*(\d+)",           "api_errors"),
-                (r"Target pending count:\s*(\d+)",      "target_pending"),
-            ]:
-                m = re.search(pattern, text)
-                if m:
-                    audit[key] = int(m.group(1))
-            m = re.search(r"Generated:\s*(.+)", text)
-            if m:
-                audit["generated"] = m.group(1).strip()
-
-            # Parse link method table (markdown table rows)
-            link_methods = []
-            in_link_table = False
-            for line in text.splitlines():
-                if "link_method" in line and "count" in line:
-                    in_link_table = True
-                    continue
-                if in_link_table:
-                    if line.startswith("|:") or line.startswith("| -"):
-                        continue
-                    if not line.startswith("|"):
-                        break
-                    parts = [p.strip() for p in line.strip("|").split("|")]
-                    if len(parts) >= 3:
-                        try:
-                            link_methods.append({
-                                "method": parts[0],
-                                "count": int(parts[1]),
-                                "pct": float(parts[2]),
-                            })
-                        except (ValueError, IndexError):
-                            pass
-            audit["link_methods"] = link_methods
-
-            # Parse confidence table
-            conf_rows = []
-            in_conf = False
-            for line in text.splitlines():
-                if "link_confidence" in line and "count" in line:
-                    in_conf = True
-                    continue
-                if in_conf:
-                    if line.startswith("|:") or line.startswith("| -"):
-                        continue
-                    if not line.startswith("|"):
-                        break
-                    parts = [p.strip() for p in line.strip("|").split("|")]
-                    if len(parts) >= 3:
-                        try:
-                            conf_rows.append({
-                                "level": parts[0],
-                                "count": int(parts[1]),
-                                "pct": float(parts[2]),
-                            })
-                        except (ValueError, IndexError):
-                            pass
-            audit["confidence_rows"] = conf_rows
-        except Exception:
-            pass
-    stats["audit"] = audit
-
-    # ── Rule improvement opportunities ────────────────────────────────────────
-    opp_path = ANALYSIS_DIR / "rule_improvement_opportunities.csv"
-    if opp_path.exists():
-        try:
-            df = pd.read_csv(opp_path, encoding="utf-8-sig", dtype=str, on_bad_lines="skip")
-            stats["improvement_rows"] = df.fillna("").to_dict("records")
-        except Exception:
-            stats["improvement_rows"] = []
-    else:
-        stats["improvement_rows"] = []
-
-    # ── URL-matched gaps (small, return all) ──────────────────────────────────
-    url_path = ANALYSIS_DIR / "gap_analysis_url_matched.csv"
-    if url_path.exists():
-        try:
-            df = pd.read_csv(url_path, encoding="utf-8-sig", dtype=str, on_bad_lines="skip",
-                             usecols=lambda c: c in ("doi_r", "url_r", "study_r", "year_r"))
-            stats["gap_url_count"] = len(df)
-            stats["gap_url_rows"] = df.fillna("").to_dict("records")
-        except Exception:
-            stats["gap_url_count"] = None
-            stats["gap_url_rows"] = []
-    else:
-        stats["gap_url_count"] = None
-        stats["gap_url_rows"] = []
-
-    return jsonify(stats)
-
-
-@dashboard_bp.route("/api/dashboard/analysis-gaps")
-def api_analysis_gaps():
-    """Paginated DOI-matched gap rows with optional title/DOI search."""
-    page     = max(1, int(request.args.get("page", 1)))
-    per_page = min(100, max(10, int(request.args.get("per_page", 50))))
-    search   = request.args.get("search", "").strip().lower()
-
-    doi_path = ANALYSIS_DIR / "gap_analysis_doi_matched.csv"
-    if not doi_path.exists():
-        return jsonify({"total": 0, "pages": 0, "rows": []})
-
-    try:
-        df = pd.read_csv(doi_path, encoding="utf-8-sig", dtype=str, on_bad_lines="skip",
-                         usecols=lambda c: c in ("doi_r", "url_r", "study_r", "year_r"))
-        df = df.fillna("")
-        if search:
-            mask = (df["doi_r"].str.lower().str.contains(search, na=False) |
-                    df["study_r"].str.lower().str.contains(search, na=False))
-            df = df[mask]
-        total = len(df)
-        pages = max(1, (total + per_page - 1) // per_page)
-        page  = min(page, pages)
-        start = (page - 1) * per_page
-        rows  = df.iloc[start:start + per_page][["doi_r", "study_r", "year_r"]].to_dict("records")
-        return jsonify({"total": total, "pages": pages, "page": page, "rows": rows})
-    except Exception as e:
-        return jsonify({"error": str(e), "total": 0, "pages": 0, "rows": []})
-
-
-@dashboard_bp.route("/api/dashboard/old-pipeline-analysis")
-def api_old_pipeline_analysis():
-    """Comparison of old pipeline (all_replications.csv) vs new pipeline.
-
-    Fast path: reads analysis/old_pipeline_comparison.json written by
-    `python -m analysis.old_pipeline_compare`.
-    Returns a stub with generation instructions if the file is missing.
-    """
-    try:
-        from analysis.old_pipeline_compare import load_cached
-        data = load_cached()
-        if data is not None:
-            return jsonify(data)
-    except Exception:
-        pass
-    return jsonify({
-        "error": "comparison not generated yet",
-        "hint": "python -m analysis.old_pipeline_compare",
-    }), 202
 
 
 @dashboard_bp.route("/api/dashboard/supabase-drilldown")
