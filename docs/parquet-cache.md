@@ -22,8 +22,11 @@ Every pipeline runner calls `refresh(stage)` in a `try/finally` block so the cac
 | Runner | Stage refreshed |
 | ------ | --------------- |
 | `search/run_search.py` | `candidates` |
-| `filter/run_filter.py` | `filtered` |
 | `extract/run_extract.py` | `extracted` or `extracted-test` |
+
+No runner refreshes `filtered`: Stage 2's `python -m filter.engine handoff`
+rewrites `data/filtered.csv` whenever the release or the tier verdicts move, and
+the Parquet copy is refreshed by calling `refresh("filtered")` by hand.
 
 `refresh(stage)` does two things in order:
 

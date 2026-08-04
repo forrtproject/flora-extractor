@@ -130,7 +130,8 @@ python -m search.run_search --list-concepts "reproducibility"
 
 Update `CONCEPT_IDS` in `search/openalex_search.py` with verified IDs.
 Rows from concept search are tagged `source = "openalex_concept"` in candidates.csv
-so they can be filtered separately (e.g. `python -m filter.run_filter --source openalex_concept`).
+so they can be told apart downstream. In the filter engine the concept arm is its own
+spec (`concept-replication`), so a concept-only row is identifiable by `route_rule`.
 
 ---
 

@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "piles": {
+    "discard": {
+      "exported": true,
+      "filter_status": "false_positive",
+      "filter_confidence": "high",
+      "vocabulary_names_status": false
+    },
+    "screen_expensive": {
+      "exported": true,
+      "filter_status": "needs_review",
+      "filter_confidence": "high",
+      "vocabulary_names_status": true
+    },
+    "screen_cheap": {
+      "exported": true,
+      "filter_status": "needs_review",
+      "filter_confidence": "medium",
+      "vocabulary_names_status": true
+    },
+    "needs_human": {
+      "exported": true,
+      "filter_status": "needs_review",
+      "filter_confidence": "low",
+      "vocabulary_names_status": false
+    },
+    "pending": {
+      "exported": false
+    }
+  },
+  "precedence_bands": [
+    {"from": 900, "to": 999, "name": "structural discards"},
+    {"from": 600, "to": 699, "name": "rescues"},
+    {"from": 500, "to": 599, "name": "vocabulary-exclusion discards"},
+    {"from": 300, "to": 399, "name": "screen_expensive routes"},
+    {"from": 200, "to": 299, "name": "screen_cheap routes"}
+  ],
+  "pending_reasons": ["unevaluated", "no_filter_matched", "no_text", "budget_blocked"],
+  "measurement_levels": {
+    "human": {"may_discard": true},
+    "llm:<model>": {"may_discard": true},
+    "downstream": {"may_discard": true},
+    "trusted": {"may_discard": true},
+    "heuristic": {"may_discard": false}
+  },
+  "filter_method_prefix": "engine:"
+}

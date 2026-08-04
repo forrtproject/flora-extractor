@@ -55,6 +55,9 @@ from shared.schema import RESOLVED_LINK_METHODS as _SCHEMA_RESOLVED_METHODS
 # Same skip list Stage 3 uses, so extraction and validation agree.
 from shared.flora_skip import default_flora_skip_dois
 from shared.utils import bare_work_id, clean_doi
+# Lineage (#146 M5): a pushed row carries the engine identity it was routed under,
+# so reconciliation keys on work_id rather than on a DOI string.
+from filter.engine.workids import work_id as _openalex_work_id
 
 _RESOLVED_METHODS = _SCHEMA_RESOLVED_METHODS | {"author_year_match_legacy"}
 _RESOLVED_STATUSES = {"replication", "reproduction"}
@@ -160,6 +163,19 @@ def _build_unvalidated_row(record_id: str, row: pd.Series) -> dict:
     }
 
 
+def _work_id_or_none(val) -> "int | None":
+    """The int64 OpenAlex id of an `openalex_id_r` cell, or None if it has none.
+
+    Absent or unparseable is null, never an error: rows predating the engine (and
+    rows whose openalex id was never resolved) still import — they simply carry no
+    lineage, which is exactly what a null work_id says.
+    """
+    try:
+        return _openalex_work_id(_s(val))
+    except ValueError:
+        return None
+
+
 def _build_metadata_row(record_id: str, row: pd.Series) -> dict:
     return {
         "record_id":                  record_id,
@@ -184,6 +200,12 @@ def _build_metadata_row(record_id: str, row: pd.Series) -> dict:
         "authors_o":                  _s(row.get("authors_o")),
         "journal_r":                  _s(row.get("journal_r")),
         "openalex_id_r":              _s(row.get("openalex_id_r")),
+        # Lineage (#146 M5): the engine identity and the routing release this row
+        # was sent under. `release_id` is a column engine handoff rows carry and
+        # legacy extracted.csv rows do not — absent means null, not empty string,
+        # because "no release" is what reconciliation must be able to see.
+        "work_id":                    _work_id_or_none(row.get("openalex_id_r")),
+        "release_id":                 _s(row.get("release_id")) or None,
         "oa_work_id_r":               _s(row.get("oa_work_id_r")),
         "oa_work_id_o":               _s(row.get("oa_work_id_o")),
         "source":                     _s(row.get("source")),

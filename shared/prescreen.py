@@ -84,10 +84,10 @@ def prescreen_bypass(title: str, abstract: str, source: str = "") -> str:
       hard_signal  — the text states the design outright.
       short_text   — under PRESCREEN_MIN_ABSTRACT_CHARS there is not enough to judge,
                      and the rows with no abstract are the pre-screen's worst stratum.
-      curated:X    — a human already put the paper on a replication list, and Stage 2
-                     bypasses keyword filtering for exactly that reason
-                     (filter/rule_filter.py). Undoing that here with a 3B model would
-                     defeat the point of the curated lists.
+      curated:X    — a human already put the paper on a replication list, and the
+                     engine routes such a row to a screen pile rather than letting
+                     a keyword rule discard it. Undoing that here with a 3B model
+                     would defeat the point of the curated lists.
 
     Stage 2's own high-confidence `replication` verdict is deliberately NOT a bypass:
     measured over data/filtered.csv, 98% of rows that reach Stage 3 carry it, including

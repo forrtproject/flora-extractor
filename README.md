@@ -10,7 +10,7 @@ A Python pipeline that discovers, extracts, and monitors replication and reprodu
 
 Starting from keyword searches of academic databases, FLoRA Extractor:
 1. **Discovers** candidate replication/reproduction papers from OpenAlex and curated lists
-2. **Filters** false positives using rule-based and LLM classification
+2. **Filters** false positives with a declarative filter engine: rules route and discard, LLM screening tiers admit
 3. **Extracts** the target study and replication outcome from each paper
 4. **Monitors** extraction progress through a web dashboard; validation happens in a separate Supabase-backed repo
 
@@ -20,7 +20,7 @@ Starting from keyword searches of academic databases, FLoRA Extractor:
 
 ```
 Stage 1: search/      → data/candidates.csv   (discover candidates)
-Stage 2: filter/      → data/filtered.csv     (remove false positives)
+Stage 2: filter/engine → data/filtered.csv    (route the pool, screen, hand off)
 Stage 3: extract/     → data/extracted.csv    (link original + code outcome)
 Stage 4: validate/    → monitoring web app    (dashboard at localhost:5001)
                              ↕
@@ -41,12 +41,17 @@ cp .env.example .env   # fill in your API keys
 
 # Run the pipeline
 python -m search.run_search
-python -m filter.run_filter
+python -m filter.engine route
+python -m filter.engine screen --tier screen_expensive --run
+python -m filter.engine handoff --out data/filtered.csv
 python -m extract.run_extract
 
 # Start the monitoring web app
 python -m validate.app   # → http://localhost:5001
 ```
+
+Stage 2's `screen` is a dry run without `--run`, printing what a tier would cost
+before anything is claimed or spent.
 
 See [docs/setup.md](docs/setup.md) for full setup instructions.
 
@@ -71,6 +76,7 @@ Optional: `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `GROBID_URL`
 | [docs/setup.md](docs/setup.md) | Installation and running the pipeline |
 | [docs/architecture.md](docs/architecture.md) | Module map and design decisions |
 | [docs/cli-reference.md](docs/cli-reference.md) | All CLI commands and flags |
+| [docs/filter-engine.md](docs/filter-engine.md) | Stage 2's declarative routing engine |
 | [docs/csv-schema.md](docs/csv-schema.md) | CSV column definitions |
 | [docs/dashboard-guide.md](docs/dashboard-guide.md) | Dashboard user guide |
 | [docs/supabase-schema.md](docs/supabase-schema.md) | Supabase validation table schemas |

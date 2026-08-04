@@ -32,7 +32,9 @@ tests/
 ├── test_d_pdf_parsing.py        — PDF parse methods + scoring
 ├── test_disambiguation.py       — Jaccard scoring + same-author/year resolution
 ├── test_extract.py              — Stage 3 orchestrator + outcome extraction
-├── test_filter.py               — Stage 2 rule filter
+├── test_engine_*.py             — Stage 2 filter engine (specs, routing, store,
+│                                  claims, overlay, tiers, diagnostics, supersede)
+├── test_filter.py               — the keyword vocabulary in filter/phrase_detection.py
 ├── test_openalex_client.py      — OpenAlex API wrapper + find_all_candidates
 ├── test_rule_analysis.py        — Filter rule analysis
 ├── test_search.py               — Stage 1 search + OpenAlex pagination

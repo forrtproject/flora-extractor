@@ -1,0 +1,207 @@
+"""The routing store: a local DuckDB cache of what a release routed where.
+
+Disposable by contract. Nothing here is a source of truth — routing is a pure
+function of (pool, specs, aliases, engine version), so deleting the file costs a
+rebuild and nothing else. It exists because counting piles, sampling a pile and
+measuring rule overlap are queries, and re-streaming the pool parquet for each
+of them is not.
+
+Three storage decisions are worth stating. `routing` holds one row per
+alias-resolved WORK — `PRIMARY KEY (release_id, work_id)`, first writer wins —
+not one per pool row: a pool that holds both a merged id and its canonical id
+holds two rows for one work, and routing it twice would export that work twice.
+`evaluations` holds only the matches — the dense spec × row matrix is ~19× the
+pool for a table that is almost all False, and absence IS False, so the
+cross-product diagnostics need is reconstructible by joining against `routing`
+rather than by storing it. And a build is one transaction: the delete and every
+insert commit together, so an interrupted run leaves the release exactly as it
+was — absent, or the previous complete build — rather than half-replaced.
+"""
+
+import hashlib
+import json
+from collections import Counter
+from dataclasses import asdict
+from pathlib import Path
+from typing import Iterator, Optional
+
+import duckdb
+import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+from filter.engine.route import eval_all, route_batch
+from filter.engine.spec import FilterSpec
+from shared.config import ENGINE_CACHE_DIR
+
+DEFAULT_STORE_PATH = ENGINE_CACHE_DIR / "engine.duckdb"
+
+_SCHEMA_SQL = (
+    """
+    CREATE TABLE IF NOT EXISTS routing (
+        work_id BIGINT,
+        pile TEXT,
+        pending_reason TEXT,
+        rule_id TEXT,
+        precedence INT,
+        matched_rules TEXT[],
+        evidence TEXT,
+        release_id TEXT,
+        PRIMARY KEY (release_id, work_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS evaluations (
+        work_id BIGINT,
+        spec_id TEXT,
+        spec_hash TEXT,
+        matched BOOLEAN,
+        release_id TEXT
+    )
+    """,
+)
+
+_EVAL_SCHEMA = pa.schema([
+    ("work_id", pa.int64()),
+    ("spec_id", pa.string()),
+    ("spec_hash", pa.string()),
+    ("matched", pa.bool_()),
+])
+
+
+def open_store(path: Path = DEFAULT_STORE_PATH) -> duckdb.DuckDBPyConnection:
+    """The store at *path*, tables created if absent. `:memory:` works too."""
+    if str(path) != ":memory:":
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(str(path))
+    for statement in _SCHEMA_SQL:
+        con.execute(statement)
+    return con
+
+
+def spec_hash(spec: FilterSpec) -> str:
+    """A content hash of one spec, for the evaluations row that recorded it.
+
+    Not the spec FILE's hash: `load_specs()` returns dataclasses and the file is
+    gone by then. Hashing the loaded form is what the evaluation actually used,
+    which is the claim the column is making.
+    """
+    payload = json.dumps(asdict(spec), sort_keys=True, separators=(",", ":"),
+                         default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def build_routing(con: duckdb.DuckDBPyConnection, pool_dir: Path,
+                  specs: list[FilterSpec], release_id: str,
+                  aliases: Optional[dict[int, int]] = None,
+                  batch_size: int = 50_000,
+                  batches: Optional[Iterator[pa.RecordBatch]] = None) -> dict:
+    """Route every pool row under *specs* and persist it as *release_id*.
+
+    *batches* replaces this function's own read of the pool with a stream the
+    caller supplies — how `pool_reader.iter_pool_batches()` feeds it batches with
+    a text overlay coalesced in (M3). The store stays ignorant of overlays: it
+    routes whatever batches it is handed, and with *batches* absent it reads the
+    pool exactly as before. *pool_dir* is still read for the file count either
+    way, so a caller passing a stream passes the directory it streamed from.
+    """
+    files = sorted(Path(pool_dir).glob("*.parquet"))
+    stream = batches if batches is not None else _iter_pool(files, batch_size)
+    pool_rows = 0
+    con.execute("BEGIN TRANSACTION")
+    try:
+        con.execute("DELETE FROM routing WHERE release_id = ?", [release_id])
+        con.execute("DELETE FROM evaluations WHERE release_id = ?", [release_id])
+        hashes = {spec.id: spec_hash(spec) for spec in specs}
+        for batch in stream:
+            evals = eval_all(specs, batch)
+            routed = route_batch(specs, batch, aliases=aliases, evals=evals)
+            _insert_routing(con, routed, release_id)
+            _insert_evaluations(con, routed.column("work_id"), evals, hashes,
+                                release_id)
+            pool_rows += routed.num_rows
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+
+    piles = pile_counts(con, release_id)
+    return {"rows": sum(piles.values()), "pool_rows": pool_rows, "piles": piles,
+            "files": len(files)}
+
+
+def _iter_pool(files: list[Path], batch_size: int):
+    for path in files:
+        yield from pq.ParquetFile(path).iter_batches(batch_size=batch_size)
+
+
+def _insert_routing(con: duckdb.DuckDBPyConnection, routed: pa.Table,
+                    release_id: str) -> None:
+    # First writer wins on a (release, work) collision: pool files stream in name
+    # order and batches in file order, so which row that is, is deterministic.
+    con.register("_routed", routed)
+    con.execute("INSERT INTO routing SELECT *, ? FROM _routed "
+                "ON CONFLICT DO NOTHING", [release_id])
+    con.unregister("_routed")
+
+
+def _insert_evaluations(con: duckdb.DuckDBPyConnection, work_ids: pa.ChunkedArray,
+                        evals: dict[str, pa.Array], hashes: dict[str, str],
+                        release_id: str) -> None:
+    ids = np.asarray(work_ids.to_numpy(zero_copy_only=False), dtype=np.int64)
+    hit_ids: list[np.ndarray] = []
+    hit_specs: list[str] = []
+    for spec_id, mask in evals.items():
+        hits = ids[np.asarray(mask.to_numpy(zero_copy_only=False), dtype=bool)]
+        if len(hits):
+            hit_ids.append(hits)
+            hit_specs.extend([spec_id] * len(hits))
+    if not hit_ids:
+        return
+    table = pa.Table.from_pydict({
+        "work_id": pa.array(np.concatenate(hit_ids)),
+        "spec_id": pa.array(hit_specs),
+        "spec_hash": pa.array([hashes[s] for s in hit_specs]),
+        "matched": pa.array([True] * len(hit_specs)),
+    }, schema=_EVAL_SCHEMA)
+    con.register("_evals", table)
+    con.execute("INSERT INTO evaluations SELECT *, ? FROM _evals", [release_id])
+    con.unregister("_evals")
+
+
+def pile_counts(con: duckdb.DuckDBPyConnection, release_id: str) -> dict[str, int]:
+    """Rows per pile for *release_id*."""
+    return dict(con.execute(
+        "SELECT pile, count(*) FROM routing WHERE release_id = ? GROUP BY pile "
+        "ORDER BY pile", [release_id]).fetchall())
+
+
+def sample_pile(con: duckdb.DuckDBPyConnection, release_id: str, pile: str,
+                n: int = 20, seed: int = 17) -> list[dict]:
+    """*n* rows of *pile*, ordered by a seeded hash so the sample is reproducible."""
+    rows = con.execute(
+        "SELECT work_id, pile, pending_reason, rule_id, precedence, matched_rules, "
+        "evidence FROM routing WHERE release_id = ? AND pile = ? "
+        "ORDER BY hash(work_id + CAST(? AS BIGINT)), work_id LIMIT ?",
+        [release_id, pile, seed, n]).fetchall()
+    columns = ["work_id", "pile", "pending_reason", "rule_id", "precedence",
+               "matched_rules", "evidence"]
+    return [dict(zip(columns, row)) for row in rows]
+
+
+def rule_hits(con: duckdb.DuckDBPyConnection, release_id: str) -> dict[str, int]:
+    """Works each spec matched under *release_id*, shadow specs included.
+
+    Counted DISTINCT by work: two pool rows for one aliased work are one routed
+    work, so a rule that matched both matched one work, not two.
+    """
+    return dict(con.execute(
+        "SELECT spec_id, count(DISTINCT work_id) FROM evaluations "
+        "WHERE release_id = ? GROUP BY spec_id ORDER BY spec_id",
+        [release_id]).fetchall())
+
+
+def releases(con: duckdb.DuckDBPyConnection) -> list[str]:
+    """Every release the store holds routing for."""
+    return [row[0] for row in con.execute(
+        "SELECT DISTINCT release_id FROM routing ORDER BY release_id").fetchall()]

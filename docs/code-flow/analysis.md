@@ -83,7 +83,8 @@ found rather than reported as gaps.
 
 ## Rule Analysis (`analysis/rule_analysis.py`)
 
-Audits the filter rules in `filter/rule_filter.py` and the extraction link methods.
+Audits Stage 2's filter decisions (as recorded in `filtered.csv`) and the extraction
+link methods.
 
 ```text
 rule_analysis.py

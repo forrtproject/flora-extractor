@@ -10,7 +10,7 @@ screen. Bypasses run before the models and send the row straight to the validate
   none    — models alone
   regex   — shared/prescreen.py's hard replication signals
   stage2  — Stage 2 already called it replication/reproduction at high confidence, or
-            the row came from a curated source (filter/rule_filter.py)
+            the row came from a curated source
   short   — abstract under 200 characters: too little text for a 3B-class model
   all     — every bypass above (the shipped configuration)
 

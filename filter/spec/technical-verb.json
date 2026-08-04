@@ -1,0 +1,24 @@
+{
+  "id": "technical-verb",
+  "description": "Verb form of technical-object: 'we replicated the code/software/pipeline'. #147: the object list no longer carries model/method/data/dataset. 15 of the 17 gold positives this pattern killed were social-science or CS replication studies whose abstract says 'we replicated the model / the data / the method' ('Social Capital and Value Creation: A Replication of \"The Role of Intrafirm Networks\"') — the pattern with the highest share of clear misfires of the seven. Narrowed to the TV1_tight_objects variant of analysis/stage_b_eval/exclusion_candidates.csv. `code` stays in the list: it is the storage/artifact sense as often as the reproduction sense, and a genuine 'replicated the analysis code of Smith (2019)' still reaches screen_cheap through exclusion-rescue (#44). NOTE: this spec is also read by filter/phrase_detection.py::_load_exclusion_regexes(), so the narrowing changes Stage 1 admission as well as engine routing — intended, and it moves stage_b_fingerprint(). Loaded back into keyword_verdict() as pattern id TECHNICAL_VERB (filter/phrase_detection.py).",
+  "match": {
+    "text_regex": "\\breplicat(?:e|ed|ing)\\s+(?:the )?(?:apparatus|code|software|pipeline|script|database)\\b"
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 540,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "trusted",
+      "rationale": "Verb form of technical-object; same rescue applies."
+    },
+    {
+      "level": "downstream",
+      "n": 5604314,
+      "sample": "5.6M OpenAlex snapshot rows (22 parquet partitions of the 2,446-file manifest, 64,118 Stage A survivors, complete harvest of the 3,785 exclusion-firing survivors) scored against the 7,505-paper override_positives.json gold corpus and the 1,333-paper gold-negative set; branch analysis/stage-b-eval, #144 evidence pass. Provenance caveat (#151): 4,681 of the 7,505 gold positives (62%) are `allrep_llm` — the old pipeline's own LLM verdicts, never human-confirmed — so the gold-recall figure is an upper bound, and only the 38% curated share (entry_sheet, flora_db) is human evidence.",
+      "date": "2026-08-03",
+      "rationale": "#147 narrowing (TV1_tight_objects): restricting the object list to apparatus/code/software/pipeline/script/database recovers 13 gold positives, admits 0 additional gold negatives, and costs 3.0 rows per million scanned (0.13% of admitted volume, ~1,531 rows over the full snapshot). The whole protective yield of the un-narrowed pattern was 18 marginal suppressions per 5.6M rows, of which 3 of 18 sampled looked in scope — the worst precision of the seven exclusions."
+    }
+  ]
+}

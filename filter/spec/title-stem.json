@@ -1,0 +1,12 @@
+{
+  "id": "title-stem",
+  "description": "The 15 multilingual replication stems, TITLE ONLY. A title is a handful of topical words, so a bare stem in one is a real signal, while the same stem anywhere in a 1,500-character abstract is noise \u2014 the distinction keyword_verdict() draws by taking title and abstract separately. The non-English stems reach works the English ones cannot (111 of 112 Korean \uc7ac\uac80\uc99d works are invisible to the English stems); they carry no matching phrases, so the cheap tier is the right destination.",
+  "match": {
+    "title_regex": "(?i)replicat|replicab|reproduc|reanalys|re-analys|reanalyz|re-analyz|replikat|r\u00e9plicat|replicaci|replica\u00e7|replicazion|reprodu\u00e7|reproduzi|\u8ffd\u8a66|\ubc18\ubcf5\uac80\uc99d|\uc7ac\uac80\uc99d"
+  },
+  "pile": "screen_cheap",
+  "vocabulary": null,
+  "precedence": 240,
+  "shadow": false,
+  "measured": []
+}

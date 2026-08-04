@@ -25,20 +25,42 @@ Produced by `search/run_search.py`. One row per discovered paper.
 
 ## filtered.csv (Stage 2 → Stage 3)
 
-All `candidates.csv` columns, plus:
+Written by `python -m filter.engine handoff`: the filter engine's two screen piles
+(`screen_expensive` first, then `screen_cheap`) for one routing release, minus the
+works a live LLM tier discarded. It is a **materialized view** of the current
+release rather than an immutable export — it is rewritten whenever the release or
+the tier verdicts move, and its `.manifest.json` is rewritten with it.
+
+Columns are `ENGINE_EXPORTED_COLS` = `FILTERED_COLS` + `ENGINE_EXPORT_COLS`: all
+`candidates.csv` columns, then the four filter columns below, then the routing
+provenance appended after them. Stage 3 reads by column name and passes trailing
+columns through untouched, so the appended block does not change its contract.
 
 | Column | Type | Description |
 | ------ | ---- | ----------- |
 | `filter_status` | string | `replication` \| `reproduction` \| `false_positive` \| `needs_review` — the paper-type field; see below |
-| `filter_method` | string | `rule_based` \| `screen` — see below |
-| `filter_evidence` | string | Phrase or pattern that triggered the classification |
+| `filter_method` | string | `engine:<release id prefix>`, or `screen` on a row a live `screen_expensive` run typed. `rule_based` is historical |
+| `filter_evidence` | string | `rule:<spec id>` plus the evidence the backend matched (phrase, prefix, type…) |
 | `filter_confidence` | string | `high` \| `medium` \| `low` — categorical, not a float |
+
+Routing provenance (`ENGINE_EXPORT_COLS` in `shared/schema.py`):
+
+| Column | Type | Description |
+| ------ | ---- | ----------- |
+| `oa_type` | string | OpenAlex work type from the pool row |
+| `hit_concept` | string | Whether Stage A kept the row on a concept match |
+| `route_rule` | string | Id of the spec that won the pile (empty when pending) |
+| `route_precedence` | string | That spec's precedence |
+| `matched_rules` | string | \|-joined — match by substring/split, never equality |
+| `pending_reason` | string | `unevaluated` \| `no_filter_matched` \| `no_text` \| `budget_blocked` |
+| `release_id` | string | The routing release the pile came from |
 
 `filter_confidence` is a three-level label because a single LLM call cannot produce calibrated probabilities.
 
-`run_filter` writes one value: every row is classified by the deterministic rule
-filter (`rule_based`), and rows the rules cannot decide are written through as
-`needs_review`. Stage 3's front-door screen is the validated decider of "is this a
+`filter_status` comes from the pile the engine routed the work into, through the
+mapping in `filter/spec/conventions.json`: `screen_expensive` carries the winning
+rule's vocabulary at high confidence, `screen_cheap` is `needs_review` at medium.
+Stage 3's front-door screen is the validated decider of "is this a
 replication at all", so when it passes a row, `run_extract` overwrites
 `filter_status` with the screen's paper type (`replication` / `reproduction`) and
 sets `filter_method` to `screen`, recording which call made the call. When the gate
@@ -48,15 +70,16 @@ fields keep Stage 2's values and `type` is left empty. Such a row is resolved an
 outcome-coded but stays at `needs_review`, which `csv_to_db` does not import: it waits
 on the check page for a human to say what it is.
 
-`llm` and `both` are **historical**: Stage 2 had an LLM escalation for
-`needs_review` rows, which is retired. Rows written before the v3.2 screen still
-carry those values and `schema.py` still lists them.
+`rule_based`, `llm` and `both` are **historical** `filter_method` values: they were
+written by the retired per-row rule classifier and its LLM escalation. Rows on disk
+from before the engine still carry them and `schema.py` still lists them.
 
 ---
 
 ## extracted.csv (Stage 3 → web app)
 
-All `filtered.csv` columns, plus:
+All `FILTERED_COLS` — the `FILTERED_COLS` half of filtered.csv, not the engine
+provenance appended after it — plus:
 
 | Column | Type | Description |
 | ------ | ---- | ----------- |

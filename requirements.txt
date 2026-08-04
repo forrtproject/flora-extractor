@@ -22,6 +22,7 @@ playwright>=1.40.0
 rapidfuzz>=3.0.0
 pyyaml>=6.0
 filelock>=3.12.0
+duckdb>=1.0.0          # filter/engine/store.py — local, disposable routing cache over the survivor pool
 fsspec[http]>=2024.6.0  # lazily imported by search/snapshot_scan.py — HTTP range reads over the OpenAlex parquet bucket
 huggingface_hub>=0.34.0  # lazily imported by search/pool_sync.py — shares the snapshot survivor pool via a private HF dataset repo
 

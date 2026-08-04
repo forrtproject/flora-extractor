@@ -1,9 +1,12 @@
 """
-Smoke tests for the rule-based filter, against classify_row() — the function
-Stage 2 actually calls per row.
+Tests for `filter/phrase_detection.py` — the keyword vocabulary itself.
+
+Stage 1's snapshot scan calls `keyword_verdict()` directly; the filter engine
+encodes the same decision as JSON specs under `filter/spec/`. The per-row Stage 2
+classifier these tests were originally written against is gone (issue #146 M4);
+what survives here is the vocabulary, which both callers still depend on.
 """
 
-import pandas as pd
 import pytest
 
 from filter.phrase_detection import (
@@ -12,8 +15,6 @@ from filter.phrase_detection import (
     is_non_scholarly_context,
     is_reproduction_only,
 )
-from filter.rule_filter import classify_row
-from shared.schema import FILTERED_COLS
 
 
 def test_phrase_detection_positive():
@@ -79,197 +80,6 @@ def test_find_replication_phrase_span_returns_offsets():
 
 def test_find_replication_phrase_span_none_when_no_phrase():
     assert find_replication_phrase_span("A field experiment on consumer choice.") is None
-
-
-def _row(title: str, abstract: str, year: int = 2020) -> dict:
-    return {
-        "doi_r": "10.1/test",
-        "title_r": title,
-        "abstract_r": abstract,
-        "year_r": year,
-        "authors_r": "X",
-        "journal_r": "J",
-        "url_r": "",
-        "openalex_id_r": "",
-        "source": "openalex",
-    }
-
-
-def test_rule_filter_replication_with_cite():
-    out = classify_row(_row(
-        "A direct replication of the original effect",
-        "We attempted a direct replication of Smith (2010). The results held.",
-    ))
-    assert out["filter_status"] == "replication"
-    assert out["filter_confidence"] == "high"
-
-
-def test_rule_filter_reproduction_with_cite():
-    out = classify_row(_row(
-        "Reproducibility study",
-        "We ran a computational reproduction of Brown (2018) and found no support.",
-    ))
-    assert out["filter_status"] == "reproduction"
-
-
-def test_rule_filter_date_phrase_not_treated_as_cite():
-    """A replication phrase plus only a date range (no real author-year cite)
-    must fall to needs_review, not auto-accept via a single_bare false match."""
-    out = classify_row(_row(
-        "A replication study",
-        "We attempted to replicate the original effect. "
-        "Data were collected between January 2020 and March 2020.",
-    ))
-    assert out["filter_status"] == "needs_review"
-    assert "cite:" not in out["filter_evidence"]
-
-
-def test_rule_filter_real_cite_still_accepts():
-    """A genuine author-year citation still promotes to a high-confidence accept."""
-    out = classify_row(_row(
-        "A replication study",
-        "We attempted a direct replication of Smith (2010) and the effect held.",
-    ))
-    assert out["filter_status"] == "replication"
-    assert out["filter_confidence"] == "high"
-    assert "cite:" in out["filter_evidence"]
-
-
-def test_rule_filter_phrase_no_cite_needs_review():
-    out = classify_row(_row(
-        "We replicate prior findings",
-        "We replicate prior findings in a different population without naming a target study.",
-    ))
-    assert out["filter_status"] == "needs_review"
-    assert out["filter_confidence"] == "medium"
-
-
-@pytest.mark.parametrize("title,abstract", [
-    # biological "replication" — DNA / replication forks
-    ("DNA replication mechanisms", "We study DNA replication forks in cells."),
-    # technical verb: replicating code, not a study
-    ("Software replication",
-     "We replicated the code using a public pipeline, no prior study named."),
-    # technical object: replicating a dataset
-    ("Replication of a dataset",
-     "Replication of the dataset using a public repository pipeline."),
-])
-def test_rule_filter_non_scholarly_excluded(title, abstract):
-    """The exclusion patterns fire at phrase level AND make the row a hard
-    false_positive — there is no rescuing author-year cite in any of these."""
-    assert is_non_scholarly_context(abstract)
-    assert find_replication_phrase_span(abstract) is None
-    out = classify_row(_row(title, abstract))
-    assert out["filter_status"] == "false_positive"
-    assert out["filter_evidence"].startswith("exclusion:")
-
-
-@pytest.mark.parametrize("doi,expected_status,expected_evidence", [
-    # #17: figshare DOIs are data records, not articles — reject even if the text
-    # reads like a replication with a citation.
-    ("10.6084/m9.figshare.4213113.v1", "false_positive", "exclusion:figshare_data_record"),
-    # #17: a /reviews/ DOI segment marks a peer-review object, never the study.
-    ("10.7287/peerj.10325v0.1/reviews/2", "false_positive", "exclusion:peer_review_object"),
-    # negative control: a real article DOI with a genuine replication+cite passes.
-    ("10.1037/xge0000123", "replication", None),
-])
-def test_rule_filter_doi_exclusions(doi, expected_status, expected_evidence):
-    row = _row("A direct replication of Smith (2019)",
-               "We report a direct replication of Smith (2019).")
-    row["doi_r"] = doi
-    out = classify_row(row)
-    assert out["filter_status"] == expected_status
-    if expected_evidence is not None:
-        assert out["filter_evidence"] == expected_evidence
-
-
-def test_rule_filter_exclusion_with_phrase_and_cite_readmitted():
-    """#44: an exclusion pattern that misfires on an in-scope computational
-    reproduction (phrase + author-year cite both present) is readmitted to
-    needs_review for the LLM, not hard-rejected."""
-    out = classify_row(_row(
-        "Reproducing an analysis",
-        "We replicated the code of Smith (2019) exactly and re-ran their analysis.",
-    ))
-    assert out["filter_status"] == "needs_review"
-    assert "phrase+cite present" in out["filter_evidence"]
-
-
-def test_rule_filter_no_phrase_false_positive():
-    out = classify_row(_row(
-        "On consumer choice in supermarkets",
-        "A field experiment on heuristic decision-making with no replication terminology.",
-    ))
-    assert out["filter_status"] == "false_positive"
-
-
-def test_rule_filter_phrase_and_cite_different_sentences_needs_review():
-    """Reconstructs the confirmed false-positive pattern (Atwood/Oryx and Crake case):
-    a replication-flavored phrase and an unrelated author-year citation appear in
-    different sentences, with no topical connection between them."""
-    out = classify_row(_row(
-        "Merging facts with fiction: replication of COVID-19 in dystopian fiction",
-        "This article discusses cross-species transplantation themes in dystopian "
-        "fiction. (Glover, 2009) The article by Jayne Glover discusses ecological "
-        "philosophy in the same novel.",
-        # Note: deliberately avoids the word "viral" next to "replication" here —
-        # that would trip the existing BIOLOGICAL exclusion pattern in
-        # exclusion-patterns.yaml (viral/virus/dna/... + replication) and return
-        # false_positive before the proximity gate is even reached, which is not
-        # what this test is checking.
-    ))
-    assert out["filter_status"] == "needs_review"
-    assert out["filter_confidence"] == "medium"
-    assert "no same-sentence cite" in out["filter_evidence"]
-
-
-def test_rule_filter_picks_same_sentence_citation_over_earlier_one():
-    """When multiple citations exist, the same-sentence one must be used as sample_cite,
-    not simply the first citation found in the whole text."""
-    out = classify_row(_row(
-        "A study of engineering education",
-        "Jones (1999) discussed unrelated background context. "
-        "We attempted a direct replication of Smith (2010) in a new sample.",
-    ))
-    assert out["filter_status"] == "replication"
-    assert "smith" in out["filter_evidence"].lower()
-
-
-def test_rule_filter_row_plus_verdict_fits_the_filtered_schema():
-    row = _row("t", "a")
-    out = {**row, **classify_row(row)}
-    for col in ("filter_status", "filter_method", "filter_evidence", "filter_confidence"):
-        assert col in out
-    assert list(pd.DataFrame([out]).reindex(columns=FILTERED_COLS).columns) == FILTERED_COLS
-
-
-def test_curated_source_bypasses_keyword_filter():
-    """A curated-list row with no replication vocabulary at all — the I4R comment
-    genre — must still reach Stage 3 rather than being dropped as false_positive."""
-    row = _row("A comment on Combs et al. (2023)",
-               "We examine the effect of anonymous cross-party interaction on polarization.")
-    row["source"] = "i4r"
-    out = classify_row(row)
-    assert out["filter_status"] == "needs_review"
-    assert "curated_source:i4r" in out["filter_evidence"]
-
-
-def test_curated_source_still_drops_non_article_doi():
-    """The bypass trusts the list about the topic, not about the DOI: a data record
-    on a curated list is still not an article."""
-    row = _row("A comment on Smith et al. (2020)", "Some text.")
-    row["source"] = "i4r"
-    row["doi_r"] = "10.6084/m9.figshare.4213113.v1"
-    out = classify_row(row)
-    assert out["filter_status"] == "false_positive"
-    assert out["filter_evidence"] == "exclusion:figshare_data_record"
-
-
-def test_uncurated_source_still_keyword_filtered():
-    row = _row("A comment on Combs et al. (2023)",
-               "We examine the effect of anonymous cross-party interaction.")
-    row["source"] = "openalex"
-    assert classify_row(row)["filter_status"] == "false_positive"
 
 
 def test_reanalysis_is_a_reproduction_phrase():
@@ -536,14 +346,52 @@ def test_keyword_verdict_reports_reproduction_vocabulary():
     assert v.outcome == "positive" and v.is_reproduction
 
 
-def test_rule_filter_title_stem_only_reaches_stage_three():
-    """Behaviour change: a bare stem in the title used to be false_positive here
-    while Stage 1 admitted it, so the row died on arrival at Stage 3. It is now
-    needs_review — the population the cheap pre-screen (#130) exists to absorb."""
-    out = classify_row(_row(
-        "Reproducibility of the X effect",
-        "Bees forage over long distances when the hive is disturbed.",
-    ))
-    assert out["filter_status"] == "needs_review"
-    assert out["filter_confidence"] == "medium"
-    assert out["filter_evidence"].startswith("title stem:")
+# --- #147: the measured exclusion narrowings, at the keyword_verdict layer. The
+# --- specs these read are the same files the filter engine routes on, so a
+# --- narrowing here is also a Stage 1 admission change and moves
+# --- stage_b_fingerprint(). Evidence:
+# --- analysis/stage_b_eval/exclusion_narrowing_report.md and
+# --- exclusion_candidates.csv on branch analysis/stage-b-eval.
+
+
+def test_technical_exclusions_no_longer_kill_model_data_method_reproductions():
+    """#147: TECHNICAL_OBJECT/TECHNICAL_VERB fired on "replicate the
+    model/data/method" — the literal description of a computational reproduction.
+    They killed 42 gold positives between them, and 3 of the 5 indexed
+    reproductions the pipeline loses (reproduction_coverage_report.md)."""
+    for text in ("We replicated the model of the original paper on a new cohort.",
+                 "We replicated the data of the published experiment exactly.",
+                 "The paper rests on replication of the method of the first study.",
+                 "A model replication of Tiebout competition.",
+                 "Replication of the dataset underlying the published estimates."):
+        assert is_non_scholarly_context(text) is None, text
+
+
+def test_technical_exclusions_still_block_the_storage_sense():
+    """The near-misses the narrowed patterns must still block: the matched-span
+    census over 5.6M rows found the dominant real-world referent of both patterns
+    is distributed-systems storage replication, not research methodology."""
+    for text, pattern in (
+            ("A strategy for database replication in ad hoc networks.",
+             "TECHNICAL_OBJECT"),
+            ("Replication of the pipeline across grid nodes.", "TECHNICAL_OBJECT"),
+            ("We replicated the database across three availability zones.",
+             "TECHNICAL_VERB"),
+            ("Replicating the software of the vendor toolchain.", "TECHNICAL_VERB")):
+        assert is_non_scholarly_context(text) == pattern, text
+
+
+def test_biological_of_exempts_genome_wide():
+    """#147 BO1: `genome(s)`/`genomic` no longer match inside `genome-wide`, so the
+    GWAS locus-replication genre survives. That clause caught the genre 24 times in
+    the gold corpus and caught nothing else 0.4 times per million real rows. The
+    Unicode dash matters: several gold rows write "Genome‐Wide" with U+2010."""
+    for text in ("Replication of Genome-Wide Association Studies of Type 2 Diabetes "
+                 "Susceptibility in Japan.",
+                 "Replication of Genome‐Wide Association Studies.",
+                 "Replication of Genome Wide association study loci."):
+        assert is_non_scholarly_context(text) is None, text
+    # Near-misses: the organism senses the clause exists for are untouched.
+    for text in ("The replication of the viral genome in host cells was measured.",
+                 "Inhibition of the replication of genomic DNA in the mutant."):
+        assert is_non_scholarly_context(text) == "BIOLOGICAL_OF", text

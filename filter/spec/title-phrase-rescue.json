@@ -1,0 +1,156 @@
+{
+  "id": "title-phrase-rescue",
+  "description": "#147 item 2, the title-phrase rescue. An exclusion pattern fired in the ABSTRACT ONLY while the TITLE itself states the design — \"A Replication of 'The Role of Intrafirm Networks'\" whose abstract says \"we replicated the model\". The row is handed to the cheap discard-only tier instead of being killed by the 500s band: the title is the paper's own claim about itself, and a keyword rule should not overrule it terminally on the strength of one phrase further down. Expressed declaratively rather than as the positional check the old keyword_verdict() sketch needed (is_non_scholarly_context() returning a match offset): the exclusion must match abstract_text and must NOT match the title, which is the same condition as \"the first match starts past the title\" for every row where the exclusion fires once. Scope: technical-object and technical-verb only. The measured bundle was TV3+TO4+DA1 (15 gold positives, ~102 extra rows across the 510M-row snapshot, 0 gold negatives); the DA1 arm is withheld because data-availability is a shadow spec in the engine and discards nothing, so a \"rescue\" from it could only pull a row DOWN from screen_expensive to screen_cheap. What ships is TV3+TO4: 12 gold positives, ~102 extra rows, 0 gold negatives, every recovered row going to a tier that decides rather than to an admission. The biological-of and BIOLOGICAL title rescues (BO3, BI1) are also absent, and measured out rather than deferred: BO3 admits 3 gold negatives for 2 positives and BI1 costs ~2,093 rows for one. The title phrase list is the phrase list AS MEASURED — the pre-#147 alternation, without the T2 arms this issue adds to phrase-replication — because widening it would widen the rescue past its measurement. Interaction with exclusion-rescue (#44) at 650: that rule asks for a phrase plus a named author-year cite anywhere in the row, this one asks for a phrase in the title and no cite at all. Both route to screen_cheap, so where both match the pile is identical and only route_rule differs; exclusion-rescue wins by precedence because a named cite is the stronger evidence. Nothing here rescues a structural discard: the 900s band outranks both.",
+  "match": {
+    "all_of": [
+      {
+        "any_of": [
+          {
+            "title_regex": "\\breplications? of\\b"
+          },
+          {
+            "title_regex": "\\bwe replicated\\b"
+          },
+          {
+            "title_regex": "\\bwe replicate\\b"
+          },
+          {
+            "title_regex": "\\bdirect replications?\\b"
+          },
+          {
+            "title_regex": "\\bconceptual replications?\\b"
+          },
+          {
+            "title_regex": "\\bregistered replications?\\b"
+          },
+          {
+            "title_regex": "\\bfailed to replicate\\b"
+          },
+          {
+            "title_regex": "\\bdid not replicate\\b"
+          },
+          {
+            "title_regex": "\\bregistered report of\\b"
+          },
+          {
+            "title_regex": "\\b(?:close|high[-\\s]powered|pre[-\\s]?registered|large[-\\s]scale)\\s+replications?\\b"
+          },
+          {
+            "title_regex": "\\battempt\\w*\\s+to\\s+replicate\\b"
+          },
+          {
+            "title_regex": "\\baim\\w*\\s+to\\s+replicate\\b"
+          },
+          {
+            "title_regex": "\\bset\\s+out\\s+to\\s+replicate\\b"
+          },
+          {
+            "title_regex": "\\bsuccess\\w*\\s+replicat\\w*\\b"
+          },
+          {
+            "title_regex": "\\bwe\\s+(?:conducted|performed|carried\\s+out)\\s+a\\s+replication\\b"
+          },
+          {
+            "title_regex": "\\b(?:many-?labs?|multi-?site)\\s+replications?\\b"
+          },
+          {
+            "title_regex": "\\breplicat\\w*\\s+(?:and|&)\\s+exten\\w*\\b"
+          },
+          {
+            "title_regex": "\\breplication\\s+stud(?:y|ies)\\b"
+          },
+          {
+            "title_regex": "\\bstudy\\s+replicate[sd]\\b"
+          },
+          {
+            "title_regex": "\\bour\\s+replications?\\b"
+          },
+          {
+            "title_regex": "\\bexact\\s+replications?\\b"
+          },
+          {
+            "title_regex": "\\breplication\\s+attempts?\\b"
+          },
+          {
+            "title_regex": "\\bcross-?(?:cultural|national|lab(?:oratory)?)\\s+replications?\\b"
+          },
+          {
+            "title_regex": "\\breplicat(?:e|es|ed|ing)\\s+(?:the\\s+)?(?:previous|prior|original|earlier|main|key|core|published)?\\s*(?:findings?|results?|effects?|analys[ei]s|stud(?:y|ies))\\b"
+          },
+          {
+            "title_regex": "\\b(?:(?:d(?:oes|o|id)|w(?:as|ere)|is|are|ha[sd]|have|could|would|should|can|may|might)\\s+(?:not|never)|cannot|can['’]t)\\s+(?:(?:be|been)\\s+)?replicat\\w+\\b"
+          },
+          {
+            "title_regex": "\\b(?:unable|inabilit\\w+|failure)\\s+to\\s+replicate\\b"
+          },
+          {
+            "title_regex": "\\bwe\\s+\\w+ly\\s+replicate[sd]?\\b"
+          },
+          {
+            "title_regex": "\\breproductions? of ['\\\"“‘]"
+          },
+          {
+            "title_regex": "\\breproductions? of\\s+(?:the\\s+)?(?:(?:original|published|reported|previous|prior|main|key|core)\\s+)?(?:results?|findings?|analys[ei]s|estimates?|figures?|tables?|stud(?:y|ies)|experiments?|data)\\b"
+          },
+          {
+            "title_regex": "\\bcomput\\w*\\s+reproduc\\w+\\b"
+          },
+          {
+            "title_regex": "\\brobustness\\s+(?:replicabilit\\w+|reproducibilit\\w+|replication)\\b"
+          },
+          {
+            "title_regex": "\\breproduc\\w+\\s+(?:and|&)\\s+(?:replicat|extend|extension)\\w*\\b"
+          },
+          {
+            "title_regex": "\\bre-?analy[sz](?:is|es|ed|ing|e)\\s+of\\b"
+          },
+          {
+            "title_regex": "\\bre-?analyz\\w+\\b"
+          },
+          {
+            "title_regex": "\\breproduc(?:e|es|ed|ing)\\s+(?:\\w+ly\\s+)?(?:the\\s+)?(?:original|published|reported|previous|prior|main|key|core|their|these|authors'?)?\\s*(?:results?|findings?|estimates?|figures?|tables?|analys[ei]s)\\b"
+          },
+          {
+            "title_regex": "\\b(?:fail\\w*|unable|inabilit\\w+|attempt\\w*|sought|seek\\w*|aim\\w*|tr(?:y|ies|ied|ying))\\s+to\\s+reproduce\\b"
+          },
+          {
+            "title_regex": "\\bwe\\s+(?:\\w+ly\\s+)?reproduced?\\b"
+          }
+        ]
+      },
+      {
+        "any_of": [
+          {
+            "abstract_regex": "\\b(?:replication of (?:the )?(?:apparatus|code|database|pipeline|protocol|software|simulation)|(?:apparatus|code|database|pipeline|protocol|software|simulation)\\s+replication)\\b"
+          },
+          {
+            "abstract_regex": "\\breplicat(?:e|ed|ing)\\s+(?:the )?(?:apparatus|code|software|pipeline|script|database)\\b"
+          }
+        ]
+      },
+      {
+        "none_of": [
+          {
+            "title_regex": "\\b(?:replication of (?:the )?(?:apparatus|code|database|pipeline|protocol|software|simulation)|(?:apparatus|code|database|pipeline|protocol|software|simulation)\\s+replication)\\b"
+          },
+          {
+            "title_regex": "\\breplicat(?:e|ed|ing)\\s+(?:the )?(?:apparatus|code|software|pipeline|script|database)\\b"
+          }
+        ]
+      }
+    ]
+  },
+  "pile": "screen_cheap",
+  "vocabulary": null,
+  "precedence": 645,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "downstream",
+      "n": 5604314,
+      "sample": "5.6M OpenAlex snapshot rows (22 parquet partitions of the 2,446-file manifest, 64,118 Stage A survivors, complete harvest of the 3,785 exclusion-firing survivors — so the influx count is exact for the scanned population, not sampled) scored against the 7,505-paper override_positives.json gold corpus and the 1,333-paper gold-negative set; branch analysis/stage-b-eval, analysis/stage_b_eval/exclusion_narrowing_report.md, #144 evidence pass. Provenance caveat (#151): 4,681 of the 7,505 gold positives (62%) are `allrep_llm` — the old pipeline's own LLM verdicts, never human-confirmed — so the gold-recovery figure is an upper bound; only the 38% curated share (entry_sheet 1,551, flora_db 1,266) is human evidence.",
+      "date": "2026-08-03",
+      "rationale": "Candidates TO4_title_rescue (4 gold positives, 0 influx rows in 5.6M) and TV3_title_rescue (8 gold positives, 1 influx row in 5.6M = 0.2 per million, 0.01% of admitted volume, ~102 rows projected over the full snapshot), 0 gold negatives newly admitted between them. This is a routing rule, not a discard: it moves rows out of a terminal pile into one that still decides, so the measurement it needs is the influx, and the influx is measured exactly. Overlap caveat: TO4 and TV3 were priced against the UN-narrowed technical patterns, and #147 narrows those too, so part of the 12 is now recovered by the narrowing instead and this rule's marginal gain is smaller. The combined change is measured as well — COMBO_A in exclusion_candidates.csv (TV1 plus the title rescue) is 23 gold positives for 7.7 rows per million. What survives as this rule's own work is the row whose abstract fires the NARROWED pattern (code, database, software, pipeline, script, apparatus, protocol, simulation) while the title says replication: exactly the computational-reproduction genre."
+    }
+  ]
+}
