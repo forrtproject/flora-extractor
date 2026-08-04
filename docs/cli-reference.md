@@ -151,12 +151,15 @@ and `FLORA_POOL_REPO` in `.env`. Uploads go up in batched commits
 would push the repo past the few-thousand-commit mark where HF says repo UX
 degrades.
 
-**Collaborator workflow — two commands, nothing to rebuild:**
+**Collaborator workflow — one command, nothing to rebuild:**
 
 ```bash
 python -m search.pool_sync --pull-build   # prebuilt corpus → data/candidates.csv
-python -m filter.run_filter               # → filtered.csv
 ```
+
+Stage 2 routes the **survivor pool**, not `candidates.csv`, so a collaborator who
+wants to run the filter engine pulls the pool as well (`--pull`, below); the
+prebuilt corpus is the Stage 1 artifact for everything else.
 
 `--pull-build` downloads the latest prebuilt candidates artifact (chunked
 parquet, `builds/<build_hash>/`) and merges it into `data/candidates.csv` through
@@ -222,56 +225,20 @@ unknowingly is not.
 
 ## Stage 2 — Filter
 
-```bash
-# Run filter on candidates.csv
-python -m filter.run_filter
-
-# Limit to specific year range
-python -m filter.run_filter --from-year 2020
-
-# Rebuild filtered index
-python -m filter.run_filter --rebuild-index
-
-# Filter using only rule-based classifier (no LLM calls)
-python -m filter.run_filter --no-llm
-
-# Reset screening decisions for rows that were decided with an empty abstract
-# and whose abstract has since been backfilled into candidates.csv (dry-run)
-python -m filter.reset_backfilled
-
-# ...and apply: drop those rows from filtered.csv, rebuild the resume index
-python -m filter.reset_backfilled --apply
-```
-
-**Input:** `data/candidates.csv`  
-**Output:** `data/filtered.csv`
-
-### Resetting backfilled screening decisions
-
-Many candidates were screened by Stage 2 with an **empty abstract** (title-only
-decisions). When `search/fetch_abstracts.py` later backfills abstracts into
-`candidates.csv`, the resume index (`cache/filtered_index.txt`) still makes
-`run_filter` skip those already-decided rows, so the recovered abstracts never
-change the screening decision.
-
-`python -m filter.reset_backfilled` fixes this in three streamed, memory-bounded
-passes: it finds filtered rows decided with an empty abstract, keeps only those
-whose `candidates.csv` row now has an abstract, and — with `--apply` — deletes
-exactly those rows from `filtered.csv` before rebuilding the index. It **deletes
-the row** rather than just its index key: `run_filter` only ever appends, so
-dropping the key alone would produce a second decision for the same paper.
-
-Operational sequence: run the abstract backfill → `reset_backfilled --apply` →
-`run_filter` (the reset rows now come through with abstracts). Dry-run by default;
-`--apply` to write. Do **not** run it while `run_filter` or `fetch_abstracts` is
-writing.
-
-### The filter engine
+Stage 2 **is** the filter engine: `python -m filter.engine <command>`. The
+per-row rule classifier (`filter.run_filter`, `filter/rule_filter.py`) and its
+`reset_backfilled` companion have been removed; nothing in the pipeline calls them
+any more.
 
 Issue #146's declarative routing layer: one engine applies the spec bundle in
 `filter/spec/` to the survivor pool and routes every row into a pile. It reads the
 pool parquet directly, not `candidates.csv`, and its design contract is
 [filter-engine.md](filter-engine.md).
+
+**Input:** the survivor pool (`cache/snapshot_pool`), plus an optional text overlay  
+**Output:** `data/filtered.csv`, written by `handoff`
+
+The usual order is `route` → `screen` → `handoff`.
 
 ```bash
 # What the bundle currently says — one line per spec, plus the bundle hash
@@ -291,6 +258,20 @@ python -m filter.engine diagnose --spec dataset-type --pool cache/snapshot_pool
 python -m filter.engine export --pile screen_expensive --out data/engine_expensive.csv \
     --pool cache/snapshot_pool --from-year 2011
 
+# What an LLM tier would cost over its pile — claims nothing, spends nothing
+python -m filter.engine screen --tier screen_expensive
+
+# Claim a small first batch and spend on it
+python -m filter.engine screen --tier screen_expensive --run --limit 500 \
+    --batch-label first-expensive-batch
+
+# The cheap tier: verdicts recorded, no effect on anything, until --live
+python -m filter.engine screen --tier screen_cheap --run
+python -m filter.engine screen --tier screen_cheap --run --live
+
+# Write the file Stage 3 reads
+python -m filter.engine handoff --out data/filtered.csv --from-year 2011
+
 # Releases on disk and the pile counts each of them routed
 python -m filter.engine status
 ```
@@ -301,7 +282,9 @@ python -m filter.engine status
 | `verify` | Runs both backends over the first batch of up to `--sample-files` pool files and prints every (spec, row) they disagree on. **Exit 1 on any mismatch** — it is meant for CI and for the check before a long run. |
 | `route` | Computes the routing release id from its six inputs, records the release, and streams the pool through the bundle into the store. Idempotent per release: re-running replaces that release's rows rather than duplicating them. |
 | `diagnose` | Routes the pool with and without `--spec` and reports rows moved per (pile without → pile with), overlap against every other rule (exclusive hits vs already-covered), a seeded readable sample, the holdout state and the spec's `measured` evidence. |
-| `export` | Writes one pile as `FILTERED_COLS` + `ENGINE_EXPORT_COLS`, `utf-8-sig`, plus `<out>.manifest.json` (release, pile, rows, sha256). `--pile pending` is refused, an existing manifest is never overwritten, and an export is refused outright when the spec bundle or alias file has changed since the release was routed — re-run `route` rather than looking for an override flag. |
+| `export` | Writes one pile as `FILTERED_COLS` + `ENGINE_EXPORT_COLS`, `utf-8-sig`, plus `<out>.manifest.json` (release, pile, rows, sha256). `--pile pending` is refused, an existing manifest is never overwritten, and an export is refused outright when the spec bundle or alias file has changed since the release was routed — re-run `route` rather than looking for an override flag. `--pile needs_human` additionally prints the size of the queue it just wrote. |
+| `screen` | Runs one LLM tier (`--tier screen_cheap\|screen_expensive`) over that pile. **Dry run by default**: it prints the row count, the token-length distribution of the abstracts it would send and `N rows → tier X ≈ $Y`, and claims, fetches and spends nothing. `--run` claims the batch through the Supabase claims RPC *before* the first voter is asked, records one permanent verdict row per vote, and completes the claim; a claim conflict refuses without spending anything, and an exhausted token budget fails the claim and stops with the verdicts already written intact. |
+| `handoff` | Writes the two screen piles — `screen_expensive` first, then `screen_cheap` — as the file Stage 3 reads, in `ENGINE_EXPORTED_COLS` order, minus the works a **live** tier run discarded, with a live `screen_expensive` record type written into `filter_status`. Unlike `export`, its manifest is rewritable: the handoff is a materialized view Stage 3 re-reads, not an immutable artifact. |
 | `status` | Every release found beside the store, with its creation time and pile counts. |
 
 `--spec-dir` (before the subcommand) points at a different bundle; `--store`
@@ -310,6 +293,23 @@ a `route` and nothing else, because routing is a pure function of pool, specs,
 aliases and engine version. `route` takes the pool's provenance from
 `--pool-manifest-hash`, else the local snapshot ledger, else the literal
 `unmanifested` (an honest "unknown", not a claim about which pool this was).
+
+**`screen` modes.** `screen_cheap` runs in `validation` mode by default: its votes
+are recorded and its would-be discards are reported against the piles the rules
+chose, and nothing is discarded. That is issue #146 §2 — the tier's zero-miss
+evidence was measured on a post-gate distribution and has to be re-validated on
+this one before it discards autonomously. `--live` is what makes those discards
+take effect. `screen_expensive` is Stage 3's validated front door
+(`classify_replication()` + `screen_gate()`) run ahead of Stage 3, so it has no
+validation mode to earn and runs live; `--limit` is how a first paid batch stays
+small enough to read. `--run` needs `SUPABASE_URL` and `SUPABASE_SERVICE_KEY`
+because the claim is what stops two runs spending on the same works; a dry run
+needs neither.
+
+**`handoff` without Supabase.** With no claims client configured there are no tier
+verdicts to read, so the command says so and hands off the piles exactly as
+routed. It refuses, like `export`, when the spec bundle, alias file or overlay has
+moved since the release was routed.
 
 ---
 

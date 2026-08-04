@@ -218,6 +218,30 @@ SNAPSHOT_BUILD_DIR = Path(os.getenv("FLORA_BUILD_DIR") or (CACHE_DIR / "snapshot
 # one small enough to read into memory whole while merging.
 SNAPSHOT_BUILD_CHUNK_ROWS = int(os.getenv("SNAPSHOT_BUILD_CHUNK_ROWS", "100000"))
 
+# ── Filter-engine LLM tiers: the dry-run cost estimate (issue #146 §6) ────────
+# Rough list prices per 1,000 tokens, SUMMED OVER A TIER'S TWO VOTERS, so a tier's
+# estimate is one multiplication per row. They exist to answer "is this run $3 or
+# $3,000?" before it starts and are deliberately not a billing record — what a run
+# actually cost is read from cache/token_usage.json afterwards. Update them when a
+# voter model changes; they are env-overridable so a price cut needs no release.
+ENGINE_TIER_PRICE_PER_1K_IN = {
+    "screen_cheap":     float(os.getenv("ENGINE_PRICE_CHEAP_IN", "0.00014")),
+    "screen_expensive": float(os.getenv("ENGINE_PRICE_EXPENSIVE_IN", "0.00055")),
+}
+ENGINE_TIER_PRICE_PER_1K_OUT = {
+    "screen_cheap":     float(os.getenv("ENGINE_PRICE_CHEAP_OUT", "0.00045")),
+    "screen_expensive": float(os.getenv("ENGINE_PRICE_EXPENSIVE_OUT", "0.00450")),
+}
+# Output tokens one row costs a tier. The cheap tier answers with one field; the
+# expensive tier returns the five-field v3.3 schema with a quote and a reasoning.
+ENGINE_TIER_OUTPUT_TOKENS = {
+    "screen_cheap":     int(os.getenv("ENGINE_OUTPUT_TOKENS_CHEAP", "20")),
+    "screen_expensive": int(os.getenv("ENGINE_OUTPUT_TOKENS_EXPENSIVE", "300")),
+}
+# Characters per token for the estimate. Nothing is tokenized to produce a number
+# nobody will be billed on; 4.0 is the usual English-prose approximation.
+ENGINE_CHARS_PER_TOKEN = float(os.getenv("ENGINE_CHARS_PER_TOKEN", "4.0"))
+
 # ── External servers ──────────────────────────────────────────────────────────
 GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")
 

@@ -183,8 +183,10 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
         # biasing any precision computed over it (audit B6).
         ("screen_disagreement", "screen_disagreement.csv",
          df["link_method"] == "screen_disagreement"),
-        # figshare data records / peer-review objects: Stage-2 false positives (#17) that
-        # predate the rule_filter DOI exclusion. The replication record itself is bogus,
+        # figshare data records / peer-review objects: Stage-2 false positives (#17)
+        # that predate the DOI exclusion — today the filter engine's
+        # `deposit-doi-prefixes` and `non-article-doi` specs discard them before
+        # Stage 3 ever sees them. The replication record itself is bogus,
         # so this is a permanent discard and outranks the unresolved states — a re-run
         # has nothing to gain by retrying it. Routed to the not_a_replication bucket.
         ("non_article", "not_a_replication.csv", df["doi_r"].map(lambda d: bool(non_article_doi(d)))),

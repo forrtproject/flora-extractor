@@ -50,6 +50,10 @@ UPLOADED = "uploaded"
 PENDING_UPLOAD = "response_pending_upload"
 RESPONSE_STATES = (UPLOADED, PENDING_UPLOAD)
 
+# Lineage kinds (#146 §5, migration 0002): a work re-routed between live piles, a
+# work now rule-discarded, or a superseded expensive-tier verdict.
+SUPERSESSION_KINDS = ("reroute", "verdict", "withdrawal")
+
 
 class ClaimsError(RuntimeError):
     """Any failure talking to the state authority."""
@@ -198,13 +202,28 @@ class ClaimsClient:
                             {"p_claim_id": claim_id, "p_status": status})
         return _scalar(result)
 
-    def active_claims(self, release_id: Optional[str] = None) -> list[dict]:
-        """Every active claim, optionally restricted to one release."""
-        params: dict = {"select": "id,release_id,tier,status,created_at,meta",
-                        "status": "eq.active"}
+    def claims(self, release_id: Optional[str] = None, tier: Optional[str] = None,
+               status: Optional[str] = None) -> list[dict]:
+        """Claims, optionally restricted to one release, tier and/or status.
+
+        Ended claims are kept, not deleted, so this is also how a later run learns
+        what an earlier one ran and under which `meta` (the tier runners record
+        their mode there — a `screen_cheap` run whose discards took effect is a
+        claim with `meta.mode == "live"`, and that is the only place that fact is
+        written down).
+        """
+        params: dict = {"select": "id,release_id,tier,status,created_at,meta"}
         if release_id:
             params["release_id"] = f"eq.{release_id}"
+        if tier:
+            params["tier"] = f"eq.{tier}"
+        if status:
+            params["status"] = f"eq.{status}"
         return self._get_paged("engine_claims", params, order="created_at.asc,id.asc")
+
+    def active_claims(self, release_id: Optional[str] = None) -> list[dict]:
+        """Every active claim, optionally restricted to one release."""
+        return self.claims(release_id=release_id, status="active")
 
     def claimed_work_ids(self, release_id: str, tier: str) -> set[int]:
         """Work ids currently held by an active claim of *tier* in *release_id*.
@@ -250,6 +269,25 @@ class ClaimsClient:
         result = self._post("engine_verdicts", row, prefer="return=representation")
         return _first(result)["id"]
 
+    def verdicts(self, tier: str, claim_ids: Optional[Iterable[str]] = None,
+                 ) -> list[dict]:
+        """Live (non-superseded) verdict rows for *tier*, one per voter vote.
+
+        Restricting by *claim_ids* is done here rather than in the query: a run
+        can hold hundreds of claims and `id=in.(…)` would put them all in a URL.
+        A superseded row is excluded because it is evidence of what was believed,
+        not of what is believed.
+        """
+        rows = self._get_paged("engine_verdicts", {
+            "select": "id,claim_id,work_id,tier,model,verdict,response_state",
+            "tier": f"eq.{tier}",
+            "superseded_by": "is.null",
+        }, order="work_id.asc,id.asc")
+        if claim_ids is None:
+            return rows
+        wanted = set(claim_ids)
+        return [r for r in rows if r.get("claim_id") in wanted]
+
     def supersede_verdict(self, old_id: str, new_id: str) -> None:
         """Point a superseded verdict at the one that replaced it.
 
@@ -259,6 +297,36 @@ class ClaimsClient:
         """
         self._patch("engine_verdicts", {"id": f"eq.{old_id}"},
                     {"superseded_by": new_id})
+
+
+    # ── supersessions ────────────────────────────────────────────────────────
+
+    def record_supersession(self, *, work_id: int, kind: str,
+                            affected_record_ids: Iterable[str],
+                            old_release_id: Optional[str] = None,
+                            new_release_id: Optional[str] = None,
+                            reason: str = "", actor: str = "") -> str:
+        """Insert one insert-only lineage row (#146 §5). Returns its id.
+
+        This is the ONLY thing an upstream change does to already-sent decisions:
+        it names them. Nothing here writes to `unvalidated`, `validated` or
+        `validation_queue` — those rows are immutable once sent, and the
+        validation repo reads this table to decide what to do about them.
+        """
+        if kind not in SUPERSESSION_KINDS:
+            raise ValueError(
+                f"unknown supersession kind: {kind} (expected one of {SUPERSESSION_KINDS})")
+        row = {
+            "work_id": int(work_id),
+            "old_release_id": old_release_id,
+            "new_release_id": new_release_id,
+            "kind": kind,
+            "reason": reason,
+            "affected_record_ids": [str(r) for r in affected_record_ids],
+            "actor": actor,
+        }
+        result = self._post("engine_supersessions", row, prefer="return=representation")
+        return _first(result)["id"]
 
 
 def _tier_of(path: str, body: str) -> str:

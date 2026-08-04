@@ -35,14 +35,20 @@ Leave `GROBID_URL=http://localhost:8070` in `.env` (the default). If GROBID is n
 
 ## Running the pipeline
 
-Each stage reads from the previous stage's CSV output. Run them in order:
+Run the stages in order. Stage 2 reads the survivor pool parquet rather than a CSV;
+every other stage reads the previous stage's CSV output.
 
 ```bash
 # Stage 1 — discover candidate papers
 python -m search.run_search
 
-# Stage 2 — filter false positives
-python -m filter.run_filter
+# Stage 2 — route the survivor pool, screen what the rules could not settle,
+# and write the file Stage 3 reads
+python -m filter.engine route
+python -m filter.engine screen --tier screen_expensive --run
+python -m filter.engine handoff --out data/filtered.csv
+# `screen` is a dry run without --run, and --run needs SUPABASE_URL /
+# SUPABASE_SERVICE_KEY: the claim is what stops two runs paying for the same works.
 
 # Stage 3 — extract original study + outcome
 python -m extract.run_extract

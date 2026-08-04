@@ -25,7 +25,7 @@ import csv
 import hashlib
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 from filter.engine.pool_reader import iter_pool_batches, overlay_manifest_hash
 from filter.engine.spec import FilterSpec, bundle_hash, load_specs
@@ -37,8 +37,11 @@ CONVENTIONS_PATH = SPEC_DIR / "conventions.json"
 ALIASES_FILENAME = "aliases.json"
 
 # "Don't check the overlay binding" — None cannot mean it, because a release
-# routed with no overlay legitimately expects None.
-_UNCHECKED: object = object()
+# routed with no overlay legitimately expects None. Public because every caller
+# that forwards the parameter must forward THIS object: a second sentinel would
+# be "unchecked" to its own module and a mismatch to this one.
+UNCHECKED: object = object()
+_UNCHECKED = UNCHECKED
 
 
 def load_conventions(path: Optional[Path] = None) -> dict:
@@ -70,16 +73,8 @@ def export_pile(con, pool_dir: Path, pile: str, out_csv: Path, release_id: str,
     anything is written. Overlay text is coalesced into the exported rows exactly
     as it was during routing — Stage 3 must see the text the pile decision saw.
     """
-    _check_release_binding(spec_dir, release_id, expect_bundle_hash,
-                           expect_alias_release, overlay_dir, expect_overlay_hash)
-    conventions = conventions or load_conventions()
-    policy = (conventions.get("piles") or {}).get(pile)
-    if policy is None:
-        raise ValueError(f"unknown pile {pile!r}")
-    if not policy.get("exported"):
-        raise ValueError(f"pile {pile!r} is not exported: a pending row has no "
-                         "settled routing to hand to Stage 3")
-
+    check_release_binding(spec_dir, release_id, expect_bundle_hash,
+                          expect_alias_release, overlay_dir, expect_overlay_hash)
     out_csv = Path(out_csv)
     manifest_path = Path(str(out_csv) + ".manifest.json")
     if manifest_path.exists():
@@ -87,12 +82,57 @@ def export_pile(con, pool_dir: Path, pile: str, out_csv: Path, release_id: str,
             f"{manifest_path} already exists — an export manifest is immutable; "
             "write the new export under a different name")
 
-    routing = _routing_rows(con, release_id, pile)
+    rows = [row for _, _, row in iter_export_rows(
+        con, pool_dir, [pile], release_id, from_year=from_year, to_year=to_year,
+        conventions=conventions, specs=specs, aliases=aliases, spec_dir=spec_dir,
+        overlay_dir=overlay_dir)]
+
+    _write_csv(out_csv, rows)
+    return _write_manifest(manifest_path, out_csv, release_id, pile, len(rows),
+                           created_at)
+
+
+def iter_export_rows(con, pool_dir: Path, piles: list[str], release_id: str,
+                     from_year: Optional[int] = None, to_year: Optional[int] = None,
+                     conventions: Optional[dict] = None,
+                     specs: Optional[list[FilterSpec]] = None,
+                     aliases: Optional[dict[int, int]] = None,
+                     spec_dir: Path = SPEC_DIR,
+                     overlay_dir: Optional[Path] = None,
+                     ) -> Iterator[tuple[str, int, dict]]:
+    """`(pile, work_id, row)` per work of *piles*, in pool order, ready for the CSV.
+
+    The alias-resolved work id travels with the row because the CSV's
+    `openalex_id_r` is the pool's raw id and a caller keying anything by work —
+    a tier verdict, say — must key it by the id the routing table used.
+
+    One pass over the pool for however many piles are asked for — `export_pile()`
+    asks for one, `handoff.py` asks for both screen piles — because streaming
+    5.1M rows once per pile is the cost this function exists to avoid. The caller
+    orders the result; the pool's order is not the piles' order.
+
+    Binding is NOT checked here: the caller checks it once, before writing
+    anything, so a refusal happens before the first row rather than after the
+    first million.
+    """
+    conventions = conventions or load_conventions()
+    policies = {}
+    for pile in piles:
+        policy = (conventions.get("piles") or {}).get(pile)
+        if policy is None:
+            raise ValueError(f"unknown pile {pile!r}")
+        if not policy.get("exported"):
+            raise ValueError(f"pile {pile!r} is not exported: a pending row has no "
+                             "settled routing to hand to Stage 3")
+        policies[pile] = policy
+
+    routing: dict[int, dict] = {}
+    for pile in piles:
+        routing.update(_routing_rows(con, release_id, pile))
     vocabularies = {spec.id: spec.vocabulary
                     for spec in (specs if specs is not None else load_specs(spec_dir))}
     prefix = conventions.get("filter_method_prefix", "engine:")
 
-    rows: list[dict] = []
     seen: set[int] = set()
     for batch in iter_pool_batches(pool_dir, overlay_dir, aliases=aliases):
         for record in batch.to_pylist():
@@ -108,23 +148,20 @@ def export_pile(con, pool_dir: Path, pile: str, out_csv: Path, release_id: str,
                 continue
             if to_year is not None and (year is None or year > to_year):
                 continue
-            rows.append(_export_row(record, routed, policy, prefix, release_id,
-                                    vocabularies.get(routed["rule_id"])))
-
-    _write_csv(out_csv, rows)
-    return _write_manifest(manifest_path, out_csv, release_id, pile, len(rows),
-                           created_at)
+            yield routed["pile"], resolved, _export_row(
+                record, routed, policies[routed["pile"]], prefix, release_id,
+                vocabularies.get(routed["rule_id"]))
 
 
 class StaleBundleError(RuntimeError):
     """The bundle on disk is not the one *release_id* was routed under."""
 
 
-def _check_release_binding(spec_dir: Path, release_id: str,
-                           expect_bundle_hash: Optional[str],
-                           expect_alias_release: Optional[str],
-                           overlay_dir: Optional[Path] = None,
-                           expect_overlay_hash: object = _UNCHECKED) -> None:
+def check_release_binding(spec_dir: Path, release_id: str,
+                          expect_bundle_hash: Optional[str],
+                          expect_alias_release: Optional[str],
+                          overlay_dir: Optional[Path] = None,
+                          expect_overlay_hash: object = _UNCHECKED) -> None:
     mismatches = []
     if expect_overlay_hash is not _UNCHECKED:
         # None is a real expectation here (routed with no overlay), so the

@@ -1,8 +1,8 @@
 {
   "id": "technical-object",
-  "description": "code/data/method replication (both 'replication of X' and 'X replication' forms), not psychological Loaded back into keyword_verdict() as pattern id TECHNICAL_OBJECT (filter/phrase_detection.py).",
+  "description": "code/database/pipeline replication (both 'replication of X' and 'X replication' forms), not psychological. #147: the object list no longer carries model/method/data/dataset. Those four words are how a computational reproduction describes itself — 'A Replication and Analysis of Tiebout Competition Using an Agent-Based Computational Model', 'Replicating MOOC predictive models at scale' — and the pattern was killing them terminally. Narrowed to the TO2_both_tight variant of analysis/stage_b_eval/exclusion_candidates.csv (both sides of the pattern, so 'model replication' and 'replication of the model' go together): +18 gold positives for 3.9 extra rows per million (~1,990 across the 510M-row snapshot), 0 gold negatives, and 3 of the 5 indexed reproductions the pipeline loses are recovered (reproduction_coverage_report.md). The surviving objects are the storage/distributed-systems sense, which is the pattern's real referent: the matched-span census over 5.6M rows found 'data replication' 36 times, 'database replication' 7 and 'model replication' 3. NOTE: this spec is also read by filter/phrase_detection.py::_load_exclusion_regexes(), so the narrowing changes Stage 1 admission as well as engine routing — intended, and it moves stage_b_fingerprint(). Loaded back into keyword_verdict() as pattern id TECHNICAL_OBJECT (filter/phrase_detection.py).",
   "match": {
-    "text_regex": "\\b(?:replication of (?:the )?(?:apparatus|code|dataset|data|database|model|method|pipeline|protocol|software|simulation)|(?:apparatus|code|dataset|data|database|model|method|pipeline|protocol|software|simulation)\\s+replication)\\b"
+    "text_regex": "\\b(?:replication of (?:the )?(?:apparatus|code|database|pipeline|protocol|software|simulation)|(?:apparatus|code|database|pipeline|protocol|software|simulation)\\s+replication)\\b"
   },
   "pile": "discard",
   "vocabulary": null,
@@ -11,7 +11,14 @@
   "measured": [
     {
       "level": "trusted",
-      "rationale": "'replication of the code/dataset/pipeline' names a technical artifact, not a study. Rows that are genuine computational reproductions carry a phrase AND a cite and are readmitted by exclusion-rescue (#44) at precedence 650."
+      "rationale": "'replication of the code/pipeline/database' names a technical artifact, not a study. Rows that are genuine computational reproductions carry a phrase AND a cite and are readmitted by exclusion-rescue (#44) at precedence 650."
+    },
+    {
+      "level": "downstream",
+      "n": 5604314,
+      "sample": "5.6M OpenAlex snapshot rows (22 parquet partitions of the 2,446-file manifest, 64,118 Stage A survivors, complete harvest of the 3,785 exclusion-firing survivors) scored against the 7,505-paper override_positives.json gold corpus and the 1,333-paper gold-negative set; branch analysis/stage-b-eval, #144 evidence pass. Provenance caveat (#151): 4,681 of the 7,505 gold positives (62%) are `allrep_llm` — the old pipeline's own LLM verdicts, never human-confirmed — so the gold-recall figure is an upper bound, and only the 38% curated share (entry_sheet, flora_db) is human evidence.",
+      "date": "2026-08-03",
+      "rationale": "#147 narrowing (TO2_both_tight): dropping model/method/data/dataset from both sides recovers 18 gold positives, admits 0 additional gold negatives, and costs 3.9 rows per million scanned (0.17% of admitted volume, ~1,990 rows over the full snapshot). Influx sampled as CS storage-replication papers ('A Strategy for Data Replication in Mobile Ad Hoc Networks'), which enter as screen_cheap rather than being admitted. The residual pattern keeps its trusted rationale above; this entry measures what the narrowing costs."
     }
   ]
 }

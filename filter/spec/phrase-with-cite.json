@@ -1,6 +1,6 @@
 {
   "id": "phrase-with-cite",
-  "description": "A replication or reproduction phrase AND an author-year citation: the shape of a paper that says what it replicated. The only route to the expensive two-voter screen. `none_of` carries the GWAS vocabulary — a discovery/replication-cohort design says 'we replicated one SNP' and means something else. Divergence 3 in docs/filter-engine.md: the guard was sentence-scoped in PHRASE_GUARDS and is row-scoped here, so a GWAS-flavoured row falls to screen_cheap rather than being suppressed. The cite clause is one RE2-safe approximation of an author-year citation (parenthetical, narrative and et-al forms); it replaces extract_author_year_patterns()'s lookahead-based patterns and its bare-name blacklist. Divergence 2 in docs/filter-engine.md: the cite only orders spend, it no longer admits, so an approximation is enough. The name atom is a negated class rather than `\\w`: Python `re` reads `\\w` as Unicode-aware and RE2 (pyarrow) as ASCII, so an accented surname in the cite position — García et al. (2020) — matched one backend and not the other. The trailing `\\b` became an explicit non-digit for the same reason.",
+  "description": "A replication or reproduction phrase AND an author-year citation: the shape of a paper that says what it replicated. The only route to the expensive two-voter screen. `none_of` carries the GWAS vocabulary — a discovery/replication-cohort design says 'we replicated one SNP' and means something else. Divergence 3 in docs/filter-engine.md: the guard was sentence-scoped in PHRASE_GUARDS and is row-scoped here, so a GWAS-flavoured row falls to screen_cheap rather than being suppressed. #147 (G1 minus `replicated the association`): the guard now stands down when the row also names a prior report — previously/prior/earlier/original/published/reported by — which is what separates 'we replicated eight loci PREVIOUSLY REPORTED in a European population' (an ordinary context-transfer replication, in scope) from 'we replicated the association' in the paper's own second cohort (a two-stage internal design, out of scope by the maintainer's ruling and by shared/prompts.py). The `replicated the association` alternative of G1 as written is deliberately absent: it is not a prior-report cue at all and leaks two internal designs. The phrase clause below duplicates phrase-replication's any_of and gains the same #147 T2 arms; the two lists are kept in sync by hand and a diff that edits one must edit the other. The cite clause is one RE2-safe approximation of an author-year citation (parenthetical, narrative and et-al forms); it replaces extract_author_year_patterns()'s lookahead-based patterns and its bare-name blacklist. Divergence 2 in docs/filter-engine.md: the cite only orders spend, it no longer admits, so an approximation is enough. The name atom is a negated class rather than `\\w`: Python `re` reads `\\w` as Unicode-aware and RE2 (pyarrow) as ASCII, so an accented surname in the cite position — García et al. (2020) — matched one backend and not the other. The trailing `\\b` became an explicit non-digit for the same reason.",
   "match": {
     "all_of": [
       {
@@ -87,6 +87,21 @@
             "text_regex": "\\bwe\\s+\\w+ly\\s+replicate[sd]?\\b"
           },
           {
+            "text_regex": "\\bwe\\s+(?:\\w+\\s+){0,2}replicat(?:e|es|ed)\\b"
+          },
+          {
+            "text_regex": "\\b(?:sought|seek(?:s|ing)?|tri(?:ed|es)|try(?:ing)?|wanted|intend(?:ed|s|ing)?|hoped?|started|planned|undertook|proceeded|decided|chose)\\s+to\\s+(?:\\w+ly\\s+)?replicate\\b"
+          },
+          {
+            "text_regex": "\\b(?:fail\\w*|unable|inabilit\\w+|attempt\\w*)\\s+to\\s+(?:\\w+ly\\s+)?replicate\\b"
+          },
+          {
+            "text_regex": "\\b(?:failures?\\s+to\\s+replicate|failed\\s+replications?|replication\\s+failures?|unsuccessful\\s+replications?)\\b"
+          },
+          {
+            "text_regex": "\\battempted\\s+replications?\\b"
+          },
+          {
             "text_regex": "\\breproductions? of ['\\\"“‘]"
           },
           {
@@ -124,7 +139,18 @@
     ],
     "none_of": [
       {
-        "text_regex": "\\b(?:gwas|genome[-\\s]wide|snps?|alleles?|genotyp\\w+|haplotype|linkage disequilibrium|minor allele frequency|loci|polymorphism\\w*|replication cohort|discovery cohort|exome)\\b"
+        "all_of": [
+          {
+            "text_regex": "\\b(?:gwas|genome[-\\s]wide|snps?|alleles?|genotyp\\w+|haplotype|linkage disequilibrium|minor allele frequency|loci|polymorphism\\w*|replication cohort|discovery cohort|exome)\\b"
+          },
+          {
+            "none_of": [
+              {
+                "text_regex": "\\b(?:previously|prior|earlier|original|published|reported\\s+by)\\b"
+              }
+            ]
+          }
+        ]
       }
     ]
   },
@@ -132,5 +158,20 @@
   "vocabulary": null,
   "precedence": 350,
   "shadow": false,
-  "measured": []
+  "measured": [
+    {
+      "level": "downstream",
+      "n": 2892614,
+      "sample": "2,892,614 real OpenAlex snapshot rows (10 manifest partitions of the stride-122 list) for the cost side; the 7,505-paper override_positives.json gold corpus for the recall side, with the 59 guard/exclusion-affected genetics papers hand-classified against the internal-replication rule of shared/prompts.py in analysis/stage_b_eval/gwas_scope_classification.md. Branch analysis/stage-b-eval, #144 evidence pass. Provenance caveat (#151): 4,681 of the 7,505 gold positives (62%) are `allrep_llm` — the old pipeline's own LLM verdicts, never human-confirmed — so gold recall is an upper bound. The genetics slice is the audited example: all 14 rows there that fail FLoRA's own coding rule came from `allrep_llm`, none from the human-curated buckets.",
+      "date": "2026-08-04",
+      "rationale": "#147 item 4, variant G1 minus its `replicated the association` alternative: the GWAS guard no longer suppresses a row that also names a prior report (previously/prior/earlier/original/published/reported by). Recovers 12 gold positives, all 12 qualifying under the maintainer's scope ruling and 0 internal two-stage designs, at 0.0 extra admissions per million scanned. The `replicated the association` alternative of G1 as written is NOT shipped: it buys 7 more papers but leaks 2 internal discovery-plus-own-cohort designs (10.1002/hbm.22247, 10.1038/s41598-023-31701-w), which the ruling puts out of scope. 11-16 genuinely qualifying papers stay unreachable whichever variant ships, because they put the prior-report attribution in a different sentence from the 'we replicated ...' claim — that is a screen judgment, not a keyword one, and no same-sentence regex reaches them."
+    },
+    {
+      "level": "downstream",
+      "n": 2892614,
+      "sample": "Same 2,892,614-row snapshot corpus and 7,505-paper override_positives.json gold corpus as the entry above; analysis/stage_b_eval/vocab_holes_report.md, branch analysis/stage-b-eval, #144 evidence pass. Provenance caveat (#151): 62% of the gold corpus is `allrep_llm` LLM output, never human-confirmed, so recall is an upper bound.",
+      "date": "2026-08-03",
+      "rationale": "#147 item 1: the five T2 phrase arms added to phrase-replication are mirrored into this spec's phrase clause, because the two files carry their own copies of the clause list and a phrase that only one of them knows would route by which copy happened to be edited. Measured as a bundle: 186 of 319 recovered, +9.3 admissions per million (+0.6%), 0 goldneg_screen hits. Here the arms only decide whether a phrase+cite row buys the expensive screen rather than the cheap tier; they do not admit."
+    }
+  ]
 }

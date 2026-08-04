@@ -1,4 +1,4 @@
-"""`python -m filter.engine <command>` — the engine's six operations.
+"""`python -m filter.engine <command>` — the engine's operations.
 
 Each subcommand is a thin call into one module: the CLI decides nothing about
 routing, it only supplies paths and prints. The one judgement it does make is
@@ -185,6 +185,108 @@ def cmd_export(args) -> int:
     print(f"{manifest['rows']:,} row(s) -> {args.out}")
     print(f"  release {manifest['release_id']}  pile {manifest['pile']}")
     print(f"  sha256  {manifest['sha256']}")
+    if args.pile == "needs_human":
+        # Issue #146 §2: needs_human is "exported with a size attached". The size
+        # is the whole point of the pile — it is the queue a person has to work
+        # through, and a number nobody prints is a queue nobody plans for.
+        print(f"\n  NEEDS HUMAN: {manifest['rows']:,} row(s) await human judgement "
+              "in this release.")
+    return 0
+
+
+def cmd_screen(args) -> int:
+    from filter.engine.claims import ClaimsClient, ClaimsNotConfigured
+    from filter.engine.tiers import (TIER_CHEAP, TIER_EXPENSIVE, run_screen_cheap,
+                                     run_screen_expensive)
+
+    con = open_store(args.store)
+    release_id = _resolve_release(con, args.release)
+    # A dry run answers "how big and how much", which needs no state authority —
+    # so the client is only demanded when something is actually about to be spent.
+    try:
+        client = ClaimsClient()
+    except ClaimsNotConfigured as exc:
+        if args.run:
+            raise SystemExit(f"{exc}. Set SUPABASE_URL and SUPABASE_SERVICE_KEY, or "
+                             "drop --run for a dry run.")
+        client = None
+
+    # screen_expensive IS the validated front door, so its verdicts count by
+    # default; screen_cheap has to earn that on this distribution first (§2), so
+    # it validates unless told otherwise.
+    mode = "live" if (args.live or args.tier == TIER_EXPENSIVE) else "validation"
+    runner = run_screen_cheap if args.tier == TIER_CHEAP else run_screen_expensive
+    report = runner(con, client, release_id, mode=mode, batch_label=args.batch_label,
+                    limit=args.limit, pool_dir=args.pool, overlay_dir=args.overlay,
+                    aliases=load_aliases(args.spec_dir / ALIASES_FILENAME),
+                    run=args.run)
+    con.close()
+    if report.get("dry_run"):
+        return 0
+
+    print(f"tier {report['tier']}  mode {report['mode']}  claim {report['claim_id']}")
+    print(f"  {report['decided']:,} work(s) decided, "
+          f"{report['verdicts']:,} verdict(s) recorded")
+    for outcome, count in sorted(report["outcomes"].items()):
+        print(f"  {outcome:<12} {count:,}")
+    if report.get("revalidation"):
+        print(f"  re-validation — {report['revalidation']['discards']:,} discard(s) "
+              "this tier would have made, by the pile the rules chose:")
+        for pile, count in sorted(report["revalidation"]["by_pile"].items()):
+            print(f"    {pile:<18} {count:,}")
+        print("  Nothing was discarded: validation mode. Re-run with --live once "
+              "these numbers have been adjudicated.")
+    return 0
+
+
+def cmd_handoff(args) -> int:
+    from filter.engine.handoff import decisions, write_handoff
+
+    con = open_store(args.store)
+    release_id = _resolve_release(con, args.release)
+    try:
+        record = read_release(release_id, cache_dir=args.store.parent)
+    except FileNotFoundError:
+        raise SystemExit(
+            f"no release record for {release_id[:12]} beside {args.store} — the "
+            "handoff cannot prove which bundle routed it. Re-run "
+            "`python -m filter.engine route`.")
+
+    from filter.engine.claims import ClaimsClient, ClaimsNotConfigured
+
+    drop: set[int] = set()
+    record_types: dict[int, str] = {}
+    try:
+        drop, record_types = decisions(ClaimsClient(), release_id)
+    except ClaimsNotConfigured:
+        # A valid state — the engine runs without Supabase until a tier spends.
+        # Any OTHER failure is not: a transport error would silently hand off rows
+        # a live run discarded, so it is left to raise.
+        print("no state authority configured (SUPABASE_URL unset) — handing off "
+              "the piles as routed, with no tier verdicts applied.")
+
+    try:
+        manifest = write_handoff(
+            con, args.pool, Path(args.out), release_id, drop=drop,
+            record_types=record_types, specs=load_specs(args.spec_dir),
+            spec_dir=args.spec_dir,
+            aliases=load_aliases(args.spec_dir / ALIASES_FILENAME),
+            expect_bundle_hash=record.get("bundle_hash"),
+            expect_alias_release=record.get("alias_release"),
+            overlay_dir=args.overlay,
+            expect_overlay_hash=record.get("overlay_hash"),
+            from_year=args.from_year, to_year=args.to_year, created_at=_now())
+    except (StaleBundleError, OverlayError) as exc:
+        raise SystemExit(str(exc))
+    con.close()
+
+    print(f"{manifest['rows']:,} row(s) -> {args.out}   (Stage 3 input)")
+    for pile, count in manifest["rows_per_pile"].items():
+        print(f"  {pile:<18} {count:,}")
+    print(f"  dropped by a live tier verdict {manifest['dropped_by_tier_verdict']:,}; "
+          f"typed by one {manifest['typed_by_tier_verdict']:,}")
+    print(f"  release {manifest['release_id']}")
+    print(f"  sha256  {manifest['sha256']}")
     return 0
 
 
@@ -274,6 +376,44 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--overlay", type=Path, default=None,
                         help="The overlay the release was routed under (must match).")
     export.set_defaults(func=cmd_export)
+
+    screen = sub.add_parser(
+        "screen", help="Run an LLM tier over its pile (dry run unless --run).")
+    screen.add_argument("--tier", required=True,
+                        choices=["screen_cheap", "screen_expensive"])
+    screen.add_argument("--pool", type=Path, default=SNAPSHOT_POOL_DIR)
+    screen.add_argument("--store", type=Path, default=DEFAULT_STORE_PATH)
+    screen.add_argument("--release", default=None,
+                        help="Release to screen (default: the store's only one).")
+    screen.add_argument("--limit", type=int, default=None,
+                        help="Stop after N works — how a first live batch stays "
+                             "small enough to inspect.")
+    screen.add_argument("--run", action="store_true",
+                        help="Claim and spend. Without it, nothing is claimed, "
+                             "fetched or spent and an estimate is printed.")
+    screen.add_argument("--live", action="store_true",
+                        help="screen_cheap: let its discards reach the handoff. "
+                             "Its default records verdicts and changes nothing "
+                             "(issue #146 §2 re-validation). screen_expensive is "
+                             "live either way — it is the validated screen.")
+    screen.add_argument("--batch-label", default="",
+                        help="A name for this batch, recorded on the claim.")
+    screen.add_argument("--overlay", type=Path, default=None,
+                        help="The overlay the release was routed under.")
+    screen.set_defaults(func=cmd_screen)
+
+    handoff = sub.add_parser(
+        "handoff", help="Write the screen piles as Stage 3's filtered.csv.")
+    handoff.add_argument("--out", default="data/filtered.csv")
+    handoff.add_argument("--pool", type=Path, default=SNAPSHOT_POOL_DIR)
+    handoff.add_argument("--store", type=Path, default=DEFAULT_STORE_PATH)
+    handoff.add_argument("--release", default=None,
+                         help="Release to hand off (default: the store's only one).")
+    handoff.add_argument("--from-year", type=int, default=None)
+    handoff.add_argument("--to-year", type=int, default=None)
+    handoff.add_argument("--overlay", type=Path, default=None,
+                         help="The overlay the release was routed under (must match).")
+    handoff.set_defaults(func=cmd_handoff)
 
     worklist_cmd = sub.add_parser(
         "worklist", help="Export the no_text rows as a backfill worklist.")

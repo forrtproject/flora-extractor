@@ -1,6 +1,6 @@
 {
   "id": "exclusion-rescue",
-  "description": "The #44 targeted readmission. An exclusion pattern fired, but a replication phrase and a specific author-year cite are both present — the shape of an in-scope computational reproduction the exclusions misfire on ('replicated the analysis code of Smith (2019)'). Outranks the whole 500s band so the readmission wins, and lands in the cheap discard-only tier: the evidence is enough to refuse a terminal discard, not enough to buy the expensive screen. The cite clause is one RE2-safe approximation of an author-year citation (parenthetical, narrative and et-al forms); it replaces extract_author_year_patterns()'s lookahead-based patterns and its bare-name blacklist. Divergence 2 in docs/filter-engine.md: the cite only orders spend, it no longer admits, so an approximation is enough. The name atom is a negated class rather than `\\w`: Python `re` reads `\\w` as Unicode-aware and RE2 (pyarrow) as ASCII, so an accented surname in the cite position — García et al. (2020) — matched one backend and not the other. The trailing `\\b` became an explicit non-digit for the same reason.",
+  "description": "The #44 targeted readmission. An exclusion pattern fired, but a replication phrase and a specific author-year cite are both present — the shape of an in-scope computational reproduction the exclusions misfire on ('replicated the analysis code of Smith (2019)'). Outranks the whole 500s band so the readmission wins, and lands in the cheap discard-only tier: the evidence is enough to refuse a terminal discard, not enough to buy the expensive screen. The exclusion-context clause below is a copy of the 500s patterns and is kept in sync with them: #147 narrowed technical-object, technical-verb and biological-of, and the copies here narrowed with them. Left wide, this rule would keep claiming rows the exclusions no longer discard and hold them at screen_cheap when nothing is rescuing them from anything — the recovered computational reproductions and GWAS-locus replications would have traded a terminal discard for a demotion. There is a sibling rescue at 645, title-phrase-rescue (#147 item 2), which asks for a title phrase instead of a cite and covers only the abstract-only technical exclusions. Both route to screen_cheap, so where both match the pile is the same and only route_rule differs; this rule wins by precedence because a named author-year cite is the stronger evidence. The cite clause is one RE2-safe approximation of an author-year citation (parenthetical, narrative and et-al forms); it replaces extract_author_year_patterns()'s lookahead-based patterns and its bare-name blacklist. Divergence 2 in docs/filter-engine.md: the cite only orders spend, it no longer admits, so an approximation is enough. The name atom is a negated class rather than `\\w`: Python `re` reads `\\w` as Unicode-aware and RE2 (pyarrow) as ASCII, so an accented surname in the cite position — García et al. (2020) — matched one backend and not the other. The trailing `\\b` became an explicit non-digit for the same reason.",
   "match": {
     "all_of": [
       {
@@ -27,7 +27,10 @@
           {
             "any_of": [
               {
-                "text_regex": "\\breplication of (?:the\\s+)?(?:\\w+[-\\s]+){0,3}(?:dna|rna|mrna|cdna|viral|\\w*virus(?:es)?|bacteri\\w+|mycobacteri\\w+|pathogens?|prions?|phages?|chromosomes?|plasmids?|genomes?|genomic|hiv|sars[-\\s]?cov[-\\s]?2?|influenza|mitochondrial|organoids?)\\b"
+                "text_regex": "\\breplication of (?:the\\s+)?(?:\\w+[-\\s]+){0,3}(?:dna|rna|mrna|cdna|viral|\\w*virus(?:es)?|bacteri\\w+|mycobacteri\\w+|pathogens?|prions?|phages?|chromosomes?|plasmids?|hiv|sars[-\\s]?cov[-\\s]?2?|influenza|mitochondrial|organoids?)\\b"
+              },
+              {
+                "text_regex": "\\breplication of (?:the\\s+)?(?:\\w+[-\\s]+){0,3}(?:genomes?|genomic)(?:$|[^-\\s‐-―\\w]|[-\\s‐-―](?:$|[^w]|w(?:$|[^i]|i(?:$|[^d]|d(?:$|[^e])))))"
               },
               {
                 "text_regex": "\\breplication of (?:the\\s+)?(?:\\w+[-\\s]+){0,3}(?:cells?|cellular|parasites?)\\b\\s*(?:[.,;:)\\]]|$|(?:in|by|during|within|with|and|or|is|are|was|were|from|to|at|under)\\b)"
@@ -35,10 +38,10 @@
             ]
           },
           {
-            "text_regex": "\\b(?:replication of (?:the )?(?:apparatus|code|dataset|data|database|model|method|pipeline|protocol|software|simulation)|(?:apparatus|code|dataset|data|database|model|method|pipeline|protocol|software|simulation)\\s+replication)\\b"
+            "text_regex": "\\b(?:replication of (?:the )?(?:apparatus|code|database|pipeline|protocol|software|simulation)|(?:apparatus|code|database|pipeline|protocol|software|simulation)\\s+replication)\\b"
           },
           {
-            "text_regex": "\\breplicat(?:e|ed|ing)\\s+(?:the )?(?:apparatus|code|dataset|data|database|model|method|pipeline|protocol|software|simulation)\\b"
+            "text_regex": "\\breplicat(?:e|ed|ing)\\s+(?:the )?(?:apparatus|code|software|pipeline|script|database)\\b"
           }
         ]
       },

@@ -21,6 +21,8 @@ from shared.dashboard_cache import _compute_extracted_stats, classify_rule_exit
     ("phrase:direct replication; no author-year cite", "r3_no_cite"),
     ("phrase:we replicated; no same-sentence cite",    "r4_no_same_sentence"),
     ("phrase:replication of; cite:(Smith, 2011)",      "r5_pass"),
+    ("rule:phrase-with-cite; phrase:direct replication", "engine_route"),
+    ("rule:dataset-type",                              "engine_route"),
     ("",                                               "unknown"),
     (None,                                             "unknown"),
 ])
@@ -29,8 +31,9 @@ def test_classify_rule_exit(evidence, expected):
 
 
 def test_rule_exit_survives_llm_evidence_prepend():
-    """run_filter prepends the rule evidence to the LLM verdict — the marker must
-    still be recoverable, otherwise every LLM-touched row falls into 'unknown'."""
+    """The retired per-row Stage 2 prepended its rule evidence to the LLM verdict.
+    Rows written that way are still on disk, so the marker must stay recoverable —
+    otherwise every LLM-touched historical row falls into 'unknown'."""
     assert classify_rule_exit(
         "phrase:we replicate; no author-year cite | llm:replicates Smith (2011)"
     ) == "r3_no_cite"

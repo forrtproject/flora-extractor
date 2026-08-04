@@ -509,58 +509,80 @@ def test_a_defective_record_does_not_stop_the_pool(snap_env, monkeypatch):
     ss.scan_snapshot(files=[parquet], pilot_csv=snap_env.tmp / "pilot.csv", survivor_pool=pool)
 
     assert list(pd.read_parquet(pool)["id"]) == [f"https://openalex.org/W{i}" for i in (1, 2, 3, 4)]
-# The anti-drift seam: Stage 1's admission and Stage 2's non-rejection are the same
-# keyword decision, so they cannot disagree about any text. Written as a table
-# rather than a property so the near-misses are visible.
+# The anti-drift seam: Stage 1's keyword admission and the filter engine's spec
+# bundle are one decision expressed twice — Python regexes here, JSON specs there —
+# so they cannot disagree about any text. Written as a table rather than a property
+# so the near-misses are visible, and each case names the pile the ENGINE must put
+# it in, because "not discarded" is satisfied by too many things to be a contract.
+#
+# The parity statement: Stage 1 admits a row exactly when the engine routes it to a
+# SCREEN pile. A rejected row is either engine-discarded (a rule saw it and said no)
+# or unmatched (`pending/no_filter_matched`, no rule claimed it) — never screened.
+# The documented divergences in docs/filter-engine.md are all in the other
+# direction: the concept arm admits rows with no keyword at all, and no-abstract
+# rows fall to `pending/no_text`; neither is a keyword decision, so neither appears
+# in this table.
+_SCREEN_PILES = ("screen_expensive", "screen_cheap")
+
 _GATE_CASES = [
-    # (title, abstract, admitted / kept)
+    # (title, abstract, admitted by Stage 1, pile the engine routes it to)
     ("A direct replication of the anchoring effect",
-     "We report a direct replication of Smith (2010).", True),
+     "We report a direct replication of Smith (2010).", True, "screen_expensive"),
     ("We replicate prior findings",
-     "We replicate prior findings in a new population, naming no target.", True),
-    # title-stem only: Stage 1's old private arm, now shared
+     "We replicate prior findings in a new population, naming no target.",
+     True, "screen_cheap"),
+    # title-stem only: Stage 1's old private arm, now a spec of its own
     ("Reproducibility of the X effect",
-     "Bees forage over long distances when the hive is disturbed.", True),
-    # exclusion + phrase + cite: the #44 rescue
+     "Bees forage over long distances when the hive is disturbed.",
+     True, "screen_cheap"),
+    # exclusion + phrase + cite: the #44 rescue, which outranks the 500s band
     ("A computational reproduction",
-     "We replicated the code of Smith (2019) and re-ran every analysis.", True),
+     "We replicated the code of Smith (2019) and re-ran every analysis.",
+     True, "screen_cheap"),
     # exclusion, nothing to rescue
     ("Origins of DNA replication in yeast",
-     "We map replication forks and origin firing across the genome.", False),
-    # a stem in the abstract alone is not a signal
+     "We map replication forks and origin firing across the genome.",
+     False, "discard"),
+    # a stem in the abstract alone is not a signal — no rule claims these
     ("Foraging patterns in bees",
-     "Replicability was not assessed in this observational field study.", False),
+     "Replicability was not assessed in this observational field study.",
+     False, "pending"),
     ("Notes on honeybee foraging",
-     "Several replications were run independently of the pilot.", False),
-    ("A field experiment on consumer choice", "Prices were randomised by store.", False),
+     "Several replications were run independently of the pilot.", False, "pending"),
+    ("A field experiment on consumer choice", "Prices were randomised by store.",
+     False, "pending"),
 ]
 
 
-@pytest.mark.parametrize("title,abstract,expected", _GATE_CASES)
-def test_stage1_admits_exactly_what_stage2_does_not_reject(snap_env, title, abstract, expected):
-    """One keyword definition, two callers. Given the same title/abstract and no
-    curated-source or non-article-DOI bypass, Stage 1 admits a row exactly when
-    Stage 2 does not call it false_positive."""
-    from filter.rule_filter import classify_row
+def _engine_pile(title: str, abstract: str) -> str:
+    """Route one synthetic pool row through the shipped spec bundle."""
+    from pathlib import Path
 
-    admitted = ss._admit(False, title, abstract)
-    status = classify_row({"doi_r": "10.1/x", "title_r": title, "abstract_r": abstract,
-                           "year_r": "2020", "source": "openalex"})["filter_status"]
+    from filter.engine.route import route_batch
+    from filter.engine.spec import load_specs
 
-    assert admitted is expected
-    assert admitted is (status != "false_positive")
+    record = {
+        "id": "https://openalex.org/W1", "doi": "10.1/x", "title": title,
+        "display_name": title, "publication_year": 2020, "type": "article",
+        "authorships": json.dumps([]), "primary_location": json.dumps({}),
+        "open_access": json.dumps({}), "concepts": json.dumps([]),
+        "abstract_text": abstract, "hit_token_title": True,
+        "hit_token_abstract": False, "hit_concept": False,
+    }
+    specs = load_specs(Path(__file__).resolve().parent.parent / "filter" / "spec")
+    batch = pa.RecordBatch.from_pylist([record], schema=ss._POOL_SCHEMA)
+    return route_batch(specs, batch).to_pylist()[0]["pile"]
 
 
-def test_title_stem_only_row_now_reaches_stage_three(snap_env):
-    """The 750-per-30k population: admitted by Stage 1 on a bare title stem, and no
-    longer thrown away by Stage 2 before Stage 3 ever sees it."""
-    from filter.rule_filter import classify_row
-
-    title, abstract = "Reproducibility of the X effect", "Bees forage over long distances."
-    assert ss._admit(False, title, abstract) is True
-    out = classify_row({"doi_r": "10.1/x", "title_r": title, "abstract_r": abstract,
-                        "year_r": "2020", "source": "openalex"})
-    assert out["filter_status"] == "needs_review"
+@pytest.mark.parametrize("title,abstract,admitted,pile", _GATE_CASES)
+def test_stage1_admits_exactly_what_the_engine_screens(snap_env, title, abstract,
+                                                       admitted, pile):
+    """One keyword decision, two implementations. Stage 1 admits a row exactly when
+    the engine routes it to a screen pile — and the pile is the one named, so a
+    spec edit that quietly moved a row between screen tiers is visible here too."""
+    assert ss._admit(False, title, abstract) is admitted
+    assert _engine_pile(title, abstract) == pile
+    assert admitted is (pile in _SCREEN_PILES)
 
 
 # ---------------------------------------------------------------------------

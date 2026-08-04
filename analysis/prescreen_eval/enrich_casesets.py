@@ -6,7 +6,7 @@ Two things the eval cannot be read without:
     them), so counting them as negatives the pre-screen "saved" inflates the benefit.
     They are marked here and excluded by the scorer.
   * Stage 2 already emits a deterministic high-confidence replication verdict
-    (a replication phrase AND a same-sentence author-year cite — filter/rule_filter.py),
+    (a replication phrase AND an author-year cite — the `phrase-with-cite` rule),
     and curated-source rows bypass keyword filtering entirely. Both are candidate
     overrides in place of a hand-written regex, so the eval has to be able to see them.
 

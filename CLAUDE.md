@@ -14,15 +14,17 @@ uninformative / cannot_be_determined / not_a_replication).
 ## Architecture — 4-Stage Pipeline
 
 ```text
-Stage 1: search/     → discovers candidate papers → data/candidates.csv
-Stage 2: filter/     → removes false positives    → data/filtered.csv
-Stage 3: extract/    → finds original + outcome   → data/extracted.csv
-Stage 4: validate/   → read-only monitoring dashboard (no CSV output)
+Stage 1: search/        → discovers candidate papers → data/candidates.csv + survivor pool
+Stage 2: filter/engine/ → routes the pool into piles → data/filtered.csv (handoff)
+Stage 3: extract/       → finds original + outcome   → data/extracted.csv
+Stage 4: validate/      → read-only monitoring dashboard (no CSV output)
 ```
 
 ```bash
 python -m search.run_search         # Stage 1 → data/candidates.csv
-python -m filter.run_filter         # Stage 2 → data/filtered.csv
+python -m filter.engine route       # Stage 2 → routing release in the DuckDB store
+python -m filter.engine screen --tier screen_expensive --run   # the claimed LLM tier
+python -m filter.engine handoff --out data/filtered.csv        # → Stage 3's input
 python -m extract.run_extract       # Stage 3 → data/extracted.csv (streamed row-by-row)
 python -m extract.csv_to_db         # push resolved rows into the Supabase validation tables
 python -m validate.app              # Stage 4 dashboard → http://localhost:5001
@@ -69,8 +71,9 @@ with all stage teams.
 | Stage | Files |
 | ----- | ----- |
 | `search/` | `run_search.py` (orchestrator; index-based merge/append), `openalex_search.py` (cursor-paginated phrase/concept harvest), `external_lists.py`, `deduplicate.py`, `fetch_abstracts.py` (abstract backfill: OpenAlex → EPMC → S2 → CrossRef → Scopus as uniform checkpointed phases) |
-| `filter/` | `rule_filter.py` (deterministic classifier), `run_filter.py` (chunked orchestrator). No LLM: rule-undecidable rows are written through as `needs_review` and settled by Stage 3's screen |
-| `filter/engine/` | The issue #146 filter engine (supersedes the `rule_filter` path once its exports feed Stage 3): declarative JSON specs in `filter/spec/` routed by precedence into piles (`discard` / `screen_expensive` / `screen_cheap` / `needs_human` / `pending`) over the survivor pool. Rules route and discard; only LLMs admit. Design: [`docs/filter-engine.md`](docs/filter-engine.md); policy (precedence bands, pile→status mapping, measurement levels): `filter/spec/CONVENTIONS.md`. CLI: `python -m filter.engine specs\|verify\|route\|diagnose\|export\|status` |
+| `filter/` | `phrase_detection.py` — `keyword_verdict()`, Stage 1's admission gate, whose exclusion patterns are loaded from the spec bundle so one edit moves both. The old `rule_filter.py`/`run_filter.py` path is retired (#146) |
+| `filter/engine/` | The issue #146 filter engine, which IS Stage 2: declarative JSON specs in `filter/spec/` routed by precedence into piles (`discard` / `screen_expensive` / `screen_cheap` / `needs_human` / `pending`) over the survivor pool; claimed, budget-gated LLM tiers; `handoff` writes Stage 3's input. Rules route and discard; only LLMs admit. Design: [`docs/filter-engine.md`](docs/filter-engine.md); policy (precedence bands, pile→status mapping, measurement levels): `filter/spec/CONVENTIONS.md`. CLI: `python -m filter.engine specs\|verify\|route\|diagnose\|worklist\|screen\|export\|handoff\|status` |
+| `db/migrations/` | The engine's Postgres state authority (claims, permanent verdicts, audit, validation lineage) — SQL the maintainer runs in Supabase |
 | `extract/` | `run_extract.py` (orchestrator: chunked read, front-door screen, per-target adapter), `link_original.py` (resolution ladder), `code_outcome.py` (outcome coding; reproductions use the computation/robustness axes), `sanity_check.py` (post-run quarantine to set-aside CSVs; runs on completion and Ctrl-C), `promote_test.py`, `audit_dois.py`, `csv_to_db.py`, `clean_parse_cache.py` |
 | `validate/` | Read-only Flask dashboard: `app.py` registers the `dashboard`, `check` and `batch` blueprints only |
 | `misc/` | Reference examples and 20-row sample CSVs — do not import |

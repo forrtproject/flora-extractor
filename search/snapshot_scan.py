@@ -434,9 +434,13 @@ def _admit(concept_hit: bool, title: str, abstract: str, year: Optional[int] = N
            verdict: "Optional[object]" = None) -> bool:
     """Stage B: keep the row?
 
-    The text arm is ``keyword_verdict`` — the SAME function Stage 2's rule filter
-    calls — so a row Stage 1 writes is exactly a row Stage 2 does not reject. Its
-    ``ambiguous`` tier is what used to be Stage 1's private title-token arm.
+    The text arm is ``keyword_verdict`` — the same keyword decision the filter
+    engine's spec bundle encodes — so a row Stage 1 writes is exactly a row the
+    engine does not route to ``discard``. Its ``ambiguous`` tier is what used to
+    be Stage 1's private title-token arm. The two are held together by
+    ``tests/test_snapshot_scan.py``'s parity test rather than by a shared call:
+    the engine evaluates JSON specs, Stage 1 runs Python regexes, and the
+    documented divergences live in ``docs/filter-engine.md``.
 
     The concept arm has no phrase equivalent and stays a Stage 1 concern: it is
     OpenAlex's own classification of the work, not anything in the text, so no

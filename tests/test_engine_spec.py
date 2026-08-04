@@ -17,6 +17,8 @@ EXPECTED = {
     "dataset-type": ("discard", 950),
     "non-article-type": ("discard", 945),
     "exclusion-rescue": ("screen_cheap", 650),
+    # #147 item 2: the second rescue, one band-neighbour below exclusion-rescue.
+    "title-phrase-rescue": ("screen_cheap", 645),
     "editorial-artifact": ("discard", 555),
     "data-availability": ("discard", 550),
     "biological": ("discard", 545),

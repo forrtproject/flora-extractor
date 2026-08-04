@@ -83,6 +83,21 @@
       },
       {
         "text_regex": "\\bwe\\s+\\w+ly\\s+replicate[sd]?\\b"
+      },
+      {
+        "text_regex": "\\bwe\\s+(?:\\w+\\s+){0,2}replicat(?:e|es|ed)\\b"
+      },
+      {
+        "text_regex": "\\b(?:sought|seek(?:s|ing)?|tri(?:ed|es)|try(?:ing)?|wanted|intend(?:ed|s|ing)?|hoped?|started|planned|undertook|proceeded|decided|chose)\\s+to\\s+(?:\\w+ly\\s+)?replicate\\b"
+      },
+      {
+        "text_regex": "\\b(?:fail\\w*|unable|inabilit\\w+|attempt\\w*)\\s+to\\s+(?:\\w+ly\\s+)?replicate\\b"
+      },
+      {
+        "text_regex": "\\b(?:failures?\\s+to\\s+replicate|failed\\s+replications?|replication\\s+failures?|unsuccessful\\s+replications?)\\b"
+      },
+      {
+        "text_regex": "\\battempted\\s+replications?\\b"
       }
     ]
   },
@@ -90,5 +105,13 @@
   "vocabulary": "replication",
   "precedence": 260,
   "shadow": false,
-  "measured": []
+  "measured": [
+    {
+      "level": "downstream",
+      "n": 2892614,
+      "sample": "2,892,614 real OpenAlex snapshot rows (10 manifest partitions of the stride-122 list, materialized locally) for the cost side, and the 7,505-paper override_positives.json gold corpus plus the 74-row goldneg_screen / 14-row goldneg_curated rejection pools for the recall side; branch analysis/stage-b-eval, analysis/stage_b_eval/vocab_holes_report.md, #144 evidence pass. Provenance caveat (#151): 4,681 of the 7,505 gold positives (62%) are `allrep_llm` — the old pipeline's own LLM verdicts, never human-confirmed — so the 186-of-319 recall figure is an upper bound; only the 38% curated share (entry_sheet 1,551, flora_db 1,266) is human evidence.",
+      "date": "2026-08-03",
+      "rationale": "#147 item 1, bundle T2 minus its GWAS-guard member (G1, which lives in phrase-with-cite's none_of): the five arms added here — the two-word gap between `we` and `replicate(d)` (C2), the sought/tried/wanted matrix-verb family (C1b), fail/unable/attempt to replicate (C12), the failure nouns (C6) and `attempted replication(s)` (C13) — recover 186 of the 319 gold positives that carry no matching phrase (58%), for 9.3 extra admissions per million scanned (+0.6%), 0 goldneg_screen hits and 7 goldneg_curated. The passive, gerund, `replicab*` and bare third-person arms are deliberately NOT here: T4 buys 65 more papers at 13x the admissions, and their noise (the biological-replicate and future-work senses) has no compact shape."
+    }
+  ]
 }

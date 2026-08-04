@@ -1,9 +1,9 @@
 """
-rescan_impact_report.py — Read-only impact report for the 2026-07-08 classification
-accuracy fixes (same-sentence proximity gate, month/weekday stopword filter, Stage 3
-narrative-citation extraction). Re-runs the already-fixed code against the EXISTING
-filtered.csv/extracted.csv data and reports how many rows would be reclassified or
-relinked under the new logic. No writes, no LLM calls. Stage 3 re-linking reuses each
+rescan_impact_report.py — Read-only impact report for the 2026-07-08 Stage 3
+narrative-citation extraction fix. Re-runs the already-fixed code against the
+EXISTING extracted.csv data and reports how many rows would be relinked under the
+new logic. Its filter-gate half was removed with the rule filter it audited (#146):
+routing is now the engine's, and `diagnose` is how a rule change is measured. No writes, no LLM calls. Stage 3 re-linking reuses each
 row's already-cached OpenAlex candidate list and journal lookups — if a candidate's
 journal name isn't already cached, it's treated as unknown rather than fetched fresh,
 so this script makes no network calls either.
@@ -23,7 +23,6 @@ import pandas as pd
 
 from shared.config import CACHE_DIR, DATA_DIR, log
 from shared.utils import cache_key, clean_doi
-from filter.rule_filter import classify_row
 from extract.link_original import _resolve_rule_based
 
 _OA_CACHE_DIR = CACHE_DIR / "openalex"
@@ -43,59 +42,6 @@ def _cached_only_journal(doi: str) -> str:
         return json.loads(cache_path.read_text(encoding="utf-8")).get("journal", "")
     except Exception:
         return ""
-
-
-def audit_filter_gate_impact(limit: int | None = None, chunksize: int = 50_000) -> pd.DataFrame:
-    """
-    Re-run classify_row() (proximity gate + stopword filter already applied) against
-    every currently high-confidence replication/reproduction row that was decided by
-    the RULE PATH ALONE (filter_method == "rule_based") in filtered.csv. Returns rows
-    whose filter_status or filter_confidence would change. No writes.
-
-    Rows with filter_method "llm" or "both" are deliberately excluded: those were
-    already reviewed by an LLM at some point, so their current status reflects a
-    semantic judgment call, not a naive rule match — comparing them against a
-    rule-only rerun isn't a meaningful "regression" signal (classify_row() never
-    calls the LLM, so it will always disagree with an LLM-influenced verdict
-    regardless of these fixes). Only "rule_based" rows were confidently decided
-    with zero semantic check, which is exactly what Fix 1/2 target.
-    """
-    filtered_path = DATA_DIR / "filtered.csv"
-    changes: list[dict] = []
-    n_checked = 0
-
-    for chunk in pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig",
-                              chunksize=chunksize, low_memory=False):
-        chunk = chunk.fillna("")
-        eligible = chunk[
-            (chunk["filter_confidence"] == "high")
-            & (chunk["filter_status"].isin(["replication", "reproduction"]))
-            & (chunk["filter_method"] == "rule_based")
-        ]
-        for _, row in eligible.iterrows():
-            if limit is not None and n_checked >= limit:
-                break
-            row_dict = row.to_dict()
-            n_checked += 1
-            new = classify_row(row_dict)
-            if (new["filter_status"], new["filter_confidence"]) != (
-                row_dict["filter_status"], row_dict["filter_confidence"]
-            ):
-                changes.append({
-                    "doi_r": row_dict.get("doi_r", ""),
-                    "title_r": row_dict.get("title_r", "")[:100],
-                    "old_filter_status": row_dict["filter_status"],
-                    "old_filter_confidence": row_dict["filter_confidence"],
-                    "new_filter_status": new["filter_status"],
-                    "new_filter_confidence": new["filter_confidence"],
-                    "new_filter_evidence": new["filter_evidence"],
-                })
-        if limit is not None and n_checked >= limit:
-            break
-
-    log.info("Filter gate audit: checked %d rule_based high-confidence rows, %d would change",
-              n_checked, len(changes))
-    return pd.DataFrame(changes)
 
 
 def audit_stage3_relink_impact(limit: int | None = None) -> pd.DataFrame:
@@ -167,19 +113,12 @@ def run_report(limit: int | None = None) -> dict:
     out_dir = DATA_DIR.parent / "analysis"
     out_dir.mkdir(exist_ok=True)
 
-    log.info("Running filter gate impact audit (reads filtered.csv in 50k-row chunks)...")
-    filter_changes = audit_filter_gate_impact(limit=limit)
-    filter_path = out_dir / "rescan_filter_gate_impact.csv"
-    filter_changes.to_csv(filter_path, index=False, encoding="utf-8-sig")
-
     log.info("Running Stage 3 relink impact audit...")
     relink_changes = audit_stage3_relink_impact(limit=limit)
     relink_path = out_dir / "rescan_stage3_relink_impact.csv"
     relink_changes.to_csv(relink_path, index=False, encoding="utf-8-sig")
 
     summary = {
-        "filter_rows_would_change": len(filter_changes),
-        "filter_report": str(filter_path),
         "stage3_rows_would_relink": len(relink_changes),
         "stage3_report": str(relink_path),
     }

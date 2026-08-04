@@ -56,17 +56,21 @@ _METHOD_KEYS = (
 )
 
 
-# Stage-2 rule exits, in the order rule_filter._classify_row checks them. The exit
-# is recovered from filter_evidence rather than a dedicated column because
-# run_filter.py PREPENDS the rule evidence to the LLM verdict ("<rule> | llm:<...>"),
-# so the marker survives even on rows the LLM later reclassified.
-_RULE_EXIT_KEYS = ("r1_exclusion", "r2_no_phrase", "r3_no_cite",
+# How a Stage-2 row got its verdict, recovered from filter_evidence rather than a
+# dedicated column. `engine_route` is the current path: the filter engine writes
+# `rule:<spec id>` and the pile did the deciding. The `r*` keys are the retired
+# per-row classifier's exits, kept because rows on disk still carry them — that
+# generation of Stage 2 prepended its rule evidence to an LLM verdict
+# ("<rule> | llm:<...>"), so the marker survives even where the LLM reclassified.
+_RULE_EXIT_KEYS = ("engine_route", "r1_exclusion", "r2_no_phrase", "r3_no_cite",
                    "r4_no_same_sentence", "r5_pass", "unknown")
 
 
 def classify_rule_exit(evidence: str) -> str:
-    """Which rule_filter exit produced this row, from its filter_evidence string."""
+    """Which Stage-2 exit produced this row, from its filter_evidence string."""
     e = str(evidence or "")
+    if e.startswith("rule:"):
+        return "engine_route"
     if e.startswith("exclusion:"):
         return "r1_exclusion"
     if e.startswith("no replication phrase detected"):

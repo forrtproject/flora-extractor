@@ -37,19 +37,18 @@ in-scope. The patterns are kept because they
 buy specificity: they drop the large volume of molecular-biology and pure-software
 "replication" noise.
 
-The narrow overlap is rescued rather than lost. When an exclusion pattern fires,
-`filter/rule_filter.py` re-checks the text for a replication phrase with exclusions
-ignored; if that phrase **and** an author-year citation are both present, the row is
-kept as `needs_review` at medium confidence (`filter_evidence` records
-`exclusion:<pattern>; phrase+cite present — LLM review`) instead of being rejected, and
-reaches Stage 3's front-door screen. Rows where the exclusion fires without both
-signals are still `false_positive` at high confidence and never reach the screen.
+The narrow overlap is rescued rather than lost. The `exclusion-rescue` spec
+outranks the exclusion band: when an exclusion pattern fires but the text also
+carries a replication phrase **and** an author-year citation, the row routes to
+`screen_cheap` instead of being discarded, and so still reaches a screening tier.
+Rows where the exclusion fires without both signals are discarded at high
+confidence and never reach a screen.
 
-**Revisit obligation:** the rescue gate requires a *parseable* author-year citation, so
-an in-scope reproduction that names its target in prose alone is still dropped — and
-since the Stage-2 LLM escalation was retired, the rule filter is the only thing standing
-between a `false_positive` verdict and the paper never being seen again. Measure
-how much that costs before treating the technical-exclusion bucket as clean.
+**Revisit obligation:** the rescue requires a *parseable* author-year citation, so
+an in-scope reproduction that names its target in prose alone is still dropped —
+and a discard is the one rule-terminal state, with nothing standing between it and
+the paper never being seen again. Measure how much that costs before treating the
+technical-exclusion bucket as clean.
 
 ---
 
@@ -63,18 +62,22 @@ on for triage or downstream weighting until it is recalibrated.
 
 ## (d) Missing abstracts force title-only decisions
 
-Of the **~2.32M filtered rows, ~494k lack an abstract**. For those rows the phrase and
-LLM decisions were made on the **title only**, which is materially weaker signal.
+Of the **~2.32M rows the retired Stage 2 filtered, ~494k lacked an abstract**. For
+those rows the phrase and LLM decisions were made on the **title only**, which is
+materially weaker signal, and those decisions are what the corpus on disk carries.
 
-`search/fetch_abstracts.py` backfills abstracts through a four-tier waterfall (OpenAlex
-batch → Semantic Scholar batch → CrossRef by DOI → Scopus by DOI), but a backfilled
-abstract does not by itself change a decision already written to `filtered.csv`: the
-Stage-2 resume index makes `run_filter` skip those rows. `filter/reset_backfilled`
-drops the rows that were decided empty-abstract and whose abstract has since arrived,
-so they are screened again.
+The filter engine no longer decides such a row at all: a work routed to a screening
+pile with no abstract is downgraded to `pending/no_text`, because absence of
+evidence must not convert into a proceed. Text arrives through a **text overlay** —
+`python -m filter.engine worklist` exports the `no_text` rows,
+`python -m filter.engine.backfill` fetches them through Stage 1's five sources, and
+a frozen overlay folds into the release id, so re-routing under it genuinely
+re-decides those rows.
 
-**Revisit obligation:** run backfill → `reset_backfilled --apply` → `run_filter` over
-the previously title-only rows, and report how many decisions the abstracts changed.
+**Revisit obligation:** the ~494k figure above is the old `filtered.csv`. Re-measure
+it as a `pending/no_text` count on the current release, run the worklist → backfill
+→ freeze → `route` cycle over it, and report how many piles the recovered abstracts
+changed.
 
 ---
 
