@@ -32,7 +32,8 @@ from filter.engine.pool_reader import iter_pool_batches, overlay_manifest_hash
 from filter.engine.release import read_release, releases_dir, routing_release, write_release
 from filter.engine.spec import bundle_hash, load_specs
 from filter.engine.store import (
-    DEFAULT_STORE_PATH, build_routing, open_store, pile_counts, releases, sample_pile,
+    DEFAULT_STORE_PATH, StoreUnavailable, build_routing, open_store, pile_counts,
+    releases, sample_pile,
 )
 from filter.engine.workids import alias_release, load_aliases
 from shared.config import SNAPSHOT_POOL_DIR
@@ -159,7 +160,7 @@ def cmd_diagnose(args) -> int:
 
 
 def cmd_export(args) -> int:
-    con = open_store(args.store)
+    con = open_store(args.store, read_only=True)
     release_id = _resolve_release(con, args.release)
     try:
         record = read_release(release_id, cache_dir=args.store.parent)
@@ -199,7 +200,7 @@ def cmd_screen(args) -> int:
     from filter.engine.tiers import (TIER_CHEAP, TIER_EXPENSIVE, run_screen_cheap,
                                      run_screen_expensive)
 
-    con = open_store(args.store)
+    con = open_store(args.store, read_only=True)
     release_id = _resolve_release(con, args.release)
     # A dry run answers "how big and how much", which needs no state authority —
     # so the client is only demanded when something is actually about to be spent.
@@ -226,7 +227,12 @@ def cmd_screen(args) -> int:
 
     print(f"tier {report['tier']}  mode {report['mode']}  claim {report['claim_id']}")
     print(f"  {report['decided']:,} work(s) decided, "
-          f"{report['verdicts']:,} verdict(s) recorded")
+          f"{report['verdicts']:,} verdict(s) recorded "
+          f"({report.get('workers', 1)} worker(s))")
+    responses = report.get("responses") or {}
+    if responses:
+        print(f"  response blobs — {responses.get('uploaded', 0):,} uploaded, "
+              f"{responses.get('response_pending_upload', 0):,} still on disk only")
     for outcome, count in sorted(report["outcomes"].items()):
         print(f"  {outcome:<12} {count:,}")
     if report.get("revalidation"):
@@ -242,7 +248,7 @@ def cmd_screen(args) -> int:
 def cmd_handoff(args) -> int:
     from filter.engine.handoff import decisions, write_handoff
 
-    con = open_store(args.store)
+    con = open_store(args.store, read_only=True)
     release_id = _resolve_release(con, args.release)
     try:
         record = read_release(release_id, cache_dir=args.store.parent)
@@ -291,7 +297,7 @@ def cmd_handoff(args) -> int:
 
 
 def cmd_worklist(args) -> int:
-    con = open_store(args.store)
+    con = open_store(args.store, read_only=True)
     release_id = _resolve_release(con, args.release)
     rows = worklist(con, release_id, args.pool, Path(args.out),
                     aliases=load_aliases(args.spec_dir / ALIASES_FILENAME))
@@ -303,7 +309,7 @@ def cmd_worklist(args) -> int:
 def cmd_status(args) -> int:
     cache_dir = args.store.parent
     on_disk = sorted(p.stem for p in releases_dir(cache_dir).glob("*.json"))
-    con = open_store(args.store)
+    con = open_store(args.store, read_only=True)
     routed = set(releases(con))
     print(f"store {args.store}")
     for release_id in sorted(set(on_disk) | routed):
@@ -434,7 +440,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except StoreUnavailable as exc:
+        # An operator condition with two different fixes ("route first" vs "wait
+        # for the writer"), so the message is the whole answer — not a traceback.
+        raise SystemExit(str(exc))
 
 
 if __name__ == "__main__":

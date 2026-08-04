@@ -13,6 +13,7 @@ to anything.
 """
 
 import json
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -22,7 +23,7 @@ import pytest
 
 from filter.engine import handoff as handoff_mod
 from filter.engine import tiers
-from filter.engine.claims import PENDING_UPLOAD, UPLOADED, ClaimConflict
+from filter.engine.claims import PENDING_UPLOAD, ClaimConflict
 from filter.engine.export import export_pile
 from filter.engine.store import build_routing, open_store
 from search.snapshot_scan import _POOL_SCHEMA
@@ -107,7 +108,10 @@ def _isolated_cache(tmp_path, monkeypatch):
     """Response blobs and run reports go to tmp_path, never the real cache/."""
     monkeypatch.setattr(tiers, "RESPONSES_DIR", tmp_path / "responses")
     monkeypatch.setattr(tiers, "RUNS_DIR", tmp_path / "runs")
-    monkeypatch.setattr(tiers, "_push_response", lambda path: False)
+    # No Hugging Face unless a test installs one. This is the real skip-the-upload
+    # flag, so every test here also exercises the "uploads are off" configuration:
+    # the blobs stay on disk, the verdicts stay pending, the run is unaffected.
+    monkeypatch.setattr(tiers, "ENGINE_TIER_HF_UPLOAD", False)
 
 
 def _client(calls: list) -> MagicMock:
@@ -278,11 +282,11 @@ def test_the_response_blob_is_on_disk_before_the_verdict_row(con, pool, tmp_path
     real_write = tiers._write_response
 
     def spy(blob):
-        response_hash, state = real_write(blob)
+        response_hash, path = real_write(blob)
         written.append(("write_response", response_hash,
                         (tmp_path / "responses" / f"{response_hash}.json").exists()))
         calls.append(("write_response", response_hash))
-        return response_hash, state
+        return response_hash, path
 
     patcher, _ = _cheap_votes("yes")
     with patcher, patch.object(tiers, "_write_response", spy):
@@ -294,18 +298,120 @@ def test_the_response_blob_is_on_disk_before_the_verdict_row(con, pool, tmp_path
     # No HF push was possible, and the state says so rather than claiming otherwise.
     states = [c[1]["response_state"] for c in calls if c[0] == "record_verdict"]
     assert states and set(states) == {PENDING_UPLOAD}
-
-
-def test_an_uploaded_blob_is_recorded_as_uploaded(con, pool, monkeypatch):
-    monkeypatch.setattr(tiers, "_push_response", lambda path: True)
-    calls: list = []
-    patcher, _ = _cheap_votes("yes")
-    with patcher:
-        tiers.run_screen_cheap(con, _client(calls), RELEASE, pool_dir=pool, run=True)
-
-    states = [c[1]["response_state"] for c in calls if c[0] == "record_verdict"]
-    assert set(states) == {UPLOADED}
     assert all(c[1]["response_hash"] for c in calls if c[0] == "record_verdict")
+
+
+# ---------------------------------------------------------------------------
+# The upload: batched commits, and a state that never overclaims
+# ---------------------------------------------------------------------------
+
+
+class _FakeHub:
+    """The two calls `_ResponseUploader` makes, and a record of them."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.commits: list[list[str]] = []
+        self.fail = fail
+
+    def install(self, monkeypatch) -> None:
+        import sys
+        import types
+        module = types.ModuleType("huggingface_hub")
+        module.CommitOperationAdd = lambda path_in_repo=None, path_or_fileobj=None: (
+            types.SimpleNamespace(path_in_repo=path_in_repo, payload=path_or_fileobj))
+        module.HfApi = lambda token=None: self
+        monkeypatch.setitem(sys.modules, "huggingface_hub", module)
+        monkeypatch.setattr(tiers, "ENGINE_TIER_HF_UPLOAD", True)
+        monkeypatch.setattr(tiers, "FLORA_POOL_REPO", "org/pool")
+        monkeypatch.setenv("HF_TOKEN", "hf_test")
+
+    def create_commit(self, repo_id=None, repo_type=None, operations=None,
+                      commit_message=None):
+        if self.fail:
+            raise RuntimeError("HTTP 429 Too Many Requests")
+        self.commits.append([op.path_in_repo for op in operations])
+
+
+def _many_works(n: int) -> list:
+    """Works the cheap tier actually asks its voters about — no hard signal, and
+    comfortably over PRESCREEN_MIN_ABSTRACT_CHARS, or a bypass would answer for it."""
+    abstract = (
+        "We survey how researchers describe their own methods sections across three "
+        "decades of published work, coding each article for the presence of a "
+        "materials appendix, a data statement and a power analysis, and we relate "
+        "those codes to the journal's editorial policy at the time of publication.")
+    return [tiers.Work(1000 + i, f"10.1/w{i}", f"Study {i}", abstract, "screen_cheap")
+            for i in range(n)]
+
+
+def test_blobs_are_committed_in_batches_not_one_commit_each(con, pool, monkeypatch):
+    """The defect this replaced: one HF commit per response blob (429s all round)."""
+    hub = _FakeHub()
+    hub.install(monkeypatch)
+    monkeypatch.setattr(tiers, "FLORA_HF_COMMIT_BATCH", 10)
+    calls: list = []
+    client = _client(calls)
+    works = _many_works(12)                       # 12 works × 2 votes = 24 blobs
+
+    patcher, _ = _cheap_votes("no", "no")
+    with patcher:
+        tiers._run_tier(con, client, RELEASE, tiers.TIER_CHEAP, works,
+                        tiers._cheap_judge, mode="validation", batch_label="b", run=True)
+
+    committed = [name for commit in hub.commits for name in commit]
+    assert len(committed) == 24
+    # Two full batches of ten and a final flush of four — not 24 commits.
+    assert [len(c) for c in hub.commits] == [10, 10, 4]
+    # Every verdict row goes in pending; the state is corrected once a commit took
+    # the bytes, and never before.
+    states = {c[1]["response_state"] for c in calls if c[0] == "record_verdict"}
+    assert states == {PENDING_UPLOAD}
+    marked = {h for call in client.mark_uploaded.call_args_list for h in call.args[0]}
+    assert len(marked) == 24
+
+
+def test_a_failed_commit_never_says_uploaded(con, pool, monkeypatch):
+    hub = _FakeHub(fail=True)
+    hub.install(monkeypatch)
+    calls: list = []
+    client = _client(calls)
+
+    patcher, _ = _cheap_votes("no", "no")
+    with patcher:
+        report = tiers.run_screen_cheap(con, client, RELEASE, pool_dir=pool, run=True)
+
+    assert client.mark_uploaded.call_count == 0
+    assert report["responses"] == {"uploaded": 0, PENDING_UPLOAD: 4}
+    states = {c[1]["response_state"] for c in calls if c[0] == "record_verdict"}
+    assert states == {PENDING_UPLOAD}
+
+
+# ---------------------------------------------------------------------------
+# The thread pool
+# ---------------------------------------------------------------------------
+
+
+def test_the_pool_loses_no_verdict_and_double_counts_none(con, pool, monkeypatch):
+    """Every work is decided exactly once and the counters agree with the calls."""
+    monkeypatch.setattr(tiers, "ENGINE_TIER_WORKERS", 8)
+    calls: list = []
+    client = _client(calls)
+    works = _many_works(40)
+
+    patcher, _ = _cheap_votes("no", "no")
+    with patcher:
+        report = tiers._run_tier(con, client, RELEASE, tiers.TIER_CHEAP, works,
+                                 tiers._cheap_judge, mode="validation",
+                                 batch_label="b", run=True)
+
+    recorded = [c[1] for c in calls if c[0] == "record_verdict"]
+    assert report["decided"] == 40
+    assert report["outcomes"] == {"discard": 40}
+    assert report["verdicts"] == len(recorded) == 80       # two voters per work
+    assert sorted({c["work_id"] for c in recorded}) == [w.work_id for w in works]
+    assert report["discarded_work_ids"] == sorted(w.work_id for w in works)
+    assert report["by_pile"] == {"screen_cheap": 40}
+    client.release_claim.assert_called_once_with("claim-1", "complete")
 
 
 # ---------------------------------------------------------------------------
@@ -314,24 +420,36 @@ def test_an_uploaded_blob_is_recorded_as_uploaded(con, pool, monkeypatch):
 
 
 def test_an_exhausted_budget_fails_the_claim_and_keeps_what_was_decided(con, pool):
+    """The budget is checked per work — under a pool too — and running out ends the
+    run without taking the verdicts already written down with it."""
     calls: list = []
     client = _client(calls)
+    lock = threading.Lock()
+    allowed = 5
     seen = {"n": 0}
 
     def budget():
-        seen["n"] += 1
-        if seen["n"] > 1:
+        with lock:
+            seen["n"] += 1
+            spent = seen["n"] > allowed
+        if spent:
             raise TokenBudgetExhausted("spent")
 
-    patcher, _ = _cheap_votes("yes")
+    works = _many_works(40)
+    patcher, _ = _cheap_votes("no", "no")
     with patcher, patch.object(tiers, "check_openai_budget", budget):
         with pytest.raises(TokenBudgetExhausted):
-            tiers.run_screen_cheap(con, client, RELEASE, pool_dir=pool, run=True)
+            tiers._run_tier(con, client, RELEASE, tiers.TIER_CHEAP, works,
+                            tiers._cheap_judge, mode="validation", batch_label="b",
+                            run=True)
 
     assert ("release_claim", ("claim-1", "failed")) in calls
     assert ("release_claim", ("claim-1", "complete")) not in calls
-    # The first work was decided before the budget ran out; its verdicts stay.
-    assert [c for c in calls if c[0] == "record_verdict"]
+    # The works that passed the check were decided, and their verdicts stay; the
+    # ones behind the exhaustion were never examined, so they were never spent on.
+    recorded = [c for c in calls if c[0] == "record_verdict"]
+    assert len(recorded) == 2 * allowed
+    assert len({c[1]["work_id"] for c in recorded}) == allowed
 
 
 # ---------------------------------------------------------------------------

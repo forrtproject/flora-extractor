@@ -69,7 +69,7 @@ def _token_usage_state_in_tmp(tmp_path_factory, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_provider_throttle(monkeypatch):
-    """Zero the per-provider LLM rate limits and forget the last-call timestamps.
+    """Zero the per-provider LLM rate limits and forget the reserved call slots.
 
     Without this every mocked provider call in the suite waits out a real
     wall-clock interval, and a test that records time.sleep() calls sees the
@@ -78,7 +78,7 @@ def _no_provider_throttle(monkeypatch):
     monkeypatch.setattr(
         _llm_client, "_PROVIDER_RATE_SEC",
         {p: 0.0 for p in _llm_client._PROVIDER_RATE_SEC})
-    _llm_client._last_call_at.clear()
+    _llm_client._next_call_at.clear()
 
 
 @pytest.fixture()

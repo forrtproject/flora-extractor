@@ -39,6 +39,10 @@ import requests
 # PostgREST caps a page at db-max-rows regardless of the Range header; every read
 # pages until a short page comes back (same rule as shared/supabase_client.py).
 _PAGE_SIZE = 1000
+# Hashes per response-state PATCH. They travel in the URL (`response_hash=in.(…)`),
+# and a 64-character hash each puts ~3 kB in a 50-hash request — comfortably inside
+# any server's URL limit, while a whole commit's worth would not be.
+_MARK_CHUNK = 50
 
 TIERS = ("screen_cheap", "screen_expensive", "human", "measurement")
 CLAIM_STATUSES = ("active", "complete", "cancelled", "failed")
@@ -287,6 +291,24 @@ class ClaimsClient:
             return rows
         wanted = set(claim_ids)
         return [r for r in rows if r.get("claim_id") in wanted]
+
+    def mark_uploaded(self, response_hashes: Iterable[str]) -> int:
+        """Flip `response_pending_upload` → `uploaded` for these blobs. Returns the count.
+
+        The reconciliation half of §4's ordering. Blobs are committed to Hugging Face
+        in batches AFTER the verdict rows naming them exist (one commit per blob is
+        what put the repo into HTTP 429), so the row is inserted pending and told the
+        truth here once a commit has actually accepted the bytes. Only rows still
+        pending are touched, and the filter is the hash, so re-running is a no-op.
+        """
+        hashes = [h for h in dict.fromkeys(response_hashes) if h]
+        for start in range(0, len(hashes), _MARK_CHUNK):
+            chunk = hashes[start:start + _MARK_CHUNK]
+            self._patch("engine_verdicts",
+                        {"response_hash": f"in.({','.join(chunk)})",
+                         "response_state": f"eq.{PENDING_UPLOAD}"},
+                        {"response_state": UPLOADED})
+        return len(hashes)
 
     def supersede_verdict(self, old_id: str, new_id: str) -> None:
         """Point a superseded verdict at the one that replaced it.

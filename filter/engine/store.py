@@ -69,10 +69,42 @@ _EVAL_SCHEMA = pa.schema([
 ])
 
 
-def open_store(path: Path = DEFAULT_STORE_PATH) -> duckdb.DuckDBPyConnection:
-    """The store at *path*, tables created if absent. `:memory:` works too."""
-    if str(path) != ":memory:":
+class StoreUnavailable(RuntimeError):
+    """The store cannot be opened — absent, or held by another process."""
+
+
+def open_store(path: Path = DEFAULT_STORE_PATH,
+               read_only: bool = False) -> duckdb.DuckDBPyConnection:
+    """The store at *path*, tables created if absent. `:memory:` works too.
+
+    *read_only* is what a command that only queries the store must pass. DuckDB
+    hands one process an exclusive lock on a read-write connection, so a command
+    that opens read-write blocks — and is blocked by — any other command on the
+    same file: a `worklist` that only SELECTs has no business failing because a
+    `screen` tier is running, and no business stopping one either. Read-only
+    connections share the file, so the reading commands can all coexist.
+
+    A read-only connection cannot create tables, so it also cannot create the
+    file. "No store yet" and "store locked" need different actions from the
+    operator, so they are told apart here rather than surfacing as one raw
+    DuckDB error.
+    """
+    if str(path) == ":memory:":
+        read_only = False        # nothing to share, and nothing to create it from
+    else:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+    if read_only:
+        if not Path(path).exists():
+            raise StoreUnavailable(
+                f"no routing store at {path} — run `python -m filter.engine route` "
+                "first.")
+        try:
+            return duckdb.connect(str(path), read_only=True)
+        except duckdb.Error as exc:
+            raise StoreUnavailable(
+                f"cannot open {path} read-only: {exc}\n"
+                "Another engine command holds the write lock (`route`, or a "
+                "`supersede`). Wait for it to finish and re-run.") from exc
     con = duckdb.connect(str(path))
     for statement in _SCHEMA_SQL:
         con.execute(statement)
