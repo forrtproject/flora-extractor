@@ -1,0 +1,40 @@
+{
+  "id": "osf-registration-protocol",
+  "description": "DISCARD twin of `osf-registration-completed`: an OSF registration whose template line is present and whose template is neither a post-completion form nor an Open-Ended Registration carrying the replication stem. What is left is the preregistration vocabulary — `OSF Preregistration`, `AsPredicted`, `OSF-Standard Pre-Data Collection`, `Replication Recipe (Brandt et al., 2013): Pre-Registration`, `Registered Report Protocol Preregistration`, `EGAP` — every one of them a form filed BEFORE data collection, describing a study that has not happened. The record announces an intention; it reports no outcome, and there is nothing for Stage 3 to code. The discard is needed rather than merely absent because these records are not silent: a Replication Recipe pre-registration's responses are full of `we will directly replicate Smith (2009)`, so under a whitelist they are admitted by `replication-claim-text` (730) and would buy two voters to be told what the template already said. That is why the precedence is 935, above the whole admission band, and it is the only reason the number is high. It sits BELOW `osf-registration-completed` (936) on purpose: the two match blocks are hand-synced copies — the format gives a spec no way to reference another — so if they ever drift the row is kept and screened rather than deleted, the cheaper of the two errors, and `tests/test_osf_registrations.py` asserts the partition. It sits below the definitional discards (940-960): those say the record is not a paper at all, this one says the record is a registration whose own template says no study has been completed. Fires on nothing until a backfill has run — the first line it matches exists only in overlay text this project wrote, and the run that writes it is the same run that produces the evidence to promote this rule out of shadow. SHADOW because the claim is a negation over a vocabulary that has not been enumerated: `every OSF template that is neither post-completion nor open-ended is a pre-data-collection form` is true of the eight templates a 60-row sample showed and unverified beyond them. rule_ideas.md SS2b names the exact promotion step, and it is cheap: fetch the template for all 3,016 no-abstract 10.17605 rows (free, under an hour, and the backfill does it), then count the FLoRA intersection per template. Zero known FLoRA papers on a discarded template promotes this rule; one stops it, and the paper names the template that has to move to the keep arm. D3 (is a planned-but-not-completed replication a FLoRA record?) is settled for THIS registrant by the maintainer ruling of 2026-08-04 and nowhere else — the `aim|set out to replicate` arm elsewhere in the bundle is untouched by it.",
+  "match": {
+    "abstract_regex": "^OSF registration template: ",
+    "none_of": [
+      {
+        "any_of": [
+          {
+            "abstract_regex": "^OSF registration template: [^\\n]*post[-\\s]?completion"
+          },
+          {
+            "all_of": [
+              {
+                "abstract_regex": "^OSF registration template: [^\\n]*open[-\\s]?ended registration"
+              },
+              {
+                "text_regex": "\\breplicat\\w*"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 935,
+  "shadow": true,
+  "measured": [
+    {
+      "level": "heuristic",
+      "n": 34,
+      "sample": "The same 2026-08-04 sample the admission twin records: 60 rows drawn from the 3,016 no-abstract 10.17605 rows of the routed pool, of which 34 resolved to OSF registrations. Eight distinct templates appeared, all but Open-Ended Registration announcing a study before data collection, and NO post-completion template appeared at all. The four registrations among the 21 known FLoRA papers on this registrant are all `Replication Recipe (Brandt et al., 2013): Post-Completion`, so none of them is on a template this rule would discard.",
+      "date": "2026-08-04",
+      "owner": "flora-extractor",
+      "rationale": "Two facts, kept apart. The COUNT is over a named population — 60 rows of the 3,016, re-countable — and it says what the template vocabulary looks like there; it is not a reading of a random sample of the rows this rule discards, and it is not a precision estimate. The recall observation (0 of 4 known FLoRA registrations on a discarded template) is a necessary condition and nothing more: 4 is the whole known-good population on this registrant that resolved to a registration, and the monitor is not a sample of what the rule kills. Heuristic is therefore the honest level, and heuristic evidence may not discard autonomously — hence `shadow: true`. The structural argument (a pre-data-collection form definitionally reports no outcome) would license `trusted` for an ENUMERATED template list; it does not license the negation this rule is written as, which claims something about templates nobody has looked at. The enumeration is the promotion step and it is free."
+    }
+  ]
+}

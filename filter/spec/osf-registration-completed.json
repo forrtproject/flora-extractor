@@ -1,0 +1,35 @@
+{
+  "id": "osf-registration-completed",
+  "description": "ADMISSION on the OSF registration TEMPLATE. The registrant 10.17605 covers 25,819 pool rows, 3,016 of them with no abstract at all, and 21 known FLoRA papers are on it — so neither the registrant nor the missing abstract may discard (measured 2026-08-04; rule_ideas.md SS2b). What separates the rows is the template the registration was filed under, which OSF exposes as `attributes.registration_supplement` and which `filter/engine/backfill.py` now writes as the FIRST LINE of the overlay text: `OSF registration template: <name>`. A spec cannot call an API at routing time, so the template arrives as text and this rule reads it off the anchored first line — that anchor, and the string in `search/fetch_abstracts.py::OSF_TEMPLATE_PREFIX` that produces it, are one contract, and changing either without the other is a routing change. TWO ARMS, and they ask for different amounts because the templates say different amounts. A POST-COMPLETION template — in practice `Replication Recipe (Brandt et al., 2013): Post-Completion` — is a report of a finished study: the record states its outcome in the Replication Recipe's own vocabulary, one sampled registration giving `d = 0.06`, `CI = [-.218, .340]` and `item33: \"informative failure to replicate\"`, which is what Stage 3 exists to extract and here arrives without a PDF or a title search. That template is admitted on its own, with no phrase requirement. `Open-Ended Registration` is a content-free container — it says only that something was registered — so it is admitted only when the record's own text also carries the replication stem, which is the maintainer's ruling of 2026-08-04 with the intent marker the ruling implies. `post[-\\s]?completion` is the whole of the first arm: OSF's `Post-Data Collection` forms are NOT covered, on the maintainer's ruling of 2026-08-04 that a post-data-collection registration is still a registration of a design and not a report of results, and no known FLoRA paper sits on one. If a template fetch over the full no-abstract population ever finds a FLoRA paper on such a form, that finding — not the naming — is what reopens the arm. The stem arm is `replicat*` only — reproduction vocabulary is #155's stream and is not admitted here on the strength of an OSF sample of four. Precedence 936 sits ABOVE this rule's discard twin `osf-registration-protocol` (935) and above the whole admission band, and BELOW the definitional discards (940-960) which say the record is not a paper at all. Above the 700s because for an overlay row the template line is a better statement of what the record IS than any phrase in the responses text it precedes — a preregistration's responses are full of `we will replicate Smith (2009)` and would otherwise be admitted by `replication-claim-text` (730). Above the twin by exactly one because the two match blocks are hand-synced copies with no way for a spec to reference another: if they ever drift, the row is kept and screened rather than deleted, which is the cheaper of the two errors. `tests/test_osf_registrations.py` asserts the partition, and is the guard the format cannot give. `vocabulary` is null: an admission to the two-voter screen is a request for attention, not a verdict that the record is a replication (CONVENTIONS.md, \"Pile -> filter_status\"). Fires on nothing until a backfill has run: the first line it matches exists only in overlay text this project wrote.",
+  "match": {
+    "any_of": [
+      {
+        "abstract_regex": "^OSF registration template: [^\\n]*post[-\\s]?completion"
+      },
+      {
+        "all_of": [
+          {
+            "abstract_regex": "^OSF registration template: [^\\n]*open[-\\s]?ended registration"
+          },
+          {
+            "text_regex": "\\breplicat\\w*"
+          }
+        ]
+      }
+    ]
+  },
+  "pile": "screen_expensive",
+  "vocabulary": null,
+  "precedence": 936,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "heuristic",
+      "n": 34,
+      "sample": "60 rows drawn from the 3,016 no-abstract 10.17605 rows of the routed pool, 2026-08-04; 34 resolved to OSF registrations and 26 to plain `nodes`. Templates: OSF Preregistration 9, AsPredicted 6, OSF-Standard Pre-Data Collection 5, Replication Recipe: Pre-Registration 4, Registered Report Protocol Preregistration 3, EGAP 3, Open-Ended Registration 2, singletons for the rest. Separately, the four registrations among the 21 known FLoRA papers on this registrant are all `Replication Recipe (Brandt et al., 2013): Post-Completion`.",
+      "date": "2026-08-04",
+      "owner": "flora-extractor",
+      "rationale": "An admission rule needs no evidence to run (CONVENTIONS.md, promotion note 4) — the worst it does is buy a screen call — so this entry documents where the arms came from rather than satisfying a gate. What it supports: the post-completion arm reaches every known-good registration in the sample, and the sample contains no post-completion template that is not one. What it does NOT support: any claim about the arms' precision over the full 3,016, or about how many post-completion registrations exist at all — the sample held none outside the FLoRA four. Fetching the template for all 3,016 rows is free and under an hour, and that count, not this one, is what the discard twin's promotion rests on."
+    }
+  ]
+}

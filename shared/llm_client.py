@@ -3,7 +3,8 @@ llm_client.py — the pipeline's LLM calls: provider ladder, target identificati
 and the two-model replication screen.
 
 Provider ladder: Gemini → OpenAI → OpenRouter, in call_llm_ladder(). Each provider
-is rate-limited against its own last-call timestamp.
+is rate-limited against its own reserved schedule, which holds under concurrent
+callers as well as sequential ones.
 
 Public API:
     identify_targets_with_llm(doi_r, study_r, abstract_r, candidates,
@@ -12,6 +13,7 @@ Public API:
 import base64
 import json
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -83,28 +85,40 @@ def _gemini_usage(body: dict) -> tuple[int, int]:
 
 
 # ── Per-provider rate limiting ────────────────────────────────────────────────
-# Each provider is throttled against its OWN last-call timestamp, immediately
-# before the request goes out. Charging the wait to the caller after a successful
-# call — as every call site used to — made the delay unconditional even when the
-# next call went to a different provider, or was served from cache, or never came.
+# Each provider is throttled against its OWN schedule, immediately before the
+# request goes out. Charging the wait to the caller after a successful call — as
+# every call site used to — made the delay unconditional even when the next call
+# went to a different provider, or was served from cache, or never came.
+#
+# Callers may be THREADS (the filter engine's tier runners run works in a pool), so
+# the limiter reserves a slot under a lock instead of reading a last-call timestamp
+# and sleeping on it. Read-then-sleep is not a rate limit under concurrency: N
+# threads all read the same timestamp, all sleep the same remainder and then all
+# fire at once, which divides the configured interval by N — exactly the burst the
+# provider's limit exists to prevent. Reserving `_next_call_at[provider]` and
+# sleeping until the reserved instant makes N concurrent callers queue at the
+# configured spacing, whatever N is. The sleep is deliberately OUTSIDE the lock: it
+# is the wait that must serialise, not the arithmetic, and holding the lock through
+# it would block calls to other providers too.
 
 _PROVIDER_RATE_SEC = {
     "gemini":     GEMINI_RATE_SEC,
     "openai":     OPENAI_RATE_SEC,
     "openrouter": OPENROUTER_RATE_SEC,
 }
-_last_call_at: dict[str, float] = {}
+_rate_lock = threading.Lock()
+_next_call_at: dict[str, float] = {}
 
 
 def _throttle(provider: str) -> None:
-    """Sleep only as long as this provider's minimum interval still has to run."""
+    """Wait until this provider's next free slot, and reserve the one after it."""
     interval = _PROVIDER_RATE_SEC.get(provider, 1.0)
-    last     = _last_call_at.get(provider)
-    if last is not None:
-        remaining = interval - (time.monotonic() - last)
-        if remaining > 0:
-            time.sleep(remaining)
-    _last_call_at[provider] = time.monotonic()
+    with _rate_lock:
+        slot = max(time.monotonic(), _next_call_at.get(provider, 0.0))
+        _next_call_at[provider] = slot + interval
+    remaining = slot - time.monotonic()
+    if remaining > 0:
+        time.sleep(remaining)
 
 
 # ── JSON parsing (handles markdown-fenced output) ─────────────────────────────

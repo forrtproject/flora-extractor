@@ -900,7 +900,7 @@ def clock(monkeypatch):
     monkeypatch.setattr(llm.time, "sleep", c.sleep)
     monkeypatch.setattr(llm, "_PROVIDER_RATE_SEC",
                         {"gemini": 1.0, "openai": 0.5, "openrouter": 0.5})
-    llm._last_call_at.clear()
+    llm._next_call_at.clear()
     return c
 
 

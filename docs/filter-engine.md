@@ -140,7 +140,7 @@ Lives in `filter/spec/conventions.json` (machine-read by `export.py`), explained
 A pile substitutes the rule's vocabulary for its own status only where its policy
 sets `vocabulary_names_status` — true for both screen piles, false for `discard` and
 `needs_human`. Whether a rule names a vocabulary is the rule's own decision,
-recorded in its spec: `replication-claim` leaves it null on purpose — admission to
+recorded in its spec: the `replication-claim-*` tiers leave it null on purpose — admission to
 the two-voter screen asks for attention rather than settling what the row is — so
 its rows reach `filtered.csv` as `needs_review`/high, while a cheap rule that names
 its vocabulary exports it at `screen_cheap`/medium.
@@ -212,7 +212,10 @@ evidence in [`filter/spec/rule_ideas.md`](../filter/spec/rule_ideas.md).
 | `deposit-registrant` | discard | 958 | | 10 deposit-only registrants (figshare dropped, D1) |
 | `not-a-paper-title` | discard | 955 | | the start-anchored genre-plus-parent title pattern |
 | `not-a-report-type` | discard | 940 | | `type ∈ {component, database, dataset, software, supplementary-materials}` — not a report of a study |
-| `replication-claim` | screen_expensive | 700 | | 12 arms: the paper says IT is or did a replication. The only route to two voters |
+| `replication-claim-cited-title` | screen_expensive | 760 | | a claim arm in the TITLE **and** an author-year citation in the title — the only live admission |
+| `replication-claim-title` | screen_expensive | 750 | ✓ | any claim arm in the title |
+| `replication-claim-text` | screen_expensive | 730 | ✓ | the 8 strong claim arms anywhere in title+abstract |
+| `replication-claim-residual` | screen_expensive | 710 | ✓ | the 4 measured-weak arms: fail/attempt · aim/set out · success* · the negation matrix |
 | `not-a-study-type` | discard | 500 | | `type ∈ {grant, libguides, paratext, peer-review, standard}` — a crosswalk that can be wrong about a real paper |
 | `replication-signal` | screen_cheap | 300 | ✓ | multilingual title stems · English title stem · concept ids · bare `replication of` |
 | `reproduction-signal` | screen_cheap | 262 | ✓ | the reproduction-anchored patterns, carried over unchanged pending #155 |
@@ -332,7 +335,7 @@ recovered abstract text, layered over the pool at read time.
 | --- | --- |
 | `pool_reader.py` | `iter_pool_batches(pool_dir, overlay_dir=None, batch_size=50_000, aliases=None)` — the engine's single input path: pool batches with overlay text coalesced over empty `abstract_text` cells. `overlay_manifest_hash(overlay_dir) -> str \| None` (defined in `overlay.py`, re-exported here so the input path is one import). The overlay is loaded once as a `work_id -> text` dict and applied per batch; with no overlay the stream is `iter_batches()` untouched. |
 | `overlay.py` | `worklist(con, release_id, pool_dir, out_path, aliases=None) -> int` (the `pending_reason='no_text'` rows joined to the pool for doi/title/year); `write_chunk()`, `load_overlay()`, `overlay_work_ids()`; `validate(overlay_dir) -> list[str]`; `freeze(overlay_dir, pool_manifest_hash=None) -> dict`; `overlay_manifest_hash()`, `read_manifest()`. |
-| `backfill.py` | `python -m filter.engine.backfill --worklist F --overlay-dir D [--run] [--limit N] [--source S] [--freeze]` — the five abstract sources over a worklist, results appended as an overlay chunk. |
+| `backfill.py` | `python -m filter.engine.backfill --worklist F --overlay-dir D [--run] [--limit N] [--source S] [--freeze]` — the six abstract sources over a worklist (OSF registrations first), results appended as an overlay chunk. |
 
 **Overlays fill, never replace.** The pool's own `abstract_text` is what the
 snapshot shipped and is primary evidence; the overlay applies only where the
@@ -360,8 +363,8 @@ bundle. An overlay directory holding chunks but no frozen manifest raises rather
 than routing: a release must not be bound to bytes nobody named.
 
 **The backfill reuses Stage 1's fetchers.** `search/fetch_abstracts.py` owns the
-sources, their measured order (OpenAlex → Europe PMC → S2 → CrossRef → Scopus),
-their batch shapes, their per-identifier cache under `cache/abstracts/` and their
+sources, their measured order (OSF → OpenAlex → Europe PMC → S2 → CrossRef →
+Scopus), their batch shapes, their per-identifier cache under `cache/abstracts/` and their
 per-source checkpoint namespaces; `backfill.py` imports its phase runners rather
 than restating any of it. Only the two ends are new: the worklist comes from the
 routing table, and results land in an overlay chunk instead of a CSV merge. The
@@ -369,6 +372,25 @@ shared cache means a DOI Stage 1 already asked about
 costs nothing here, and a miss recorded here is one Stage 1 will not re-buy.
 Dataset-prefix DOIs are dropped from the worklist — no source has an abstract
 for a deposit.
+
+**The OSF source is the one that recovers a decision rather than an abstract.**
+The registrant `10.17605` covers 25,819 pool rows, 3,016 of them textless, and 21
+known FLoRA papers — so neither the registrant nor the missing abstract may
+discard. What separates them is the registration TEMPLATE
+(`attributes.registration_supplement`), and a spec cannot call an API at routing
+time, so the phase writes it as the FIRST LINE of the recovered text
+(`OSF registration template: <name>`) with the registration's responses form
+under it — a median 5,268 characters that OSF keeps out of `description`. Two
+specs read that line: `osf-registration-completed` (936) admits a post-completion
+template on its own, and an `Open-Ended Registration` carrying the replication
+stem; `osf-registration-protocol` (935, shadow) discards the rest, which is the
+preregistration vocabulary. Both sit above the 700s admission band because for
+these rows the template line is a better statement of what the record is than
+any phrase in the responses text — a preregistration says "we will replicate
+Smith (2009)" and means it has not happened yet. The phase runs first in the
+source order so nothing displaces that first line, and it is restricted to its
+registrant: the endpoint answers about OSF GUIDs and nothing else. `OSF_TOKEN`
+is optional and only raises the throttle.
 
 **Dry-run is the default** (§6). Without `--run`, the CLI prints per-source
 targets, request counts and quota caps computed against the live checkpoint —
@@ -388,7 +410,7 @@ which pool rows the engine routes and nothing about which rows enter the pool, s
 wrong call costs a `route` re-run over the pool, never a rescan.
 
 **A new admission arm usually needs no scan change.** Every arm of
-`replication-claim` and `replication-signal` contains the `replicat` stem or a
+the `replication-claim-*` tiers and `replication-signal` contain the `replicat` stem or a
 multilingual equivalent, so the search gate's token alternation already keeps those
 rows in the survivor pool. An arm built on vocabulary the gate does not carry — most
 of `replication-probe` — reaches only the rows some other gate token admitted, and
@@ -446,13 +468,21 @@ so a live discard takes effect at the handoff, where the rows leave the engine.
   the row count, the abstract token-length distribution and "N rows → tier X ≈ $Y"
   are printed from the rough per-1k prices in `shared/config.py`.
 - **Evidence before the verdict naming it.** The raw response is written to
-  `cache/engine/responses/<hash>.json` and pushed to HF (silently skipped without
-  `HF_TOKEN`/`FLORA_POOL_REPO`) *before* `record_verdict`; a push that did not
-  happen is `response_pending_upload`, never `uploaded`.
-- **Per-work checkpointing, server-side.** A verdict is written per work; an
-  interrupted run's claim is failed and the next run re-claims only the works with
-  no verdict. `TokenBudgetExhausted` fails the claim and stops cleanly, keeping
-  what was decided.
+  `cache/engine/responses/<hash>.json` *before* `record_verdict`, which inserts the
+  row `response_pending_upload`. Blobs go to Hugging Face in **multi-file commits**
+  of `FLORA_HF_COMMIT_BATCH`, plus a final flush — one commit per blob is what HF
+  answers with `HTTP 429` — and only a commit that was accepted turns the state
+  into `uploaded` (`client.mark_uploaded()`). A push that did not happen, an
+  unconfigured HF (`HF_TOKEN`/`FLORA_POOL_REPO`) and `ENGINE_TIER_HF_UPLOAD=false`
+  all leave the row `response_pending_upload`, never `uploaded`, for a later
+  reconciliation run.
+- **Per-work checkpointing, server-side, in parallel.** A verdict is written per
+  work; an interrupted run's claim is failed and the next run re-claims only the
+  works with no verdict. Works are independent, so `ENGINE_TIER_WORKERS` (default
+  8) of them are judged at once; the request rate is bounded by the per-provider
+  limiter in `shared/llm_client.py`, which reserves a slot per call under a lock
+  rather than sleeping on a shared timestamp. `TokenBudgetExhausted` fails the
+  claim and stops cleanly, keeping what was decided.
 
 ### The Stage 3 switch
 

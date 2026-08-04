@@ -11,8 +11,78 @@ things to read first; the rest are one-off diagnostics kept for their findings.
 
 | Path | What it holds |
 | --- | --- |
+| `arm_evidence.py` | The free scorer for a candidate filter pattern — see below. |
+| `rule_report.py` | The applied-rules overview for the whole live bundle — see below. |
 | `prescreen_eval/` | The issue #130 evaluation of the optional cheap pre-screen (`shared/prescreen.py`). `REPORT.md` is the finding and is cited from CLAUDE.md; `CASESETS.md` and `README.md` describe the gold sets; `build_casesets.py` / `enrich_casesets.py` / `eval_prescreen.py` rebuild them; the `pre_p*_*.json` files are per-prompt, per-model run records. |
 | `screening_eval/` | The derivation of Stage 3's front-door voter pair and its prompt. `report_v33.md` scores the shipped v3.3 prompt (`prompt_v33.txt` is the evaluated copy of `_CLASSIFY_PROMPT`); `report_v32.md` is the version behind it. `gate_sweep*.md` derive `screen_gate()`; `human_truth*.json` / `heldout_truth*.json` are the hand-coded labels; `voter_*.json` are per-prompt, per-model run records. |
+
+## `arm_evidence.py` — should this rule or this arm go live?
+
+Scores one candidate pattern, or every arm of a spec, against every label the repo
+already owns: how much of the survivor pool it matches (and matches *alone*), how
+much of that the current routing release admitted, how many known-good FLoRA
+replications it reaches exclusively, how many screen-confirmed negatives it hits,
+and what the already-paid-for two-voter verdicts in `cache/llm/` said about its
+rows. No LLM call, no network call, no spend; a full scan of the 2,232 pool files
+takes seconds, and the elapsed scan time is printed on every run.
+
+```bash
+python -m analysis.arm_evidence --spec filter/spec/replication-claim.json
+```
+
+`--pattern 'title:<regex>'` (repeatable, prefixes `title:`/`abstract:`/`text:`,
+default `text`) scores ad-hoc patterns instead — the way to compare the same
+phrase in the title against the same phrase anywhere. `--and '<regex>'` ANDs a
+conjunct onto every arm, `--release` pins a routing release, `--json` dumps the
+table, `--all-cohorts` scores every cached-verdict cohort rather than only the
+largest.
+
+**Read its label-derived columns as optimistic.** The cached verdicts,
+`data/not_a_replication.csv` and `data/extracted.csv` all describe what the OLD
+filter admitted, so any precision computed from them is measured on a corpus that
+the pattern's ancestors selected; and the FLoRA column is partly circular, because
+much of `flora.csv` was found with these very phrases. Cells resting on fewer than
+15 labelled rows are marked as decoration for the same reason. The tool ranks
+candidates and gates cheap decisions. It does not replace a human-labelled
+precision estimate for anything that **discards**.
+
+## `rule_report.py` — what did every rule actually do?
+
+`arm_evidence.py` asks about one candidate pattern before it ships;
+`rule_report.py` asks about the whole shipped bundle after it has run. One row
+per spec in `filter/spec/`: its pile, precedence, shadow state, vocabulary and
+`measured` levels; the rows it **won** in the current routing release (it was the
+highest-precedence non-shadow match) against the rows it **matched** at all; for
+a draft (shadow) rule the would-win counterfactual read out of `evaluations`;
+known-FLoRA works reached and reached *uniquely*; known negatives hit; and — once
+a tier has been screened — rows screened, proceed/discard, and the observed
+precision with a **Wilson 95% interval**. Plus the release's pile composition and
+the `pending` split (`no_filter_matched` vs `no_text`), which is the bundle's
+coverage gap.
+
+```bash
+python -m analysis.rule_report                                  # terminal table
+python -m analysis.rule_report --html redesign/rule_report.html # publishable page
+python -m analysis.rule_report --json cache/rule_report.json    # raw numbers
+```
+
+The store is opened **read-only**; a `python -m filter.engine route` holding the
+write lock produces a message saying so rather than a hang. `--release` pins a
+release (default: the newest in the store), `--workers` sizes the pool scan, and
+the elapsed time is printed on every run.
+
+A rule that has **not been screened yet** prints `not screened`; a rule with no
+verdicts anywhere prints `no verdicts`; only a rule that was screened and
+proceeded nothing prints `0%`. The same optimism caveat as `arm_evidence` applies
+to every label-derived column, and to the screening columns in particular.
+
+Not wired into the Stage 4 dashboard, which is read-only monitoring over
+`data/dashboard/` (`shared/dashboard_cache.py`) and registers three blueprints
+only. A future "rules" tab would be fed from this script's `--json` output — the
+same dict `render()` and `render_html()` print, with `rules[]` one entry per spec
+and top-level `piles` / `pending` / `flora` / `negatives` / `screen` blocks —
+written on a schedule beside `data/dashboard/stats.json`. Adding the tab is the
+maintainer's call, not this script's.
 
 ## One-off analyses (historical)
 

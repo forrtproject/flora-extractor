@@ -13,14 +13,15 @@ from pathlib import Path
 import pytest
 
 from filter.engine.spec import load_specs
-from tests.test_rulebook_v2 import _matches, _row
+from tests.test_rulebook_v2 import CLAIM_TIERS, _matches, _matches_family, _row
 
 SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
 
-# The two admission rules that decide a row on replication vocabulary.
+# The admission rules that decide a row on replication vocabulary: the five
+# tiers of the `replication-claim` family, and `replication-signal`.
 # `replication-probe` carries unmeasured candidate vocabularies and is out of
 # scope for these cases.
-_ADMISSION = ("replication-claim", "replication-signal")
+_ADMISSION = (*CLAIM_TIERS, "replication-signal")
 
 
 @pytest.fixture(scope="module")
@@ -59,7 +60,7 @@ def test_a_dna_title_reaches_only_the_cheap_title_stem_and_never_a_discard(specs
     row = _row("DNA Replication in Yeast",
                "We map origin firing across the genome by sequencing.")
     assert _matches(specs, "replication-signal", row)
-    assert not _matches(specs, "replication-claim", row)
+    assert not _matches_family(specs, row)
     for rule in _discards(specs):
         assert not _matches(specs, rule, row), rule
 
@@ -76,7 +77,7 @@ def test_a_homograph_collocation_is_claimed_by_b_and_discarded_by_nothing(
     biological homograph. No rule discards them, and B claims both on its
     qualifier arm."""
     row = _row(title, abstract)
-    assert _matches(specs, "replication-claim", row)
+    assert _matches_family(specs, row)
     for rule in _discards(specs):
         assert not _matches(specs, rule, row), rule
 
@@ -91,7 +92,7 @@ def test_bare_replication_of_is_a_cheap_signal_and_never_an_expensive_one(specs)
     the cheap discard-only tier, never two voters."""
     row = _row("Bees and anchoring",
                "This paper offers a replication of an earlier result.")
-    assert not _matches(specs, "replication-claim", row)
+    assert not _matches_family(specs, row)
     assert _matches(specs, "replication-signal", row)
 
 
@@ -137,7 +138,7 @@ def test_the_editorial_anchor_claims_the_artifact_and_spares_the_paper(specs):
     # It is a paper about replication, not a paper claiming to BE one: C's title
     # stem admits it to the cheap tier and B does not.
     assert _matches(specs, "replication-signal", paper)
-    assert not _matches(specs, "replication-claim", paper)
+    assert not _matches_family(specs, paper)
 
 
 @pytest.mark.parametrize("doi,claimed", [

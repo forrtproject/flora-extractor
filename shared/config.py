@@ -108,6 +108,10 @@ ELSEVIER_API_KEY = os.getenv("ELSEVIER_API_KEY", "")
 # An institutional token grants Scopus entitlement off the subscribing network;
 # without it Elsevier entitlement is IP-bound (campus network / VPN).
 ELSEVIER_INSTTOKEN = os.getenv("ELSEVIER_INSTTOKEN", "").strip()
+# OSF personal access token — optional. The registration endpoint the backfill
+# reads is public; a token only raises the throttle (OSF meters anonymous
+# callers per hour and authenticated ones per day).
+OSF_TOKEN = os.getenv("OSF_TOKEN", "").strip()
 
 # ── Model identifiers ─────────────────────────────────────────────────────────
 # Deliberately NOT env-overridable. Which model answers is a project decision, not a
@@ -184,6 +188,20 @@ FLORA_POOL_REPO = os.getenv("FLORA_POOL_REPO", "")
 # degrades, so uploads are batched into multi-file commits.
 FLORA_HF_COMMIT_BATCH = int(os.getenv("FLORA_HF_COMMIT_BATCH", "100"))
 
+# ── Filter-engine LLM tiers (filter/engine/tiers.py) ──────────────────────────
+# How many works a tier run judges at once. The works are independent and each one
+# is almost entirely provider latency, so a sequential loop spends the run waiting;
+# the per-provider rate limit in shared/llm_client.py — not this number — is what
+# bounds the request rate, so raising it buys overlap, never a faster provider.
+ENGINE_TIER_WORKERS = int(os.getenv("ENGINE_TIER_WORKERS", "8"))
+# Whether a tier run pushes its raw response blobs to the Hugging Face pool repo.
+# On by default, and off for a run that wants nothing to do with HF: the blobs are
+# on disk either way and their verdict rows say `response_pending_upload`, which is
+# what a later reconciliation run reads. Emptying HF_TOKEN also disables the push,
+# but it disables every other HF path in the process with it — this is the flag.
+ENGINE_TIER_HF_UPLOAD = os.getenv("ENGINE_TIER_HF_UPLOAD", "true").lower() not in (
+    "0", "false", "no")
+
 # ── External servers ──────────────────────────────────────────────────────────
 GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")
 
@@ -230,6 +248,9 @@ EPMC_RATE_SEC      = float(os.getenv("EPMC_RATE_SEC", "0.4"))
 CROSSREF_RATE_SEC  = float(os.getenv("CROSSREF_RATE_SEC",  "0.1"))
 S2_RATE_SEC        = float(os.getenv("S2_RATE_SEC",        "0.5"))
 SCOPUS_RATE_SEC    = float(os.getenv("SCOPUS_RATE_SEC",    "1.0"))  # Elsevier: ~1 req/sec
+# OSF meters anonymous callers per hour and token-bearing ones per day, so the
+# polite default suits a keyless run; set OSF_TOKEN and lower this to go faster.
+OSF_RATE_SEC       = float(os.getenv("OSF_RATE_SEC",       "1.0"))
 
 # ── Abstract backfill: batch sizes and quota caps ────────────────────────────
 # OpenAlex filter= accepts up to 50 pipe-separated ids per call.

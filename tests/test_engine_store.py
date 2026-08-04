@@ -290,3 +290,40 @@ def test_route_then_export_runs_end_to_end_and_then_refuses_a_touched_bundle(
                            str(tmp_path / "stale.csv"), "--pool", str(pool),
                            "--store", str(store_path)])
     assert not (tmp_path / "stale.csv").exists()
+
+
+# ---------------------------------------------------------------------------
+# Concurrency
+# ---------------------------------------------------------------------------
+
+
+def test_a_read_command_does_not_contend_with_a_running_tier(pool, specs, tmp_path,
+                                                             capsys):
+    """`worklist` and `status` only SELECT, so a tier in progress must not lock them
+    out — nor they it. Read-only connections share the file; read-write does not."""
+    path = tmp_path / "engine.duckdb"
+    con = open_store(path)
+    build_routing(con, pool, specs, "rel-a")
+    con.close()
+
+    tier = open_store(path, read_only=True)      # as `screen` now opens it
+    try:
+        assert cli.main(["status", "--store", str(path)]) == 0
+        assert "rel-a"[:12] in capsys.readouterr().out
+    finally:
+        tier.close()
+
+    writer = open_store(path)                    # as `route` opens it
+    try:
+        with pytest.raises(store.StoreUnavailable, match="holds the write lock"):
+            open_store(path, read_only=True)
+    finally:
+        writer.close()
+
+
+def test_a_missing_store_says_so_rather_than_looking_locked(tmp_path):
+    """"No store yet" and "store locked" need different actions from the operator."""
+    with pytest.raises(store.StoreUnavailable, match="no routing store"):
+        open_store(tmp_path / "nowhere.duckdb", read_only=True)
+    with pytest.raises(SystemExit, match="no routing store"):
+        cli.main(["status", "--store", str(tmp_path / "nowhere.duckdb")])

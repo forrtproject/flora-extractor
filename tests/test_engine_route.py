@@ -99,8 +99,10 @@ CORPUS = [
     _row(work="https://openalex.org/W13", title="Reanalysis of a classic finding",
          abstract=f"We replicated the code of Smith (2019); this is a replication "
                   f"of the original findings {_CITE}."),
-    # rule B, one row per shape the arms were measured on
-    _row(work="https://openalex.org/W14", title="A direct replication of the Smith effect",
+    # rule B, one row per shape the arms were measured on. W14's title carries
+    # both a claim arm and an author-year cite, which is the live tier's shape.
+    _row(work="https://openalex.org/W14",
+         title="A direct replication of the Smith (2019) effect",
          abstract=f"We report a direct replication of the anchoring effect, {_CITE}."),
     _row(work="https://openalex.org/W15", title="A replication study of anchoring",
          abstract="We failed to replicate the original result; our replication "
@@ -127,6 +129,17 @@ CORPUS = [
     _row(work="https://openalex.org/W23",
          title="A direct replication of the Smith effect", abstract=None),
     _row(work="https://openalex.org/W24", title="A study of bees", abstract="Bees are nice."),
+    # the OSF pair: overlay text whose first line is the registration template,
+    # one completed record and one protocol (the protocol's own responses carry a
+    # claim arm, which is the whole reason its discard outranks the 700s)
+    _row(work="https://openalex.org/W25", doi="10.17605/OSF.IO/AB12D",
+         title="Registered study",
+         abstract="OSF registration template: Replication Recipe (Brandt et al., "
+                  "2013): Post-Completion\n\nitem33: informative failure to replicate"),
+    _row(work="https://openalex.org/W26", doi="10.17605/OSF.IO/CD34E",
+         title="Registered study",
+         abstract="OSF registration template: OSF Preregistration\n\nWe will run a "
+                  "direct replication of the Smith (2019) effect."),
 ]
 
 
@@ -193,13 +206,13 @@ def test_the_two_backends_agree_on_non_ascii_text(specs):
 
 
 def test_an_accented_name_does_not_part_the_backends_inside_an_arm(specs):
-    """`replication-claim`'s first arm is written with `\\w+`, which Python `re`
+    """`replication-claim-text`'s first arm is written with `\\w+`, which Python `re`
     reads as Unicode-aware and RE2 as ASCII. An accented word in the gap must give
     the same answer in both backends."""
     rows = [_row(title="A replication of the Müller effect",
                  abstract="We successivement répliqué; we thereby replicated the "
                           "original findings of Müller.")]
-    spec = next(s for s in specs if s.id == "replication-claim")
+    spec = next(s for s in specs if s.id == "replication-claim-text")
     assert eval_spec_rows(spec, rows) == [True]
     assert eval_spec_batch(spec, _batch(rows)).to_pylist() == [True]
 

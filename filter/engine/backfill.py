@@ -1,4 +1,4 @@
-"""Filling a text overlay: the five abstract sources, run over a routing worklist.
+"""Filling a text overlay: the six abstract sources, run over a routing worklist.
 
 The sources, their order, their batch shapes, their per-identifier cache and
 their checkpoint namespaces all come from `search/fetch_abstracts.py` unchanged —
@@ -12,6 +12,14 @@ overlay chunk instead of being merged back into a CSV.
 Sharing the cache is deliberate. A DOI Stage 1 already asked Europe PMC about is
 answered from `cache/abstracts/` here for free, and a miss recorded here is a
 miss Stage 1 will not re-buy.
+
+The OSF source (registrant 10.17605, first in the order) is the one that is not
+an abstract lookup. Those records have no abstract anywhere — they have a
+registration template and a responses form — so the phase writes the template
+name as the first line of the recovered text and the responses under it. That
+line is what `osf-registration-completed` and `osf-registration-protocol` read:
+a Replication Recipe post-completion record is a finished replication with its
+outcome already coded, a preregistration on the same registrant is a plan.
 
 **Dry-run is the default.** Issue #146 §6: a backfill over the pool needs
 per-source quota estimates BEFORE fetching — Scopus alone is a ~10k/week ceiling
@@ -33,15 +41,15 @@ from filter.engine.overlay import (
     freeze, overlay_work_ids, read_worklist, write_chunk,
 )
 from search.fetch_abstracts import (
-    _DATASET_PREFIXES, _fetch_crossref_abstract, _fetch_epmc_batch,
-    _fetch_openalex_batch, _fetch_s2_abstract, _fetch_s2_batch,
-    _fetch_scopus_abstract, _load_checkpoint, _load_found_index, _phase_targets,
-    _read_abstract_cache, _run_batch_phase, _run_item_phase,
+    OSF_REGISTRANT, _DATASET_PREFIXES, _fetch_crossref_abstract, _fetch_epmc_batch,
+    _fetch_openalex_batch, _fetch_osf_registration, _fetch_s2_abstract,
+    _fetch_s2_batch, _fetch_scopus_abstract, _load_checkpoint, _load_found_index,
+    _phase_targets, _read_abstract_cache, _run_batch_phase, _run_item_phase,
 )
 from shared.config import (
     CROSSREF_RATE_SEC, ELSEVIER_API_KEY, EPMC_BATCH_SIZE, EPMC_RATE_SEC,
-    OA_BATCH_SIZE, OPENALEX_RATE_SEC, S2_API_KEY, S2_BATCH_RATE_SEC, S2_BATCH_SIZE,
-    SCOPUS_DEFAULT_LIMIT, SCOPUS_RATE_SEC, log,
+    OA_BATCH_SIZE, OPENALEX_RATE_SEC, OSF_RATE_SEC, S2_API_KEY, S2_BATCH_RATE_SEC,
+    S2_BATCH_SIZE, SCOPUS_DEFAULT_LIMIT, SCOPUS_RATE_SEC, log,
 )
 from shared.utils import clean_doi
 
@@ -49,6 +57,7 @@ from shared.utils import clean_doi
 # The names are this module's CLI vocabulary; the namespaces are that module's
 # on-disk contract and must not be renamed.
 NAMESPACES = {
+    "osf": "osf",
     "openalex": "oa",
     "epmc": "epmc",
     "s2": "s2",
@@ -57,8 +66,10 @@ NAMESPACES = {
 }
 
 # The measured order (see fetch_abstracts' module docstring). Also the priority
-# order a recovered abstract is attributed to a source in.
-SOURCE_ORDER = ("openalex", "epmc", "s2", "crossref", "scopus")
+# order a recovered abstract is attributed to a source in — which is why `osf`
+# leads: an OSF registration's own template line has to be the text the overlay
+# stores, and a later source's abstract for the same row would displace it.
+SOURCE_ORDER = ("osf", "openalex", "epmc", "s2", "crossref", "scopus")
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +121,8 @@ def estimate(rows: list[dict], sources=SOURCE_ORDER) -> list[dict]:
         if source == "openalex":
             targets = [r["oa"] for r in rows
                        if r["oa"] and f"{namespace}:{r['oa']}" not in done]
+        elif source == "osf":
+            targets = _osf_targets(rows, done, found)
         else:
             targets = _phase_targets(rows, namespace, done, found)
         estimates.append(dict(_source_shape(source),
@@ -119,8 +132,21 @@ def estimate(rows: list[dict], sources=SOURCE_ORDER) -> list[dict]:
     return estimates
 
 
+def _osf_targets(rows: list[dict], done: set[str], found: set[str]) -> list[str]:
+    """The OSF-registrant DOIs the OSF phase still has to try.
+
+    The only source restricted to a registrant: the endpoint answers about OSF
+    GUIDs and nothing else, so every other DOI is a call whose answer is known
+    before it is made.
+    """
+    return [doi for doi in _phase_targets(rows, NAMESPACES["osf"], done, found)
+            if doi.split("/", 1)[0] == OSF_REGISTRANT]
+
+
 def _source_shape(source: str) -> dict:
     shapes = {
+        "osf": {"batch_size": 1, "rate_sec": OSF_RATE_SEC,
+                "quota": None, "skipped": ""},
         "openalex": {"batch_size": OA_BATCH_SIZE, "rate_sec": OPENALEX_RATE_SEC,
                      "quota": None, "skipped": ""},
         "epmc": {"batch_size": EPMC_BATCH_SIZE, "rate_sec": EPMC_RATE_SEC,
@@ -210,7 +236,11 @@ def run(worklist_path: Path, overlay_dir: Path, sources=SOURCE_ORDER,
             log.info("%s: skipped (%s).", source, shape["skipped"])
             continue
         label = f"backfill — {source}"
-        if source == "openalex":
+        if source == "osf":
+            _run_item_phase(label, namespace, _osf_targets(rows, done, found),
+                            OSF_RATE_SEC, _fetch_osf_registration, found,
+                            progress_every=200)
+        elif source == "openalex":
             _run_batch_phase(
                 label, namespace,
                 [r["oa"] for r in rows if r["oa"] and f"{namespace}:{r['oa']}" not in done],

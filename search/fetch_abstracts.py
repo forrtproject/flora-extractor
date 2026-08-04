@@ -1,5 +1,5 @@
 """
-fetch_abstracts.py — The five abstract sources, their order, and the contract
+fetch_abstracts.py — The six abstract sources, their order, and the contract
 that keeps a transient failure from being recorded as a definitive miss.
 
 This module is a library of phase runners, not a command. Its one consumer is
@@ -34,6 +34,16 @@ Waterfall by identifier type, in the order a run should spend calls:
   5. Scopus by DOI    — Elsevier Abstract Retrieval API fallback (requires
                         ELSEVIER_API_KEY; ~10k requests/week quota, so a caller
                         should cap its Scopus phase)
+  6. OSF registrations — rows on the OSF registrant (10.17605) ONLY, one call per
+                        DOI, keyless. Not an abstract source in the ordinary
+                        sense: these records HAVE no abstract, they have a
+                        registration template and a responses form, and the
+                        template is what says whether the record reports a
+                        completed replication or announces a planned one. It runs
+                        FIRST because it is free, because nothing else holds text
+                        for these rows, and because its text must be the text the
+                        overlay records — the template name leads it, and two
+                        specs in `filter/spec/` read that first line.
 
 Rows whose DOI prefix registers datasets rather than articles (_DATASET_PREFIXES)
 should be dropped from a worklist entirely — they have no abstract to find, so
@@ -64,7 +74,7 @@ import requests
 
 from shared.config import (
     CACHE_DIR, ELSEVIER_INSTTOKEN, EPMC_BATCH_SIZE, EPMC_RATE_SEC, OA_BATCH_SIZE,
-    RESEARCHER_EMAIL, S2_BATCH_RATE_SEC, S2_BATCH_SIZE, log,
+    OSF_TOKEN, RESEARCHER_EMAIL, S2_BATCH_RATE_SEC, S2_BATCH_SIZE, log,
 )
 from shared.openalex_keys import headers as oa_headers, is_budget_refusal, rotate_key
 from shared.utils import clean_doi, cache_key, reconstruct_abstract
@@ -525,7 +535,79 @@ def _fetch_scopus_abstract(doi: str, api_key: str) -> tuple[Optional[str], bool]
 
 
 # ---------------------------------------------------------------------------
-# Phase runners — one contract for all five sources
+# Source 6: OSF registrations by DOI (registrant 10.17605 only)
+# ---------------------------------------------------------------------------
+
+# The registrant OSF mints its registration and project DOIs on.
+OSF_REGISTRANT = "10.17605"
+# The template name goes at the START of the recovered text, because that is
+# what decides the record: `filter/spec/osf-registration-completed.json` and its
+# discard twin match this exact prefix and read the template off the first line.
+# Changing this string is a spec change, not a formatting change.
+OSF_TEMPLATE_PREFIX = "OSF registration template: "
+# The named-but-unset case: a registration whose template field is blank still
+# gets a template line, so the two OSF specs partition every recovered row.
+OSF_TEMPLATE_UNSPECIFIED = "unspecified"
+
+_OSF_API = "https://api.osf.io/v2/registrations/{guid}/"
+
+
+def _osf_guid(doi: str) -> Optional[str]:
+    """The OSF GUID in *doi* (`10.17605/OSF.IO/AB12D` → `ab12d`), or None."""
+    parts = clean_doi(doi).split("/")
+    return parts[-1].lower() if len(parts) >= 2 and parts[-1] else None
+
+
+def _osf_registration_text(attributes: dict) -> str:
+    """The registration's text, template name first.
+
+    OSF leaves `description` empty on most registrations and keeps the substance
+    in `registration_responses` — a question-key → answer map holding a median
+    5,268 characters (measured 2026-08-04 over 34 sampled registrations). Both
+    are joined into one abstract-shaped string so a screen can read the record
+    the way it reads any other row.
+    """
+    template = (attributes.get("registration_supplement")
+                or OSF_TEMPLATE_UNSPECIFIED).strip()
+    blocks = [OSF_TEMPLATE_PREFIX + template]
+    description = (attributes.get("description") or "").strip()
+    if description:
+        blocks.append(description)
+    for question, answer in (attributes.get("registration_responses") or {}).items():
+        if isinstance(answer, (list, tuple)):
+            answer = "; ".join(str(a) for a in answer if a)
+        text = str(answer or "").strip()
+        if text:
+            blocks.append(f"{question}: {text}")
+    return "\n\n".join(blocks)
+
+
+def _fetch_osf_registration(doi: str) -> tuple[Optional[str], str]:
+    """Fetch an OSF registration's template and responses by DOI.
+
+    Same (abstract, status) contract as the other per-item sources. A 404 is a
+    definitive `empty`: the DOI is an OSF project or component rather than a
+    registration, and no later run should re-buy that answer.
+    """
+    guid = _osf_guid(doi)
+    if not guid:
+        return None, "empty"
+    headers = {"Authorization": f"Bearer {OSF_TOKEN}"} if OSF_TOKEN else {}
+    resp, status = _request_with_retry(
+        f"OSF {doi}",
+        lambda: _SESSION.get(_OSF_API.format(guid=guid), timeout=30, headers=headers))
+    if status == "transient":
+        return None, "transient"
+    if resp.status_code >= 400:
+        return None, "empty"
+    attributes = (resp.json().get("data") or {}).get("attributes") or {}
+    if not attributes:
+        return None, "empty"
+    return _osf_registration_text(attributes), "ok"
+
+
+# ---------------------------------------------------------------------------
+# Phase runners — one contract for all six sources
 # ---------------------------------------------------------------------------
 
 def _phase_targets(worklist: list[dict], namespace: str, done: set[str],

@@ -27,14 +27,24 @@ EXPECTED = {
     "deposit-registrant": ("discard", 958, None, False),
     "not-a-paper-title": ("discard", 955, None, False),
     "not-a-report-type": ("discard", 940, None, False),
-    "replication-claim": ("screen_expensive", 700, None, False),
+    "osf-registration-completed": ("screen_expensive", 936, None, False),
+    "osf-registration-protocol": ("discard", 935, None, True),
+    "replication-claim-cited-title": ("screen_expensive", 760, None, False),
+    "replication-claim-title": ("screen_expensive", 750, None, True),
+    "replication-claim-text": ("screen_expensive", 730, None, True),
+    "replication-claim-residual": ("screen_expensive", 710, None, True),
     "not-a-study-type": ("discard", 500, None, False),
     "replication-signal": ("screen_cheap", 300, "replication", True),
     "reproduction-signal": ("screen_cheap", 262, "reproduction", True),
     "replication-probe": ("screen_cheap", 100, "replication", True),
 }
 
-_ADMISSION = "replication-claim"
+# The replication-claim family, narrowest first: the same twelve arms asked for
+# with decreasing strength. Every tier routes to the same pile, so precedence
+# inside the family decides attribution rather than destination.
+_CLAIM_TIERS = ("replication-claim-cited-title", "replication-claim-title",
+                "replication-claim-text", "replication-claim-residual")
+_ADMISSION = _CLAIM_TIERS
 _ABOVE_ADMISSION = ("not-a-paper-doi", "deposit-registrant", "not-a-paper-title",
                     "not-a-report-type")
 _BELOW_ADMISSION = ("not-a-study-type",)
@@ -70,18 +80,30 @@ def test_specs_are_returned_highest_precedence_first():
 
 def test_admission_sits_between_the_two_kinds_of_discard():
     """The definitional discards outrank admission; the metadata-crosswalk discard
-    does not, so a mistyped replication is screened rather than deleted."""
+    does not, so a mistyped replication is screened rather than deleted. The whole
+    claim family shares that band, so the ordering holds for every tier."""
     precedence = {s.id: s.precedence for s in load_specs(SPEC_DIR)}
-    for rule in _ABOVE_ADMISSION:
-        assert precedence[rule] > precedence[_ADMISSION], rule
-    for rule in _BELOW_ADMISSION:
-        assert precedence[rule] < precedence[_ADMISSION], rule
+    for admission in _ADMISSION:
+        for rule in _ABOVE_ADMISSION:
+            assert precedence[rule] > precedence[admission], (rule, admission)
+        for rule in _BELOW_ADMISSION:
+            assert precedence[rule] < precedence[admission], (rule, admission)
 
 
-def test_only_one_rule_routes_to_the_expensive_screen():
-    """`replication-claim` is the sole route to two voters."""
+def test_the_expensive_screen_has_exactly_two_routes():
+    """The four `replication-claim-*` tiers are the phrase route, ordered
+    narrowest-claim-first. `osf-registration-completed` is the only other one, and
+    it admits on a registration template rather than on anything the text says —
+    which is why it outranks the whole family."""
     expensive = [s.id for s in load_specs(SPEC_DIR) if s.pile == "screen_expensive"]
-    assert expensive == [_ADMISSION]
+    assert expensive == ["osf-registration-completed", *_CLAIM_TIERS]
+
+
+def test_exactly_one_tier_of_the_claim_family_is_live():
+    """The tiers are switched on one at a time; the live one is the narrowest."""
+    live = [s.id for s in load_specs(SPEC_DIR)
+            if s.id in _CLAIM_TIERS and not s.shadow]
+    assert live == ["replication-claim-cited-title"]
 
 
 def test_a_duplicate_id_across_two_files_is_rejected(tmp_path):

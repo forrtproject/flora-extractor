@@ -106,7 +106,7 @@ screen piles only, so an exported row's `pending_reason` is always empty.
 mapping in `filter/spec/conventions.json`, refined by the winning rule's
 `vocabulary` where the pile's policy sets `vocabulary_names_status`. In the current
 bundle that lands as: `screen_expensive` → `needs_review` at **high** confidence
-(its one rule, `replication-claim`, names no vocabulary), and `screen_cheap` →
+(its rules, the `replication-claim-*` tiers, name no vocabulary), and `screen_cheap` →
 `needs_review` at **medium**, except for the rules that do name one —
 `replication-signal` and `replication-probe` → `replication`,
 `reproduction-signal` → `reproduction`, also at medium. So a vocabulary status in `filtered.csv` today always arrives at

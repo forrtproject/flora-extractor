@@ -1,8 +1,12 @@
-"""What `replication-claim` matches and what it does not.
+"""What the `replication-claim` family matches and what it does not.
 
 Patterns only — where a claimed row is routed is asserted in the policy table of
 `tests/test_engine_spec.py`. `_matches()` asserts the two backends agree on every
-string it is given; `tests/test_spec_vocabulary.py` imports both helpers.
+string it is given; `tests/test_spec_vocabulary.py` imports these helpers.
+
+The twelve arms are spread over four tiers that differ only in how much they ask
+for, so an arm is exercised through `_matches_family()` — does ANY tier claim this
+string — and the narrowing each tier adds is asserted separately.
 """
 
 import json
@@ -41,6 +45,15 @@ def _row(title: str, abstract: str, work: int = 1, doi: str = None,
         "hit_token_abstract": True,
         "hit_concept": False,
     }
+
+
+CLAIM_TIERS = ("replication-claim-cited-title", "replication-claim-title",
+               "replication-claim-text", "replication-claim-residual")
+
+
+def _matches_family(specs: list, row: dict) -> bool:
+    """Whether any tier of the `replication-claim` family claims *row*."""
+    return any(_matches(specs, tier, row) for tier in CLAIM_TIERS)
 
 
 def _matches(specs: list, spec_id: str, row: dict) -> bool:
@@ -86,7 +99,7 @@ def _matches(specs: list, spec_id: str, row: dict) -> bool:
 ])
 def test_rule_b_claims_a_self_referential_replication_claim(specs, abstract):
     """One string per arm: the paper says that IT is or did a replication."""
-    assert _matches(specs, "replication-claim", _row("A new sample", abstract))
+    assert _matches_family(specs, _row("A new sample", abstract))
 
 
 @pytest.mark.parametrize("abstract", [
@@ -108,4 +121,60 @@ def test_rule_b_claims_a_self_referential_replication_claim(specs, abstract):
 def test_rule_b_refuses_what_it_leaves_out(specs, abstract):
     """No arm of B claims these — the senses it excludes and the two phrases it
     deliberately does not carry (bare `replication of`, `registered report of`)."""
-    assert not _matches(specs, "replication-claim", _row("Grassland ecology", abstract))
+    assert not _matches_family(specs, _row("Grassland ecology", abstract))
+
+
+# ---------------------------------------------------------------------------
+# What each tier adds on top of the arms
+# ---------------------------------------------------------------------------
+
+
+_CLAIM_TITLE = "A direct replication of the anchoring effect"
+_CITED_TITLE = "A direct replication of Smith et al. (2009)"
+
+
+@pytest.mark.parametrize("tier,title,abstract,claimed", [
+    # the arm is in the abstract only: neither title tier reaches it
+    ("replication-claim-title", "Anchoring in context",
+     "We report a direct replication of Smith (2009).", False),
+    ("replication-claim-cited-title", "Anchoring in context",
+     "We report a direct replication of Smith (2009).", False),
+    # the arm is in the title, and only the cited-title tier asks for the year too
+    ("replication-claim-title", _CLAIM_TITLE, "No target is named.", True),
+    ("replication-claim-cited-title", _CLAIM_TITLE, "No target is named.", False),
+    ("replication-claim-cited-title", _CITED_TITLE, "No target is named.", True),
+    # the strong/residual split: a residual arm is claimed by its own tier only
+    ("replication-claim-text", "Anchoring in context",
+     "The original effect did not replicate in any of the three samples.", False),
+    ("replication-claim-residual", "Anchoring in context",
+     "The original effect did not replicate in any of the three samples.", True),
+    ("replication-claim-text", "Anchoring in context",
+     "This replication study re-tests the original claim.", True),
+    ("replication-claim-residual", "Anchoring in context",
+     "This replication study re-tests the original claim.", False),
+    # outside a title the text tier asks for a strong arm and nothing else: a
+    # named work in the abstract neither adds to the claim nor is required by it,
+    # which is why the `replication-claim-cited` tier was dropped (rule_ideas.md)
+    ("replication-claim-text", "Anchoring in context",
+     "This replication study re-tests the claim of Smith (2009).", True),
+])
+def test_each_tier_asks_for_exactly_what_its_name_says(specs, tier, title, abstract,
+                                                       claimed):
+    assert _matches(specs, tier, _row(title, abstract)) is claimed
+
+
+def test_the_citation_pattern_is_a_word_then_a_year_and_no_more(specs):
+    """What the pattern actually requires, stated as three cases so the looseness is
+    on the record rather than in the description only: a word of three or more
+    characters, then spaces or commas, then a year. It is case-insensitive like
+    every other spec regex, so `[A-Z]` describes the surface form and does not
+    require a capital — and any word will do, not only a surname."""
+    # any word, not only a name: this is the pattern's known looseness
+    assert _matches(specs, "replication-claim-cited-title",
+                    _row("A direct replication, 2009-2011 cohort", "No target."))
+    # lowercase surname: the [A-Z] atom does not require a capital
+    assert _matches(specs, "replication-claim-cited-title",
+                    _row("A direct replication of smith 2009", "No target."))
+    # punctuation between the word and the year breaks the pattern
+    assert not _matches(specs, "replication-claim-cited-title",
+                        _row("A direct replication: 2009", "No target."))

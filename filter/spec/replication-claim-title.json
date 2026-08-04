@@ -1,0 +1,65 @@
+{
+  "id": "replication-claim-title",
+  "description": "STRONG ADMISSION: any of the twelve arms in the TITLE, with no requirement that the title name a target. The claim is positional only — a title is the paper's own statement of what it is, so a replication phrase there is self-description, while the same phrase in an abstract is as often a sentence about someone else's work. Over the routed pool (release ec9497102a7e, 5,146,160 rows) the twelve arms admitted 89,113 rows to screen_expensive. Restricting the arms to TITLE position leaves 8,898 admitted rows holding 597 of the 1,455 in-pool FLoRA papers; requiring the citation pattern in the title as well leaves 1,790 rows — 20% of the title slice — holding 149 FLoRA papers, 25% of the title slice's. A blind Sonnet label pass over 584 stratified title-position rows (titles only, field-neutral rubric, 2026-08-04) read 471 yes / 80 no / 33 unclear, an apparent 80.7% for title position as a whole. On the rows whose title also carries the citation pattern it read 105 yes of 108, i.e. 97.2%, two false positives in 108. Read those two numbers as the price of dropping the citation requirement: five times the volume, four times the FLoRA capture, and 80.7% against 97.2% apparent precision. The exclusion-style narrowings measured on the same labels were near-useless beside that: dropping meta-discussion markers gave 82.0%, dropping biological terms 81.9%, both together 83.4%, against 97.2% for the positive requirement. THAT CONTRAST IS THE ARGUMENT FOR THIS TIER. The fix for a loose admission is a stronger positive requirement, not a list of senses to exclude — which is the whole point of the whitelist inversion, and the reason the v1 book's twenty disambiguation rules were deleted rather than tuned. What the citation requirement does not remove is visible in the same labels: of the 80 title-position noes, 36 are terminology_only (a virus replicating in a host, the experimental-replicate sense, \"machines cannot replicate…\") and 30 are about_replication (the replication crisis, calls for replication, meta-research). Those two classes are what a stronger positive requirement still has to beat. One clause per arm, so each arm can be measured and retired on its own evidence — the engine attributes a hit to the rule, not the arm, so an arm's count is a separate evaluation of that arm's pattern. Every regex is carried verbatim from the twelve-arm `replication-claim` this family replaces. Note what is NOT in any arm. Bare `replications? of` is deliberately excluded: it is the highest-recall phrase in the book (40.4% of positives) and also fires on 82.2% of screen-confirmed negatives, and no cheap syntactic anchor repairs it — it is `replication-signal`'s last arm instead. `registered report of` is excluded because most Registered Reports are original studies. Reproduction vocabulary is out of scope entirely; it belongs to `reproduction-signal` and #155. Every tier of this family routes to the same pile, so precedence here decides ATTRIBUTION, not destination: which tier `filter_evidence` records for a row several tiers claim, and therefore the order a worklist can be worked in. The ordering is by measured specificity — cited-title (760), title (750), text (730), residual (710) — so a row is credited to the narrowest claim that reaches it. The whole family sits in the 700s strong-admission band for the reason the single rule did: it yields to the identifier/title/type discards above it (940–960), which say the record is not a paper at all, and it outranks `not-a-study-type` (500), whose claim is a fallible registry crosswalk — so a replication mistyped as `paratext` is screened rather than deleted. This tier sits directly below `replication-claim-cited-title` (760), which is this same claim with a named target, and above `replication-claim-text` (730), which is this claim with the positional requirement removed: position says whose claim the phrase is, which is why the title slice is the narrower tier of the two. `vocabulary` stays null across the family: an admission to the two-voter screen is a request for attention, not a verdict about what the row is (CONVENTIONS.md, \"Pile → filter_status\"). OPEN SCOPE QUESTION (D3), inherited from the single rule and landing on the `aim|set out to replicate` arm: if a planned-but-not-completed replication is not a FLoRA record, that arm belongs elsewhere.",
+  "match": {
+    "any_of": [
+      {
+        "title_regex": "\\bwe\\s+(?:\\w+\\s+){0,2}replicat(?:e|es|ed)\\b"
+      },
+      {
+        "title_regex": "\\breplication\\s+stud(?:y|ies)\\b"
+      },
+      {
+        "title_regex": "\\breplicat\\w*\\s+(?:and|&)\\s+exten\\w*\\b"
+      },
+      {
+        "title_regex": "\\bstudy\\s+replicate[sd]\\b"
+      },
+      {
+        "title_regex": "\\b(?:fail\\w*|unable|inabilit\\w+|attempt\\w*)\\s+to\\s+(?:\\w+ly\\s+)?replicate\\b"
+      },
+      {
+        "title_regex": "\\b(?:direct|conceptual|registered|exact|close|high[-\\s]powered|pre[-\\s]?registered|large[-\\s]scale|many-?labs?|multi-?site)\\s+replications?\\b"
+      },
+      {
+        "title_regex": "\\b(?:aim\\w*|set\\s+out)\\s+to\\s+(?:\\w+ly\\s+)?replicate\\b"
+      },
+      {
+        "title_regex": "\\bour\\s+replications?\\b"
+      },
+      {
+        "title_regex": "\\bsuccess\\w*\\s+replicat\\w*\\b"
+      },
+      {
+        "title_regex": "\\breplication\\s+attempts?\\b"
+      },
+      {
+        "title_regex": "\\b(?:failures?\\s+to\\s+replicate|failed\\s+replications?|replication\\s+failures?|unsuccessful\\s+replications?)\\b"
+      },
+      {
+        "title_regex": "\\b(?:(?:d(?:oes|o|id)|w(?:as|ere)|is|are|ha[sd]|have|could|would|should|can|may|might)\\s+(?:not|never)|cannot|can['’]t)\\s+(?:(?:be|been)\\s+)?replicat\\w+\\b"
+      }
+    ]
+  },
+  "pile": "screen_expensive",
+  "vocabulary": null,
+  "precedence": 750,
+  "shadow": true,
+  "measured": [
+    {
+      "level": "downstream",
+      "n": 2895,
+      "sample": "2,895 distinct replication studies with a usable abstract from `data/FLoRA entry sheet - replication list.csv` (3,851 rows, 2,978 distinct doi_r), text = ref_r + abstract_r as a proxy for the pool row's title + abstract; scored against 501 rows of `data/not_a_replication.csv`, papers that passed the old filter, reached the two-voter screen and were judged not_a_replication. Computed 2026-08-04, proposal SS1 (redesign/rulebook_v2.html).",
+      "date": "2026-08-04",
+      "rationale": "With all twelve arms this rule fires on 82.6% of the positives at 6.8% of the false-positive load (80.8% / 6.2% without the four marginal arms). READ BOTH DENOMINATORS AS WHAT THEY ARE. The recall figure is an UPPER BOUND: a substantial share of the entry sheet was discovered by keyword search, so a phrase rule scored against it over-estimates recall, most for the arms that did the finding; the sheet's columns do not separate curated-list entries from pipeline-found ones, so this is corrected by the SS6 holdout design, not here. The 6.8% is NOT a population false-positive rate and must never be quoted as this rule's precision: the negatives corpus is the false-positive load itself — what the old loose filter admitted and the screen then rejected — so what it measures exactly is the composition of the money currently being wasted. Per-arm firing on the 501 negatives: `we replicat*` 1.6%, `replicate and extend` 1.6%, `replication study` 0.8%, `fail/attempt to replicate` 0.8%, `study replicated` 0.0%, the qualifier family 2.8%. The four marginal arms were measured MARGINALLY, i.e. what each adds once the arms above it are in: `success* replicat*` +26 positives / +2 negatives (13:1, and the only arm carrying the successful-outcome framing); the negation matrix +18 / +1; `replication attempt(s)` +8 / +0; the failure nouns +1 / +0. That last +1 is the clearest case on the page of why a marginal count is not a coverage argument: 'We present a failed replication of Smith (2009)' fires the noun arm and NOTHING ELSE in this rule, because 'replication' there is a noun and the sentence never uses the verb. It scores +1 only because in this keyword-assembled corpus the papers phrasing it that way almost all also say 'replication study' or 'we replicated' somewhere in the same abstract. A marginal count of +1 on a biased corpus is weak evidence of redundancy; a marginal count of +0 negatives is strong evidence of harmlessness, and when an arm is free the second number decides. The rule discards nothing — it admits into a tier that decides — so the evidence gate does not bind it; this entry documents the claim rather than satisfying a gate."
+    },
+    {
+      "level": "llm:sonnet",
+      "precision": 0.807,
+      "n": 584,
+      "date": "2026-08-04",
+      "sample": "Routed pool at release ec9497102a7e (5,146,160 rows) for every volume and FLoRA count; FLoRA capture against data/flora.csv, of which 1,455 papers are in this pool, counted over the ADMITTED rows — `analysis.arm_evidence`'s own `flora` column counts rows the arms MATCH, which is a larger set, so the two are not the same number. Precision from a blind label pass by Claude Sonnet over 584 title-position rows drawn stratified by arm, titles only, field-neutral rubric, 2026-08-04. Volumes recomputable with `python -m analysis.arm_evidence --spec filter/spec/<this file>`.",
+      "rationale": "Over the routed pool (release ec9497102a7e, 5,146,160 rows) the twelve arms admitted 89,113 rows to screen_expensive. Restricting the arms to TITLE position leaves 8,898 admitted rows holding 597 of the 1,455 in-pool FLoRA papers; requiring the citation pattern in the title as well leaves 1,790 rows — 20% of the title slice — holding 149 FLoRA papers, 25% of the title slice's. A blind Sonnet label pass over 584 stratified title-position rows (titles only, field-neutral rubric, 2026-08-04) read 471 yes / 80 no / 33 unclear, an apparent 80.7% for title position as a whole. On the rows whose title also carries the citation pattern it read 105 yes of 108, i.e. 97.2%, two false positives in 108. The exclusion-style narrowings measured on the same labels were near-useless beside that: dropping meta-discussion markers gave 82.0%, dropping biological terms 81.9%, both together 83.4%, against 97.2% for the positive requirement. THAT CONTRAST IS THE ARGUMENT FOR THIS TIER. The fix for a loose admission is a stronger positive requirement, not a list of senses to exclude — which is the whole point of the whitelist inversion, and the reason the v1 book's twenty disambiguation rules were deleted rather than tuned. What the citation requirement does not remove is visible in the same labels: of the 80 title-position noes, 36 are terminology_only (a virus replicating in a host, the experimental-replicate sense, \"machines cannot replicate…\") and 30 are about_replication (the replication crisis, calls for replication, meta-research). Those two classes are what a stronger positive requirement still has to beat. The labels are one model's reading of TITLES ALONE, not the two-voter screen's verdicts and not a human's: they rank candidates and do not settle precision. Nothing downstream of this rule produced them — the labelling model saw the title and a field-neutral rubric and nothing else — so they are not circular, but they are also not the instrument that will actually decide these rows."
+    }
+  ]
+}

@@ -28,16 +28,19 @@ Four properties both runners share, and the reasons they are not optional:
   `shared/config.py`'s rough per-1k prices (§6).
 
   **Evidence before its verdict.** Each raw response is written to
-  `cache/engine/responses/<hash>.json` and pushed to Hugging Face when a token and
-  a repo are configured, BEFORE `record_verdict` inserts the row that names it
-  (§4). A push that did not happen is recorded as `response_pending_upload`
-  rather than claimed as `uploaded` — the state is about the blob, not about our
-  intentions for it.
+  `cache/engine/responses/<hash>.json` BEFORE `record_verdict` inserts the row that
+  names it (§4). The row is inserted `response_pending_upload`; the blob travels to
+  Hugging Face in a MULTI-FILE commit later in the run, and only a commit that was
+  actually accepted turns the state into `uploaded` (`_ResponseUploader`). The
+  state is about the blob, not about our intentions for it.
 
-  **Per-work checkpointing.** A verdict is written as each work is decided, so an
-  interrupted run's claim is failed and the next run re-claims only the works that
-  have no verdict yet. Nothing local is checkpointed: the server holds the state,
-  and a local file that disagreed with it would be the thing we trusted.
+  **Per-work checkpointing, in parallel.** A verdict is written as each work is
+  decided, so an interrupted run's claim is failed and the next run re-claims only
+  the works that have no verdict yet. Works are independent, so they are judged by
+  a pool of `ENGINE_TIER_WORKERS` threads; what bounds the request rate is the
+  per-provider limiter in `shared/llm_client.py`, not the loop's shape. Nothing
+  local is checkpointed: the server holds the state, and a local file that
+  disagreed with it would be the thing we trusted.
 
 Neither runner touches the routing table. A live `screen_cheap` discard is applied
 where the rows leave the engine (`handoff.py`), because routing is derived data —
@@ -49,17 +52,21 @@ import datetime
 import hashlib
 import json
 import logging
+import os
 import statistics
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
-from filter.engine.claims import (PENDING_UPLOAD, UPLOADED, ClaimConflict,
-                                  ClaimsClient)
+from filter.engine.claims import PENDING_UPLOAD, ClaimConflict, ClaimsClient
 from filter.engine.pool_reader import iter_pool_batches
 from filter.engine.workids import resolve, work_id
 from shared import token_counter
-from shared.config import ENGINE_CACHE_DIR, FLORA_POOL_REPO, SNAPSHOT_POOL_DIR
+from shared.config import (ENGINE_CACHE_DIR, ENGINE_TIER_HF_UPLOAD,
+                           ENGINE_TIER_WORKERS, FLORA_HF_COMMIT_BATCH,
+                           FLORA_POOL_REPO, SNAPSHOT_POOL_DIR)
 from shared.llm_client import classify_replication, screen_gate, screen_voters
 from shared.prescreen import prescreen_bypass, prescreen_voters
 from shared.token_usage import TokenBudgetExhausted, check_openai_budget
@@ -250,41 +257,114 @@ def _usd(amount: float) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _write_response(blob: dict) -> tuple[str, str]:
-    """Persist one raw response and return `(response_hash, response_state)`.
+def _write_response(blob: dict) -> tuple[str, Path]:
+    """Persist one raw response and return `(response_hash, path)`.
 
-    The hash names the bytes, so the same answer written twice is one blob. The
-    state is what actually happened to it: `uploaded` only when a push returned
-    without raising, `response_pending_upload` when there was nothing to push
-    with or the push failed. An unconfigured Hugging Face is not an error — the
-    blob is on disk either way and reconciliation is a later run's job.
+    The hash names the bytes, so the same answer written twice is one blob. Disk
+    is the only thing this does: the blob exists before the verdict row that names
+    it, which is the ordering §4 asks for, and the upload is a separate, batched
+    concern (`_ResponseUploader`).
     """
     payload = json.dumps(blob, sort_keys=True, ensure_ascii=False, default=str)
     response_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     RESPONSES_DIR.mkdir(parents=True, exist_ok=True)
     path = RESPONSES_DIR / f"{response_hash}.json"
     path.write_text(payload, encoding="utf-8")
-    return response_hash, UPLOADED if _push_response(path) else PENDING_UPLOAD
+    return response_hash, path
 
 
-def _push_response(path: Path) -> bool:
-    """Upload one response blob to the pool repo, or return False, silently.
+def _hf_upload_target() -> Optional[str]:
+    """The repo response blobs go to, or None when this run does not push.
 
-    Env-gated on purpose: a developer with no HF_TOKEN runs the tiers exactly as
-    a deployment does, and the only difference is a response_state that says so.
+    Three ways to be off, and none of them is an error: the config flag
+    (`ENGINE_TIER_HF_UPLOAD=false`), no repo, no token. A developer with no
+    HF_TOKEN runs the tiers exactly as a deployment does, and the only difference
+    is a response_state that says so.
     """
-    import os
-    if not (FLORA_POOL_REPO and os.getenv("HF_TOKEN")):
-        return False
-    try:
-        import huggingface_hub as hf  # pipeline-only dependency
-        hf.HfApi(token=os.getenv("HF_TOKEN")).upload_file(
-            path_or_fileobj=str(path), path_in_repo=f"responses/{path.name}",
-            repo_id=FLORA_POOL_REPO, repo_type="dataset")
-        return True
-    except Exception as exc:  # noqa: BLE001 — network boundary
-        log.debug("response blob %s not uploaded: %s", path.name, exc)
-        return False
+    if not (ENGINE_TIER_HF_UPLOAD and FLORA_POOL_REPO and os.getenv("HF_TOKEN")):
+        return None
+    return FLORA_POOL_REPO
+
+
+class _ResponseUploader:
+    """Response blobs to Hugging Face, in multi-file commits rather than one each.
+
+    `upload_file` per blob is one COMMIT per blob — two per work, ~3,700 for a
+    single expensive-tier batch. That is the anti-pattern `search/pool_sync.py`
+    already refuses for pool files, and on a live run Hugging Face answered it with
+    HTTP 429 on essentially every commit. Blobs are collected as they are written
+    and committed `FLORA_HF_COMMIT_BATCH` at a time, plus a final flush.
+
+    **What that costs, and why it is paid this way.** The verdict row must be
+    written when the work is decided — it is the run's checkpoint — but the commit
+    carrying its blob happens later, so the upload state is not known yet at insert
+    time. The row is therefore inserted `response_pending_upload` and corrected by
+    `client.mark_uploaded()` once a commit has actually accepted the bytes. The
+    alternative — holding verdicts back until their blob is committed — would trade
+    an honest, self-correcting state for a run that loses its checkpoint on every
+    interruption, and the checkpoint is what makes a killed run cheap to resume.
+    Nothing here ever claims `uploaded` for a blob a commit did not take: a failed
+    commit, an unconfigured HF and a failed `mark_uploaded` all leave the row
+    pending, and reconciliation is a later run's job.
+
+    Used from worker threads, so `add()` is locked and only one commit runs at a
+    time — HF rate limits are per account, not per thread.
+    """
+
+    def __init__(self, client: ClaimsClient, batch_size: Optional[int] = None):
+        self._client = client
+        self._batch_size = max(1, batch_size or FLORA_HF_COMMIT_BATCH)
+        self._pending: list[tuple[str, Path]] = []
+        self._lock = threading.Lock()
+        self.uploaded = 0
+        self.not_uploaded = 0
+
+    def add(self, response_hash: str, path: Path) -> None:
+        with self._lock:
+            self._pending.append((response_hash, path))
+            ready = (self._take(self._batch_size)
+                     if len(self._pending) >= self._batch_size else [])
+            if ready:
+                self._commit(ready)
+
+    def flush(self) -> None:
+        with self._lock:
+            while self._pending:
+                self._commit(self._take(self._batch_size))
+
+    def _take(self, n: int) -> list[tuple[str, Path]]:
+        batch, self._pending = self._pending[:n], self._pending[n:]
+        return batch
+
+    def _commit(self, batch: list[tuple[str, Path]]) -> None:
+        """One commit for the whole batch; anything short of success stays pending."""
+        repo = _hf_upload_target()
+        if repo is None:
+            self.not_uploaded += len(batch)
+            return
+        try:
+            import huggingface_hub as hf  # pipeline-only dependency
+            hf.HfApi(token=os.getenv("HF_TOKEN")).create_commit(
+                repo_id=repo, repo_type="dataset",
+                operations=[hf.CommitOperationAdd(
+                    path_in_repo=f"responses/{path.name}", path_or_fileobj=str(path))
+                    for _, path in batch],
+                commit_message=f"engine tier responses ({len(batch)} blob(s))")
+        except Exception as exc:  # noqa: BLE001 — network boundary
+            log.warning("%d response blob(s) not uploaded (%s); they are on disk and "
+                        "their verdicts stay %s", len(batch), exc, PENDING_UPLOAD)
+            self.not_uploaded += len(batch)
+            return
+        try:
+            self._client.mark_uploaded([h for h, _ in batch])
+        except Exception as exc:  # noqa: BLE001 — network boundary
+            # The bytes ARE on Hugging Face; only the row saying so failed. Counted
+            # as not-uploaded because that is what the database now believes.
+            log.warning("%d blob(s) committed but their verdict rows still read %s "
+                        "(%s)", len(batch), PENDING_UPLOAD, exc)
+            self.not_uploaded += len(batch)
+            return
+        self.uploaded += len(batch)
 
 
 # ---------------------------------------------------------------------------
@@ -327,40 +407,98 @@ def _run_tier(con, client: ClaimsClient, release_id: str, tier: str,
     report = {"tier": tier, "mode": mode, "dry_run": False, "estimate": est,
               "claim_id": claim_id, "release_id": release_id, "batch": batch_label,
               "decided": 0, "outcomes": {}, "discarded_work_ids": [],
-              "by_pile": {}, "verdicts": 0}
-    try:
-        for work in works:
-            check_openai_budget()
-            outcome, votes = judge(work)
-            for vote in votes:
-                response_hash, state = _write_response(vote["blob"])
-                client.record_verdict(
-                    claim_id=claim_id, work_id=work.work_id, tier=tier,
-                    verdict=vote["verdict"], model=vote.get("model", ""),
-                    prompt_hash=vote.get("prompt_hash", ""),
-                    confidence=vote.get("confidence", ""),
-                    quote=vote.get("quote", ""),
-                    response_hash=response_hash, response_state=state)
+              "by_pile": {}, "verdicts": 0, "workers": max(1, ENGINE_TIER_WORKERS)}
+    uploader = _ResponseUploader(client)
+    counters = threading.Lock()
+    stop = threading.Event()
+
+    def decide(work: Work) -> None:
+        """One work, start to finish, on a worker thread.
+
+        Everything a work needs is private to it except the report counters and the
+        uploader's queue, both of which are locked. `stop` makes the works that were
+        queued behind a failure no-ops rather than cancellations, so a run that is
+        ending still drains cheaply and nothing half-finishes.
+        """
+        if stop.is_set():
+            return
+        check_openai_budget()
+        outcome, votes = judge(work)
+        for vote in votes:
+            response_hash, path = _write_response(vote["blob"])
+            client.record_verdict(
+                claim_id=claim_id, work_id=work.work_id, tier=tier,
+                verdict=vote["verdict"], model=vote.get("model", ""),
+                prompt_hash=vote.get("prompt_hash", ""),
+                confidence=vote.get("confidence", ""),
+                quote=vote.get("quote", ""),
+                response_hash=response_hash, response_state=PENDING_UPLOAD)
+            uploader.add(response_hash, path)
+            with counters:
                 report["verdicts"] += 1
+        with counters:
             report["decided"] += 1
             report["outcomes"][outcome] = report["outcomes"].get(outcome, 0) + 1
             if outcome == DISCARD:
                 report["discarded_work_ids"].append(work.work_id)
                 report["by_pile"][work.pile] = report["by_pile"].get(work.pile, 0) + 1
+
+    try:
+        failures: list[BaseException] = []
+        # Works are independent and each is almost entirely provider latency, so
+        # they overlap; the request RATE is still bounded by the per-provider
+        # limiter in shared/llm_client.py, which reserves slots under a lock.
+        with ThreadPoolExecutor(max_workers=report["workers"],
+                                thread_name_prefix=f"tier-{tier}") as pool:
+            futures = [pool.submit(decide, work) for work in works]
+            try:
+                for future in as_completed(futures):
+                    try:
+                        future.result()
+                    except BaseException as exc:  # noqa: BLE001 — one work must not
+                        stop.set()                # cost the others their verdicts
+                        failures.append(exc)
+            finally:
+                # Leaving the pool waits for every queued work, so a Ctrl-C here
+                # would otherwise sit through the whole rest of the batch. Setting
+                # the flag makes the queued ones return immediately; the handful
+                # already in flight still finish and record what they were paid for.
+                stop.set()
+        if failures:
+            # A budget exhaustion is the one failure with a report line of its own,
+            # and it wins over an incidental error raised in the same moment.
+            raise next((exc for exc in failures
+                        if isinstance(exc, TokenBudgetExhausted)), failures[0])
     except TokenBudgetExhausted as exc:
         # The remaining works were never examined. Failing the claim frees them
         # for the next run; the verdicts already written stay, because they are
         # evidence and the budget did not un-spend them.
-        client.release_claim(claim_id, "failed")
         report["stopped"] = f"token budget exhausted: {exc}"
-        _write_run_report(report)
+        _finish(report, uploader, client, claim_id, "failed")
         raise
     except BaseException:
-        client.release_claim(claim_id, "failed")
-        _write_run_report(report)
+        _finish(report, uploader, client, claim_id, "failed")
         raise
 
-    client.release_claim(claim_id, "complete")
+    _finish(report, uploader, client, claim_id, "complete")
+    return report
+
+
+def _finish(report: dict, uploader: "_ResponseUploader", client: ClaimsClient,
+            claim_id: str, status: str) -> dict:
+    """Push what is still queued, end the claim, write the report.
+
+    The flush comes first so the report's upload counts are final, and it runs on
+    the failure paths too: the blobs are already written and committing them costs
+    nothing an ending run cares about.
+    """
+    uploader.flush()
+    # Ordering is not a contract of the run, but it is of the report — a threaded
+    # run would otherwise shuffle this list between two identical runs.
+    report["discarded_work_ids"].sort()
+    report["responses"] = {"uploaded": uploader.uploaded,
+                           PENDING_UPLOAD: uploader.not_uploaded}
+    client.release_claim(claim_id, status)
     _write_run_report(report)
     return report
 
