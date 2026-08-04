@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FLoRA Extractor — Stage-2 Rule Book v2: a whitelist in seven rules</title>
+<style>
+:root { --ink:#1c2333; --muted:#5b6478; --accent:#1a5fb4; --rule:#e3e6ee; --bg:#fdfdfc;
+        --panel:#f4f6fa; --warn:#9a6a00; --bad:#b3261e; --good:#3a7d44; --code-bg:#f0f2f7; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink);
+       font:16px/1.65 "Avenir Next","Segoe UI",system-ui,sans-serif; }
+main { max-width:900px; margin:0 auto; padding:3rem 1.5rem 6rem; }
+h1 { font-size:1.9rem; line-height:1.25; margin:0 0 .3rem; }
+.subtitle { color:var(--muted); margin:0 0 2.2rem; font-size:1.02rem; }
+h2 { font-size:1.35rem; margin:3.2rem 0 .5rem; padding-top:1.2rem; border-top:2px solid var(--rule); }
+h3 { font-size:1.05rem; margin:2.2rem 0 .2rem; font-family:"SF Mono",ui-monospace,Menlo,monospace; }
+h4 { font-size:.98rem; margin:1.6rem 0 .2rem; }
+p { margin:.6rem 0; }
+code { background:var(--code-bg); padding:.1em .35em; border-radius:4px; font-size:.88em;
+       font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace; }
+pre { background:var(--code-bg); padding:.9rem 1rem; border-radius:6px; overflow-x:auto;
+      font-size:.8rem; line-height:1.5; margin:.8rem 0; }
+pre code { background:none; padding:0; font-size:1em; }
+table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.92rem; }
+th,td { border:1px solid var(--rule); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+th { background:var(--panel); font-weight:600; }
+td.num { text-align:right; font-variant-numeric:tabular-nums;
+         font-family:"SF Mono",ui-monospace,Menlo,monospace; font-size:.86rem; }
+.tablewrap { overflow-x:auto; }
+.box { background:var(--panel); border-left:4px solid var(--accent);
+       padding:1rem 1.2rem; border-radius:0 8px 8px 0; margin:1.5rem 0; }
+.box.bad { border-left-color:var(--bad); }
+.box.warn { border-left-color:var(--warn); }
+.box.good { border-left-color:var(--good); }
+.box p:first-child { margin-top:0; }
+.box p:last-child { margin-bottom:0; }
+ul, ol { margin:.6rem 0; padding-left:1.4rem; }
+li { margin:.35rem 0; }
+.tag { display:inline-block; font-size:.68rem; font-weight:700; padding:.14em .6em;
+       border-radius:999px; margin-left:.4rem; vertical-align:middle; color:#fff;
+       font-family:"Avenir Next",system-ui,sans-serif; letter-spacing:.02em; }
+.t-live { background:var(--good); } .t-draft { background:var(--warn); }
+.t-bad { background:var(--bad); } .t-new { background:var(--accent); }
+.meta { color:var(--muted); font-size:.82rem; margin:.15rem 0 .5rem;
+        font-family:"SF Mono",ui-monospace,Menlo,monospace; }
+.small { color:var(--muted); font-size:.9rem; }
+.lead { font-size:1.06rem; }
+a { color:var(--accent); }
+hr { border:none; border-top:1px solid var(--rule); margin:2rem 0; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Stage-2 Rule Book v2 — a whitelist in seven rules</h1>
+<p class="subtitle">Twenty specs become seven, covering replication only; reproduction moves to
+its own issue. Two whole precedence bands are deleted, not rewritten. The design is settled by
+measurement on local data and stress-tested against Gemini 3.1 Pro and codex. Companion to
+<code>rulebook_review.html</code> (what is wrong with the current book) and
+<code>current_state_v4.html</code> (the pipeline as a whole).</p>
+
+<div class="box">
+<p><strong>The short version.</strong> The exclusion band and the rescue band exist only
+because the admission signal is loose. Invert the architecture from <em>blacklist</em>
+("a replication stem is a candidate unless an exclusion kills it") to <em>whitelist</em>
+("nothing is screened unless a positive rule admits it") and both bands become unnecessary
+in the same move — no sense-disambiguation rules, no rescues, no ninety duplicated regexes,
+no manual sync obligation. What remains is four discards of two clearly different kinds, one
+strong admission rule, one weak admission rule, and an audited <code>pending</code> reservoir.</p>
+<p>The measurement that decides the shape: six phrase arms cover <strong>92%</strong> of
+known replication studies, and the other twenty-six arms in the current book buy
+<strong>1%</strong>. One of those six — bare <code>replication of</code> — fires on
+<strong>82% of screened negatives</strong>. Split the book there and everything else follows.</p>
+<p><strong>Scope:</strong> this book admits <em>replications</em>. The reproduction vocabulary
+(<code>reproduce</code>, <code>re-analyse</code>, computational reproducibility, CODECHECK) is a
+different genre with a different precision profile and needs its own rule, developed against its
+own evidence — <a href="https://github.com/forrtproject/flora-extractor/issues/155">issue #155</a>, and the existing <code>phrase-reproduction</code> rule carries on
+unchanged in the meantime so nothing goes dark.</p>
+</div>
+
+<h2>1 · The evidence this design rests on</h2>
+
+<p>All figures below were computed locally today against two corpora already in the repo.
+Method and biases are stated first, because the numbers are only worth what the denominators
+are worth — the failure that produced the 2026-08-04 reset (#151).</p>
+
+<h4>The positives</h4>
+<p><strong>2,895 distinct replication studies</strong> with a usable abstract, from
+<code>data/FLoRA entry sheet - replication list.csv</code> (3,851 rows, 2,978 distinct
+<code>doi_r</code>, 1,550 carrying a <code>validation_status</code>). Text used is
+<code>ref_r</code> (an APA citation, which contains the title) concatenated with
+<code>abstract_r</code> — a close proxy for the pool row's title + abstract, not an exact one.</p>
+
+<div class="box warn">
+<p><strong>Bias, stated up front.</strong> A substantial share of the entry sheet was
+discovered by keyword search, so any phrase rule scored against it <em>over-estimates
+recall</em>, and over-estimates it most for the arms that did the finding. The sheet's columns
+do not let curated-external-list entries be separated from pipeline-found ones, so this cannot
+be corrected here — it has to be handled by the holdout design in §6. Read the recall figures
+as an <strong>upper bound</strong> and, more usefully, as a <strong>ranking</strong> of arms
+against each other, which the bias distorts far less.</p>
+</div>
+
+<h4>The negatives</h4>
+<p><strong>501 rows</strong> from <code>data/not_a_replication.csv</code> — papers that passed
+the old filter, reached the two-voter screen, and were judged <code>not_a_replication</code>.</p>
+
+<div class="box warn">
+<p><strong>Bias, stated up front.</strong> These are not a random sample of OpenAlex. They are
+a sample of <em>what the old loose filter admitted and the screen then rejected</em> — i.e.
+the false-positive load itself. So a figure like "5.8% of negatives" is <em>not</em> a
+population false-positive rate and must never be quoted as rule B's precision. What this
+corpus does measure, and measures exactly, is <strong>the composition of the money we are
+currently wasting</strong> — which is the question the rule book has to answer.</p>
+</div>
+
+<h3>1.1 · Six arms carry the whole rule book</h3>
+
+<p>Greedy set cover over all 42 phrase arms in <code>phrase-replication.json</code> +
+<code>phrase-reproduction.json</code>, against the 2,895 positives:</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>#</th><th>arm</th><th>new positives</th><th>cumulative recall</th></tr>
+<tr><td class="num">1</td><td><code>\breplications? of\b</code></td><td class="num">1,169</td><td class="num">40.4%</td></tr>
+<tr><td class="num">2</td><td><code>\bwe\s+(?:\w+\s+){0,2}replicat(?:e|es|ed)\b</code></td><td class="num">592</td><td class="num">60.8%</td></tr>
+<tr><td class="num">3</td><td><code>\breplication\s+stud(?:y|ies)\b</code></td><td class="num">440</td><td class="num">76.0%</td></tr>
+<tr><td class="num">4</td><td><code>\breplicat\w*\s+(?:and|&amp;)\s+exten\w*\b</code></td><td class="num">310</td><td class="num">86.7%</td></tr>
+<tr><td class="num">5</td><td><code>\b(?:fail\w*|unable|inabilit\w+|attempt\w*)\s+to\s+(?:\w+ly\s+)?replicate\b</code></td><td class="num">91</td><td class="num">89.9%</td></tr>
+<tr><td class="num">6</td><td><code>\bstudy\s+replicate[sd]\b</code></td><td class="num">60</td><td class="num">92.0%</td></tr>
+<tr><td class="num">7–12</td><td>direct / conceptual / registered replication, aim-to-replicate, negated-replicate, …</td><td class="num">87</td><td class="num">95.2%</td></tr>
+<tr><td class="num">13–42</td><td><em>the remaining thirty arms</em></td><td class="num">28</td><td class="num">96.2%</td></tr>
+</table>
+</div>
+
+<p>Thirty arms — including every arm the exclusion/rescue machinery was built to protect —
+contribute <strong>28 papers out of 2,895</strong>. The maintenance cost of the current book
+is being paid almost entirely for its last percentage point of (over-estimated) recall.</p>
+
+<h3>1.2 · The one number that decides the architecture</h3>
+
+<p>Split the six-arm core into "bare <code>replication of</code>" and the other five (call
+them <strong>STRONG</strong>, plus the near-free <code>direct|conceptual|registered|exact
+replication</code> family), and score each side on both corpora:</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>signal</th><th>fires on positives</th><th>fires on screened negatives</th></tr>
+<tr><td><strong>STRONG</strong> (6 self-referential arms)</td><td class="num">76.9%</td><td class="num">5.8%</td></tr>
+<tr><td>bare <code>replication of</code>, with no STRONG arm</td><td class="num">16.9%</td><td class="num">79.2%</td></tr>
+<tr><td>STRONG <em>or</em> bare</td><td class="num">93.7%</td><td class="num">85.0%</td></tr>
+</table>
+</div>
+
+<p class="small">Per-arm firing on the 501 negatives: <code>replication of</code> 82.2% ·
+<code>we replicat*</code> 1.6% · <code>replicate and extend</code> 1.6% ·
+<code>replication study</code> 0.8% · <code>fail/attempt to replicate</code> 0.8% ·
+<code>study replicated</code> 0.0% · <code>direct|conceptual|registered|exact</code> 2.8%.</p>
+
+<div class="box bad">
+<p><strong>Bare <code>replication of</code> is the false-positive load.</strong> It is
+simultaneously the highest-recall arm in the book (40% of positives, 342 of them uniquely) and
+the source of four-fifths of the rows the screen throws away. Every exclusion rule in the
+current 500s band — DNA replication, replication forks, database replication, technical
+objects — is downstream of this one arm. <em>The exclusions are a patch on a single loose
+regex.</em></p>
+</div>
+
+<h4>It cannot be repaired with an anchor</h4>
+<p>The obvious fix is to require an object after "replication of". Three anchors were tested
+on the rows where <code>replication of</code> fires and no STRONG arm does:</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>anchor on the object of "replication of"</th><th>positives gained</th><th>negatives admitted</th></tr>
+<tr><td>study-noun (<code>study / experiment / result / finding / effect / analysis / paper</code>)</td><td class="num">+3.6%</td><td class="num">+14.2%</td></tr>
+<tr><td>proper name + year (<code>… of Smith et al. (2009)</code>)</td><td class="num">+2.3%</td><td class="num">+3.0%</td></tr>
+<tr><td>quoted title (<code>… of “Title”</code>)</td><td class="num">+0.2%</td><td class="num">+0.2%</td></tr>
+<tr><td><strong>any of the three</strong></td><td class="num">+5.8%</td><td class="num">+17.2%</td></tr>
+</table>
+</div>
+
+<p>The best anchor (proper name + year) is roughly break-even; the union admits three
+negatives per positive. The existing <code>phrase-with-cite</code> rule does no better: on
+bare-only rows its row-scoped author-year citation is present in 61% of positives and 42% of
+negatives. <strong>No cheap syntactic anchor makes bare <code>replication of</code> precise.</strong>
+It belongs in the cheap tier or in shadow, sized against the pool before it is switched on —
+and it must not be a route to the expensive screen, which is exactly what
+<code>phrase-with-cite</code> makes it today.</p>
+
+<h3>1.3 · Where the signal lives when the abstract does not</h3>
+
+<div class="tablewrap">
+<table>
+<tr><th>text available</th><th>STRONG arms match</th><th>replication stem matches</th></tr>
+<tr><td>title only</td><td class="num">47.8%</td><td class="num">63.1%</td></tr>
+<tr><td>abstract only</td><td class="num">73.9%</td><td class="num">—</td></tr>
+<tr><td>title + abstract</td><td class="num">89.7%</td><td class="num">—</td></tr>
+<tr><td>title + abstract, plus title-stem fallback</td><td class="num">93.1%</td><td class="num">—</td></tr>
+</table>
+</div>
+
+<p>A pool row with no abstract loses roughly half its signal even with the multilingual stem
+fallback. The current engine downgrades a matched screening pile with an empty abstract to
+<code>pending/no_text</code> — correct, since absence of evidence must not convert into a
+proceed, but it means a decisive title like <em>"A Direct Replication of Kahneman &amp;
+Tversky (1979)"</em> currently cannot reach a screen at all. §5 fixes that narrowly.</p>
+
+<h2>2 · The architecture: invert, then delete</h2>
+
+<p>The current book inherits a blacklist from the API-harvest era, when the search query
+<em>was</em> the admission decision: everything carrying a replication stem was a candidate,
+and rules existed to kill the wrong senses. That architecture produces a cascade — an exclusion for
+"DNA replication", then a rescue for a genuine replication that mentions a plasmid, then a
+copy of the exclusion's regex inside the rescue, then a precedence inversion where the rescue
+(650) outranks the only admission route (350) and quietly demotes real papers out of the
+two-voter screen.</p>
+
+<p>Under a whitelist, none of that machinery has anything to do:</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>what the blacklist needed</th><th>what the whitelist does instead</th></tr>
+<tr><td>6 vocabulary-exclusion rules (<code>biological</code>, <code>biological-of</code>,
+    <code>structural</code>, <code>technical-object</code>, <code>technical-verb</code>,
+    <code>data-availability</code>)</td>
+    <td><strong>Deleted.</strong> "DNA replication" is not discarded — it is simply never
+    admitted, because it matches no admission arm.</td></tr>
+<tr><td>2 rescue rules (<code>exclusion-rescue</code> 173 lines, <code>title-phrase-rescue</code> 156)</td>
+    <td><strong>Deleted.</strong> Nothing to rescue from. The one job worth keeping —
+    "a strong admission should beat a fallible discard" — becomes a precedence number (§3).</td></tr>
+<tr><td>The 32-arm alternation written four times, hand-synced</td>
+    <td><strong>Written once</strong>, in rule B. The other three copies had no consumer once
+    the exclusions and rescues are gone. (One caveat survives: §7.)</td></tr>
+<tr><td><code>nfd-stems</code>, a second stem rule for decomposed Unicode</td>
+    <td><strong>Deleted.</strong> NFC-normalise title and abstract once where the pool row is
+    built; every downstream consumer gets it free.</td></tr>
+<tr><td>The <code>pyre_regex</code> / RE2 divergence that keeps two rules in draft</td>
+    <td><strong>Moot.</strong> Both rules needing a proximity lookaround are exclusions.</td></tr>
+</table>
+</div>
+
+<div class="box bad">
+<p><strong>The one thing the inversion does not buy, and both reviewers said it loudly:</strong>
+<code>pending</code> is now where recall goes to die. Codex: <em>"a never-sampled pending pile
+is a silent discard pile with more comforting terminology."</em> A whitelist is only defensible
+as <strong>a whitelist plus a monitored rejection reservoir</strong>. §6 makes pending sampling
+a release obligation, not optional maintenance — if that part is dropped, do not adopt this
+design.</p>
+</div>
+
+<h2>3 · The seven rules</h2>
+
+<p>Precedence bands are re-cut. The 600s rescue band and the 500s exclusion band disappear;
+a new 700s admission band sits <em>between</em> the two kinds of discard, which is the whole
+trick.</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>band</th><th>rule</th><th>pile</th><th>why here</th></tr>
+<tr><td class="num">960</td><td><code>not-a-paper-doi</code></td><td>discard</td><td rowspan="3"><strong>Above admission.</strong> Either the identifier/title states what the object <em>is</em> (a decision letter echoes its parent's title verbatim and <em>will</em> fire admission arms), or the object has no codable text, in which case a strong phrase in its title changes nothing.</td></tr>
+<tr><td class="num">955</td><td><code>not-a-paper-title</code></td><td>discard</td></tr>
+<tr><td class="num">940</td><td><code>no-codable-text</code></td><td>discard</td></tr>
+<tr><td class="num">700</td><td><code>replication-claim</code></td><td>screen_expensive</td><td><strong>Strong admission.</strong></td></tr>
+<tr><td class="num">500</td><td><code>not-a-study-type</code></td><td>discard</td><td><strong>Below admission</strong> — a registry crosswalk, which can be wrong about a real paper. A mistyped replication gets screened rather than deleted.</td></tr>
+<tr><td class="num">300</td><td><code>replication-signal</code></td><td>screen_cheap</td><td><strong>Weak admission.</strong></td></tr>
+<tr><td class="num">100</td><td><code>replication-probe</code></td><td>screen_cheap · <span class="tag t-draft">shadow</span></td><td>Candidate vocabularies with no measurement yet.</td></tr>
+<tr><td class="num">262</td><td><code>phrase-reproduction</code></td><td>screen_cheap</td><td><em>Carried over unchanged</em> pending the reproduction issue (§3.7).</td></tr>
+<tr><td class="num">—</td><td><em>unmatched</em></td><td>pending</td><td>Retained, audited, never screened.</td></tr>
+</table>
+</div>
+
+<div class="box good">
+<p><strong>The rescue band's job, done by ordering.</strong> Gemini's strongest objection to
+the strawman was that a structural discard can delete a real replication filed under the wrong
+work type, and that admission should therefore override it. That is right — but only for the
+<em>fallible</em> discards. Splitting the discards by failure mode and putting admission between
+them gets the protection with a precedence number instead of a 173-line rescue rule that
+re-implements everything it rescues from.</p>
+</div>
+
+<div class="box">
+<p><strong>Two kinds of discard, two kinds of evidence.</strong> This is the split that makes
+the discards auditable. A rule at 940+ says <em>this object cannot be a coded FLoRA record</em> —
+either it is definitionally not the study, or it carries no text to code from. That claim is
+about the object, and it is settled by inspection. A rule at 500 says <em>this registry type is
+not a study</em> — a claim about a metadata crosswalk that can simply be wrong, which is why
+admission outranks it and why it owes a sampled precision estimate. Merging them, as the current
+book does at 945–960, hides the difference.</p>
+</div>
+
+<h3>A1 · <code>not-a-paper-doi</code> <span class="tag t-live">discard</span> <span class="tag t-new">960</span></h3>
+<p>Two arms, kept as separately-labelled clauses so each can be audited and retired on its own
+evidence (codex was firm on this: merging rule <em>files</em> is fine, merging <em>arm
+provenance</em> is not — one overall 99.9% figure can hide one unsafe arm).</p>
+<ul>
+<li><code>doi_regex: /reviews/|/decisions/</code> — a publisher-minted path segment for the
+review object. Recommend anchoring to known registrants rather than matching anywhere in the
+DOI.</li>
+<li><code>doi_regex: \.suppl$</code> — a DOI ending in <code>.suppl</code> is the
+supplementary object minted alongside an article, not the article. Terminal-anchored, so it
+cannot match a DOI that merely contains the string. This is the identifier-side counterpart of
+the <code>supplementary-materials</code> work type in A3a, and the two overlap deliberately:
+different fields, either one alone is enough.</li>
+<li><code>doi_prefix</code> — the ten confirmed deposit-only registrants from today's rule.
+<strong>Change: drop the figshare <code>10.6084</code> arm.</strong> figshare is a
+general-purpose registrant hosting preprints and technical reports, not a deposit-only one;
+it is in the current rule as a regex purely because <code>non_article_doi()</code> matches it
+on a prefix boundary, which is an implementation detail leaking into policy.</li>
+</ul>
+<p>The deposit arm rests on a claim that has never been measured: <em>"the paper is in the
+corpus under its own DOI, so discarding the deposit loses nothing."</em> Codex is right that
+this is a joint probability (parent DOI resolvable × parent in pool × parent admitted by some
+other route), not a structural fact. It stays live — the prior is strong and the volume matters
+— but §7/V1 makes measuring parent recovery a named obligation, and the answer can move this
+arm to a linkage worklist instead of a discard (<a href="https://github.com/forrtproject/flora-extractor/issues/157">#157</a>, deferred).</p>
+
+<h3>A2 · <code>not-a-paper-title</code> <span class="tag t-live">discard</span> <span class="tag t-new">955</span></h3>
+<p>Today's <code>editorial-artifact</code> pattern, unchanged:</p>
+<pre><code>^\s*(?:review for|decision letter for|peer review #|
+      faculty opinions recommendation of|correction to|author response)\b</code></pre>
+<p>Every alternative names a <em>document genre followed by its parent</em>, and the pattern is
+start-anchored, so it fires on titles that announce what the object is and not on papers that
+discuss the genre. A bare <code>^editorial</code> arm would break that property — an article
+titled <em>"Editorial independence and replication"</em> is a paper — so no such arm is added.</p>
+<p class="small"><strong>Scope decision owed (D2 below):</strong> codex notes that
+<code>correction to</code> and <code>author response</code> objects sometimes contain a
+substantive failed reproduction. Both are already in the live pattern; whether they should be
+is a definition question for FLoRA, not a fact about the rule.</p>
+
+<h3>A3a · <code>no-codable-text</code> <span class="tag t-live">discard</span> <span class="tag t-new">940</span></h3>
+<p><code>type ∈ {dataset, software, supplementary-materials, component, database}</code>.</p>
+<p><strong>The claim here is not "this is not a replication".</strong> It is that these objects
+carry no abstract and no prose, so even when one <em>is</em> the artifact of a replication there
+is nothing to screen and nothing to code an outcome from. That is a scope decision about what
+FLoRA can produce, and stating it that way is what makes it defensible — a deposit record is not
+being asserted to be off-topic, it is being asserted to be uncodable.</p>
+<p>Two consequences follow, and both are better handled here than papered over:</p>
+<ul>
+<li>It sits <em>above</em> admission at 940. A deposit titled <em>"Replication Data for: …"</em>
+will fire admission arms; being admitted would only buy a screen with no text to read, which the
+#149 pilot showed proceeds at ~70% precisely because the model cannot discard what it cannot
+read. Deleting <code>dataset</code>'s free discard was the most expensive item in the current
+book, and this ruling reverses it on a rationale that does not need a precision sample.</li>
+<li>The residual risk both reviewers raised is real and unchanged: where a deposit is the
+<em>only</em> record of a replication, that replication is lost. The mitigation would be a
+linkage worklist rather than an admission — record the deposit's parent DOI, check whether the
+parent is in the pool, and route the unlinked remainder to a human. <strong>That is deferred:
+<a href="https://github.com/forrtproject/flora-extractor/issues/157">#157</a>.</strong> Deposit→parent resolution is not a metadata lookup —
+DataCite relation fields are unevenly populated and often point at a preprint or a sibling
+deposit, one deposit can serve several papers, and title matching fails precisely where the
+deposit's title and the article's title share nothing. What is <em>not</em> deferred is
+V1's parent-recovery measurement (§7), which sizes the loss for A1's deposit prefixes and A3a
+together and tells us whether the worklist is worth building at all.</li>
+</ul>
+<p class="small"><code>component</code> and <code>database</code> are in this list on the same
+argument, and are the two worth a second look — a <code>component</code> can occasionally be an
+independently meaningful report.</p>
+
+<h3>A3b · <code>not-a-study-type</code> <span class="tag t-live">discard</span> <span class="tag t-new">500</span></h3>
+<p><code>type ∈ {peer-review, grant, paratext, libguides, standard}</code>. The remainder of
+today's list: registry types for objects that are affirmatively not studies <em>and</em> would
+have text if they were. Because the only thing standing between one of these and deletion is a
+metadata crosswalk, admission at 700 outranks it — a real replication mistyped as
+<code>paratext</code> gets screened instead of deleted.</p>
+<p><strong><code>letter</code> stays out of both lists.</strong> Major journals publish short
+replication reports as letters, and a letter has an abstract. It is screened like any other
+paper. <code>editorial</code> and <code>erratum</code> are not in today's rule either; adding
+them is a decision, not a cleanup, so they are not added here.</p>
+
+<h3>B · <code>replication-claim</code> <span class="tag t-live">screen_expensive</span> <span class="tag t-new">700</span></h3>
+<p>The paper says <em>it</em> is or did a replication. Arms chosen by the set cover in §1.1 and
+by marginal contribution, not by enumeration. Replication vocabulary only.</p>
+<pre><code>we (…0-2 words…) replicat(e|es|ed)        replication stud(y|ies)
+replicat* (and|&) exten*                  study replicate(s|d)
+(fail*|unable|inabilit*|attempt*) to replicate
+(direct|conceptual|registered|exact|close|high-powered|
+ pre-registered|large-scale|many-labs|multi-site) replication(s)
+aim*|set out to replicate                 our replication(s)
+success* replicat*                        replication attempt(s)
+failed replication(s) | failure(s) to replicate |
+  replication failure(s) | unsuccessful replication(s)
+(did|was|could|would|can) not / cannot (be) replicat*
+</code></pre>
+
+<h4>Does B need "failed" and "successful"?</h4>
+<p>Measured marginally — i.e. what each adds once the arms above it are already in:</p>
+<div class="tablewrap">
+<table>
+<tr><th>candidate arm</th><th>positives it adds</th><th>negatives it adds</th><th>verdict</th></tr>
+<tr><td><code>failed replication(s) · failure(s) to replicate · unsuccessful replication(s)</code></td><td class="num">+1</td><td class="num">+0</td><td><strong>Add.</strong> A distinct construction the verb arm cannot reach, at zero measured cost.</td></tr>
+<tr><td><code>success* replicat*</code></td><td class="num">+26</td><td class="num">+2</td><td><strong>Add.</strong> 13:1, and the only arm carrying the successful-outcome framing.</td></tr>
+<tr><td><code>did not / could not / cannot be replicat*</code></td><td class="num">+18</td><td class="num">+1</td><td><strong>Add.</strong> The negated form the "failed" noun phrase was reaching for.</td></tr>
+<tr><td><code>replication attempt(s)</code></td><td class="num">+8</td><td class="num">+0</td><td><strong>Add.</strong> Free.</td></tr>
+</table>
+</div>
+<p>So: yes to both, and all four arms go in. With them B reaches <strong>82.6% of positives at
+6.8% of the false-positive load</strong>, against 80.8% / 6.2% without.</p>
+
+<div class="box warn">
+<p><strong>Read the "+1" carefully — it is the clearest example on this page of why a marginal
+count is not a coverage argument.</strong> The noun phrase and the verb phrase are different
+constructions and neither reaches the other. <em>"We present a failed replication of Smith
+(2009)"</em> fires the noun arm and <strong>nothing else in B</strong> — not
+<code>fail* to replicate</code>, not <code>we … replicat(e|ed)</code>, because "replication"
+there is a noun and the sentence never uses the verb.</p>
+<p>The arm scores +1 marginally because in <em>this</em> corpus the 98 papers phrasing it that
+way almost all also say "replication study" or "we replicated" somewhere in the same abstract —
+and that corpus was assembled partly by keyword search, so its abstracts are systematically
+richer in the vocabulary that found them. A marginal count of +1 on a biased corpus is weak
+evidence of redundancy; a marginal count of +0 negatives is strong evidence of harmlessness.
+When an arm is free, the second number decides.</p>
+</div>
+<p>Codex's refinement, which I would adopt for the arms that report someone else's result:
+<code>replication study</code>, <code>failed to replicate</code>, <code>direct
+replication</code> and the many-labs family are strong <em>in a title</em> but can be
+literature-review language in an abstract. Split each into a <code>title_regex</code> arm at
+full strength and a <code>text_regex</code> arm requiring a current-paper cue
+(<code>this|the present|our|we</code>) nearby. That is a narrowing inside one rule, which is
+exactly the property the whole redesign is buying.</p>
+<p><strong>Deliberately excluded from B:</strong> bare <code>replication of</code> (§1.2) and
+<code>registered report of</code> (most Registered Reports are original studies) — both go to C
+or the probe rule. All reproduction vocabulary is out of scope for this book entirely (§3.7).</p>
+
+<h3>C · <code>replication-signal</code> <span class="tag t-live">screen_cheap</span> <span class="tag t-new">300</span></h3>
+<p>Enough signal to be worth one small discard-only model, not enough for two voters.
+Arms kept separately labelled so each can be sized and switched independently:</p>
+<ul>
+<li>multilingual title stems (<code>title-stem</code> today — 111 of 112 Korean 재검증 works
+are invisible to the English stems, and this arm alone rescues 3.4% of known positives that
+no phrase arm reaches);</li>
+<li>English replication stem in the <strong>title</strong>;</li>
+<li>OpenAlex replication concept ids, <em>conditional on</em> an article-like type and a
+non-empty abstract;</li>
+<li>bare <code>replication of</code> — <strong>last, and only after sizing</strong>. On
+current evidence this arm alone may be larger than the rest of the cheap tier combined.</li>
+</ul>
+
+<h3>D · <code>replication-probe</code> <span class="tag t-draft">shadow</span> <span class="tag t-new">100</span></h3>
+<p>The genuinely new content in this design, and the reason it is not simply a smaller version
+of the old book. Both reviewers independently produced the same list of replication genres that
+carry <em>no replication vocabulary at all</em> — and no amount of tuning the word "replicate"
+will ever reach them:</p>
+<ul>
+<li><em>"Revisiting X"</em>, <em>"X reconsidered"</em>, <em>"A new look at X"</em>, <em>"On the
+robustness of X"</em> — heavily used in economics;</li>
+<li><em>"we repeated the experiment/study"</em>, <em>"an independent test of"</em>,
+<em>"external / out-of-sample validation of"</em>, <code>re-examin*</code>;</li>
+<li>many-analyst projects, adversarial collaborations and forecasting tournaments whose
+abstracts describe the consortium, not a replication;</li>
+<li>pre-2010 papers written before the vocabulary stabilised — <em>"we attempted to confirm
+the finding"</em>;</li>
+<li>non-English equivalents of <em>verification</em> / <em>repeat experiment</em> outside the
+current stem list.</li>
+</ul>
+<p>Each is a separate shadow arm with its own id, promoted only on its own count and its own
+sample. This rule is where the whitelist's blind spot is made visible instead of silent.</p>
+<p class="small">The reproduction-side probes — <code>re-estimat*</code>,
+<code>reimplement*</code>, <code>rerun</code>, CODECHECK certificates and artifact-evaluation
+reports — belong to the reproduction rule, not here.</p>
+
+<h3>3.7 · Reproduction is carved out</h3>
+<p>Reproduction is a different genre with a different failure profile, and folding it into a
+replication rule book means the two are promoted and measured together when their evidence has
+nothing to do with each other. Bare <code>reproduction of</code> is animal breeding, social
+reproduction and epidemiological R₀ (8% precision over 15,440 rows, 0 of 15 sampled hits in our
+sense — #137); <code>re-analysis of</code> is dominated by secondary analyses asking new
+questions of old data; generic <code>comput* reproduc*</code> is workflow engineering, pedagogy
+and policy. Each of those needs its own sample, and none of them is settled by anything measured
+on this page — my positives corpus contains too few reproductions to say anything
+(<code>comput* reproduc*</code> fires on 4 of 2,895; anchored <code>reproduction of the …
+results</code> on 3).</p>
+<p>So: <strong>no reproduction vocabulary enters rules B, C or D.</strong> Today's
+<code>phrase-reproduction</code> — ten anchored patterns, the best-argued rule in the current
+bundle — is carried into the new bundle verbatim, live, at its current precedence, so the
+reproduction stream does not go dark while its replacement is developed. Everything else about
+reproduction, including the two axes Stage 3 already codes it on, goes to <a href="https://github.com/forrtproject/flora-extractor/issues/155">#155</a>.</p>
+
+<h2>4 · What this deletes</h2>
+
+<div class="tablewrap">
+<table>
+<tr><th></th><th>today</th><th>v2</th></tr>
+<tr><td>spec files</td><td class="num">20</td><td class="num">7</td><td class="small">6 new + <code>phrase-reproduction</code> carried over</td></tr>
+<tr><td>autonomous discard rules</td><td class="num">6</td><td class="num">4</td><td class="small">2 above admission, 1 scope, 1 below admission</td></tr>
+<tr><td>rescue rules</td><td class="num">2 (329 lines)</td><td class="num">0</td></tr>
+<tr><td>vocabulary-exclusion rules</td><td class="num">6</td><td class="num">0</td></tr>
+<tr><td>copies of the phrase alternation</td><td class="num">4</td><td class="num">1</td></tr>
+<tr><td>rules blocked by the RE2 proximity limit</td><td class="num">2</td><td class="num">0</td></tr>
+<tr><td>routes to <code>screen_expensive</code></td><td class="num">1 (phrase + any citation)</td><td class="num">1 (self-referential claim)</td></tr>
+</table>
+</div>
+
+<h2>5 · The no-abstract problem</h2>
+
+<p>Roughly a fifth of the pool has no abstract, and §1.3 says such a row loses about half its
+signal. The fix is a <strong>cascade, not a pile</strong>: a narrow title rule selects who is
+worth the effort, backfill tries to get the text, and a human or an LLM is spent only on what
+backfill could not recover.</p>
+
+<pre><code>narrow title rule            unmistakable replication titles only:
+   │                         "A Direct Replication of …", "Registered Replication
+   │                         Report of …", "Failure to Replicate …"
+   ▼
+abstract backfill            search/fetch_abstracts.py waterfall:
+   │                         OpenAlex → EPMC → S2 → CrossRef → Scopus
+   ├── recovered ──────────► normal routing: the row now has text, and rules
+   │                         B / C decide it like any other row
+   ▼
+   not recovered ──────────► needs_human  (title + metadata review)
+</code></pre>
+
+<p>Three properties make this better than admitting title-only rows to a screen:</p>
+<ol>
+<li><strong>The narrow rule is a budget gate, not an admission.</strong> It decides who gets
+backfill effort. It never sends a row to an LLM on a title alone — codex's objection holds: a
+two-voter screen given only a title mostly converts missing evidence into a paid "unclear".</li>
+<li><strong>Backfill success returns the row to the ordinary path.</strong> No parallel
+evaluation, no title-only screening prompt to validate separately. Most rows should leave the
+cascade here.</li>
+<li><strong>Only genuine dead ends cost human attention</strong>, and by construction they are
+rows whose titles are unmistakable — which is exactly the population where a human decides
+quickly from metadata.</li>
+</ol>
+
+<p>Two supporting rules:</p>
+<ul>
+<li><code>pending/no_text</code> is the backfill worklist. The engine already emits the reason
+code and the waterfall already exists; they are not currently wired together. Priority order
+for the budget: known FLoRA DOIs → narrow-title matches → rule-C title stems with an
+article-like type → concept-only rows. Do <em>not</em> backfill 5M rows.</li>
+<li><strong>Never let a concept-only, no-abstract row reach a screen</strong> — the #149
+finding, that unreadable rows proceed at inflated rates because the model has nothing to
+discard on. This is also why A3a discards the typeless-text objects outright rather than
+sending them round this cascade.</li>
+</ul>
+<p>And report recall separately for abstract-present vs abstract-absent, by year, language and
+field. A measured small loss is acceptable; an unmeasured, systematically biased one is not.</p>
+
+<h2>6 · Implementation, in the order that pays</h2>
+
+<div class="box">
+<p><strong>The organising principle:</strong> the expensive screen is the budget, so the first
+live rule should be the one that <em>fills</em> it (B), not the ones that shrink the pool (A).
+Discards only save money where they overlap what would otherwise be screened — and under a
+whitelist that overlap is small. Shrinking 5M to 3.5M is worth nothing on its own; putting
+20k high-precision rows in front of two voters is worth everything.</p>
+</div>
+
+<h4>Phase 0 — size everything before switching anything on <span class="small">(no LLM spend)</span></h4>
+<p>Author the new rules with <strong>every arm shadow and separately labelled</strong>, mint a
+release, and run <code>route</code> + <code>sizing</code> + <code>diagnose</code> over the
+pool. What comes back is the thing this entire design is currently missing: per-arm exclusive
+and overlapping counts on the real 5M-row distribution, plus abstract-missing rate, type
+composition, prefix composition, and overlap with known FLoRA DOIs. Estimated screen cost falls
+straight out.</p>
+<p class="small"><strong>Blocker to clear first:</strong> the pool is not in this checkout
+(<code>cache/snapshot_pool/</code> is absent, <code>cache/engine/</code> is empty). Pull it via
+<code>search.pool_sync</code> before Phase 0 — and, per the 2026-08-04 incident note, verify
+row counts against the dashboard before anything reads it.</p>
+
+<h4>Phase 1 — rule B live, capped <span class="small">(first real spend)</span></h4>
+<p>Turn on only the title-position and first-person arms of B → <code>screen_expensive</code>,
+in deterministic capped batches. This produces the first high-yield worklist and — more
+valuable — the first <em>downstream</em> precision estimate, since the screen's own verdicts on
+B's rows are a measurement that costs nothing extra. Everything else stays shadow.</p>
+
+<h4>Phase 2 — audit, then the discards live in order of confidence</h4>
+<p>Sample before switching on, per subarm (§7/V1). A1 and A2 first (definitional). A3a next —
+its rationale is a scope claim rather than a precision claim, so what its audit has to establish
+is narrower: that the types really do lack codable text, and how often a deposit is the only
+record of its replication. A3b last, since it is the one whose failure mode is a wrong crosswalk.
+None of this needs to precede rule B operationally — only the overlap rows cost money.</p>
+
+<h4>Phase 3 — widen B one family at a time</h4>
+<p>Add abstract-position arms with current-paper cues, then completed multi-lab reports. After
+each addition measure the <em>marginal</em> count and marginal precision — gross per-arm
+precision over overlapping hits will flatter a weak arm hiding behind a strong one. Read a small
+marginal count as "cheap", not as "redundant": §3 B shows how a distinct construction can score
++1 on this corpus and still be the only arm that reaches a real phrasing.</p>
+
+<h4>Phase 4 — C live through the cheap tier, arm by arm</h4>
+<p>Order: multilingual title stems → English title stems → concept + article-type + abstract → bare <code>replication of</code> <em>only if</em> Phase 0's
+sizing and a sample justify it. Keep the cheap tier's discards non-operative until that tier's
+recall is validated on this distribution (§7/V4).</p>
+
+<h4>Phase 5 — pending audit becomes a standing obligation</h4>
+<p>Every release samples <code>pending</code>, or the whitelist has no way to learn what it is
+missing. Promote probe arms out of D on their counts.</p>
+
+<h2>7 · Validation plan</h2>
+
+<p>The rule that killed the last one: <strong>LLM output is not a reference label for a rule,
+nor for the screen evaluating that rule.</strong> Human labels are the authority; LLMs may
+triage and flag disagreements. Before any sampling, write a short adjudication manual
+distinguishing completed replication · completed computational reproduction · protocol or
+planned replication · robustness/secondary analysis · internal replication cohort ·
+discussion of replication · artifact linked to a replication · unrelated homograph. Two
+trained coders label independently, blind to the selecting rule where feasible; a third
+adjudicates; 10–15% of agreements are re-audited.</p>
+
+<h4>V0 — freeze the holdout <em>first</em></h4>
+<p><code>filter/spec/holdout.json</code> has been referenced in three docs and never created;
+<code>diagnose</code> reports <code>not_constructed</code> for all 20 rules. Sequester a random
+20–30% of FLoRA <code>doi_r</code>, stratified by year, field and language, before any rule is
+authored. Design on the remainder. Do not look at the misses until the book is frozen. Without
+this, the first promotion tunes on its own test set.</p>
+
+<h4>V1 — discard precision, per subarm (A1 · A2 · A3a · A3b)</h4>
+<p>~300 independently labelled hits per subarm with zero errors supports a 95% lower bound near
+99%; ~600 for 99.5%; a 99.9% claim needs ~3,000 — and "trusted" prose is not a substitute for
+any of them. Review all hits for small arms. Stratify DOI prefixes by prefix and period.
+Sample every work type separately and oversample <code>software</code>, <code>component</code>,
+<code>database</code>, <code>supplementary-materials</code>.</p>
+<p><strong>Threshold:</strong> autonomous discard requires ≥99.5% estimated precision with a
+one-sided 95% lower bound ≥99%, <em>and</em> no confirmed eligible study unless its parent is
+demonstrably present and admitted by another route. Any subarm with one genuine unrecovered
+study goes back to shadow, or is referred to the deferred linkage route
+(<a href="https://github.com/forrtproject/flora-extractor/issues/157">#157</a>).</p>
+<p><strong>Plus the deposit obligation:</strong> among "Replication Data for X" records, measure
+the proportion with a resolvable parent DOI × parent present in the pool × parent admitted —
+this is the measurement <a href="https://github.com/forrtproject/flora-extractor/issues/157">#157</a> is blocked on, and it runs whether or not the
+worklist is ever built. The
+discard argument <em>is</em> that joint probability.</p>
+
+<h4>V2 — rule B admission precision</h4>
+<p>Precision here means "the expensive screen should reasonably look at this", not "this reaches
+Stage 3". Stratify by arm, field, title-vs-abstract match, and abstract availability: ~200 per
+sizeable arm, all hits for arms under 200, plus a weighted random sample of 500–1,000 from the
+union for overall precision at true corpus frequencies. Measure <em>marginal</em> precision —
+labels among rows a given arm adds after the stronger arms are removed.</p>
+<p><strong>Threshold:</strong> ≥50% confirmed-eligible-or-appropriately-ambiguous for the core,
+95% lower bound above 40%, no arm below ~25% unless it demonstrably carries unique recall for an
+underserved field.</p>
+
+<h4>V3 — rule C, and the cheap tier itself</h4>
+<p>200–300 labels per major arm. Admission precision of 5–15% is fine for a bounded cheap arm.
+But the cheap tier is discard-only, so validate <em>it</em> separately on ≥500 human-labelled
+rule-C rows enriched for hard positives, and require ≤1% confirmed-positive loss with the
+upper bound below 2% before its discards go live.</p>
+
+<h4>V4 — recall, three estimators, none sufficient alone</h4>
+<ol>
+<li><strong>Known-FLoRA capture (regression test).</strong> Map the ~2,978 curated
+<code>doi_r</code> into the pool and report pool-inclusion recall, B-recall given pool,
+B∨C-recall given pool, and end-to-end recall including Stage 1 — stratified by year, field,
+language, abstract availability, and how the record entered FLoRA. Target ≥95% of held-out
+FLoRA records present in the pool. <em>This is a regression test, not a population estimate:</em>
+FLoRA is enriched for recent, English, explicitly-titled psychology replications, which is
+precisely what a lexical whitelist finds easily.</li>
+<li><strong>Stratified prevalence sampling of <code>pending</code> (the real estimator).</strong>
+Build strata from signals <em>not</em> identical to the whitelist — revisit/re-estimate/verify
+vocabulary, robustness language, replication-oriented journals and collections, CS artifact and
+CODECHECK signals, non-English fields, no-abstract rows, citation links to known originals, and
+a uniform random stratum. Label 500–1,000 per enriched stratum plus as large a uniform sample as
+affordable. Estimate missed positives per stratum with inverse-probability weights; recall is
+estimated B∨C eligible over that plus the weighted pending estimate. Report intervals and
+stratum-level figures; never pool enriched samples unweighted.</li>
+<li><strong>Multi-list capture–recapture (sensitivity only).</strong> Three or more lists
+(FLoRA, replication registries, CODECHECK collections, journal replication collections, citation
+searches, the new book), log-linear models with source interactions, stratified by field / year /
+language / genre. Equal catchability and source independence are both badly violated here —
+FLoRA and lexical rules share their blind spots, and curated projects feed FLoRA directly. Report
+a range across plausible models, and treat the unseen-population estimate as a diagnostic that
+the whitelist and FLoRA fail in the same places, not as ground truth.</li>
+</ol>
+
+<h4>Acceptance</h4>
+<p>Adopt when: every live discard subarm clears its own threshold; B fits the expensive budget
+at its marginal precision; B∨C captures ≥95% of held-out FLoRA records present in the pool;
+weighted pending audits show no large missed population, with stated uncertainty; no-abstract
+recall is reported separately and has a funded policy; Stage 1 and Stage 2 consume one canonical
+vocabulary; and pending is sampled in every release.</p>
+
+<h2>8 · What this does not fix, and what needs your decision</h2>
+
+<div class="box warn">
+<p><strong>The "one alternation" claim is not true until Stage 1 changes too.</strong> Codex
+caught this and it is the sharpest thing either reviewer said. Deleting the Stage-2 duplicates
+still leaves <code>filter/phrase_detection.py</code> defining <code>REPLICATION_PHRASES</code>
+and loading the seven exclusion specs for <code>keyword_verdict()</code>. So the exclusions
+would survive indirectly, and there would still be two phrase authorities. <strong>The rule
+book cannot be simplified to seven rules without retiring <code>candidates.csv</code> as an
+admission-gated artifact</strong> — Stage A stays in Stage 1 as the search query, Stage B's
+verdict becomes metadata on the pool row rather than a gate. That was already item 2 in the
+review's change list; v2 makes it a prerequisite rather than a cleanup.</p>
+</div>
+
+<h4>Settled</h4>
+<ul>
+<li><strong><code>dataset</code>, <code>software</code>, <code>supplementary-materials</code>
+discard</strong>, on the "no codable text" rationale, above admission — A3a.</li>
+<li><strong><code>letter</code> is screened</strong>, not discarded.</li>
+<li><strong><code>.suppl$</code> DOIs discard</strong>; <strong>no <code>^editorial</code>
+title arm</strong>.</li>
+<li><strong>Reproduction carved out</strong> to its own issue; <code>phrase-reproduction</code>
+carried over live in the interim.</li>
+<li><strong>No-abstract flow</strong> is narrow title rule → backfill → human only on backfill
+failure (§5).</li>
+</ul>
+
+<h4>Still owed by you, not by evidence</h4>
+<ol>
+<li><strong>D1 · figshare.</strong> Drop <code>10.6084</code> from the live deposit discard
+(recommended — general-purpose registrant), or keep it and measure?</li>
+<li><strong>D2 · corrections and author responses.</strong> Both are already in A2's live
+pattern. In scope as replication evidence, or out of scope as document types?</li>
+<li><strong>D3 · protocols and Stage-1 Registered Reports.</strong> Is a
+planned-but-not-completed replication a FLoRA record? This decides whether <code>aim to
+replicate</code> stays a B arm, drops to C, or gets its own pile.</li>
+<li><strong>D4 · <code>component</code> and <code>database</code>.</strong> Same "no codable
+text" treatment as <code>dataset</code>, or held back — a <code>component</code> is
+occasionally an independently meaningful report.</li>
+<li><strong>D5 · the no-abstract loss.</strong> What budget does the §5 backfill get, and what
+volume of <code>needs_human</code> is acceptable at the end of the cascade?</li>
+<li><strong>D6 · CS reimplementation and benchmarking.</strong> "We reimplemented and could not
+reproduce the reported accuracy" — in scope? Now a question for the reproduction issue rather
+than for this book.</li>
+</ol>
+
+<hr>
+<p class="small">Measurements computed 2026-08-04 against
+<code>data/FLoRA entry sheet - replication list.csv</code> (n=2,895 positives with abstracts)
+and <code>data/not_a_replication.csv</code> (n=501 screen-confirmed negatives), with the biases
+of both stated in §1. Design stress-tested against Gemini 3.1 Pro and codex, which agreed on the
+whitelist inversion, on bare <code>replication of</code> belonging in the cheap tier, on the discards
+needing per-subarm samples, and on <code>pending</code> requiring a standing audit; they
+disagreed on whether admission should outrank structural discards, which §3 resolves by splitting
+the discards by failure mode. No rule has been written or changed — this is a proposal.
+Companions: <code>rulebook_review.html</code>, <code>current_state_v4.html</code>.</p>
+
+</main>
+</body>
+</html>

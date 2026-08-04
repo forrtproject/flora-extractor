@@ -1,0 +1,1690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FLoRA Extractor — The Stage-2 Rule Book, Reviewed</title>
+<style>
+:root { --ink:#1c2333; --muted:#5b6478; --accent:#1a5fb4; --rule:#e3e6ee; --bg:#fdfdfc;
+        --panel:#f4f6fa; --warn:#9a6a00; --bad:#b3261e; --good:#3a7d44; --code-bg:#f0f2f7; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink);
+       font:16px/1.65 "Avenir Next","Segoe UI",system-ui,sans-serif; }
+main { max-width:900px; margin:0 auto; padding:3rem 1.5rem 6rem; }
+h1 { font-size:1.9rem; line-height:1.25; margin:0 0 .3rem; }
+.subtitle { color:var(--muted); margin:0 0 2.2rem; font-size:1.02rem; }
+h2 { font-size:1.35rem; margin:3.2rem 0 .5rem; padding-top:1.2rem; border-top:2px solid var(--rule); }
+h3 { font-size:1.05rem; margin:2.2rem 0 .2rem; font-family:"SF Mono",ui-monospace,Menlo,monospace; }
+h3 code { background:none; padding:0; font-size:1em; }
+p { margin:.6rem 0; }
+code { background:var(--code-bg); padding:.1em .35em; border-radius:4px; font-size:.88em;
+       font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace; }
+pre { background:var(--code-bg); padding:.9rem 1rem; border-radius:6px; overflow-x:auto;
+      font-size:.8rem; line-height:1.5; margin:.8rem 0; }
+pre code { background:none; padding:0; font-size:1em; }
+table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.92rem; }
+th,td { border:1px solid var(--rule); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+th { background:var(--panel); font-weight:600; }
+.tablewrap { overflow-x:auto; }
+.box { background:var(--panel); border-left:4px solid var(--accent);
+       padding:1rem 1.2rem; border-radius:0 8px 8px 0; margin:1.5rem 0; }
+.box.bad { border-left-color:var(--bad); }
+.box.warn { border-left-color:var(--warn); }
+.box p:first-child { margin-top:0; }
+.box p:last-child { margin-bottom:0; }
+ul, ol { margin:.6rem 0; padding-left:1.4rem; }
+li { margin:.35rem 0; }
+.tag { display:inline-block; font-size:.68rem; font-weight:700; padding:.14em .6em;
+       border-radius:999px; margin-left:.4rem; vertical-align:middle; color:#fff;
+       font-family:"Avenir Next",system-ui,sans-serif; letter-spacing:.02em; }
+.t-live { background:var(--good); } .t-draft { background:var(--warn); }
+.t-bad { background:var(--bad); }
+.meta { color:var(--muted); font-size:.82rem; margin:.15rem 0 .5rem;
+        font-family:"SF Mono",ui-monospace,Menlo,monospace; }
+.verdict { font-weight:600; margin:.5rem 0 .6rem; }
+.small { color:var(--muted); font-size:.9rem; }
+details { margin:.9rem 0 0; }
+summary { cursor:pointer; color:var(--accent); font-size:.88rem; font-weight:600;
+          padding:.3rem 0; }
+summary:hover { text-decoration:underline; }
+a { color:var(--accent); }
+</style>
+</head>
+<body>
+<main>
+
+<h1>The Stage-2 Rule Book, Reviewed</h1>
+<p class="subtitle">All 20 filter specs as they stand after the 2026-08-04 evidence reset —
+each with its full JSON, its current state, and what is wrong with it. Companion to
+<code>current_state_v4.html</code>, which covers the pipeline as a whole.</p>
+
+<div class="box">
+<p><strong>The short version.</strong> The individual rules are mostly sound; the
+<em>book</em> is not. Three findings dominate everything below. (1) The pipeline runs two rule
+evaluators over two corpora, and the second one — <code>keyword_verdict()</code> in Stage 1 —
+now gates a corpus Stage 2 does not read; §2.1, which answers your search-vs-filter question and
+corrects a claim I got wrong in the first draft. (2) <code>exclusion-rescue</code> is live and now actively harms
+rows: it outranks the only admission route and demotes phrase+cite papers from the expensive
+screen to the cheap tier, rescuing them from rules that no longer discard — §2.2. (3) The
+phrase alternation is written four times and the exclusion patterns twice, by hand, with the
+specs themselves documenting the manual sync obligation — §2.3. Beyond those: several
+descriptions are commit logs rather than policy, two rules exist only because text isn't
+Unicode-normalised, and two more differ only by an audit obligation.</p>
+</div>
+
+<div class="box warn">
+<p><strong>Superseded in part — read this first.</strong> A parallel design pass produced
+<code>rulebook_v2.html</code>, which proposes inverting Stage 2 from a blacklist
+(&ldquo;stem unless excluded&rdquo;) to a <strong>whitelist</strong> (&ldquo;nothing screened
+unless admitted&rdquo;), collapsing <strong>20 specs to 6</strong>. Its evidence is stronger
+than anything in the current book: a greedy set cover finds <strong>6 phrase arms carry 92% of
+positives</strong> while the remaining 30 arms buy 1% (28 papers), and bare
+<code>replication of</code> fires on <strong>82% of screened negatives</strong> — so every 500s
+exclusion rule is a patch on one over-broad admission arm.</p>
+<p>If that lands, three findings below are resolved by deletion rather than repair: §2.2's
+<code>exclusion-rescue</code> demotion bug (the whole 600s rescue band becomes a precedence
+number), §2.3's four-way phrase duplication (three copies go), and the
+<code>nfd-stems</code> and RE2-proximity problems. <strong>§2.1 is not superseded — it is
+v2's stated prerequisite</strong>, and the per-rule critiques below remain the record of why
+the current book needs replacing. Read this page as the diagnosis and v2 as the proposed
+cure.</p>
+</div>
+
+<h2 id="reading">1 · How to read a rule</h2>
+
+<p>Each spec is a JSON object with five decision-bearing fields. Nothing else in the file
+affects behaviour.</p>
+
+<div class="tablewrap"><table>
+<tr><th>Field</th><th>What it does</th></tr>
+<tr><td><code>match</code></td><td>The predicate: <code>text_regex</code>,
+<code>title_regex</code>, <code>doi_regex</code>, <code>doi_prefix</code>,
+<code>fields</code>, composed with <code>any_of</code> / <code>all_of</code> /
+<code>none_of</code>. <code>pyre_regex</code> is a loader-only escape hatch holding the
+original Python pattern where a lookaround is needed — the decomposition beside it is what RE2
+(and so pyarrow) actually evaluates.</td></tr>
+<tr><td><code>pile</code></td><td>Where a claimed row goes: <code>discard</code> (the only
+rule-terminal state), <code>screen_expensive</code>, <code>screen_cheap</code>,
+<code>needs_human</code>. <code>pending</code> is engine-assigned and illegal in a
+spec.</td></tr>
+<tr><td><code>precedence</code></td><td>Higher wins. Multi-match is normal; the pile resolves
+once. Bands: 900s structural discards · 600s rescues · 500s vocabulary exclusions · 300s
+expensive routes · 200s cheap routes.</td></tr>
+<tr><td><code>shadow</code></td><td><strong>The draft switch.</strong> A shadow rule is still
+evaluated and its matches are still recorded in <code>evaluations</code>, but it never claims a
+pile and never affects a row's status. It also bypasses the evidence gate entirely, which is
+what makes it the honest home for an unmeasured rule.</td></tr>
+<tr><td><code>measured</code></td><td>Why the rule is allowed to discard. Levels
+<code>human</code>, <code>downstream</code>, <code>trusted</code>, <code>llm:&lt;model&gt;</code>
+permit an autonomous discard; <code>heuristic</code> does not.
+<code>validate_spec()</code> rejects a non-shadow <code>discard</code> whose evidence is all
+heuristic or absent — and that is the <em>only</em> evidence check in the engine.</td></tr>
+</table></div>
+
+<p>The single most important asymmetry, and the best idea in the design: <strong>rules route
+and discard; only LLM tiers admit.</strong> A rule that cannot admit cannot do much harm, which
+is why the routing rules below get a light touch and the discards get a hard one.</p>
+
+<h2 id="structural">2 · The three structural problems</h2>
+
+<h3 id="s21">2.1 · Two rule sets, two corpora — and the second gates nothing</h3>
+
+<p>You asked what <code>keyword_verdict()</code> does and whether Stage 1 should be filtering at
+all. It matters here because it determines whether today's reverts mean anything.</p>
+
+<p><code>keyword_verdict(title, abstract, year)</code> in
+<code>filter/phrase_detection.py</code> returns one of three verdicts:</p>
+<ul>
+<li><strong><code>positive</code></strong> — a precise replication phrase matched, survived the
+exclusion patterns and the guards.</li>
+<li><strong><code>ambiguous</code></strong> — worth a look: either a replication stem in the
+<em>title</em> with no precise phrase, or a phrase an exclusion killed <em>while</em> a specific
+author-year cite is present (the #44 readmission).</li>
+<li><strong><code>negative</code></strong> — nothing, or an exclusion with nothing to rescue.</li>
+</ul>
+<p>It checks exclusions <em>first</em>, and they dominate: &ldquo;Origins of DNA
+replication&rdquo; is refused on the biological pattern before its title stem is considered. It
+loads those exclusion patterns out of the Stage-2 spec bundle (the seven ids in
+<code>_EXCLUSION_SPEC_IDS</code>), which is what CLAUDE.md means by &ldquo;one keyword decision,
+shared&rdquo;.</p>
+
+<p><code>search/snapshot_scan.py</code> calls it as the second admission step (named "Stage B" in the
+code at the time of writing; that letter naming is being removed). The search gate is a
+vectorised token gate over the raw inverted-index JSON (a cheap recall query — the only thing
+that can run over 510,372,821 snapshot rows), yielding roughly <strong>5&nbsp;million</strong>
+survivors. Every one of those is then passed to the keyword step, which runs
+<code>keyword_verdict</code> and admits on <code>positive</code> or <code>ambiguous</code>.</p>
+
+<div class="box warn">
+<p><strong>Correction to an earlier draft of this page.</strong> I first wrote that a keyword
+<code>negative</code> never reaches Stage 2, making today's shadow flips cosmetic. <strong>That
+is wrong.</strong> In <code>_scan_batch()</code>, <code>_pool_record()</code> is appended for
+<em>every search-gate survivor</em>, unconditionally, <em>before</em>
+<code>_row_if_admitted()</code> is consulted. The survivor pool therefore holds all ~5M search-gate
+rows regardless of the keyword verdict — and the pool is what Stage 2 reads
+(<code>SNAPSHOT_POOL_DIR</code>, the default <code>--pool</code> for every engine subcommand).
+<strong>Shadow works properly: the four drafted exclusions really do stop affecting which
+papers the pipeline can reach.</strong> Today's reverts are real.</p>
+</div>
+
+<p>But that leaves a stranger problem, and it is the one your &ldquo;two rule sets&rdquo;
+instinct is pointing at.</p>
+
+<div class="box bad">
+<p><strong>The keyword verdict gates a corpus nothing downstream reads.</strong> What
+<code>keyword_verdict</code>'s verdict actually decides is admission into
+<code>data/candidates.csv</code> — the Stage-1 artifact of the API-harvest era. Stage 2 reads the
+pool, not <code>candidates.csv</code>; grep <code>filter/</code> and <code>extract/</code> and
+the only hits are stale comments. So the pipeline currently maintains <em>two corpora</em> (~5M
+pooled search-gate survivors, and the smaller keyword-admitted CSV) and <em>two rule evaluators</em>
+(the engine over the spec bundle, and <code>keyword_verdict</code> over Python constants), where
+the second evaluator's exclusions no longer gate anything that reaches Stage 3.</p>
+</div>
+
+<p>Which makes CLAUDE.md's &ldquo;one keyword decision, shared by Stage 1 and Stage 2&rdquo;
+false as stated: <strong>Stage 2 never calls <code>keyword_verdict</code> at all.</strong> The
+sharing runs the other way and only partly — the seven exclusion specs are loaded <em>out of</em>
+the bundle <em>into</em> Python for the search gate and keyword step to use. The inclusion phrases, the guards and the
+stem list are duplicated by hand (§2.3).</p>
+
+<h3 id="s21b">Where the boundary should sit</h3>
+
+<p>Your rule — Stage 1 searches, Stage 2 filters, one rule set, with the OpenAlex search terms
+as the allowed exception — is right, and it is closer to done than it looks:</p>
+<ul>
+<li><strong>The search gate stays in Stage 1.</strong> It <em>is</em> the search query: a token/stem gate
+plus concept membership, the only affordable predicate at 510M rows. This is exactly the
+carve-out you'd allow, and the stem list is the &ldquo;OA search terms&rdquo;.</li>
+<li><strong>The keyword verdict's gating role should go.</strong> Not because it hides rows from Stage 2
+(it doesn't), but because it is a second hand-maintained evaluator whose only remaining job is
+gating a legacy corpus. Retire <code>candidates.csv</code> as an admission-gated artifact, keep
+the pool as the single corpus, and let the verdict be <em>recorded</em> on the pool row as
+metadata (it is nearly free — the row already carries
+<code>hit_token_title</code>/<code>hit_token_abstract</code>/<code>hit_concept</code>) rather
+than deciding anything.</li>
+<li><strong>Terminal rules are legitimate — and already exist in the right place.</strong> Your
+instinct that cheap structural rules (work <code>type</code>, deposit DOI prefixes) should settle
+a row once and not be revisited is exactly what the 900s precedence band does inside the engine:
+highest precedence, <code>discard</code>, resolved before anything else looks at the row. The
+need is met; what is <em>not</em> right is that those same mappings are <em>also</em> duplicated
+as <code>_NON_ARTICLE_TYPES</code>, <code>_DATA_REPOSITORY_PREFIXES</code> and
+<code>_NON_ARTICLE_DOI_RE</code> in <code>shared/utils.py</code>. One bundle, one evaluator, one
+band — not a second copy in Python.</li>
+</ul>
+<p>The payoff for collapsing to one evaluator is concrete: the entire
+<code>pyre_regex</code>-vs-RE2 divergence class disappears, and that class is precisely
+<em>why</em> <code>biological-of</code> and <code>data-availability</code> are stuck in draft.
+Two rules get unblocked by deleting a code path rather than by running an audit.</p>
+
+<h3 id="s22">2.2 · <code>exclusion-rescue</code> now demotes the rows it was meant to save</h3>
+
+<p>The rescue sits at precedence 650 and routes to <code>screen_cheap</code>. The only
+admission route, <code>phrase-with-cite</code>, sits at 350 and routes to
+<code>screen_expensive</code>. 650 outranks 350.</p>
+
+<p>That was fine while the 500s exclusions were live: a row matching an exclusion <em>plus</em> a
+phrase <em>plus</em> a cite was being saved from a terminal discard, and the cheap tier was a
+promotion. It is not fine now. Four of the seven patterns the rescue copies are shadow and
+discard nothing, so for those rows the rescue saves them from no danger and takes away the
+two-voter screen they qualified for on their own evidence.</p>
+
+<p>The rule book already contains this argument, written against itself:
+<code>title-phrase-rescue</code>'s description explains that its <code>data-availability</code>
+arm was withheld because &ldquo;a rescue from it could only pull a row DOWN from
+screen_expensive to screen_cheap&rdquo;. <code>exclusion-rescue</code> keeps that same
+<code>data-availability</code> clause. We shadowed the sibling on this reasoning this morning
+and left the worse offender live.</p>
+
+<p><strong>Two fixes, short and long.</strong> Short: restrict the rescue's exclusion clause to
+the three still-live patterns (<code>biological</code>, <code>structural</code>,
+<code>editorial-artifact</code>) and extend the test-suite invariant to cover both rescues, not
+just one. Long: rescues should name the rule <em>ids</em> they rescue from — the engine already
+records which rules matched each row — instead of re-implementing their regexes. That fixes this
+bug and §2.3 at the same time.</p>
+
+<h3 id="s23">2.3 · The phrase list is written four times, the exclusions twice</h3>
+
+<div class="tablewrap"><table>
+<tr><th>Policy</th><th>Copies</th></tr>
+<tr><td>The replication phrase alternation (32 arms)</td>
+<td><code>phrase-replication.json</code> · <code>phrase-with-cite.json</code> (inlined) ·
+<code>exclusion-rescue.json</code> (inlined) · <code>REPLICATION_PHRASES</code> in
+<code>filter/phrase_detection.py</code></td></tr>
+<tr><td>The reproduction-anchored patterns (10 arms)</td>
+<td><code>phrase-reproduction.json</code> · <code>phrase-with-cite.json</code> ·
+<code>exclusion-rescue.json</code> · <code>_REPRODUCTION_ANCHORED</code> in Python</td></tr>
+<tr><td>The seven exclusion patterns</td>
+<td>their own spec files · re-inlined wholesale in
+<code>exclusion-rescue.json</code></td></tr>
+<tr><td>The multilingual stem list</td>
+<td><code>title-stem.json</code> · <code>REPLICATION_STEM_PATTERN</code> in Python ·
+partially again in <code>nfd-stems.json</code></td></tr>
+</table></div>
+
+<p>Only the exclusion patterns are genuinely single-sourced into Python (the loader pulls them
+from the bundle — CLAUDE.md's &ldquo;one edit moves both&rdquo; is true, but only for those
+seven). Everything else is hand-synced, and the specs say so:
+<code>exclusion-rescue</code>'s description records that when #147 narrowed three patterns,
+&ldquo;the copies here narrowed with them&rdquo;. That is a maintenance obligation written into
+a comment, which is the thing declarative configuration is supposed to abolish.</p>
+
+<p><strong>What the format is missing is composition.</strong> Something like
+<code>{"rule_ref": "phrase-replication"}</code> inside a <code>match</code>, resolved at load
+time, plus <code>{"matched": "technical-verb"}</code> for rescues. Roughly 90 inlined regexes
+disappear, the four-place edit becomes one place, and the two rescue rules stop being copies of
+what they rescue from. This is the highest-value refactor in the engine and it is a
+loader-level change, not a redesign.</p>
+
+<h3 id="s24">2.4 · Smaller things, across the book</h3>
+<ul>
+<li><strong>Descriptions are changelogs.</strong> <code>biological-of</code> (~1,900 chars),
+<code>title-phrase-rescue</code> (~2,000) and <code>exclusion-rescue</code> mix what the rule
+matches with why arms were added, which issue narrowed it, backend notes and Unicode
+trivia. A reviewer approving a routing change should not have to read commit history to find the
+rule. The history is valuable — put it in <code>docs/filter-engine.md</code> or the issue and
+leave three sentences. (After today's honesty pass several <code>measured</code> rationales are
+long for the same reason; that is a fair trade for not overclaiming, but they are prose where a
+structured field would do.)</li>
+<li><strong><code>structural.json</code>'s description is a malformed fragment</strong> —
+two sentences fused without punctuation, in a file where everything else writes an essay.</li>
+<li><strong>Two rules differ only by an audit obligation.</strong>
+<code>non-article-type</code> and <code>dataset-type</code> match the same field the same way at
+945 / 950. Merge once the dataset audit exists.</li>
+<li><strong>Two rules exist because text isn't normalised.</strong>
+<code>nfd-stems</code> duplicates part of <code>title-stem</code> to cover decomposed Unicode.
+NFC-normalise at pool build and delete the rule instead of promoting it.</li>
+<li><strong>One backend decision recorded as two rule problems.</strong>
+<code>biological-of</code> and <code>data-availability</code> are both shadow because RE2 cannot
+express a proximity lookahead. That is one engineering choice (get a proximity-capable
+evaluator — or, per §2.1, stop needing two evaluators at all), owned by nobody.</li>
+<li><strong><code>vocabulary: null</code> on every discard rule</strong> is noise: the field only
+means anything on a screen pile. Harmless, but it invites the misreading that a discard could
+name a vocabulary.</li>
+<li><strong>No rule has held-out validation.</strong> <code>filter/spec/holdout.json</code> is
+reserved in the loader, referenced in three docs, and has never been created —
+<code>diagnose</code> reports <code>not_constructed</code> for all 20 rules. Freeze one before
+any promotion, or the first promotion tunes on its own test set.</li>
+<li><strong>The reverts should cut both ways.</strong> Several arms were <em>rejected</em> on
+figures from the same compromised gold corpus (the BI1 title rescue &ldquo;costs ~2,093 rows for
+one gold positive&rdquo;; BO3 &ldquo;admits 3 gold negatives for 2 positives&rdquo;). Removing
+the claims that licensed discarding without also re-examining the claims that licensed
+<em>not</em> rescuing leaves a systematically over-strict book.</li>
+</ul>
+
+<h2>Structural discards — live</h2>
+<p class="small">These delete records autonomously. Every one must be true by construction.</p>
+
+<h3 id="r-deposit-doi-prefixes"><code>deposit-doi-prefixes</code> <span class="tag t-live">LIVE · KEEP</span></h3>
+<p class="meta">pile <code>discard</code> · precedence <code>960</code> ·
+shadow <code>false</code> · vocabulary <code>None</code> ·
+evidence levels: trusted</p>
+<p class="verdict">Keep live — the cleanest rule in the book.</p>
+<p>Structural in the strict sense: the claim is about what a <em>registrant</em> mints, not
+ about how often a sampled row is a study, so no sample can be owed. Exclude-only and
+ deliberately incomplete, with Zenodo left out because CODECHECK certificates live there —
+ that reasoning is exactly right and is the model the rest of the book should copy.</p>
+ <p><strong>Two nits.</strong> (1) The parenthetical recording that the old
+ <code>precision 0.995, n=282</code> entry was removed is changelog inside a policy file; it
+ belongs in the commit message that removed it. (2) figshare is a <code>doi_regex</code>
+ rather than a <code>doi_prefix</code> entry purely because <code>non_article_doi()</code>
+ matches it on a <code>"10.6084/"</code> boundary — an implementation detail leaking into
+ policy. Make it a prefix entry and fix the matcher.</p>
+<details><summary>Full spec JSON (37 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;deposit-doi-prefixes&quot;,
+  &quot;description&quot;: &quot;A DOI on a data-repository prefix is the deposit that accompanies a paper — \&quot;Replication Data for: ...\&quot; — and carries the word replication into the pipeline without being a study (issue #141). The deposit is evidence that a replication exists, but the paper itself is in the corpus under its own DOI, so discarding the deposit loses nothing. figshare (10.6084) is a regex rather than a prefix entry because non_article_doi() matches it on the \&quot;10.6084/\&quot; boundary. EXCLUDE-ONLY and deliberately incomplete: a prefix belongs here only when its registrant is positively identified as a data repository, which is why Zenodo (10.5281) is absent — CODECHECK certificates live there and the reproduction arm admits them.&quot;,
+  &quot;match&quot;: {
+    &quot;any_of&quot;: [
+      {
+        &quot;doi_prefix&quot;: [
+          &quot;10.11587&quot;,
+          &quot;10.15139&quot;,
+          &quot;10.18170&quot;,
+          &quot;10.18710&quot;,
+          &quot;10.18738&quot;,
+          &quot;10.21979&quot;,
+          &quot;10.2905&quot;,
+          &quot;10.34894&quot;,
+          &quot;10.3886&quot;,
+          &quot;10.7910&quot;
+        ]
+      },
+      {
+        &quot;doi_regex&quot;: &quot;^10\\.6084/&quot;
+      }
+    ]
+  },
+  &quot;pile&quot;: &quot;discard&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 960,
+  &quot;shadow&quot;: false,
+  &quot;measured&quot;: [
+    {
+      &quot;level&quot;: &quot;trusted&quot;,
+      &quot;date&quot;: &quot;2026-08-04&quot;,
+      &quot;owner&quot;: &quot;flora-extractor&quot;,
+      &quot;rationale&quot;: &quot;Structural, not statistical: each prefix on this list was separately confirmed against DataCite as belonging to a registrant that mints DOIs for deposits only, so a DOI on it is a deposit record rather than a paper, and the paper it accompanies is in the corpus under its own DOI. The list is exclude-only and deliberately incomplete for exactly that reason — Zenodo (10.5281) is absent because it is a general-purpose registrant whose DOIs include CODECHECK certificates the reproduction arm admits. No sample is needed because the claim is about what the registrant mints, not about how often a sampled row is a study. (An earlier `human, precision 0.995, n=282, sample 30k-candidates-2026-07` entry was removed: no such sample artifact exists in the repo or its history, and 0.995 is not an attainable proportion at n=282.)&quot;
+    }
+  ]
+}</code></pre></details>
+
+<h3 id="r-non-article-doi"><code>non-article-doi</code> <span class="tag t-live">LIVE · KEEP</span></h3>
+<p class="meta">pile <code>discard</code> · precedence <code>955</code> ·
+shadow <code>false</code> · vocabulary <code>None</code> ·
+evidence levels: trusted</p>
+<p class="verdict">Keep live — three lines, airtight.</p>
+<p>A <code>/reviews/</code> or <code>/decisions/</code> path segment is minted by the
+ publisher for the review object. Structural, briefly stated, no evidence owed. <strong>This is
+ what every spec in this file should look like.</strong> Note the deliberate overlap with
+ <code>editorial-artifact</code> (which catches the same objects by title): belt-and-braces on
+ different fields, which is fine, but say so once rather than leaving a reader to wonder which
+ is redundant.</p>
+<details><summary>Full spec JSON (17 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;non-article-doi&quot;,
+  &quot;description&quot;: &quot;A \&quot;/reviews/\&quot; or \&quot;/decisions/\&quot; segment marks a peer-review or editorial object (e.g. 10.7287/peerj.10325v0.1/reviews/2), not the study (issue #17). These records echo the reviewed paper&#x27;s title verbatim, so every replication phrase in the title fires on something that is not the paper.&quot;,
+  &quot;match&quot;: {
+    &quot;doi_regex&quot;: &quot;/reviews/|/decisions/&quot;
+  },
+  &quot;pile&quot;: &quot;discard&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 955,
+  &quot;shadow&quot;: false,
+  &quot;measured&quot;: [
+    {
+      &quot;level&quot;: &quot;trusted&quot;,
+      &quot;rationale&quot;: &quot;A DOI path segment minted by the publisher for the review object itself; the mapping is structural, not statistical.&quot;
+    }
+  ]
+}</code></pre></details>
+
+<h3 id="r-non-article-type"><code>non-article-type</code> <span class="tag t-live">LIVE · KEEP</span></h3>
+<p class="meta">pile <code>discard</code> · precedence <code>945</code> ·
+shadow <code>false</code> · vocabulary <code>None</code> ·
+evidence levels: trusted</p>
+<p class="verdict">Keep live — but it should absorb dataset-type.</p>
+<p>Good after the trim: the evidence is now the structural argument (registry types for
+ objects that are affirmatively not studies, exclude-only because <code>type</code> coverage is
+ inconsistent), with the 23-of-50 hand-check demoted to motivation — correctly, since it
+ measured recall of the type signal, not discard precision.</p>
+ <p><strong>Redundancy:</strong> this rule and <code>dataset-type</code> match the same field
+ with the same mechanism at adjacent precedences (945 / 950). They are two rules only because
+ <code>dataset</code> carries an audit obligation the others don't. Once that audit exists,
+ <code>dataset</code> becomes one more string in this list and the second rule should be
+ deleted.</p>
+<details><summary>Full spec JSON (29 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;non-article-type&quot;,
+  &quot;description&quot;: &quot;The remaining _NON_ARTICLE_TYPES from shared/utils.py: registry work types that are affirmatively not studies. EXCLUDE-ONLY, never require — `type` coverage is incomplete and inconsistent across CrossRef and OpenAlex, so an allow-list of good types would silently drop real replications. \&quot;other\&quot; is deliberately absent (the registries&#x27; catch-all, including ordinary articles), as are \&quot;data-paper\&quot; and \&quot;software-paper\&quot;, which are papers ABOUT data. `dataset` has its own rule.&quot;,
+  &quot;match&quot;: {
+    &quot;fields&quot;: {
+      &quot;type&quot;: [
+        &quot;component&quot;,
+        &quot;database&quot;,
+        &quot;grant&quot;,
+        &quot;libguides&quot;,
+        &quot;paratext&quot;,
+        &quot;peer-review&quot;,
+        &quot;software&quot;,
+        &quot;standard&quot;,
+        &quot;supplementary-materials&quot;
+      ]
+    }
+  },
+  &quot;pile&quot;: &quot;discard&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 945,
+  &quot;shadow&quot;: false,
+  &quot;measured&quot;: [
+    {
+      &quot;level&quot;: &quot;trusted&quot;,
+      &quot;rationale&quot;: &quot;Structural: every type on this list is a registry work type for an object that is affirmatively not a study — a component, a peer review, a grant record, a standard, supplementary materials. The list is exclude-only, never a require, because `type` coverage is incomplete and inconsistent across CrossRef and OpenAlex; \&quot;other\&quot; (the registries&#x27; catch-all) and \&quot;data-paper\&quot;/\&quot;software-paper\&quot; (papers ABOUT data) are deliberately absent. The hand-check of 50 provisionally-linked rows that found 23 non-studies — Dataverse/Zenodo/Mendeley deposits and eLife &#x27;Author response&#x27; objects, each carrying a giveaway type — measured the RECALL of the type signal among known non-studies, not the precision of the discard, so it is recorded as motivation rather than as the evidence that licenses the discard.&quot;
+    }
+  ]
+}</code></pre></details>
+
+<h3 id="r-editorial-artifact"><code>editorial-artifact</code> <span class="tag t-live">LIVE · KEEP</span></h3>
+<p class="meta">pile <code>discard</code> · precedence <code>555</code> ·
+shadow <code>false</code> · vocabulary <code>None</code> ·
+evidence levels: trusted</p>
+<p class="verdict">Keep live — structural, and cannot have a false positive that matters.</p>
+<p>&ldquo;Decision letter for: &lt;replication paper&gt;&rdquo; is definitionally not the
+ study, and the real paper is in the corpus under its own DOI, so the discard loses nothing.
+ The anchored <code>^</code> keeps it narrow. No change needed.</p>
+<details><summary>Full spec JSON (17 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;editorial-artifact&quot;,
+  &quot;description&quot;: &quot;Peer-review records and editorial artifacts echo a real replication paper&#x27;s title verbatim, so every replication phrase in the title fires on a record that is not the study. Loaded back into keyword_verdict() as pattern id EDITORIAL_ARTIFACT (filter/phrase_detection.py).&quot;,
+  &quot;match&quot;: {
+    &quot;text_regex&quot;: &quot;^\\s*(?:review for|decision letter for|peer review #|faculty opinions recommendation of|correction to|author response)\\b&quot;
+  },
+  &quot;pile&quot;: &quot;discard&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 555,
+  &quot;shadow&quot;: false,
+  &quot;measured&quot;: [
+    {
+      &quot;level&quot;: &quot;trusted&quot;,
+      &quot;rationale&quot;: &quot;Ported verbatim from SciMeto&#x27;s NON_SCHOLARLY_REPLICATION_CONTEXTS and in production in keyword_verdict() since Stage 2 existed. A record titled &#x27;Decision letter for: &lt;replication paper&gt;&#x27; is definitionally not the study, so the rule cannot have a false positive that matters.&quot;
+    }
+  ]
+}</code></pre></details>
+
+<h3 id="r-structural"><code>structural</code> <span class="tag t-live">LIVE · KEEP</span></h3>
+<p class="meta">pile <code>discard</code> · precedence <code>544</code> ·
+shadow <code>false</code> · vocabulary <code>None</code> ·
+evidence levels: trusted</p>
+<p class="verdict">Keep live — but the description is a broken fragment.</p>
+<p>&ldquo;replication fork / origin / stress / timing&rdquo; are molecular-biology terms of
+ art with no social-science homograph. The rule is fine.</p>
+ <p><strong>The description is literally malformed:</strong>
+ <code>"molecular biology structural terms Loaded back into keyword_verdict() as pattern id
+ STRUCTURAL"</code> — two sentences fused, no full stop, no explanation of why these four nouns
+ and not others. It reads as a placeholder someone never came back to, in a file where every
+ other rule writes an essay. Write one real sentence.</p>
+<details><summary>Full spec JSON (17 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;structural&quot;,
+  &quot;description&quot;: &quot;molecular biology structural terms Loaded back into keyword_verdict() as pattern id STRUCTURAL (filter/phrase_detection.py).&quot;,
+  &quot;match&quot;: {
+    &quot;text_regex&quot;: &quot;\\breplication (?:fork|origin|stress|timing)\\b&quot;
+  },
+  &quot;pile&quot;: &quot;discard&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 544,
+  &quot;shadow&quot;: false,
+  &quot;measured&quot;: [
+    {
+      &quot;level&quot;: &quot;trusted&quot;,
+      &quot;rationale&quot;: &quot;&#x27;replication fork/origin/stress/timing&#x27; are molecular-biology terms of art with no social-science homograph.&quot;
+    }
+  ]
+}</code></pre></details>
+
+<h3 id="r-biological"><code>biological</code> <span class="tag t-live">LIVE · KEEP</span></h3>
+<p class="meta">pile <code>discard</code> · precedence <code>545</code> ·
+shadow <code>false</code> · vocabulary <code>None</code> ·
+evidence levels: trusted</p>
+<p class="verdict">Keep live — but its rejected arms need re-measuring, not its discards.</p>
+<p>&ldquo;&lt;organism&gt; replication&rdquo; with the organism as the head of the phrase is
+ molecular biology by construction, and the trim that removed &ldquo;no counter-example has been
+ reported in any sampled audit&rdquo; was right — absence of a report is not a measurement.</p>
+ <p><strong>An asymmetry worth naming.</strong> This rule carries none of the protections its
+ sibling <code>biological-of</code> needed (no head restriction, no study-noun refusal, no
+ genome-wide exemption) because the word order makes them unnecessary. Fair. But the reason its
+ title-rescue arm (BI1) was <em>rejected</em> — &ldquo;costs ~2,093 rows for one gold
+ positive&rdquo; — was computed against the same 62%-LLM gold corpus we just disowned
+ (<a href="https://github.com/forrtproject/flora-extractor/issues/151">#151</a>). The reverts
+ cut both ways: claims that justified <em>not</em> adding a rescue are exactly as unreliable as
+ claims that justified discarding. Re-measure the rejections too.</p>
+<details><summary>Full spec JSON (17 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;biological&quot;,
+  &quot;description&quot;: &quot;\&quot;&lt;organism&gt; replication\&quot; — biology, not psychology. The named-pathogen terms (hiv, sars-cov-2, influenza, &lt;x&gt;virus) were added because the original dna/rna/viral/virus list missed titles like \&quot;Suppression of HIV-1 Replication\&quot;. Loaded back into keyword_verdict() as pattern id BIOLOGICAL (filter/phrase_detection.py).&quot;,
+  &quot;match&quot;: {
+    &quot;text_regex&quot;: &quot;\\b(?:dna|rna|mrna|cdna|viral|\\w*virus(?:es)?|hiv|sars[-\\s]?cov[-\\s]?2?|influenza|bacteri\\w+|mycobacteri\\w+|pathogens?|parasites?|prions?|phages?|cell|cellular|chromosome|plasmid|genome|genomic|mitochondrial)\\s+replication\\b&quot;
+  },
+  &quot;pile&quot;: &quot;discard&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 545,
+  &quot;shadow&quot;: false,
+  &quot;measured&quot;: [
+    {
+      &quot;level&quot;: &quot;trusted&quot;,
+      &quot;rationale&quot;: &quot;&#x27;&lt;organism&gt; replication&#x27; is molecular biology by construction: the organism term is the head of the phrase, so the sense is fixed by the words themselves rather than by a rate estimated from a sample. In production in keyword_verdict() and in Stage 1&#x27;s scan.&quot;
+    }
+  ]
+}</code></pre></details>
+
+<h3 id="r-dataset-type"><code>dataset-type</code> <span class="tag t-draft">DRAFT</span></h3>
+<p class="meta">pile <code>discard</code> · precedence <code>950</code> ·
+shadow <code>true</code> · vocabulary <code>None</code> ·
+evidence levels: heuristic</p>
+<p class="verdict">Correctly reverted to draft — and first in the promotion queue.</p>
+<p>The revert is right: the spec's own text said the sampled audit was owed, and what the
+ #149 pilot measured (69.8% of dataset rows proceed vs 12.5% for articles) is a screen-spend
+ figure, not a precision figure. A rule may not delete records on the strength of what it costs
+ to keep them.</p>
+ <p><strong>But note the live consequence:</strong> this rule was the only thing keeping
+ unreadable deposit records out of the LLM screen, and the pilot says ~70% of them survive it
+ because the screen cannot discard text it cannot read. Drafting it converts a free discard
+ into paid screening. That makes its audit both the cheapest (a deposit record is obvious at a
+ glance) and the highest-value one in the queue.</p>
+<details><summary>Full spec JSON (23 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;dataset-type&quot;,
+  &quot;description&quot;: &quot;OpenAlex type == dataset. Its own rule rather than part of non-article-type because it is the #149 decision and carries a standing obligation: the rows are ROUTED, not deleted — they stay in the survivor pool, are tagged with this rule id in `evaluations`, and a sampled audit of what this rule discards is owed before the milestone closes. Evidence from the 2026-08-03 pilot: dataset rows are 15-33% of every admission arm, and in the concept arm 69.8% of them proceed past the screen against 12.5% for articles — not because they are replications but because the screen cannot discard a row whose text it cannot read. Admitting them buys screen spend on unreadable records.&quot;,
+  &quot;match&quot;: {
+    &quot;fields&quot;: {
+      &quot;type&quot;: [
+        &quot;dataset&quot;
+      ]
+    }
+  },
+  &quot;pile&quot;: &quot;discard&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 950,
+  &quot;shadow&quot;: true,
+  &quot;measured&quot;: [
+    {
+      &quot;level&quot;: &quot;heuristic&quot;,
+      &quot;sample&quot;: &quot;issue-149-pilot-2026-08-03&quot;,
+      &quot;date&quot;: &quot;2026-08-03&quot;,
+      &quot;rationale&quot;: &quot;What the pilot measured is the cost of NOT discarding (69.8% of dataset rows proceed in the concept arm vs 12.5% for articles, an artifact of unreadable text), which is a screen-spend figure, not a precision figure. Nothing here measures how often a discarded `dataset` row is a real replication record, so the level is heuristic and the rule runs in shadow. The sampled audit of what it discards, already owed by the #149 decision, must be done before it may discard autonomously.&quot;
+    }
+  ]
+}</code></pre></details>
+
+<h2>Vocabulary exclusions — the 500s band</h2>
+<p class="small">Sense-disambiguation patterns. Four of six are now draft; two backend-blocked, two evidence-blocked.</p>
+
+<h3 id="r-data-availability"><code>data-availability</code> <span class="tag t-draft">DRAFT</span></h3>
+<p class="meta">pile <code>discard</code> · precedence <code>550</code> ·
+shadow <code>true</code> · vocabulary <code>None</code> ·
+evidence levels: heuristic</p>
+<p class="verdict">Stays draft — and its backend problem is the same one as biological-of.</p>
+<p>Good rule, honestly labelled. The demotion from <code>trusted</code> to
+ <code>heuristic</code> was right: &ldquo;the pattern is in production in
+ <code>keyword_verdict()</code>&rdquo; is an argument from incumbency, not from structure.</p>
+ <p><strong>Consolidate the decision.</strong> This spec and <code>biological-of</code> are
+ shadow for the identical reason — a same-sentence proximity requirement RE2 cannot express, so
+ the decomposition widens the discard. That is <em>one</em> engineering decision (get a
+ proximity-capable evaluator, or accept the widening with a measurement), not two rule-level
+ questions. Right now it is recorded twice and owned by nobody.</p>
+<details><summary>Full spec JSON (25 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;data-availability&quot;,
+  &quot;description&quot;: &quot;Dataverse/OSF/GitHub boilerplate — \&quot;data and code are available on OSF to reproduce the results in this paper\&quot; — describes the paper&#x27;s OWN reproducibility package, not a reproduction of someone else&#x27;s study. An availability anchor (available/deposited/OSF/GitHub/...) is REQUIRED, and is looked for anywhere in the same sentence — it may follow the verb, as in \&quot;data and code to reproduce the results in this paper are on OSF\&quot;. Without the anchor the pattern matched ordinary methods prose: \&quot;Data from the published experiment were used to replicate the main result\&quot; is a genuine reproduction and was being made false_positive, which is terminal. Every gap excludes newlines as well as full stops, so it cannot bridge the title/abstract join. SHADOW: the original requires the availability anchor to sit in the SAME sentence as the noun (a lookahead RE2 cannot express). The decomposition ANDs the two clauses row-wide, which widens the discard, so the spec is shadow until a proximity-capable backend exists; keyword_verdict() keeps the exact original via pyre_regex. Loaded back into keyword_verdict() as pattern id DATA_AVAILABILITY (filter/phrase_detection.py).&quot;,
+  &quot;match&quot;: {
+    &quot;all_of&quot;: [
+      {
+        &quot;text_regex&quot;: &quot;\\b(?:data|code|scripts?|files?|materials?|repositor\\w+|replication package)\\b[^.\\n]{0,80}?\\bto\\s+(?:replicate|reproduce)\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\b(?:data|code|scripts?|files?|materials?|repositor\\w+|replication package)\\b[^.\\n]{0,200}\\b(?:available|provided|deposited|archived|posted|shared|supplement\\w*|repositor\\w+|osf|github|dataverse|zenodo|figshare|doi\\.org)\\b&quot;
+      }
+    ],
+    &quot;pyre_regex&quot;: &quot;\\b(?:data|code|scripts?|files?|materials?|repositor\\w+|replication package)\\b(?=[^.\\n]{0,200}\\b(?:available|provided|deposited|archived|posted|shared|supplement\\w*|repositor\\w+|osf|github|dataverse|zenodo|figshare|doi\\.org)\\b)[^.\\n]{0,80}?\\bto\\s+(?:replicate|reproduce)\\b&quot;
+  },
+  &quot;pile&quot;: &quot;discard&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 550,
+  &quot;shadow&quot;: true,
+  &quot;measured&quot;: [
+    {
+      &quot;level&quot;: &quot;heuristic&quot;,
+      &quot;rationale&quot;: &quot;The only argument on offer is incumbency: the pattern is in production in keyword_verdict(). That is not a structural claim about what the pattern names, and no sample of what it discards has been read, so the level is heuristic rather than trusted. The RE2 decomposition is separately unmeasured and widens the discard, which is the reason the spec is shadow.&quot;
+    }
+  ]
+}</code></pre></details>
+
+<h3 id="r-biological-of"><code>biological-of</code> <span class="tag t-draft">DRAFT</span></h3>
+<p class="meta">pile <code>discard</code> · precedence <code>543</code> ·
+shadow <code>true</code> · vocabulary <code>None</code> ·
+evidence levels: downstream, heuristic</p>
+<p class="verdict">Stays draft — correct. The description is the problem.</p>
+<p>Shadow for a real reason that has nothing to do with #151: the original refuses
+ study-nouns inside its three-word filler with a negative lookahead, RE2 cannot express it, and
+ the decomposition next to it <em>widens</em> the discard. That is a backend limitation, and
+ keeping it out of the pile until a proximity-capable backend exists is the right call.</p>
+ <p><strong>The description is ~1,900 characters of commit history.</strong> It mixes what the
+ rule matches, why three arms were added, the #147 GWAS ruling, the U+2010 dash problem, the
+ shadow rationale, and a note about which file loads it. All of that is valuable — none of it is
+ policy. A reviewer approving a routing change should not have to read a changelog to find the
+ rule. Move the history to <code>docs/filter-engine.md</code> or the issue and leave three
+ sentences.</p>
+<details><summary>Full spec JSON (36 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;biological-of&quot;,
+  &quot;description&quot;: &quot;\&quot;replication of &lt;organism&gt;\&quot; word order. BIOLOGICAL only covers \&quot;&lt;organism&gt; replication\&quot;, so virology abstracts phrased \&quot;the replication of enteroviruses\&quot; passed the filter — one duplicated cluster of these accounted for 106 of the 501 rows Stage 3 later screened out as not-a-replication. Up to three filler words are allowed before the organism (\&quot;Replication of Oncolytic Herpes Simplex Virus\&quot;). cell/cellular/parasite are split out and must be the HEAD of the phrase — followed by punctuation, end, or a preposition/verb. They have common non-biological collocations, and with a three-word filler window the unrestricted form killed genuine replications outright: \&quot;a direct replication of the classic CELL PHONE driving study\&quot; and \&quot;a conceptual replication of the PARASITE STRESS theory of values\&quot; both became false_positive, which is terminal. The unambiguous organism terms need no such restriction. The filler window also refuses study-nouns, so \&quot;a replication of the original STUDY in cells\&quot; keeps its real head (\&quot;study\&quot;) and survives. Without that, a replication merely CONDUCTED in biological material was excluded. #147 (BO1): genome(s)/genomic no longer match inside genome-wide, so \&quot;Replication of Genome-Wide Association Studies of Type 2 Diabetes Susceptibility in Japan\&quot; survives. That clause was doing almost no protective work — 2 of 300 BIOLOGICAL_OF firings in 5.6M rows were the GWAS genre, and both were genuine GWAS-locus replications — while killing papers of that genre whose titles begin \&quot;Replication of Genome-Wide Association Studies of …\&quot;. The maintainer&#x27;s scope ruling (#147 §4) admits independent replications of published genetic associations and excludes two-stage discovery-plus-own-replication-cohort designs; the papers BO1 restores were read one by one against that ruling (analysis/stage_b_eval/gwas_scope_classification.md) and were predominantly in scope, with no virology among them. The genome arm is split out because the exemption is expressed WITHOUT a lookahead: the character after the organism token is consumed rather than looked ahead at, so both backends read it identically, and the Unicode dash range matters because several of the affected titles write \&quot;Genome‐Wide\&quot; with U+2010. SHADOW (unchanged by #147, and for a different reason): the original refuses study-nouns inside the three-word filler with a negative lookahead, which RE2 cannot express; dropping it widens the discard (&#x27;replication of the original study of DNA repair&#x27; would now match). The cell/cellular/parasite head restriction IS preserved faithfully by consuming what the original looked ahead at. keyword_verdict() keeps the exact original via pyre_regex, which carries BO1 as its own lookahead so Stage 1 and the engine agree on the change. Loaded back into keyword_verdict() as pattern id BIOLOGICAL_OF (filter/phrase_detection.py).&quot;,
+  &quot;match&quot;: {
+    &quot;any_of&quot;: [
+      {
+        &quot;text_regex&quot;: &quot;\\breplication of (?:the\\s+)?(?:\\w+[-\\s]+){0,3}(?:dna|rna|mrna|cdna|viral|\\w*virus(?:es)?|bacteri\\w+|mycobacteri\\w+|pathogens?|prions?|phages?|chromosomes?|plasmids?|hiv|sars[-\\s]?cov[-\\s]?2?|influenza|mitochondrial|organoids?)\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\breplication of (?:the\\s+)?(?:\\w+[-\\s]+){0,3}(?:genomes?|genomic)(?:$|[^-\\s‐-―\\w]|[-\\s‐-―](?:$|[^w]|w(?:$|[^i]|i(?:$|[^d]|d(?:$|[^e])))))&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\breplication of (?:the\\s+)?(?:\\w+[-\\s]+){0,3}(?:cells?|cellular|parasites?)\\b\\s*(?:[.,;:)\\]]|$|(?:in|by|during|within|with|and|or|is|are|was|were|from|to|at|under)\\b)&quot;
+      }
+    ],
+    &quot;pyre_regex&quot;: &quot;\\breplication of (?:the\\s+)?(?:(?!(?:study|studies|experiments?|effects?|findings?|results?|analys[ei]s|papers?|trials?|surveys?)\\b)\\w+[-\\s]+){0,3}(?:(?:dna|rna|mrna|cdna|viral|\\w*virus(?:es)?|bacteri\\w+|mycobacteri\\w+|pathogens?|prions?|phages?|chromosomes?|plasmids?|genomes?(?![-\\s‐-―]?wide)|genomic(?![-\\s‐-―]?wide)|hiv|sars[-\\s]?cov[-\\s]?2?|influenza|mitochondrial|organoids?)\\b|(?:cells?|cellular|parasites?)\\b(?=\\s*(?:[.,;:)\\]]|$|\\b(?:in|by|during|within|with|and|or|is|are|was|were|from|to|at|under)\\b)))&quot;
+  },
+  &quot;pile&quot;: &quot;discard&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 543,
+  &quot;shadow&quot;: true,
+  &quot;measured&quot;: [
+    {
+      &quot;level&quot;: &quot;downstream&quot;,
+      &quot;n&quot;: 501,
+      &quot;rationale&quot;: &quot;One duplicated virology cluster phrased &#x27;the replication of &lt;organism&gt;&#x27; accounted for 106 of the 501 rows Stage 3 later screened out as not-a-replication — the measurement that motivated the pattern. It says nothing about the widened RE2 form, which is why this spec is shadow.&quot;
+    },
+    {
+      &quot;level&quot;: &quot;heuristic&quot;,
+      &quot;n&quot;: 5604314,
+      &quot;sample&quot;: &quot;5.6M OpenAlex snapshot rows (22 parquet partitions of the 2,446-file manifest, complete harvest of the 3,785 exclusion-firing survivors of the search gate); scope classification of the affected genetics papers, read one by one, in analysis/stage_b_eval/gwas_scope_classification.md. Branch analysis/stage-b-eval, #144 evidence pass. NOTE ON n: 5,604,314 is the size of the scan, i.e. the denominator of the rows-per-million cost figure, and the only denominator claimed here.&quot;,
+      &quot;date&quot;: &quot;2026-08-04&quot;,
+      &quot;rationale&quot;: &quot;Cost of BO1, counted exactly over the scanned population: 0.4 extra rows per million scanned, 0.02% of admitted volume, ~204 rows over the full 510M-row snapshot, with both sampled influx rows themselves GWAS-locus replication papers. Benefit, from reading the restored genetics papers one by one against the maintainer&#x27;s #147 §4 scope ruling: they are predominantly in scope and none is molecular. What is missing is a reading of what the rule still discards, so its precision is unmeasured; level is heuristic. The spec was already shadow for an independent reason — the study-noun lookahead is undecomposable in RE2 — and BO1 does not change that.&quot;
+    }
+  ]
+}</code></pre></details>
+
+<h3 id="r-technical-object"><code>technical-object</code> <span class="tag t-draft">DRAFT</span></h3>
+<p class="meta">pile <code>discard</code> · precedence <code>541</code> ·
+shadow <code>true</code> · vocabulary <code>None</code> ·
+evidence levels: heuristic, trusted</p>
+<p class="verdict">Correctly reverted — and shadow is currently cosmetic (see §2.1).</p>
+<p>The right call: the #147 narrowing was scored against the compromised corpus, and
+ post-narrowing precision — how many of the rows it still kills are real studies — has never
+ been measured. The surviving objects are plausibly the storage/distributed-systems sense, but
+ &ldquo;plausibly&rdquo; is not evidence, and the mitigation via
+ <code>exclusion-rescue</code> is a mitigation, not a precision estimate.</p>
+ <p><strong>Two things the shadow flip does not do,</strong> both structural rather than this
+ rule's fault: it does not stop Stage 1 refusing these rows admission (§2.1), and it does not
+ stop <code>exclusion-rescue</code> claiming rows on this pattern at precedence 650
+ (§2.2).</p>
+<details><summary>Full spec JSON (24 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;technical-object&quot;,
+  &quot;description&quot;: &quot;code/database/pipeline replication (both &#x27;replication of X&#x27; and &#x27;X replication&#x27; forms), not psychological. #147: the object list no longer carries model/method/data/dataset. Those four words are how a computational reproduction describes itself — &#x27;A Replication and Analysis of Tiebout Competition Using an Agent-Based Computational Model&#x27;, &#x27;Replicating MOOC predictive models at scale&#x27; — and the pattern was killing them terminally. Narrowed to the TO2_both_tight variant of analysis/stage_b_eval/exclusion_candidates.csv (both sides of the pattern, so &#x27;model replication&#x27; and &#x27;replication of the model&#x27; go together), at a counted cost of 3.9 extra rows per million scanned (~1,990 across the 510M-row snapshot). The surviving objects are the storage/distributed-systems sense, which is the pattern&#x27;s real referent: the matched-span census over 5.6M rows found &#x27;data replication&#x27; 36 times, &#x27;database replication&#x27; 7 and &#x27;model replication&#x27; 3. NOTE: this spec is also read by filter/phrase_detection.py::_load_exclusion_regexes(), so the narrowing changes Stage 1 admission as well as engine routing — intended, and it moves stage_b_fingerprint(). Loaded back into keyword_verdict() as pattern id TECHNICAL_OBJECT (filter/phrase_detection.py).&quot;,
+  &quot;match&quot;: {
+    &quot;text_regex&quot;: &quot;\\b(?:replication of (?:the )?(?:apparatus|code|database|pipeline|protocol|software|simulation)|(?:apparatus|code|database|pipeline|protocol|software|simulation)\\s+replication)\\b&quot;
+  },
+  &quot;pile&quot;: &quot;discard&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 541,
+  &quot;shadow&quot;: true,
+  &quot;measured&quot;: [
+    {
+      &quot;level&quot;: &quot;trusted&quot;,
+      &quot;rationale&quot;: &quot;&#x27;replication of the code/pipeline/database&#x27; names a technical artifact, not a study. The readmission of genuine computational reproductions by exclusion-rescue (#44) at precedence 650 — phrase AND cite — is a mitigation of the pattern&#x27;s misfires, not a measurement of its precision: no sample of what this rule discards has been read.&quot;
+    },
+    {
+      &quot;level&quot;: &quot;heuristic&quot;,
+      &quot;n&quot;: 5604314,
+      &quot;sample&quot;: &quot;5.6M OpenAlex snapshot rows (22 parquet partitions of the 2,446-file manifest, 64,118 survivors of the search gate, complete harvest of the 3,785 exclusion-firing survivors); branch analysis/stage-b-eval, #144 evidence pass. The claim here is an exact count over that scanned population and nothing else.&quot;,
+      &quot;date&quot;: &quot;2026-08-03&quot;,
+      &quot;rationale&quot;: &quot;What the #147 narrowing (TO2_both_tight) costs is counted exactly over the scanned population: 3.9 extra rows per million scanned (0.17% of admitted volume, ~1,990 rows over the full snapshot), sampled as CS storage-replication papers (&#x27;A Strategy for Data Replication in Mobile Ad Hoc Networks&#x27;) entering at screen_cheap. What the rule discards has never been read: how many of those rows are real studies is unmeasured, so the level is heuristic and the spec is shadow until a sample of its discards is classified, or until the flora.csv recall monitor (analysis/gold/README.md) reports how many known FLoRA papers it kills.&quot;
+    }
+  ]
+}</code></pre></details>
+
+<h3 id="r-technical-verb"><code>technical-verb</code> <span class="tag t-draft">DRAFT</span></h3>
+<p class="meta">pile <code>discard</code> · precedence <code>540</code> ·
+shadow <code>true</code> · vocabulary <code>None</code> ·
+evidence levels: heuristic, trusted</p>
+<p class="verdict">Correctly reverted — the most clearly justified draft in the book.</p>
+<p>This rule documents its own unreliability better than any audit could: 15 of the 17 gold
+ positives it killed were real social-science or CS replication studies, 3 of 18 sampled
+ suppressions looked in scope, and the spec calls it &ldquo;the worst precision of the seven
+ exclusions&rdquo;. A rule that says that about itself should never have been discarding
+ autonomously.</p>
+ <p>Same two caveats as <code>technical-object</code>: Stage 1 still excludes, and
+ <code>exclusion-rescue</code> still copies the pattern.</p>
+<details><summary>Full spec JSON (24 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;technical-verb&quot;,
+  &quot;description&quot;: &quot;Verb form of technical-object: &#x27;we replicated the code/software/pipeline&#x27;. #147: the object list no longer carries model/method/data/dataset. Those four words are how a social-science or CS replication study describes its own design — &#x27;we replicated the model / the data / the method&#x27;, as in &#x27;Social Capital and Value Creation: A Replication of \&quot;The Role of Intrafirm Networks\&quot;&#x27; — and the pattern was killing such papers terminally. Narrowed to the TV1_tight_objects variant of analysis/stage_b_eval/exclusion_candidates.csv. `code` stays in the list: it is the storage/artifact sense as often as the reproduction sense, and a genuine &#x27;replicated the analysis code of Smith (2019)&#x27; still reaches screen_cheap through exclusion-rescue (#44). NOTE: this spec is also read by filter/phrase_detection.py::_load_exclusion_regexes(), so the narrowing changes Stage 1 admission as well as engine routing — intended, and it moves stage_b_fingerprint(). Loaded back into keyword_verdict() as pattern id TECHNICAL_VERB (filter/phrase_detection.py).&quot;,
+  &quot;match&quot;: {
+    &quot;text_regex&quot;: &quot;\\breplicat(?:e|ed|ing)\\s+(?:the )?(?:apparatus|code|software|pipeline|script|database)\\b&quot;
+  },
+  &quot;pile&quot;: &quot;discard&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 540,
+  &quot;shadow&quot;: true,
+  &quot;measured&quot;: [
+    {
+      &quot;level&quot;: &quot;trusted&quot;,
+      &quot;rationale&quot;: &quot;Verb form of technical-object; the same exclusion-rescue (#44) readmission applies, and it is a mitigation of misfires rather than a measurement of precision.&quot;
+    },
+    {
+      &quot;level&quot;: &quot;heuristic&quot;,
+      &quot;n&quot;: 5604314,
+      &quot;sample&quot;: &quot;5.6M OpenAlex snapshot rows (22 parquet partitions of the 2,446-file manifest, 64,118 survivors of the search gate, complete harvest of the 3,785 exclusion-firing survivors); branch analysis/stage-b-eval, #144 evidence pass. The claim here is an exact count over that scanned population, plus a hand reading of 18 rows drawn from it.&quot;,
+      &quot;date&quot;: &quot;2026-08-03&quot;,
+      &quot;rationale&quot;: &quot;What the #147 narrowing (TV1_tight_objects, restricting the object list to apparatus/code/software/pipeline/script/database) costs is counted exactly over the scanned population: 3.0 extra rows per million scanned (0.13% of admitted volume, ~1,531 rows over the full snapshot). The one hand reading of rows this pattern suppresses at the margin — 18 rows in the 5.6M scan — found 3 of 18 in scope, which is the only direct signal anyone has about its precision and is far too small a sample to license a live discard. Precision after the narrowing is otherwise unmeasured; level is heuristic and the spec is shadow.&quot;
+    }
+  ]
+}</code></pre></details>
+
+<h2>Rescues — the 600s band</h2>
+<p class="small">Evidence that outranks a discard. Both are copies of the rules they rescue from.</p>
+
+<h3 id="r-exclusion-rescue"><code>exclusion-rescue</code> <span class="tag t-bad">NEEDS CHANGE</span></h3>
+<p class="meta">pile <code>screen_cheap</code> · precedence <code>650</code> ·
+shadow <code>false</code> · vocabulary <code>None</code> ·
+evidence levels: — none —</p>
+<p class="verdict">LIVE and now actively harmful — it demotes rows it can no longer rescue.</p>
+<p><strong>This is the worst structural defect in the rule book, and today's shadow flips
+ made it live.</strong> Three problems, compounding:</p>
+ <p><strong>(1) It demotes rows from the expensive screen to the cheap one.</strong> The rule
+ sits at precedence 650 and routes to <code>screen_cheap</code>. Four of the seven exclusion
+ patterns it copies are now shadow and discard nothing
+ (<code>technical-object</code>, <code>technical-verb</code>, <code>biological-of</code>,
+ <code>data-availability</code>). A row matching one of those plus a phrase plus an author-year
+ cite is precisely a <code>phrase-with-cite</code> row, which belongs in
+ <code>screen_expensive</code> at 350 — but 650 outranks 350, so the &ldquo;rescue&rdquo; pulls
+ it <em>down</em> into the cheap discard-only tier. It is rescuing the row from nothing and
+ costing it the two-voter screen. <code>title-phrase-rescue</code>'s own description spells out
+ this exact failure mode as the reason its DA1 arm was withheld — and then this rule keeps the
+ DA clause anyway.</p>
+ <p><strong>(2) We shadowed its sibling for this and left it live.</strong>
+ <code>title-phrase-rescue</code> went to draft today on the argument that a rescue whose
+ targets are shadow is dead weight. That argument applies here with more force, because this
+ rule outranks a real admission route. The invariant the test suite now encodes should cover
+ both rescues, not one.</p>
+ <p><strong>(3) It is a copy of the entire 500s band plus the entire phrase list,</strong>
+ hand-synced — the description says so outright (&ldquo;kept in sync with them: #147 narrowed
+ technical-object, technical-verb and biological-of, and the copies here narrowed with
+ them&rdquo;). That is ~90 inlined regexes duplicating other files, with a stated manual
+ obligation to keep them equal. It is the single-source-of-truth violation that the declarative
+ engine was supposed to end.</p>
+ <p><strong>Fix:</strong> rescues should reference rule <em>ids</em> (&ldquo;fired for
+ <code>technical-verb</code>&rdquo;), which the engine already knows per row, instead of
+ re-implementing their patterns. Until that exists, restrict this rule's exclusion clause to the
+ three live patterns and add the shadow-consistency invariant for both rescues.</p>
+<details><summary>Full spec JSON (173 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;exclusion-rescue&quot;,
+  &quot;description&quot;: &quot;The #44 targeted readmission. An exclusion pattern fired, but a replication phrase and a specific author-year cite are both present — the shape of an in-scope computational reproduction the exclusions misfire on (&#x27;replicated the analysis code of Smith (2019)&#x27;). Outranks the whole 500s band so the readmission wins, and lands in the cheap discard-only tier: the evidence is enough to refuse a terminal discard, not enough to buy the expensive screen. The exclusion-context clause below is a copy of the 500s patterns and is kept in sync with them: #147 narrowed technical-object, technical-verb and biological-of, and the copies here narrowed with them. Left wide, this rule would keep claiming rows the exclusions no longer discard and hold them at screen_cheap when nothing is rescuing them from anything — the recovered computational reproductions and GWAS-locus replications would have traded a terminal discard for a demotion. There is a sibling rescue at 645, title-phrase-rescue (#147 item 2), which asks for a title phrase instead of a cite and covers only the abstract-only technical exclusions. Both route to screen_cheap, so where both match the pile is the same and only route_rule differs; this rule wins by precedence because a named author-year cite is the stronger evidence. The cite clause is one RE2-safe approximation of an author-year citation (parenthetical, narrative and et-al forms); it replaces extract_author_year_patterns()&#x27;s lookahead-based patterns and its bare-name blacklist. Divergence 2 in docs/filter-engine.md: the cite only orders spend, it no longer admits, so an approximation is enough. The name atom is a negated class rather than `\\w`: Python `re` reads `\\w` as Unicode-aware and RE2 (pyarrow) as ASCII, so an accented surname in the cite position — García et al. (2020) — matched one backend and not the other. The trailing `\\b` became an explicit non-digit for the same reason.&quot;,
+  &quot;match&quot;: {
+    &quot;all_of&quot;: [
+      {
+        &quot;any_of&quot;: [
+          {
+            &quot;text_regex&quot;: &quot;^\\s*(?:review for|decision letter for|peer review #|faculty opinions recommendation of|correction to|author response)\\b&quot;
+          },
+          {
+            &quot;all_of&quot;: [
+              {
+                &quot;text_regex&quot;: &quot;\\b(?:data|code|scripts?|files?|materials?|repositor\\w+|replication package)\\b[^.\\n]{0,80}?\\bto\\s+(?:replicate|reproduce)\\b&quot;
+              },
+              {
+                &quot;text_regex&quot;: &quot;\\b(?:data|code|scripts?|files?|materials?|repositor\\w+|replication package)\\b[^.\\n]{0,200}\\b(?:available|provided|deposited|archived|posted|shared|supplement\\w*|repositor\\w+|osf|github|dataverse|zenodo|figshare|doi\\.org)\\b&quot;
+              }
+            ]
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\b(?:dna|rna|mrna|cdna|viral|\\w*virus(?:es)?|hiv|sars[-\\s]?cov[-\\s]?2?|influenza|bacteri\\w+|mycobacteri\\w+|pathogens?|parasites?|prions?|phages?|cell|cellular|chromosome|plasmid|genome|genomic|mitochondrial)\\s+replication\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breplication (?:fork|origin|stress|timing)\\b&quot;
+          },
+          {
+            &quot;any_of&quot;: [
+              {
+                &quot;text_regex&quot;: &quot;\\breplication of (?:the\\s+)?(?:\\w+[-\\s]+){0,3}(?:dna|rna|mrna|cdna|viral|\\w*virus(?:es)?|bacteri\\w+|mycobacteri\\w+|pathogens?|prions?|phages?|chromosomes?|plasmids?|hiv|sars[-\\s]?cov[-\\s]?2?|influenza|mitochondrial|organoids?)\\b&quot;
+              },
+              {
+                &quot;text_regex&quot;: &quot;\\breplication of (?:the\\s+)?(?:\\w+[-\\s]+){0,3}(?:genomes?|genomic)(?:$|[^-\\s‐-―\\w]|[-\\s‐-―](?:$|[^w]|w(?:$|[^i]|i(?:$|[^d]|d(?:$|[^e])))))&quot;
+              },
+              {
+                &quot;text_regex&quot;: &quot;\\breplication of (?:the\\s+)?(?:\\w+[-\\s]+){0,3}(?:cells?|cellular|parasites?)\\b\\s*(?:[.,;:)\\]]|$|(?:in|by|during|within|with|and|or|is|are|was|were|from|to|at|under)\\b)&quot;
+              }
+            ]
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\b(?:replication of (?:the )?(?:apparatus|code|database|pipeline|protocol|software|simulation)|(?:apparatus|code|database|pipeline|protocol|software|simulation)\\s+replication)\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breplicat(?:e|ed|ing)\\s+(?:the )?(?:apparatus|code|software|pipeline|script|database)\\b&quot;
+          }
+        ]
+      },
+      {
+        &quot;any_of&quot;: [
+          {
+            &quot;text_regex&quot;: &quot;\\breplications? of\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bwe replicated\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bwe replicate\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bdirect replications?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bconceptual replications?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bregistered replications?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bfailed to replicate\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bdid not replicate\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bregistered report of\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\b(?:close|high[-\\s]powered|pre[-\\s]?registered|large[-\\s]scale)\\s+replications?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\battempt\\w*\\s+to\\s+replicate\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\baim\\w*\\s+to\\s+replicate\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bset\\s+out\\s+to\\s+replicate\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bsuccess\\w*\\s+replicat\\w*\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bwe\\s+(?:conducted|performed|carried\\s+out)\\s+a\\s+replication\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\b(?:many-?labs?|multi-?site)\\s+replications?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breplicat\\w*\\s+(?:and|&amp;)\\s+exten\\w*\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breplication\\s+stud(?:y|ies)\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bstudy\\s+replicate[sd]\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bour\\s+replications?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bexact\\s+replications?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breplication\\s+attempts?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bcross-?(?:cultural|national|lab(?:oratory)?)\\s+replications?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breplicat(?:e|es|ed|ing)\\s+(?:the\\s+)?(?:previous|prior|original|earlier|main|key|core|published)?\\s*(?:findings?|results?|effects?|analys[ei]s|stud(?:y|ies))\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\b(?:(?:d(?:oes|o|id)|w(?:as|ere)|is|are|ha[sd]|have|could|would|should|can|may|might)\\s+(?:not|never)|cannot|can[&#x27;’]t)\\s+(?:(?:be|been)\\s+)?replicat\\w+\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\b(?:unable|inabilit\\w+|failure)\\s+to\\s+replicate\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bwe\\s+\\w+ly\\s+replicate[sd]?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breproductions? of [&#x27;\\\&quot;“‘]&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breproductions? of\\s+(?:the\\s+)?(?:(?:original|published|reported|previous|prior|main|key|core)\\s+)?(?:results?|findings?|analys[ei]s|estimates?|figures?|tables?|stud(?:y|ies)|experiments?|data)\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bcomput\\w*\\s+reproduc\\w+\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\brobustness\\s+(?:replicabilit\\w+|reproducibilit\\w+|replication)\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breproduc\\w+\\s+(?:and|&amp;)\\s+(?:replicat|extend|extension)\\w*\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bre-?analy[sz](?:is|es|ed|ing|e)\\s+of\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bre-?analyz\\w+\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breproduc(?:e|es|ed|ing)\\s+(?:\\w+ly\\s+)?(?:the\\s+)?(?:original|published|reported|previous|prior|main|key|core|their|these|authors&#x27;?)?\\s*(?:results?|findings?|estimates?|figures?|tables?|analys[ei]s)\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\b(?:fail\\w*|unable|inabilit\\w+|attempt\\w*|sought|seek\\w*|aim\\w*|tr(?:y|ies|ied|ying))\\s+to\\s+reproduce\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bwe\\s+(?:\\w+ly\\s+)?reproduced?\\b&quot;
+          }
+        ]
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\(\\s*[^ \\t\\n\\r\\f,;:()\\[\\]]{2,}(?:\\s+et\\s+al\\.?|(?:\\s*,\\s*[^ \\t\\n\\r\\f,;:()\\[\\]]{2,}){0,3}\\s*,?\\s*(?:and|&amp;)\\s*[^ \\t\\n\\r\\f,;:()\\[\\]]{2,})?\\s*,?\\s*(?:19|20)\\d{2}[a-z]?\\s*[);,]|[^ \\t\\n\\r\\f,;:()\\[\\]]{3,}(?:\\s+et\\s+al\\.?|\\s*(?:and|&amp;)\\s*[^ \\t\\n\\r\\f,;:()\\[\\]]{3,})?\\s*[&#x27;’]?s?\\s*\\(\\s*(?:19|20)\\d{2}[a-z]?\\s*\\)|[^ \\t\\n\\r\\f,;:()\\[\\]]{3,}\\s+et\\s+al\\.?,?\\s+(?:19|20)\\d{2}(?:[^0-9]|$)&quot;
+      }
+    ]
+  },
+  &quot;pile&quot;: &quot;screen_cheap&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 650,
+  &quot;shadow&quot;: false,
+  &quot;measured&quot;: []
+}</code></pre></details>
+
+<h3 id="r-title-phrase-rescue"><code>title-phrase-rescue</code> <span class="tag t-draft">DRAFT</span></h3>
+<p class="meta">pile <code>screen_cheap</code> · precedence <code>645</code> ·
+shadow <code>true</code> · vocabulary <code>None</code> ·
+evidence levels: downstream</p>
+<p class="verdict">Correctly drafted today — the consistent half of the rescue pair.</p>
+<p>Now consistent with its targets, and the description says plainly that it must be
+ un-shadowed <em>with</em> <code>technical-object</code> and <code>technical-verb</code>, never
+ before them. The kept evidence is the right kind: an exact influx count (0 and 1 rows in 5.6M)
+ over a named population, independent of the gold corpus.</p>
+ <p>Same essay problem as <code>biological-of</code> — the description is ~2,000 characters
+ covering measurement bundles, withdrawn arms, interaction with the sibling rescue, and the
+ shadow reason. And it shares the design defect: the fix is referencing rule ids, not copying
+ patterns.</p>
+<details><summary>Full spec JSON (156 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;title-phrase-rescue&quot;,
+  &quot;description&quot;: &quot;#147 item 2, the title-phrase rescue. An exclusion pattern fired in the ABSTRACT ONLY while the TITLE itself states the design — \&quot;A Replication of &#x27;The Role of Intrafirm Networks&#x27;\&quot; whose abstract says \&quot;we replicated the model\&quot;. The row is handed to the cheap discard-only tier instead of being killed by the 500s band: the title is the paper&#x27;s own claim about itself, and a keyword rule should not overrule it terminally on the strength of one phrase further down. Expressed declaratively rather than as the positional check the old keyword_verdict() sketch needed (is_non_scholarly_context() returning a match offset): the exclusion must match abstract_text and must NOT match the title, which is the same condition as \&quot;the first match starts past the title\&quot; for every row where the exclusion fires once. Scope: technical-object and technical-verb only. The measured bundle was TV3+TO4+DA1; the DA1 arm is withheld because data-availability is a shadow spec in the engine and discards nothing, so a \&quot;rescue\&quot; from it could only pull a row DOWN from screen_expensive to screen_cheap. What ships is TV3+TO4, at a counted cost of ~102 extra rows across the 510M-row snapshot, every rescued row going to a tier that decides rather than to an admission. The biological-of and BIOLOGICAL title rescues (BO3, BI1) are absent on cost: BI1 alone moves ~2,093 rows across the snapshot, twenty times the whole TV3+TO4 rescue, and BO3 pulls rows back out of a discard whose matched phrase is molecular biology by construction. The title phrase list is the phrase list AS MEASURED — the pre-#147 alternation, without the T2 arms this issue adds to phrase-replication — because widening it would widen the rescue past its measurement. Interaction with exclusion-rescue (#44) at 650: that rule asks for a phrase plus a named author-year cite anywhere in the row, this one asks for a phrase in the title and no cite at all. Both route to screen_cheap, so where both match the pile is identical and only route_rule differs; exclusion-rescue wins by precedence because a named cite is the stronger evidence. Nothing here rescues a structural discard: the 900s band outranks both. SHADOW: the entire scope of this rule is rescuing rows from technical-object and technical-verb, and both of those are shadow and discard nothing, so a live rescue would only hold rows at screen_cheap that would otherwise route on their own evidence. It must be un-shadowed together with technical-object and technical-verb, never before them.&quot;,
+  &quot;match&quot;: {
+    &quot;all_of&quot;: [
+      {
+        &quot;any_of&quot;: [
+          {
+            &quot;title_regex&quot;: &quot;\\breplications? of\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bwe replicated\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bwe replicate\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bdirect replications?\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bconceptual replications?\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bregistered replications?\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bfailed to replicate\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bdid not replicate\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bregistered report of\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\b(?:close|high[-\\s]powered|pre[-\\s]?registered|large[-\\s]scale)\\s+replications?\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\battempt\\w*\\s+to\\s+replicate\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\baim\\w*\\s+to\\s+replicate\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bset\\s+out\\s+to\\s+replicate\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bsuccess\\w*\\s+replicat\\w*\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bwe\\s+(?:conducted|performed|carried\\s+out)\\s+a\\s+replication\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\b(?:many-?labs?|multi-?site)\\s+replications?\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\breplicat\\w*\\s+(?:and|&amp;)\\s+exten\\w*\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\breplication\\s+stud(?:y|ies)\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bstudy\\s+replicate[sd]\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bour\\s+replications?\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bexact\\s+replications?\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\breplication\\s+attempts?\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bcross-?(?:cultural|national|lab(?:oratory)?)\\s+replications?\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\breplicat(?:e|es|ed|ing)\\s+(?:the\\s+)?(?:previous|prior|original|earlier|main|key|core|published)?\\s*(?:findings?|results?|effects?|analys[ei]s|stud(?:y|ies))\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\b(?:(?:d(?:oes|o|id)|w(?:as|ere)|is|are|ha[sd]|have|could|would|should|can|may|might)\\s+(?:not|never)|cannot|can[&#x27;’]t)\\s+(?:(?:be|been)\\s+)?replicat\\w+\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\b(?:unable|inabilit\\w+|failure)\\s+to\\s+replicate\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bwe\\s+\\w+ly\\s+replicate[sd]?\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\breproductions? of [&#x27;\\\&quot;“‘]&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\breproductions? of\\s+(?:the\\s+)?(?:(?:original|published|reported|previous|prior|main|key|core)\\s+)?(?:results?|findings?|analys[ei]s|estimates?|figures?|tables?|stud(?:y|ies)|experiments?|data)\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bcomput\\w*\\s+reproduc\\w+\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\brobustness\\s+(?:replicabilit\\w+|reproducibilit\\w+|replication)\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\breproduc\\w+\\s+(?:and|&amp;)\\s+(?:replicat|extend|extension)\\w*\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bre-?analy[sz](?:is|es|ed|ing|e)\\s+of\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bre-?analyz\\w+\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\breproduc(?:e|es|ed|ing)\\s+(?:\\w+ly\\s+)?(?:the\\s+)?(?:original|published|reported|previous|prior|main|key|core|their|these|authors&#x27;?)?\\s*(?:results?|findings?|estimates?|figures?|tables?|analys[ei]s)\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\b(?:fail\\w*|unable|inabilit\\w+|attempt\\w*|sought|seek\\w*|aim\\w*|tr(?:y|ies|ied|ying))\\s+to\\s+reproduce\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\bwe\\s+(?:\\w+ly\\s+)?reproduced?\\b&quot;
+          }
+        ]
+      },
+      {
+        &quot;any_of&quot;: [
+          {
+            &quot;abstract_regex&quot;: &quot;\\b(?:replication of (?:the )?(?:apparatus|code|database|pipeline|protocol|software|simulation)|(?:apparatus|code|database|pipeline|protocol|software|simulation)\\s+replication)\\b&quot;
+          },
+          {
+            &quot;abstract_regex&quot;: &quot;\\breplicat(?:e|ed|ing)\\s+(?:the )?(?:apparatus|code|software|pipeline|script|database)\\b&quot;
+          }
+        ]
+      },
+      {
+        &quot;none_of&quot;: [
+          {
+            &quot;title_regex&quot;: &quot;\\b(?:replication of (?:the )?(?:apparatus|code|database|pipeline|protocol|software|simulation)|(?:apparatus|code|database|pipeline|protocol|software|simulation)\\s+replication)\\b&quot;
+          },
+          {
+            &quot;title_regex&quot;: &quot;\\breplicat(?:e|ed|ing)\\s+(?:the )?(?:apparatus|code|software|pipeline|script|database)\\b&quot;
+          }
+        ]
+      }
+    ]
+  },
+  &quot;pile&quot;: &quot;screen_cheap&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 645,
+  &quot;shadow&quot;: true,
+  &quot;measured&quot;: [
+    {
+      &quot;level&quot;: &quot;downstream&quot;,
+      &quot;n&quot;: 5604314,
+      &quot;sample&quot;: &quot;5.6M OpenAlex snapshot rows (22 parquet partitions of the 2,446-file manifest, 64,118 survivors of the search gate, complete harvest of the 3,785 exclusion-firing survivors — a complete harvest, so the influx count is exact for the scanned population, not sampled); branch analysis/stage-b-eval, analysis/stage_b_eval/exclusion_narrowing_report.md, #144 evidence pass. The influx count over that population is the only thing claimed here.&quot;,
+      &quot;date&quot;: &quot;2026-08-03&quot;,
+      &quot;rationale&quot;: &quot;Cost, exactly counted over the scanned population: TO4_title_rescue contributes 0 influx rows in 5.6M and TV3_title_rescue 1 (0.2 per million, 0.01% of admitted volume, ~102 rows projected over the full snapshot). This is a routing rule, not a discard: it moves rows out of a terminal pile into one that still decides, so the influx is the measurement it needs. What the rule is for is the row whose abstract fires the narrowed technical pattern (code, database, software, pipeline, script, apparatus, protocol, simulation) while the title says replication: the computational-reproduction genre. It is shadow because the two patterns it rescues from are shadow, not because of its cost.&quot;
+    }
+  ]
+}</code></pre></details>
+
+<h2>Admission and routing</h2>
+<p class="small">Only these can send a row to an LLM. None of them can kill.</p>
+
+<h3 id="r-phrase-with-cite"><code>phrase-with-cite</code> <span class="tag t-live">LIVE · KEEP</span></h3>
+<p class="meta">pile <code>screen_expensive</code> · precedence <code>350</code> ·
+shadow <code>false</code> · vocabulary <code>None</code> ·
+evidence levels: downstream</p>
+<p class="verdict">Keep live — it is the only admission route. But 42 of its arms are copies.</p>
+<p>Must stay live: shadowing it would empty <code>screen_expensive</code> and leave the
+ pipeline with no route to the two-voter screen at all. The evidence trim was right — the
+ hand-classified genetics stratum is cited as human evidence about those rows, and the
+ corpus-wide recall figure is no longer claimed.</p>
+ <p><strong>The phrase clause is <code>phrase-replication</code>'s 32 arms plus
+ <code>phrase-reproduction</code>'s 10, pasted in.</strong> The alternation now exists three
+ times across the bundle (here, in each phrase rule, and again inside
+ <code>exclusion-rescue</code>) plus a fourth time as Python constants in
+ <code>filter/phrase_detection.py</code>. Any future arm has to be added in four places
+ correctly or the piles silently disagree. The spec format needs composition — a
+ <code>rule_ref</code> or a named pattern group — and this rule is the strongest argument for
+ it.</p>
+ <p>The row-scoped GWAS guard in <code>none_of</code> is a documented, deliberate divergence
+ from the sentence-scoped original; that one is fine and recorded.</p>
+<details><summary>Full spec JSON (177 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;phrase-with-cite&quot;,
+  &quot;description&quot;: &quot;A replication or reproduction phrase AND an author-year citation: the shape of a paper that says what it replicated. The only route to the expensive two-voter screen. `none_of` carries the GWAS vocabulary — a discovery/replication-cohort design says &#x27;we replicated one SNP&#x27; and means something else. Divergence 3 in docs/filter-engine.md: the guard was sentence-scoped in PHRASE_GUARDS and is row-scoped here, so a GWAS-flavoured row falls to screen_cheap rather than being suppressed. #147 (G1 minus `replicated the association`): the guard now stands down when the row also names a prior report — previously/prior/earlier/original/published/reported by — which is what separates &#x27;we replicated eight loci PREVIOUSLY REPORTED in a European population&#x27; (an ordinary context-transfer replication, in scope) from &#x27;we replicated the association&#x27; in the paper&#x27;s own second cohort (a two-stage internal design, out of scope by the maintainer&#x27;s ruling and by shared/prompts.py). The `replicated the association` alternative of G1 as written is deliberately absent: it is not a prior-report cue at all and leaks two internal designs. The phrase clause below duplicates phrase-replication&#x27;s any_of and gains the same #147 T2 arms; the two lists are kept in sync by hand and a diff that edits one must edit the other. The cite clause is one RE2-safe approximation of an author-year citation (parenthetical, narrative and et-al forms); it replaces extract_author_year_patterns()&#x27;s lookahead-based patterns and its bare-name blacklist. Divergence 2 in docs/filter-engine.md: the cite only orders spend, it no longer admits, so an approximation is enough. The name atom is a negated class rather than `\\w`: Python `re` reads `\\w` as Unicode-aware and RE2 (pyarrow) as ASCII, so an accented surname in the cite position — García et al. (2020) — matched one backend and not the other. The trailing `\\b` became an explicit non-digit for the same reason.&quot;,
+  &quot;match&quot;: {
+    &quot;all_of&quot;: [
+      {
+        &quot;any_of&quot;: [
+          {
+            &quot;text_regex&quot;: &quot;\\breplications? of\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bwe replicated\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bwe replicate\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bdirect replications?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bconceptual replications?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bregistered replications?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bfailed to replicate\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bdid not replicate\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bregistered report of\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\b(?:close|high[-\\s]powered|pre[-\\s]?registered|large[-\\s]scale)\\s+replications?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\battempt\\w*\\s+to\\s+replicate\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\baim\\w*\\s+to\\s+replicate\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bset\\s+out\\s+to\\s+replicate\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bsuccess\\w*\\s+replicat\\w*\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bwe\\s+(?:conducted|performed|carried\\s+out)\\s+a\\s+replication\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\b(?:many-?labs?|multi-?site)\\s+replications?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breplicat\\w*\\s+(?:and|&amp;)\\s+exten\\w*\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breplication\\s+stud(?:y|ies)\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bstudy\\s+replicate[sd]\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bour\\s+replications?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bexact\\s+replications?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breplication\\s+attempts?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bcross-?(?:cultural|national|lab(?:oratory)?)\\s+replications?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breplicat(?:e|es|ed|ing)\\s+(?:the\\s+)?(?:previous|prior|original|earlier|main|key|core|published)?\\s*(?:findings?|results?|effects?|analys[ei]s|stud(?:y|ies))\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\b(?:(?:d(?:oes|o|id)|w(?:as|ere)|is|are|ha[sd]|have|could|would|should|can|may|might)\\s+(?:not|never)|cannot|can[&#x27;’]t)\\s+(?:(?:be|been)\\s+)?replicat\\w+\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\b(?:unable|inabilit\\w+|failure)\\s+to\\s+replicate\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bwe\\s+\\w+ly\\s+replicate[sd]?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bwe\\s+(?:\\w+\\s+){0,2}replicat(?:e|es|ed)\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\b(?:sought|seek(?:s|ing)?|tri(?:ed|es)|try(?:ing)?|wanted|intend(?:ed|s|ing)?|hoped?|started|planned|undertook|proceeded|decided|chose)\\s+to\\s+(?:\\w+ly\\s+)?replicate\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\b(?:fail\\w*|unable|inabilit\\w+|attempt\\w*)\\s+to\\s+(?:\\w+ly\\s+)?replicate\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\b(?:failures?\\s+to\\s+replicate|failed\\s+replications?|replication\\s+failures?|unsuccessful\\s+replications?)\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\battempted\\s+replications?\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breproductions? of [&#x27;\\\&quot;“‘]&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breproductions? of\\s+(?:the\\s+)?(?:(?:original|published|reported|previous|prior|main|key|core)\\s+)?(?:results?|findings?|analys[ei]s|estimates?|figures?|tables?|stud(?:y|ies)|experiments?|data)\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bcomput\\w*\\s+reproduc\\w+\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\brobustness\\s+(?:replicabilit\\w+|reproducibilit\\w+|replication)\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breproduc\\w+\\s+(?:and|&amp;)\\s+(?:replicat|extend|extension)\\w*\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bre-?analy[sz](?:is|es|ed|ing|e)\\s+of\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bre-?analyz\\w+\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\breproduc(?:e|es|ed|ing)\\s+(?:\\w+ly\\s+)?(?:the\\s+)?(?:original|published|reported|previous|prior|main|key|core|their|these|authors&#x27;?)?\\s*(?:results?|findings?|estimates?|figures?|tables?|analys[ei]s)\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\b(?:fail\\w*|unable|inabilit\\w+|attempt\\w*|sought|seek\\w*|aim\\w*|tr(?:y|ies|ied|ying))\\s+to\\s+reproduce\\b&quot;
+          },
+          {
+            &quot;text_regex&quot;: &quot;\\bwe\\s+(?:\\w+ly\\s+)?reproduced?\\b&quot;
+          }
+        ]
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\(\\s*[^ \\t\\n\\r\\f,;:()\\[\\]]{2,}(?:\\s+et\\s+al\\.?|(?:\\s*,\\s*[^ \\t\\n\\r\\f,;:()\\[\\]]{2,}){0,3}\\s*,?\\s*(?:and|&amp;)\\s*[^ \\t\\n\\r\\f,;:()\\[\\]]{2,})?\\s*,?\\s*(?:19|20)\\d{2}[a-z]?\\s*[);,]|[^ \\t\\n\\r\\f,;:()\\[\\]]{3,}(?:\\s+et\\s+al\\.?|\\s*(?:and|&amp;)\\s*[^ \\t\\n\\r\\f,;:()\\[\\]]{3,})?\\s*[&#x27;’]?s?\\s*\\(\\s*(?:19|20)\\d{2}[a-z]?\\s*\\)|[^ \\t\\n\\r\\f,;:()\\[\\]]{3,}\\s+et\\s+al\\.?,?\\s+(?:19|20)\\d{2}(?:[^0-9]|$)&quot;
+      }
+    ],
+    &quot;none_of&quot;: [
+      {
+        &quot;all_of&quot;: [
+          {
+            &quot;text_regex&quot;: &quot;\\b(?:gwas|genome[-\\s]wide|snps?|alleles?|genotyp\\w+|haplotype|linkage disequilibrium|minor allele frequency|loci|polymorphism\\w*|replication cohort|discovery cohort|exome)\\b&quot;
+          },
+          {
+            &quot;none_of&quot;: [
+              {
+                &quot;text_regex&quot;: &quot;\\b(?:previously|prior|earlier|original|published|reported\\s+by)\\b&quot;
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  &quot;pile&quot;: &quot;screen_expensive&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 350,
+  &quot;shadow&quot;: false,
+  &quot;measured&quot;: [
+    {
+      &quot;level&quot;: &quot;downstream&quot;,
+      &quot;n&quot;: 2892614,
+      &quot;sample&quot;: &quot;2,892,614 real OpenAlex snapshot rows (10 manifest partitions of the stride-122 list) for the cost side, which is the only denominator claimed here. The scope side is a hand reading: the guard/exclusion-affected genetics papers were classified one by one against the internal-replication rule of shared/prompts.py (analysis/stage_b_eval/gwas_scope_classification.md). Branch analysis/stage-b-eval, #144 evidence pass.&quot;,
+      &quot;date&quot;: &quot;2026-08-04&quot;,
+      &quot;rationale&quot;: &quot;#147 item 4, variant G1 minus its `replicated the association` alternative: the GWAS guard no longer suppresses a row that also names a prior report (previously/prior/earlier/original/published/reported by). Cost, counted over the scanned snapshot: 0.0 extra admissions per million. Benefit, from the hand-classified genetics papers: every row the change restores qualifies under the maintainer&#x27;s scope ruling, with no internal two-stage design among them. The `replicated the association` alternative of G1 as written is NOT shipped: it restores more rows but leaks internal discovery-plus-own-cohort designs (10.1002/hbm.22247, 10.1038/s41598-023-31701-w), which the ruling puts out of scope. Some genuinely qualifying papers stay unreachable whichever variant ships, because they put the prior-report attribution in a different sentence from the &#x27;we replicated ...&#x27; claim — that is a screen judgment, not a keyword one, and no same-sentence regex reaches them. This rule routes to the expensive screen and discards nothing, so the evidence gate does not apply to it.&quot;
+    },
+    {
+      &quot;level&quot;: &quot;downstream&quot;,
+      &quot;n&quot;: 2892614,
+      &quot;sample&quot;: &quot;Same 2,892,614-row snapshot corpus as the entry above, which is the denominator of the admissions-per-million figure; analysis/stage_b_eval/vocab_holes_report.md, branch analysis/stage-b-eval, #144 evidence pass. The admissions count over that population is the only thing claimed here.&quot;,
+      &quot;date&quot;: &quot;2026-08-03&quot;,
+      &quot;rationale&quot;: &quot;#147 item 1: the five T2 phrase arms added to phrase-replication are mirrored into this spec&#x27;s phrase clause, because the two files carry their own copies of the clause list and a phrase that only one of them knows would route by which copy happened to be edited. What is measured is the cost, counted over the snapshot: +9.3 admissions per million (+0.6%). What the arms recover is not measured here; recall belongs to the flora.csv monitor (analysis/gold/README.md). The entry stays `downstream` because what remains is an exact count of the rows this rule routes, which is the measurement a non-discard rule needs; the evidence gate does not bind here in any case, and the arms only decide whether a phrase+cite row buys the expensive screen rather than the cheap tier.&quot;
+    }
+  ]
+}</code></pre></details>
+
+<h3 id="r-phrase-replication"><code>phrase-replication</code> <span class="tag t-live">LIVE · KEEP</span></h3>
+<p class="meta">pile <code>screen_cheap</code> · precedence <code>260</code> ·
+shadow <code>false</code> · vocabulary <code>replication</code> ·
+evidence levels: downstream</p>
+<p class="verdict">Keep live — routing only, cannot kill. Duplication is its problem.</p>
+<p>Honest after the trim: the +9.3 admissions-per-million influx figure is an exact count
+ over a named snapshot population and stands; the 186-of-319 gold recovery is gone; the
+ goldneg pools (74 and 14 rows) are disclosed as too small to bound anything. The rule discards
+ nothing, so no evidence gate binds it in the first place.</p>
+ <p>The 32 arms are duplicated into <code>phrase-with-cite</code> and
+ <code>exclusion-rescue</code> — see above. One clause per original pattern (for hit
+ attribution) is a good decision worth keeping when composition arrives.</p>
+<details><summary>Full spec JSON (117 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;phrase-replication&quot;,
+  &quot;description&quot;: &quot;The REPLICATION_PHRASES of filter/phrase_detection.py minus the reproduction-anchored subset: precise first-person, negation, qualifier and attempt framings of a replication claim. One clause per original pattern so a diagnostics run can attribute a hit. Routes to the cheap discard-only tier rather than admitting: a phrase without a cite is a claim about replication as often as it is a replication.&quot;,
+  &quot;match&quot;: {
+    &quot;any_of&quot;: [
+      {
+        &quot;text_regex&quot;: &quot;\\breplications? of\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bwe replicated\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bwe replicate\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bdirect replications?\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bconceptual replications?\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bregistered replications?\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bfailed to replicate\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bdid not replicate\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bregistered report of\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\b(?:close|high[-\\s]powered|pre[-\\s]?registered|large[-\\s]scale)\\s+replications?\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\battempt\\w*\\s+to\\s+replicate\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\baim\\w*\\s+to\\s+replicate\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bset\\s+out\\s+to\\s+replicate\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bsuccess\\w*\\s+replicat\\w*\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bwe\\s+(?:conducted|performed|carried\\s+out)\\s+a\\s+replication\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\b(?:many-?labs?|multi-?site)\\s+replications?\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\breplicat\\w*\\s+(?:and|&amp;)\\s+exten\\w*\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\breplication\\s+stud(?:y|ies)\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bstudy\\s+replicate[sd]\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bour\\s+replications?\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bexact\\s+replications?\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\breplication\\s+attempts?\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bcross-?(?:cultural|national|lab(?:oratory)?)\\s+replications?\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\breplicat(?:e|es|ed|ing)\\s+(?:the\\s+)?(?:previous|prior|original|earlier|main|key|core|published)?\\s*(?:findings?|results?|effects?|analys[ei]s|stud(?:y|ies))\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\b(?:(?:d(?:oes|o|id)|w(?:as|ere)|is|are|ha[sd]|have|could|would|should|can|may|might)\\s+(?:not|never)|cannot|can[&#x27;’]t)\\s+(?:(?:be|been)\\s+)?replicat\\w+\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\b(?:unable|inabilit\\w+|failure)\\s+to\\s+replicate\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bwe\\s+\\w+ly\\s+replicate[sd]?\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bwe\\s+(?:\\w+\\s+){0,2}replicat(?:e|es|ed)\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\b(?:sought|seek(?:s|ing)?|tri(?:ed|es)|try(?:ing)?|wanted|intend(?:ed|s|ing)?|hoped?|started|planned|undertook|proceeded|decided|chose)\\s+to\\s+(?:\\w+ly\\s+)?replicate\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\b(?:fail\\w*|unable|inabilit\\w+|attempt\\w*)\\s+to\\s+(?:\\w+ly\\s+)?replicate\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\b(?:failures?\\s+to\\s+replicate|failed\\s+replications?|replication\\s+failures?|unsuccessful\\s+replications?)\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\battempted\\s+replications?\\b&quot;
+      }
+    ]
+  },
+  &quot;pile&quot;: &quot;screen_cheap&quot;,
+  &quot;vocabulary&quot;: &quot;replication&quot;,
+  &quot;precedence&quot;: 260,
+  &quot;shadow&quot;: false,
+  &quot;measured&quot;: [
+    {
+      &quot;level&quot;: &quot;downstream&quot;,
+      &quot;n&quot;: 2892614,
+      &quot;sample&quot;: &quot;2,892,614 real OpenAlex snapshot rows (10 manifest partitions of the stride-122 list, materialized locally) — the denominator of the admissions-per-million figure, and the only denominator claimed here. Branch analysis/stage-b-eval, analysis/stage_b_eval/vocab_holes_report.md, #144 evidence pass.&quot;,
+      &quot;date&quot;: &quot;2026-08-03&quot;,
+      &quot;rationale&quot;: &quot;#147 item 1, bundle T2 minus its GWAS-guard member (G1, which lives in phrase-with-cite&#x27;s none_of): the five arms added here — the two-word gap between `we` and `replicate(d)` (C2), the sought/tried/wanted matrix-verb family (C1b), fail/unable/attempt to replicate (C12), the failure nouns (C6) and `attempted replication(s)` (C13). What is measured is the cost, counted over the snapshot: 9.3 extra admissions per million scanned (+0.6%). What these arms recover is not measured here; recall belongs to the flora.csv monitor (analysis/gold/README.md). The rule discards nothing — it routes to the cheap discard-only tier — so the evidence gate does not bind. The passive, gerund, `replicab*` and bare third-person arms are deliberately NOT here: T4 costs 13x the admissions, and their noise (the biological-replicate and future-work senses) has no compact shape.&quot;
+    }
+  ]
+}</code></pre></details>
+
+<h3 id="r-phrase-reproduction"><code>phrase-reproduction</code> <span class="tag t-live">LIVE · KEEP</span></h3>
+<p class="meta">pile <code>screen_cheap</code> · precedence <code>262</code> ·
+shadow <code>false</code> · vocabulary <code>reproduction</code> ·
+evidence levels: — none —</p>
+<p class="verdict">Keep live — the best-argued rule in the bundle.</p>
+<p>Ten anchored patterns, and the description explains the <em>negative</em> result that
+ shaped them: a bare &ldquo;reproduction of&rdquo; is animal breeding, social reproduction and
+ epidemiological R₀ (8% precision over 15,440 rows; 0 of 15 sampled hits were our sense, #137).
+ That is how evidence should read — a measurement that constrained the rule, not a number
+ decorating it. <code>measured: []</code> is correct here: it routes, it cannot kill.</p>
+<details><summary>Full spec JSON (43 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;phrase-reproduction&quot;,
+  &quot;description&quot;: &quot;The nine reproduction-anchored patterns (_REPRODUCTION_ANCHORED). Anchored on purpose: a bare \&quot;reproduction of\&quot; matches animal breeding, social reproduction and epidemiological R0 far more often than a reproduction study (8% precision over 15,440 corpus rows; 0 of 15 sampled bare hits were our sense, #137), while these forms cost nothing and score better on the curated reproduction list.&quot;,
+  &quot;match&quot;: {
+    &quot;any_of&quot;: [
+      {
+        &quot;text_regex&quot;: &quot;\\breproductions? of [&#x27;\\\&quot;“‘]&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\breproductions? of\\s+(?:the\\s+)?(?:(?:original|published|reported|previous|prior|main|key|core)\\s+)?(?:results?|findings?|analys[ei]s|estimates?|figures?|tables?|stud(?:y|ies)|experiments?|data)\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bcomput\\w*\\s+reproduc\\w+\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\brobustness\\s+(?:replicabilit\\w+|reproducibilit\\w+|replication)\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\breproduc\\w+\\s+(?:and|&amp;)\\s+(?:replicat|extend|extension)\\w*\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bre-?analy[sz](?:is|es|ed|ing|e)\\s+of\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bre-?analyz\\w+\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\breproduc(?:e|es|ed|ing)\\s+(?:\\w+ly\\s+)?(?:the\\s+)?(?:original|published|reported|previous|prior|main|key|core|their|these|authors&#x27;?)?\\s*(?:results?|findings?|estimates?|figures?|tables?|analys[ei]s)\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\b(?:fail\\w*|unable|inabilit\\w+|attempt\\w*|sought|seek\\w*|aim\\w*|tr(?:y|ies|ied|ying))\\s+to\\s+reproduce\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\bwe\\s+(?:\\w+ly\\s+)?reproduced?\\b&quot;
+      }
+    ]
+  },
+  &quot;pile&quot;: &quot;screen_cheap&quot;,
+  &quot;vocabulary&quot;: &quot;reproduction&quot;,
+  &quot;precedence&quot;: 262,
+  &quot;shadow&quot;: false,
+  &quot;measured&quot;: []
+}</code></pre></details>
+
+<h3 id="r-title-stem"><code>title-stem</code> <span class="tag t-live">LIVE · KEEP</span></h3>
+<p class="meta">pile <code>screen_cheap</code> · precedence <code>240</code> ·
+shadow <code>false</code> · vocabulary <code>None</code> ·
+evidence levels: — none —</p>
+<p class="verdict">Keep live — but it and nfd-stems should be one rule, or zero.</p>
+<p>Title-only is the right scope, and the multilingual justification is concrete (111 of 112
+ Korean 재검증 works are invisible to the English stems). Cheap tier is the right
+ destination.</p>
+ <p><strong>See <code>nfd-stems</code>:</strong> the same stem list exists twice because of
+ Unicode normalisation. That is not a policy question and should not be two rules.</p>
+<details><summary>Full spec JSON (12 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;title-stem&quot;,
+  &quot;description&quot;: &quot;The 15 multilingual replication stems, TITLE ONLY. A title is a handful of topical words, so a bare stem in one is a real signal, while the same stem anywhere in a 1,500-character abstract is noise — the distinction keyword_verdict() draws by taking title and abstract separately. The non-English stems reach works the English ones cannot (111 of 112 Korean 재검증 works are invisible to the English stems); they carry no matching phrases, so the cheap tier is the right destination.&quot;,
+  &quot;match&quot;: {
+    &quot;title_regex&quot;: &quot;(?i)replicat|replicab|reproduc|reanalys|re-analys|reanalyz|re-analyz|replikat|réplicat|replicaci|replicaç|replicazion|reproduç|reproduzi|追試|반복검증|재검증&quot;
+  },
+  &quot;pile&quot;: &quot;screen_cheap&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 240,
+  &quot;shadow&quot;: false,
+  &quot;measured&quot;: []
+}</code></pre></details>
+
+<h3 id="r-concept-replication"><code>concept-replication</code> <span class="tag t-live">LIVE · KEEP</span></h3>
+<p class="meta">pile <code>screen_cheap</code> · precedence <code>220</code> ·
+shadow <code>false</code> · vocabulary <code>None</code> ·
+evidence levels: — none —</p>
+<p class="verdict">Keep live — a good downgrade from the old terminal behaviour.</p>
+<p>The old Stage 2 wrote a concept-only row <code>false_positive</code> terminally; this
+ routes it to the cheap tier instead, on the stated principle that a rule which cannot admit
+ must not be allowed to kill. That principle is the best idea in the whole engine design and
+ this rule is its clearest application. <code>measured: []</code> is right.</p>
+<details><summary>Full spec JSON (17 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;concept-replication&quot;,
+  &quot;description&quot;: &quot;OpenAlex concepts C12590798 (Replication (statistics)) and C9893847 (Reproducibility) — the Stage 1 harvest arm. Divergence 1 in docs/filter-engine.md: Stage 2 wrote a concept-only row `false_positive` TERMINALLY; here it routes to the cheap discard-only tier instead, because a concept is a topical signal and a rule that cannot admit must not be allowed to kill.&quot;,
+  &quot;match&quot;: {
+    &quot;fields&quot;: {
+      &quot;concept_ids&quot;: [
+        &quot;C12590798&quot;,
+        &quot;C9893847&quot;
+      ]
+    }
+  },
+  &quot;pile&quot;: &quot;screen_cheap&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 220,
+  &quot;shadow&quot;: false,
+  &quot;measured&quot;: []
+}</code></pre></details>
+
+<h3 id="r-reproduce-verb-arms"><code>reproduce-verb-arms</code> <span class="tag t-draft">DRAFT</span></h3>
+<p class="meta">pile <code>screen_cheap</code> · precedence <code>210</code> ·
+shadow <code>true</code> · vocabulary <code>None</code> ·
+evidence levels: — none —</p>
+<p class="verdict">Draft, awaiting counts — legitimately parked.</p>
+<p>A genuine open question stated as one: how much of the computational-reproduction genre
+ do the anchored patterns miss, and can only be answered by counting what this arm would move.
+ <code>measured: []</code> plus <code>shadow: true</code> is the honest encoding of &ldquo;we
+ don't know yet&rdquo;. Promote on diagnostics whenever they run — it cannot kill, so the bar is
+ low.</p>
+<details><summary>Full spec JSON (19 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;reproduce-verb-arms&quot;,
+  &quot;description&quot;: &quot;SHADOW, awaiting diagnostics (#142). Bare \&quot;reproduce/reproduces/reproduced/ reproducing\&quot; verb uses that no _REPRODUCTION_ANCHORED pattern claims — every anchored pattern requires a results-noun object, a first-person subject or a failure/attempt framing, on the grounds that a bare \&quot;reproduce\&quot; is biology. The open question is how much of the computational-reproduction genre that costs, and it can only be answered by counting what this arm would move.&quot;,
+  &quot;match&quot;: {
+    &quot;any_of&quot;: [
+      {
+        &quot;text_regex&quot;: &quot;\\breproduce[sd]?\\b&quot;
+      },
+      {
+        &quot;text_regex&quot;: &quot;\\breproducing\\b&quot;
+      }
+    ]
+  },
+  &quot;pile&quot;: &quot;screen_cheap&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 210,
+  &quot;shadow&quot;: true,
+  &quot;measured&quot;: []
+}</code></pre></details>
+
+<h3 id="r-nfd-stems"><code>nfd-stems</code> <span class="tag t-bad">NEEDS CHANGE</span></h3>
+<p class="meta">pile <code>screen_cheap</code> · precedence <code>205</code> ·
+shadow <code>true</code> · vocabulary <code>None</code> ·
+evidence levels: — none —</p>
+<p class="verdict">Draft — but this should be a data-normalisation fix, not a rule.</p>
+<p>The rule exists because <code>REPLICATION_STEM_PATTERN</code> spells accented stems in
+ composed (NFC) form while OpenAlex titles are not normalised, so a decomposed title matches
+ nothing. That is a text-pipeline bug being papered over with a second policy object — and a
+ partial one: it lists three stems where <code>title-stem</code> lists fifteen, so the two are
+ not even the same coverage.</p>
+ <p><strong>Fix properly:</strong> NFC-normalise title and abstract once where the pool row is
+ built. Then <code>title-stem</code> matches every spelling, this rule is deleted rather than
+ promoted, and the diagnostics it is waiting for (#142) are unnecessary. Every downstream
+ consumer gets the fix for free.</p>
+<details><summary>Full spec JSON (12 lines)</summary>
+<pre><code>{
+  &quot;id&quot;: &quot;nfd-stems&quot;,
+  &quot;description&quot;: &quot;SHADOW, awaiting diagnostics (#142). REPLICATION_STEM_PATTERN spells its accented stems in composed (NFC) form; OpenAlex titles are not normalised, so a title carrying the decomposed (NFD) spelling — \&quot;re\&quot; + U+0301 + \&quot;plicat\&quot; — matches nothing today. This arm is the same stem list written with combining diacritics. Shadow until the counts say whether the hole is real or empty.&quot;,
+  &quot;match&quot;: {
+    &quot;title_regex&quot;: &quot;(?i)réplicat|replicaç|reproduc&quot;
+  },
+  &quot;pile&quot;: &quot;screen_cheap&quot;,
+  &quot;vocabulary&quot;: null,
+  &quot;precedence&quot;: 205,
+  &quot;shadow&quot;: true,
+  &quot;measured&quot;: []
+}</code></pre></details>
+
+<h2 id="todo">4 · What I would change, in order</h2>
+
+<ol>
+<li><strong>Fix <code>exclusion-rescue</code> today</strong> (§2.2). Restrict its exclusion
+clause to the three live patterns and extend the rescue-consistency invariant in
+<code>tests/test_engine_spec.py</code> to both rescues. This is a live defect that costs real
+papers their two-voter screen, and the fix is a few lines.</li>
+<li><strong>Collapse to one rule set</strong> (§2.1). Retire <code>candidates.csv</code> as an
+admission-gated corpus, make the pool the single corpus, and let Stage 1 keep only the Stage A
+search query. Delete the duplicate non-article mappings in <code>shared/utils.py</code> in the
+same change. This is the one that unblocks <code>biological-of</code> and
+<code>data-availability</code> without an audit, by removing the second evaluator they have to
+agree with. Fix CLAUDE.md's &ldquo;shared keyword decision&rdquo; claim while you are there —
+Stage 2 never calls <code>keyword_verdict()</code>.</li>
+<li><strong>Add composition to the spec format</strong> (§2.3): <code>rule_ref</code> for
+patterns, <code>matched</code> for rescues. Removes ~90 duplicated regexes and the hand-sync
+obligation.</li>
+<li><strong>NFC-normalise text at pool build</strong>, then delete <code>nfd-stems</code>.</li>
+<li><strong>Freeze <code>holdout.json</code></strong> before the first promotion.</li>
+<li><strong>Split description from history</strong> in the four essay specs; fix
+<code>structural</code>'s fragment.</li>
+<li><strong>Audit <code>dataset-type</code> first</strong> and, on promotion, merge it into
+<code>non-article-type</code>.</li>
+<li><strong>Re-measure the rejected arms</strong> (BI1, BO3, the T4 bundle) against the
+stratified corpus, not just the accepted ones.</li>
+</ol>
+
+<div class="box">
+<p><strong>What not to change.</strong> The precedence-band design, the
+&ldquo;rules route, only LLMs admit&rdquo; asymmetry, the shadow mechanism itself, and the
+release-bound routing store are all good and are what made today's reset a one-line-per-rule
+edit rather than a migration. The six live structural discards are genuinely safe. The problems
+above are about duplication, boundaries and prose — not about the engine's shape.</p>
+</div>
+
+<p class="small">All JSON above is verbatim from <code>filter/spec/</code> in the working tree at
+2026-08-04 after the evidence reset (bundle <code>69dcfa41f2b4</code>, 20 specs loading clean).
+Uncommitted. Companion pages: <code>current_state_v4.html</code> (pipeline and plan),
+<code>screening_audit.html</code> (Stage 3 screen). Issues referenced: #17, #44, #113, #137,
+#141, #142, #144, #146–#151.</p>
+
+</main>
+<script>
+(function () {
+  window.HC_CONFIG = {
+    endpoint: 'https://script.google.com/macros/s/AKfycbyx858xfSCgHQ8RmbfbMsdzcmzrkNs_JZVmqeEBVrH-S6g8YJbI32CY7if-k8oTzg-eyQ/exec',
+    project: 'flora-extractor-rulebook-review'
+  };
+  var BASE = 'https://html-comments.surge.sh/';
+  var link = document.createElement('link');
+  link.rel = 'stylesheet'; link.href = BASE + 'html-comments.css';
+  document.head.appendChild(link);
+  var s = document.createElement('script');
+  s.src = BASE + 'html-comments.js';
+  document.head.appendChild(s);
+})();
+</script>
+</body>
+</html>
