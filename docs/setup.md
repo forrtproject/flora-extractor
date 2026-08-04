@@ -27,11 +27,12 @@ OPENAI_API_KEY=...                 # Stage 3's second screen voter (default SCRE
 **Only Stage 3 enforces anything.** `_check_screen_providers()` in
 `extract/run_extract.py` refuses to start unless *both* front-door screen voters have
 their key (that is `GEMINI_API_KEY` plus whichever of `OPENAI_API_KEY` /
-`OPENROUTER_API_KEY` the configured `SCREEN_VOTER2_MODEL` needs), and, when
-`PRESCREEN_ENABLED` is set, unless the pre-screen's providers do too — `--no-llm`
-skips both checks. Nothing else validates: `shared/config.py` only reads env, so a
-missing `RESEARCHER_EMAIL` silently falls back to `research@example.com`. Check `.env`
-against `.env.example` rather than relying on an error.
+`OPENROUTER_API_KEY` the configured `SCREEN_VOTER2_MODEL` needs) — `--no-llm`
+skips the check. Nothing else validates: an unset variable simply takes the default in
+`shared/config.py`, so a missing `RESEARCHER_EMAIL` silently falls back to
+`research@example.com`. Check `.env` against `.env.example` rather than relying on an
+error — that file lists every variable the code reads, and marks the values that are
+constants in `shared/config.py` and cannot be set from the environment at all.
 
 ## GROBID (optional, recommended for Stage 3)
 

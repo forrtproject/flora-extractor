@@ -190,7 +190,7 @@ SET_FILES: dict[str, dict] = {
                "paper is clearly out of scope) ended these rows before the validated front-door "
                "screen ever voted. It is a weaker instrument than that screen and its discards "
                "are terminal, so they are kept separate rather than mixed into Not a Replication.",
-        "action": "Sample these regularly whenever PRESCREEN_ENABLED is on — nothing else in the "
+        "action": "Sample these regularly while the cheap tier is running — nothing else in the "
                   "pipeline ever looks at them again. --rescreen reopens them.",
     },
     "unresolved_doi_mismatch": {

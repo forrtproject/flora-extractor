@@ -370,9 +370,8 @@ indefinitely. `--rescreen` reopens exactly those rows — the whole paper, so a
 multi-original paper is re-screened as a unit — and leaves every other resolved row
 carried forward.
 
-The optional cheap pre-screen's discards (`prescreen_discard`) are reopened by the same
-flag, and this is the only way back: turning `PRESCREEN_ENABLED` off does **not** revisit
-rows it already discarded, because a resume treats a set-aside row as settled.
+Historical cheap-tier discards (`prescreen_discard`) are reopened by the same flag, and
+this is the only way back: a resume treats a set-aside row as settled.
 
 Rows `sanity_check` has already moved out to `data/not_a_replication.csv`,
 `data/screen_disagreement.csv` or `data/prescreen_discard.csv` are no longer in

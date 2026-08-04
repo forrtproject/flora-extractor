@@ -21,10 +21,9 @@ import pandas as pd
 from shared.config import (
     BASE_DIR, DATA_DIR, GEMINI_API_KEYS,
     OA_XML_CACHE_DIR, OPENAI_API_KEY, OPENROUTER_API_KEY, PARSE_CACHE_DIR,
-    PDF_CACHE_DIR, PRESCREEN_ENABLED, log,
+    PDF_CACHE_DIR, log,
 )
 from shared import token_counter
-from shared.prescreen import prescreen, prescreen_voters
 from shared.llm_client import (
     _clean_study_numbers, classify_replication, screen_voters,
 )
@@ -938,13 +937,9 @@ def _extract_row_key(row: "dict | pd.Series") -> str:
 # They are the rows a changed voter pair or prompt would decide differently, so
 # --rescreen reopens exactly these and nothing else.
 SCREEN_SET_ASIDE_METHODS = {"not_a_replication", "screen_disagreement",
-                            # The cheap pre-screen's discards belong here for the same
-                            # reason: they were settled from the abstract alone, and a
-                            # changed pre-screen prompt, model pair or bypass list would
-                            # decide them differently. --rescreen is what makes an
-                            # over-aggressive pre-screen version recoverable rather than
-                            # permanent — turning PRESCREEN_ENABLED off does NOT reopen
-                            # them, because a resume treats a set-aside row as settled.
+                            # Historical rows only: the cheap tier now runs in Stage 2
+                            # and Stage 3 never writes this method. Kept because rows
+                            # on disk carry it, and --rescreen is what reopens them.
                             "prescreen_discard"}
 
 # Where sanity_check parks the screen's own verdicts (see extract/sanity_check.py).
@@ -1282,22 +1277,6 @@ def _check_screen_providers(no_llm: bool) -> None:
             f"Stage 3 needs both reference-screen providers; missing: {', '.join(missing)}. "
             "Set them in .env, or run with --no-llm to skip every LLM stage."
         )
-    # The pre-screen fails open, so a missing key would cost only its savings and not
-    # the run — but silently paying full price for every row because a key is unset is
-    # not something to discover from a token bill. Checked separately from the screen's
-    # keys: the tier is optional and its providers are its own.
-    if PRESCREEN_ENABLED:
-        pre_missing = sorted({env for provider, _ in prescreen_voters()
-                              for env in [("OPENROUTER_API_KEY" if provider == "openrouter"
-                                           else "OPENAI_API_KEY")]
-                              if not _SCREEN_KEYS[env]()})
-        if pre_missing:
-            raise RuntimeError(
-                f"PRESCREEN_ENABLED is set but the pre-screen cannot call its models; "
-                f"missing: {', '.join(pre_missing)}. Set them in .env, or unset "
-                "PRESCREEN_ENABLED to run the validated screen alone."
-            )
-
 
 def _merge_duplicate_originals(rows: list[dict], doi_r: str) -> list[dict]:
     """Merge written rows that turned out to name the SAME original.
@@ -1693,22 +1672,11 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
         return [_empty_row(row, "single_original", "low",
                            link_method="target_pending")]
 
-    # ── Ahead of the front door: the optional cheap pre-screen (issue #130) ──
-    # Two very small models, allowed only to discard and only when both agree, in
-    # front of a screen that costs ~40x more per row. Off unless PRESCREEN_ENABLED:
-    # its discards are terminal and it does not inherit the validated gate's measured
-    # zero-settled-miss property. Everything it cannot settle falls straight through.
-    if PRESCREEN_ENABLED and not no_llm:
-        pre = prescreen(doi_r, str(row.get("title_r", "") or ""),
-                        str(row.get("abstract_r", "")), str(row.get("source", "") or ""))
-        # Recorded on the Series, so every producer downstream carries it: _base_row
-        # builds from filter_row.to_dict() and the tier's effect on a row that
-        # PROCEEDED is otherwise invisible.
-        row["prescreen_verdict"] = (f"bypass:{pre['bypass']}" if pre["bypass"]
-                                    else pre["verdict"])
-        if pre["verdict"] == "discard":
-            log.info("[%s] pre-screen: %s", doi_r, pre["evidence"])
-            return [_prescreen_row(row, pre)]
+    # No cheap pre-screen here. That tier is Stage 2's `screen_cheap` pile
+    # (filter/engine/tiers.py): which rows get it is decided by the rule book, so a
+    # row arriving here has already been routed past it. Gating it globally from
+    # Stage 3 would have re-applied the cheap gate to rows the rule book sent to the
+    # expensive tier.
 
     # ── Front door: is this a replication at all? ────────────────────────
     # 58% of the rows that reach the classification screen are discarded there.
@@ -2017,8 +1985,8 @@ if __name__ == "__main__":
              "prompt or bypass list decides them again. This is the ONLY way back: a "
              "resume without it treats every key in data/not_a_replication.csv, "
              "data/screen_disagreement.csv and data/prescreen_discard.csv as settled and "
-             "skips the paper, and turning PRESCREEN_ENABLED off does not reopen "
-             "anything it already discarded.",
+             "skips the paper. Historical prescreen_discard rows are reopened the "
+             "same way.",
     )
     parser.add_argument(
         "--resolved-only", action="store_true",

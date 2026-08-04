@@ -20,7 +20,7 @@ import requests
 
 from .config import (
     GEMINI_API_KEYS, GEMINI_MODEL, GEMINI_LIGHT_MODEL, GEMINI_HEAVY_MODEL,
-    GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT, GEMINI_PAID_KEYS, GEMINI_RATE_SEC,
+    GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT, GEMINI_PAID_KEY_SLOTS, GEMINI_RATE_SEC,
     GEMINI_THINKING_LEVEL,
     LLM_CACHE_DIR,
     OPENAI_API_KEY, OPENAI_MODEL, OPENAI_RATE_SEC,
@@ -148,11 +148,11 @@ def _parse_llm_json(text: str) -> Optional[dict]:
 
 # ── Gemini flex inference ─────────────────────────────────────────────────────
 # Flex costs 50% less (identical to Batch pricing) but is only offered on paid
-# keys, so the decision follows which key is in use — GEMINI_PAID_KEYS — rather
+# keys, so the decision follows which key is in use — GEMINI_PAID_KEY_SLOTS — rather
 # than the key's position in the rotation.
 
 def _gemini_use_flex(key_idx: int) -> bool:
-    return GEMINI_USE_FLEX and (key_idx + 1) in GEMINI_PAID_KEYS
+    return GEMINI_USE_FLEX and (key_idx + 1) in GEMINI_PAID_KEY_SLOTS
 
 
 def _gemini_post(url: str, payload: dict, key_idx: int, base_timeout: int):
@@ -250,7 +250,7 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
 
     if GEMINI_USE_FLEX:
         log.debug("Gemini flex inference enabled on paid keys %s (timeout=%ds)",
-                  sorted(GEMINI_PAID_KEYS), GEMINI_FLEX_TIMEOUT)
+                  sorted(GEMINI_PAID_KEY_SLOTS), GEMINI_FLEX_TIMEOUT)
 
     last_error = "all keys exhausted"
     for key_idx, api_key in enumerate(GEMINI_API_KEYS):

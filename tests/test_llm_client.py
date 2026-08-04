@@ -407,7 +407,7 @@ def _gemini_ok(text: str = '{"ok": true}'):
 
 def _flex_env(monkeypatch, *, use_flex=True, paid=(1,), keys=("k1", "k2")):
     monkeypatch.setattr(llm, "GEMINI_USE_FLEX", use_flex)
-    monkeypatch.setattr(llm, "GEMINI_PAID_KEYS", set(paid))
+    monkeypatch.setattr(llm, "GEMINI_PAID_KEY_SLOTS", set(paid))
     monkeypatch.setattr(llm, "GEMINI_FLEX_TIMEOUT", 900)
     monkeypatch.setattr(llm, "GEMINI_API_KEYS", list(keys))
 

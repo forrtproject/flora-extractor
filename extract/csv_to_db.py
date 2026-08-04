@@ -39,10 +39,12 @@ import uuid
 from pathlib import Path
 
 import pandas as pd
-from dotenv import load_dotenv
 from supabase import create_client, Client
 
-load_dotenv()
+# Imported for its side effect: shared/config.py is the one place that loads .env and
+# .env.defaults, in that precedence. A bare load_dotenv() here would read .env only
+# and so miss SUPABASE_URL, which now lives in the committed .env.defaults.
+import shared.config  # noqa: F401
 
 # Columns shown in the UI for all main tables
 _DISPLAY_COLS = {

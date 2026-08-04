@@ -48,7 +48,9 @@ SYNTHETIC_N = 1000              # synthetic rows measured per table
 _PILES = ("screen_expensive", "screen_cheap", "needs_human", "discard")
 _VERDICTS = ("replication", "reproduction", "none", "unclear")
 _CONFIDENCES = ("high", "medium", "low")
-_MODELS = ("gemini-2.5-flash-lite", "gpt-5.4-mini", "openai/gpt-5.4-mini")
+# Representative model-id STRINGS, for their byte width only — this measures how wide
+# a stored row is, and never selects a model. Voter ids live in shared/config.py.
+_MODELS = ("gemini-3.5-flash-lite", "gpt-5.4-mini", "openai/gpt-5.4-mini")
 # A screen quote is a sentence from the abstract; this is a representative one.
 _QUOTE = ("We conducted a direct replication of Study 2 of Smith and Jones (2009) "
           "with a larger sample drawn from the same population, preregistered on OSF.")
