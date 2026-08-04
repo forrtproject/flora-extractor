@@ -69,10 +69,15 @@ from shared.config import (
     SNAPSHOT_CACHE_DIR,
     SNAPSHOT_HTTP_RETRIES,
     SNAPSHOT_HTTP_TIMEOUT,
-    SNAPSHOT_POOL_COMPRESSION,
     SNAPSHOT_POOL_DIR,
     log,
 )
+
+# The survivor pool's on-disk compression. This is the pool's FORMAT, not a
+# preference: the pool is written here and read by every collaborator, so a
+# per-machine value would produce shards the rest of the team cannot open. zstd is
+# the best size/speed trade pyarrow ships by default.
+SNAPSHOT_POOL_COMPRESSION = "zstd"
 from shared.row_key import row_keys
 from shared.schema import CANDIDATES_COLS
 from shared.utils import clean_doi, reconstruct_abstract

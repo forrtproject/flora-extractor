@@ -32,10 +32,14 @@ import re
 import time
 from typing import Optional
 
-from shared.config import (
-    GEMINI_HEAVY_MODEL, LLM_CACHE_DIR,
-    OUTCOME_FULLTEXT_ESCALATION, log,
-)
+from shared.config import GEMINI_HEAVY_MODEL, LLM_CACHE_DIR, log
+
+# When the abstract-based outcome call returns cannot_be_determined (or there is no
+# abstract) and parsed fulltext is available, escalate to a second, fulltext-based
+# call. Not settable: turning it off changes what a row is CODED AS — the same paper
+# resolves cannot_be_determined instead of success — so it must not vary between the
+# machines writing into one corpus.
+OUTCOME_FULLTEXT_ESCALATION = True
 from shared import token_counter
 from shared.cache import content_key, read_cache, write_cache
 from shared.llm_client import call_llm, ladder_fingerprint

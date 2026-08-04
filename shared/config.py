@@ -147,41 +147,6 @@ OPENROUTER_HEAVY_MODEL = "qwen/qwen3.5-35b-a3b"
 # An id containing "/" is routed to OpenRouter, anything else to OpenAI direct.
 SCREEN_VOTER2_MODEL = "gpt-5.4-mini"
 
-# ── The cheap discard-only tier (issue #130) ──────────────────────────────────
-# Two very small models that may only DISCARD, and only when both agree the row is
-# clearly out of scope. Everything else — one keep, an unreadable reply, an API
-# failure — falls through unchanged, so the tier can lose papers but never add them.
-#
-# WHICH ROWS GET IT IS A ROUTING DECISION, not a setting: Stage 2 sends a row to the
-# `screen_cheap` pile and the engine runs the tier over that pile (filter/engine/
-# tiers.py, claimed and budget-gated). There is no global on/off — a flag would have
-# applied this gate to rows the rule book deliberately routed to the expensive tier.
-#
-# Deliberately separate from SCREEN_VOTER2_MODEL: changing a model here must never
-# silently alter the validated screen's cached verdicts.
-# Both measured on the full eval and both reliable under concurrency: 8/8 clean replies,
-# 9 output tokens, ~$0.027 per 1,000 rows each. The model matters as much as the prompt —
-# on identical text, discard rates across the cheap field ran from 15% to 97%.
-#
-# Order is a cost choice, not a verdict choice: the gate discards only when BOTH say no,
-# so voter 2 is asked only about the rows voter 1 rejects. qwen goes first because it
-# rejects slightly less often, which is what voter 2 is billed for.
-#
-# mistral-nemo would be $1/pass cheaper for a marginally better discard rate and was NOT
-# chosen: alone on this prompt it discards 39 of 567 gold positives, against 5 and 12 for
-# these two. The pair's measured loss is still zero, but a voter that says no to one
-# genuine replication in fourteen makes the AND gate a single-voter gate with a noisy
-# co-signer, and the tier's whole safety argument is that two independent voters agree.
-#
-# Not inclusionai/ling-2.6-flash, 3x cheaper again: it has a single OpenRouter endpoint
-# (Novita) that returned 429 for every call on 2026-08-02 under every routing mode, with
-# credit on the account. If that clears it is worth re-measuring — one env var.
-PRESCREEN_VOTER1_MODEL = "qwen/qwen3-30b-a3b-instruct-2507"
-PRESCREEN_VOTER2_MODEL = "mistralai/mistral-small-24b-instruct-2501"
-# Below this many characters of abstract there is not enough text for a 3B-class model
-# to be trusted with a terminal verdict, so the row bypasses the pre-screen.
-PRESCREEN_MIN_ABSTRACT_CHARS = 200
-
 # ── Stage 2 curated sources ───────────────────────────────────────────────────
 # Rows from these sources were put on a curated replication/reproduction list by a
 # human, so Stage 2's keyword discovery can only lose them: an I4R reproduction
@@ -206,10 +171,6 @@ SNAPSHOT_HTTP_TIMEOUT = int(os.getenv("SNAPSHOT_HTTP_TIMEOUT", "60"))
 # Compression for the Stage A survivor pool. The pool is the artifact that makes a
 # Stage B vocabulary change a local re-run instead of a 725 GB rescan, so it is kept
 # small and portable; zstd is the best size/speed trade pyarrow ships by default.
-# Not settable: this is the pool's on-disk FORMAT, not a preference. The pool is
-# written by one machine and read by every other, so a per-machine value would produce
-# shards the rest of the team cannot open.
-SNAPSHOT_POOL_COMPRESSION = "zstd"
 # Where that pool lives. Deliberately NOT in the mkdir loop above: the pool is a
 # few GB and is often pointed at an external or shared disk, so importing config
 # must not create it (or fail on an unmounted path) for the runs that never touch
@@ -222,31 +183,6 @@ FLORA_POOL_REPO = os.getenv("FLORA_POOL_REPO", "")
 # pool push (~2,446 files) past the "few thousand commits" at which HF says repo UX
 # degrades, so uploads are batched into multi-file commits.
 FLORA_HF_COMMIT_BATCH = int(os.getenv("FLORA_HF_COMMIT_BATCH", "100"))
-
-# ── Filter-engine LLM tiers: the dry-run cost estimate (issue #146 §6) ────────
-# Rough list prices per 1,000 tokens, SUMMED OVER A TIER'S TWO VOTERS, so a tier's
-# estimate is one multiplication per row. They exist to answer "is this run $3 or
-# $3,000?" before it starts and are deliberately not a billing record — what a run
-# actually cost is read from cache/token_usage.json afterwards. Published list prices
-# for the voter models above, so they move only when a price or a voter does: update
-# them here, in the same commit as the model change they describe.
-ENGINE_TIER_PRICE_PER_1K_IN = {
-    "screen_cheap":     0.00014,
-    "screen_expensive": 0.00055,
-}
-ENGINE_TIER_PRICE_PER_1K_OUT = {
-    "screen_cheap":     0.00045,
-    "screen_expensive": 0.00450,
-}
-# Output tokens one row costs a tier. The cheap tier answers with one field; the
-# expensive tier returns the five-field v3.3 schema with a quote and a reasoning.
-ENGINE_TIER_OUTPUT_TOKENS = {
-    "screen_cheap":     20,
-    "screen_expensive": 300,
-}
-# Characters per token for the estimate. Nothing is tokenized to produce a number
-# nobody will be billed on; 4.0 is the usual English-prose approximation.
-ENGINE_CHARS_PER_TOKEN = 4.0
 
 # ── External servers ──────────────────────────────────────────────────────────
 GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")
@@ -277,14 +213,6 @@ OPENAI_USE_FLEX     = os.getenv("OPENAI_USE_FLEX", "").lower() in ("1", "true", 
 # Timeout in seconds for flex calls — must cover the queueing worst case.
 OPENAI_FLEX_TIMEOUT = int(os.getenv("OPENAI_FLEX_TIMEOUT", "900"))
 
-# ── Outcome extraction ────────────────────────────────────────────────────────
-# When the abstract-based outcome LLM returns cannot_be_determined (or the abstract is
-# empty) and parsed fulltext is available, escalate to a second fulltext-based LLM
-# call. Not settable: turning it off changes the coded outcome of a row — the same
-# paper resolves cannot_be_determined instead of success — so it must not vary between
-# the machines writing into one corpus.
-OUTCOME_FULLTEXT_ESCALATION = True
-
 # ── Daily OpenAI token budget ─────────────────────────────────────────────────
 # A hard ceiling on OpenAI tokens (prompt + completion) bought per calendar day —
 # the metered spend in this pipeline. The running total is persisted (see
@@ -302,8 +230,6 @@ EPMC_RATE_SEC      = float(os.getenv("EPMC_RATE_SEC", "0.4"))
 CROSSREF_RATE_SEC  = float(os.getenv("CROSSREF_RATE_SEC",  "0.1"))
 S2_RATE_SEC        = float(os.getenv("S2_RATE_SEC",        "0.5"))
 SCOPUS_RATE_SEC    = float(os.getenv("SCOPUS_RATE_SEC",    "1.0"))  # Elsevier: ~1 req/sec
-UNPAYWALL_RATE_SEC = 0.5
-GROBID_RATE_SEC    = 3.0
 
 # ── Abstract backfill: batch sizes and quota caps ────────────────────────────
 # OpenAlex filter= accepts up to 50 pipe-separated ids per call.

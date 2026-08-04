@@ -289,12 +289,14 @@ report, a commit message or a decision is read off the artifact.
 5. CSV writes `utf-8-sig` (appends plain `utf-8`).
 6. All DOIs pass through `clean_doi()` before writing or comparing.
 7. All API responses cached before use.
-8. Everything configurable lives in `shared/config.py`, in one of two kinds. A
-   **constant** — model ids, thresholds, prices, closed vocabularies — is a plain
-   Python value with no `os.getenv`: it decides what the pipeline concludes, so it is
-   changed by a commit, not by a machine. A **tunable** — rate limit, batch size,
-   timeout, path — is `os.getenv` with a default, because it varies by machine and
-   changes nothing about the answer. If an override could make two collaborators grade
+8. Two kinds of configurable value. A **constant** — model ids, thresholds, prices,
+   closed vocabularies — is a plain Python value with no `os.getenv`: it decides what
+   the pipeline concludes, so it is changed by a commit, not by a machine. It lives
+   with the code it governs (the pre-screen's voters in `shared/prescreen.py`, the dry
+   run's prices in `filter/engine/tiers.py`); only constants with several consumers
+   stay in `shared/config.py`. A **tunable** — rate limit, batch size, timeout, path —
+   is `os.getenv` with a default and always lives in `shared/config.py`, which is the
+   whole `.env` surface in one file. If an override could make two collaborators grade
    the same row differently, it is a constant. LLM rate
    intervals are charged per provider, so the screen's two votes never wait on each other.
 9. API key values live in `.env` only; `config.py` only reads env. `.env.defaults` is
@@ -328,9 +330,11 @@ GEMINI_PAID_KEY_SLOTS=1         # which key SLOTS are billing-enabled, not key v
 FLORA_CACHE_DIR=                # move cache/ to an SSD; FLORA_POOL_DIR does the same
 ```
 
-Model ids (`GEMINI_MODEL`, `GEMINI_LIGHT_MODEL`, `SCREEN_VOTER2_MODEL`, the pre-screen
-voters), `GEMINI_THINKING_LEVEL`, `CURATED_SOURCES` and the `ENGINE_*` price estimates
-are **constants in `shared/config.py`, not env vars** — see code-style rule 8.
+Constants are **not env vars anywhere** — see code-style rule 8. Model ids,
+`GEMINI_THINKING_LEVEL` and `CURATED_SOURCES` are in `shared/config.py`; the
+pre-screen's voters and threshold in `shared/prescreen.py`;
+`OUTCOME_FULLTEXT_ESCALATION` in `extract/code_outcome.py`; the dry run's price list in
+`filter/engine/tiers.py`; `SNAPSHOT_POOL_COMPRESSION` in `search/snapshot_scan.py`.
 
 Gemini quota is per project, not per key — extra `GEMINI_API_KEY_N` slots buy failover,
 not throughput; the intended configuration is one paid (Tier 1) project with flex.
