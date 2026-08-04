@@ -371,6 +371,128 @@ non-studies (Dataverse/Zenodo/Mendeley deposits, eLife "Author response" objects
 measured the RECALL of the type signal among known non-studies, not the precision of the
 discard.
 
+### `replication-claim` — screen_expensive, 700, live (split into four tiers)
+
+Not deleted for being wrong. The single rule was twelve arms in one `any_of` over
+title-and-abstract, routing every match to `screen_expensive` at one precedence, and its
+JSON is at **`727b378`** (`git show 727b378:filter/spec/replication-claim.json`). What
+replaced it is the same twelve regexes, verbatim, spread over four specs that differ only
+in how much they ask for:
+
+| tier | asks for | prec |
+| --- | --- | --- |
+| `replication-claim-cited-title` | any of the twelve arms in the TITLE **and** an author-year cite in the title | 760 |
+| `replication-claim-title` | any of the twelve arms in the TITLE | 750 |
+| `replication-claim-text` | a STRONG arm in title-or-abstract — the old rule minus its residual arms | 730 |
+| `replication-claim-residual` | one of the four RESIDUAL arms in title-or-abstract | 710 |
+
+The split was drafted as FIVE tiers; the fifth, `replication-claim-cited` (740), is
+archived below.
+
+STRONG is arms 1, 2, 3, 4, 6, 8, 10 and 11 of the old `any_of`; RESIDUAL is 5, 7, 9 and
+12 — `(fail*|unable|inabilit*|attempt*) to replicate`, `(aim*|set out) to replicate`,
+`success* replicat*` and the negation matrix.
+
+**Why split at all.** The single rule admitted 89,113 rows of the 5,146,160-row routed
+pool (release `ec9497102a7e`) on twelve arms of very different quality, and one rule
+cannot record that: `filter_evidence` names the rule, not the arm, so a worklist built
+from it has no order. Measured marginally — over the rows no other arm of the twelve
+reached — the four residual arms yield 2.9 / 2.3 / 2.5 / 0.66 FLoRA papers per thousand
+exclusive pool rows at 35% / 42% / 13% / 10% cached two-voter precision, against 24 / 15 /
+14 for the best strong arms. A tenfold spread inside one `any_of` is a spread nothing
+downstream can see.
+
+**Why the tiers are positional and cited rather than narrowed.** The title slice is 8,898
+admitted rows holding 597 of the 1,455 in-pool FLoRA papers; requiring a cite in the title
+too leaves 1,790 rows holding 149. A blind Sonnet label pass over 584 stratified
+title-position rows (titles only, 2026-08-04) read 80.7% apparent precision for title
+position and 97.2% for the cited-title subset — while the exclusion-style narrowings
+measured on the SAME labels gave 82.0% (drop meta-discussion markers), 81.9% (drop
+biological terms) and 83.4% (both). That contrast is the whole argument, and it is §4's
+argument arriving with numbers: under a whitelist the fix for a loose admission is a
+stronger positive requirement, not a longer list of senses to exclude.
+
+**The cite regex `replication-claim-cited-title` uses is NOT `phrase-with-cite`'s** (§1,
+still archived above, still the more faithful pattern). The measurements were taken with a
+simpler one, so that is what the spec runs:
+
+```
+[A-Z][0-9A-Za-z_'’-]{2,}(?:\s+(?:et\s+al\.?|and|&)\s*[A-Z]?[0-9A-Za-z_'’-]*)?[\s,]*\(?(?:19|20)\d{2}
+```
+
+It was measured as `[A-Z][\w'’-]{2,}…`, with `\w` rather than the class written out, and
+that form is a backend divergence of exactly the kind `phrase-with-cite`'s negated class
+was built to avoid: Python `re` reads `\w` as Unicode-aware and RE2 — the pyarrow backend
+that routing and every measurement here ran on — reads it as ASCII, so "García et al.
+(2020)" matched the row backend and not the batch one. Spelling the class out pins the row
+backend to what RE2 was already doing, which is why the numbers are unaffected.
+
+Matching is case-insensitive in both backends, so its `[A-Z]` atoms describe the intended
+surface form rather than constrain it — over a title, where a bare four-digit year is
+rare, that looseness holds; over running text it is a much weaker claim, which is why the
+running-text version of the conjunct did not survive (archived immediately below).
+
+**What is unresolved.** `replication-claim-residual` exists as a tier because its four
+arms are where a negation or narrowing may genuinely be needed before they can be admitted
+at all — "the effect did not replicate" is written by the paper that failed to replicate
+it and by the review discussing that paper, and nothing in the arm separates them. No
+candidate narrowing has been measured and none is invented in the spec. D3 (§7) still
+lands on the `aim|set out to replicate` arm wherever that arm lives.
+
+#### `replication-claim-cited` — screen_expensive, 740, shadow (dropped 2026-08-04)
+
+The fifth tier of the split, never live, removed before it ever routed a production
+release. It asked for one of the eight STRONG arms anywhere in title-or-abstract AND the
+author-year cite pattern anywhere in the same text — the cited-title conjunct with the
+positional requirement dropped:
+
+```json
+{
+  "match": {
+    "all_of": [
+      {
+        "any_of": [
+          {"text_regex": "\\bwe\\s+(?:\\w+\\s+){0,2}replicat(?:e|es|ed)\\b"},
+          {"text_regex": "\\breplication\\s+stud(?:y|ies)\\b"},
+          {"text_regex": "\\breplicat\\w*\\s+(?:and|&)\\s+exten\\w*\\b"},
+          {"text_regex": "\\bstudy\\s+replicate[sd]\\b"},
+          {"text_regex": "\\b(?:direct|conceptual|registered|exact|close|high[-\\s]powered|pre[-\\s]?registered|large[-\\s]scale|many-?labs?|multi-?site)\\s+replications?\\b"},
+          {"text_regex": "\\bour\\s+replications?\\b"},
+          {"text_regex": "\\breplication\\s+attempts?\\b"},
+          {"text_regex": "\\b(?:failures?\\s+to\\s+replicate|failed\\s+replications?|replication\\s+failures?|unsuccessful\\s+replications?)\\b"}
+        ]
+      },
+      {"text_regex": "[A-Z][0-9A-Za-z_'’-]{2,}(?:\\s+(?:et\\s+al\\.?|and|&)\\s*[A-Z]?[0-9A-Za-z_'’-]*)?[\\s,]*\\(?(?:19|20)\\d{2}"}
+    ]
+  },
+  "pile": "screen_expensive",
+  "vocabulary": null,
+  "precedence": 740,
+  "shadow": true
+}
+```
+
+**Nothing is lost by deleting it.** Its eight-arm `any_of` is byte-identical to
+`replication-claim-text`'s (checked clause by clause at removal), so the tier was
+`replication-claim-text` plus a conjunct. Every row it claimed is claimed by
+`replication-claim-text` at 730 — the family routes to one pile, so the only casualty is
+the attribution recorded in `filter_evidence`.
+
+**Why it was dropped.** Position is what made the citation conjunct work. Over a TITLE, an
+author-year cite plausibly names the target — the paper's own one-line statement of what it
+re-tests. Over running text it is mere co-occurrence: every paper cites something, so an
+abstract satisfies the conjunct whether or not the dated work it names is the one being
+re-tested. The measurement says the same thing twice over. The cite pattern is present in
+49.6% of in-pool FLoRA papers against 38.7% of screen-confirmed negatives — an enrichment
+of 2.55, which is a real signal but not a rung's worth of one — and on the screened sample
+the conjunct removed 105 confirmed-good rows in order to remove 97 confirmed-bad ones.
+Compare what the SAME conjunct buys IN A TITLE: 97.2% apparent precision on 108
+Sonnet-labelled rows, against 80.7% for title position alone. A tier has to earn its rung
+by separating rows the tier below it cannot; this one did not.
+
+No label pass was ever run on this tier's own rows. The 2026-08-04 Sonnet pass sampled
+title-position rows only, and its 97.2% belongs to `replication-claim-cited-title`.
+
 ---
 
 ## 2 · `phrase-replication` arms NOT carried into `replication-claim`
@@ -440,6 +562,86 @@ bare "replicate the results" form reachable, which is where its noise lives.
 ```
 Third-party framing ("three attempted replications of…"), which the fail/attempt verb arm
 does not reach.
+
+---
+
+## 2b · OSF registrations: the template decides, and it is fetchable
+
+Measured 2026-08-04 against the routed pool and the OSF API. The registrant `10.17605`
+covers **25,819 pool rows**, of which 3,016 carry no abstract and sit in
+`pending/no_text`. A discard on the registrant, or on registrant + missing abstract,
+**fails the recall monitor**: 21 known FLoRA papers are on it, 10 of them among the
+no-abstract rows. So neither blunt form may be promoted.
+
+The discriminator is the registration TEMPLATE, exposed as
+`attributes.registration_supplement` on `https://api.osf.io/v2/registrations/<guid>/`.
+In a 60-row sample of the no-abstract population: 34 registrations, 26 plain `nodes`;
+templates were `OSF Preregistration` (9), `AsPredicted` (6), `OSF-Standard Pre-Data
+Collection` (5), `Replication Recipe: Pre-Registration` (4), `Registered Report Protocol
+Preregistration` (3), `EGAP` (3), `Open-Ended Registration` (2), and singletons —
+**no Post-Completion at all**. All FOUR of the known-FLoRA registrations are
+`Replication Recipe (Brandt et al., 2013): Post-Completion`.
+
+**Maintainer ruling, 2026-08-04.** KEEP `Post-Completion` and `Open-Ended Registration`;
+DISCARD the preregistration templates. On the evidence above that rule loses none of the
+known-good papers, which is what the blunt versions could not manage.
+
+**The records are not textless — OSF just keeps the text elsewhere.** `description` is
+empty, but `registration_responses` holds a median **5,268 characters** (29 of 34
+registrations over 200). A Post-Completion record carries the outcome pre-coded in the
+Replication Recipe's own vocabulary — one sampled registration reports `d = 0.06`,
+`CI = [-.218, .340]` and `item33: "informative failure to replicate"`, which is what
+Stage 3 exists to extract, without a PDF or an LLM. `article_doi` is null on all four
+sampled, so a deposit→parent linkage route does not rescue these.
+
+**SHIPPED as the overlay shape.** Specs match DOI, title, work type, concepts and
+abstract presence; they cannot call an API at routing time. Of the two shapes that
+work — fetch the template plus responses into the TEXT OVERLAY, or materialise the
+template as a pool field — the first shipped, because it needs no new spec vocabulary
+and no pool rebuild. `search/fetch_abstracts.py` gained a sixth source (`osf`,
+registrant `10.17605` only, keyless, first in the order) which writes
+`OSF registration template: <name>` as the FIRST LINE of the recovered text with the
+`registration_responses` form under it; `filter/engine/backfill.py` runs it as an
+ordinary per-item phase. Two specs read that line, and they partition the recovered
+rows — the format gives a spec no way to reference another, so
+`tests/test_osf_registrations.py` asserts the partition instead:
+
+| spec | asks for | pile | prec |
+| --- | --- | --- | --- |
+| `osf-registration-completed` | a post-completion template, OR `Open-Ended Registration` **and** the `replicat*` stem in the text | `screen_expensive` | 936 |
+| `osf-registration-protocol` | the template line, and neither of the above | `discard` (shadow) | 935 |
+
+Both sit above the 700s admission band, because for these rows the template line is a
+better statement of what the record is than any phrase in the responses text it
+precedes: a preregistration's responses say "we will replicate Smith (2009)" and are
+otherwise admitted by `replication-claim-text` (730). The admission outranks its own
+discard twin by one, so that drift between the two hand-synced blocks keeps a row and
+screens it rather than deleting it. D3 does not need settling for this route: what the
+protocol templates get is a discard, not a screen, so the screen prompt is never asked
+what a protocol is.
+
+One departure from the ruling as written, deliberate: the intent marker is required
+on the Open-Ended arm only. A Replication Recipe post-completion record is a completed
+replication by the name of the form it was filed on, while an Open-Ended Registration
+says nothing at all until its own text does.
+
+The keep arm is `post[-\s]?completion` and reaches no further. A draft that also
+covered OSF's `Post-Data Collection` forms was dropped on the maintainer's ruling of
+2026-08-04: registering after data collection still registers a design, not a result,
+so such a record has no outcome for Stage 3 to read, and no known FLoRA paper sits on
+one. The per-template FLoRA intersection below is what would reopen that arm — a
+positive on a post-data-collection form, not the name's resemblance to the one that
+admits.
+
+**Before promoting the discard out of shadow:** the numbers above rest on 34
+registrations and 4 FLoRA papers, and the rule is written as a negation — *every OSF
+template that is neither post-completion nor open-ended is a pre-data-collection
+form* — which is true of the eight templates the sample showed and unverified beyond
+them. Fetching the template for all 3,016 no-abstract rows is free and under an hour,
+and the backfill run that makes the rule fire at all is the run that does it: it gives
+the exact FLoRA intersection per template rather than a sample, which is what the
+promotion recipe asks for. Zero known FLoRA papers on a discarded template promotes
+it; one stops it, and that paper names the template that has to move to the keep arm.
 
 ---
 

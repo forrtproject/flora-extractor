@@ -419,12 +419,19 @@ _GATE_CASES = [
     # so a weak-signal row reads `pending` and its comment names the shadow rule
     # that will claim it once that rule is switched on.
     #
-    # replication-claim, live
+    # replication-claim-cited-title, live: a claim arm AND an author-year cite,
+    # both in the TITLE
+    ("A direct replication of Smith (2010)",
+     "We report a direct replication of the anchoring effect.",
+     True, "screen_expensive"),
+    # the same claim without a cited work in the title, and the same claim in the
+    # abstract only: both are claimed by shadow tiers of the family
+    # (replication-claim-title, replication-claim-text) and so read `pending`
     ("A direct replication of the anchoring effect",
-     "We report a direct replication of Smith (2010).", True, "screen_expensive"),
+     "We report a direct replication of Smith (2010).", True, "pending"),
     ("We replicate prior findings",
      "We replicate prior findings in a new population, naming no target.",
-     True, "screen_expensive"),
+     True, "pending"),
     # replication-signal (shadow) — title stem only, bound for screen_cheap
     ("Reproducibility of the X effect",
      "Bees forage over long distances when the hive is disturbed.",
@@ -434,10 +441,11 @@ _GATE_CASES = [
     ("A computational reproduction",
      "We re-ran the authors' code and reproduced the published results.",
      True, "pending"),
-    # both vocabularies in one row: replication-claim is live and claims it
+    # both vocabularies in one row: the claim is in the abstract, so only the
+    # shadow tiers of the claim family reach it
     ("A computational reproduction",
      "We replicated the code of Smith (2019) and re-ran every analysis.",
-     True, "screen_expensive"),
+     True, "pending"),
     # the molecular sense: admitted by nothing, discarded by nothing
     ("Origins of DNA replication in yeast",
      "We map replication forks and origin firing across the genome.",

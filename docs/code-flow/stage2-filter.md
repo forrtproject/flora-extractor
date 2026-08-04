@@ -96,9 +96,9 @@ to the `filter_status` / `filter_confidence` an exported row carries (`discard` 
 `needs_human` → `needs_review` low; `pending` is not exported). Both screen piles set
 `vocabulary_names_status`, so a row there takes the winning rule's `vocabulary` as its
 status and falls back to `needs_review` when the rule names none.
-`replication-claim`, the only `screen_expensive` rule, names none by design — an
+The four `replication-claim-*` tiers, the only `screen_expensive` rules, name none by design — an
 admission to the two-voter screen is a request for attention, not the verdict the
-screen exists to produce — so its rows export `needs_review`/high. The three cheap
+screen exists to produce — so their rows export `needs_review`/high. The three cheap
 rules (`replication-signal`, `replication-probe`, `reproduction-signal`) do name
 theirs, at `screen_cheap`/medium. `filter_method` is `engine:<release id prefix>` and
 `filter_evidence` is `rule:<spec id>` plus what the backend matched — except on a
