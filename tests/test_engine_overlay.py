@@ -1,8 +1,11 @@
 """M3: text overlays over the survivor pool, and the backfill that fills them.
 
-One test per seam. The pool fixture holds one row the shipped bundle would route
-to a keyword pile if it had text and downgrades to `pending/no_text` because it
-does not — that row is the whole milestone, so every test here is about it.
+One test per seam. The pool fixture holds one row the bundle would route to a
+keyword pile if it had text and downgrades to `pending/no_text` because it does
+not — that row is the whole milestone, so every test here is about it.
+
+The bundle is the synthetic one (`tests/engine_bundle.py`): the downgrade is a
+property of `route_batch()`, not of any shipped rule.
 """
 
 import json
@@ -16,11 +19,9 @@ from filter.engine import backfill, overlay
 from filter.engine.overlay import OverlayError, freeze, validate, worklist
 from filter.engine.pool_reader import iter_pool_batches, overlay_manifest_hash
 from filter.engine.release import routing_release
-from filter.engine.spec import load_specs
 from filter.engine.store import build_routing, open_store
 from search.snapshot_scan import _POOL_SCHEMA
-
-SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
+from tests import engine_bundle
 
 _REPLICATION = "We report a direct replication of the anchoring effect."
 
@@ -66,7 +67,7 @@ def pool(tmp_path) -> Path:
 
 @pytest.fixture
 def specs() -> list:
-    return load_specs(SPEC_DIR)
+    return engine_bundle.specs()
 
 
 def _overlay(dir_path: Path, rows: list[dict], name="overlay-0000.parquet") -> Path:

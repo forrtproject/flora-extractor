@@ -8,11 +8,13 @@ vectorized production run honest against a readable implementation.
 Two things make the equality achievable rather than merely hoped for. Specs are
 RE2-safe (`spec.re2_safe()`), so no pattern exists that only one engine can run;
 and both backends read the DECOMPOSED match, never the loader-only `pyre_regex`
-key — that key holds the lookaround original for `filter/phrase_detection.py`,
-and evaluating it here would divide the backends by construction.
+key — that key is a record of the lookaround original the decomposition replaced,
+evaluated by nothing, and evaluating it here would divide the backends by
+construction.
 """
 
 import re
+import unicodedata
 from typing import Any, Optional
 
 import numpy as np
@@ -62,11 +64,24 @@ def _row_title(row: dict) -> str:
     # coalesce(display_name, title): NULL falls through, an empty string does
     # not — pyarrow's coalesce works that way and the backends must not differ.
     display_name = row.get("display_name")
-    return (display_name if display_name is not None else row.get("title")) or ""
+    title = (display_name if display_name is not None else row.get("title")) or ""
+    return _nfc(title)
 
 
 def _row_abstract(row: dict) -> str:
-    return row.get("abstract_text") or ""
+    return _nfc(row.get("abstract_text") or "")
+
+
+def _nfc(text: str) -> str:
+    """NFC once, where text becomes matchable — the `nfd-stems` retirement.
+
+    OpenAlex does not normalise, so a title spelled "re" + U+0301 + "plicat"
+    matched no spec whose accented stem was written composed. That used to need a
+    second stem rule with the decomposed spellings next to every composed one;
+    normalising at the one seam per backend gives every rule the same text
+    instead. DOIs are not normalised — `clean_doi()` owns their canonical form.
+    """
+    return unicodedata.normalize("NFC", text)
 
 
 def _row_text(row: dict) -> str:
@@ -183,8 +198,10 @@ class BatchContext:
                 return batch.column(name)
             return pa.nulls(self.n, pa.string())
 
-        self.title = pc.fill_null(pc.coalesce(col("display_name"), col("title")), "")
-        self.abstract = pc.fill_null(col("abstract_text"), "")
+        # NFC at the same seam as the row backend's `_nfc()` — see its docstring.
+        self.title = _nfc_array(
+            pc.fill_null(pc.coalesce(col("display_name"), col("title")), ""))
+        self.abstract = _nfc_array(pc.fill_null(col("abstract_text"), ""))
         self.text = pc.binary_join_element_wise(self.title, self.abstract, "\n")
         self.doi = _clean_doi_array(col("doi"))
         self.concepts = pc.fill_null(col("concepts"), "")
@@ -192,6 +209,21 @@ class BatchContext:
 
     def column(self, name: str) -> Optional[pa.Array]:
         return self.batch.column(name) if name in self.batch.schema.names else None
+
+
+def _nfc_array(col: pa.Array) -> pa.Array:
+    """`_nfc()` over a null-free string array, once per batch.
+
+    Not `pc.utf8_normalize`: on pyarrow 25 it returns its input unchanged for
+    NFC, so the two backends would part company on exactly the decomposed titles
+    this exists for. The Python pass costs ~20 ms per 50k rows and is skipped
+    entirely when the batch is already composed, which almost every batch is.
+    """
+    values = col.to_pylist()
+    if all(unicodedata.is_normalized("NFC", value) for value in values):
+        return col
+    return pa.array([unicodedata.normalize("NFC", value) for value in values],
+                    type=pa.string())
 
 
 def _clean_doi_array(col: pa.Array) -> pa.Array:

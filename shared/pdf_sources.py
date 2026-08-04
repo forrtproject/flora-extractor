@@ -653,30 +653,6 @@ _PDF_SELECTORS = [
     "button:has-text('Download PDF')",
 ]
 
-# Publisher domains that require a real browser (bot-detection / JS rendering)
-_HEADLESS_DOMAINS = {
-    "elsevier.com", "sciencedirect.com", "springer.com", "springerlink.com",
-    "nature.com", "wiley.com", "onlinelibrary.wiley.com", "tandfonline.com",
-    "apa.org", "psycnet.apa.org", "cambridge.org", "oup.com",
-    "sagepub.com", "informs.org", "pnas.org", "science.org",
-    "jneurosci.org", "cell.com", "thelancet.com", "bmj.com",
-}
-
-
-def _is_headless_candidate(doi: str) -> bool:
-    """
-    True for DOIs whose publishers are known to require a real browser.
-    Also returns True when doi is empty (so the DOI landing page is always tried).
-    """
-    if not doi:
-        return True
-    doi_lower = doi.lower()
-    # Springer: 10.1007, Nature: 10.1038, Wiley: 10.1002, Taylor: 10.1080
-    headless_prefixes = ("10.1007/", "10.1038/", "10.1002/", "10.1080/",
-                         "10.1037/", "10.1016/", "10.1017/", "10.1093/",
-                         "10.1177/", "10.1111/")
-    return any(doi_lower.startswith(p) for p in headless_prefixes)
-
 
 def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000) -> dict:
     """

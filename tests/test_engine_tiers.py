@@ -24,19 +24,23 @@ from filter.engine import handoff as handoff_mod
 from filter.engine import tiers
 from filter.engine.claims import PENDING_UPLOAD, UPLOADED, ClaimConflict
 from filter.engine.export import export_pile
-from filter.engine.spec import load_specs
 from filter.engine.store import build_routing, open_store
 from search.snapshot_scan import _POOL_SCHEMA
 from shared.schema import ENGINE_EXPORTED_COLS, validate_csv_columns
 from shared.token_usage import TokenBudgetExhausted
+from tests import engine_bundle
 
-SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
+# The synthetic bundle, not `filter/spec/`: every seam here is tier machinery
+# (claiming, spending, verdicts, the handoff), not which shipped rule sent a row
+# to a pile. The shipped bundle also could not serve — its admission rules are
+# shadow, so it routes nothing to a screening tier.
 RELEASE = "rel-m4"
 
 _CITE = "as reported by Smith et al. (2019)"
 
 
-def _row(work: int, title: str, abstract: str, year: int = 2024) -> dict:
+def _row(work: int, title: str, abstract: str, year: int = 2024,
+         concepts: tuple = ()) -> dict:
     return {
         "id": f"https://openalex.org/W{work}",
         "doi": f"10.1234/w{work}",
@@ -48,7 +52,8 @@ def _row(work: int, title: str, abstract: str, year: int = 2024) -> dict:
         "primary_location": json.dumps({"source": {"display_name": "J. Repl."},
                                         "landing_page_url": "https://example.org/1"}),
         "open_access": json.dumps({"oa_url": None}),
-        "concepts": json.dumps([]),
+        "concepts": json.dumps([{"id": f"https://openalex.org/{c}"}
+                                for c in concepts]),
         "abstract_text": abstract,
         "hit_token_title": True,
         "hit_token_abstract": False,
@@ -61,17 +66,19 @@ def _row(work: int, title: str, abstract: str, year: int = 2024) -> dict:
 POOL_ROWS = [
     _row(11, "A direct replication of the Smith effect",
          f"We report a direct replication of the anchoring effect, {_CITE}."),
-    _row(12, "A conceptual replication of the Jones effect",
-         f"We report a conceptual replication of the framing effect, {_CITE}."),
+    _row(12, "A direct replication of the Jones effect",
+         f"We report a direct replication of the framing effect, {_CITE}."),
     # The cheap pile's rows are deliberately free of hard signals and comfortably
     # over PRESCREEN_MIN_ABSTRACT_CHARS, so the tier actually asks its voters
     # about them rather than bypassing (which is its own test, below).
-    _row(21, "Replicability in the social sciences",
+    _row(21, "Replicability in the social sciences", concepts=("C12590798",),
+         abstract=
          "We survey how researchers describe their own methods sections across "
          "three decades of published work, coding each article for the presence "
          "of a materials appendix, a data statement and a power analysis, and we "
          "relate those codes to the journal's editorial policy at the time."),
-    _row(22, "Reproducibility of the X effect",
+    _row(22, "Reproducibility of the X effect", concepts=("C12590798",),
+         abstract=
          "Bees forage over long distances when the hive is disturbed, and the "
          "colony recovers within a fortnight of the disturbance ending. We "
          "tracked eleven hives across two summers and measured foraging radius, "
@@ -91,7 +98,7 @@ def pool(tmp_path) -> Path:
 @pytest.fixture
 def con(pool):
     store = open_store(Path(":memory:"))
-    build_routing(store, pool, load_specs(SPEC_DIR), RELEASE)
+    build_routing(store, pool, engine_bundle.specs(), RELEASE)
     return store
 
 
@@ -335,11 +342,12 @@ def test_an_exhausted_budget_fails_the_claim_and_keeps_what_was_decided(con, poo
 def _handoff(con, pool, tmp_path, client=None, name="filtered.csv"):
     drop, record_types = ((set(), {}) if client is None
                           else handoff_mod.decisions(client, RELEASE))
+    spec_dir = engine_bundle.write_bundle(tmp_path / "bundle")
     out = tmp_path / name
     manifest = handoff_mod.write_handoff(con, pool, out, RELEASE, drop=drop,
                                          record_types=record_types,
-                                         specs=load_specs(SPEC_DIR),
-                                         spec_dir=SPEC_DIR, created_at="2026-08-04")
+                                         specs=engine_bundle.specs(),
+                                         spec_dir=spec_dir, created_at="2026-08-04")
     return out, manifest
 
 
@@ -457,7 +465,8 @@ def _voter_models() -> list[str]:
 def test_export_pile_still_writes_one_pile(con, pool, tmp_path):
     """The row iterator now serves two callers; the single-pile export is unchanged."""
     manifest = export_pile(con, pool, "screen_cheap", tmp_path / "cheap.csv", RELEASE,
-                           specs=load_specs(SPEC_DIR), spec_dir=SPEC_DIR,
+                           specs=engine_bundle.specs(),
+                           spec_dir=engine_bundle.write_bundle(tmp_path / "bundle"),
                            created_at="2026-08-04")
     rows = _read(tmp_path / "cheap.csv")
     assert manifest["rows"] == len(rows) == 2

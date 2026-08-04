@@ -198,64 +198,78 @@ def test_resolution_treats_not_validation_as_excluded(monkeypatch):
     assert res["reviewer_kept_pipeline"] == 0
 
 
-# ── Stage 1 phrase yield ─────────────────────────────────────────────────────
+# ── Stage 1: the survivor pool ───────────────────────────────────────────────
 
-def test_phrase_yield_attributes_cursor_files(tmp_path, monkeypatch):
-    import json as _json
-
-    import search.openalex_search as oas
-
-    monkeypatch.setattr(oas, "OA_CACHE_DIR", tmp_path)
-    phrase = oas.SEARCH_PHRASES[0]
-    for years, n in [((2020, 2020), 7), ((2021, 2021), 5)]:
-        key = oas._job_key(phrase, *years)
-        (tmp_path / f"{key}.cursor.json").write_text(
-            _json.dumps({"total_fetched": n, "completed": True}), encoding="utf-8")
-    (tmp_path / "deadbeef.cursor.json").write_text('{"total_fetched": 99}', encoding="utf-8")
-
-    out = oas.phrase_yield()
-    row = next(r for r in out["rows"] if r["phrase"] == phrase)
-
-    assert row["fetched"] == 12          # summed across both year jobs
-    assert row["jobs"] == 2
-    assert out["total_fetched"] == 12    # the unmatched file is not counted
-    assert out["unattributed_files"] == 1
+def _write_pool(pool_dir, parts):
+    """A minimal survivor pool: the _POOL_SCHEMA columns the stats read."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    pool_dir.mkdir(parents=True, exist_ok=True)
+    schema = pa.schema([("id", pa.string()), ("doi", pa.string()),
+                        ("publication_year", pa.int32()),
+                        ("hit_token_title", pa.bool_()),
+                        ("hit_token_abstract", pa.bool_()),
+                        ("hit_concept", pa.bool_())])
+    for i, rows in enumerate(parts):
+        pq.write_table(pa.Table.from_pylist(rows, schema=schema),
+                       pool_dir / f"part-2016-0{i}.parquet")
 
 
-def _phrase_endpoint(tmp_path, monkeypatch, persisted):
-    import search.openalex_search as oas
+def _clear_pool_memo():
+    import shared.dashboard_cache as dc
+    dc._totals_memo = None
+
+
+def test_pool_stats_count_rows_years_and_gate_arms(tmp_path):
+    """The pool replaces candidates.csv as Stage 1's artifact: totals come from the
+    parquet footers, and the three hit_* booleans are why each row was kept."""
+    from shared.dashboard_cache import compute_pool_stats
+
+    _write_pool(tmp_path / "pool", [
+        [{"id": "W1", "doi": "10.1/a", "publication_year": 2015,
+          "hit_token_title": True, "hit_token_abstract": False, "hit_concept": True},
+         {"id": "W2", "doi": "", "publication_year": 2016,
+          "hit_token_title": False, "hit_token_abstract": True, "hit_concept": True}],
+        [{"id": "W3", "doi": None, "publication_year": 1899,
+          "hit_token_title": False, "hit_token_abstract": True, "hit_concept": False}],
+    ])
+    _clear_pool_memo()
+    stats = compute_pool_stats(tmp_path / "pool")
+
+    assert stats["total"] == 3 and stats["files"] == 2
+    assert stats["no_doi"] == 2, "blank and null DOIs both count"
+    assert stats["by_year"] == {"2015": 1, "2016": 1, "1899": 1}
+    # A row can hit several arms, so these deliberately sum to more than 3.
+    assert stats["gate_hits"] == {"title": 1, "abstract": 2, "concept": 2}
+
+
+def test_pool_absent_is_none_not_an_error(tmp_path):
+    """The pool is gigabytes and gitignored — a checkout without one is normal, and
+    every pool read must degrade to 'not available here' rather than raise."""
+    from shared.dashboard_cache import compute_pool_stats, compute_stage_stats, pool_totals
+
+    _clear_pool_memo()
+    assert pool_totals(tmp_path / "nope") is None
+    _clear_pool_memo()
+    assert compute_pool_stats(tmp_path / "nope") is None
+    _clear_pool_memo()
+    assert compute_stage_stats("pool") is None or isinstance(compute_stage_stats("pool"), dict)
+
+
+def test_csv_stats_endpoint_reports_pool_absence(tmp_path, monkeypatch):
+    """With neither a local pool nor pool figures in stats.json, the Stage 1 panel
+    must say so — not render a zero that reads as 'the search found nothing'."""
     import validate.routes.dashboard as dash
 
-    monkeypatch.setattr(oas, "OA_CACHE_DIR", tmp_path)   # empty: live scan yields 0
-    monkeypatch.setattr(dash, "load_stats",
-                        lambda: {"candidates": {"by_phrase": persisted}})
+    monkeypatch.setattr(dash, "load_stats", lambda: {})
+    monkeypatch.setattr(dash, "pool_totals", lambda: None)
+    monkeypatch.setattr(dash, "_STAGE_FILES", {})
     from validate.app import create_app
-    return create_app().test_client().get("/api/dashboard/search-phrases").get_json()
+    data = create_app().test_client().get("/api/dashboard/csv-stats").get_json()
 
-
-@pytest.mark.parametrize("persisted,expected_source,expect_note", [
-    # current snapshot: carries the coverage fields
-    ({"rows": [{"phrase": "replication of", "fetched": 42, "jobs": 1,
-                "expected": 100, "source": "phrase"}],
-      "total_fetched": 42, "total_expected": 100, "unattributed_files": 0,
-      "coverage_from_year": 1990},
-     "stats_json", False),
-    # legacy snapshot: written before coverage tracking, so no expected/incomplete
-    # fields. Serving it as if current would hide the under-fetching the coverage
-    # columns exist to surface (#68), so it must be marked and carry an explanation.
-    ({"rows": [{"phrase": "replication of", "fetched": 42, "jobs": 1, "source": "phrase"}],
-      "total_fetched": 42, "unattributed_files": 0},
-     "stats_json_legacy", True),
-])
-def test_search_phrases_endpoint_falls_back_to_stats_json(
-        tmp_path, monkeypatch, persisted, expected_source, expect_note):
-    """cache/ is gitignored, so a deployed instance has no cursor files — the
-    endpoint must fall back to the phrase yield persisted in stats.json, and label
-    the snapshot it served."""
-    data = _phrase_endpoint(tmp_path, monkeypatch, persisted)
-    assert data["_source"] == expected_source
-    assert data["total_fetched"] == 42, "the persisted numbers are still served"
-    assert ("note" in data) == expect_note
+    assert data["pool_present"] is False
+    assert data["pool_source"] == "none"
+    assert data["pool_count"] is None
 
 
 # ── Set-aside CSVs ───────────────────────────────────────────────────────────

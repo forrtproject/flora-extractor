@@ -509,16 +509,6 @@ def parse_result_is_empty(results: "dict[str, dict] | None") -> bool:
                 if isinstance(r, dict)), default=0) <= 0
 
 
-def best_parse_method_name(results: "dict[str, dict]") -> str:
-    """Return the key of the highest-scoring parse method, or '' if all errored."""
-    best_k, best_s = "", -1
-    for k, r in results.items():
-        s = score_parse_result(r)
-        if s > best_s:
-            best_s, best_k = s, k
-    return best_k if best_s >= 0 else ""
-
-
 # ── Orchestrator ─────────────────────────────────────────────────────────────
 
 def parse_all(doi_r: str, pdf_path, oa_xml: dict | None = None,

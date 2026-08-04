@@ -26,7 +26,8 @@ CANDIDATES_COLS = [
 # All CANDIDATES_COLS + the following:
 FILTER_ADDED_COLS = [
     "filter_status",     # str — replication | reproduction | false_positive | needs_review
-    "filter_method",     # str — rule_based | screen; llm/both are historical
+    "filter_method",     # str — engine:<release_id> (the filter engine) | screen (Stage 3's
+                         #       front door). rule_based/llm/both are historical only.
     "filter_evidence",   # str — phrase or quote that triggered classification
     "filter_confidence", # str — high | medium | low  (categorical, not float)
 ]
@@ -43,7 +44,8 @@ ENGINE_EXPORT_COLS = [
     "route_rule",        # str — id of the spec that won the pile ("" when pending)
     "route_precedence",  # str — that spec's precedence
     "matched_rules",     # str — |-joined; match by substring/split, never equality
-    "pending_reason",    # str — unevaluated | no_filter_matched | no_text | budget_blocked
+    "pending_reason",    # str — no_filter_matched (no rule claimed the row) | no_text
+                         #       (a text pile downgraded because the abstract is empty)
     "release_id",        # str — the routing release the pile came from
 ]
 ENGINE_EXPORTED_COLS = FILTERED_COLS + ENGINE_EXPORT_COLS
@@ -131,7 +133,7 @@ EXTRACT_ADDED_COLS = [
                            #         ("computationally reproducible, robust"), so one column reads
                            #         the same way for both record types — the way flora.csv stores it.
     "outcome_phrase",      # str   — supporting quote from the paper
-    "outcome_confidence",  # str   — high | low  (medium is no longer emitted)
+    "outcome_confidence",  # str   — high | medium | low
     "out_quote_source",    # str   — abstract | title | fulltext (or two joined by " | ")
     "outcome_reasoning",  # str   — one-sentence LLM note explaining the classification choice
 
@@ -195,7 +197,8 @@ RESOLVED_LINK_METHODS = {
     "llm_cited_candidates",
     "llm_fulltext",
     # Stage 4.5: the LLM picked the target from the paper's OpenAlex reference list,
-    # accepted only at confidence == "high" (see link_original.run_for_doi).
+    # accepted only when the model marked the target `match_certain`
+    # (see link_original.run_for_doi).
     "llm_references",
 }
 
@@ -373,17 +376,6 @@ VALIDATION_STATUS_VALUES = {"confirmed", "rejected", "pending", "needs_review"}
 SOURCE_VALUES = {"openalex", "openalex_concept", "openalex_snapshot", "semantic_scholar",
                  "backfill_old_pipeline"}
 
-# ── Default empty row builders ────────────────────────────────────────────────
-
-def empty_candidates_row() -> dict:
-    return {col: "" for col in CANDIDATES_COLS}
-
-def empty_filter_row() -> dict:
-    return {col: "" for col in FILTERED_COLS}
-
-def empty_extract_row() -> dict:
-    return {col: "" for col in EXTRACTED_COLS}
-
 
 def make_pair_id(doi_r: str, doi_o: str, oa_work_id_o: str = "",
                  title_o: str = "") -> str:
@@ -421,8 +413,6 @@ def make_pair_id(doi_r: str, doi_o: str, oa_work_id_o: str = "",
             second = "t:" + re.sub(r"\s+", " ", str(title_o).strip().lower())
     return hashlib.md5(f"{doi_r}|{second}".encode()).hexdigest()
 
-def empty_validated_row() -> dict:
-    return {col: "" for col in VALIDATED_COLS}
 
 # ── Schema validation helper ──────────────────────────────────────────────────
 
