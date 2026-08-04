@@ -1,10 +1,10 @@
 {
-  "id": "phrase-reproduction",
-  "description": "The nine reproduction-anchored patterns (_REPRODUCTION_ANCHORED). Anchored on purpose: a bare \"reproduction of\" matches animal breeding, social reproduction and epidemiological R0 far more often than a reproduction study (8% precision over 15,440 corpus rows; 0 of 15 sampled bare hits were our sense, #137), while these forms cost nothing and score better on the curated reproduction list.",
+  "id": "reproduction-signal",
+  "description": "WEAK ADMISSION, reproduction side: the counterpart of replication-signal in the other vocabulary, and the whole of the reproduction book until #155 replaces it. Anchored on purpose — a bare \"reproduction of\" matches animal breeding, social reproduction and epidemiological R₀ far more often than a reproduction study (8% precision over 15,440 corpus rows; 0 of 15 sampled bare hits were our sense, #137) — while these ten forms cost nothing and score better on the curated reproduction list. Patterns unchanged from v1, where the rule carried the id `phrase-reproduction`; renamed in the v2 rewrite so the bundle names rules by what they do (claim · signal · probe) rather than by how v1 implemented them.",
   "match": {
     "any_of": [
       {
-        "text_regex": "\\breproductions? of ['\\\"\u201c\u2018]"
+        "text_regex": "\\breproductions? of ['\\\"“‘]"
       },
       {
         "text_regex": "\\breproductions? of\\s+(?:the\\s+)?(?:(?:original|published|reported|previous|prior|main|key|core)\\s+)?(?:results?|findings?|analys[ei]s|estimates?|figures?|tables?|stud(?:y|ies)|experiments?|data)\\b"

@@ -1,0 +1,27 @@
+{
+  "id": "no-codable-text",
+  "description": "Registry work types whose objects carry no abstract and no prose. THE CLAIM IS NOT \"this is not a replication\" — it is that there is nothing here to screen and nothing to code an outcome from, so the object cannot become a FLoRA record whatever it is the artifact of. Stating it that way is what makes it defensible: a deposit is not asserted to be off-topic, it is asserted to be uncodable. Scope ruling by the maintainer, 2026-08-04. `component` and `database` are on the list on the same argument and are the two worth a second look (D4): a `component` can occasionally be an independently meaningful report. The residual risk is real: where a deposit is the ONLY record of a replication, that replication is lost. The mitigation would be a linkage worklist rather than an admission — record the deposit's parent DOI, check whether the parent is in the pool, route the unlinked remainder to a human — deferred to #157.",
+  "match": {
+    "fields": {
+      "type": [
+        "component",
+        "database",
+        "dataset",
+        "software",
+        "supplementary-materials"
+      ]
+    }
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 940,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "trusted",
+      "date": "2026-08-04",
+      "owner": "flora-extractor",
+      "rationale": "Structural and scope, not statistical. Every type on this list names a registry object that carries no abstract and no prose, and the discard claims exactly that: there is no text to screen and no text to code an outcome from. A precision sample would answer a different question (how often such an object is the artifact OF a replication), which the ruling deliberately does not turn on. What a sample IS still owed for is the residual loss — the deposit that is the only record of its replication — and that is the V1 parent-recovery measurement (proposal SS7), deferred with #157. Supersedes the retired `dataset-type` spec, whose 2026-08-03 pilot evidence measured screen spend (69.8% of dataset rows proceed in the concept arm vs 12.5% for articles) rather than precision and therefore could not license a live discard on a not-a-replication claim; the v2 rule discards on the uncodable-text claim instead."
+    }
+  ]
+}

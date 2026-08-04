@@ -1,0 +1,43 @@
+{
+  "id": "replication-probe",
+  "description": "PROBES: candidate vocabularies with no measurement at all, where the whitelist's blind spot is made visible instead of silent. Every arm names a replication genre that carries NO replication vocabulary, so no amount of tuning the word \"replicate\" will ever reach it — revisiting/reconsidered titles (heavily used in economics), repeated-experiment and independent-test phrasings, external and out-of-sample validation, re-examination, the pre-2010 \"we attempted to confirm the finding\" framing that predates the stabilised vocabulary, and the many-analyst / adversarial-collaboration / forecasting-tournament genre whose abstracts describe the consortium rather than a replication. Nothing here has a count, a precision or a sample; that is the point of the rule. One clause per probe so each is separately attributable and can be promoted on its own count, never as a block. The arms are deliberately narrow rather than broad: an arm that fires on everything tells you nothing about the genre it was written for. Several are title-only for the same reason a title stem beats an abstract stem — \"revisiting\" in an abstract is ordinary discourse. The revisiting arm is one clause over the whole title rather than a title-initial and a title-anywhere pair, because the title-initial form is a strict subset of the other and two clauses where one contains the other cannot be counted apart; splitting \"Revisiting X\" from \"X, revisited\" is a narrowing to do once the arm has a count worth narrowing. Replication side only: the reproduction-side probes (`re-estimat*`, `reimplement*`, `rerun`, CODECHECK certificates, artifact-evaluation reports) are parked in rule_ideas.md for #155.",
+  "match": {
+    "any_of": [
+      {
+        "title_regex": "\\brevisit(?:ing|ed)\\b"
+      },
+      {
+        "title_regex": "\\breconsidered\\b"
+      },
+      {
+        "text_regex": "\\ba (?:new|second) look at\\b"
+      },
+      {
+        "title_regex": "\\bon the robustness of\\b"
+      },
+      {
+        "text_regex": "\\bwe repeated the (?:experiment|study|analysis)\\b"
+      },
+      {
+        "text_regex": "\\ban? independent test of\\b"
+      },
+      {
+        "text_regex": "\\b(?:external|out-of-sample) validation of\\b"
+      },
+      {
+        "title_regex": "\\bre-?examin\\w+\\b"
+      },
+      {
+        "text_regex": "\\b(?:attempted|sought) to confirm\\b"
+      },
+      {
+        "text_regex": "\\bmany analysts\\b|\\bmulti-?analyst\\b|\\badversarial collaboration\\b|\\bforecasting tournament\\b"
+      }
+    ]
+  },
+  "pile": "screen_cheap",
+  "vocabulary": "replication",
+  "precedence": 100,
+  "shadow": true,
+  "measured": []
+}

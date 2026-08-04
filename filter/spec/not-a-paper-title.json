@@ -1,0 +1,19 @@
+{
+  "id": "not-a-paper-title",
+  "description": "The title announces a document genre followed by its parent — \"Review for: <replication paper>\", \"Decision letter for: …\", \"Correction to: …\" — so the record is the editorial artifact and not the study it names. These objects echo the paper's title verbatim, which is why they carry replication phrases at all. The pattern is START-ANCHORED on purpose, and that anchor is the whole rule: it fires on a title that says what the object IS and never on a paper that discusses the genre. For the same reason there is deliberately NO bare `^editorial` arm — an article titled \"Editorial independence and replication in psychology\" is a paper, and that alternative would break the genre-plus-parent property the pattern rests on. OPEN SCOPE QUESTION (D2): `correction to` and `author response` objects sometimes contain a substantive failed reproduction. Both have been in the pattern since it was ported; whether they should be is a definition question for FLoRA, not a fact about the pattern.",
+  "match": {
+    "text_regex": "^\\s*(?:review for|decision letter for|peer review #|faculty opinions recommendation of|correction to|author response)\\b"
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 955,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "trusted",
+      "date": "2026-08-04",
+      "owner": "flora-extractor",
+      "rationale": "Carried verbatim from the retired `editorial-artifact` spec, which ported it from SciMeto's NON_SCHOLARLY_REPLICATION_CONTEXTS; in production in keyword_verdict() since Stage 2 existed. A record titled 'Decision letter for: <replication paper>' is definitionally not the study, so no sample is needed: the claim is about what the start-anchored genre name means, not about a rate. The precedence changed in the v2 rewrite (555 -> 955) because the rule belongs with the definitional discards that outrank admission; the pattern did not change."
+    }
+  ]
+}

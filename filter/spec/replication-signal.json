@@ -1,0 +1,56 @@
+{
+  "id": "replication-signal",
+  "description": "WEAK ADMISSION: enough signal to be worth one small discard-only model, not enough for two voters. Four arms, kept as separate clauses so each can be sized and switched independently. (1) The 15 multilingual replication stems, TITLE ONLY, carried verbatim from the retired `title-stem` spec: a title is a handful of topical words, so a bare stem in one is a real signal while the same stem anywhere in a 1,500-character abstract is noise. This arm alone reaches 3.4% of known positives that no phrase arm does, and 111 of 112 Korean 재검증 works are invisible to the English stems. Carried verbatim includes its `reproduc`/`reanalys` stems — the one place reproduction vocabulary survives in the replication book, flagged for #155 to settle (D7). (2) The English replication stem in the title, on the same title-position argument. It is a proper SUBSET of arm 1, whose alternation opens with `replicat`, and is written as its own clause anyway so the English-stem hit count is separately attributable; switching the arms on one at a time therefore requires stripping the English stems out of arm 1 first. (3) The OpenAlex replication concepts C12590798 (Replication (statistics)) and C9893847 (Reproducibility) — the Stage 1 harvest arm. Divergence 1 in docs/filter-engine.md: v1 Stage 2 wrote a concept-only row `false_positive` TERMINALLY; here it routes to the cheap discard-only tier, because a concept is a topical signal and a rule that cannot admit must not be allowed to kill. The arm carries a `none_of` on the typeless work types even though no-codable-text and not-a-study-type both outrank it — precedence settles the pile, but a per-arm count is computed independently of precedence, so the guard is what keeps this arm's own numbers honest. The non-empty-abstract condition is already guaranteed by the engine's `no_text` downgrade. (4) Bare `replications? of`, LAST and with a warning: it fires on 82.2% of screen-confirmed negatives and may be larger than the rest of the cheap tier combined. Three anchors on its object were tested and all failed (§1.2: study-noun +3.6% positives / +14.2% negatives; proper name + year +2.3% / +3.0%; quoted title +0.2% / +0.2%), and v1's `phrase-with-cite` did no better — its row-scoped author-year cite is present in 61% of the positives and 42% of the negatives on exactly these rows.",
+  "match": {
+    "any_of": [
+      {
+        "title_regex": "(?i)replicat|replicab|reproduc|reanalys|re-analys|reanalyz|re-analyz|replikat|réplicat|replicaci|replicaç|replicazion|reproduç|reproduzi|追試|반복검증|재검증"
+      },
+      {
+        "title_regex": "\\breplicat\\w*"
+      },
+      {
+        "fields": {
+          "concept_ids": [
+            "C12590798",
+            "C9893847"
+          ]
+        },
+        "none_of": [
+          {
+            "fields": {
+              "type": [
+                "component",
+                "database",
+                "dataset",
+                "grant",
+                "libguides",
+                "paratext",
+                "peer-review",
+                "software",
+                "standard",
+                "supplementary-materials"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text_regex": "\\breplications? of\\b"
+      }
+    ]
+  },
+  "pile": "screen_cheap",
+  "vocabulary": "replication",
+  "precedence": 300,
+  "shadow": true,
+  "measured": [
+    {
+      "level": "downstream",
+      "n": 2895,
+      "sample": "The same two corpora as replication-claim: 2,895 entry-sheet positives with usable abstracts and 501 screen-confirmed negatives from data/not_a_replication.csv. Computed 2026-08-04, proposal SS1.2 and SS1.3 (redesign/rulebook_v2.html).",
+      "date": "2026-08-04",
+      "rationale": "What is measured, and its biases, are stated in replication-claim's entry and apply unchanged here. Arm 4 (bare `replications? of`) fires on 40.4% of the positives — the highest-recall single arm in the book, 342 of them uniquely — and on 82.2% of the screened negatives; taking it together with the strong arms lifts positives to 93.7% and negatives to 85.0%, which is why it is a cheap-tier arm and not an admission to the expensive screen. Arm 1's contribution is 3.4% of positives that no phrase arm reaches. On where the signal lives (SS1.3): the strong arms match 47.8% of positives on the title alone, 73.9% on the abstract alone, 89.7% on both, and 93.1% once the title-stem fallback is added — so a pool row with no abstract loses roughly half its signal even with this rule, which is the no-abstract problem the SS5 backfill cascade (D5, unbuilt) is for. The rule ships shadow; it admits nothing yet and discards nothing ever, so the evidence gate does not bind it."
+    }
+  ]
+}

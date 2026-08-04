@@ -1,0 +1,52 @@
+{
+  "id": "not-a-paper-doi",
+  "description": "The identifier itself says the object is not the paper. Three separately-labelled arms, kept as their own clauses so each can be audited and retired on its own evidence — one overall precision figure would hide an unsafe arm. (1) A `/reviews/` or `/decisions/` path segment is minted by the publisher for the review object (e.g. 10.7287/peerj.10325v0.1/reviews/2); such records echo the reviewed paper's title verbatim, so every replication phrase in the title fires on something that is not the paper. A narrowing worth doing later is anchoring the segment to known registrants rather than matching anywhere in the DOI. (2) A DOI ending in `.suppl` is the supplementary object minted alongside an article, not the article; terminal-anchored so it cannot fire on a DOI that merely contains the string. It is the identifier-side counterpart of the `supplementary-materials` work type in no-codable-text, and the two overlap deliberately: different fields, either one alone is enough. (3) A DOI on a deposit-only registrant is the data deposit that accompanies a paper — \"Replication Data for: …\" — carrying the word replication into the pipeline without being a study (#141). Each prefix was separately confirmed against DataCite. EXCLUDE-ONLY and deliberately incomplete: Zenodo (10.5281) is absent because it is a general-purpose registrant whose DOIs include CODECHECK certificates, and figshare (10.6084) was dropped for the same reason (D1) — it hosts preprints and technical reports, and was only ever on the list because `non_article_doi()` happened to match it on a prefix boundary.",
+  "match": {
+    "any_of": [
+      {
+        "doi_regex": "/reviews/|/decisions/"
+      },
+      {
+        "doi_regex": "\\.suppl$"
+      },
+      {
+        "doi_prefix": [
+          "10.11587",
+          "10.15139",
+          "10.18170",
+          "10.18710",
+          "10.18738",
+          "10.21979",
+          "10.2905",
+          "10.34894",
+          "10.3886",
+          "10.7910"
+        ]
+      }
+    ]
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 960,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "trusted",
+      "date": "2026-08-04",
+      "owner": "flora-extractor",
+      "rationale": "Arm 1 (/reviews/ | /decisions/), carried unchanged from the retired `non-article-doi` spec: a DOI path segment minted by the publisher for the review object itself, so the mapping is structural, not statistical."
+    },
+    {
+      "level": "trusted",
+      "date": "2026-08-04",
+      "owner": "flora-extractor",
+      "rationale": "Arm 2 (\\.suppl$), new in the v2 rule book: a terminal \".suppl\" is the identifier a publisher mints for the supplementary object of an article. Structural for the same reason as arm 1 — the claim is about what the registrant writes into the identifier, not about a rate estimated from a sample — and the terminal anchor is what keeps it that way: a DOI that merely contains the string is not claimed."
+    },
+    {
+      "level": "trusted",
+      "date": "2026-08-04",
+      "owner": "flora-extractor",
+      "rationale": "Arm 3 (deposit prefixes), carried from the retired `deposit-doi-prefixes` spec minus figshare: each prefix was separately confirmed against DataCite as belonging to a registrant that mints DOIs for deposits only, so a DOI on it is a deposit record rather than a paper. OWED, and not yet done: the discard also rests on a second claim — that the paper the deposit accompanies is in the corpus under its own DOI — which is a joint probability (parent DOI resolvable x parent present in the pool x parent admitted by another route), not a structural fact. Proposal SS7/V1 makes measuring parent recovery a named obligation; its answer can move this arm to a linkage worklist instead of a discard (#157, deferred). (An earlier `human, precision 0.995, n=282, sample 30k-candidates-2026-07` entry was removed in 2026-08: no such sample artifact exists in the repo or its history, and 0.995 is not an attainable proportion at n=282.)"
+    }
+  ]
+}

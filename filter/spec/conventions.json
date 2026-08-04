@@ -30,13 +30,14 @@
     }
   },
   "precedence_bands": [
-    {"from": 900, "to": 999, "name": "structural discards"},
-    {"from": 600, "to": 699, "name": "rescues"},
-    {"from": 500, "to": 599, "name": "vocabulary-exclusion discards"},
-    {"from": 300, "to": 399, "name": "screen_expensive routes"},
-    {"from": 200, "to": 299, "name": "screen_cheap routes"}
+    {"from": 900, "to": 999, "name": "definitional discards — the identifier/title/type says what the object is, or it has no codable text"},
+    {"from": 700, "to": 799, "name": "strong admission → screen_expensive"},
+    {"from": 500, "to": 599, "name": "metadata-derived discards — a registry crosswalk that can be wrong; admission outranks them"},
+    {"from": 300, "to": 399, "name": "weak admission → screen_cheap"},
+    {"from": 200, "to": 299, "name": "reproduction admission → screen_cheap (interim, pending #155)"},
+    {"from": 100, "to": 199, "name": "probe arms — shadow candidate vocabularies"}
   ],
-  "pending_reasons": ["unevaluated", "no_filter_matched", "no_text", "budget_blocked"],
+  "pending_reasons": ["no_filter_matched", "no_text"],
   "measurement_levels": {
     "human": {"may_discard": true},
     "llm:<model>": {"may_discard": true},
