@@ -32,8 +32,13 @@ import requests
 
 from .config import (
     OA_CACHE_DIR, OA_XML_CACHE_DIR, OPENALEX_API_KEYS, PDF_CACHE_DIR,
-    RESEARCHER_EMAIL, SERPAPI_KEY, SERPAPI_KEYS, UNPAYWALL_RATE_SEC, log,
+    RESEARCHER_EMAIL, SERPAPI_KEY, SERPAPI_KEYS, log,
 )
+
+# Seconds between Unpaywall calls. Their API is free and keyless and asks only for a
+# mailto; this is politeness, not a quota, and it is nobody's business but this
+# module's — Unpaywall is reached from here and nowhere else.
+UNPAYWALL_RATE_SEC = 0.5
 from .openalex_keys import headers as oa_headers, is_budget_refusal, rotate_key
 from .utils import clean_doi, cache_key
 

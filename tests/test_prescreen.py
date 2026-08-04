@@ -106,65 +106,28 @@ def test_a_discard_is_quarantined_separately_from_the_validated_screen(tmp_path,
     assert set(pre["doi_r"]) == {"10.1/pre"}
 
 
-def test_the_discard_row_records_who_ended_the_paper(tmp_path, monkeypatch):
-    """The row is never seen by the screen or by a human again, so the two models and
-    what each said have to be on it — and it must not claim a validated verdict."""
+def test_stage3_never_runs_the_cheap_tier(tmp_path, monkeypatch):
+    """Which rows get the cheap tier is a Stage 2 routing decision (the screen_cheap
+    pile). Stage 3 must not re-apply it: a row that reached the front door was routed
+    past it, and re-gating here would override the rule book on exactly the rows it
+    sent to the expensive tier."""
     import extract.run_extract as rx
 
     monkeypatch.setattr(ps, "LLM_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(rx, "PRESCREEN_ENABLED", True)
     row = pd.Series({"doi_r": "10.1/x", "title_r": "Market entry",
                      "abstract_r": "We estimate the effect of concentration. " * 8,
-                     "filter_status": "replication", "source": "openalex"})
-    with patch.object(ps, "call_openrouter", return_value=({"maybe_replication": "no"}, "")):
-        out = rx._process_row(row, "10.1/x", no_llm=False, no_pdf=True,
-                              no_reproductions=False, resolved_only=False,
-                              recalibrate_outcomes=False)
-
-    assert len(out) == 1
-    assert out[0]["link_method"] == "prescreen_discard"
-    assert out[0]["prescreen_verdict"] == "discard"
-    assert out[0]["outcome_confidence"] == "low"
-    # both configured voters and what each said, whichever models they are
-    for _, model in ps.prescreen_voters():
-        assert f"{model}=no" in out[0]["link_evidence"]
-
-
-def test_a_bypassed_row_costs_nothing_and_still_says_so(tmp_path, monkeypatch):
-    """The override runs before any model, so a rescued row is free — and the reason it
-    was rescued lands on the row that went on to the validated screen, which is the only
-    way to audit how much of the corpus the tier never judged."""
-    import extract.run_extract as rx
-
-    monkeypatch.setattr(ps, "LLM_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(rx, "PRESCREEN_ENABLED", True)
-    row = pd.Series({"doi_r": "10.1/y", "title_r": "A direct replication of Smith",
-                     "abstract_r": "We report a direct replication of Smith (2010). " * 10,
                      "filter_status": "replication", "source": "openalex"})
     screen = {"resolution_method": "llm_refscreen_failed", "screen_verdict": "",
               "votes": [], "categories": [], "llm_error": "boom",
               "llm_reasoning": "", "llm_model": "m"}
     with patch.object(ps, "call_openrouter") as call, \
          patch.object(rx, "classify_replication", return_value=screen):
-        out = rx._process_row(row, "10.1/y", no_llm=False, no_pdf=True,
+        out = rx._process_row(row, "10.1/x", no_llm=False, no_pdf=True,
                               no_reproductions=False, resolved_only=False,
                               recalibrate_outcomes=False)
 
     call.assert_not_called()
-    assert out[0]["prescreen_verdict"] == "bypass:hard_signal:direct replication"
-
-
-def test_no_llm_never_pre_screens(monkeypatch):
-    """--no-llm means no LLM stage runs, and the pre-screen is one."""
-    import extract.run_extract as rx
-
-    monkeypatch.setattr(rx, "PRESCREEN_ENABLED", True)
-    row = pd.Series({"doi_r": "10.1/x", "title_r": "T", "abstract_r": "a" * 400,
-                     "filter_status": "replication"})
-    with patch.object(ps, "call_openrouter") as call:
-        rx._process_row(row, "10.1/x", no_llm=True, no_pdf=True, no_reproductions=False,
-                        resolved_only=False, recalibrate_outcomes=False)
-    call.assert_not_called()
+    assert all(r["link_method"] != "prescreen_discard" for r in out)
 
 
 def test_one_model_configured_twice_is_refused():

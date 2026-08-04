@@ -53,7 +53,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 | `shared/target_keys.py`     | `assign_target_keys()` — one deduplicated `@smith2009` namespace over a paper's candidates and references, plus the key → record map |
 | `shared/token_usage.py`     | Per-day/provider/model token recording (`cache/token_usage.json`) + the OpenAI daily budget check |
 | `shared/prompts.py`         | Every LLM prompt + `prompt_version()` (hash of the prompt text and every spliced fragment) |
-| `shared/prescreen.py`       | The optional cheap pre-screen: `hard_signal()`, `prescreen_bypass()`, `prescreen()`. Off unless `PRESCREEN_ENABLED` |
+| `shared/prescreen.py`       | The cheap discard-only tier: `hard_signal()`, `prescreen_bypass()`, `prescreen()`. Run by Stage 2 over the `screen_cheap` pile |
 | `shared/cache.py`           | Cache helpers; `content_key()` builds the content-complete LLM cache key |
 | `shared/row_key.py`         | Row identity: `row_keys()` / `primary_key()` (doi → oa: → url: → title:) |
 | `shared/csv_index.py`       | Sidecar index load/save/append/build + shared CSV dedup (streaming writes) |
@@ -103,8 +103,12 @@ Never change a column name without updating `schema.py` and notifying all teams.
 
 ## Stage 3 — Front Door and Resolution
 
-**The optional cheap pre-screen** (`shared/prescreen.py`, off unless
-`PRESCREEN_ENABLED`) sits in front of everything below. Two very small models
+**The cheap discard-only tier** (`shared/prescreen.py`) is NOT part of Stage 3: which
+rows get it is a Stage 2 routing decision — the rule book sends a row to the
+`screen_cheap` pile and `filter/engine/tiers.py` runs the tier over that pile, claimed
+and budget-gated. It is described here because its verdicts land in Stage 3's CSV.
+There is no global on/off, deliberately: a flag would apply the cheap gate to rows the
+rule book routed to the expensive tier. Two very small models
 (`PRESCREEN_VOTER1_MODEL`, `PRESCREEN_VOTER2_MODEL`, both OpenRouter by default) are
 asked one question with one field of answer; voter 2 is asked only when voter 1 said
 "no", because once the row can no longer be discarded a second opinion changes nothing.
@@ -116,8 +120,8 @@ at all: text that states the design outright (`hard_signal()`), rows from a
 Stage 2's own high-confidence `replication` verdict is deliberately not a bypass — 98%
 of rows reaching Stage 3 carry it, including every screen-confirmed negative. A discard
 writes `link_method = prescreen_discard`, is quarantined by `sanity_check` to its own
-`data/prescreen_discard.csv`, and is reopened by `--rescreen`; turning the flag off does
-**not** reopen it. Evidence: `analysis/prescreen_eval/REPORT.md`.
+`data/prescreen_discard.csv`, and is reopened by `--rescreen`.
+Evidence: `analysis/prescreen_eval/REPORT.md`.
 
 **Front-door screen** (`classify_replication()`): two voters — Gemini
 (`GEMINI_LIGHT_MODEL`) and `SCREEN_VOTER2_MODEL` (default `gpt-5.4-mini`; an id with
@@ -285,9 +289,18 @@ report, a commit message or a decision is read off the artifact.
 5. CSV writes `utf-8-sig` (appends plain `utf-8`).
 6. All DOIs pass through `clean_doi()` before writing or comparing.
 7. All API responses cached before use.
-8. Every rate limit / tunable lives in `shared/config.py`, env-overridable. LLM rate
+8. Two kinds of configurable value. A **constant** — model ids, thresholds, prices,
+   closed vocabularies — is a plain Python value with no `os.getenv`: it decides what
+   the pipeline concludes, so it is changed by a commit, not by a machine. It lives
+   with the code it governs (the pre-screen's voters in `shared/prescreen.py`, the dry
+   run's prices in `filter/engine/tiers.py`); only constants with several consumers
+   stay in `shared/config.py`. A **tunable** — rate limit, batch size, timeout, path —
+   is `os.getenv` with a default and always lives in `shared/config.py`, which is the
+   whole `.env` surface in one file. If an override could make two collaborators grade
+   the same row differently, it is a constant. LLM rate
    intervals are charged per provider, so the screen's two votes never wait on each other.
-9. API key values live in `.env` only; `config.py` only reads env.
+9. API key values live in `.env` only; `config.py` only reads env. `.env.defaults` is
+   committed, so nothing secret may go in it.
 
 ## Testing
 
@@ -298,21 +311,30 @@ and delete tests when their code path dies.
 
 ## Environment
 
-Copy `.env.example` to `.env`. Key variables:
+Copy `.env.example` to `.env`. Three files, in precedence order — real environment >
+`.env` (gitignored: secrets and per-machine settings) > `.env.defaults` (committed:
+shared non-secret project identifiers only, currently `SUPABASE_URL` and
+`FLORA_POOL_REPO`) > the default in `shared/config.py`. Both files are loaded once, by
+`config.py`. Never restate a `config.py` default in `.env.defaults`: a tunable's value
+and its rationale belong together in one committed place. Key variables:
 
 ```bash
 RESEARCHER_EMAIL=...            # required: OpenAlex/CrossRef politeness headers
 GEMINI_API_KEY=...              # required
 OPENAI_API_KEY=...              # required for Stage 3 (default screen voter 2)
 OPENROUTER_API_KEY=...          # only if SCREEN_VOTER2_MODEL contains "/"
-GEMINI_MODEL=...  GEMINI_HEAVY_MODEL=...  OPENAI_MODEL=...
-SCREEN_VOTER2_MODEL=gpt-5.4-mini
-PRESCREEN_ENABLED=              # unset = off; the cheap pre-screen's discards are terminal
 OPENAI_DAILY_TOKEN_BUDGET=8000000   # 0 disables the cap
 GEMINI_USE_FLEX=true            # 50% discount on paid keys; flex uses GEMINI_FLEX_TIMEOUT
 OPENAI_USE_FLEX=true            # same trade on OpenAI; refused flex falls back to standard
-GEMINI_THINKING_LEVEL=          # unset = model default; "minimal" is in the cache key
+GEMINI_PAID_KEY_SLOTS=1         # which key SLOTS are billing-enabled, not key values
+FLORA_CACHE_DIR=                # move cache/ to an SSD; FLORA_POOL_DIR does the same
 ```
+
+Constants are **not env vars anywhere** — see code-style rule 8. Model ids,
+`GEMINI_THINKING_LEVEL` and `CURATED_SOURCES` are in `shared/config.py`; the
+pre-screen's voters and threshold in `shared/prescreen.py`;
+`OUTCOME_FULLTEXT_ESCALATION` in `extract/code_outcome.py`; the dry run's price list in
+`filter/engine/tiers.py`; `SNAPSHOT_POOL_COMPRESSION` in `search/snapshot_scan.py`.
 
 Gemini quota is per project, not per key — extra `GEMINI_API_KEY_N` slots buy failover,
 not throughput; the intended configuration is one paid (Tier 1) project with flex.

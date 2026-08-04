@@ -70,9 +70,12 @@ aside on the screen's own verdict, wherever a previous run's rows are being read
 voter pair or prompt decides them again. Every other resolved row is carried forward
 untouched, and a multi-original paper is reopened as a unit.
 
-## The optional cheap pre-screen (`shared/prescreen.py`)
+## The cheap discard-only tier (`shared/prescreen.py`)
 
-Off unless `PRESCREEN_ENABLED` is set, and it sits in front of everything below. Two
+Not part of Stage 3. Which rows get it is a Stage 2 routing decision — the rule book
+sends a row to the `screen_cheap` pile and `filter/engine/tiers.py` runs the tier over
+that pile — so a row arriving at the front door has already been routed past it. It is
+described here because its verdicts land in Stage 3's CSV. Two
 very small models (`PRESCREEN_VOTER1_MODEL`, `PRESCREEN_VOTER2_MODEL`, OpenRouter by
 default) answer one question with one field; voter 2 is asked only when voter 1 said
 "no", because once the row can no longer be discarded a second opinion changes nothing.
@@ -84,9 +87,8 @@ pre-screened at all: text stating the design outright (`hard_signal()`), rows fr
 `CURATED_SOURCES` list, and rows with under `PRESCREEN_MIN_ABSTRACT_CHARS` of abstract.
 
 A discard writes `link_method = prescreen_discard`, is quarantined to its own
-`data/prescreen_discard.csv`, and is reopened only by `--rescreen` — turning
-`PRESCREEN_ENABLED` off does **not** reopen it. Evidence and the argument for leaving
-it off: `analysis/prescreen_eval/REPORT.md` and
+`data/prescreen_discard.csv`, and is reopened only by `--rescreen`. Evidence on the
+tier's precision: `analysis/prescreen_eval/REPORT.md` and
 [limitations.md](../limitations.md) §(g).
 
 ## The front door (`shared/llm_client.classify_replication`)

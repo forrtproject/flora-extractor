@@ -59,16 +59,38 @@ from filter.engine.claims import (PENDING_UPLOAD, UPLOADED, ClaimConflict,
 from filter.engine.pool_reader import iter_pool_batches
 from filter.engine.workids import resolve, work_id
 from shared import token_counter
-from shared.config import (ENGINE_CACHE_DIR, ENGINE_CHARS_PER_TOKEN,
-                           ENGINE_TIER_OUTPUT_TOKENS, ENGINE_TIER_PRICE_PER_1K_IN,
-                           ENGINE_TIER_PRICE_PER_1K_OUT, FLORA_POOL_REPO,
-                           SNAPSHOT_POOL_DIR)
+from shared.config import ENGINE_CACHE_DIR, FLORA_POOL_REPO, SNAPSHOT_POOL_DIR
 from shared.llm_client import classify_replication, screen_gate, screen_voters
 from shared.prescreen import prescreen_bypass, prescreen_voters
 from shared.token_usage import TokenBudgetExhausted, check_openai_budget
 from shared.utils import clean_doi
 
 log = logging.getLogger(__name__)
+
+# ── The dry run's price list (issue #146 §6) ──────────────────────────────────
+# Rough list prices per 1,000 tokens, SUMMED OVER A TIER'S TWO VOTERS, so a tier's
+# estimate is one multiplication per row. They answer "is this run $3 or $3,000?"
+# before it starts and are deliberately not a billing record — what a run actually
+# cost is read from cache/token_usage.json afterwards. They live here, next to the
+# estimate() that is their only reader, and move only when a price or a voter model
+# does: update them in the same commit as the change they describe.
+TIER_PRICE_PER_1K_IN = {
+    "screen_cheap":     0.00014,
+    "screen_expensive": 0.00055,
+}
+TIER_PRICE_PER_1K_OUT = {
+    "screen_cheap":     0.00045,
+    "screen_expensive": 0.00450,
+}
+# Output tokens one row costs a tier. The cheap tier answers with one field; the
+# expensive tier returns the five-field v3.3 schema with a quote and a reasoning.
+TIER_OUTPUT_TOKENS = {
+    "screen_cheap":     20,
+    "screen_expensive": 300,
+}
+# Characters per token for the estimate. Nothing is tokenized to produce a number
+# nobody will be billed on; 4.0 is the usual English-prose approximation.
+CHARS_PER_TOKEN = 4.0
 
 TIER_CHEAP = "screen_cheap"
 TIER_EXPENSIVE = "screen_expensive"
@@ -165,11 +187,11 @@ def pile_works(con, release_id: str, pile: str, pool_dir: Path = SNAPSHOT_POOL_D
 def estimate(works: list[Work], tier: str) -> dict:
     """What running *tier* over *works* would cost, roughly, before it is run."""
     chars = [len(w.title) + len(w.abstract) for w in works]
-    in_tokens = [c / ENGINE_CHARS_PER_TOKEN for c in chars]
-    out_tokens = ENGINE_TIER_OUTPUT_TOKENS.get(tier, 0)
+    in_tokens = [c / CHARS_PER_TOKEN for c in chars]
+    out_tokens = TIER_OUTPUT_TOKENS.get(tier, 0)
     total_in = sum(in_tokens)
-    cost = (total_in / 1000 * ENGINE_TIER_PRICE_PER_1K_IN.get(tier, 0.0)
-            + len(works) * out_tokens / 1000 * ENGINE_TIER_PRICE_PER_1K_OUT.get(tier, 0.0))
+    cost = (total_in / 1000 * TIER_PRICE_PER_1K_IN.get(tier, 0.0)
+            + len(works) * out_tokens / 1000 * TIER_PRICE_PER_1K_OUT.get(tier, 0.0))
     return {
         "tier": tier,
         "rows": len(works),

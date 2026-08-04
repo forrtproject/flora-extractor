@@ -9,8 +9,9 @@ data/*.db
 cache/
 
 # ── Environment ───────────────────────────────────────────────────────────────
+# Secrets only. .env.example (variable names) and .env.defaults (shared non-secret
+# project identifiers) are both committed on purpose.
 .env
-.env.example
 
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/

@@ -26,7 +26,12 @@ from typing import Optional
 
 import requests
 
-from .config import GEMINI_MODEL, GROBID_CACHE_DIR, GROBID_RATE_SEC, GROBID_SERVER, log
+from .config import GEMINI_MODEL, GROBID_CACHE_DIR, GROBID_SERVER, log
+
+# Seconds between GROBID calls. The public HuggingFace server is shared and slow to
+# anger; a local Docker GROBID does not need it, but paying 3s on a local server is
+# cheaper than getting the shared one to refuse everyone.
+GROBID_RATE_SEC = 3.0
 from .prompts import PDF_IMAGE_REFERENCES_PROMPT, PDF_REFERENCES_PROMPT, prompt_version
 from .utils import clean_citation_title, usable_title
 

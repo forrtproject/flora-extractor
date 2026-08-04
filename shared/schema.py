@@ -221,8 +221,8 @@ LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
     # Screen verdicts that end the row without a target. sanity_check quarantines
     # both; exclude from DB import.
     "not_a_replication",
-    # The cheap pre-screen (shared/prescreen.py, off unless PRESCREEN_ENABLED) ended
-    # the row before the validated screen ever voted. Deliberately NOT folded into
+    # The cheap discard-only tier (shared/prescreen.py, run by Stage 2 over the
+    # screen_cheap pile) ended the row before the validated screen ever voted. Deliberately NOT folded into
     # not_a_replication: that value means the validated pair settled the paper, and an
     # audit of the screen must not have to disentangle a lower-recall tier's discards
     # from it. Quarantined to its own prescreen_discard.csv; excluded from DB import.

@@ -5,9 +5,15 @@ import os
 import logging
 from pathlib import Path
 
+# Two files, one mechanism. .env is gitignored and holds secrets and per-machine
+# settings; .env.defaults is committed and holds the shared, non-secret project
+# identifiers (see its header for what may go in it). load_dotenv never overwrites a
+# variable that is already set, so loading .env first gives:
+#     real environment > .env > .env.defaults > the os.getenv default below.
 try:
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).parent.parent / ".env")
+    load_dotenv(Path(__file__).parent.parent / ".env.defaults")
 except ImportError:
     pass
 
@@ -104,15 +110,21 @@ ELSEVIER_API_KEY = os.getenv("ELSEVIER_API_KEY", "")
 ELSEVIER_INSTTOKEN = os.getenv("ELSEVIER_INSTTOKEN", "").strip()
 
 # ── Model identifiers ─────────────────────────────────────────────────────────
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
+# Deliberately NOT env-overridable. Which model answers is a project decision, not a
+# per-machine one: the models are the classifier, they are folded into every cache
+# key, and the evaluations under analysis/ are evidence about these exact ids. A
+# per-machine override would let two collaborators produce differently-graded rows
+# into one shared corpus with nothing in the repo recording it. Changing a model is a
+# commit — reviewable, and dated by git.
+OPENAI_MODEL = "gpt-5-mini"
+GEMINI_MODEL = "gemini-3-flash-preview"
 
 # Per-task model selection — light for code_outcome and the screen's Gemini voter,
 # heavy for the full identify_targets_with_llm linking step.
 # Default light to gemini-3.5-flash-lite (cheap, high rate limits); it is also one of
 # the two independent voters in the Stage 4.5 replication classifier.
-GEMINI_LIGHT_MODEL = os.getenv("GEMINI_LIGHT_MODEL", "gemini-3.5-flash-lite")
-GEMINI_HEAVY_MODEL = os.getenv("GEMINI_HEAVY_MODEL", GEMINI_MODEL)
+GEMINI_LIGHT_MODEL = "gemini-3.5-flash-lite"
+GEMINI_HEAVY_MODEL = GEMINI_MODEL
 
 # Thinking level for the heavy model (gemini-3-flash-preview accepts "minimal" or
 # "high"). Empty — the default — sends nothing and keeps the model's own default,
@@ -123,50 +135,17 @@ GEMINI_HEAVY_MODEL = os.getenv("GEMINI_HEAVY_MODEL", GEMINI_MODEL)
 # a non-empty value is folded into every cache key naming that model
 # (cache_model_id() in shared/llm_client.py), so the two settings never share an
 # answer.
-GEMINI_THINKING_LEVEL = os.getenv("GEMINI_THINKING_LEVEL", "").strip().lower()
+# Empty is the current decision, pending that spot-check; flipping it is a commit.
+GEMINI_THINKING_LEVEL = ""
 
 # OpenRouter (OpenAI-compatible API at openrouter.ai) — optional alternative LLMs
 OPENROUTER_API_KEY    = os.getenv("OPENROUTER_API_KEY",    "")
-OPENROUTER_HEAVY_MODEL = os.getenv("OPENROUTER_HEAVY_MODEL", "qwen/qwen3.5-35b-a3b")
+OPENROUTER_HEAVY_MODEL = "qwen/qwen3.5-35b-a3b"
 # Second voter of the front-door replication screen. On the v3.2 gate sweep this
 # model paired with Gemini Flash-Lite discards 89% of adjudicated hard negatives
 # with zero settled misses; Ministral via OpenRouter reached 73% on the same gate.
 # An id containing "/" is routed to OpenRouter, anything else to OpenAI direct.
-SCREEN_VOTER2_MODEL = os.getenv("SCREEN_VOTER2_MODEL", "gpt-5.4-mini")
-
-# ── Stage 3 cheap pre-screen (issue #130) ─────────────────────────────────────
-# An optional tier in front of the validated screen: two very small models that can
-# only DISCARD, and only when both agree the row is clearly out of scope. Everything
-# else — one keep, an unreadable reply, an API failure — falls through to the screen
-# unchanged, so the tier can lose papers but can never add them.
-#
-# Default OFF. A pre-screen discard is terminal and never reaches a human, so the
-# validated screen's measured zero-settled-miss property does not extend to it.
-# Deliberately separate from SCREEN_VOTER2_MODEL: changing a pre-screen model must
-# never silently alter the validated screen's cached verdicts.
-PRESCREEN_ENABLED = os.getenv("PRESCREEN_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
-# Both measured on the full eval and both reliable under concurrency: 8/8 clean replies,
-# 9 output tokens, ~$0.027 per 1,000 rows each. The model matters as much as the prompt —
-# on identical text, discard rates across the cheap field ran from 15% to 97%.
-#
-# Order is a cost choice, not a verdict choice: the gate discards only when BOTH say no,
-# so voter 2 is asked only about the rows voter 1 rejects. qwen goes first because it
-# rejects slightly less often, which is what voter 2 is billed for.
-#
-# mistral-nemo would be $1/pass cheaper for a marginally better discard rate and was NOT
-# chosen: alone on this prompt it discards 39 of 567 gold positives, against 5 and 12 for
-# these two. The pair's measured loss is still zero, but a voter that says no to one
-# genuine replication in fourteen makes the AND gate a single-voter gate with a noisy
-# co-signer, and the tier's whole safety argument is that two independent voters agree.
-#
-# Not inclusionai/ling-2.6-flash, 3x cheaper again: it has a single OpenRouter endpoint
-# (Novita) that returned 429 for every call on 2026-08-02 under every routing mode, with
-# credit on the account. If that clears it is worth re-measuring — one env var.
-PRESCREEN_VOTER1_MODEL = os.getenv("PRESCREEN_VOTER1_MODEL", "qwen/qwen3-30b-a3b-instruct-2507")
-PRESCREEN_VOTER2_MODEL = os.getenv("PRESCREEN_VOTER2_MODEL", "mistralai/mistral-small-24b-instruct-2501")
-# Below this many characters of abstract there is not enough text for a 3B-class model
-# to be trusted with a terminal verdict, so the row bypasses the pre-screen.
-PRESCREEN_MIN_ABSTRACT_CHARS = int(os.getenv("PRESCREEN_MIN_ABSTRACT_CHARS", "200"))
+SCREEN_VOTER2_MODEL = "gpt-5.4-mini"
 
 # ── Stage 2 curated sources ───────────────────────────────────────────────────
 # Rows from these sources were put on a curated replication/reproduction list by a
@@ -174,11 +153,9 @@ PRESCREEN_MIN_ABSTRACT_CHARS = int(os.getenv("PRESCREEN_MIN_ABSTRACT_CHARS", "20
 # titled "A comment on Smith et al. (2023)" carries no replication vocabulary at
 # all. They bypass phrase matching and go straight to needs_review for Stage 3's
 # screen — the validated decider — to settle.
-CURATED_SOURCES = frozenset(
-    s.strip().lower()
-    for s in os.getenv("CURATED_SOURCES", "i4r,bob_reed,backfill_old_pipeline").split(",")
-    if s.strip()
-)
+# A closed vocabulary: these strings are written by Stage 1's own source tags, so the
+# set is a fact about the corpus, not a setting. Adding one is a code change.
+CURATED_SOURCES = frozenset({"i4r", "bob_reed", "backfill_old_pipeline"})
 
 # ── OpenAlex snapshot (bulk parquet) ──────────────────────────────────────────
 # The public S3 bucket holding the whole corpus as column-projectable parquet.
@@ -194,7 +171,6 @@ SNAPSHOT_HTTP_TIMEOUT = int(os.getenv("SNAPSHOT_HTTP_TIMEOUT", "60"))
 # Compression for the Stage A survivor pool. The pool is the artifact that makes a
 # Stage B vocabulary change a local re-run instead of a 725 GB rescan, so it is kept
 # small and portable; zstd is the best size/speed trade pyarrow ships by default.
-SNAPSHOT_POOL_COMPRESSION = os.getenv("SNAPSHOT_POOL_COMPRESSION", "zstd")
 # Where that pool lives. Deliberately NOT in the mkdir loop above: the pool is a
 # few GB and is often pointed at an external or shared disk, so importing config
 # must not create it (or fail on an unmounted path) for the runs that never touch
@@ -208,30 +184,6 @@ FLORA_POOL_REPO = os.getenv("FLORA_POOL_REPO", "")
 # degrades, so uploads are batched into multi-file commits.
 FLORA_HF_COMMIT_BATCH = int(os.getenv("FLORA_HF_COMMIT_BATCH", "100"))
 
-# ── Filter-engine LLM tiers: the dry-run cost estimate (issue #146 §6) ────────
-# Rough list prices per 1,000 tokens, SUMMED OVER A TIER'S TWO VOTERS, so a tier's
-# estimate is one multiplication per row. They exist to answer "is this run $3 or
-# $3,000?" before it starts and are deliberately not a billing record — what a run
-# actually cost is read from cache/token_usage.json afterwards. Update them when a
-# voter model changes; they are env-overridable so a price cut needs no release.
-ENGINE_TIER_PRICE_PER_1K_IN = {
-    "screen_cheap":     float(os.getenv("ENGINE_PRICE_CHEAP_IN", "0.00014")),
-    "screen_expensive": float(os.getenv("ENGINE_PRICE_EXPENSIVE_IN", "0.00055")),
-}
-ENGINE_TIER_PRICE_PER_1K_OUT = {
-    "screen_cheap":     float(os.getenv("ENGINE_PRICE_CHEAP_OUT", "0.00045")),
-    "screen_expensive": float(os.getenv("ENGINE_PRICE_EXPENSIVE_OUT", "0.00450")),
-}
-# Output tokens one row costs a tier. The cheap tier answers with one field; the
-# expensive tier returns the five-field v3.3 schema with a quote and a reasoning.
-ENGINE_TIER_OUTPUT_TOKENS = {
-    "screen_cheap":     int(os.getenv("ENGINE_OUTPUT_TOKENS_CHEAP", "20")),
-    "screen_expensive": int(os.getenv("ENGINE_OUTPUT_TOKENS_EXPENSIVE", "300")),
-}
-# Characters per token for the estimate. Nothing is tokenized to produce a number
-# nobody will be billed on; 4.0 is the usual English-prose approximation.
-ENGINE_CHARS_PER_TOKEN = float(os.getenv("ENGINE_CHARS_PER_TOKEN", "4.0"))
-
 # ── External servers ──────────────────────────────────────────────────────────
 GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")
 
@@ -242,11 +194,13 @@ GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")
 GEMINI_USE_FLEX     = os.getenv("GEMINI_USE_FLEX", "").lower() in ("1", "true", "yes")
 # Timeout in seconds for flex calls — must cover the 15-minute worst case.
 GEMINI_FLEX_TIMEOUT = int(os.getenv("GEMINI_FLEX_TIMEOUT", "900"))
-# Which keys are paid, by 1-based slot number (GEMINI_API_KEY = 1, GEMINI_API_KEY_2 = 2, …).
-# Flex follows the key rather than its position in the rotation, so a disabled or
-# reordered key does not silently drop every call back to standard pricing.
-GEMINI_PAID_KEYS: set[int] = {
-    int(n) for n in os.getenv("GEMINI_PAID_KEYS", "1").replace(",", " ").split() if n.isdigit()
+# WHICH SLOTS are paid, by 1-based number (GEMINI_API_KEY = 1, GEMINI_API_KEY_2 = 2, …)
+# — slot numbers, never key values. A fact about one machine's key layout, so it is
+# env-set. Flex follows the key rather than its position in the rotation, so a
+# disabled or reordered key does not silently drop every call back to standard pricing.
+GEMINI_PAID_KEY_SLOTS: set[int] = {
+    int(n) for n in os.getenv("GEMINI_PAID_KEY_SLOTS", "1").replace(",", " ").split()
+    if n.isdigit()
 }
 
 # ── OpenAI flex tier ──────────────────────────────────────────────────────────
@@ -258,13 +212,6 @@ GEMINI_PAID_KEYS: set[int] = {
 OPENAI_USE_FLEX     = os.getenv("OPENAI_USE_FLEX", "").lower() in ("1", "true", "yes")
 # Timeout in seconds for flex calls — must cover the queueing worst case.
 OPENAI_FLEX_TIMEOUT = int(os.getenv("OPENAI_FLEX_TIMEOUT", "900"))
-
-# ── Outcome extraction ────────────────────────────────────────────────────────
-# When the abstract-based outcome LLM returns cannot_be_determined (or the
-# abstract is empty) and parsed fulltext is available, escalate to a second
-# fulltext-based LLM call. Set to false to disable the escalation step.
-OUTCOME_FULLTEXT_ESCALATION = os.getenv(
-    "OUTCOME_FULLTEXT_ESCALATION", "true").strip().lower() not in {"false", "0", "no"}
 
 # ── Daily OpenAI token budget ─────────────────────────────────────────────────
 # A hard ceiling on OpenAI tokens (prompt + completion) bought per calendar day —
@@ -283,8 +230,6 @@ EPMC_RATE_SEC      = float(os.getenv("EPMC_RATE_SEC", "0.4"))
 CROSSREF_RATE_SEC  = float(os.getenv("CROSSREF_RATE_SEC",  "0.1"))
 S2_RATE_SEC        = float(os.getenv("S2_RATE_SEC",        "0.5"))
 SCOPUS_RATE_SEC    = float(os.getenv("SCOPUS_RATE_SEC",    "1.0"))  # Elsevier: ~1 req/sec
-UNPAYWALL_RATE_SEC = 0.5
-GROBID_RATE_SEC    = 3.0
 
 # ── Abstract backfill: batch sizes and quota caps ────────────────────────────
 # OpenAlex filter= accepts up to 50 pipe-separated ids per call.
