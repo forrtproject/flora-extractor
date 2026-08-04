@@ -66,26 +66,24 @@ run_engine () {
     echo " $label"
     echo "==============================================================================="
     echo
-    if [[ -z "$keywords_arg" ]]; then
-        python -m search.engine.cli \
-            --sources "$SOURCES" \
-            --max-per-source "$MAX_PER_SOURCE" \
-            --year-from "$YEAR_FROM" --year-to "$YEAR_TO" \
-            --out "$OUT_DIR/$file"
-    else
-        python -m search.engine.cli \
-            --keywords "$keywords_arg" \
-            --sources "$SOURCES" \
-            --max-per-source "$MAX_PER_SOURCE" \
-            --year-from "$YEAR_FROM" --year-to "$YEAR_TO" \
-            --out "$OUT_DIR/$file"
+    # The standalone engine CLI was deleted: it wrote its own candidates_engine.csv and
+    # bypassed the merge, dedup and index that make a candidates row usable. The engine
+    # backend now reaches production only through run_search, behind FLORA_USE_ENGINE.
+    # Keyword sets are not a per-run flag any more — the search vocabulary lives in
+    # search/openalex_search.py (SEARCH_PHRASES) and filter/phrase_detection.py.
+    if [[ -n "$keywords_arg" ]]; then
+        echo "NOTE: per-run --keywords is no longer supported; using the built-in phrase list."
+        echo
     fi
-    local n
-    n=$(($(wc -l < "$OUT_DIR/$file") - 1))
+    FLORA_USE_ENGINE=1 python -m search.run_search \
+        --source "$SOURCES" \
+        --max-per-phrase "$MAX_PER_SOURCE" \
+        --from-year "$YEAR_FROM" --to-year "$YEAR_TO"
     echo
-    echo "Wrote $n rows to $OUT_DIR/$file"
+    echo "Rows are merged into data/candidates.csv (deduped, indexed) — not $OUT_DIR/$file."
+    echo "See docs/cli-reference.md for the full flag set."
     echo
-    eval "$4=$n"
+    eval "$4=0"
 }
 
 # Run 1 — Discover UI "Load example" preset (every wildcard syntax)
@@ -116,24 +114,22 @@ run_engine \
     "" \
     N4
 
-# Stage 2 (optional, gracefully skipped on feature/search)
+# Stage 2 — the filter engine. It routes the survivor pool (parquet), not the
+# CSVs the runs above wrote, so there is nothing here to chain into it; what the
+# demo can show offline is the spec bundle it would route with.
 echo "==============================================================================="
-echo " Stage 2  ::  filter (rule + LLM)"
+echo " Stage 2  ::  filter engine (route → screen → handoff)"
 echo "==============================================================================="
 echo
-cp "$OUT_DIR/example_load.csv" "data/candidates.csv"
-
-if python -c "from filter.rule_filter import apply_rule_filter; import inspect; \
-import sys; sys.exit(0 if 'NotImplementedError' not in inspect.getsource(apply_rule_filter) else 9)" 2>/dev/null
-then
-    python -m filter.run_filter || echo "[WARN] filter step failed; continuing."
-else
-    echo "  note  filter/rule_filter.py is still the stub on this branch."
-    echo "        Switch to feature/filter to run Stage 2:"
-    echo "            git fetch && git checkout feature/filter"
-    echo "            python -m filter.run_filter"
-fi
-
+echo "Stage 2 reads the survivor pool, not these candidate CSVs. The bundle:"
+echo
+python -m filter.engine specs || echo "[WARN] could not load the spec bundle; continuing."
+echo
+echo "To run it over a pool:"
+echo "    python -m search.pool_sync --pull"
+echo "    python -m filter.engine route"
+echo "    python -m filter.engine screen --tier screen_expensive --run"
+echo "    python -m filter.engine handoff --out data/filtered.csv"
 echo
 echo "==============================================================================="
 echo " Summary"
@@ -145,6 +141,6 @@ echo "  Run 4 (spec only)        $N4 rows  →  $OUT_DIR/example_spec.csv"
 echo
 echo " Next steps:"
 echo "   -  Open the CSVs in Excel; rows follow CANDIDATES_COLS."
-echo "   -  For Stage 2: git checkout feature/filter && python -m filter.run_filter"
-echo "   -  Engine internals: docs/scimeto_engine_port.md"
+echo "   -  For Stage 2: python -m filter.engine route  (see docs/filter-engine.md)"
+echo "   -  All commands and flags: docs/cli-reference.md"
 echo "==============================================================================="

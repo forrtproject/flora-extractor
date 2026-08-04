@@ -25,9 +25,9 @@ REM
 REM    4. After each run, shows where the output CSV landed and a quick row
 REM       count so you can see how recall changes with the keyword set.
 REM
-REM    5. Optionally runs Stage 2 (filter) on the engine output.  Stage 2
-REM       lives on feature/filter, so this step gracefully skips with a
-REM       message when run from feature/search.
+REM    5. Prints the Stage 2 spec bundle.  Stage 2 (the filter engine) routes
+REM       the survivor pool, not these candidate CSVs, so there is nothing
+REM       here to chain into it -- only the commands to run it yourself.
 REM
 REM  Conservative defaults are used everywhere:
 REM
@@ -147,12 +147,15 @@ echo  Keywords:  replicat*    pre-?registered    (close^|high-powered) replicati
 echo ===============================================================================
 echo.
 
-python -m search.engine.cli ^
-    --keywords "replicat*,pre-?registered,(close|high-powered) replication" ^
-    --sources %SOURCES% ^
-    --max-per-source %MAX_PER_SOURCE% ^
-    --year-from %YEAR_FROM% --year-to %YEAR_TO% ^
-    --out "%OUT_DIR%\example_load.csv"
+REM  The standalone engine CLI was deleted (it wrote its own candidates_engine.csv
+REM  and bypassed merge/dedup/index). The engine backend now runs only through
+REM  run_search, behind FLORA_USE_ENGINE. Keywords are not a per-run flag: the
+REM  search vocabulary lives in search/openalex_search.py (SEARCH_PHRASES).
+set FLORA_USE_ENGINE=1
+python -m search.run_search ^
+    --source %SOURCES% ^
+    --max-per-phrase %MAX_PER_SOURCE% ^
+    --from-year %YEAR_FROM% --to-year %YEAR_TO%
 if errorlevel 1 (
     echo [ERROR] Run 1 failed.
     popd
@@ -185,12 +188,15 @@ echo             (close^|high-powered^|preregistered) replication
 echo ===============================================================================
 echo.
 
-python -m search.engine.cli ^
-    --keywords "replicat*,direct replication,failed to replicate,(close|high-powered|preregistered) replication" ^
-    --sources %SOURCES% ^
-    --max-per-source %MAX_PER_SOURCE% ^
-    --year-from %YEAR_FROM% --year-to %YEAR_TO% ^
-    --out "%OUT_DIR%\example_placeholder.csv"
+REM  The standalone engine CLI was deleted (it wrote its own candidates_engine.csv
+REM  and bypassed merge/dedup/index). The engine backend now runs only through
+REM  run_search, behind FLORA_USE_ENGINE. Keywords are not a per-run flag: the
+REM  search vocabulary lives in search/openalex_search.py (SEARCH_PHRASES).
+set FLORA_USE_ENGINE=1
+python -m search.run_search ^
+    --source %SOURCES% ^
+    --max-per-phrase %MAX_PER_SOURCE% ^
+    --from-year %YEAR_FROM% --to-year %YEAR_TO%
 if errorlevel 1 (
     echo [ERROR] Run 2 failed.
     popd
@@ -215,12 +221,15 @@ echo  Run 3  ::  "Custom"  (long alternation list, single OR-bundle call)
 echo ===============================================================================
 echo.
 
-python -m search.engine.cli ^
-    --keywords "(direct|conceptual|preregistered|registered|close|high-powered|systematic|many-labs|exact|near|approximate|external|independent|operational) replication" ^
-    --sources %SOURCES% ^
-    --max-per-source %MAX_PER_SOURCE% ^
-    --year-from %YEAR_FROM% --year-to %YEAR_TO% ^
-    --out "%OUT_DIR%\example_custom.csv"
+REM  The standalone engine CLI was deleted (it wrote its own candidates_engine.csv
+REM  and bypassed merge/dedup/index). The engine backend now runs only through
+REM  run_search, behind FLORA_USE_ENGINE. Keywords are not a per-run flag: the
+REM  search vocabulary lives in search/openalex_search.py (SEARCH_PHRASES).
+set FLORA_USE_ENGINE=1
+python -m search.run_search ^
+    --source %SOURCES% ^
+    --max-per-phrase %MAX_PER_SOURCE% ^
+    --from-year %YEAR_FROM% --to-year %YEAR_TO%
 if errorlevel 1 (
     echo [ERROR] Run 3 failed.
     popd
@@ -242,11 +251,15 @@ echo  Run 4  ::  "Spec only"  (no extra wildcards, just search\spec\search-keywo
 echo ===============================================================================
 echo.
 
-python -m search.engine.cli ^
-    --sources %SOURCES% ^
-    --max-per-source %MAX_PER_SOURCE% ^
-    --year-from %YEAR_FROM% --year-to %YEAR_TO% ^
-    --out "%OUT_DIR%\example_spec.csv"
+REM  The standalone engine CLI was deleted (it wrote its own candidates_engine.csv
+REM  and bypassed merge/dedup/index). The engine backend now runs only through
+REM  run_search, behind FLORA_USE_ENGINE. Keywords are not a per-run flag: the
+REM  search vocabulary lives in search/openalex_search.py (SEARCH_PHRASES).
+set FLORA_USE_ENGINE=1
+python -m search.run_search ^
+    --source %SOURCES% ^
+    --max-per-phrase %MAX_PER_SOURCE% ^
+    --from-year %YEAR_FROM% --to-year %YEAR_TO%
 if errorlevel 1 (
     echo [ERROR] Run 4 failed.
     popd
@@ -259,38 +272,28 @@ echo Run 4 wrote %N4% rows to %OUT_DIR%\example_spec.csv
 echo.
 
 REM ===========================================================================
-REM  Stage 2 (filter)  --  optional, only fires when filter\rule_filter.py is
-REM  implemented.  On feature/search the file is still a stub that raises
-REM  NotImplementedError, so we detect that and print a friendly skip message
-REM  instead of failing the whole walkthrough.
+REM  Stage 2 (filter engine)  --  it routes the survivor pool (parquet), not
+REM  the CSVs the runs above wrote, so there is nothing here to chain into it.
+REM  What the demo can show offline is the spec bundle it would route with.
 REM ===========================================================================
 echo ===============================================================================
-echo  Stage 2  ::  filter (rule + LLM)
+echo  Stage 2  ::  filter engine (route -^> screen -^> handoff)
 echo ===============================================================================
 echo.
+echo Stage 2 reads the survivor pool, not these candidate CSVs.  The bundle:
+echo.
 
-REM Stage the engine output as candidates.csv so run_filter can consume it.
-copy /Y "%OUT_DIR%\example_load.csv" "data\candidates.csv" >nul
-
-python -c "from filter.rule_filter import apply_rule_filter; import inspect; src=inspect.getsource(apply_rule_filter); raise SystemExit(0 if 'NotImplementedError' not in src else 9)" >nul 2>&1
-if errorlevel 9 (
-    echo   note  filter\rule_filter.py is still the stub on this branch.
-    echo         Switch to feature/filter to run Stage 2:
-    echo             git fetch  ^&^&  git checkout feature/filter
-    echo             python -m filter.run_filter
-    goto :stage2_done
-)
+python -m filter.engine specs
 if errorlevel 1 (
-    echo   [WARN] could not introspect filter.rule_filter -- skipping Stage 2.
-    goto :stage2_done
+    echo   [WARN] could not load the spec bundle -- continuing anyway.
 )
 
-python -m filter.run_filter
-if errorlevel 1 (
-    echo [WARN] filter step failed -- continuing anyway.
-)
-
-:stage2_done
+echo.
+echo To run it over a pool:
+echo     python -m search.pool_sync --pull
+echo     python -m filter.engine route
+echo     python -m filter.engine screen --tier screen_expensive --run
+echo     python -m filter.engine handoff --out data\filtered.csv
 echo.
 
 REM ===========================================================================
@@ -306,12 +309,11 @@ echo   Run 4 (spec only)        %N4% rows  --  %OUT_DIR%\example_spec.csv
 echo.
 echo  Next steps:
 echo    -  Open the CSVs in Excel; rows are in the canonical CANDIDATES_COLS schema.
-echo    -  For Stage 2 (filter), check out feature/filter and run:
-echo           python -m filter.run_filter
-echo    -  For the full pipeline plus the web UI, check feature/filter's CLAUDE.md
-echo       (search/filter/extract/validate views all live there).
+echo    -  For Stage 2 (filter engine), run:
+echo           python -m filter.engine route
+echo    -  For the full pipeline plus the web UI, see CLAUDE.md.
 echo.
-echo  Engine internals are documented at docs\scimeto_engine_port.md.
+echo  Stage 2 design: docs\filter-engine.md  --  all flags: docs\cli-reference.md
 echo ===============================================================================
 
 popd

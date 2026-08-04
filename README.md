@@ -19,15 +19,19 @@ Starting from keyword searches of academic databases, FLoRA Extractor:
 ## Architecture
 
 ```
-Stage 1: search/      → data/candidates.csv   (discover candidates)
+Stage 1: search/       → the survivor pool    (search only — no filtering)
 Stage 2: filter/engine → data/filtered.csv    (route the pool, screen, hand off)
-Stage 3: extract/     → data/extracted.csv    (link original + code outcome)
-Stage 4: validate/    → monitoring web app    (dashboard at localhost:5001)
+Stage 3: extract/      → data/extracted.csv   (link original + code outcome)
+Stage 4: validate/     → monitoring web app   (dashboard at localhost:5001)
                              ↕
                       Supabase (separate validation repo)
 ```
 
-Each stage is independently runnable.
+Each stage is independently runnable. The split is deliberate: **Stage 1 searches
+and Stage 2 decides.** Stage 1's only keyword logic is the search gate that makes
+scanning 510M works tractable (a broad token/stem alternation plus concept
+membership); every precision decision — exclusions, phrases, vocabulary, rescues —
+lives in Stage 2's spec bundle, so there is one rule set to reason about.
 
 ---
 
@@ -62,26 +66,22 @@ See [docs/setup.md](docs/setup.md) for full setup instructions.
 ```
 RESEARCHER_EMAIL=you@example.com   # for OpenAlex/Crossref API politeness
 GEMINI_API_KEY=...                 # primary LLM (free at aistudio.google.com)
-OPENROUTER_API_KEY=...             # second voter of the Stage 4.5 screen (Stage 3 only)
+OPENAI_API_KEY=...                 # Stage 3's second screen voter (default SCREEN_VOTER2_MODEL)
 ```
 
-Optional: `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `GROBID_URL`. See `.env.example`.
+`OPENROUTER_API_KEY` is needed only when a model id contains a `/` (e.g. a
+`SCREEN_VOTER2_MODEL` or the optional pre-screen voters routed through OpenRouter).
+Optional: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `GROBID_URL`.
+
+`.env.example` is the authoritative list of every variable and its default — copy it
+rather than this excerpt.
 
 ---
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [docs/setup.md](docs/setup.md) | Installation and running the pipeline |
-| [docs/architecture.md](docs/architecture.md) | Module map and design decisions |
-| [docs/cli-reference.md](docs/cli-reference.md) | All CLI commands and flags |
-| [docs/filter-engine.md](docs/filter-engine.md) | Stage 2's declarative routing engine |
-| [docs/csv-schema.md](docs/csv-schema.md) | CSV column definitions |
-| [docs/dashboard-guide.md](docs/dashboard-guide.md) | Dashboard user guide |
-| [docs/supabase-schema.md](docs/supabase-schema.md) | Supabase validation table schemas |
-| [docs/testing.md](docs/testing.md) | Running and writing tests |
-| [docs/README.md](docs/README.md) | Full documentation index |
+**[docs/README.md](docs/README.md) is the documentation index** — every guide,
+reference and code-flow walkthrough is listed there.
 
 **AI coding agent?** Read [CLAUDE.md](CLAUDE.md) first.
 
@@ -103,10 +103,12 @@ Abstract backfill: Europe PMC, Semantic Scholar, Crossref, Scopus.
 
 ## Contributing
 
-1. Branch from `dev` (`feature/search`, `feature/filter`, `feature/extract`, `feature/validate`)
+1. Branch from `origin/main` (`feature/search`, `feature/filter`, `feature/extract`, `feature/validate`)
 2. Test with sample data in `misc/`
-3. Open a PR to `dev` when a feature is stable — don't wait until the end
-4. `main` and `dev` are branch-protected; all merges require a PR review
+3. Open a PR with `--base main` when a feature is stable — don't wait until the end
+4. `main` is branch-protected; all merges require a PR review
+
+(The `dev` branch is stale — do not base work on it.)
 
 ---
 

@@ -38,7 +38,6 @@ INSTANCE_TYPE="${INSTANCE_TYPE:-c7i.xlarge}"
 VOLUME_GB="${VOLUME_GB:-100}"
 REPO_REF="${REPO_REF:-main}"                   # branch/tag/SHA the instance scans with
 REPO_URL="${REPO_URL:-https://github.com/forrtproject/flora-extractor.git}"
-BUILD_CANDIDATES="${BUILD_CANDIDATES:-1}"      # also build + push the prebuilt corpus
 SHUTDOWN_WHEN_DONE="${SHUTDOWN_WHEN_DONE:-0}"  # 1 = power off after publishing (see runbook)
 SPOT="${SPOT:-0}"                              # 1 = spot instance (~70% cheaper, LOSES the scan if reclaimed)
 NAME_TAG="${NAME_TAG:-flora-snapshot-scan}"
@@ -146,7 +145,6 @@ trap 'rm -f "$USER_DATA"' EXIT
   echo "export FLORA_POOL_REPO='$FLORA_POOL_REPO'"
   echo "export REPO_URL='$REPO_URL'"
   echo "export REPO_REF='$REPO_REF'"
-  echo "export BUILD_CANDIDATES='$BUILD_CANDIDATES'"
   echo "export SHUTDOWN_WHEN_DONE='$SHUTDOWN_WHEN_DONE'"
   tail -n +2 "$BOOTSTRAP"    # everything but its shebang
 } > "$USER_DATA"

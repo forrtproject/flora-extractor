@@ -1,7 +1,7 @@
 # Running the OpenAlex Snapshot Scan on AWS
 
 The Stage 1 snapshot scan reads the entire OpenAlex works corpus — 2,446 parquet
-partitions, 725 GB, 510,372,821 records — and keeps what its two-stage gate admits
+partitions, 725 GB, 510,372,821 records — and keeps what the **search gate** admits
 (`search/snapshot_scan.py`). On a home connection that is a 13–21 hour job. In
 **us-east-1**, where the bucket lives, it is a 2–5 hour job that costs a few dollars,
 because S3 → EC2 traffic inside one region is free and column projection means only
@@ -15,8 +15,13 @@ it again.
 
 | Artifact | Where | Who consumes it |
 | -------- | ----- | --------------- |
-| Stage A survivor pool (~2–3 GB, one parquet per partition) | `<repo>/<year>/part-*.parquet` + `pool_manifest.json` | anyone changing the Stage B vocabulary (`--admit-from-pool`) |
-| Prebuilt candidates artifact (chunked parquet + manifest) | `<repo>/builds/<build_hash>/`, `builds/latest.json` | everyone else (`python -m search.pool_sync --pull-build`) |
+| The survivor pool (~2–3 GB, one parquet per partition) | `<repo>/<year>/part-*.parquet` + `pool_manifest.json` | everyone — it is Stage 1's output and Stage 2's direct input (`python -m search.pool_sync --pull`) |
+
+There is one artifact, and that is the point: the pool is the corpus. The prebuilt
+prebuilt `candidates.csv` build belonged to the admission-gated Stage 1 that no
+longer exists and has been deleted with it: `pool_sync` now offers only `--push`,
+`--pull` and `--check-access`, and the `BUILD_CANDIDATES` knob is gone from both
+scripts.
 
 ## Prerequisites
 
@@ -62,7 +67,6 @@ Optional knobs, all environment variables:
 | `VOLUME_GB` | `100` | root volume; the pre-flight floor is 25 GB free |
 | `REGION` | `us-east-1` | where the OpenAlex bucket is — moving it costs egress |
 | `REPO_REF` | `main` | branch, tag or SHA the instance scans with |
-| `BUILD_CANDIDATES` | `1` | also build and push the prebuilt candidates artifact |
 | `SHUTDOWN_WHEN_DONE` | `0` | power off (not terminate) after a successful publish |
 | `SPOT` | `0` | `1` is cheaper but loses the scan on a reclaim (see Cost) |
 | `FORCE_NEW` | `0` | `1` launches even if a scan instance is already running |
@@ -98,8 +102,7 @@ Ubuntu box with `sudo -E bash scripts/aws_snapshot_scan.sh`):
    write, because an existing repo answers a read-only token's `create_repo` happily
    — then fetches the OpenAlex manifest and checks free disk. Any failure here aborts
    with nothing scanned.
-5. Starts the long phase detached in tmux: scan → push pool → build candidates →
-   push build → write `/opt/flora/DONE`.
+5. Starts the long phase detached in tmux: scan → push pool → write `/opt/flora/DONE`.
 
 ## What to expect
 
@@ -108,8 +111,6 @@ Ubuntu box with `sudo -E bash scripts/aws_snapshot_scan.sh`):
 | Bootstrap + pre-flight | 2–4 min | apt, pip, HF write check |
 | Snapshot scan | 2–5 h | sequential, network- and decode-bound |
 | Pool push (~2–3 GB, ~2,446 files) | 10–25 min | batched commits, resumable |
-| Candidates build | ~15 min | local Stage B pass over the pool |
-| Build push | 2–5 min | a few dozen chunks |
 
 Progress is visible from the first minute: partitions are consumed oldest-first, and
 the early `updated_date=2016-*` partitions are small, so the file counter moves fast
@@ -135,7 +136,7 @@ partition at a time, so `c7i.xlarge` is the right default and a bigger instance
 mostly buys network burst it does not use.
 
 **Spot** (`SPOT=1`) is ~70% cheaper and **loses the whole scan if it is reclaimed**. The
-ledger, the survivor pool and `candidates.csv` all live on the instance's root volume,
+ledger and the survivor pool both live on the instance's root volume,
 which is `DeleteOnTermination`; a reclaim terminates the instance, so the volume and
 every hour of scanning on it are gone and the next launch starts from an empty ledger.
 The per-partition checkpointing protects against a *process* dying, not against the box
@@ -162,15 +163,15 @@ often as you like. Output:
   files consumed                        620 / 2,446  (25.3%)
   bytes consumed                        101.01 / 724.97 GB
   records scanned                       84,618,962 / 510,372,821
-  rows merged into candidates.csv       101,576
+  rows kept                             101,576
   survivor pool                         2 file(s), 0.01 GB  (/opt/flora/pool)
   file(s) mid-scan                      1 (updated_date=2025-11-06/part_0201.parquet)
   first / last file finished            2026-08-02T23:07:32+00:00 / 2026-08-02T23:30:28+00:00  (1m 00s ago)
   recent throughput                     89.1 MB/s (last 50 files)
   estimated time remaining              1h 56m
   snapshot date                         2026-07-28
-  Stage A / Stage B fingerprint         d536bc51b9b2 / f2d76434d673
-  this checkout                         d536bc51b9b2 / f2d76434d673
+  search gate fingerprint               d536bc51b9b2
+  this checkout                         d536bc51b9b2
 ```
 
 Throughput and ETA are measured over the last 50 finished files in manifest bytes, not
@@ -196,11 +197,9 @@ You do not have to supply the token again: the script reads `RESEARCHER_EMAIL`,
 file, which is how you fix a bad token — `sudo HF_TOKEN=hf_… bash
 /opt/flora/aws_snapshot_scan.sh`.
 
-- The ledger records each manifest file as `done` only after its rows are merged and
-  its pool file is committed, so a killed process re-reads at most one partition.
-- A file left `merging` (crash between the CSV append and the index append) triggers a
-  rebuild of the candidates index before anything is rescanned — no duplicated rows.
-- Pool and build pushes skip anything already on the remote at the same size, so an
+- The ledger records each manifest file as `done` only after its pool file is
+  committed, so a killed process re-reads at most one partition.
+- Pool pushes skip anything already on the remote at the same size, so an
   interrupted upload is resumed by re-running it.
 - A second invocation while a scan is running takes no lock and does not start a
   second scanner; it tells you to use `status` instead.
@@ -215,8 +214,6 @@ If only the *publish* failed (bad token fixed after the fact), the scan is on di
 ```bash
 cd /opt/flora/flora-extractor
 sudo /opt/flora/venv/bin/python -m search.pool_sync --push
-sudo /opt/flora/venv/bin/python -m search.pool_sync --build-candidates
-sudo /opt/flora/venv/bin/python -m search.pool_sync --push-build
 ```
 
 ## Verifying the result
@@ -232,19 +229,17 @@ sudo bash /opt/flora/aws_snapshot_scan.sh status
    `scan.log` under "finished with N unreadable file(s)". Re-running the scan picks
    exactly those up (they are absent from the ledger, not marked done).
 2. **Records scanned equals the manifest total** (~510 M) — the same check by row.
-3. **Pool file count ≈ file count** — a partition with no Stage A survivor at all
+3. **Pool file count ≈ file count** — a partition with no gate survivor at all
    leaves no pool file, so a handful fewer is expected; hundreds fewer is not.
-4. **`pool_manifest.json` in the repo** names the gate the pool was scanned under:
-   `stage_a_fingerprint` must match `this checkout` in the status output, and
+4. **`pool_manifest.json` in the repo** names the search gate the pool was scanned
+   under: its gate fingerprint must match `this checkout` in the status output, and
    `ledger_files` / `ledger_records` must match the manifest.
-5. **`builds/latest.json`** points at a `build_hash` whose `manifest.json` reports the
-   row count you expect, with the same `stage_a_fingerprint` / `stage_b_fingerprint`.
 
 Then, from any laptop with read access to the repo:
 
 ```bash
-python -m search.pool_sync --pull-build --dry-run   # names the build, downloads nothing
-python -m search.pool_sync --pull-build             # → data/candidates.csv
+python -m search.pool_sync --pull --dry-run   # names what it would fetch, downloads nothing
+python -m search.pool_sync --pull            # → the survivor pool, Stage 2's input
 ```
 
 ## Tearing down

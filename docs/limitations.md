@@ -2,27 +2,54 @@
 
 This document records deliberate design choices in the current pipeline that bound
 recall or precision, together with the concrete **revisit obligation** each one carries.
-The numbers below are from the production run of **2026-07**. These are not bugs to be
-silently patched over — each is a place where a future pass should re-examine the data.
+These are not bugs to be silently patched over — each is a place where a future pass
+should re-examine the data.
+
+Every measurement here is date-stamped and names the run or report it came from,
+**and the segment of the corpus it was measured over**. A rate quoted over an
+unsegmented corpus is not a rate: a 5.4% PDF-escalation figure computed over a
+mixed file was 92% once legacy rows were excluded and only fresh rows counted, and
+nothing in the number itself said which population it described. Name the
+denominator or do not quote the figure.
+
+Where an entry is marked **historical** or **superseded**, the number was measured on
+the retired `filtered.csv` of the **2026-07** production run and does not describe the
+current pipeline. Last reviewed against the code on **2026-08-04**.
 
 ---
 
-## (a) Recall is bounded by the Stage-2 phrase gate
+## (a) Recall is bounded by the search gate
 
-Stage 2 only admits candidates that contain a replication phrase. Rows with **no
-replication phrase at all (~2.17M)** are rejected at high confidence **without any LLM
-review**. A second pass over this rejected bucket (embedding-based or LLM-based) is
-**planned but not implemented**.
+**Stage 1 searches; Stage 2 filters.** The snapshot scanner
+(`search/snapshot_scan.py`) applies the **search gate** and nothing else: a broad
+token/stem alternation over title and raw abstract, **or** membership of a
+replication concept. Either hit puts the work in the survivor pool. No exclusion
+pattern and no phrase precision test runs in Stage 1, so a rule change is a
+`filter.engine route` re-run over the pool rather than a rescan, and the spec
+bundle is the one rule set that decides what a paper is.
 
-The cost of skipping LLM review is measurable on the rows that *did* get it. Of the
-**132,197** phrase-without-citation rows sent to the LLM, **28,438 were readmitted**
-(24,232 replication + 4,206 reproduction). That means **~58% of all accepted rows came
-in via the LLM leg** — so rules-only decisions materially undercount true replications,
-and the ~2.17M no-phrase rows almost certainly hide a substantial number of missed
-studies.
+The bound that remains is the gate itself. A work whose title and abstract carry
+none of the stems and which OpenAlex tagged with neither concept never enters the
+pool, and nothing downstream can recover it: Stage 2 routes and discards over the
+pool, **only LLM tiers admit** there, and a rule can never turn a discard back into
+a keep. The gate is a token vocabulary plus two concept ids, applied once, at scan
+time, with no LLM review of what it rejected — and a full rescan is the only way
+back. That asymmetry is why a token added to the gate is the expensive kind of
+change (it also enlarges the artifact every collaborator downloads) while a spec
+edit is the cheap kind.
+
+The historical measurement behind this entry, from the retired `filtered.csv`
+(production run of **2026-07**): rows with no replication phrase at all (~2.17M) were
+rejected at high confidence without any LLM review, while of the 132,197
+phrase-without-citation rows that *were* sent to the LLM, 28,438 were readmitted
+(24,232 replication + 4,206 reproduction) — ~58% of all accepted rows arrived via the
+LLM leg. Those numbers describe a pipeline that no longer exists; they are kept
+because the shape of the finding — rules-only admission materially undercounts — is
+what motivates the obligation below.
 
 **Revisit obligation:** implement and run a second pass (embedding or LLM) over the
-no-phrase bucket before treating the accepted set as complete.
+bucket the search gate rejects, and re-measure the readmission rate on the current
+architecture before treating the accepted set as complete.
 
 ---
 
@@ -52,11 +79,18 @@ technical-exclusion bucket as clean.
 
 ---
 
-## (c) `filter_confidence` is currently uninformative
+## (c) `filter_confidence` does not discriminate
 
-The `filter_confidence` field is **99.9% `high`** in the production run. It does not
-currently discriminate between confident and marginal decisions and should not be relied
-on for triage or downstream weighting until it is recalibrated.
+**Superseded measurement.** The "99.9% `high`" figure was measured on the retired
+`filtered.csv` of the **2026-07** production run, produced by a filter stage that no
+longer exists. Do not quote it.
+
+The field is uninformative for a different reason now: under the filter engine,
+`filter_confidence` is a **constant per pile**, read from
+`filter/spec/conventions.json` (`screen_expensive` → high, `screen_cheap` → medium,
+`needs_human` → low, `discard` → high). It labels which pile a row came from, not how
+sure anything was about that row, and two rows in the same pile always carry the same
+value. It should not be used for triage or downstream weighting.
 
 ---
 
@@ -78,8 +112,6 @@ re-decides those rows.
 it as a `pending/no_text` count on the current release, run the worklist → backfill
 → freeze → `route` cycle over it, and report how many piles the recovered abstracts
 changed.
-
----
 
 ---
 
@@ -165,3 +197,25 @@ measurable in the thousands without any gold labels, and it is the only number t
 should decide this. Re-check the economics at the same time: measured over
 `data/filtered.csv` on 2026-08-02, 49,800 of 2,581,092 rows reach Stage 3, so the whole
 screening bill is ~$87 and this tier nets ~$30 of it.
+
+---
+
+## (h) Full-text acquisition fails on most rows that reach it
+
+**Historical measurement, 2026-07 production corpus.** Of the rows that escalated to
+PDF acquisition, the waterfall in `shared/pdf_sources.py` returned no usable
+document **62%** of the time. That bounds every step behind it: the full-text link
+rung, the full-text outcome pass, and `record_type_check` are all unavailable on
+those rows, which is a large part of why `cannot_be_determined` and `pending` are
+common outcomes rather than rare ones.
+
+The denominator matters here more than the rate. It is *rows that reached
+acquisition*, not rows in the corpus, and the population that reaches acquisition is
+the one the cheaper rungs could not settle — the hard tail, and the tail most likely
+to be paywalled. Do not restate it as a corpus-wide open-access rate.
+
+**Revisit obligation:** re-measure on the current corpus, segmented by
+`pdf_source`/`parse_method` (both are written on every row precisely so this is
+answerable from the CSV), and decide from the failure mix whether another
+acquisition tier would pay for itself or whether the misses are structurally
+paywalled.

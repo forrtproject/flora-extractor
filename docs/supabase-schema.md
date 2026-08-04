@@ -6,30 +6,41 @@ The validation repo uses Supabase (PostgreSQL) as its backend. This document des
 
 ### `unvalidated`
 
-All records pushed for validation. The FLoRA extractor pipeline writes `extracted.csv`; the validation repo imports rows here.
+All records pushed for validation. `extract/csv_to_db.py` writes them; the payload is
+built by `_build_unvalidated_row()`, which is the authoritative column list — a
+column added there needs a matching `alter table` in the validation repo first,
+because PostgREST rejects the whole insert when the payload names a column the table
+does not have. The fields the dashboard reads back are the `select` strings in
+`shared/supabase_client.py`. The ones worth naming here:
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `doi_r` | text | Replication paper DOI |
-| `doi_o` | text | Original study DOI |
-| `title_r` | text | Replication paper title |
-| `title_o` | text | Original study title |
-| `outcome` | text | Extracted outcome (`success`, `failure`, `mixed`, etc.) |
+| `record_id` | text | Primary key; the page order key for every paged read |
+| `doi_r` / `doi_o` | text | Replication and original DOIs |
+| `outcome` | text | Extracted outcome (`success`, `failure`, `mixed`, …) |
 | `type` | text | `replication` or `reproduction` |
 | `link_method` | text | How the original was found |
 | `validation_status` | text | `unvalidated` \| `validated` \| `need_review` \| `validation_inprogress` |
 
 ### `validation_queue`
 
-Individual validator assignments and completion status.
+Individual validator assignments, their completion status, and the judgements
+themselves. **This repo writes only the skeleton**: `_build_queue_rows()` in
+`extract/csv_to_db.py` inserts one row per validator slot with exactly four fields —
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `doi_r` | text | Replication DOI being validated |
-| `validator_id` | text | Validator identifier |
-| `is_validated` | bool | Whether this assignment has been completed |
-| `assigned_at` | timestamp | When assigned |
-| `completed_at` | timestamp | When completed (null if pending) |
+| `record_id` | text | The record being validated |
+| `validator_slot` | text | One of `_VALIDATOR_SLOTS` in `extract/csv_to_db.py` (`human_1`, `human_2`, `llm`); a DB CHECK constraint enforces the same three |
+| `is_shown` | bool | Written `false`; the validation app flips it |
+| `is_validated` | bool | Written `false`; the validation app flips it |
+
+Every other column on the table — `validator_id`, `validator_name`, `type_check`,
+`original_check`, `outcome_check`, `corrected_doi_o`, `corrected_outcome`,
+`corrected_type`, `validator_notes` — is owned and filled by the external validation
+app. This repo only *reads* them; the read side is `shared/supabase_client.py`
+(`get_correction_frequency()`, `get_validation_analytics()`, `get_drilldown_page()`),
+whose `select` strings are the authoritative list of what the dashboard needs.
 
 ### `validated`
 
@@ -71,20 +82,69 @@ has to add them before the next import runs (tracked in forrtproject/flora-valid
 | `pdf_source` | text | forrtproject/flora-extractor#124 | Acquisition tier that supplied the full text (`arxiv`, `unpaywall_pdf`, `openalex_xml`, …); blank when the row read no document |
 | `parse_method` | text | forrtproject/flora-extractor#124 | Parser whose result was sent to the LLM (`pdfminer`, `grobid`, `openalex_xml`, …); blank when nothing was parsed |
 
+**Engine lineage: `work_id` and `release_id`.** Added by
+`db/migrations/0002_validation_lineage.sql` (run in the Supabase SQL editor after
+0001), both nullable because every row imported before the filter engine existed
+has neither.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `work_id` | bigint | The alias-resolved int64 OpenAlex id of the replication, derived by `csv_to_db` from `openalex_id_r` via `filter/engine/workids.work_id()`. Null when the row carries no parseable OpenAlex id |
+| `release_id` | text | The routing release the row was handed off under. Null unless the import was given `--release-id` |
+
+`work_id` is the load-bearing one. **Routing provenance is linked, not copied**:
+`extracted.csv` carries none of `ENGINE_EXPORT_COLS` (`route_rule`,
+`matched_rules`, `pending_reason`, `release_id`, …) because `EXTRACTED_COLS`
+excludes them by design, so `csv_to_db` cannot read a release id off a row and
+does not pretend to. What it writes instead is the identity everything else can be
+joined on:
+
+- **Which pile, rule and release a validated record came from** — join
+  `record_metadata.work_id` against the engine's `routing` table
+  (`filter/engine/store.py`, keyed `PRIMARY KEY (release_id, work_id)`), which
+  holds `pile`, `pending_reason`, `rule_id`, `precedence` and `matched_rules` per
+  release. The store is a disposable local DuckDB cache; it rebuilds from pool +
+  spec bundle, so the lineage survives losing it.
+- **What was spent on the work** — `engine_claim_items.work_id` →
+  `engine_claims.release_id`/`tier`, and `engine_verdicts.work_id` for the tier
+  evidence. These are in Postgres and are permanent.
+- **Whether an upstream change has invalidated a sent record** —
+  `filter/engine/supersede.py` reads exactly this join and writes
+  `engine_supersessions` rows naming the affected `record_id`s. It never mutates
+  `unvalidated`, `validated` or `validation_queue`.
+
+`release_id` is a property of the **handoff**, not of a row: every row of one
+Stage 3 run came through one `filter.engine handoff`, and that command's
+`data/filtered.csv.manifest.json` names its `release_id`. Pass it to the import to
+stamp it:
+
+```bash
+python -m extract.csv_to_db --input data/extracted.csv \
+    --release-id "$(python -c 'import json;print(json.load(open("data/filtered.csv.manifest.json"))["release_id"])')"
+```
+
+Omitting it costs nothing that cannot be recovered — the `work_id` join above
+still answers every routing question — it only means the record does not record
+which release it was sent under without consulting the store.
+
 The reproduction axis columns (`outcome_computation`, `outcome_computational_quote`,
 `out_quote_computational_source`, `outcome_robustness`, `outcome_robustness_quote`,
 `out_quote_robust_source`) are the same kind of pending entry on `unvalidated`.
 
 ## Dashboard endpoints
 
-The monitoring dashboard reads these tables via three API endpoints:
+Registered by the `dashboard` blueprint (`validate/routes/dashboard.py`); each one is
+a thin wrapper over the correspondingly named function in `shared/supabase_client.py`,
+where the `_get("<table>", …)` calls are the source of truth for what is read:
 
 | Endpoint | Tables read | Description |
 |----------|-------------|-------------|
-| `GET /api/dashboard/supabase-stats` | `unvalidated`, `validation_queue` | KPIs: total, progress, validators, agreement |
-| `GET /api/dashboard/supabase-corrections` | `validated` | Per-field correction frequency |
+| `GET /api/dashboard/supabase-stats` | `unvalidated`, `validation_queue` | KPIs: total, status counts, completion rate (a progress metric, **not** inter-rater agreement) |
+| `GET /api/dashboard/supabase-corrections` | `validation_queue` | Per-field correction frequency, over completed judgements |
 | `GET /api/dashboard/supabase-outcomes` | `validated` | Outcome distribution |
-| `GET /api/dashboard/supabase-drilldown` | `validated` | Paginated incorrect-DOI table |
+| `GET /api/dashboard/supabase-analytics` | `unvalidated` | Coverage and per-field validator agreement |
+| `GET /api/dashboard/supabase-confusion` | `unvalidated` | Pipeline-vs-final confusion matrices (#72) |
+| `GET /api/dashboard/supabase-drilldown` | `validation_queue`, `unvalidated` | Paginated incorrect-DOI table |
 
 All endpoints cache responses for 5 minutes (`CACHE_TTL = 300` in `shared/supabase_client.py`).
 

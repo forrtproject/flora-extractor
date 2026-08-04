@@ -10,8 +10,7 @@ module interfaces; `filter/spec/CONVENTIONS.md` is the authority for policy
 
 - **Piles:** `discard` (the only rule-terminal state), `screen_expensive` (two-voter
   classify gate), `screen_cheap` (discard-only small-model tier), `needs_human`,
-  `pending`. Pending rows carry a reason: `unevaluated`, `no_filter_matched`,
-  `no_text`, `budget_blocked`.
+  `pending`. Pending rows carry a `pending_reason` — see below.
 - **Precedence:** every spec carries an integer precedence; **higher number wins**.
   Multi-match is expected; the pile resolves once, by the highest-precedence
   matching rule. Routing of unclaimed rows is a pure function of
@@ -24,19 +23,37 @@ module interfaces; `filter/spec/CONVENTIONS.md` is the authority for policy
   (discards still discard — structural rules don't read the abstract). This is
   engine policy, not a spec: absence of evidence must not convert into a proceed.
 
+### `pending` and `pending_reason` are two different statements
+
+They read redundantly if you take `pending_reason` for a restatement of the pile.
+It is not. **`pending` is the pile: no decision exists for this row.**
+**`pending_reason` says why no decision exists**, and the two ways that happens
+want completely different work from a human.
+
+| `pending_reason` | What happened | What would move the row |
+| --- | --- | --- |
+| `no_filter_matched` | The row was routed and **no rule claimed it**. Every spec was evaluated and none matched, so nothing said discard and nothing sent it to a tier. It is *unclassified*. | A rule that covers it — this pile is the bundle's coverage gap, and its size is the honest measure of how much of the pool the rules say nothing about. |
+| `no_text` | A rule **did** claim it, for `screen_expensive` or `screen_cheap`, but `abstract_text` is empty and the engine downgraded it. It is *claimed but unreadable*. | Text. The M3 overlay path — `worklist` → `filter.engine.backfill` → `freeze` → `route --overlay` — exists for exactly this pile. |
+
+The distinction is what keeps "the rules do not cover this" from being silently
+counted as "we could not read this", which would hide a bundle gap behind a data
+gap. `build_routing()` in `filter/engine/route.py` emits these two values and no
+others; `conventions.json` declares them; `handoff` exports the two screen piles
+only, so an exported row's `pending_reason` is always empty.
+
 ## Module map (`filter/engine/`)
 
 | Module | Contract |
 | --- | --- |
-| `spec.py` | `FilterSpec` (frozen dataclass mirroring the JSON), `load_specs(spec_dir) -> list[FilterSpec]` (validated, sorted by precedence desc, ids unique), `bundle_hash(specs) -> str` (sha256 over each file's canonical bytes, order-independent, **including `conventions.json`** — see "The bundle a release is bound to"), `validate_spec(dict) -> list[str]` (error strings), RE2-safety check `re2_safe(pattern) -> bool` (rejects lookaround, backreferences, conditionals, `\G`, atomic groups, possessive quantifiers). |
+| `spec.py` | `FilterSpec` (frozen dataclass mirroring the JSON), `load_specs(spec_dir) -> list[FilterSpec]` (validated, sorted by precedence desc, ids unique), `bundle_hash(spec_dir: Path) -> str` (sha256 over the bundle directory's (filename, bytes) pairs, order-independent, **including `conventions.json`** — see "The bundle a release is bound to"), `validate_spec(dict) -> list[str]` (error strings), RE2-safety check `re2_safe(pattern) -> bool` (rejects lookaround, backreferences, conditionals, `\G`, atomic groups, possessive quantifiers). |
 | `backends.py` | Two evaluators with identical semantics: `eval_spec_rows(spec, rows: list[dict]) -> list[bool]` (Python `re`) and `eval_spec_batch(spec, batch: pa.RecordBatch) -> pa.BooleanArray` (pyarrow compute). `verify_backends(specs, table) -> list[str]` returns per-spec mismatch reports (empty = equal); used by tests and by `python -m filter.engine verify`. |
 | `route.py` | `route_batch(specs, batch) -> pa.Table` with columns `work_id (int64), pile (str), pending_reason (str), rule_id (str), precedence (int32), matched_rules (list<str>)`; `matched_rules` holds every non-shadow match (overlap diagnostics need the full cross-product), shadow matches are recorded separately in evaluations. |
 | `workids.py` | `work_id(openalex_id: str) -> int` (`https://openalex.org/W123` → `123`); `load_aliases(path) -> dict[int, int]` from `filter/spec/aliases.json` (old_id → canonical_id, empty to start); `alias_release(path) -> str` (file hash). |
 | `release.py` | `routing_release(pool_manifest_hash, overlay_hash, bundle_hash, engine_version, alias_release, schema_version) -> str` (sha256 of the canonical JSON); `write_release(...)`/`read_release(...)` under `cache/engine/releases/<id>.json`. Overlay hash is `None` until M3 (text overlays); pool manifest hash comes from `search.pool_sync.pool_manifest()`'s ledger hash or `--pool-manifest-hash`. |
-| `store.py` | Local DuckDB acceleration cache (gitignored, disposable): `open_store(path)`, `build_routing(store, pool_dir, specs, release_id)` (streams pool parquet through `route_batch`, persists `routing` and `evaluations(work_id, spec_id, spec_hash, matched)` incl. shadow specs), `pile_counts(store, release_id)`, `sample_pile(store, pile, n)`. `routing` is keyed `PRIMARY KEY (release_id, work_id)` and inserts `ON CONFLICT DO NOTHING`: a pool holding both a merged id and its canonical id holds two rows for ONE work, and first-writer-wins is what keeps that one routed work and one exported row. A build is one transaction — the delete and every insert commit together — so an interrupted run leaves the release absent or as its previous complete build, never half-replaced. Deleting the DB loses nothing: everything rebuilds from pool + specs. |
-| `diagnostics.py` | `diagnose(store_before, store_after, spec_id, ...) -> dict` — the §3 rule-diagnostics function: rows moved per (source pile → destination pile); overlap/agreement matrix vs every other rule (exclusive hits vs covered); a readable random sample (n≈20, seeded) of moved rows; holdout effect (reads `filter/spec/holdout.json`; reports `"holdout": "not_constructed"` until decision #146-2 lands); for discard specs, whether a `measured` entry exists (else the spec must be shadow). Renders JSON + a human-readable text block. |
-| `export.py` | `export_pile(store, pile, out_csv, release_id, from_year, to_year)` — writes the Stage 3 contract: `FILTERED_COLS` + `ENGINE_EXPORT_COLS` (see below), `utf-8-sig`, `filter_status`/`filter_method`/`filter_evidence`/`filter_confidence` derived via the conventions mapping. Also `export_manifest(...)`: a JSON naming release id, pile, row count, and content hash next to the CSV (immutable once written). |
-| `cli.py` / `__main__.py` | `python -m filter.engine route\|verify\|diagnose\|export\|specs\|status` (see `docs/cli-reference.md`). |
+| `store.py` | Local DuckDB acceleration cache (gitignored, disposable): `open_store(path)`, `build_routing(store, pool_dir, specs, release_id)` (streams pool parquet through `route_batch`, persists `routing` and `evaluations(work_id, spec_id, spec_hash, matched)` incl. shadow specs), `pile_counts(store, release_id)`, `sample_pile(con, release_id, pile, n=20, seed=17)`. `routing` is keyed `PRIMARY KEY (release_id, work_id)` and inserts `ON CONFLICT DO NOTHING`: a pool holding both a merged id and its canonical id holds two rows for ONE work, and first-writer-wins is what keeps that one routed work and one exported row. A build is one transaction — the delete and every insert commit together — so an interrupted run leaves the release absent or as its previous complete build, never half-replaced. Deleting the DB loses nothing: everything rebuilds from pool + specs. |
+| `diagnostics.py` | `diagnose(pool_dir, spec_dir, spec_id, *, baseline_dir=None, sample_n=20, seed=17) -> dict` — routes the pool twice, with and without the spec (the baseline bundle defaults to the same directory minus the spec). The §3 rule-diagnostics function: rows moved per (source pile → destination pile); overlap/agreement matrix vs every other rule (exclusive hits vs covered); a readable random sample (n≈20, seeded) of moved rows; holdout effect (reads `filter/spec/holdout.json`; reports `"holdout": "not_constructed"` until decision #146-2 lands); for discard specs, whether a `measured` entry exists (else the spec must be shadow). Renders JSON + a human-readable text block. |
+| `export.py` | `export_pile(con, pool_dir, pile, out_csv, release_id, from_year=None, to_year=None, conventions=None, specs=None, aliases=None, spec_dir=SPEC_DIR, expect_bundle_hash=None, expect_alias_release=None, overlay_dir=None, expect_overlay_hash=UNCHECKED, created_at="")` — writes the Stage 3 contract: `FILTERED_COLS` + `ENGINE_EXPORT_COLS` (see below), `utf-8-sig`, `filter_status`/`filter_method`/`filter_evidence`/`filter_confidence` derived via the conventions mapping. Also `export_manifest(...)`: a JSON naming release id, pile, row count, and content hash next to the CSV (immutable once written). |
+| `cli.py` / `__main__.py` | `python -m filter.engine specs\|verify\|route\|diagnose\|export\|screen\|handoff\|worklist\|status`. The subcommand list is `cli.py`'s `add_parser` calls; `--help` is authoritative, `docs/cli-reference.md` is the prose. |
 
 `ENGINE_VERSION` lives in `filter/engine/__init__.py` and is bumped whenever routing
 behavior changes without a spec change.
@@ -65,11 +82,18 @@ re-runs `route` and exports the new release (issue #146 §4).
 two backends' character classes identical. Python `re` reads `\w`, `\b` and
 `IGNORECASE` as Unicode-aware; RE2 — and so pyarrow — reads `\w` and `\b` as
 ASCII. A pattern that is RE2-safe can still match different rows in the two
-engines on non-ASCII text. This is not hypothetical: the author-year cite clause
-of `phrase-with-cite` and `exclusion-rescue` used `[\w'’.-]` as its surname atom,
-and `García et al. (2020)` matched the `re` backend only. Both now use an explicit
-negated class (`[^ \t\n\r\f,;:()\[\]]`), which both engines read identically, and
-the trailing `\b` on the et-al form became an explicit non-digit.
+engines on non-ASCII text. This is not hypothetical: the retired `phrase-with-cite` rule's author-year cite
+clause used `[\w'’.-]` as its surname atom, and `García et al. (2020)` matched the
+`re` backend only. The fix was an explicit negated class
+(`[^ \t\n\r\f,;:()\[\]]`), which both engines read identically; the pattern is
+archived in `filter/spec/rule_ideas.md`. Live rules still use `\w` — rule B's
+`we (…0-2 words…) replicat(ed)` arm — so the hazard is current, not historical.
+
+Text is NFC-normalised at the one seam per backend where it becomes matchable
+(`_nfc()` and `BatchContext`), which is why the bundle needs no decomposed-Unicode
+twin of its multilingual stem arm. `pc.utf8_normalize` is not used: on pyarrow 25
+it returns its input unchanged for NFC, which would divide the backends on exactly
+those rows.
 
 Two limits remain, deliberately. `\s` outside a character class is still
 Unicode-aware in `re` and ASCII in RE2, so text separated by non-breaking or
@@ -92,18 +116,36 @@ release_id`. (`matched_rules` is |-joined; match by substring/split like
 `screen_categories`.) Stage 3 ignores trailing columns it does not read, so its
 contract is untouched.
 
+**They stop here, on purpose.** `EXTRACTED_COLS` excludes `ENGINE_EXPORT_COLS`, so
+Stage 3 does not carry the block into `extracted.csv` and `csv_to_db` does not push
+it. Provenance is **linked, not duplicated**: `extract/csv_to_db.py` writes
+`record_metadata.work_id` (the int64 id, via `filter/engine/workids.work_id()`),
+and every routing column is recoverable by joining that against the `routing` table
+for a release — the same join `filter/engine/supersede.py` already uses. Widening
+the CSV schema would create a second copy that can drift from the store.
+
 ### Pile → `filter_status` mapping
 
 Lives in `filter/spec/conventions.json` (machine-read by `export.py`), explained in
-`CONVENTIONS.md`. M1 mapping:
+`CONVENTIONS.md` — read the JSON, not this table, when the answer has to be right:
 
 | pile | filter_status | filter_confidence |
 | --- | --- | --- |
 | discard | `false_positive` | high |
-| screen_expensive | `replication` / `reproduction` (by the winning rule's `vocabulary` field) | high |
-| screen_cheap | `needs_review` (or the rule's vocabulary at medium, if it names one) | medium |
+| screen_expensive | the winning rule's `vocabulary`, else `needs_review` | high |
+| screen_cheap | the winning rule's `vocabulary`, else `needs_review` | medium |
 | needs_human | `needs_review` | low |
 | pending | not exported | — |
+
+A pile substitutes the rule's vocabulary for its own status only where its policy
+sets `vocabulary_names_status` — true for both screen piles, false for `discard` and
+`needs_human`. In the **current bundle** only the cheap rules name one.
+`replication-claim`, the sole `screen_expensive` rule, leaves `vocabulary` null on
+purpose — admission to the two-voter screen asks for attention rather than settling
+what the row is — so its rows reach `filtered.csv` as `needs_review`/high, while
+`replication-signal`, `replication-probe` and `reproduction-signal` export their
+vocabulary at `screen_cheap`/medium. That is a property of the bundle, not of the
+mapping.
 
 `filter_method` is always `engine:<release_id_prefix>`; `filter_evidence` is
 `rule:<id>` plus the matched evidence (phrase, prefix, type…) the backend recorded.
@@ -115,7 +157,7 @@ version. Verbatim shape:
 
 ```json
 {
-  "id": "deposit-doi-prefixes",
+  "id": "not-a-paper-doi",
   "description": "Why this rule exists and what it measured.",
   "match": {
     "doi_prefix": ["10.7910"],
@@ -134,9 +176,7 @@ version. Verbatim shape:
   "precedence": 960,
   "shadow": false,
   "measured": [
-    {"level": "human", "precision": 0.995, "n": 282,
-     "sample": "30k-candidates-2026-07", "date": "2026-08-01",
-     "owner": "…", "rationale": "…"}
+    {"level": "trusted", "date": "2026-08-04", "owner": "…", "rationale": "…"}
   ]
 }
 ```
@@ -159,70 +199,81 @@ Match semantics:
 - `vocabulary` (`"replication"` / `"reproduction"` / null) feeds the status mapping.
 - A `discard` spec with no `measured` entry fails validation unless `shadow` is true.
 
-## The consolidated starter bundle
+## The shipped bundle (rule book v2)
 
-Everything the pipeline currently knows as scattered Python/YAML constants becomes a
-spec file. Sources: `shared/utils.py` (deposit prefixes, non-article DOI/type),
-`filter/phrase_detection.py` (phrases, stems, guards), the former
-`filter/spec/exclusion-patterns.yaml` (folded in and deleted), and
-`search/openalex_search.py` (concept ids). Precedence bands per `CONVENTIONS.md`:
-900s structural discards · 600s rescues · 500s vocabulary-exclusion discards ·
-300s screen_expensive routes · 200s screen_cheap routes.
+Eight specs, designed in `redesign/rulebook_v2.html` and measured there. The book
+is a **whitelist**: nothing is screened unless a positive rule admits it, which is
+why there is no exclusion band and no rescue band. The nineteen specs it replaced
+— the six vocabulary exclusions, the two rescues, the four phrase/stem rules and
+the identifier/type rules it absorbed — are archived with their patterns and
+evidence in [`filter/spec/rule_ideas.md`](../filter/spec/rule_ideas.md).
 
-| spec | pile | prec. | content |
-| --- | --- | --- | --- |
-| `deposit-doi-prefixes` | discard | 960 | the 10 `_DATA_REPOSITORY_PREFIXES` + figshare rule |
-| `non-article-doi` | discard | 955 | `/reviews/`\|`/decisions/` DOI paths (peer-review objects) |
-| `dataset-type` | discard | 950 | OpenAlex `type == dataset` — the #149 rule; measured on the 2026-08-03 pilot; its rows stay in the pool and are auditable by rule id (route-not-delete) |
-| `non-article-type` | discard | 945 | the remaining `_NON_ARTICLE_TYPES` (paratext, peer-review, erratum, …) |
-| `editorial-artifact` | discard | 555 | former YAML `EDITORIAL_ARTIFACT` |
-| `data-availability` | discard | 550 | former YAML `DATA_AVAILABILITY` |
-| `biological` · `structural` · `biological-of` | discard | 545 · 544 · 543 | former YAML `BIOLOGICAL`, `STRUCTURAL`, `BIOLOGICAL_OF` |
-| `technical-object` · `technical-verb` | discard | 541 · 540 | former YAML `TECHNICAL_OBJECT`, `TECHNICAL_VERB` |
-| `exclusion-rescue` | screen_cheap | 650 | exclusion context AND phrase AND cite — the #44 readmission, outranks the 500s |
-| `phrase-with-cite` | screen_expensive | 350 | replication/reproduction phrase AND author-year cite, `none_of` GWAS vocabulary |
-| `phrase-reproduction` | screen_cheap | 262 | the reproduction-anchored patterns, `vocabulary: reproduction` |
-| `phrase-replication` | screen_cheap | 260 | the remaining replication phrases, `vocabulary: replication` |
-| `title-stem` | screen_cheap | 240 | the 15 multilingual stems, title only |
-| `concept-replication` | screen_cheap | 220 | concepts C12590798 / C9893847 — the arm Stage 2 used to kill terminally |
+Precedence bands per `CONVENTIONS.md`: 900s definitional discards · 700s strong
+admission · 500s metadata-derived discards · 300s weak admission · 200s
+carried-over `screen_cheap` · 100s probes.
 
-The 500s band ships as seven files rather than four, one per former YAML pattern:
-`filter/phrase_detection.py` maps a spec id back to its legacy pattern id
-(uppercase, hyphens → underscores) to keep `filter_evidence` unchanged, and a
-merged spec would have lost that.
+| spec | pile | prec. | shadow | content |
+| --- | --- | --- | --- | --- |
+| `not-a-paper-doi` | discard | 960 | | `/reviews/`\|`/decisions/` paths · terminal `.suppl` · 10 deposit-only registrants (figshare dropped, D1) |
+| `not-a-paper-title` | discard | 955 | | the start-anchored genre-plus-parent title pattern |
+| `no-codable-text` | discard | 940 | | `type ∈ {component, database, dataset, software, supplementary-materials}` — no abstract, no prose, nothing to code |
+| `replication-claim` | screen_expensive | 700 | | 12 arms: the paper says IT is or did a replication. The only route to two voters |
+| `not-a-study-type` | discard | 500 | | `type ∈ {grant, libguides, paratext, peer-review, standard}` — a crosswalk, so admission outranks it |
+| `replication-signal` | screen_cheap | 300 | ✓ | multilingual title stems · English title stem · concept ids · bare `replication of` |
+| `reproduction-signal` | screen_cheap | 262 | | the reproduction-anchored patterns, carried over unchanged pending #155 |
+| `replication-probe` | screen_cheap | 100 | ✓ | unmeasured candidate vocabularies (revisiting, reconsidered, independent test, many-analyst …) |
 
-Shadow specs (deferred #142 findings, awaiting diagnostics): `reproduce-verb-arms`,
-`nfd-stems` — `"shadow": true`, no pile effect, evaluations recorded. `biological-of`
-and `data-availability` are shadow for a different reason: their faithful form needs
-a lookaround, so the spec carries an RE2 decomposition that *widens* the discard
-alongside the exact original under the loader-only `pyre_regex` key (see
-`CONVENTIONS.md`). `keyword_verdict()` reads the original; the engine may not
-discard on the wider one.
+Each rule keeps one match clause per arm, so `filter_evidence` and the diagnostics
+attribute a hit to the arm that made it.
 
-## Known intended divergences from `keyword_verdict()`
+**The bundle is live at its ends and shadow in its middle.** The four discards,
+`replication-claim` and `reproduction-signal` are live; the two weak admission
+rules are not, because the cheap tier they feed is discard-only, so an unsized
+rule there costs recall rather than merely money. Until they are switched on, a
+row carrying only a weak signal lands in `pending`. The rationale and the
+switch-on order are policy — `filter/spec/CONVENTIONS.md`.
 
-Recorded here because parity is measured against *intended* semantics (#148):
+**Discards and admission interleave on purpose.** A discard at 900+ says the
+object *is* not a paper or has no text, which is settled by inspection, so it
+outranks admission — a decision letter carries its parent's replication phrases.
+A discard at 500 rests on a registry crosswalk that can be wrong, so admission
+outranks it and a mistyped replication is screened rather than deleted. That
+ordering is what replaced the deleted rescue band.
+
+## Known intended divergences from the retired keyword filter
+
+Recorded here because parity was measured against *intended* semantics (#148):
 
 1. **Concept arm**: a concept-only row routes to `screen_cheap`; the old Stage 2
    wrote it `false_positive` terminally. A regression test asserts the divergence.
-2. **Cite proximity**: the same-sentence gate and the blacklist-filtered
-   `extract_author_year_patterns()` are replaced by one RE2-safe cite regex; the
-   distinction only orders spend (expensive vs cheap), it no longer admits.
-3. **Guard scoping**: GWAS guards were sentence-scoped; the spec `none_of` is
-   row-scoped. A GWAS-flavoured phrase row falls to `screen_cheap` instead of
-   being guard-suppressed.
-4. **No-abstract rows** route to `pending/no_text` instead of being screened blind.
+2. **No-abstract rows** route to `pending/no_text` instead of being screened blind.
 
-`keyword_verdict()` remains the Stage 1 admission gate unchanged; the engine
-supersedes Stage 2's *decision* layer, not Stage 1's scan.
+The other two divergences on this list were properties of `phrase-with-cite` — the
+RE2-safe cite regex replacing the same-sentence gate, and the row-scoped rather
+than sentence-scoped GWAS guard — and both went with the rule. Nothing is admitted
+by a citation any more, and no arm admits "we replicated the association" without
+a first-person or qualifier construction.
 
-## Engine input
+## Engine input, and the one keyword decision upstream of it
 
 The engine reads the survivor pool parquet (`_POOL_SCHEMA`, year-sharded files in a
-flat directory) directly — not candidates.csv. Batches stream via
-`pq.ParquetFile(...).iter_batches()` as in `snapshot_scan.py`. `work_id` is the
-int64 OpenAlex id; aliases (merged works) resolve through `filter/spec/aliases.json`
-before any state is keyed.
+flat directory) directly. Batches stream via `pq.ParquetFile(...).iter_batches()`
+as in `snapshot_scan.py`. `work_id` is the int64 OpenAlex id; aliases (merged
+works) resolve through `filter/spec/aliases.json` before any state is keyed.
+
+**Stage 1 searches; Stage 2 filters.** The scan's only keyword decision is the
+**search gate** — a broad token/stem alternation over the title and the raw
+abstract inverted-index JSON, **or** membership of a replication concept — and it
+exists because 510M works cannot be routed one rule bundle at a time. Everything
+that follows from it is Stage 2's: exclusions, phrase precision, vocabulary,
+rescues. Stage 1 applies no exclusion pattern and makes no precision judgement, so
+there is exactly **one** rule set that decides what is a replication, and it is the
+spec bundle in `filter/spec/`.
+
+The engine therefore evaluates the specs itself, over pool text. It never called
+`keyword_verdict()`, and that function no longer exists: with Stage 1 reduced to
+the search gate, nothing evaluated it and it was deleted along with the phrase
+lists, guards and exclusion loader that only it used.
 
 ## Milestone 2 — the Postgres state authority
 
@@ -291,7 +342,7 @@ recovered abstract text, layered over the pool at read time.
 
 | Module | Contract |
 | --- | --- |
-| `pool_reader.py` | `iter_pool_batches(pool_dir, overlay_dir=None, batch_size=50_000, aliases=None)` — the engine's single input path: pool batches with overlay text coalesced over empty `abstract_text` cells. `overlay_manifest_hash(overlay_dir) -> str \| None`. The overlay is loaded once as a `work_id -> text` dict and applied per batch; with no overlay the stream is `iter_batches()` untouched. |
+| `pool_reader.py` | `iter_pool_batches(pool_dir, overlay_dir=None, batch_size=50_000, aliases=None)` — the engine's single input path: pool batches with overlay text coalesced over empty `abstract_text` cells. `overlay_manifest_hash(overlay_dir) -> str \| None` (defined in `overlay.py`, re-exported here so the input path is one import). The overlay is loaded once as a `work_id -> text` dict and applied per batch; with no overlay the stream is `iter_batches()` untouched. |
 | `overlay.py` | `worklist(con, release_id, pool_dir, out_path, aliases=None) -> int` (the `pending_reason='no_text'` rows joined to the pool for doi/title/year); `write_chunk()`, `load_overlay()`, `overlay_work_ids()`; `validate(overlay_dir) -> list[str]`; `freeze(overlay_dir, pool_manifest_hash=None) -> dict`; `overlay_manifest_hash()`, `read_manifest()`. |
 | `backfill.py` | `python -m filter.engine.backfill --worklist F --overlay-dir D [--run] [--limit N] [--source S] [--freeze]` — the five abstract sources over a worklist, results appended as an overlay chunk. |
 
@@ -325,8 +376,8 @@ sources, their measured order (OpenAlex → Europe PMC → S2 → CrossRef → S
 their batch shapes, their per-identifier cache under `cache/abstracts/` and their
 per-source checkpoint namespaces; `backfill.py` imports its phase runners rather
 than restating any of it. Only the two ends are new: the worklist comes from the
-routing table instead of `candidates.csv`, and results land in an overlay chunk
-instead of a CSV merge. The shared cache means a DOI Stage 1 already asked about
+routing table, and results land in an overlay chunk instead of a CSV merge. The
+shared cache means a DOI Stage 1 already asked about
 costs nothing here, and a miss recorded here is one Stage 1 will not re-buy.
 Dataset-prefix DOIs are dropped from the worklist — no source has an abstract
 for a deposit.
@@ -339,53 +390,25 @@ checkpointed identifiers, and the chunk write skips work ids the overlay already
 covers, so an interrupted run re-fetches nothing and cannot write a work into a
 second chunk.
 
-## The #147 policy entries
+## Editing the rule book
 
-Issue #147's four measured keyword fixes ship as spec content, not as edits to
-`keyword_verdict()`. Each carries a `measured` entry naming both sides of its
-measurement, the corpus that is its denominator, and — per #151 — the fact that
-62% of the 7,505-paper gold corpus is `allrep_llm` output that was never
-human-confirmed, so every recall figure below is an upper bound.
+Two standing facts about spec edits, both worth stating rather than rediscovering.
 
-| change | spec(s) | shipped as | measured |
-| --- | --- | --- | --- |
-| Phrase morphology (bundle T2) | `phrase-replication`, `phrase-with-cite` | five arms added to the phrase `any_of` of both files | 186 of 319 no-phrase gold misses, +9.3 admissions/M (+0.6%), 0 goldneg_screen |
-| Title-phrase rescue | `title-phrase-rescue` (new, 645) | title phrase AND an abstract-only technical exclusion → `screen_cheap` | 12 gold, ~102 rows over 510M, 0 gold-negative |
-| TECHNICAL_* narrowing | `technical-object`, `technical-verb` | object lists lose model/method/data/dataset | 18 + 13 gold, ~3.5k rows, 0 gold-negative; frees 3 of the 5 lost indexed reproductions |
-| GWAS scope ruling | `biological-of` (BO1), `phrase-with-cite` (G1−) | genome-wide exempted; the guard stands down on a prior-report cue | 20 gold / ~204 rows; 12 gold, all qualifying, 0 internal, 0 extra rows |
+**Rules are Stage 2's alone.** No spec pattern runs in the Stage 1 path: the scan's
+only keyword decision is the search gate. Narrowing or widening a rule changes
+which pool rows the engine routes and nothing about which rows enter the pool, so a
+wrong call costs a `route` re-run over the pool, never a rescan.
 
-Four things about this band are worth stating rather than rediscovering.
+**A new admission arm usually needs no scan change.** Every arm of
+`replication-claim` and `replication-signal` contains the `replicat` stem or a
+multilingual equivalent, so the search gate's token alternation already keeps those
+rows in the survivor pool. An arm built on vocabulary the gate does not carry — most
+of `replication-probe` — reaches only the rows some other gate token admitted, and
+its counts have to be read with that in mind.
 
-**Two rescues now sit in the 600s.** `exclusion-rescue` (650) asks for a phrase
-plus a named author-year cite anywhere in the row; `title-phrase-rescue` (645)
-asks for a phrase in the TITLE and no cite at all. Both route to `screen_cheap`,
-so where both match the pile is identical and only `route_rule` differs;
-`exclusion-rescue` wins because a named cite is the stronger evidence.
-
-**The rescue is scoped to the two non-shadow technical exclusions.** The measured
-bundle was TV3+TO4+DA1, but `data-availability` is shadow and discards nothing,
-so a rescue from it could only pull a row DOWN from `screen_expensive`. What
-ships is TV3+TO4, worth 12 gold rather than the issue's 15.
-
-**The 500s exclusions are shared with Stage 1.** `filter/phrase_detection.py::
-_load_exclusion_regexes()` reads these same files, so narrowing
-`technical-object`/`technical-verb` and applying BO1 to `biological-of`'s
-`pyre_regex` changes Stage 1's admission too, and `stage_b_fingerprint()` moves
-with it. That is the intended effect — it is how the lost reproductions and the
-GWAS-locus genre re-enter the scan.
-
-**T2 is engine-only, and that is sufficient.** `REPLICATION_PHRASES` is a Python
-constant rather than a spec, so the five new arms do not reach `keyword_verdict()`.
-They do not need to: every T2 shape contains the `replicat` stem, so Stage A's
-token gate keeps those rows in the survivor pool, and the pool — not
-candidates.csv — is what the engine routes.
-
-`biological-of` remains shadow after BO1. The exemption itself is expressible
-without lookaround (the character after the organism token is consumed rather
-than looked ahead at, with the Unicode dash range U+2010–U+2015 in the class,
-because gold rows write "Genome‐Wide"), but the spec's study-noun refusal inside
-the filler window still is not, and that is what keeps its RE2 decomposition
-wider than the original.
+The measured history of the rules this bundle replaced, including issue #147's four
+narrowings and the evidence behind each, is in
+[`filter/spec/rule_ideas.md`](../filter/spec/rule_ideas.md).
 
 Every same-sentence regex leaves 11–16 genuinely qualifying GWAS replications
 unreachable: they attribute the prior report in a different sentence from the
@@ -461,13 +484,11 @@ through.
 ### Retirement
 
 `filter/rule_filter.py`, `filter/run_filter.py` and `filter/reset_backfilled.py`
-are deleted, with their tests. `filter/phrase_detection.py` stays: Stage 1's scan
-calls `keyword_verdict()` and the spec bundle encodes the same decision. The two
-are held together by `test_stage1_admits_exactly_what_the_engine_screens` in
-`tests/test_snapshot_scan.py` — Stage 1 admits a row exactly when the engine
-routes it to a screen pile; a rejected row is either engine-discarded or
-unmatched (`pending/no_filter_matched`), never screened. Each case names the pile
-it expects, so a spec edit that moved a row between screen tiers is visible too.
+are deleted, with their tests. `filter/phrase_detection.py` stays, but only for
+what the **search gate** needs — the stem/token alternation the scan runs over the
+snapshot. It applies no exclusion patterns and gates no admission, so there is no
+second rule set to hold in parity with the bundle: the engine is the only thing
+that decides a row's fate, and the pool is the only thing it decides over.
 
 ## Milestone 5 — validation lineage and supersession
 

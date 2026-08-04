@@ -4,8 +4,19 @@
 
 ## What it does
 
-Discovers candidate papers from multiple sources and appends new ones to `data/candidates.csv`.
-Each run has two phases: harvest all previously cached API pages, then issue new live requests.
+**Stage 1 searches. It does not filter.** It discovers candidate papers and writes
+them to the **survivor pool**; every precision decision — exclusions, phrase
+matching, vocabulary, rescues — belongs to Stage 2's spec bundle, which is the one
+rule set that decides what is a replication.
+
+The single keyword exception is the **search gate**, described under
+[the snapshot scan](#the-snapshot-scan-and-the-survivor-pool) below: a broad
+token/stem alternation plus concept membership, which exists because 510M works
+cannot be routed one rule bundle at a time. It admits generously and judges
+nothing.
+
+The API legs run in two phases per invocation: harvest all previously cached API
+pages, then issue new live requests.
 
 ---
 
@@ -23,7 +34,7 @@ run_search.py
             │
             ├── OpenAlex phrase search  (source = "openalex")
             │       fetch_openalex_candidates()
-            │           └── for each phrase in SEARCH_PHRASES (37 total):
+            │           └── for each phrase in SEARCH_PHRASES:
             │                   paginate /works?filter=title_and_abstract.search:"<phrase>"
             │                   _extract_row() → standardise to CANDIDATES_COLS schema
             │                   cache each page to cache/openalex/<hash>.json
@@ -38,7 +49,7 @@ run_search.py
             │
             ├── Semantic Scholar phrase search  (source = "semantic_scholar")
             │       fetch_semantic_scholar_candidates()
-            │           └── for each phrase in S2 SEARCH_PHRASES (10 total, its own subset):
+            │           └── for each phrase in SEARCH_PHRASES (imported from openalex_search):
             │                   paginate /graph/v1/paper/search
             │                   save offset to cache/s2/<hash>.offset.json
             │
@@ -49,24 +60,25 @@ run_search.py
                     _append_to_candidates_index(new_keys)
 ```
 
+> **`data/candidates.csv` is retired as a corpus.** It was the admission-gated
+> Stage 1 output, and both halves of that description are gone: Stage 1 no longer
+> gates admission, and the corpus everything downstream reads is the survivor pool,
+> shared through Hugging Face rather than kept as a multi-GB local CSV. The API
+> legs above remain as supplementary discovery — the snapshot scan is the path that
+> produces the pool — and `CANDIDATES_COLS` survives as the column contract a pool
+> row is rebuilt into (see [csv-schema.md](../csv-schema.md)).
+
 ---
 
 ## Search phrases
 
-**OpenAlex** uses all **37** phrases defined in `SEARCH_PHRASES` in
-`search/openalex_search.py` (the three tiers below).
+The phrase list is `SEARCH_PHRASES` in `search/openalex_search.py`. **Both** phrase
+sources use it: `search/semantic_scholar_search.py` imports the same list rather than
+keeping its own (issue #47 — the two used to diverge, and the S2 leg searched a
+smaller subset). Adding a phrase there changes both legs.
 
-**Semantic Scholar** does **not** mirror these 37. It uses its own **10-phrase** list
-in `search/semantic_scholar_search.py`, which is exactly the "Original tier" below:
-
-```text
-"replication of"          "direct replication"       "close replication"
-"conceptual replication"  "replication study"        "reproduction study"
-"we replicated"           "attempts to replicate"    "registered replication report"
-"pre-registered replication"
-```
-
-The three OpenAlex tiers:
+The list is grouped in three tiers, reproduced below for orientation only — the file
+is the list, and a phrase added there will not appear here:
 
 Original tier (high precision):
 
@@ -100,6 +112,63 @@ only inside the abstract, not the title):
 
 ---
 
+## The snapshot scan and the survivor pool
+
+`search/snapshot_scan.py` is Stage 1's main path (`--source openalex_snapshot`).
+Where the API legs can only find works whose title or abstract matches a phrase
+someone thought to write down, the scanner reads the **whole** OpenAlex
+bulk-parquet corpus once — 2,446 partitions, 725 GB, ~510M records — and keeps
+what the search gate admits.
+
+**The search gate** (vectorized, pyarrow) is the whole of Stage 1's keyword logic:
+
+- a broad token/stem alternation over the title and the raw abstract
+  inverted-index JSON (it runs against the un-reconstructed JSON, so it can test
+  tokens but not phrases — word order does not exist there), **or**
+- membership of a replication concept, which is the recall arm and mirrors what
+  the `openalex_concept` API leg does.
+
+Either hit admits. There is no second keyword stage, no exclusion pattern and no
+phrase precision test in the scan: a row the gate keeps goes into the pool and the
+filter engine decides everything else about it. The gate keeps well under 1% of
+the corpus.
+
+**The survivor pool** (`--survivor-pool PATH`) is Stage 1's output: every gate
+survivor as a parquet dataset, one file per manifest partition, a few GB against
+~725 GB of snapshot. It is the filter engine's direct input — Stage 2 routes the
+pool parquet, and nothing between the scan and the engine holds a filtered copy of
+it. Progress is checkpointed per manifest file in `cache/snapshot/ledger.json`, so
+an interrupted scan resumes where it stopped.
+
+Because the pool holds everything the gate saw, a **Stage 2 rule change is a local
+`filter.engine route` re-run over the pool**, not a rescan. Only a change to the
+search gate itself — its token alternation or `CONCEPT_IDS` — costs the full scan,
+which is why the gate has its own fingerprint and why a token added there is
+doubly expensive: it also enlarges the artifact every collaborator downloads.
+
+Pool columns (`_POOL_SCHEMA` in `search/snapshot_scan.py`) are the identity and
+metadata needed to rebuild a paper row without the snapshot — `id`, `doi`, `title`,
+`display_name`, `publication_year`, `type`, the nested `authorships`,
+`primary_location`, `open_access` and `concepts` as JSON strings, the
+already-reconstructed `abstract_text`, and the three booleans recording *why* the
+gate kept the row: `hit_token_title`, `hit_token_abstract`, `hit_concept`.
+
+`search/pool_sync.py` shares the pool through a private Hugging Face dataset repo,
+so nobody has to reproduce the scan:
+
+```bash
+python -m search.pool_sync --check-access         # prove write access before a long scan
+python -m search.pool_sync --push / --pull        # the ~2-3 GB survivor pool itself
+```
+
+`pool_manifest.json` at the repo root records the search gate, snapshot date and
+ledger the pool was scanned under; pushing over a pool scanned under a *different*
+gate fingerprint is refused, because the mixture would be complete under neither
+gate and nothing downstream could tell. Runbook for the full scan:
+[aws-snapshot-scan.md](../aws-snapshot-scan.md).
+
+---
+
 ## Concept-based search
 
 Defined in `CONCEPT_IDS` in `search/openalex_search.py`.
@@ -109,7 +178,7 @@ Concept search complements phrase search by catching papers that:
 - have no abstract stored in OpenAlex (common for pre-2015 papers), so
   `title_and_abstract.search` can only check the title
 - describe replication implicitly ("we confirm", "cross-cultural validation") without
-  using any of the 37 phrases
+  using any `SEARCH_PHRASES` phrase
 
 OpenAlex assigns concept tags using its own ML model over the full paper text, so
 concept search can surface papers the phrase search misses.
@@ -129,8 +198,8 @@ python -m search.run_search --list-concepts "reproducibility"
 ```
 
 Update `CONCEPT_IDS` in `search/openalex_search.py` with verified IDs.
-Rows from concept search are tagged `source = "openalex_concept"` in candidates.csv
-so they can be told apart downstream. In the filter engine the concept arm is its own
+Rows from concept search are tagged `source = "openalex_concept"` so they can be
+told apart downstream. In the filter engine the concept arm is its own
 spec (`concept-replication`), so a concept-only row is identifiable by `route_rule`.
 
 ---
@@ -138,8 +207,11 @@ spec (`concept-replication`), so a concept-only row is identifiable by `route_ru
 ## Large-file handling
 
 The candidates index (`cache/candidates_index.txt`) stores all identifiers ever written.
-Key priority per row (order in `_row_keys`): `oa:<openalex_id>` → `doi` → `url:<url>` → `title:<lowercased title>`.
-Each row stores up to 4 keys so a duplicate is caught regardless of which identifier is present.
+Key priority per row (`row_keys()` in `shared/row_key.py`): `doi` → `oa:<openalex_id>`
+→ `url:<url>` → `title:<lowercased title>`. A row stores every identifier it has, so a
+duplicate is caught regardless of which one is present — except that `title:` is a
+**last-resort** key contributed only when the row has no other identifier at all
+(issue #53: two distinct works sharing a title would otherwise collide).
 
 This avoids loading the full CSV (~2M rows) into memory on every merge.
 
@@ -150,9 +222,9 @@ This avoids loading the full CSV (~2M rows) into memory on every merge.
 `--auto-advance` processes exactly one (source, phrase/concept, year) job per call.
 Jobs cycle in this order within each year before advancing to the next year:
 
-1. OpenAlex phrase jobs (37 × N years)
-2. Semantic Scholar phrase jobs (10 × N years)
-3. OpenAlex concept jobs (2 × N years, as of 2026-06-23)
+1. OpenAlex phrase jobs (`len(SEARCH_PHRASES)` × N years)
+2. Semantic Scholar phrase jobs (the same list × N years)
+3. OpenAlex concept jobs (`len(CONCEPT_IDS)` × N years)
 
 State is saved in `cache/search_state.json`. Run in a loop until exit code 2
 (all cursors exhausted for the year range):

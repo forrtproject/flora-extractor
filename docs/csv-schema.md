@@ -4,9 +4,17 @@ The authoritative schema definition is `shared/schema.py`. This document is the 
 
 ---
 
-## candidates.csv (Stage 1 → Stage 2)
+## `CANDIDATES_COLS` — the Stage 1 record shape
 
-Produced by `search/run_search.py`. One row per discovered paper.
+Stage 1 **searches**; it does not filter. Its output is the **survivor pool**
+(parquet, one file per snapshot partition), and the filter engine reads that pool
+directly. `data/candidates.csv` — the admission-gated corpus the old Stage 1 wrote
+— is retired: the pool is the single Stage 1 artifact, and it is shared through
+Hugging Face rather than kept as a multi-GB local CSV.
+
+`CANDIDATES_COLS` survives as the **column contract** the pool rebuilds a paper
+row into, and it is the first block of `FILTERED_COLS` below. One entry per
+discovered paper.
 
 | Column | Type | Description |
 | ------ | ---- | ----------- |
@@ -18,7 +26,7 @@ Produced by `search/run_search.py`. One row per discovered paper.
 | `journal_r` | string | Journal or venue name |
 | `url_r` | string | Canonical URL |
 | `openalex_id_r` | string | OpenAlex work ID (e.g. W1234567890) |
-| `source` | string | Where this paper was discovered: `openalex`, `openalex_concept`, `semantic_scholar`, `backfill_old_pipeline` (see `schema.SOURCE_VALUES`). `bob_reed` / `i4r` are **not** produced — their scrapers exist but are not wired into `run_search` |
+| `source` | string | Where this paper was discovered. The enum is `schema.SOURCE_VALUES`; the set `run_search` can actually emit is `_ALL_SOURCES` in `search/run_search.py` (currently including `openalex_snapshot`, the bulk-parquet scanner). `bob_reed` / `i4r` are in the enum but **not** produced — their scrapers in `search/external_lists.py` are not wired into `run_search` (issue #46) |
 | `ref_r` | string | Formatted reference string for the replication paper |
 
 ---
@@ -32,13 +40,14 @@ release rather than an immutable export — it is rewritten whenever the release
 the tier verdicts move, and its `.manifest.json` is rewritten with it.
 
 Columns are `ENGINE_EXPORTED_COLS` = `FILTERED_COLS` + `ENGINE_EXPORT_COLS`: all
-`candidates.csv` columns, then the four filter columns below, then the routing
-provenance appended after them. Stage 3 reads by column name and passes trailing
-columns through untouched, so the appended block does not change its contract.
+`CANDIDATES_COLS` fields, then the four filter columns below, then the routing
+provenance appended after them. Stage 3 reads by column name, so the appended block
+does not change its contract — but it does **not** carry the block forward: see the
+note under the provenance table.
 
 | Column | Type | Description |
 | ------ | ---- | ----------- |
-| `filter_status` | string | `replication` \| `reproduction` \| `false_positive` \| `needs_review` — the paper-type field; see below |
+| `filter_status` | string | `replication` \| `reproduction` \| `needs_review` — the paper-type field; see below. `false_positive` is in the enum but never appears in `filtered.csv`: it is the `discard` pile's status, and `HANDOFF_PILES` (`filter/engine/handoff.py`) is the two screen piles only. Discarded rows are reachable through `filter.engine export --pile discard` |
 | `filter_method` | string | `engine:<release id prefix>`, or `screen` on a row a live `screen_expensive` run typed. `rule_based` is historical |
 | `filter_evidence` | string | `rule:<spec id>` plus the evidence the backend matched (phrase, prefix, type…) |
 | `filter_confidence` | string | `high` \| `medium` \| `low` — categorical, not a float |
@@ -48,18 +57,62 @@ Routing provenance (`ENGINE_EXPORT_COLS` in `shared/schema.py`):
 | Column | Type | Description |
 | ------ | ---- | ----------- |
 | `oa_type` | string | OpenAlex work type from the pool row |
-| `hit_concept` | string | Whether Stage A kept the row on a concept match |
+| `hit_concept` | string | Whether the search gate kept the row on a concept match rather than a token hit |
 | `route_rule` | string | Id of the spec that won the pile (empty when pending) |
 | `route_precedence` | string | That spec's precedence |
 | `matched_rules` | string | \|-joined — match by substring/split, never equality |
-| `pending_reason` | string | `unevaluated` \| `no_filter_matched` \| `no_text` \| `budget_blocked` |
+| `pending_reason` | string | Empty on an exported row; on a `pending` row it says **why no decision exists** — see below |
 | `release_id` | string | The routing release the pile came from |
+
+**`pending` is a pile; `pending_reason` is why that pile has no decision in it.**
+The two are not the same statement and neither is redundant. A row is in the
+`pending` pile because nothing decided it, and the reason names which of the two
+ways that happened:
+
+- `no_filter_matched` — the row was routed and **no rule claimed it**. Every spec
+  was evaluated against it and none matched, so there is no rule to say discard
+  and no rule to send it to a screening tier. It is unclassified, not undecided-
+  by-a-tier.
+- `no_text` — a rule **did** claim it and sent it to `screen_expensive` or
+  `screen_cheap`, but its `abstract_text` is empty, so the engine downgraded it:
+  "no text ⇒ no LLM", because absence of evidence must not become a proceed. This
+  row has a rule behind it and is waiting only on text, which the M3 overlay path
+  (`worklist` → `backfill` → `freeze` → `route`) exists to supply.
+
+These are the only two values `build_routing()` in `filter/engine/route.py` emits,
+and `conventions.json` declares them. `filter/engine/handoff.py` exports the two
+screen piles only, so an exported row's `pending_reason` is always empty.
+
+> **Engine provenance is linked, not copied.** `EXTRACTED_COLS` in `shared/schema.py`
+> is `["pair_id"] + FILTERED_COLS + EXTRACT_ADDED_COLS` and deliberately excludes
+> `ENGINE_EXPORT_COLS`, so `run_extract` does not carry `oa_type`, `hit_concept`,
+> `route_rule`, `route_precedence`, `matched_rules`, `pending_reason` or
+> `release_id` into `extracted.csv`. That is the design, not a gap: duplicating a
+> column down every stage makes two copies that can disagree, and the engine's
+> routing state already holds all of it.
+>
+> The join key is **`work_id`** — the int64 OpenAlex id (`filter/engine/workids.py`
+> derives it from `openalex_id_r`). `extract/csv_to_db.py` writes it into
+> `record_metadata.work_id` for every pushed row, so any routing column can be
+> recovered by joining back to the engine's `routing` table for a release.
+> Reconciliation keys on `work_id` rather than DOI throughout
+> (`filter/engine/supersede.py`), because a work is the engine's identity while a
+> DOI is a string a row may lack, share or spell differently. See
+> [`supabase-schema.md`](supabase-schema.md).
 
 `filter_confidence` is a three-level label because a single LLM call cannot produce calibrated probabilities.
 
 `filter_status` comes from the pile the engine routed the work into, through the
-mapping in `filter/spec/conventions.json`: `screen_expensive` carries the winning
-rule's vocabulary at high confidence, `screen_cheap` is `needs_review` at medium.
+mapping in `filter/spec/conventions.json`, refined by the winning rule's
+`vocabulary` where the pile's policy sets `vocabulary_names_status`. In the current
+bundle that lands as: `screen_expensive` → `needs_review` at **high** confidence
+(its one rule, `replication-claim`, names no vocabulary), and `screen_cheap` →
+`needs_review` at **medium**, except for the rules that do name one —
+`replication-signal` and `replication-probe` → `replication`,
+`reproduction-signal` → `reproduction`, also at medium. So a vocabulary status in `filtered.csv` today always arrives at
+medium confidence. Read `filter/spec/conventions.json` and the specs' `vocabulary`
+fields rather than trusting this paragraph.
+
 Stage 3's front-door screen is the validated decider of "is this a
 replication at all", so when it passes a row, `run_extract` overwrites
 `filter_status` with the screen's paper type (`replication` / `reproduction`) and
@@ -113,7 +166,7 @@ provenance appended after it — plus:
 | `out_quote_source` | string | Where the outcome quote came from: `abstract` \| `title` \| `fulltext`. `fulltext` appears only on results escalated to the fulltext LLM pass. |
 | `outcome_reasoning` | string | LLM chain-of-thought for the outcome decision |
 | `outcome_llm_model` | string | Model that coded the outcome. Can differ from `link_llm_model` within one run — the outcome step fails over to another provider when the primary's quota runs out. `keyword` on `--no-llm` rule-based rows; blank when no outcome verdict was made (`pending`, `api_error`) |
-| `type` | string | `replication` \| `reproduction` \| empty. Decided by the front-door screen (a `both` classification is recorded as `replication`, since such a paper collects new data), falling back to Stage 2's `filter_status`. **Empty** when neither decided — the screen proceeded without a qualifying vote on a row Stage 2 left at `needs_review`; such a row is coded on the replication vocabulary but carries no type and is not imported. Also selects the outcome vocabulary — a reproduction is coded on the computation/robustness grid |
+| `type` | string | `replication` \| `reproduction` \| empty. Decided by the front-door screen (a `both` classification is recorded as `replication`, since such a paper collects new data), falling back to Stage 2's `filter_status`. **Empty** when a screen ran and neither decided — the screen proceeded without a qualifying vote on a row Stage 2 left at `needs_review`; such a row is coded on the replication vocabulary but carries no type and is not imported. When **no screen ran at all** (`--no-llm`) and Stage 2 named no vocabulary, `_record_type()` in `extract/run_extract.py` falls back to `replication` rather than leaving the field empty. Also selects the outcome vocabulary — a reproduction is coded on the computation/robustness grid |
 | `original_rank` | int | 1 for single-original; 1, 2, 3… for multi-original |
 | `n_originals` | int | Total number of originals for this paper |
 

@@ -5,32 +5,30 @@ Used by Stage 3 (`extract/link_original.py`) to obtain full-text content for DOI
 ## PDF Acquisition Waterfall
 
 ```
-pdf_sources.py: fetch_pdf(doi_r)
+pdf_sources.py: acquire_pdf(doi_r, title="", openalex_id="")
     │
-    ├── Tier 0: OpenAlex XML endpoint (authenticated, requires OPENALEX_API_KEY)
-    │       GET content.openalex.org/{openalex_id}/xml
-    │       → returns structured GROBID XML (no local PDF needed)
-    │
-    ├── Tier 1: arXiv
-    │       resolve arxiv ID from DOI → download PDF
-    │
-    ├── Tier 2: OSF (Open Science Framework)
-    │       check OSF for preprint PDF
-    │
-    ├── Tier 3: Unpaywall
-    │       GET api.unpaywall.org/v2/{doi}?email={RESEARCHER_EMAIL}
-    │       → best_oa_location.url_for_pdf
-    │
-    ├── Tier 4: CORE
-    │       GET core.ac.uk/api-v2/search/works?q=doi:{doi}
-    │       → downloadUrl
-    │
-    └── Tier 5: direct DOI URL
-            follow doi.org redirect, check Content-Type: application/pdf
+    ├── Tier 0: OpenAlex GROBID XML   — structured content, no PDF file needed;
+    │                                   needs openalex_id. Does NOT stop the waterfall
+    ├── Tier 1: arXiv direct          — before any API call
+    ├── Tier 2: OSF preprint
+    ├── Tier 3: OpenAlex OA URL
+    ├── Tier 4: Unpaywall direct PDFs — one round-trip, reused by Tier 8
+    ├── Tier 5: Semantic Scholar
+    ├── Tier 6: CORE
+    ├── Tier 7: Europe PMC
+    ├── Tier 8: scrape the Unpaywall landing pages from Tier 4
+    ├── Tier 9: SerpAPI               — quota-limited, last HTTP resort
+    └── Tier 10: Playwright headless Chromium
 
-Result cached at: cache/pdf/{key}.pdf
-Returns: (path_to_pdf, source_name) or (None, None)
+Tiers 1–10 stop at the first successful download. Tier 0 is independent: it can
+succeed and a PDF tier still run, so a row may carry both structured XML and a PDF.
+
+Result cached at: cache/pdfs/{key}.pdf  (PDF_CACHE_DIR in shared/config.py)
+Returns: {pdf_url, pdf_source, pdf_path, pdf_ok, pdf_url_tried, openalex_xml}
 ```
+
+The tier list above is the comment structure of `acquire_pdf()` — read the function
+when the order has to be exactly right.
 
 The tier that supplied the document is written to the row's `pdf_source`, and the
 parser that won the scoring below to `parse_method` — full-text provenance is a
@@ -49,7 +47,7 @@ work, because a shell means the fetch or the TEI parse is broken upstream.
 ## PDF Parsing
 
 ```
-pdf_parsing.py: parse_all(pdf_path, doi_r, openalex_xml)
+pdf_parsing.py: parse_all(doi_r, pdf_path, oa_xml=None, no_llm=False)
     │
     ├── openalex_xml   — parse structured XML from OpenAlex content endpoint
     │                    extracts: abstract, intro, methods, references
@@ -92,7 +90,7 @@ The winner's `abstract + intro` is fed to the LLM. If the winner has no referenc
 
 | Cache location | Contents |
 |----------------|----------|
-| `cache/pdf/{key}.pdf` | Downloaded PDF file |
+| `cache/pdfs/{key}.pdf` | Downloaded PDF file |
 | `cache/parse/parse_{key}.json` | All six parse results (dict by method) |
 | `cache/markdown/{key}.md` | MarkItDown raw markdown output |
 
@@ -103,4 +101,6 @@ If a parse cache exists but is missing the `markitdown` key (written before Mark
 The Extract tab's detail panel shows:
 - A **★ USED BY LLM** badge on the winning parse method column
 - Each method's score
-- The winning method name (via `best_parse_method_name()`)
+
+The winner is whatever `best_parse_result()` returns; its `source` field names the
+parser, and that is what `link_original.py` writes to the row's `parse_method`.
