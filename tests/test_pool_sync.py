@@ -241,20 +241,20 @@ def test_push_records_the_gate_the_pool_was_scanned_under(tmp_path, monkeypatch)
     ps.push_pool(pool, repo="me/pool")
 
     manifest = json.loads(calls["remote"][ps._POOL_MANIFEST])
-    assert manifest["stage_a_fingerprint"] == ss.stage_a_fingerprint()
+    assert manifest["stage_a_fingerprint"] == ss.search_gate_fingerprint()
     assert manifest["snapshot_date"] == "2026-07-01"
     assert (manifest["ledger_files"], manifest["ledger_records"], manifest["ledger_kept"]) \
         == (1, 10, 2)
     assert manifest["ledger_hash"] == ss.ledger_hash(ss.load_ledger())
 
 
-def test_push_refuses_to_mix_two_stage_a_gates(tmp_path, monkeypatch):
+def test_push_refuses_to_mix_two_search_gates(tmp_path, monkeypatch):
     """A pool half-scanned under each of two gates is complete under neither, and
     nothing downstream could see it — so this is the case that refuses."""
     pool = _pool(tmp_path, {"part-2019-01-01-part_0000.parquet": 10})
     calls = _fake_hub(monkeypatch, {}, store=_remote_manifest("deadbeef" * 8))
 
-    with pytest.raises(RuntimeError, match="DIFFERENT Stage A gate"):
+    with pytest.raises(RuntimeError, match="DIFFERENT search gate"):
         ps.push_pool(pool, repo="me/pool")
     assert "commits" not in calls
 
@@ -266,10 +266,10 @@ def test_push_force_overrides_the_gate_conflict(tmp_path, monkeypatch, caplog):
     with caplog.at_level("WARNING"):
         assert ps.push_pool(pool, repo="me/pool", force=True) == 1
 
-    assert "--force" in caplog.text and "different Stage A gate" in caplog.text
+    assert "--force" in caplog.text and "different search gate" in caplog.text
     assert "2019/part-2019-01-01-part_0000.parquet" in _uploaded(calls)
     assert json.loads(calls["remote"][ps._POOL_MANIFEST])["stage_a_fingerprint"] \
-        == ss.stage_a_fingerprint()
+        == ss.search_gate_fingerprint()
 
 
 def test_push_refuses_when_the_manifest_cannot_be_read(tmp_path, monkeypatch):
@@ -312,7 +312,7 @@ def test_push_commits_the_manifest_before_any_data(tmp_path, monkeypatch):
 
 def test_push_against_a_matching_gate_proceeds(tmp_path, monkeypatch):
     pool = _pool(tmp_path, {"part-2019-01-01-part_0000.parquet": 10})
-    calls = _fake_hub(monkeypatch, {}, store=_remote_manifest(ss.stage_a_fingerprint()))
+    calls = _fake_hub(monkeypatch, {}, store=_remote_manifest(ss.search_gate_fingerprint()))
 
     assert ps.push_pool(pool, repo="me/pool") == 1
     assert "2019/part-2019-01-01-part_0000.parquet" in _uploaded(calls)
@@ -327,7 +327,7 @@ def test_pull_warns_on_a_gate_mismatch_but_still_downloads(tmp_path, monkeypatch
         n = ps.pull_pool(tmp_path / "pool", repo="me/pool")
 
     assert n == 1
-    assert "DIFFERENT Stage A gate" in caplog.text
+    assert "DIFFERENT search gate" in caplog.text
 
 
 def test_pull_still_downloads_when_the_manifest_cannot_be_read(tmp_path, monkeypatch, caplog):
@@ -376,7 +376,7 @@ def test_pull_years_requests_only_those_years(tmp_path, monkeypatch):
     assert n == 2
     assert calls["downloaded"] == ["2019/part-2019-01-01-part_0000.parquet",
                                    "2019/part-2019-06-02-part_0001.parquet"]
-    # The local pool is flat — admit_from_pool globs a single directory.
+    # The local pool is flat — the pool row builder globs a single directory.
     assert sorted(p.name for p in pool.glob("*.parquet")) == [
         "part-2019-01-01-part_0000.parquet", "part-2019-06-02-part_0001.parquet"]
     assert not (pool / "2019").exists()
@@ -405,114 +405,6 @@ def test_pull_for_an_absent_year_says_so(tmp_path, monkeypatch):
 
 # ---------------------------------------------------------------------------
 # The prebuilt candidates artifact
-# ---------------------------------------------------------------------------
-
-
-def _build(tmp_path, rows_per_chunk=(2, 1), stage_b=None, row_builder=None) -> Path:
-    """A local build directory: chunked parquet plus the manifest describing it."""
-    import pandas as pd
-
-    from shared.schema import CANDIDATES_COLS
-
-    build_dir = tmp_path / "build"
-    build_dir.mkdir()
-    chunks = []
-    n = 0
-    for i, rows in enumerate(rows_per_chunk):
-        name = f"candidates-{i:04d}.parquet"
-        frame = pd.DataFrame(
-            [{**{c: "" for c in CANDIDATES_COLS}, "doi_r": f"10.1/{n + j}"}
-             for j in range(rows)], columns=CANDIDATES_COLS)
-        frame.to_parquet(build_dir / name, compression="zstd", index=False)
-        chunks.append({"name": name, "rows": rows})
-        n += rows
-    manifest = {
-        "build_hash": "b" * 64,
-        "stage_a_fingerprint": ss.stage_a_fingerprint(),
-        "stage_b_fingerprint": stage_b or ss.stage_b_fingerprint(),
-        "row_builder_version": row_builder or ss.ROW_BUILDER_VERSION,
-        "snapshot_date": "2026-07-01", "ledger_hash": "l" * 64,
-        "rows": n, "chunk_rows": 2, "chunks": chunks, "created_at": "2026-08-02T00:00:00+00:00",
-    }
-    (build_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    return build_dir
-
-
-def test_push_build_uploads_under_its_hash_and_moves_latest(tmp_path, monkeypatch):
-    build_dir = _build(tmp_path)
-    calls = _fake_hub(monkeypatch, {})
-
-    assert ps.push_build(build_dir, repo="me/pool") == 2
-
-    paths = _uploaded(calls)
-    assert f"builds/{'b' * 64}/candidates-0000.parquet" in paths
-    assert f"builds/{'b' * 64}/manifest.json" in paths
-    assert json.loads(calls["remote"][ps._LATEST_BUILD])["build_hash"] == "b" * 64
-    # Re-pushing the same build re-uploads no chunk.
-    assert ps.push_build(build_dir, repo="me/pool") == 0
-
-
-def test_pull_build_follows_latest_and_merges_with_enrich_false(tmp_path, monkeypatch):
-    """The round trip a collaborator actually runs: push a build, then pull it back
-    with no build hash in hand and let latest.json say which one that is."""
-    calls = _fake_hub(monkeypatch, {})
-    ps.push_build(_build(tmp_path), repo="me/pool")
-    monkeypatch.setattr(ps, "DATA_DIR", tmp_path)
-
-    merged = []
-
-    def capture(df, path, enrich=True):
-        assert enrich is False, "build rows carry OpenAlex's own abstract"
-        assert path == tmp_path / "candidates.csv"
-        merged.append(df)
-        return len(df)
-
-    n = ps.pull_build(tmp_path / "builds", repo="me/pool", merge_fn=capture)
-
-    assert n == 3
-    assert [len(df) for df in merged] == [2, 1], "one merge per chunk"
-    assert sorted(d for df in merged for d in df["doi_r"]) == ["10.1/0", "10.1/1", "10.1/2"]
-    # The chunks land flat under the build's own directory, not in a nested mirror.
-    assert sorted(p.name for p in (tmp_path / "builds" / ("b" * 64)).glob("*.parquet")) == [
-        "candidates-0000.parquet", "candidates-0001.parquet"]
-
-
-def test_pull_build_by_hash_never_reads_latest(tmp_path, monkeypatch):
-    calls = _fake_hub(monkeypatch, {})
-    ps.push_build(_build(tmp_path), repo="me/pool")
-    monkeypatch.setattr(ps, "DATA_DIR", tmp_path)
-    calls.pop("downloaded", None)
-
-    ps.pull_build(tmp_path / "builds", repo="me/pool", build_hash="b" * 64,
-                  merge_fn=lambda df, path, enrich=True: len(df))
-
-    assert ps._LATEST_BUILD not in calls["downloaded"]
-
-
-def test_pull_build_warns_when_the_build_was_admitted_under_other_rules(
-        tmp_path, monkeypatch, caplog):
-    """The provenance check is the point: a CSV passed around says nothing about the
-    vocabulary that produced it, a build says exactly that."""
-    _fake_hub(monkeypatch, {})
-    ps.push_build(_build(tmp_path, stage_b="cafe" * 16, row_builder="v99"), repo="me/pool")
-    monkeypatch.setattr(ps, "DATA_DIR", tmp_path)
-
-    with caplog.at_level("WARNING"):
-        ps.pull_build(tmp_path / "builds", repo="me/pool",
-                      merge_fn=lambda df, path, enrich=True: len(df))
-
-    assert "ADMITTED UNDER DIFFERENT RULES" in caplog.text
-    assert "DIFFERENT ROW BUILDER" in caplog.text
-
-
-def test_pull_build_without_any_build_says_what_to_do_instead(tmp_path, monkeypatch):
-    _fake_hub(monkeypatch, {})
-    with pytest.raises(ValueError, match="admit-from-pool"):
-        ps.pull_build(tmp_path / "builds", repo="me/pool")
-
-
-# ---------------------------------------------------------------------------
-# --years parsing
 # ---------------------------------------------------------------------------
 
 

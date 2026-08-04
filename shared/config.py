@@ -168,10 +168,6 @@ PRESCREEN_VOTER2_MODEL = os.getenv("PRESCREEN_VOTER2_MODEL", "mistralai/mistral-
 # to be trusted with a terminal verdict, so the row bypasses the pre-screen.
 PRESCREEN_MIN_ABSTRACT_CHARS = int(os.getenv("PRESCREEN_MIN_ABSTRACT_CHARS", "200"))
 
-# ── Stage 1 engine source ─────────────────────────────────────────────────────
-# FLORA_USE_ENGINE=1 (or true/yes/on) opts into the YAML-spec engine source.
-FLORA_USE_ENGINE = os.getenv("FLORA_USE_ENGINE", "").strip().lower() in {"1", "true", "yes", "on"}
-
 # ── Stage 2 curated sources ───────────────────────────────────────────────────
 # Rows from these sources were put on a curated replication/reproduction list by a
 # human, so Stage 2's keyword discovery can only lose them: an I4R reproduction
@@ -211,12 +207,6 @@ FLORA_POOL_REPO = os.getenv("FLORA_POOL_REPO", "")
 # pool push (~2,446 files) past the "few thousand commits" at which HF says repo UX
 # degrades, so uploads are batched into multi-file commits.
 FLORA_HF_COMMIT_BATCH = int(os.getenv("FLORA_HF_COMMIT_BATCH", "100"))
-# Where a prebuilt candidates artifact (chunked parquet + manifest.json) is written
-# and pulled into. Like the pool, not created at import time.
-SNAPSHOT_BUILD_DIR = Path(os.getenv("FLORA_BUILD_DIR") or (CACHE_DIR / "snapshot_build"))
-# Rows per parquet chunk in that artifact: dozens of files, not thousands, and each
-# one small enough to read into memory whole while merging.
-SNAPSHOT_BUILD_CHUNK_ROWS = int(os.getenv("SNAPSHOT_BUILD_CHUNK_ROWS", "100000"))
 
 # ── Filter-engine LLM tiers: the dry-run cost estimate (issue #146 §6) ────────
 # Rough list prices per 1,000 tokens, SUMMED OVER A TIER'S TWO VOTERS, so a tier's

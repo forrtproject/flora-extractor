@@ -325,3 +325,23 @@ def sentence_spans(text: str) -> list[tuple[int, int]]:
         start = m.end()
     spans.append((start, len(text)))
     return spans
+
+
+def reconstruct_abstract(inverted_index: "dict | None") -> "str | None":
+    """Reconstruct plain abstract text from an OpenAlex inverted index.
+
+    OpenAlex represents abstracts as a mapping of ``{word: [positions]}``. This
+    reverses the mapping into position order and joins the tokens. Returns
+    ``None`` when no abstract data is provided.
+
+    Shared because both ends of the abstract supply chain decode the same shape:
+    the snapshot scanner reads it out of the raw snapshot rows, and the abstract
+    backfill reads it out of the API. One decoder means the two can never drift.
+    """
+    if not inverted_index:
+        return None
+    positions: dict[int, str] = {}
+    for word, pos_list in inverted_index.items():
+        for pos in pos_list:
+            positions[pos] = word
+    return " ".join(positions[k] for k in sorted(positions)) if positions else None
