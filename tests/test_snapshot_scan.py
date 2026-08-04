@@ -21,8 +21,6 @@ import pyarrow.parquet as pq
 import pytest
 
 from shared.schema import CANDIDATES_COLS
-from search import openalex_search as oa
-from search import run_search as rs
 from search import snapshot_scan as ss
 
 
@@ -92,9 +90,8 @@ def _mask(arr) -> list[bool]:
 def snap_env(tmp_path, monkeypatch):
     """Redirect every path the scanner writes to into tmp_path.
 
-    The ledger, the manifest cache, candidates.csv and the candidates index are all
-    process-global in production; a test that forgot one would corrupt the real
-    pipeline state (see the CANDIDATES_INDEX idiom in tests/test_search.py).
+    The ledger and the manifest cache are process-global in production; a test that
+    forgot one would corrupt the real pipeline state.
     """
     snap_dir = tmp_path / "snapshot"
     snap_dir.mkdir()
@@ -102,7 +99,6 @@ def snap_env(tmp_path, monkeypatch):
     monkeypatch.setattr(ss, "_MANIFEST_PATH", snap_dir / "manifest.json", raising=False)
     monkeypatch.setattr(ss, "_LEDGER_PATH", snap_dir / "ledger.json", raising=False)
     monkeypatch.setattr(ss, "DATA_DIR", tmp_path, raising=False)
-    monkeypatch.setattr(rs.CANDIDATES_INDEX, "path", tmp_path / "candidates_index.txt")
     return types.SimpleNamespace(
         snap_dir=snap_dir,
         ledger=snap_dir / "ledger.json",
@@ -176,13 +172,13 @@ def test_ledger_round_trip_and_needs_scan(snap_env):
     """A done file is skipped, a rewritten file (new content_length) is rescanned, and
     a file left 'merging' by a crash is unfinished business, not done work."""
     url = "https://openalex.s3.amazonaws.com/data/parquet/works/a/part_0000.parquet"
-    ss.save_ledger({"stage_a_fingerprint": "abc", "files": {
+    ss.save_ledger({"search_gate_fingerprint": "abc", "files": {
         url: {"content_length": 500, "record_count": 9, "status": "done"},
     }})
 
     ledger = ss.load_ledger()
     assert ledger["files"][url]["content_length"] == 500
-    assert ledger["stage_a_fingerprint"] == "abc"
+    assert ss.ledger_gate_fingerprint(ledger) == "abc"
 
     assert ss._needs_scan(url, {"content_length": 500}, ledger) is False
     assert ss._needs_scan(url, {"content_length": 999}, ledger) is True
@@ -191,80 +187,6 @@ def test_ledger_round_trip_and_needs_scan(snap_env):
 
     ledger["files"][url]["status"] = "merging"
     assert ss._needs_scan(url, {"content_length": 500}, ledger) is True
-
-
-def test_crash_between_csv_and_index_append_adds_no_duplicates(snap_env, monkeypatch):
-    """A1: the merge appends to the CSV and *then* to the index. A crash in between
-    leaves a stale-but-non-empty index that load_or_build() trusts, so a rescan would
-    re-append the rows the index never learned about. Recovery from a 'merging' ledger
-    entry must rebuild the index from the CSV first."""
-    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", [
-        _record(work_id="https://openalex.org/W1", doi="https://doi.org/10.1/a",
-                title="A direct replication of Smith (2009)"),
-        _record(work_id="https://openalex.org/W2", doi="https://doi.org/10.1/b",
-                title="A direct replication of Jones (2011)"),
-    ])
-
-    # Run 1, crashed: both rows reached the CSV, only the first row's keys reached
-    # the index, and the ledger entry never advanced past "merging".
-    def half_written_merge(df, out_path, enrich=True):
-        df.to_csv(out_path, mode="a", index=False, header=not out_path.exists(),
-                  encoding="utf-8")
-        rs.CANDIDATES_INDEX.append(rs.row_keys(df.iloc[0]))
-        return len(df)
-
-    ss.scan_snapshot(files=[parquet], merge_fn=half_written_merge,
-                     index_loader=rs._load_or_build_candidates_index)
-    ledger = ss.load_ledger()
-    ledger["files"][parquet]["status"] = "merging"
-    ss.save_ledger(ledger)
-
-    before = len(pd.read_csv(snap_env.candidates))
-    assert before == 2
-
-    n_merged = ss.scan_snapshot(files=[parquet], merge_fn=rs._merge_into_candidates_csv,
-                                index_loader=rs._load_or_build_candidates_index)
-
-    assert n_merged == 0, "a rescan after a crash must add nothing"
-    assert len(pd.read_csv(snap_env.candidates)) == before
-    assert ss.load_ledger()["files"][parquet]["status"] == "done"
-    assert ss.load_ledger().get("stage_a_fingerprint"), \
-        "A8: the ledger records which gate produced it"
-
-
-def test_merge_failure_raises_and_leaves_the_ledger_mid_merge(snap_env):
-    """A merge that half-wrote the CSV must NOT be retried or skipped: the retry would
-    append the same rows again, and popping the ledger entry would erase the 'merging'
-    signal recovery depends on. It has to come straight out of scan_snapshot."""
-    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", [
-        _record(work_id="https://openalex.org/W1", doi="https://doi.org/10.1/a",
-                title="A direct replication of Smith (2009)"),
-        _record(work_id="https://openalex.org/W2", doi="https://doi.org/10.1/b",
-                title="A direct replication of Jones (2011)"),
-    ])
-
-    attempts = []
-
-    def merge_then_die(df, out_path, enrich=True):
-        attempts.append(len(df))
-        df.to_csv(out_path, mode="a", index=False, header=not out_path.exists(),
-                  encoding="utf-8")
-        raise RuntimeError("disk gave out before the index append")
-
-    with pytest.raises(RuntimeError, match="disk gave out"):
-        ss.scan_snapshot(files=[parquet], merge_fn=merge_then_die,
-                         index_loader=rs._load_or_build_candidates_index)
-
-    assert attempts == [2], "a local-write failure must not be retried"
-    assert ss.load_ledger()["files"][parquet]["status"] == "merging"
-    assert len(pd.read_csv(snap_env.candidates)) == 2
-
-    # The follow-up run sees "merging", rebuilds the index from the CSV, and adds nothing.
-    n_merged = ss.scan_snapshot(files=[parquet], merge_fn=rs._merge_into_candidates_csv,
-                                index_loader=rs._load_or_build_candidates_index)
-    assert n_merged == 0
-    assert len(pd.read_csv(snap_env.candidates)) == 2
-    assert ss.load_ledger()["files"][parquet]["status"] == "done"
 
 
 def test_a_failed_rescan_leaves_the_previous_record_standing(snap_env, monkeypatch, caplog):
@@ -276,8 +198,7 @@ def test_a_failed_rescan_leaves_the_previous_record_standing(snap_env, monkeypat
     done = {"content_length": 100, "record_count": 10, "status": "done", "kept": 7,
             "scanned_at": "2024-02-02T00:00:00+00:00"}
     ss.save_ledger({"snapshot_date": "2024-02-01",
-                    "stage_a_fingerprint": ss.stage_a_fingerprint(),
-                    "stage_b_fingerprint": ss.stage_b_fingerprint(),
+                    "search_gate_fingerprint": ss.search_gate_fingerprint(),
                     "files": {url: done}})
 
     monkeypatch.setattr(ss, "fetch_manifest", lambda: {
@@ -287,56 +208,60 @@ def test_a_failed_rescan_leaves_the_previous_record_standing(snap_env, monkeypat
     monkeypatch.setattr(ss, "_open_parquet", lambda u: (_ for _ in ()).throw(OSError("no route")))
 
     with caplog.at_level("ERROR"):
-        assert ss.scan_snapshot(merge_fn=rs._merge_into_candidates_csv,
-                                index_loader=rs._load_or_build_candidates_index) == 0
+        assert ss.scan_snapshot() == 0
 
     assert ss.load_ledger()["files"][url] == done, \
         "a failed rescan must not erase what the previous scan consumed"
 
 
-def test_old_stage_a_fingerprint_is_never_overwritten(snap_env, caplog):
+def test_an_old_gate_fingerprint_is_never_overwritten(snap_env, caplog):
     """The mismatch warning must keep firing every run until the user deletes the
     ledger — scanning one file under the new gate does not make the files marked done
     under the old one any less stale."""
     old_files = {f"https://openalex.s3.amazonaws.com/old_{i}.parquet":
                  {"content_length": 10 + i, "status": "done", "kept": 0} for i in range(3)}
-    ss.save_ledger({"snapshot_date": "", "stage_a_fingerprint": "OLD-GATE",
-                    "stage_b_fingerprint": ss.stage_b_fingerprint(), "files": old_files})
+    ss.save_ledger({"snapshot_date": "", "search_gate_fingerprint": "OLD-GATE",
+                    "files": old_files})
 
     parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", [
         _record(doi="https://doi.org/10.1/a", title="A direct replication of Smith (2009)"),
     ])
 
     with caplog.at_level("WARNING"):
-        ss.scan_snapshot(files=[parquet], merge_fn=rs._merge_into_candidates_csv,
-                         index_loader=rs._load_or_build_candidates_index)
+        ss.scan_snapshot(files=[parquet])
 
     assert any("DIFFERENT gate" in r.message for r in caplog.records), \
         "the mismatch must be reported"
     ledger = ss.load_ledger()
-    assert ledger["stage_a_fingerprint"] == "OLD-GATE"
+    assert ss.ledger_gate_fingerprint(ledger) == "OLD-GATE"
     assert ledger["files"][parquet]["status"] == "done"
     assert all(ledger["files"][u]["status"] == "done" for u in old_files)
 
 
-def test_stage_b_change_asks_for_re_admission_not_a_rescan(snap_env, caplog):
-    """The whole point of the pool: a phrase-list change is re-runnable locally, so it
-    must NOT print the loud 'delete the ledger and rescan' warning that a Stage A
-    change prints — only a mild pointer at --admit-from-pool."""
-    ss.save_ledger({"snapshot_date": "", "stage_a_fingerprint": ss.stage_a_fingerprint(),
-                    "stage_b_fingerprint": "OLD-PHRASES", "files": {}})
+def test_a_ledger_written_under_the_old_key_name_still_resumes(snap_env, caplog):
+    """A 510M-row scan checkpointed as `stage_a_fingerprint` must not look like a new
+    gate after the rename. Same value, older key name: no rescan warning, and the
+    partitions already marked done stay done."""
+    old_files = {f"https://openalex.s3.amazonaws.com/old_{i}.parquet":
+                 {"content_length": 10 + i, "status": "done", "kept": 0} for i in range(3)}
+    ss.save_ledger({"snapshot_date": "",
+                    "stage_a_fingerprint": ss.search_gate_fingerprint(),
+                    "stage_b_fingerprint": "A-RETIRED-STAGE-B-VALUE",
+                    "files": old_files})
     parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", [
         _record(doi="https://doi.org/10.1/a", title="A direct replication of Smith (2009)"),
     ])
 
-    with caplog.at_level("INFO"):
-        ss.scan_snapshot(files=[parquet], merge_fn=rs._merge_into_candidates_csv,
-                         index_loader=rs._load_or_build_candidates_index)
+    with caplog.at_level("WARNING"):
+        ss.scan_snapshot(files=[parquet])
 
     assert not any("DIFFERENT gate" in r.message for r in caplog.records), \
-        "a Stage B change must never demand a 725 GB rescan"
-    assert any("--admit-from-pool" in r.message for r in caplog.records)
-    assert ss.stage_a_fingerprint() != ss.stage_b_fingerprint()
+        "the legacy key name must never demand a 725 GB rescan"
+    ledger = ss.load_ledger()
+    assert ledger["stage_a_fingerprint"] == ss.search_gate_fingerprint()
+    assert "search_gate_fingerprint" not in ledger, \
+        "a ledger that already names the gate is left alone"
+    assert all(ledger["files"][u]["status"] == "done" for u in old_files)
 
 
 def test_explicit_files_never_fetch_the_manifest(snap_env, monkeypatch):
@@ -351,8 +276,7 @@ def test_explicit_files_never_fetch_the_manifest(snap_env, monkeypatch):
     ])
 
     assert ss.scan_snapshot(files=[parquet], pilot_csv=snap_env.tmp / "pilot.csv") == 1
-    assert ss.scan_snapshot(files=[parquet], merge_fn=rs._merge_into_candidates_csv,
-                            index_loader=rs._load_or_build_candidates_index) == 1
+    assert ss.scan_snapshot(files=[parquet]) == 1
     assert not snap_env.manifest.exists()
 
 
@@ -375,22 +299,20 @@ def test_token_gate_matches_title_and_raw_abstract_json(snap_env):
     assert _mask(ss._gate_mask(batch)) == [True, True, True, False]
 
 
-def test_gate_is_order_blind_but_stage_b_is_not(snap_env):
-    """The raw JSON has no word order, so Stage A cannot tell "replications of" from
-    "replications ... of" — it passes both. Stage B, run on the reconstructed text,
-    is what rejects the accidental co-occurrence."""
+def test_the_gate_is_order_blind(snap_env):
+    """The raw JSON has no word order, so the search gate cannot tell "replications of"
+    from "replications ... of" — it passes both, and Stage 2 sorts them out over the
+    reconstructed text the pool stores."""
     abstract = _inverted("Several replications were run independently of the pilot")
     rec = _record(title="Notes on honeybee foraging", abstract=abstract)
 
     assert _mask(ss._gate_mask(_table([rec]))) == [True]
-    reconstructed = oa._reconstruct_abstract(json.loads(abstract))
-    assert ss._admit(False, rec["title"], reconstructed) is False
 
 
 def test_concept_ids_do_not_match_longer_ids_in_the_json_branch(snap_env):
     """Some snapshot builds ship `concepts` as a JSON string, matched by regex. An
     unanchored id is a prefix of longer ids — C9893847 inside C98938470 — and a concept
-    hit bypasses Stage B, so the false hit would enter candidates.csv unchallenged."""
+    hit admits the work on its own, so the false hit would enter the pool unchallenged."""
     real = sorted(ss._CONCEPT_IDS_BARE)[0]
     longer = pa.table({"concepts": [json.dumps(
         [{"id": f"https://openalex.org/{real}0", "display_name": "Other", "score": 0.9}])]})
@@ -412,29 +334,6 @@ def test_concept_hit_without_any_token(snap_env):
 
     assert _mask(ss._concept_mask(batch)) == [True]
     assert _mask(ss._gate_mask(batch)) == [False]
-    # Nothing in the text admits it — the concept hit alone bypasses Stage B.
-    assert ss._admit(False, rec["title"], "We describe how bees find flowers") is False
-    assert ss._admit(True, rec["title"], "We describe how bees find flowers") is True
-
-
-def test_the_candidates_index_is_not_reloaded_for_every_batch(snap_env, monkeypatch, caplog):
-    """The merge runs once per pyarrow batch — thousands of times over a full scan — and
-    each merge starts by loading the candidates index. At 7M keys that is ~1.4s and a GB
-    of RSS per call, so it must be read from disk once, not per batch."""
-    monkeypatch.setattr(ss, "SNAPSHOT_BATCH_ROWS", 1)
-    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", [
-        _record(work_id=f"https://openalex.org/W{i}", doi=f"https://doi.org/10.1/{i}",
-                oa_url=f"https://example.org/{i}.pdf",
-                title=f"A direct replication of Smith ({2000 + i})")
-        for i in range(1, 6)
-    ])
-
-    with caplog.at_level("INFO"):
-        assert ss.scan_snapshot(files=[parquet], merge_fn=rs._merge_into_candidates_csv,
-                                index_loader=rs._load_or_build_candidates_index) == 5
-
-    reads = [r for r in caplog.records if "index loaded" in r.getMessage()]
-    assert len(reads) <= 1, f"the index was re-read from disk {len(reads)} times"
 
 
 # ---------------------------------------------------------------------------
@@ -471,84 +370,88 @@ def test_a_defective_record_costs_one_row_not_the_partition(snap_env, monkeypatc
     real_open = ss._open_parquet
     monkeypatch.setattr(ss, "_open_parquet", lambda url: opens.append(url) or real_open(url))
 
-    real_admit = ss._row_if_admitted
+    real_admit = ss._admitted_row
 
-    def explode_on_w2(rec, concept_hit, counters, abstract=None):
+    def explode_on_w2(rec, counters, abstract=None):
         if rec.get("id") == "https://openalex.org/W2":
             raise AttributeError("'list' object has no attribute 'items'")
-        return real_admit(rec, concept_hit, counters, abstract=abstract)
+        return real_admit(rec, counters, abstract=abstract)
 
-    monkeypatch.setattr(ss, "_row_if_admitted", explode_on_w2)
+    monkeypatch.setattr(ss, "_admitted_row", explode_on_w2)
 
+    pilot = snap_env.tmp / "pilot.csv"
     with caplog.at_level("WARNING"):
-        merged = ss.scan_snapshot(files=[parquet], merge_fn=rs._merge_into_candidates_csv,
-                                  index_loader=rs._load_or_build_candidates_index)
+        merged = ss.scan_snapshot(files=[parquet], pilot_csv=pilot)
 
     assert merged == 2, "the two sound records must still be admitted"
     assert len(opens) == 1, "a record defect is not a read failure — no retry"
-    assert ss.load_ledger()["files"][parquet]["status"] == "done"
-    assert list(pd.read_csv(snap_env.candidates)["doi_r"]) == ["10.1/a", "10.1/c"]
+    assert list(pd.read_csv(pilot, encoding="utf-8-sig")["doi_r"]) == ["10.1/a", "10.1/c"]
     assert any("https://openalex.org/W2" in r.getMessage() for r in caplog.records), \
         "the skipped record must be named"
 
 
 def test_a_defective_record_does_not_stop_the_pool(snap_env, monkeypatch):
-    """The pool holds Stage A survivors, and one unreadable record must not cost the
-    others their place in it — a truncated pool would silently narrow re-admission."""
+    """The pool holds search-gate survivors, and one unreadable record must not cost
+    the others their place in it — a truncated pool would silently narrow Stage 2."""
     parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
     pool = snap_env.tmp / "pool"
 
-    real_admit = ss._row_if_admitted
+    real_admit = ss._admitted_row
 
-    def explode_on_w2(rec, concept_hit, counters, abstract=None):
+    def explode_on_w2(rec, counters, abstract=None):
         if rec.get("id") == "https://openalex.org/W2":
             raise ValueError("malformed record")
-        return real_admit(rec, concept_hit, counters, abstract=abstract)
+        return real_admit(rec, counters, abstract=abstract)
 
-    monkeypatch.setattr(ss, "_row_if_admitted", explode_on_w2)
+    monkeypatch.setattr(ss, "_admitted_row", explode_on_w2)
     ss.scan_snapshot(files=[parquet], pilot_csv=snap_env.tmp / "pilot.csv", survivor_pool=pool)
 
     assert list(pd.read_parquet(pool)["id"]) == [f"https://openalex.org/W{i}" for i in (1, 2, 3, 4)]
-# The anti-drift seam: Stage 1's keyword admission and the filter engine's spec
-# bundle are one decision expressed twice — Python regexes here, JSON specs there —
-# so they cannot disagree about any text. Written as a table rather than a property
-# so the near-misses are visible, and each case names the pile the ENGINE must put
-# it in, because "not discarded" is satisfied by too many things to be a contract.
-#
-# The parity statement: Stage 1 admits a row exactly when the engine routes it to a
-# SCREEN pile. A rejected row is either engine-discarded (a rule saw it and said no)
-# or unmatched (`pending/no_filter_matched`, no rule claimed it) — never screened.
-# The documented divergences in docs/filter-engine.md are all in the other
-# direction: the concept arm admits rows with no keyword at all, and no-abstract
-# rows fall to `pending/no_text`; neither is a keyword decision, so neither appears
-# in this table.
-_SCREEN_PILES = ("screen_expensive", "screen_cheap")
-
+# Stage 1 no longer has a keyword decision: a search-gate survivor is admitted, and
+# every exclusion, rescue and tier assignment belongs to the engine's spec bundle.
+# This table is what that buys — the same texts, routed by the ONE rule set. Written
+# as a table rather than a property so the near-misses are visible, and each case
+# names the pile the ENGINE must put it in, because "not discarded" is satisfied by
+# too many things to be a contract.
 _GATE_CASES = [
-    # (title, abstract, admitted by Stage 1, pile the engine routes it to)
+    # (title, abstract, search gate keeps it, pile the engine routes it to)
+    # The bundle is live at its ends and shadow in the middle (CONVENTIONS.md),
+    # so a weak-signal row reads `pending` and its comment names the shadow rule
+    # that will claim it once that rule is switched on.
+    #
+    # replication-claim, live
     ("A direct replication of the anchoring effect",
      "We report a direct replication of Smith (2010).", True, "screen_expensive"),
     ("We replicate prior findings",
      "We replicate prior findings in a new population, naming no target.",
-     True, "screen_cheap"),
-    # title-stem only: Stage 1's old private arm, now a spec of its own
+     True, "screen_expensive"),
+    # replication-signal (shadow) — title stem only, bound for screen_cheap
     ("Reproducibility of the X effect",
      "Bees forage over long distances when the hive is disturbed.",
+     True, "pending"),
+    # reproduction-signal, live pending #155
+    ("A computational reproduction",
+     "We re-ran the authors' code and reproduced the published results.",
      True, "screen_cheap"),
-    # exclusion + phrase + cite: the #44 rescue, which outranks the 500s band
+    # both vocabularies in one row: replication-claim (700) outranks
+    # reproduction-signal (262), so the two-voter screen is what settles it
     ("A computational reproduction",
      "We replicated the code of Smith (2019) and re-ran every analysis.",
-     True, "screen_cheap"),
-    # exclusion, nothing to rescue
+     True, "screen_expensive"),
+    # the molecular sense: admitted by nothing, discarded by nothing
     ("Origins of DNA replication in yeast",
      "We map replication forks and origin firing across the genome.",
-     False, "discard"),
+     True, "pending"),
+    # a live discard: the title announces the genre and echoes its parent
+    ("Review for: A replication of the anchoring effect",
+     "Reviewer comments on the submitted manuscript.", True, "discard"),
     # a stem in the abstract alone is not a signal — no rule claims these
     ("Foraging patterns in bees",
      "Replicability was not assessed in this observational field study.",
-     False, "pending"),
+     True, "pending"),
     ("Notes on honeybee foraging",
-     "Several replications were run independently of the pilot.", False, "pending"),
+     "Several replications were run independently of the pilot.", True, "pending"),
+    # no replication token anywhere: the search gate itself never sees this one
     ("A field experiment on consumer choice", "Prices were randomised by store.",
      False, "pending"),
 ]
@@ -574,39 +477,21 @@ def _engine_pile(title: str, abstract: str) -> str:
     return route_batch(specs, batch).to_pylist()[0]["pile"]
 
 
-@pytest.mark.parametrize("title,abstract,admitted,pile", _GATE_CASES)
-def test_stage1_admits_exactly_what_the_engine_screens(snap_env, title, abstract,
-                                                       admitted, pile):
-    """One keyword decision, two implementations. Stage 1 admits a row exactly when
-    the engine routes it to a screen pile — and the pile is the one named, so a
-    spec edit that quietly moved a row between screen tiers is visible here too."""
-    assert ss._admit(False, title, abstract) is admitted
+@pytest.mark.parametrize("title,abstract,gated,pile", _GATE_CASES)
+def test_stage1_admits_everything_and_the_engine_sorts_it(snap_env, title, abstract,
+                                                          gated, pile):
+    """One rule set, and it lives in Stage 2. Stage 1 decides on the search gate alone
+    and keeps every survivor — including the ones the engine will discard — and the
+    engine names the pile, so a spec edit that moved a row between tiers is visible."""
+    batch = _table([_record(title=title, abstract=_inverted(abstract))])
+    assert _mask(ss._gate_mask(batch)) == [gated], \
+        "the search gate is the whole of Stage 1's decision"
     assert _engine_pile(title, abstract) == pile
-    assert admitted is (pile in _SCREEN_PILES)
 
 
 # ---------------------------------------------------------------------------
 # Row construction
 # ---------------------------------------------------------------------------
-
-def test_row_from_snapshot_matches_the_api_row(snap_env):
-    """Snapshot rows and API rows land in the same CSV, so the only field allowed to
-    differ is the source tag."""
-    rec = _record(work_id="https://openalex.org/W123", doi="https://doi.org/10.1234/ABC.567",
-                  title="A direct replication study", year=2024,
-                  authors=("Alice Smith", "Bob Jones"), journal="Journal of Replications",
-                  abstract=_inverted("This is a replication abstract"))
-    api_json = {**rec, "abstract_inverted_index": json.loads(rec["abstract_inverted_index"])}
-
-    row = ss._row_from_snapshot(rec)
-    expected = oa._extract_row(api_json)
-
-    assert row["source"] == ss.SOURCE_TAG_SNAPSHOT == "openalex_snapshot"
-    for col in CANDIDATES_COLS:
-        if col == "source":
-            continue
-        assert row[col] == expected[col], col
-
 
 def test_snapshot_row_has_exactly_the_candidates_schema(snap_env):
     row = ss._row_from_snapshot(_record(doi="https://doi.org/10.1/a"))
@@ -617,60 +502,112 @@ def test_snapshot_row_has_exactly_the_candidates_schema(snap_env):
 # Merge: the enrichment bypass
 # ---------------------------------------------------------------------------
 
-def test_merge_enrich_false_skips_enrichment_and_returns_the_appended_count(
-        snap_env, monkeypatch):
-    """Snapshot rows already carry OpenAlex's abstract; sending 400 GB of them through
-    the CrossRef/S2 backfill would be the run's dominant cost. The blank ones are
-    handled later by `fetch_abstracts --skip-openalex`."""
-    called = []
-    monkeypatch.setattr(rs, "enrich_abstracts", lambda df: called.append(len(df)) or df)
-
-    df = pd.DataFrame([{**{c: "" for c in CANDIDATES_COLS}, "doi_r": "10.1/a", "title_r": "A"}],
-                      columns=CANDIDATES_COLS)
-    n = rs._merge_into_candidates_csv(df, snap_env.candidates, enrich=False)
-
-    assert n == 1
-    assert called == [], "enrich=False must not reach the abstract backfill"
-
-    other = pd.DataFrame([{**{c: "" for c in CANDIDATES_COLS}, "doi_r": "10.1/b", "title_r": "B"}],
-                         columns=CANDIDATES_COLS)
-    assert rs._merge_into_candidates_csv(other, snap_env.candidates) == 1
-    assert called == [1], "the default path still enriches"
-
+# ---------------------------------------------------------------------------
+# Opt-in
+# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Opt-in
 # ---------------------------------------------------------------------------
 
-def test_snapshot_runs_only_when_explicitly_requested(monkeypatch, tmp_path):
-    """A2: a bare `python -m search.run_search` must never start a 400+ GB scan, so
-    the snapshot is not part of "all sources" — only an explicit --source starts it."""
+def test_a_bare_invocation_never_starts_a_scan(monkeypatch):
+    """A2: `python -m search.run_search` with no flags must never start a 400+ GB
+    read. --scan (or --snapshot-pilot) is required, and argparse must say so."""
+    import runpy
+
+    fake = types.ModuleType("search.snapshot_scan")
+    fake.scan_snapshot = lambda **kw: pytest.fail("a bare invocation must not scan")
+    monkeypatch.setitem(sys.modules, "search.snapshot_scan", fake)
+    monkeypatch.setattr(sys, "argv", ["run_search"])
+
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_module("search.run_search", run_name="__main__")
+    assert exc.value.code == 2
+
+
+def test_the_dashboard_is_refreshed_even_when_the_scan_dies(monkeypatch):
+    """The machine holding the pool is the only one that can write Stage 1's stats —
+    a request path never scans column data. So the refresh runs in `finally`: a
+    Ctrl-C 300 files in must still leave the dashboard showing what was scanned."""
+    import runpy
+
+    refreshed = []
+    fake = types.ModuleType("search.snapshot_scan")
+    fake.scan_snapshot = lambda **kw: (_ for _ in ()).throw(KeyboardInterrupt())
+    monkeypatch.setitem(sys.modules, "search.snapshot_scan", fake)
+
+    import shared.dashboard_cache as dc
+    monkeypatch.setattr(dc, "refresh",
+                        lambda stage, pool_dir=None: refreshed.append(stage))
+    monkeypatch.setattr(sys, "argv", ["run_search", "--scan"])
+
+    with pytest.raises(KeyboardInterrupt):
+        runpy.run_module("search.run_search", run_name="__main__")
+    assert refreshed == [dc.POOL_STAGE]
+
+
+def test_the_dashboard_is_refreshed_from_the_pool_this_run_wrote(monkeypatch, tmp_path):
+    """`--survivor-pool` moves where the scan writes, so it must move where the
+    stats are read from too. Publishing SNAPSHOT_POOL_DIR's numbers after scanning
+    somewhere else is silently wrong — the dashboard would show a stale pool's
+    counts as if they were this run's."""
+    import runpy
+
+    elsewhere = tmp_path / "other-pool"
+    seen = {}
+    fake = types.ModuleType("search.snapshot_scan")
+    fake.scan_snapshot = lambda **kw: 0
+    monkeypatch.setitem(sys.modules, "search.snapshot_scan", fake)
+
+    import shared.dashboard_cache as dc
+    monkeypatch.setattr(dc, "refresh",
+                        lambda stage, pool_dir=None: seen.update(stage=stage, pool=pool_dir))
+    monkeypatch.setattr(sys, "argv",
+                        ["run_search", "--scan", "--survivor-pool", str(elsewhere)])
+
+    runpy.run_module("search.run_search", run_name="__main__")
+    assert seen["stage"] == dc.POOL_STAGE
+    assert seen["pool"] == elsewhere
+
+
+def test_scan_reaches_the_scanner_with_the_operator_flags(monkeypatch, tmp_path):
     calls = []
     fake = types.ModuleType("search.snapshot_scan")
     fake.scan_snapshot = lambda **kw: calls.append(kw) or 0
     monkeypatch.setitem(sys.modules, "search.snapshot_scan", fake)
+    monkeypatch.setattr(sys, "argv", ["run_search", "--scan", "--snapshot-max-files", "2",
+                                      "--survivor-pool", str(tmp_path / "pool")])
+    import runpy
+    runpy.run_module("search.run_search", run_name="__main__")
 
-    empty = pd.DataFrame(columns=CANDIDATES_COLS)
-    monkeypatch.setattr(rs, "_harvest_oa_cache", lambda: empty)
-    monkeypatch.setattr(rs, "_harvest_s2_cache", lambda: empty)
-    monkeypatch.setattr(rs, "fetch_openalex_candidates", lambda **kw: empty)
-    monkeypatch.setattr(rs, "fetch_semantic_scholar_candidates", lambda **kw: empty)
-    monkeypatch.setattr(rs, "fetch_openalex_concept_candidates", lambda **kw: empty)
-    monkeypatch.setattr(rs, "is_engine_enabled", lambda: False)
-    monkeypatch.setattr(rs, "deduplicate_candidates", lambda df: df)
-    monkeypatch.setattr(rs, "_merge_into_candidates_csv", lambda df, path, **kw: 0)
-
-    rs.run_search(sources=None)
-    assert calls == [], "the default run must not touch the snapshot"
-
-    rs.run_search(sources={"openalex_snapshot"}, snapshot_max_files=2)
     assert len(calls) == 1
     assert calls[0]["max_files"] == 2
+    assert calls[0]["survivor_pool"] == tmp_path / "pool"
 
 
 # ---------------------------------------------------------------------------
 # Pilot mode
 # ---------------------------------------------------------------------------
+
+def test_a_pilot_write_failure_comes_straight_out(snap_env, monkeypatch):
+    """A half-written pilot CSV must NOT be retried: the rows it was appending are
+    already recorded as seen in memory, so a retry would write partial duplicates."""
+    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", [
+        _record(work_id="https://openalex.org/W1", doi="https://doi.org/10.1/a",
+                title="A direct replication of Smith (2009)"),
+    ])
+    attempts = []
+
+    def die(df, path):
+        attempts.append(len(df))
+        raise RuntimeError("disk gave out mid-write")
+
+    monkeypatch.setattr(ss, "_write_pilot", die)
+    with pytest.raises(RuntimeError, match="disk gave out"):
+        ss.scan_snapshot(files=[parquet], pilot_csv=snap_env.tmp / "pilot.csv")
+    assert attempts == [1], "a local-write failure must not be retried"
+
+
 
 def test_pilot_dedups_against_its_own_csv(snap_env):
     """A6: pilot mode keeps no ledger, so re-running the same partition is expected —
@@ -750,7 +687,7 @@ def test_pool_stores_every_stage_a_survivor_with_why_it_survived(snap_env):
 
 def test_rescanning_a_partition_overwrites_its_pool_file(snap_env):
     """A partition re-read after a crash must replace its pool file — a second copy
-    would double every one of its rows on the next re-admission."""
+    would double every one of its rows the next time the pool is read."""
     parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
     pool = snap_env.tmp / "pool"
     pilot = snap_env.tmp / "pilot.csv"
@@ -761,167 +698,6 @@ def test_rescanning_a_partition_overwrites_its_pool_file(snap_env):
 
     assert len(list(pool.glob("*.parquet"))) == 1
     assert len(pd.read_parquet(pool)) == len(first) == 4
-
-
-def test_admit_from_pool_admits_exactly_what_the_scanner_admits(snap_env, monkeypatch):
-    """The seam the whole feature rests on: re-admission from the pool and the scan's
-    own admission are one code path, so they cannot drift apart."""
-    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
-    pool = snap_env.tmp / "pool"
-    pilot = snap_env.tmp / "pilot.csv"
-
-    ss.scan_snapshot(files=[parquet], pilot_csv=pilot, survivor_pool=pool)
-    scanned = pd.read_csv(pilot, encoding="utf-8-sig").fillna("")
-
-    merged: list[pd.DataFrame] = []
-
-    def capture(df, path, enrich=True):
-        assert enrich is False, "pool rows carry OpenAlex's own abstract"
-        merged.append(df)
-        return len(df)
-
-    n = ss.admit_from_pool(pool, merge_fn=capture, index_loader=lambda p: set())
-
-    readmitted = pd.concat(merged, ignore_index=True).fillna("")
-    assert n == len(readmitted) == len(scanned) == 2
-    assert list(readmitted["doi_r"]) == list(scanned["doi_r"])
-    for col in CANDIDATES_COLS:
-        assert list(readmitted[col].astype(str)) == list(scanned[col].astype(str)), col
-
-
-def test_admit_from_pool_dry_run_writes_nothing(snap_env):
-    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
-    pool = snap_env.tmp / "pool"
-    ss.scan_snapshot(files=[parquet], pilot_csv=snap_env.tmp / "pilot.csv", survivor_pool=pool)
-
-    def explode(df, path, enrich=True):
-        raise AssertionError("a dry run must not merge anything")
-
-    assert ss.admit_from_pool(pool, merge_fn=explode, index_loader=lambda p: set(),
-                              dry_run=True) == 2
-
-
-def test_admit_from_pool_cli_flag_is_wired(monkeypatch, tmp_path):
-    """--admit-from-pool is an early-exit mode: it must reach admit_from_pool with the
-    path and the dry-run flag, and never start a search run."""
-    import runpy
-
-    calls = []
-    fake = types.ModuleType("search.snapshot_scan")
-    fake.admit_from_pool = lambda path, **kw: calls.append((path, kw)) or 0
-    fake.scan_snapshot = lambda **kw: pytest.fail("--admit-from-pool must not scan")
-    monkeypatch.setitem(sys.modules, "search.snapshot_scan", fake)
-    monkeypatch.setattr(sys, "argv",
-                        ["run_search", "--admit-from-pool", str(tmp_path / "pool"), "--dry-run"])
-
-    with pytest.raises(SystemExit) as exc:
-        runpy.run_module("search.run_search", run_name="__main__")
-
-    assert exc.value.code == 0
-    assert len(calls) == 1
-    assert calls[0][0] == tmp_path / "pool"
-    assert calls[0][1]["dry_run"] is True
-
-
-# ---------------------------------------------------------------------------
-# The prebuilt candidates artifact
-# ---------------------------------------------------------------------------
-
-
-def _ledger_with(files: dict) -> dict:
-    return {"snapshot_date": "2026-07-01", "files": files}
-
-
-_LEDGER = _ledger_with({"https://example.org/part_0000.parquet":
-                        {"content_length": 100, "record_count": 10, "kept": 2}})
-
-
-@pytest.mark.parametrize("mutate", [
-    lambda m: m.setattr(ss, "ROW_BUILDER_VERSION", "v99", raising=False),
-    lambda m: m.setattr(ss, "stage_a_fingerprint", lambda: "other-a"),
-    lambda m: m.setattr(ss, "stage_b_fingerprint", lambda: "other-b"),
-])
-def test_build_hash_moves_with_the_code_that_makes_the_rows(snap_env, monkeypatch, mutate):
-    """A build is downloaded BY its hash, so anything that changes a row must change it."""
-    before = ss.build_hash(_LEDGER)
-    mutate(monkeypatch)
-    assert ss.build_hash(_LEDGER) != before
-
-
-@pytest.mark.parametrize("ledger", [
-    _ledger_with({"https://example.org/part_0000.parquet":
-                  {"content_length": 101, "record_count": 10, "kept": 2}}),   # partition rewritten
-    _ledger_with({"https://example.org/part_0000.parquet":
-                  {"content_length": 100, "record_count": 10, "kept": 2},
-                  "https://example.org/part_0001.parquet":
-                  {"content_length": 50, "record_count": 5, "kept": 1}}),     # one more partition
-    {"snapshot_date": "2026-08-01", "files": _LEDGER["files"]},               # newer snapshot
-])
-def test_build_hash_moves_with_what_the_scan_consumed(snap_env, ledger):
-    assert ss.build_hash(ledger) != ss.build_hash(_LEDGER)
-
-
-def test_build_hash_ignores_the_kept_counts(snap_env):
-    """``kept`` is what the merge appended after dedup against the LOCAL candidates.csv,
-    so a colleague who already held some of these rows records a different number for
-    the same partition. Folding it in would give byte-identical builds different hashes
-    on two machines — the one thing a content hash exists to rule out."""
-    other_kept = _ledger_with({"https://example.org/part_0000.parquet":
-                               {"content_length": 100, "record_count": 10, "kept": 0}})
-    assert ss.build_hash(other_kept) == ss.build_hash(_LEDGER)
-
-
-def test_build_hash_is_stable_for_the_same_inputs(snap_env):
-    reordered = {"snapshot_date": "2026-07-01",
-                 "files": dict(reversed(list(_LEDGER["files"].items())))}
-    assert ss.build_hash(_LEDGER) == ss.build_hash(reordered) == ss.build_hash(_LEDGER)
-
-
-def test_build_candidates_rows_are_what_admit_from_pool_admits(snap_env, monkeypatch):
-    """The anti-drift seam: a shared build must hold exactly the rows a collaborator's
-    own --admit-from-pool would have produced, row for row."""
-    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
-    pool = snap_env.tmp / "pool"
-    ss.scan_snapshot(files=[parquet], pilot_csv=snap_env.tmp / "pilot.csv", survivor_pool=pool)
-
-    admitted: list[pd.DataFrame] = []
-    ss.admit_from_pool(pool, merge_fn=lambda df, path, enrich=True: admitted.append(df) or len(df),
-                       index_loader=lambda p: set())
-
-    manifest = ss.build_candidates(pool, snap_env.tmp / "build")
-    built = pd.concat([pd.read_parquet(snap_env.tmp / "build" / c["name"])
-                       for c in manifest["chunks"]], ignore_index=True).fillna("")
-    expected = pd.concat(admitted, ignore_index=True).fillna("")
-
-    assert manifest["rows"] == len(built) == len(expected) == 2
-    for col in CANDIDATES_COLS:
-        assert list(built[col].astype(str)) == list(expected[col].astype(str)), col
-
-
-def test_build_candidates_chunks_and_counts_them_honestly(snap_env):
-    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
-    pool = snap_env.tmp / "pool"
-    ss.scan_snapshot(files=[parquet], pilot_csv=snap_env.tmp / "pilot.csv", survivor_pool=pool)
-
-    out = snap_env.tmp / "build"
-    manifest = ss.build_candidates(pool, out, chunk_rows=1)
-
-    assert [c["name"] for c in manifest["chunks"]] == ["candidates-0000.parquet",
-                                                       "candidates-0001.parquet"]
-    for chunk in manifest["chunks"]:
-        assert len(pd.read_parquet(out / chunk["name"])) == chunk["rows"] == 1
-    assert manifest["rows"] == sum(c["rows"] for c in manifest["chunks"])
-    assert manifest["build_hash"] == ss.build_hash()
-    assert (manifest["stage_a_fingerprint"], manifest["stage_b_fingerprint"],
-            manifest["row_builder_version"]) == (ss.stage_a_fingerprint(),
-                                                 ss.stage_b_fingerprint(),
-                                                 ss.ROW_BUILDER_VERSION)
-    assert json.loads((out / "manifest.json").read_text(encoding="utf-8")) == manifest
-
-    # A rebuild must not leave the previous build's chunks behind for the push to
-    # carry along under the new manifest.
-    ss.build_candidates(pool, out, chunk_rows=10)
-    assert sorted(p.name for p in out.glob("*.parquet")) == ["candidates-0000.parquet"]
 
 
 # ---------------------------------------------------------------------------
