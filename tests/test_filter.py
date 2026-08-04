@@ -8,6 +8,7 @@ import pytest
 
 from filter.phrase_detection import (
     find_replication_phrase_span,
+    keyword_verdict,
     is_non_scholarly_context,
     is_reproduction_only,
 )
@@ -480,3 +481,69 @@ def test_biological_abstract_matches_no_new_pattern():
             "rapidly. We measured reproductive output and the basic reproduction "
             "number over three seasons.")
     assert find_replication_phrase_span(text, ignore_exclusions=True) is None
+
+
+# ---------------------------------------------------------------------------
+# keyword_verdict — the one keyword decision both stages evaluate
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("title,abstract,outcome", [
+    # positive: a precise phrase that survives exclusions and guards
+    ("A direct replication of the anchoring effect",
+     "We report a direct replication of Smith (2010).", "positive"),
+    ("Computational reproduction",
+     "We reproduce the results of Brown (2018) from the posted code.", "positive"),
+    # ambiguous: a stem in the TITLE only — no phrase anywhere
+    ("Reproducibility of the X effect",
+     "Bees forage over long distances when the hive is disturbed.", "ambiguous"),
+    ("Replicability in the social sciences",
+     "We survey how researchers describe their own methods sections.", "ambiguous"),
+    # negative: near-misses. A stem in the ABSTRACT alone is not enough — that is
+    # the title/abstract distinction the rule now makes explicit.
+    ("Foraging patterns in bees",
+     "Replicability was not assessed in this observational field study.", "negative"),
+    ("Notes on honeybee foraging",
+     "Several replications were run independently of the pilot.", "negative"),
+    ("A field experiment on consumer choice", "Prices were randomised by store.",
+     "negative"),
+])
+def test_keyword_verdict_tiers(title, abstract, outcome):
+    assert keyword_verdict(title, abstract).outcome == outcome
+
+
+def test_keyword_verdict_exclusion_beats_a_title_stem():
+    """A biological title carries the stem too. The exclusion is checked first, so
+    "DNA replication" does not enter through the title arm."""
+    v = keyword_verdict("Origins of DNA replication in yeast",
+                        "We map replication forks and origin firing across the genome.")
+    assert v.outcome == "negative"
+    assert v.exclusion
+
+
+def test_keyword_verdict_exclusion_plus_cite_is_ambiguous():
+    """#44 rescue: an exclusion fired, but a phrase AND an author-year cite are
+    present, so the row is handed on rather than rejected."""
+    v = keyword_verdict("A computational reproduction",
+                        "We replicated the code of Smith (2019) and re-ran "
+                        "every analysis.")
+    assert v.outcome == "ambiguous"
+    assert v.exclusion and "phrase+cite" in v.reason
+
+
+def test_keyword_verdict_reports_reproduction_vocabulary():
+    v = keyword_verdict("Reproducibility study",
+                        "We ran a computational reproduction of Brown (2018).")
+    assert v.outcome == "positive" and v.is_reproduction
+
+
+def test_rule_filter_title_stem_only_reaches_stage_three():
+    """Behaviour change: a bare stem in the title used to be false_positive here
+    while Stage 1 admitted it, so the row died on arrival at Stage 3. It is now
+    needs_review — the population the cheap pre-screen (#130) exists to absorb."""
+    out = classify_row(_row(
+        "Reproducibility of the X effect",
+        "Bees forage over long distances when the hive is disturbed.",
+    ))
+    assert out["filter_status"] == "needs_review"
+    assert out["filter_confidence"] == "medium"
+    assert out["filter_evidence"].startswith("title stem:")

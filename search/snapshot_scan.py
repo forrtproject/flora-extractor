@@ -12,14 +12,18 @@ Two admission stages, both recall-oriented:
 
 Stage A (vectorized, pyarrow)  a broad token regex over title and the RAW
     abstract inverted-index JSON, OR membership of a replication concept.
-Stage B (per row, Python)      a precise ``REPLICATION_PHRASES`` match on
-    title + reconstructed abstract, OR a token hit in the title alone.
+Stage B (per row, Python)      ``keyword_verdict(title, abstract)`` from
+    ``filter/phrase_detection.py`` — admit on ``positive`` or ``ambiguous``.
     Concept hits bypass Stage B entirely — that is the recall arm, mirroring
     what the ``openalex_concept`` API source does today.
 
-Stage B is a POSITIVE match only, NOT Stage 2's precision semantics: no
-exclusion patterns, no phrase guards. Stage 1 must never reject a paper; that
-is Stage 2's and Stage 3's job.
+Stage B calls the SAME function Stage 2's rule filter calls, so the two stages
+cannot disagree about the keywords: a row Stage 1 writes is exactly a row Stage 2
+does not call ``false_positive``. That means Stage B now applies the exclusion
+patterns and phrase guards too — a row killed by an exclusion is no longer
+written, because Stage 2 would have discarded it on arrival anyway. Stage 1 still
+does not judge anything the keyword rule does not: the substantive decision
+belongs to Stage 3's screen.
 
 Progress is checkpointed per manifest file in ``cache/snapshot/ledger.json`` so
 an interrupted 400+ GB scan resumes where it stopped.
@@ -85,22 +89,16 @@ from shared.row_key import row_keys
 from shared.schema import CANDIDATES_COLS
 from shared.utils import clean_doi
 from search.openalex_search import CONCEPT_IDS, _build_ref, _reconstruct_abstract
-from filter.phrase_detection import REPLICATION_PHRASES
+from filter.phrase_detection import (NON_SCHOLARLY_REPLICATION_CONTEXTS, PHRASE_GUARDS,
+                                     REPLICATION_PHRASES, REPLICATION_STEM_PATTERN,
+                                     keyword_verdict)
 
 SOURCE_TAG_SNAPSHOT = "openalex_snapshot"
 
 # Stage A. Deliberately loose stems, not phrases — see _gate_mask for why this
-# runs against the raw inverted-index JSON and therefore cannot use phrases.
-# Non-English stems earn their place by reaching works the English stems do not:
-# 111 of 112 Korean 재검증 works and 10 of 11 반복검증 are invisible to the English
-# gate. Membership here only decides what enters the survivor pool; whether a row
-# becomes a candidate is Stage B's call.
-_TOKEN_GATE = (
-    r"(?i)replicat|replicab|reproduc|reanalys|re-analys|reanalyz|re-analyz"
-    r"|replikat|réplicat|replicaci|replicaç|replicazion|reproduç|reproduzi"
-    r"|追試|반복검증|재검증"
-)
-_TOKEN_RE = re.compile(_TOKEN_GATE)
+# runs against the raw inverted-index JSON and therefore cannot use phrases. The
+# same source string is what keyword_verdict tests the title with.
+_TOKEN_GATE = REPLICATION_STEM_PATTERN
 
 _SCAN_COLUMNS = ["id", "doi", "title", "display_name", "publication_year", "type",
                  "authorships", "primary_location", "open_access", "concepts",
@@ -126,7 +124,8 @@ _POOL_SCHEMA = pa.schema([
 ])
 
 # Bumped whenever _admit's rule changes, so stage_b_fingerprint moves with it.
-_ADMISSION_RULE_VERSION = "v1: precise-phrase(title+abstract) OR token(title); concepts bypass"
+_ADMISSION_RULE_VERSION = ("v2: keyword_verdict(title, abstract) in "
+                           "{positive, ambiguous}; concepts bypass")
 
 _CONCEPT_IDS_BARE = {c.replace("https://openalex.org/", "").strip() for c in CONCEPT_IDS}
 
@@ -241,9 +240,18 @@ def stage_b_fingerprint() -> str:
 
     Every row Stage B ever saw is in the survivor pool, so a mismatch here is a
     local re-admission (``admit_from_pool``), not a rescan.
+
+    It hashes everything ``keyword_verdict`` consults — the phrases, the stem
+    alternation, the phrase guards and the exclusion patterns — plus the rule that
+    turns a verdict into an admission. Stage B stopped being "the phrase list" the
+    moment it started sharing the decision with Stage 2.
     """
     return _fingerprint([
         "|".join(sorted(p.pattern for p in REPLICATION_PHRASES)),
+        REPLICATION_STEM_PATTERN,
+        "|".join(f"{k}={v.pattern}" for k, v in sorted(PHRASE_GUARDS.items())),
+        "|".join(f"{pid}={rx.pattern}"
+                 for pid, rx in sorted(NON_SCHOLARLY_REPLICATION_CONTEXTS)),
         _ADMISSION_RULE_VERSION,
     ])
 
@@ -422,29 +430,23 @@ def _concept_mask(batch: pa.RecordBatch) -> pa.Array:
 # ---------------------------------------------------------------------------
 
 
-def _precise_hit(text: str) -> bool:
-    """A ``REPLICATION_PHRASES`` match on *text*.
+def _admit(concept_hit: bool, title: str, abstract: str, year: Optional[int] = None,
+           verdict: "Optional[object]" = None) -> bool:
+    """Stage B: keep the row?
 
-    Positive match only: exclusion patterns and phrase guards are deliberately not
-    applied, because Stage 1 discovers and never rejects.
+    The text arm is ``keyword_verdict`` — the SAME function Stage 2's rule filter
+    calls — so a row Stage 1 writes is exactly a row Stage 2 does not reject. Its
+    ``ambiguous`` tier is what used to be Stage 1's private title-token arm.
+
+    The concept arm has no phrase equivalent and stays a Stage 1 concern: it is
+    OpenAlex's own classification of the work, not anything in the text, so no
+    keyword rule can express it. It admits unconditionally, exactly as before.
+
+    *verdict* lets a caller that already computed the verdict (for the gate
+    counters) pass it in rather than run the regexes a second time.
     """
-    return any(p.search(text) for p in REPLICATION_PHRASES)
-
-
-def _stage_b_signals(title: str, abstract: str) -> tuple[bool, bool]:
-    """The two text signals Stage B reads: ``(precise phrase, token in the title)``."""
-    return _precise_hit(f"{title} {abstract}"), bool(_TOKEN_RE.search(title))
-
-
-def _admit(concept_hit: bool, title: str, abstract: str,
-           signals: Optional[tuple[bool, bool]] = None) -> bool:
-    """Stage B: keep the row? Concept hits are admitted unconditionally.
-
-    *signals* lets a caller that already computed ``_stage_b_signals`` (for the
-    gate report) pass them in rather than run the phrase regexes a second time.
-    """
-    precise, title_token = signals if signals is not None else _stage_b_signals(title, abstract)
-    return concept_hit or precise or title_token
+    v = verdict if verdict is not None else keyword_verdict(title, abstract, year)
+    return concept_hit or v.outcome in ("positive", "ambiguous")
 
 
 # ---------------------------------------------------------------------------
@@ -523,11 +525,15 @@ def _row_if_admitted(rec: dict, concept_hit: bool, counters: dict,
     title = row["title_r"] or ""
     abstract_text = row["abstract_r"] or ""
 
-    signals = _stage_b_signals(title, abstract_text)
-    counters["precise"] += int(signals[0])
-    counters["default_rule"] += int(signals[0] or signals[1])
+    try:
+        year = int(row.get("year_r"))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        year = None
+    verdict = keyword_verdict(title, abstract_text, year)
+    counters["keyword_positive"] += int(verdict.outcome == "positive")
+    counters["keyword_admits"] += int(verdict.outcome in ("positive", "ambiguous"))
 
-    if not _admit(concept_hit, title, abstract_text, signals=signals):
+    if not _admit(concept_hit, title, abstract_text, verdict=verdict):
         return None
     counters["admitted"] += 1
     counters["no_abstract"] += int(not abstract_text)
@@ -876,7 +882,7 @@ def scan_snapshot(max_files: Optional[int] = None,
              len(targets), n_available, " (pilot)" if pilot_csv is not None else "")
 
     counters = {"scanned": 0, "stage_a": 0, "stage_a_token": 0, "stage_a_concept": 0,
-                "precise": 0, "default_rule": 0, "admitted": 0, "no_abstract": 0,
+                "keyword_positive": 0, "keyword_admits": 0, "admitted": 0, "no_abstract": 0,
                 "already_in_candidates": 0, "pooled": 0, "row_errors": 0}
     total_merged = 0
     skipped: list[str] = []
@@ -1000,8 +1006,8 @@ def _print_pilot_report(counters: dict, written: int, n_files: int, pilot_csv: P
     print(f"  Stage A survivors                     {counters['stage_a']:,}"
           f"  (token {counters['stage_a_token']:,}, concept {counters['stage_a_concept']:,})")
     print(f"  (i)   Stage A alone                   {counters['stage_a']:,}")
-    print(f"  (ii)  Stage A + precise phrase        {counters['precise']:,}")
-    print(f"  (iii) default rule (precise|title)    {counters['default_rule']:,}")
+    print(f"  (ii)  keyword verdict = positive      {counters['keyword_positive']:,}")
+    print(f"  (iii) positive or ambiguous           {counters['keyword_admits']:,}")
     print(f"  admitted (iii or concept)             {counters['admitted']:,}")
     print(f"  admitted with no abstract             {counters['no_abstract']:,}")
     print(f"  admitted already in candidates.csv    {counters['already_in_candidates']:,}")
@@ -1050,7 +1056,7 @@ def _admitted_batches(files: list[Path], counters: dict, label: str):
 
 
 def _pool_counters() -> dict:
-    return {"scanned": 0, "precise": 0, "default_rule": 0, "admitted": 0,
+    return {"scanned": 0, "keyword_positive": 0, "keyword_admits": 0, "admitted": 0,
             "no_abstract": 0, "already_in_candidates": 0}
 
 
@@ -1162,8 +1168,8 @@ def admit_from_pool(pool_path: Path, merge_fn: Optional[Callable] = None,
 
     print(f"\n=== Pool re-admission ({len(files)} pool file(s) -> {pool_path}) ===")
     print(f"  Stage A survivors in pool             {counters['scanned']:,}")
-    print(f"  Stage A + precise phrase              {counters['precise']:,}")
-    print(f"  default rule (precise|title)          {counters['default_rule']:,}")
+    print(f"  keyword verdict = positive            {counters['keyword_positive']:,}")
+    print(f"  positive or ambiguous                 {counters['keyword_admits']:,}")
     print(f"  admitted by the current Stage B       {counters['admitted']:,}")
     print(f"  admitted with no abstract             {counters['no_abstract']:,}")
     print(f"  survivor pool on disk                 "

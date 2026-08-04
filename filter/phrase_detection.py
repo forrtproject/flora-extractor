@@ -18,12 +18,28 @@ list.
 """
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import yaml
 
+from shared.openalex_client import extract_author_year_patterns
 from shared.utils import sentence_spans
+
+# The loose stem alternation. Stage 1's vectorized Stage A gate runs THIS source
+# string through pyarrow over the raw inverted-index JSON (where word order does
+# not exist, so only single-token tests are sound), and ``keyword_verdict`` runs
+# it over the title alone. One definition, so the two cannot drift apart.
+# Non-English stems reach works the English ones cannot: 111 of 112 Korean 재검증
+# works and 10 of 11 반복검증 are invisible to the English stems. They carry no
+# matching phrases, so a hit can only ever be `ambiguous` — which is the intent,
+# since the LLM screen reads these languages and the rule filter does not.
+REPLICATION_STEM_PATTERN = (
+    r"(?i)replicat|replicab|reproduc|reanalys|re-analys|reanalyz|re-analyz"
+    r"|replikat|réplicat|replicaci|replicaç|replicazion|reproduç|reproduzi"
+    r"|追試|반복검증|재검증")
+_STEM_RE = re.compile(REPLICATION_STEM_PATTERN)
 
 # Patterns are intentionally compiled WITHOUT a global counterpart — JS's /g
 # flag carries lastIndex across calls (LESSONS.md #15 in the SciMeto repo).
@@ -271,3 +287,87 @@ def is_reproduction_only(text: str) -> bool:
         if r not in REPRODUCTION_PHRASES and _hits(r)
     ]
     return not other_hits
+
+
+# ---------------------------------------------------------------------------
+# The shared keyword decision
+# ---------------------------------------------------------------------------
+
+
+def _author_year_cites(text: str, year: Optional[int]) -> list:
+    """Author-year citations in *text*. strict_bare drops single_bare false matches
+    (months, "Study 2019", date ranges) that would otherwise auto-accept a row."""
+    return (extract_author_year_patterns(text, max_year=year, strict_bare=True)
+            if year else extract_author_year_patterns(text, strict_bare=True))
+
+
+@dataclass(frozen=True)
+class KeywordVerdict:
+    """What the keyword rule says about one paper.
+
+    ``text`` is the title+abstract blob the verdict was computed on — callers reuse
+    it (for sentence spans, citations) instead of joining the two fields themselves,
+    so nobody can evaluate the rule against a differently-assembled string.
+    """
+
+    outcome: str            # "positive" | "ambiguous" | "negative"
+    reason: str             # evidence, ready for filter_evidence
+    text: str
+    phrase: str = ""
+    phrase_start: int = -1
+    is_reproduction: bool = False
+    exclusion: str = ""
+
+
+def keyword_verdict(title: str, abstract: str,
+                    year: Optional[int] = None) -> KeywordVerdict:
+    """THE keyword decision, shared by Stage 1's snapshot gate and Stage 2's filter.
+
+    Title and abstract are taken SEPARATELY because the rule treats them
+    differently: a title is a handful of topical words, so a bare replication stem
+    in one is a real signal, while the same stem anywhere in a 1,500-character
+    abstract is noise. That distinction used to live only inside Stage 1's
+    admission and was invisible to Stage 2; it is now part of the shared rule.
+
+    Three outcomes:
+
+      positive   a precise ``REPLICATION_PHRASES`` match that survived the
+                 exclusion patterns and the phrase guards.
+      ambiguous  worth a look, not settled — either a replication stem in the
+                 TITLE with no precise phrase anywhere, or a phrase that an
+                 exclusion pattern killed while a specific author-year cite is
+                 present (the #44 targeted readmission).
+      negative   nothing, or an exclusion with nothing to rescue.
+
+    An exclusion is checked FIRST and dominates the title-stem tier: "Origins of
+    DNA replication" is a biological title, and admitting every such title on its
+    stem is exactly the noise the exclusion patterns exist to remove.
+    """
+    text = f"{title or ''}\n{abstract or ''}".strip()
+
+    excl = is_non_scholarly_context(text)
+    if excl:
+        # The exclusion gate suppresses phrase detection, so re-check ignoring it:
+        # exclusions misfire on in-scope computational reproductions ("replicated
+        # the analysis code of Smith (2019)"). A phrase AND a specific author-year
+        # cite together are enough to hand the row on rather than reject it.
+        rescue = find_replication_phrase_span(text, ignore_exclusions=True)
+        if rescue is not None and _author_year_cites(text, year):
+            return KeywordVerdict(
+                "ambiguous", f"exclusion:{excl}; phrase+cite present — LLM review",
+                text, phrase=rescue[0], phrase_start=rescue[1], exclusion=excl)
+        return KeywordVerdict("negative", f"exclusion:{excl}", text, exclusion=excl)
+
+    match = find_replication_phrase_span(text)
+    if match is not None:
+        phrase, start, _end = match
+        return KeywordVerdict("positive", f"phrase:{phrase!s}", text, phrase=phrase,
+                              phrase_start=start,
+                              is_reproduction=is_reproduction_only(text))
+
+    stem = _STEM_RE.search(title or "")
+    if stem:
+        return KeywordVerdict("ambiguous",
+                              f"title stem:{stem.group(0).lower()}; no phrase", text)
+
+    return KeywordVerdict("negative", "no replication phrase detected", text)
