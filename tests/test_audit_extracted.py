@@ -5,7 +5,6 @@ Synthetic DataFrames / CSVs only; the Supabase client is mocked. No live calls.
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-import pytest
 
 from extract.audit_extracted import (
     BLOCKER, WARNING, audit_dataframe, audit_file, blocked_pair_ids,
@@ -58,40 +57,32 @@ def test_clean_row_fires_nothing():
 
 # ── BLOCKER checks ───────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("verification,blocks", [
-    # Only "verified" and "corrected" are a checked link…
-    ("verified",  False),
-    ("corrected", False),
-    # …everything else — including a blank field — is not.
-    ("mismatch",  True),
-    ("",          True),
-])
-def test_doi_o_must_be_verified(verification, blocks):
-    rows = [_clean_row(doi_o_verification=verification)]
-    if blocks:
-        assert _severity_of(rows, "doi_o_unverified") == BLOCKER
-    else:
-        assert "doi_o_unverified" not in _checks_fired(rows)
-
-
-@pytest.mark.parametrize("work_id", ["W2003152982", "https://openalex.org/W2003152982"])
-def test_no_doi_with_openalex_id_is_not_a_blocker(work_id):
-    """Books, chapters and pre-DOI-era papers have no DOI to verify. The row is
-    still identifiable — and clickable — through its OpenAlex work id, in either
-    the bare or the URL form."""
-    row = _clean_row(doi_o="", doi_o_verification="no_doi",
-                     oa_work_id_o=work_id, title_o="Gender Advertisements")
-    assert _checks_fired([row]) == set()
-
-
-def test_no_doi_without_openalex_id_still_blocks():
-    row = _clean_row(doi_o="", doi_o_verification="no_doi", oa_work_id_o="")
-    assert _severity_of([row], "doi_o_unverified") == BLOCKER
-
-
-def test_openalex_id_does_not_rescue_other_verification_values():
-    row = _clean_row(doi_o_verification="mismatch", oa_work_id_o="W2003152982")
-    assert _severity_of([row], "doi_o_unverified") == BLOCKER
+def test_doi_o_must_be_verified_or_carry_an_openalex_id():
+    """Only "verified"/"corrected" count as a checked link. A no_doi row — books,
+    chapters, pre-DOI-era papers — is rescued when it is still identifiable through
+    its OpenAlex work id (bare or URL form), and by nothing else: a work id does not
+    excuse a mismatch."""
+    cases = [
+        # (verification, oa_work_id_o, blocks)
+        ("verified",  "",            False),
+        ("corrected", "",            False),
+        ("mismatch",  "",            True),
+        ("",          "",            True),
+        ("no_doi",    "W2003152982", False),
+        ("no_doi",    "https://openalex.org/W2003152982", False),
+        ("no_doi",    "",            True),
+        ("mismatch",  "W2003152982", True),
+    ]
+    for verification, work_id, blocks in cases:
+        case = (verification, work_id)
+        extra = {"doi_o": "", "title_o": "Gender Advertisements"} \
+            if verification == "no_doi" else {}
+        rows = [_clean_row(doi_o_verification=verification, oa_work_id_o=work_id,
+                           **extra)]
+        if blocks:
+            assert _severity_of(rows, "doi_o_unverified") == BLOCKER, case
+        else:
+            assert _checks_fired(rows) == set(), case
 
 
 def test_self_link_fires():
@@ -116,12 +107,11 @@ def test_duplicate_pair_id_fires_on_both_rows():
     assert all(r["severity"] == BLOCKER for r in dup)
 
 
-@pytest.mark.parametrize("field,value", [
-    ("outcome", "pending"),                 # the outcome half never ran
-    ("link_method", "target_pending"),      # the link half never resolved
-])
-def test_unresolved_stage_fires(field, value):
-    assert "unresolved_stage" in _checks_fired([_clean_row(**{field: value})])
+def test_unresolved_stage_fires():
+    """Either half of the pipeline left pending makes the row unvalidatable."""
+    for field, value in (("outcome", "pending"),          # the outcome half never ran
+                         ("link_method", "target_pending")):  # the link never resolved
+        assert "unresolved_stage" in _checks_fired([_clean_row(**{field: value})]), field
 
 
 def test_missing_display_field_fires():
@@ -135,20 +125,17 @@ def test_missing_display_field_fires():
 
 # ── WARNING checks ───────────────────────────────────────────────────────────
 
-def test_original_postdates_replication_fires():
-    assert "original_postdates_replication" in _checks_fired(
-        [_clean_row(year_r="2010", year_o="2015")])
-
-
-def test_original_postdates_within_tolerance_ok():
-    # one year after is tolerated (in-press ordering)
-    assert "original_postdates_replication" not in _checks_fired(
-        [_clean_row(year_r="2010", year_o="2011")])
-
-
-def test_original_postdates_nonnumeric_skipped():
-    assert "original_postdates_replication" not in _checks_fired(
-        [_clean_row(year_r="in press", year_o="2015")])
+def test_original_postdates_replication():
+    """An original published after its replication is a link error — but one year of
+    slack absorbs in-press ordering, and an unparseable year decides nothing."""
+    for year_r, year_o, fires in (
+        ("2010", "2015", True),
+        ("2010", "2011", False),      # one year after is tolerated (in-press ordering)
+        ("in press", "2015", False),  # non-numeric: the check is skipped
+    ):
+        fired = "original_postdates_replication" in _checks_fired(
+            [_clean_row(year_r=year_r, year_o=year_o)])
+        assert fired is fires, (year_r, year_o)
 
 
 def test_outcome_not_canonical_fires():
@@ -166,25 +153,23 @@ def test_cannot_be_determined_is_canonical():
     assert "outcome_not_canonical" not in _checks_fired([row])
 
 
-def test_quote_whitespace_case_normalized_ok():
-    assert "quote_not_in_abstract" not in _checks_fired([_clean_row(
-        abstract_r="The study   found a CLEAR   effect here.",
-        outcome_phrase="Found a Clear Effect")])
-
-
-def test_quote_fuzzy_threshold_ok():
-    # near-verbatim quote (minor word difference) passes via partial_ratio >= 85
-    assert "quote_not_in_abstract" not in _checks_fired([_clean_row(
-        abstract_r="Participants showed a significant reduction in anxiety scores.",
-        outcome_phrase="showed a significant reduction in anxiety score")])
-
-
-def test_quote_genuine_miss_fires():
-    row = _clean_row(
-        abstract_r="This paper is about photosynthesis in tomato plants.",
-        outcome_phrase="the replication failed to reproduce the priming effect")
-    assert "quote_not_in_abstract" in _checks_fired([row])
-    assert _severity_of([row], "quote_not_in_abstract") == WARNING
+def test_quote_matching_tolerates_transcription_noise_but_not_a_real_miss():
+    """Models re-space and re-case what they quote, so the match is normalised and
+    fuzzy; only a quote that is nowhere in the abstract may be flagged."""
+    for abstract, phrase, fires in (
+        # whitespace and case are normalised away
+        ("The study   found a CLEAR   effect here.", "Found a Clear Effect", False),
+        # near-verbatim (minor word difference) passes via partial_ratio >= 85
+        ("Participants showed a significant reduction in anxiety scores.",
+         "showed a significant reduction in anxiety score", False),
+        ("This paper is about photosynthesis in tomato plants.",
+         "the replication failed to reproduce the priming effect", True),
+    ):
+        rows = [_clean_row(abstract_r=abstract, outcome_phrase=phrase)]
+        if fires:
+            assert _severity_of(rows, "quote_not_in_abstract") == WARNING, phrase
+        else:
+            assert "quote_not_in_abstract" not in _checks_fired(rows), phrase
 
 
 def test_quote_not_checked_when_source_not_abstract():
@@ -236,30 +221,29 @@ def test_quote_source_count_mismatch_fires_both_ways():
     assert "quote_source_count_mismatch" not in _checks_fired([_clean_row()])
 
 
-@pytest.mark.parametrize("field,check", [
-    ("link_confidence", "low_link_confidence"),
-    ("outcome_confidence", "low_outcome_confidence"),
-])
-def test_low_confidence_fires(field, check):
-    assert check in _checks_fired([_clean_row(**{field: "low"})])
+def test_low_confidence_fires():
+    """Both confidence fields are surfaced to the validator, so both are audited."""
+    for field, check in (("link_confidence", "low_link_confidence"),
+                         ("outcome_confidence", "low_outcome_confidence")):
+        assert check in _checks_fired([_clean_row(**{field: "low"})]), field
 
 
-def test_multi_original_bad_ranks_fires():
-    rows = [_clean_row(pair_id="p1", doi_r="10.1/multi", doi_o="10.2/o1",
-                       original_rank="1", n_originals="2"),
-            _clean_row(pair_id="p2", doi_r="10.1/multi", doi_o="10.2/o2",
-                       original_rank="3", n_originals="2")]  # rank 3 not in 1..2
-    fired = [r for r in audit_dataframe(pd.DataFrame(rows))
+def test_multi_original_ranks_and_counts_must_agree():
+    """The rows of one replication are a numbered set: ranks must fill 1..n and every
+    row must agree on n, or the validator cannot tell how many originals there are."""
+    bad_ranks = [_clean_row(pair_id="p1", doi_r="10.1/multi", doi_o="10.2/o1",
+                            original_rank="1", n_originals="2"),
+                 _clean_row(pair_id="p2", doi_r="10.1/multi", doi_o="10.2/o2",
+                            original_rank="3", n_originals="2")]  # rank 3 not in 1..2
+    fired = [r for r in audit_dataframe(pd.DataFrame(bad_ranks))
              if r["check"] == "multi_original_inconsistent"]
     assert len(fired) == 2 and all(r["severity"] == WARNING for r in fired)
 
-
-def test_multi_original_n_disagrees_fires():
-    rows = [_clean_row(pair_id="p1", doi_r="10.1/multi", doi_o="10.2/o1",
-                       original_rank="1", n_originals="2"),
-            _clean_row(pair_id="p2", doi_r="10.1/multi", doi_o="10.2/o2",
-                       original_rank="2", n_originals="3")]  # n_originals disagree
-    assert "multi_original_inconsistent" in _checks_fired(rows)
+    bad_n = [_clean_row(pair_id="p1", doi_r="10.1/multi", doi_o="10.2/o1",
+                        original_rank="1", n_originals="2"),
+             _clean_row(pair_id="p2", doi_r="10.1/multi", doi_o="10.2/o2",
+                        original_rank="2", n_originals="3")]  # n_originals disagree
+    assert "multi_original_inconsistent" in _checks_fired(bad_n)
 
 
 # ── audit_file / report / exit accounting ────────────────────────────────────

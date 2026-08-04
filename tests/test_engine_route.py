@@ -1,8 +1,11 @@
 """Wave B: the two backends, routing, work ids and routing releases.
 
-One test per seam. The corpus below is crafted so every shipped spec — shadow
-ones included — claims at least one row: the backend-equality test is only worth
-running over rows that actually exercise the bundle.
+One test per seam, and the seams split in two. The BACKENDS are checked against
+the shipped bundle, over a corpus crafted so every shipped spec — shadow ones
+included — claims at least one row: an equality proof is only worth running over
+rows that actually exercise the rules, and this is the one place that proof is
+made, for every other test in the suite. ROUTING is a property of the code, so it
+runs against the synthetic bundle and pool of `tests/engine_bundle.py`.
 """
 
 import json
@@ -18,6 +21,8 @@ from filter.engine.route import eval_all, route_batch
 from filter.engine.spec import load_specs
 from filter.engine.workids import load_aliases, resolve, work_id
 from search.snapshot_scan import _POOL_SCHEMA
+from tests.engine_bundle import EXPECTED_ROUTING, POOL_ROWS
+from tests.engine_bundle import specs as synthetic_specs
 
 SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
 
@@ -153,7 +158,14 @@ UNICODE_CORPUS = [
 
 @pytest.fixture(scope="module")
 def specs() -> list:
+    """The SHIPPED bundle — for the backend-equality seams only."""
     return load_specs(SPEC_DIR)
+
+
+@pytest.fixture(scope="module")
+def synth() -> list:
+    """The synthetic bundle — for every routing seam."""
+    return synthetic_specs()
 
 
 # ---------------------------------------------------------------------------
@@ -210,65 +222,49 @@ def _routed(specs, rows: list[dict]) -> list[dict]:
     return route_batch(specs, _batch(rows)).to_pylist()
 
 
-def test_a_dataset_row_carrying_a_replication_phrase_discards_on_precedence(specs):
-    row = _row(type_="dataset", title="Replication Data for: Bees",
-               abstract="A direct replication of Smith (2019).")
-    routed = _routed(specs, [row])[0]
-    assert (routed["pile"], routed["rule_id"], routed["precedence"]) \
-        == ("discard", "dataset-type", 950)
+def test_every_pile_a_row_can_reach_is_reached_by_the_row_that_should(synth):
+    """The routing table of `tests/engine_bundle.py`, asserted whole: a discard won
+    on precedence over two lower rules, both screening tiers, a vocabulary-bearing
+    and a field-evidence cheap route, a row nothing live claims, a screening route
+    with no text, and a discard that reads no text and discards anyway."""
+    routed = {row["work_id"]: (row["pile"], row["rule_id"])
+              for row in _routed(synth, POOL_ROWS)}
+    assert routed == EXPECTED_ROUTING
 
 
-def test_a_phrase_in_the_title_with_no_abstract_routes_pending_no_text(specs):
-    routed = _routed(specs, [_row(title="A direct replication of the Smith effect",
-                                  abstract=None)])[0]
-    assert (routed["pile"], routed["pending_reason"], routed["rule_id"]) \
-        == ("pending", "no_text", "phrase-replication")
+def test_a_routed_row_records_why_it_landed_where_it_did(synth):
+    by_id = {row["work_id"]: row for row in _routed(synth, POOL_ROWS)}
 
-
-def test_a_deposit_doi_with_no_abstract_still_discards(specs):
-    routed = _routed(specs, [_row(doi="https://doi.org/10.7910/DVN/ABC",
-                                  title="Replication Data for: Wasps", abstract=None)])[0]
-    assert (routed["pile"], routed["pending_reason"], routed["rule_id"]) \
-        == ("discard", "", "deposit-doi-prefixes")
-    assert routed["evidence"] == "10.7910"
-
-
-def test_a_concept_only_row_routes_to_the_cheap_tier(specs):
-    routed = _routed(specs, [_row(title="Anchoring in context",
-                                  abstract="A study of judgement.",
-                                  concepts=("C12590798",))])[0]
-    assert (routed["pile"], routed["rule_id"]) == ("screen_cheap", "concept-replication")
-    assert routed["evidence"] == "concept_ids=C12590798"
-
-
-def test_the_same_row_without_the_concept_is_pending_rather_than_discarded(specs):
+    # The winning precedence, on the row two lower rules also matched.
+    assert by_id[1]["precedence"] == 950
+    # A screening route with no abstract is held, not decided...
+    assert by_id[7]["pending_reason"] == "no_text"
+    # ...while a discard reads no abstract, so it discards regardless.
+    assert (by_id[8]["pending_reason"], by_id[8]["evidence"]) == ("", "10.7910")
+    assert by_id[5]["evidence"] == "concept_ids=C12590798"
     # Issue #148 regression: Stage 2 wrote the concept arm `false_positive`
     # terminally. Nothing may discard a row for lacking a topical signal.
-    routed = _routed(specs, [_row(title="Anchoring in context",
-                                  abstract="A study of judgement.")])[0]
-    assert routed["pile"] == "pending"
-    assert routed["pending_reason"] == "no_filter_matched"
-    assert routed["rule_id"] == ""
+    assert (by_id[6]["pending_reason"], by_id[6]["rule_id"]) == ("no_filter_matched", "")
 
 
-def test_matched_rules_lists_every_non_shadow_match_and_shadow_specs_never_win(specs):
-    row = _row(title="On the replication of enteroviruses",
-               abstract="We reproduced the original results of the published analysis.")
-    routed = _routed(specs, [row])[0]
-    shadow = {spec.id for spec in specs if spec.shadow}
+def test_matched_rules_lists_every_non_shadow_match_and_shadow_specs_never_win(synth):
+    # The dataset row: a discard on a field, two phrase rules below it, and the
+    # shadow arm that matches its title.
+    row = POOL_ROWS[0]
+    routed = _routed(synth, [row])[0]
+    shadow = {spec.id for spec in synth if spec.shadow}
     assert routed["rule_id"] not in shadow
     assert not shadow & set(routed["matched_rules"])
-    assert routed["matched_rules"] == ["phrase-reproduction", "phrase-replication",
-                                       "title-stem"]
-    # ...while the shadow arms did evaluate, for the evaluations table.
-    assert eval_all(specs, _batch([row]))["biological-of"].to_pylist() == [True]
+    assert routed["matched_rules"] == ["syn-dataset", "syn-replication"]
+    # ...while the shadow arm did evaluate, for the evaluations table.
+    assert eval_all(synth, _batch([row]))["syn-shadow"].to_pylist() == [True]
 
 
-def test_precomputed_evaluations_are_reused_rather_than_recomputed(specs):
-    batch = _batch([_row(type_="dataset", title="Replication Data for: Bees")])
-    evals = eval_all(specs, batch)
-    evals["dataset-type"] = pa.array([False])
-    assert route_batch(specs, batch, evals=evals).to_pylist()[0]["rule_id"] != "dataset-type"
+def test_precomputed_evaluations_are_reused_rather_than_recomputed(synth):
+    batch = _batch([POOL_ROWS[0]])
+    evals = eval_all(synth, batch)
+    evals["syn-dataset"] = pa.array([False])
+    assert route_batch(synth, batch, evals=evals).to_pylist()[0]["rule_id"] != "syn-dataset"
 
 
 # ---------------------------------------------------------------------------
@@ -285,13 +281,13 @@ def test_work_id_parses_the_three_accepted_forms_and_rejects_junk():
             work_id(junk)
 
 
-def test_an_alias_rekeys_a_routed_row(specs, tmp_path):
+def test_an_alias_rekeys_a_routed_row(synth, tmp_path):
     path = tmp_path / "aliases.json"
     path.write_text(json.dumps({"version": 1, "aliases": {"7": 4210170740}}))
     aliases = load_aliases(path)
     assert resolve(7, aliases) == 4210170740
     assert resolve(8, aliases) == 8
-    routed = route_batch(specs, _batch([_row(work="https://openalex.org/W7")]),
+    routed = route_batch(synth, _batch([_row(work="https://openalex.org/W7")]),
                          aliases=aliases).to_pylist()[0]
     assert routed["work_id"] == 4210170740
 

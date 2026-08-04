@@ -12,9 +12,9 @@ rows, chosen so that between them they exercise every pile, both evidence kinds
 (regex and field), a shadow rule that matches but may never win, a precedence
 conflict, a row nothing claims, and a row with no abstract in each of the two
 piles that treat it differently. What the SHIPPED rules do is asserted in exactly
-two other places: their policy in `tests/test_engine_spec.py` (the policy table),
-their patterns in `tests/test_engine_147_rules.py` and the backend-equality tests
-of `tests/test_engine_route.py`.
+two other places: `tests/test_engine_spec.py`, which holds both their policy (the
+precedence table) and their patterns (the #147 measured changes), and the
+backend-equality tests of `tests/test_engine_route.py`.
 """
 
 import json

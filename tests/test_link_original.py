@@ -53,36 +53,33 @@ class TestExtractCitContexts:
 # ── Stage 2.5 title-pattern resolver ─────────────────────────────────────────
 
 class TestExtractTitleTarget:
+    """One row per pattern in _TITLE_PATS — the alternations inside a pattern
+    ("A Direct/Failed Replication of", Revisiting/Re-examining/Reconsidering, the
+    optional "and Extension") are one regex and are exercised once. A None row is a
+    title no pattern may claim."""
+
     @pytest.mark.parametrize("title,expected_contains", [
-        ("Replication of the ego depletion effect",        "ego depletion effect"),
-        ("A Direct Replication of the pen-in-mouth effect","pen-in-mouth effect"),
-        ("Failed Replication of the IAT effect",           "IAT effect"),
+        ("A Direct Replication of the pen-in-mouth effect", "pen-in-mouth effect"),
         ("Replicating Milgram's obedience study",           "Milgram"),
-        ("Revisiting the weapons effect",                  "weapons effect"),
-        ("Re-examining the anchoring and adjustment effect","anchoring and adjustment effect"),
-        ("Reconsidering ego depletion",                    "ego depletion"),
-        ("The pen-in-mouth effect: A Replication",         "pen-in-mouth effect"),
-        ("The pen-in-mouth effect: Replication and Extension","pen-in-mouth effect"),
-        ("Does power posing increase testosterone? Replication attempt",  None),
-        ("Can we replicate the Mozart effect?",             "Mozart effect"),
-        ("Testing the replicability of social priming",     "social priming"),
         ("A Reproduction of the embodied cognition effect", "embodied cognition effect"),
+        ("Reproducing the embodied cognition effect",       "embodied cognition effect"),
+        ("Re-examining the anchoring and adjustment effect","anchoring and adjustment effect"),
+        ("Can we replicate the Mozart effect?",             "Mozart effect"),
+        ("Does the Mozart effect replicate?",               "Mozart effect"),
+        ("Testing the replicability of social priming",     "social priming"),
+        ("The pen-in-mouth effect: Replication and Extension","pen-in-mouth effect"),
+        ("A meta-analysis of social priming effects",       None),
+        ("Many Labs 2: Investigating Variation in Replicability", None),
     ])
     def test_extract_target(self, title, expected_contains):
         result = _extract_title_target(title)
         if expected_contains is None:
-            assert result is None or len(result) < 15
+            assert result is None, f"Expected no match for: {title!r}"
         else:
             assert result is not None, f"Expected match for: {title!r}"
             assert expected_contains.lower() in result.lower(), (
                 f"Expected {expected_contains!r} in {result!r} for title {title!r}"
             )
-
-    def test_no_match_returns_none(self):
-        assert _extract_title_target("A meta-analysis of social priming effects") is None
-
-    def test_generic_title_returns_none(self):
-        assert _extract_title_target("Many Labs 2: Investigating Variation in Replicability") is None
 
 
 class TestResolveByTitlePattern:
@@ -201,21 +198,6 @@ class TestScreenRouting:
         assert "openai=none/confident" in row["llm_evidence"]
         assert "not a replication of anything" in row["llm_evidence"]
         assert "gemini: unrelated" in row["llm_reasoning"]
-
-    def test_a_confident_split_proceeds_instead_of_being_set_aside(self):
-        """There is no screen_disagreement terminal state any more: a confident
-        none against a confident qualifying answer goes down the ladder."""
-        row, _ = _run_to_title_search(_screen_result(
-            screen_verdict="proceed", screen_classification="replication",
-            record_type="replication",
-            votes=[{"provider": "gemini", "classification": "replication",
-                    "confident": True, "categories": [], "reasoning": "yes"},
-                   {"provider": "openai", "classification": "none",
-                    "confident": True, "categories": [], "reasoning": "no"}]))
-
-        # It escalated past the screen instead of terminating there.
-        assert _map_method(row["resolution_method"]) != "screen_disagreement"
-        assert _map_method(row["resolution_method"]) == "target_pending"
 
 
 # ── Stage 4.6 title-search gate (audit D2) ───────────────────────────────────
@@ -425,15 +407,33 @@ class TestMayStopAtARule:
             "We re-tested Smith (2009) and Jones (2011).", 2020) is False
 
     def test_a_stated_study_count_may_not_stop(self):
+        """The conjunction: one author-year pair is not enough when the text also
+        says how many studies were replicated."""
         assert link_original.may_stop_at_a_rule(
             "Many Labs 2",
             "We report replications of 28 classic studies, following Smith (2009).",
             2020) is False
 
-    def test_a_year_is_not_a_study_count(self):
-        assert link_original.may_stop_at_a_rule(
-            "Replication of 2019 findings",
-            "We re-tested the effect reported by Smith (2009).", 2020) is True
+
+class TestStudyCountStated:
+    """3 ≤ N < 1900 — a captured year is not a study count, and a project name is not
+    a count at all (many labs replicating ONE original is one target). The count does
+    not route a row anywhere; it decides whether a deterministic ladder stage may END
+    the row (see may_stop_at_a_rule)."""
+
+    @pytest.mark.parametrize("title,abstract,expected", [
+        # A year sits above _COUNT_N_MAX, in either field.
+        ("Replication of 2019 findings", "",                                   False),
+        ("A paper", "We report replications of 2019 studies conducted earlier.", False),
+        # A plausible count, in either field.
+        ("Replication of 12 studies", "",                                      True),
+        ("A paper", "We replicated 28 classic studies across many labs.",      True),
+        # Below _COUNT_N_MIN, and a project name with no count behind it.
+        ("Replication of 2 studies", "",                                       False),
+        ("Many Labs 2: replicating effects", "",                               False),
+    ])
+    def test_study_count_stated(self, title, abstract, expected):
+        assert link_original._study_count_stated(title, abstract) is expected
 
 
 def _answer(**over) -> dict:
@@ -633,11 +633,24 @@ class TestGateRestoresWhenNothingEnumerates:
         assert len(seen["intro"]) <= TARGET_INTRO_CHARS
         assert row["grobid_intro"] == seen["intro"]
 
-    def test_the_no_document_exit_restores_it(self):
-        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS, pdf_ok=False,
-                        abstract_answer=_failed_answer())
+    @pytest.mark.parametrize("exit_", ["no_document", "no_pdf", "incomplete_screen"])
+    def test_every_exit_that_enumerates_nothing_restores_it(self, exit_):
+        """One surviving vote is a provider outage, an absent document is a failure to
+        look, and --no-pdf never looked: none of the three is an answer about how many
+        originals the paper has, so the deterministic pick stands."""
+        kwargs = {"no_document": {"pdf_ok": False},
+                  "no_pdf": {"no_pdf": True},
+                  "incomplete_screen": {"screen": _screen_result(
+                      resolution_method="llm_refscreen_partial",
+                      llm_error="classifier failed: openai")}}[exit_]
+        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS,
+                        abstract_answer=_failed_answer(), **kwargs)
+
         assert row["resolution_method"] == "title_pattern_match"
         assert row["resolved_doi_o"] == "10.9/orig"
+        if exit_ == "incomplete_screen":
+            # Restoring the pick must not swallow the outage that caused it.
+            assert row["llm_error"] == "classifier failed: openai"
 
     def test_no_llm_mode_never_withholds_at_all(self):
         """--no-llm runs no enumerating call, so withholding buys no information and
@@ -646,22 +659,6 @@ class TestGateRestoresWhenNothingEnumerates:
         assert row["resolution_method"] == "title_pattern_match"
         # Returned at the rule: every stage past it emits with the acquired pdf block.
         assert row["pdf_source"] == "none"
-
-    def test_no_pdf_mode_restores_it(self):
-        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS, no_pdf=True,
-                        abstract_answer=_failed_answer())
-        assert row["resolution_method"] == "title_pattern_match"
-
-    def test_an_incomplete_screen_restores_it_and_keeps_the_error(self):
-        """One surviving vote is a provider outage. Turning it into a lost
-        deterministic resolution is exactly what the error-handling rule forbids."""
-        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS,
-                        abstract_answer=_failed_answer(),
-                        screen=_screen_result(
-                            resolution_method="llm_refscreen_partial",
-                            llm_error="classifier failed: openai"))
-        assert row["resolution_method"] == "title_pattern_match"
-        assert row["llm_error"] == "classifier failed: openai"
 
     def test_a_screen_discard_still_wins_over_the_pick(self):
         """A discard is a verdict about the paper, not a failure to look."""

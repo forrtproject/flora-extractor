@@ -23,7 +23,6 @@ import pytest
 from filter.engine import handoff as handoff_mod
 from filter.engine import tiers
 from filter.engine.claims import PENDING_UPLOAD, UPLOADED, ClaimConflict
-from filter.engine.export import export_pile
 from filter.engine.spec import load_specs
 from filter.engine.store import build_routing, open_store
 from search.snapshot_scan import _POOL_SCHEMA
@@ -207,59 +206,6 @@ def test_a_claim_conflict_refuses_without_spending(con, pool):
 
 
 # ---------------------------------------------------------------------------
-# The cheap tier's one rule
-# ---------------------------------------------------------------------------
-
-
-def test_two_noes_discard_and_one_keep_proceeds(con, pool):
-    """The whole semantic of the discard-only tier, both ways round."""
-    calls: list = []
-    patcher, _ = _cheap_votes("no", "no")
-    with patcher:
-        both_no = tiers.run_screen_cheap(con, _client(calls), RELEASE, pool_dir=pool,
-                                         run=True)
-    assert both_no["outcomes"] == {"discard": 2}
-
-    patcher, seen = _cheap_votes("yes")
-    with patcher:
-        one_keep = tiers.run_screen_cheap(con, _client([]), RELEASE, pool_dir=pool,
-                                          run=True)
-    assert one_keep["outcomes"] == {"proceed": 2}
-    # Voter 2 is not asked once the row can no longer be discarded.
-    assert len(seen) == 2, "voter 2 was paid for an answer that could change nothing"
-
-
-def test_a_hard_signal_row_is_never_asked_of_a_small_model(con, pool):
-    """The three rows `prescreen_bypass()` refuses to let a 3B model end. A bypass
-    is recorded as a verdict — deciding not to ask is a decision — and costs
-    nothing, because no voter is called."""
-    calls: list = []
-    signal = tiers.Work(21, "10.1/x", "A systematic replication study",
-                        "The purpose of this systematic replication study was to "
-                        "re-test the original effect in a new sample drawn from "
-                        "the same population, using the authors' own materials "
-                        "and a preregistered analysis plan agreed in advance with "
-                        "the original team.", "screen_cheap")
-    with patch("shared.prescreen._vote") as vote:
-        outcome, votes = tiers._cheap_judge(signal)
-
-    assert vote.call_count == 0
-    assert outcome == "proceed"
-    assert [v["model"] for v in votes] == ["prescreen_bypass"]
-    assert votes[0]["quote"].startswith("hard_signal:")
-    assert calls == []
-
-
-def test_a_non_answer_is_not_a_no(con, pool):
-    """An unreadable reply must fall through to proceed, never to the terminal side."""
-    patcher, _ = _cheap_votes(None, "no")
-    with patcher:
-        report = tiers.run_screen_cheap(con, _client([]), RELEASE, pool_dir=pool,
-                                        run=True)
-    assert report["outcomes"] == {"proceed": 2}
-
-
-# ---------------------------------------------------------------------------
 # Evidence before the verdict that names it (§4)
 # ---------------------------------------------------------------------------
 
@@ -360,6 +306,9 @@ def _decided_client(ran_tier: str, mode: str, verdicts: list[dict]) -> MagicMock
 
 def test_validation_mode_records_verdicts_but_the_handoff_is_unaffected(
         con, pool, tmp_path):
+    """Also the tier's own seam onto the pre-screen: two noes are a discard, and each
+    voter's answer becomes a `record_verdict` row. What the pre-screen DECIDES is
+    `tests/test_prescreen.py`'s; the tier is the thin wrapper that records it."""
     calls: list = []
     client = _client(calls)
     patcher, _ = _cheap_votes("no", "no")
@@ -452,14 +401,3 @@ def test_a_live_expensive_verdict_types_the_row_stage_three_reads(con, pool, tmp
 def _voter_models() -> list[str]:
     from shared.llm_client import screen_voters
     return [m for _, m, _ in screen_voters()]
-
-
-def test_export_pile_still_writes_one_pile(con, pool, tmp_path):
-    """The row iterator now serves two callers; the single-pile export is unchanged."""
-    manifest = export_pile(con, pool, "screen_cheap", tmp_path / "cheap.csv", RELEASE,
-                           specs=load_specs(SPEC_DIR), spec_dir=SPEC_DIR,
-                           created_at="2026-08-04")
-    rows = _read(tmp_path / "cheap.csv")
-    assert manifest["rows"] == len(rows) == 2
-    assert {r["openalex_id_r"] for r in rows} == {
-        "https://openalex.org/W21", "https://openalex.org/W22"}

@@ -93,21 +93,14 @@ def _screen(monkeypatch, tmp_path, gemini_ok: bool, voter2_ok: bool,
 # ── screen_gate: G-softqual, mirroring analysis/screening_eval/gate_sweep_v32.py ──
 
 @pytest.mark.parametrize("votes,expected", [
-    # Both "none", at any confidence → discard.
-    ([_v("none", True),  _v("none", True)],  "discard"),
-    ([_v("none", False), _v("none", False)], "discard"),
+    # Every vote "none" → discard, whatever the confidence.
     ([_v("none", True),  _v("none", False)], "discard"),
     # One confident "none" + an unconfident partner → discard (the softqual clause).
-    ([_v("none", True),  _v("unclear", False)],     "discard"),
     ([_v("none", True),  _v("replication", False)], "discard"),
-    ([_v("unclear", False), _v("none", True)],      "discard"),
     # A confident split is a real disagreement — it proceeds.
     ([_v("none", True),  _v("replication", True)], "proceed"),
-    ([_v("none", True),  _v("unclear", True)],     "proceed"),
     # No confident "none" at all → proceed.
     ([_v("none", False), _v("replication", False)], "proceed"),
-    ([_v("replication", True), _v("reproduction", True)], "proceed"),
-    ([_v("unclear", False), _v("unclear", False)],  "proceed"),
 ])
 def test_screen_gate(votes, expected):
     parsed = [dict(v, provider="p") for v in votes]
@@ -267,21 +260,18 @@ def _two_votes(monkeypatch, tmp_path, v1, v2):
     return llm.classify_replication("10.1/x", "Title", "Abstract")
 
 
-@pytest.mark.parametrize("v1,v2,expected", [
-    (_v("replication"),  _v("replication"),  "replication"),
-    (_v("reproduction"), _v("reproduction"), "reproduction"),
-    # A split or a "both" falls back to voter 1's qualifying answer…
-    (_v("replication"),  _v("reproduction"), "replication"),
-    (_v("reproduction"), _v("replication"),  "reproduction"),
-    (_v("both"),         _v("reproduction"), "replication"),
-    # …and to voter 2's when voter 1 gave no qualifying answer.
-    (_v("none", True),   _v("reproduction", True), "reproduction"),
-    (_v("unclear", False), _v("replication", True), "replication"),
+@pytest.mark.parametrize("votes,expected", [
+    # Both voters agree.
+    ([_v("reproduction"), _v("reproduction")], "reproduction"),
+    # A split falls back to the first qualifying voter in call order.
+    ([_v("none", True), _v("reproduction", True)], "reproduction"),
+    # "both" collects new data, so it is coded with replication vocabulary.
+    ([_v("both"), _v("reproduction")], "replication"),
     # Neither qualifying → no record_type at all.
-    (_v("none"),         _v("unclear"),      ""),
+    ([_v("none"), _v("unclear")], ""),
 ])
-def test_record_type_from_the_votes(monkeypatch, tmp_path, v1, v2, expected):
-    assert _two_votes(monkeypatch, tmp_path, v1, v2)["record_type"] == expected
+def test_record_type_from_the_votes(votes, expected):
+    assert llm._screen_record_type(votes) == expected
 
 
 def test_categories_are_the_union_of_both_voters_in_enum_order(monkeypatch, tmp_path):

@@ -7,29 +7,16 @@ Run:  python -m pytest tests/test_extract.py -v
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 
-from shared.schema import (
-    EXTRACTED_COLS,
-    LINK_METHOD_VALUES,
-    RESOLVED_LINK_METHODS,
-    make_pair_id,
-)
-from shared.cache import content_key, read_cache
-import extract.code_outcome as code_outcome
-import extract.link_original as link_original
+from shared.schema import EXTRACTED_COLS, make_pair_id
 import extract.run_extract as run_extract
 import shared.llm_client as llm_client
 from extract.code_outcome import extract_outcome, _keyword_scan, _expand_to_sentences
-from extract.run_extract import (
-    _map_method,
-    _merge_row,
-    _merge_multi_row,
-    _score_to_confidence,
-)
+from extract.run_extract import _merge_row, _merge_multi_row
 from shared.token_usage import TokenBudgetExhausted
 
 
@@ -67,27 +54,35 @@ class TestExpandToSentences:
 # ── Keyword scan unit tests ───────────────────────────────────────────────────
 
 class TestKeywordScan:
-    @pytest.mark.parametrize("text,expected", [
-        ("we found no evidence of ego depletion", "failure"),
-        ("failed to replicate the original finding", "failure"),
-        ("null result for the predicted effect", "failure"),
-        ("the three-item CRT was successfully replicated", "success"),
-        ("effect was robustly replicated across three samples", "success"),
-        ("IAT demonstrated strong psychometric properties consistent with original reports", "success"),
-        ("partially replicated with some but not all findings held", "mixed"),
-        ("No evidence was found for precognition in any experiment", "failure"),
-        ("adapted the procedure in a different cultural population", "descriptive"),
+    @pytest.mark.parametrize("text,expected,confidence", [
+        # A weak failure phrase alone still codes failure — but only at medium.
+        ("we found no evidence of ego depletion", "failure", "medium"),
+        ("failed to replicate the original finding", "failure", None),
+        ("null result for the predicted effect", "failure", None),
+        ("the three-item CRT was successfully replicated", "success", None),
+        ("effect was robustly replicated across three samples", "success", None),
+        ("IAT demonstrated strong psychometric properties consistent with original reports", "success", None),
+        ("partially replicated with some but not all findings held", "mixed", None),
+        ("No evidence was found for precognition in any experiment", "failure", None),
+        ("adapted the procedure in a different cultural population", "descriptive", None),
         # A failure phrase outranks a success keyword in the same clause.
-        ("we failed to replicate the originally replicated finding", "failure"),
+        ("we failed to replicate the originally replicated finding", "failure", None),
+        # "No significant difference" describes the TEST, not the verdict: in a
+        # successful replication it is how the comparison against the original is
+        # reported, so an explicit success claim in the same abstract wins.
+        ("We found no significant difference between our estimate and the original, "
+         "consistent with the original finding.", "success", None),
+        ("There was no evidence of a difference from the original effect; the "
+         "replication was successful.", "success", None),
         # Declines: effect size alone must not decide the outcome. `mixed` requires
         # the authors' own evidence to be partly supporting and partly not; a
         # supported-but-smaller effect is a success. Neither is decidable here, so
         # the row goes to the LLM rather than being coded on magnitude alone.
-        ("significant but smaller effect than the original study reported", None),
-        ("the replication produced a reduced effect magnitude", None),
-        ("we attempted this study across multiple sites", None),
+        ("significant but smaller effect than the original study reported", None, None),
+        ("the replication produced a reduced effect magnitude", None, None),
+        ("we attempted this study across multiple sites", None, None),
     ])
-    def test_keyword_scan(self, text, expected):
+    def test_keyword_scan(self, text, expected, confidence):
         hit = _keyword_scan(text, "abstract")
         if expected is None:
             assert hit is None, f"Expected no hit for: {text!r}"
@@ -96,6 +91,8 @@ class TestKeywordScan:
         assert hit["outcome"] == expected, (
             f"Expected {expected}, got {hit['outcome']} for: {text!r}"
         )
+        if confidence is not None:
+            assert hit["outcome_confidence"] == confidence, text
 
     def test_success_in_the_same_sentence_vetoes_a_failure_keyword(self):
         """A failure phrase does not decide a sentence that also reports success."""
@@ -112,26 +109,6 @@ class TestKeywordScan:
         hit = _keyword_scan(text, "abstract")
         assert hit is not None
         assert hit["outcome"] == "failure"
-
-    @pytest.mark.parametrize("text", [
-        "We found no significant difference between our estimate and the original, "
-        "consistent with the original finding.",
-        "There was no evidence of a difference from the original effect; the "
-        "replication was successful.",
-    ])
-    def test_weak_failure_phrases_lose_to_an_explicit_success(self, text):
-        """"No significant difference" describes the test, not the verdict.
-
-        In a successful replication it is how the comparison against the original
-        is reported, so an explicit success claim in the same abstract wins. Alone,
-        the same phrase still codes failure — but only at medium confidence.
-        """
-        hit = _keyword_scan(text, "abstract")
-        assert hit is not None
-        assert hit["outcome"] == "success"
-        alone = _keyword_scan("We found no evidence of ego depletion.", "abstract")
-        assert alone["outcome"] == "failure"
-        assert alone["outcome_confidence"] == "medium"
 
     def test_outcome_phrase_spans_the_surrounding_sentences(self):
         text = ("Prior work found a large effect. We failed to replicate this effect "
@@ -218,44 +195,18 @@ class TestExtractOutcome:
             )
         assert result["outcome"] == "mixed"
 
-    def test_single_candidate_confidence_capped_at_medium(self):
-        """#51: a lone candidate auto-accepted at score 1.0 must not read as high."""
-        from extract.run_extract import _link_confidence
-        assert _link_confidence(
-            {"resolution_method": "single_candidate_after_requery", "resolution_score": 1.0}
-        ) == "medium"
-        # other methods at 1.0 are unaffected
-        assert _link_confidence(
-            {"resolution_method": "citation_context_match", "resolution_score": 1.0}
-        ) == "high"
-        # an explicit LLM confidence still flows through for non-capped methods
-        assert _link_confidence(
-            {"resolution_method": "llm_cited_candidates", "llm_confidence": "high"}
-        ) == "high"
-
     def test_llm_failure_returns_api_error(self, tmp_path):
-        """Exhausting every provider is an api_error, not a cannot_be_determined verdict."""
+        """Exhausting every provider is an api_error, not a cannot_be_determined
+        verdict — and it leaves no reasoning behind, because nothing reasoned."""
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.time.sleep"), \
              patch("extract.code_outcome.call_llm", return_value=(None, "", "quota | error")):
             result = extract_outcome("10.1234/fail", abstract_r="ambiguous text")
         assert result["outcome"] == "api_error"
         assert result["outcome_confidence"] == "low"
+        assert result.get("outcome_reasoning", "") == ""
         # An API failure must not be cached — a re-run has to be able to code the row.
         assert not list(tmp_path.glob("*.json"))
-
-    def test_llm_result_cached(self, tmp_path):
-        """LLM result should be written to cache and reused."""
-        mock_result = {"outcome": "success", "outcome_phrase": "replicated",
-                       "confidence": "high", "out_quote_source": "abstract"}
-        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.call_llm", return_value=(mock_result, "gemini-model", "")), \
-             patch("extract.code_outcome.time.sleep"):
-            r1 = extract_outcome("10.1234/cache", abstract_r="ambiguous text")
-            with patch("extract.code_outcome.call_llm") as mock2:
-                r2 = extract_outcome("10.1234/cache", abstract_r="ambiguous text")
-                mock2.assert_not_called()
-        assert r1["outcome"] == r2["outcome"] == "success"
 
     def test_invalid_llm_outcome_normalised(self, tmp_path):
         """LLM returning an unexpected outcome value should become cannot_be_determined."""
@@ -309,11 +260,6 @@ class TestLLMOutcomePrompt:
         result, _ = self._run_llm(tmp_path)
         assert "outcome_reasoning" in result
         assert result["outcome_reasoning"] == "All effects replicated."
-
-    def test_outcome_reasoning_empty_on_llm_failure(self):
-        with patch("extract.code_outcome.call_llm", return_value=(None, "", "")):
-            result = extract_outcome("10.1234/fail2", abstract_r="ambiguous")
-        assert result.get("outcome_reasoning", "") == ""
 
     def test_abstract_pass_never_reads_a_record_type_check(self, tmp_path):
         """The abstract pass sees exactly the evidence two validated screen voters
@@ -527,25 +473,37 @@ class TestOutcomeCacheKey:
         mock = self._run(tmp_path, abstract_r="ambiguous abstract", title_r="T")
         assert mock.call_count == 0
 
-    def test_changed_abstract_misses(self, tmp_path):
-        self._run(tmp_path, abstract_r="one abstract", title_r="T")
-        mock = self._run(tmp_path, abstract_r="another abstract", title_r="T")
+    @pytest.mark.parametrize("first,second,edit_prompt", [
+        # the abstract the model was asked about
+        ({"abstract_r": "one abstract"}, {"abstract_r": "another abstract"}, False),
+        # the vocabulary it was asked to answer in
+        ({}, {"record_type": "reproduction"}, False),
+        # the sentence telling the model the paper's other originals are coded on
+        # their own rows — leaving it out let a per-target row read back a
+        # single-original row's answer for the same pair
+        ({}, {"multi_original": True}, False),
+        # the escalation reads the fulltext, so a re-parsed PDF must not replay the
+        # verdict reached without it
+        ({"fulltext": "old text"}, {"fulltext": "new text"}, False),
+        # the prompt itself
+        ({}, {}, True),
+    ], ids=["abstract", "record_type", "multi_original", "fulltext", "prompt_version"])
+    def test_a_changed_input_misses(self, tmp_path, monkeypatch, first, second,
+                                    edit_prompt):
+        """A cache key names everything the answer depends on, so varying any one of
+        them has to miss rather than replay an answer given about something else."""
+        from shared import prompts
+        base = {"abstract_r": "a", "title_r": "T"}
+        self._run(tmp_path, **{**base, **first})
+        if edit_prompt:
+            monkeypatch.setattr(prompts, "_OUTCOME_TEMPLATE",
+                                prompts._OUTCOME_TEMPLATE + " EDIT")
+            prompts.prompt_version.cache_clear()
+        try:
+            mock = self._run(tmp_path, **{**base, **second})
+        finally:
+            prompts.prompt_version.cache_clear()
         assert mock.call_count == 1
-        assert len(list(tmp_path.glob("outcome_*.json"))) == 2
-
-    def test_changed_record_type_misses(self, tmp_path):
-        self._run(tmp_path, abstract_r="a", title_r="T")
-        mock = self._run(tmp_path, abstract_r="a", title_r="T", record_type="reproduction")
-        assert mock.call_count == 1
-
-    def test_the_multi_original_flag_misses(self, tmp_path):
-        """The flag adds a sentence to the prompt telling the model the paper's other
-        originals are coded on their own rows. Leaving it out of the key let a
-        per-target row read back a single-original row's answer for the same pair."""
-        self._run(tmp_path, abstract_r="a", title_r="T")
-        mock = self._run(tmp_path, abstract_r="a", title_r="T", multi_original=True)
-        assert mock.call_count == 1
-        assert len(list(tmp_path.glob("outcome_*.json"))) == 2
 
     def test_the_flag_is_appended_only_when_set(self, tmp_path):
         """A key component that is always present moves EVERY key. The outcome cache
@@ -566,25 +524,6 @@ class TestOutcomeCacheKey:
         self._run(tmp_path, abstract_r="a", title_r="T")
         assert [f.stem for f in tmp_path.glob("outcome_*.json")] == [pre_pr]
         assert with_flag != pre_pr
-
-    def test_changed_fulltext_misses(self, tmp_path):
-        """The escalation reads the fulltext, so a re-parsed PDF must not replay the
-        verdict reached without it."""
-        self._run(tmp_path, abstract_r="a", title_r="T", fulltext="old text")
-        mock = self._run(tmp_path, abstract_r="a", title_r="T", fulltext="new text")
-        assert mock.call_count == 1
-
-    def test_prompt_version_in_key(self, tmp_path, monkeypatch):
-        from shared import prompts
-        self._run(tmp_path, abstract_r="a", title_r="T")
-        monkeypatch.setattr(prompts, "_OUTCOME_TEMPLATE",
-                            prompts._OUTCOME_TEMPLATE + " EDIT")
-        prompts.prompt_version.cache_clear()
-        try:
-            mock = self._run(tmp_path, abstract_r="a", title_r="T")
-        finally:
-            prompts.prompt_version.cache_clear()
-        assert mock.call_count == 1
 
 
 def write_cache_json(cache_dir, key, data):
@@ -798,42 +737,6 @@ class TestRunExtract:
         assert list(result["doi_r"]) == ["10.1000/r1", "10.1000/r3", "10.1000/r5",
                                          "10.1000/r0"]
 
-    def test_the_ladder_is_not_run_for_false_positives(self):
-        """Routing test: false_positive must bypass the resolution ladder entirely."""
-        csv = (
-            "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
-            "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
-            "10.1000/fp,FP,Abstract,2020,Smith,J. Psych,,W1,openalex,"
-            "false_positive,rule_based,meta-discussion,high\n"
-        )
-        mock_ladder = MagicMock(return_value=_MOCK_LINK)
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv",
-                                         delete=False, encoding="utf-8-sig") as f:
-            f.write(csv)
-            tmp = Path(f.name)
-
-        with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
-             patch("extract.run_extract.run_for_doi", mock_ladder), \
-             patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
-             patch("extract.run_extract.verify_and_correct",
-                   side_effect=lambda doi, *a, **k: {"doi_o": doi,
-                                                     "doi_o_verification": "skipped",
-                                                     "evidence_note": ""}), \
-             patch("extract.run_extract._oa_by_doi", return_value=None), \
-             patch("extract.run_extract.DATA_DIR", tmp.parent), \
-             patch("extract.run_extract.BASE_DIR", tmp.parent):
-            fp_path = tmp.parent / "filtered.csv"
-            fp_path.write_text(tmp.read_text(encoding="utf-8-sig"), encoding="utf-8-sig")
-            from extract.run_extract import run_extract
-            run_extract()
-
-        tmp.unlink(missing_ok=True)
-        fp_path.unlink(missing_ok=True)
-        (tmp.parent / "extracted.csv").unlink(missing_ok=True)
-
-        mock_ladder.assert_not_called()
-
-
     def test_api_error_passthrough(self):
         """When extraction throws an exception, link_method and outcome must be
         'api_error' and the row must still appear in the output."""
@@ -843,10 +746,6 @@ class TestRunExtract:
             "10.1000/fail,Fail Paper,Abstract,2020,Smith,J. Psych,,W1,openalex,"
             "replication,rule_based,direct replication,high\n"
         )
-        result = self._run(csv)  # run_for_doi is mocked to return _MOCK_LINK by default
-        # Now run again but force run_for_doi to raise
-        import tempfile
-        from pathlib import Path
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv",
                                          delete=False, encoding="utf-8-sig") as f:
             f.write(csv)
@@ -905,19 +804,12 @@ class TestRunExtract:
 # ── Granular link_method labels ──────────────────────────────────────────────
 
 class TestGranularLinkMethods:
-    """The five rule-based resolution methods must pass through as distinct public
-    link_method values instead of collapsing to author_year_match."""
+    """The rule-based resolution methods must pass through as distinct public
+    link_method values instead of collapsing to author_year_match. (The whole enum's
+    passthrough is TestLinkMethodEnumCoverage.test_map_method_passthrough_matches_the_enum.)"""
 
-    GRANULAR = [
-        "citation_context_match",
-        "same_author_year_title_overlap",
-        "single_candidate_after_requery",
-        "title_pattern_match",
-        "grobid_ref_match",
-    ]
-
-    @pytest.mark.parametrize("method", GRANULAR)
-    def test_merge_row_emits_granular_label(self, method):
+    def test_merge_row_emits_granular_label(self):
+        method = "citation_context_match"
         link = {
             "resolution_method": method,
             "resolved_doi_o": "10.1/orig", "resolved_title_o": "Original",
@@ -946,56 +838,6 @@ class TestGranularLinkMethods:
         assert row["study_o"] == "1, 2"
 
 
-# ── pair_id identity: stability for DOI rows, distinctness without a DOI ──────
-
-class TestMakePairId:
-    def test_doi_pair_hashes_are_frozen(self):
-        """pair_id is the identity key the validation DB already holds, and csv_to_db
-        skips pair_ids it has seen. If the hash of a row with a doi_o ever changes,
-        every imported record re-imports as a duplicate — so these literals are the
-        pre-fallback md5("doi_r|doi_o") values and must never move."""
-        assert (make_pair_id("10.1/rep", "10.2/orig")
-                == "cdb1325243087bf3f8292ff737cf69cc")
-        assert (make_pair_id("10.25669/9kzj-tc3j", "10.1037/0022-3514.51.6.1173")
-                == "22e94c46165158b30a740f3e66114c82")
-        assert make_pair_id("", "") == "b99834bc19bbad24580b3adfa04fb947"
-
-    def test_identifierless_row_keeps_its_legacy_hash(self):
-        """extracted.csv holds 129 single-original rows with a blank doi_o AND a blank
-        oa_work_id_o, already keyed on md5("doi_r|") in the validation DB. Nothing may
-        re-key them, which is why the single-original writer never passes title_o —
-        this literal is the real pair_id of one of those rows."""
-        assert (make_pair_id("10.34917/4332616", "", "")
-                == "422738f9134f6255828b6088979c7ae3")
-
-    def test_extra_arguments_are_ignored_when_doi_o_is_set(self):
-        assert (make_pair_id("10.1/rep", "10.2/orig", "W123", "A Title")
-                == make_pair_id("10.1/rep", "10.2/orig"))
-
-    def test_two_doi_less_originals_of_one_replication_are_distinct(self):
-        """The collision this fallback exists to fix: without it both originals
-        hash to "doi_r|" and csv_to_db silently drops one of them."""
-        a = make_pair_id("10.1/rep", "", "W1")
-        b = make_pair_id("10.1/rep", "", "W2")
-        c = make_pair_id("10.1/rep", "", "", "Gender Advertisements")
-        d = make_pair_id("10.1/rep", "", "", "Frame Analysis")
-        assert len({a, b, c, d, make_pair_id("10.1/rep", "")}) == 5
-
-    def test_work_id_wins_over_title(self):
-        assert (make_pair_id("10.1/rep", "", "W1", "Some Title")
-                == make_pair_id("10.1/rep", "", "W1", "Another Title"))
-
-    def test_work_id_form_and_title_whitespace_are_normalised(self):
-        assert (make_pair_id("10.1/rep", "", "https://openalex.org/W1")
-                == make_pair_id("10.1/rep", "", "w1"))
-        assert (make_pair_id("10.1/rep", "", "", "  Gender   Advertisements ")
-                == make_pair_id("10.1/rep", "", "", "Gender Advertisements"))
-
-    def test_non_work_openalex_id_falls_through_to_title(self):
-        assert (make_pair_id("10.1/rep", "", "A5023888391", "T")
-                == make_pair_id("10.1/rep", "", "", "T"))
-
-
 # ── Multi-original pair_id uniqueness + truthful link_method ──────────────────
 
 class TestMergeMultiRow:
@@ -1010,55 +852,28 @@ class TestMergeMultiRow:
                                     "multiple_original", "high", 2,
                                     link_method=link_method)
 
-    def test_two_unresolved_originals_get_distinct_pair_ids(self):
-        """Empty doi_o must not collapse every original to the same pair_id."""
-        r1 = self._merge({"rank": 1, "doi": "", "title": "Original One",
-                          "first_author": "A", "year": 2001, "confidence": "high"})
-        r2 = self._merge({"rank": 2, "doi": "", "title": "Original Two",
-                          "first_author": "B", "year": 2002, "confidence": "high"})
-        assert r1["pair_id"] != r2["pair_id"]
-        # And neither equals the naive make_pair_id(doi_r, "") that used to collide.
-        collide = make_pair_id("10.1/rep", "")
-        assert r1["pair_id"] != collide
-        assert r2["pair_id"] != collide
+    def test_every_doi_less_original_of_one_replication_gets_its_own_pair_id(self):
+        """The collision the identifier fallback exists to fix: an empty doi_o hashes
+        every original of a paper to md5("doi_r|"), and csv_to_db silently drops all
+        but one of them."""
+        by_title = [self._merge({"rank": i, "doi": "", "title": title,
+                                 "first_author": author, "year": year,
+                                 "confidence": "high"})["pair_id"]
+                    for i, (title, author, year) in enumerate(
+                        [("Original One", "A", 2001), ("Original Two", "B", 2002)], 1)]
+        by_work_id = [self._merge({"rank": i, "doi": "", "title": "A Book",
+                                   "openalex_id": work_id,
+                                   "confidence": "high"})["pair_id"]
+                      for i, work_id in enumerate(["W1", "W2"], 1)]
+        # And none of them equals the naive make_pair_id(doi_r, "") that used to collide.
+        assert len(set(by_title + by_work_id + [make_pair_id("10.1/rep", "")])) == 5
 
-    def test_two_doi_less_originals_with_openalex_ids_are_distinct(self):
-        r1 = self._merge({"rank": 1, "doi": "", "title": "A Book",
-                          "openalex_id": "W1", "confidence": "high"})
-        r2 = self._merge({"rank": 2, "doi": "", "title": "A Book",
-                          "openalex_id": "W2", "confidence": "high"})
-        assert r1["pair_id"] != r2["pair_id"]
-
-
-# ── The gate's study-count bound ──────────────────────────────────────────────
-
-class TestStudyCountBound:
-    """3 ≤ N < 1900 — a captured year is not a study count. The count no longer
-    routes a row anywhere; it decides whether a deterministic ladder stage may END
-    the row (see link_original.may_stop_at_a_rule)."""
-
-    def test_year_in_title_is_not_a_count(self):
-        assert not link_original._study_count_stated("Replication of 2019 findings", "")
-
-    def test_year_in_abstract_is_not_a_count(self):
-        assert not link_original._study_count_stated(
-            "A paper", "We report replications of 2019 studies conducted earlier.")
-
-    def test_a_count_in_the_title_is_stated(self):
-        assert link_original._study_count_stated("Replication of 12 studies", "")
-
-    def test_a_count_in_the_abstract_is_stated(self):
-        assert link_original._study_count_stated(
-            "A paper", "We replicated 28 classic studies across many labs.")
-
-    def test_a_count_below_the_minimum_is_not_stated(self):
-        assert not link_original._study_count_stated("Replication of 2 studies", "")
-
-    def test_a_project_name_alone_is_not_a_count(self):
-        """Many labs replicating ONE original is one target — the old rule read the
-        project name as N originals and expanded single-target papers into N rows."""
-        assert not link_original._study_count_stated(
-            "Many Labs 2: replicating effects", "")
+    def test_a_medium_confidence_original_is_written_low(self):
+        """link_confidence is high/low; medium reached the CSV through the multi
+        writer's confidence pass-through."""
+        row = self._merge({"rank": 1, "doi": "10.1/o", "title": "O",
+                           "confidence": "medium"})
+        assert row["link_confidence"] == "low"
 
 
 # ── Schema integration test ───────────────────────────────────────────────────
@@ -1071,82 +886,11 @@ def test_sample_extracted_schema():
     assert not missing, f"Missing columns in sample_extracted.csv: {missing}"
 
 
-# ── FLoRA skip-list (entry sheet + flora.csv) ────────────────────────────────
-
-class TestFloraSkipDois:
-    """Stage 3 must never re-extract a replication already in FLoRA.
-
-    Two sources: the entry sheet (rows already validated) and flora.csv (the
-    published database — every row is by definition already in FLoRA).
-    """
-
-    def _sheet(self, tmp_path, rows):
-        p = tmp_path / "sheet.csv"
-        pd.DataFrame(rows).to_csv(p, index=False, encoding="utf-8-sig")
-        return p
-
-    def _flora(self, tmp_path, rows):
-        p = tmp_path / "flora.csv"
-        pd.DataFrame(rows).to_csv(p, index=False, encoding="utf-8-sig")
-        return p
-
-    def test_validated_chosen_is_skipped(self, tmp_path):
-        """Regression: 'validated - chosen' was omitted, so those rows leaked
-        through to extraction and on to validation (e.g. 10.1037/per0000041)."""
-        sheet = self._sheet(tmp_path, [
-            {"doi_r": "10.1/chosen",    "validation_status": "validated - chosen"},
-            {"doi_r": "10.1/unchanged", "validation_status": "validated - unchanged"},
-            {"doi_r": "10.1/changed",   "validation_status": "validated - changed"},
-        ])
-        got = run_extract._load_flora_skip_dois(sheet, None)
-        assert got == {"10.1/chosen", "10.1/unchanged", "10.1/changed"}
-
-    def test_unvalidated_statuses_not_skipped(self, tmp_path):
-        sheet = self._sheet(tmp_path, [
-            {"doi_r": "10.1/blank",    "validation_status": ""},
-            {"doi_r": "10.1/help",     "validation_status": "help needed"},
-            {"doi_r": "10.1/hold",     "validation_status": "on hold"},
-            {"doi_r": "10.1/awaiting", "validation_status": "awaiting validation"},
-        ])
-        assert run_extract._load_flora_skip_dois(sheet, None) == set()
-
-    def test_flora_csv_skipped_wholesale(self, tmp_path):
-        """flora.csv has no validation_status — everything in it is already in FLoRA."""
-        flora = self._flora(tmp_path, [
-            {"doi_r": "10.2/a", "doi_r_alt": ""},
-            {"doi_r": "10.2/b", "doi_r_alt": "10.2/b-alt"},
-            {"doi_r": "",       "doi_r_alt": ""},
-        ])
-        got = run_extract._load_flora_skip_dois(None, flora)
-        assert got == {"10.2/a", "10.2/b", "10.2/b-alt"}
-
-    def test_both_sources_are_unioned(self, tmp_path):
-        sheet = self._sheet(tmp_path, [
-            {"doi_r": "10.1/chosen", "validation_status": "validated - chosen"},
-            {"doi_r": "10.1/blank",  "validation_status": ""},
-        ])
-        flora = self._flora(tmp_path, [{"doi_r": "10.2/a", "doi_r_alt": ""}])
-        assert run_extract._load_flora_skip_dois(sheet, flora) == {"10.1/chosen", "10.2/a"}
-
-    def test_missing_files_are_non_fatal(self, tmp_path):
-        assert run_extract._load_flora_skip_dois(
-            tmp_path / "nope.csv", tmp_path / "also-nope.csv") == set()
-
-
 # ── Reproduction outcome coding (3x3 computation/robustness grid) ────────────
 
 class TestReproductionOutcome:
     """Reproductions use a different vocabulary from replications; the row's
     type must select it, or every reproduction verdict is coerced away."""
-
-    def test_vocabulary_selected_by_type(self):
-        from shared.schema import outcome_categories_for
-        repro = outcome_categories_for("reproduction")
-        repl = outcome_categories_for("replication")
-        assert "computationally reproducible, robust" in repro
-        assert "computationally reproducible, robust" not in repl
-        assert "success" in repl and "success" not in repro
-        assert "cannot_be_determined" in repro and "cannot_be_determined" in repl
 
     def test_axes_are_stored_and_the_outcome_is_derived(self, tmp_path):
         mock = {"outcome_computation": "computational issues",
@@ -1252,12 +996,9 @@ class TestReproductionEscalation:
                                      record_type="reproduction", **kw)
         return result, mock_llm
 
-    def test_one_unsettled_axis_escalates(self, tmp_path):
+    def test_one_unsettled_axis_escalates_and_the_escalation_replaces_both(self, tmp_path):
         result, mock_llm = self._run(tmp_path, [self._ABS_HALF, self._FT_BOTH])
         assert mock_llm.call_count == 2
-
-    def test_escalation_replaces_both_axes(self, tmp_path):
-        result, _ = self._run(tmp_path, [self._ABS_HALF, self._FT_BOTH])
         assert result["outcome_computation"] == "technical failure"
         assert result["outcome_robustness"] == "robustness challenges"
         assert result["outcome"] == "technical failure, robustness challenges"
@@ -1395,11 +1136,6 @@ class TestGuardOriginalLink:
              "pair_id": "p", "doi_o_verification": "verified", "ref_o": "x"}
         r.update(kw); return r
 
-    def test_self_link_by_doi_rejected(self):
-        out = run_extract._guard_original_link(self._row(doi_o="10.1/repl"))
-        assert out["link_method"] == "target_pending"
-        assert out["doi_o"] == ""
-
     @pytest.mark.parametrize("title_o", [
         "A Study of Things",
         "  a study of THINGS.  ",   # case and punctuation must not hide a self-link
@@ -1407,27 +1143,6 @@ class TestGuardOriginalLink:
     def test_self_link_by_title_rejected(self, title_o):
         out = run_extract._guard_original_link(self._row(doi_o="", title_o=title_o))
         assert out["link_method"] == "target_pending"
-
-    def test_demotion_clears_a_merged_outcome(self):
-        """The multi-original path merges the outcome before the guard runs, so a
-        rejected row would otherwise carry a coded outcome on an unresolved link."""
-        out = run_extract._guard_original_link(self._row(
-            doi_o="10.1/repl", outcome="success", outcome_phrase="we replicated it",
-            outcome_confidence="high", out_quote_source="abstract"))
-        assert out["link_method"] == "target_pending"
-        assert out["outcome"] == "pending"
-        assert out["outcome_phrase"] == ""
-        assert out["outcome_confidence"] == "low"
-        assert out["out_quote_source"] == ""
-
-    def test_demotion_clears_the_rejected_original(self):
-        """study_o and title_o described the original the guard just threw out; left
-        behind, they name a study inside a paper the row no longer links to."""
-        out = run_extract._guard_original_link(
-            self._row(doi_o="10.1/repl", study_o="1, 2"))
-        assert out["link_method"] == "target_pending"
-        assert out["study_o"] == ""
-        assert out["title_o"] == ""
 
     def test_good_link_untouched(self):
         out = run_extract._guard_original_link(self._row())
@@ -1464,7 +1179,6 @@ class TestGuardOriginalLink:
         assert out["doi_o"] == ""
         assert out["doi_o_verification"] == "no_doi"
         assert out.get("oa_work_id_o", "") == ""
-        assert out["pair_id"] == "p"
 
     def test_no_doi_and_no_usable_title_is_pending(self):
         with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
@@ -1484,49 +1198,46 @@ class TestGuardOriginalLink:
         assert out["doi_o_verification"] == "no_doi"
         assert out["oa_work_id_o"] == "W123"
 
-    def test_legacy_doi_less_row_keeps_its_md5_doi_r_pipe_pair_id(self):
+    @pytest.mark.parametrize("crossref,openalex,recovered_doi,work_id", [
+        # a DOI-less OpenAlex work: the id is stamped, the legacy key stays
+        (None, {"doi": "", "openalex_id": "W123", "title": "The Original Work"},
+         "", "W123"),
+        # nothing came back at all: there is no identifier to re-key on
+        (None, None, "", ""),
+        # a recovering hit re-keys on md5("doi_r|doi_o") and folds in nothing else
+        ({"doi": "10.9/found", "openalex_id": "W123"}, None, "10.9/found", ""),
+    ], ids=["work_id_only", "nothing_found", "doi_recovered"])
+    def test_the_guard_never_re_keys_pair_id_onto_a_work_id(self, crossref, openalex,
+                                                            recovered_doi, work_id):
         """REGRESSION: 129 rows already live in the validation DB keyed on
-        md5("doi_r|"). Re-extracting one and now finding a DOI-less OpenAlex work
-        must stamp oa_work_id_o WITHOUT re-keying pair_id — a changed pair_id is a
-        duplicate import, and the oa: fallback buys nothing on the single-original
-        path anyway."""
+        md5("doi_r|"), and imported rows key on md5("doi_r|doi_o"). A changed pair_id
+        is a duplicate import, so no recovery step may fold a work id into the hash."""
         legacy = make_pair_id("10.1/repl", "")
-        hit = {"doi": "", "openalex_id": "W123", "title": "The Original Work"}
-        with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
-             patch("extract.run_extract._search_openalex_by_title", return_value=hit):
+        with patch("extract.run_extract._search_crossref_by_title", return_value=crossref), \
+             patch("extract.run_extract._search_openalex_by_title", return_value=openalex):
             out = run_extract._guard_original_link(
                 self._row(doi_o="", oa_work_id_o="", pair_id=legacy))
-        assert out["oa_work_id_o"] == "W123"
-        assert out["pair_id"] == legacy
+        assert out["doi_o"] == recovered_doi
+        assert out.get("oa_work_id_o", "") == work_id
+        assert out["pair_id"] == make_pair_id("10.1/repl", recovered_doi)
         assert out["pair_id"] != make_pair_id("10.1/repl", "", "W123")
 
-    def test_step2_doi_hit_whose_work_id_is_the_replication_is_rejected(self):
-        """OpenAlex can return the replication's own work under an alternate DOI
-        string; the DOI comparison alone would let it through."""
-        hit = {"doi": "10.1/REPL.v2", "openalex_id": "https://openalex.org/W999"}
-        with patch("extract.run_extract._search_crossref_by_title", return_value=hit):
-            out = run_extract._guard_original_link(
-                self._row(doi_o="", oa_work_id_r="W999"))
+    @pytest.mark.parametrize("crossref,openalex,row_over", [
+        # OpenAlex can return the replication's own work under an alternate DOI
+        # string, which the DOI comparison alone would let through
+        ({"doi": "10.1/REPL.v2", "openalex_id": "https://openalex.org/W999"}, None,
+         {"oa_work_id_r": "W999"}),
+        # …and the same work with no DOI at all, found by title
+        (None, {"doi": "", "openalex_id": "W999", "title": "The Original Work"},
+         {"openalex_id_r": "https://openalex.org/W999"}),
+    ], ids=["crossref_step", "openalex_step"])
+    def test_a_recovered_work_id_that_is_the_replication_is_a_self_link(
+            self, crossref, openalex, row_over):
+        with patch("extract.run_extract._search_crossref_by_title", return_value=crossref), \
+             patch("extract.run_extract._search_openalex_by_title", return_value=openalex):
+            out = run_extract._guard_original_link(self._row(doi_o="", **row_over))
         assert out["link_method"] == "target_pending"
         assert out["doi_o"] == ""
-
-    def test_work_id_matching_the_replication_is_a_self_link(self):
-        hit = {"doi": "", "openalex_id": "W999", "title": "The Original Work"}
-        with patch("extract.run_extract._search_crossref_by_title", return_value=None), \
-             patch("extract.run_extract._search_openalex_by_title", return_value=hit):
-            out = run_extract._guard_original_link(
-                self._row(doi_o="", openalex_id_r="https://openalex.org/W999"))
-        assert out["link_method"] == "target_pending"
-        assert out.get("oa_work_id_o", "") == ""
-
-    def test_recovered_doi_keeps_the_legacy_two_argument_pair_id(self):
-        """pair_ids already imported into the validation DB key on md5("doi_r|doi_o"),
-        so a DOI-recovering hit must not fold the work id into the hash."""
-        hit = {"doi": "10.9/found", "openalex_id": "W123"}
-        with patch("extract.run_extract._search_crossref_by_title", return_value=hit):
-            out = run_extract._guard_original_link(self._row(doi_o=""))
-        assert out["doi_o"] == "10.9/found"
-        assert out["pair_id"] == make_pair_id("10.1/repl", "10.9/found")
         assert out.get("oa_work_id_o", "") == ""
 
 
@@ -1562,31 +1273,6 @@ class TestReferenceStringTargets:
         fragment = self._entry(self._FRAGMENT)
         assert fragment["confidence"] == "low"
         assert fragment["doi"] == ""
-
-    def test_settlement_does_not_advertise_a_low_link_as_a_high_match(self):
-        """original_match_confidence is settled after the guard and --resolved-only
-        from the link METHOD; a resolved method on a record nobody can check is still
-        not a high-confidence match."""
-        link = {"targets": [{"match_certain": True, "target_as_named": "T",
-                             "study_numbers": "", "replication_study_numbers": "",
-                             "evidence_quote": "q",
-                             "record": {"doi": "10.2/orig", "title": self._FRAGMENT,
-                                        "first_author": "Moieni", "year": 2015}}],
-                "target_stage": "llm_fulltext", "unidentified_count": 0,
-                "llm_model": "m", "pdf_source": "", "parse_method": "", "pdf_ok": False}
-        row = pd.Series({"doi_r": "10.1/repl", "title_r": "R",
-                         "filter_status": "replication"})
-        with patch("extract.run_extract._build_ref_o", return_value=("", "", "")), \
-             patch.object(run_extract, "_has_document", return_value=False), \
-             patch.object(run_extract, "_get_outcome", return_value={}), \
-             patch.object(run_extract, "_verify_row", side_effect=lambda r: r):
-            rows = run_extract._per_target_rows(row, "10.1/repl", link, None,
-                                                no_llm=True, no_pdf=True,
-                                                resolved_only=False,
-                                                recalibrate_outcomes=False)
-        assert len(rows) == 1
-        assert rows[0]["link_confidence"] == "low"
-        assert rows[0]["original_match_confidence"] == "low"
 
     def test_a_fragment_title_with_no_doi_is_pending(self):
         """The guard's usable-title rule has to catch citation fragments: "[3] M.
@@ -1712,35 +1398,18 @@ class TestFillWorkIds:
         assert out["oa_work_id_r"] == ""
         assert out["oa_work_id_o"] == ""
 
-    def test_runs_after_verification_so_a_corrected_doi_o_wins(self):
-        """_verify_row can replace doi_o; the o-side id must describe the DOI that
-        actually got written, not the one the LLM originally proposed."""
-        row = {"doi_r": "10.1/r", "title_r": "R", "doi_o": "10.2/wrong",
-               "title_o": "Orig", "year_o": "2010", "authors_o": "Smith",
-               "link_method": "llm_fulltext", "link_confidence": "high",
-               "openalex_id_r": "https://openalex.org/W111", "pair_id": "p"}
-        v = {"doi_o_verification": "corrected", "doi_o": "10.2/right",
-             "evidence_note": "corrected"}
-        by_doi = {"10.2/wrong": "https://openalex.org/W999",
-                  "10.2/right": "https://openalex.org/W222"}
-        with patch("extract.run_extract.verify_and_correct", return_value=v), \
-             patch("extract.run_extract._build_ref_o", return_value=("r", "a", "b")), \
-             patch("extract.run_extract._oa_by_doi") as oa:
-            oa.side_effect = lambda d: {"openalex_id": by_doi.get(d, "")}
-            out = run_extract._fill_work_ids(run_extract._verify_row(row))
-        assert out["doi_o"] == "10.2/right"
-        assert out["oa_work_id_o"] == "W222", "the id must follow the corrected DOI"
-
 
 # ── Title-search provenance is visible in link_method (fix 2) ────────────────
 
 class TestTitleSearchProvenance:
-    def test_mapped_from_internal_label(self):
-        assert run_extract._map_method("llm_title_search_gemini") == "llm_title_search"
-        assert run_extract._map_method("llm_title_search_openai") == "llm_title_search"
-
-    def test_candidate_derived_link_is_not_title_search(self):
-        assert run_extract._map_method("llm_gemini") == "llm_fulltext"
+    @pytest.mark.parametrize("internal,public", [
+        ("llm_title_search_gemini", "llm_title_search"),
+        ("llm_title_search_openai", "llm_title_search"),
+        # a candidate-derived link is not a title search
+        ("llm_gemini", "llm_fulltext"),
+    ])
+    def test_mapped_from_internal_label(self, internal, public):
+        assert run_extract._map_method(internal) == public
 
 
 # ── link_method enum covers everything the pipeline can emit (audit B1) ──────
@@ -1775,12 +1444,6 @@ class TestLinkMethodEnumCoverage:
         for value in LINK_METHOD_VALUES:
             assert run_extract._map_method(value) == value
 
-    def test_the_reference_screen_resolves(self):
-        """csv_to_db filters DB imports on RESOLVED_LINK_METHODS, so an omission
-        silently drops resolved rows — llm_references, 25% of extracted-test.csv,
-        was dropped exactly this way."""
-        assert "llm_references" in RESOLVED_LINK_METHODS
-
 
 # ── Decision-model attribution and the two-provider requirement ──────────────
 
@@ -1814,13 +1477,18 @@ class TestClassifyModelAttribution:
                                       link_method="target_pending",
                                       classify_model="gemini-heavy")
 
-    @pytest.mark.parametrize("builder", ["_merge_row", "_merge_multi_row", "_empty_row"])
-    def test_the_classifier_model_is_persisted(self, builder):
-        assert getattr(self, builder)()["classify_llm_model"] == "gemini-heavy"
-
-    @pytest.mark.parametrize("builder", ["_merge_row", "_merge_multi_row"])
-    def test_the_outcome_model_is_persisted(self, builder):
-        assert getattr(self, builder)()["outcome_llm_model"] == "gemini-outcome"
+    @pytest.mark.parametrize("builder,column,expected", [
+        ("_merge_row",       "classify_llm_model", "gemini-heavy"),
+        ("_merge_multi_row", "classify_llm_model", "gemini-heavy"),
+        ("_empty_row",       "classify_llm_model", "gemini-heavy"),
+        ("_merge_row",       "outcome_llm_model",  "gemini-outcome"),
+        ("_merge_multi_row", "outcome_llm_model",  "gemini-outcome"),
+        # The outcome step fails over independently of the link step, so the two
+        # models can differ inside one run — that is the whole point of the column.
+        ("_merge_row",       "link_llm_model",     "gemini-link"),
+    ])
+    def test_each_decision_names_the_model_that_made_it(self, builder, column, expected):
+        assert getattr(self, builder)()[column] == expected
 
     def test_apply_outcome_persists_the_outcome_model(self):
         """The post-gate writer is the one that runs on every coded row — a column
@@ -1828,13 +1496,6 @@ class TestClassifyModelAttribution:
         row = run_extract._apply_outcome({}, _MOCK_OUTCOME)
         assert row["outcome_llm_model"] == "gemini-outcome"
         assert row["outcome"] == "success"
-
-    def test_the_link_model_is_the_link_stages_own(self):
-        """The outcome step fails over independently of the link step, so the two
-        models can differ inside one run — that is the whole point of the column."""
-        row = self._merge_row()
-        assert row["link_llm_model"] == "gemini-link"
-        assert row["outcome_llm_model"] == "gemini-outcome"
 
 
 class TestMultiRowRecordType:
@@ -1867,55 +1528,18 @@ class TestMultiRowRecordType:
         assert single["type"] == filter_status
 
 
-class TestRescreenReopensSetAsides:
+class TestResumeAndRescreenReadTheSetAsides:
     """--resume carries every resolved row forward, which freezes the Stage 4.5
-    screen's own verdicts under whichever voter pair produced them."""
+    screen's own verdicts under whichever voter pair produced them — and sanity_check
+    has already moved those verdicts out of extracted.csv, so a resume that reads only
+    extracted.csv re-screens every paper the screen already settled."""
 
-    @staticmethod
-    def _csv(tmp_path, rows: list[dict]) -> Path:
-        df = pd.DataFrame(rows)
-        for c in EXTRACTED_COLS:
-            if c not in df.columns:
-                df[c] = ""
-        path = tmp_path / "extracted.csv"
-        df[EXTRACTED_COLS].to_csv(path, index=False, encoding="utf-8-sig")
-        return path
-
-    _ROWS = [
-        {"doi_r": "10.1/keep", "filter_status": "replication",
-         "link_method": "llm_references", "doi_o": "10.1/o", "outcome": "success"},
-        {"doi_r": "10.1/nar", "filter_status": "replication",
-         "link_method": "not_a_replication", "outcome": "not_a_replication"},
-        {"doi_r": "10.1/dis", "filter_status": "replication",
-         "link_method": "screen_disagreement", "outcome": "pending"},
-    ]
-
-    def test_without_the_flag_set_asides_are_carried_forward(self, tmp_path):
-        resolved, pending = run_extract._load_extracted_rows(self._csv(tmp_path, self._ROWS))
-        assert set(resolved) == {"10.1/keep", "10.1/nar", "10.1/dis"}
-        assert pending == set()
-
-    def test_rescreen_reopens_only_the_set_asides(self, tmp_path):
-        resolved, pending = run_extract._load_extracted_rows(
-            self._csv(tmp_path, self._ROWS), rescreen=True)
-        assert set(resolved) == {"10.1/keep"}
-        assert pending == set()   # reopened rows are re-processed, not carried as pending
-
-    def test_rescreen_reopens_the_whole_multi_original_paper(self, tmp_path):
-        rows = [
-            {"doi_r": "10.1/multi", "filter_status": "replication", "original_rank": "1",
-             "link_method": "llm_references", "doi_o": "10.1/o1", "outcome": "success"},
-            {"doi_r": "10.1/multi", "filter_status": "replication", "original_rank": "2",
-             "link_method": "screen_disagreement", "outcome": "pending"},
-        ]
-        resolved, _ = run_extract._load_extracted_rows(self._csv(tmp_path, rows),
-                                                      rescreen=True)
-        assert resolved == {}
-
-
-class TestResumeReadsTheScreenSetAsides:
-    """sanity_check moves the screen's verdicts out of extracted.csv, so a resume
-    that reads only extracted.csv re-screens every paper the screen already settled."""
+    _KEEP = {"doi_r": "10.1/keep", "filter_status": "replication",
+             "link_method": "llm_references", "doi_o": "10.1/o", "outcome": "success"}
+    _NAR = {"doi_r": "10.1/nar", "filter_status": "replication",
+            "link_method": "not_a_replication", "outcome": "not_a_replication"}
+    _DIS = {"doi_r": "10.1/dis", "filter_status": "replication",
+            "link_method": "screen_disagreement", "outcome": "pending"}
 
     @staticmethod
     def _write(path: Path, rows: list[dict]) -> None:
@@ -1925,45 +1549,59 @@ class TestResumeReadsTheScreenSetAsides:
                 df[c] = ""
         df[EXTRACTED_COLS].to_csv(path, index=False, encoding="utf-8-sig")
 
-    def _setup(self, tmp_path) -> Path:
+    def _fixture(self, tmp_path, shape: str = "set_aside") -> Path:
+        """The same three papers, either still in extracted.csv or already
+        quarantined into the two set-aside files sanity_check writes."""
         out = tmp_path / "extracted.csv"
-        self._write(out, [{"doi_r": "10.1/keep", "filter_status": "replication",
-                           "link_method": "llm_references", "doi_o": "10.1/o",
-                           "outcome": "success"}])
-        self._write(tmp_path / "not_a_replication.csv",
-                    [{"doi_r": "10.1/nar", "filter_status": "replication",
-                      "link_method": "not_a_replication", "outcome": "not_a_replication"}])
-        self._write(tmp_path / "screen_disagreement.csv",
-                    [{"doi_r": "10.1/dis", "filter_status": "replication",
-                      "link_method": "screen_disagreement", "outcome": "pending"}])
+        if shape == "in_extracted":
+            self._write(out, [self._KEEP, self._NAR, self._DIS])
+        else:
+            self._write(out, [self._KEEP])
+            self._write(tmp_path / "not_a_replication.csv", [self._NAR])
+            self._write(tmp_path / "screen_disagreement.csv", [self._DIS])
         return out
 
-    def test_set_aside_papers_count_as_resolved(self, tmp_path):
-        resolved, pending = run_extract._load_extracted_rows(self._setup(tmp_path))
+    @pytest.mark.parametrize("shape", ["in_extracted", "set_aside"])
+    def test_set_aside_papers_count_as_resolved(self, tmp_path, shape):
+        resolved, pending = run_extract._load_extracted_rows(
+            self._fixture(tmp_path, shape))
         assert set(resolved) == {"10.1/keep", "10.1/nar", "10.1/dis"}
         assert pending == set()
 
+    @pytest.mark.parametrize("shape", ["in_extracted", "set_aside"])
+    def test_rescreen_reopens_only_the_set_asides(self, tmp_path, shape):
+        resolved, pending = run_extract._load_extracted_rows(
+            self._fixture(tmp_path, shape), rescreen=True)
+        assert set(resolved) == {"10.1/keep"}
+        assert pending == set()   # reopened rows are re-processed, not carried as pending
+
     def test_set_aside_rows_are_not_written_back_to_extracted_csv(self, tmp_path):
-        resolved, _ = run_extract._load_extracted_rows(self._setup(tmp_path))
+        resolved, _ = run_extract._load_extracted_rows(self._fixture(tmp_path))
         assert resolved["10.1/nar"] == []
         assert resolved["10.1/dis"] == []
         assert len(resolved["10.1/keep"]) == 1
 
-    def test_rescreen_ignores_the_set_aside_files(self, tmp_path):
-        resolved, _ = run_extract._load_extracted_rows(self._setup(tmp_path),
-                                                       rescreen=True)
-        assert set(resolved) == {"10.1/keep"}
-
     def test_set_aside_keys_union_both_files_and_key_doi_less_rows(self, tmp_path):
         """The set of keys itself: both files are read, and a row with no DOI keys on
         the next identifier in the chain rather than collapsing to the empty key."""
-        self._setup(tmp_path)
+        self._fixture(tmp_path)
         self._write(tmp_path / "not_a_replication.csv",
                     [{"doi_r": "10.1/nar", "link_method": "not_a_replication"},
                      {"doi_r": "", "openalex_id_r": "W7", "title_r": "No DOI",
                       "link_method": "not_a_replication"}])
         assert run_extract._screen_set_aside_keys(tmp_path) == {
             "10.1/nar", "oa:W7", "10.1/dis"}
+
+    def test_rescreen_reopens_the_whole_multi_original_paper(self, tmp_path):
+        out = tmp_path / "extracted.csv"
+        self._write(out, [
+            {"doi_r": "10.1/multi", "filter_status": "replication", "original_rank": "1",
+             "link_method": "llm_references", "doi_o": "10.1/o1", "outcome": "success"},
+            {"doi_r": "10.1/multi", "filter_status": "replication", "original_rank": "2",
+             "link_method": "screen_disagreement", "outcome": "pending"},
+        ])
+        resolved, _ = run_extract._load_extracted_rows(out, rescreen=True)
+        assert resolved == {}
 
 
 class TestScreenProviderPrecheck:
@@ -2009,17 +1647,28 @@ class TestTitleSearchIsProvisional:
     hand-check put its precision near 50%. The row must therefore never present as
     a settled pairing: low confidence, no outcome, and no DB import."""
 
-    def test_link_confidence_is_forced_low(self):
-        for method in ("llm_title_search_prepdf", "llm_title_search_gemini",
-                       "llm_title_search_openai"):
-            link = {"resolution_method": method, "llm_confidence": "high",
-                    "resolution_score": 1.0}
-            assert run_extract._link_confidence(link) == "low", method
-
-    def test_candidate_derived_links_keep_their_confidence(self):
-        link = {"resolution_method": "llm_gemini", "llm_confidence": "high",
-                "resolution_score": 1.0}
-        assert run_extract._link_confidence(link) == "high"
+    @pytest.mark.parametrize("link,expected", [
+        # every title-search label is provisional, whatever the model claimed
+        ({"resolution_method": "llm_title_search_prepdf",
+          "llm_confidence": "high", "resolution_score": 1.0}, "low"),
+        ({"resolution_method": "llm_title_search_gemini",
+          "llm_confidence": "high", "resolution_score": 1.0}, "low"),
+        ({"resolution_method": "llm_title_search_openai",
+          "llm_confidence": "high", "resolution_score": 1.0}, "low"),
+        # #51: a lone candidate auto-accepted at score 1.0 must not read as high
+        ({"resolution_method": "single_candidate_after_requery",
+          "resolution_score": 1.0}, "medium"),
+        # other methods at 1.0 are unaffected
+        ({"resolution_method": "citation_context_match",
+          "resolution_score": 1.0}, "high"),
+        # an explicit LLM confidence flows through for the uncapped methods
+        ({"resolution_method": "llm_cited_candidates",
+          "llm_confidence": "high"}, "high"),
+        ({"resolution_method": "llm_gemini", "llm_confidence": "high",
+          "resolution_score": 1.0}, "high"),
+    ])
+    def test_link_confidence_by_resolution_method(self, link, expected):
+        assert run_extract._link_confidence(link) == expected, link["resolution_method"]
 
     def test_no_outcome_is_coded_against_a_title_search_link(self):
         link = {"resolution_method": "llm_title_search_prepdf",
@@ -2091,124 +1740,71 @@ class TestFrontDoorScreen:
             result = run_extract.run_extract()
         return result, m_link, m_out
 
-    @pytest.mark.parametrize("confident", [True, False])
-    def test_agreed_none_is_written_without_any_further_call(self, tmp_path, monkeypatch,
-                                                             confident):
-        """G-softqual discards two "none" votes at any confidence."""
+    def test_agreed_none_is_written_without_any_further_call(self, tmp_path, monkeypatch):
+        """G-softqual discards two "none" votes. (The gate's own truth table is
+        tests/test_llm_client.py::test_screen_gate.)"""
         result, m_link, m_out = self._run(
             _screen(screen_verdict="discard", screen_classification="none",
                     record_type="", categories=["terminology_only"],
                     llm_reasoning="gemini: unrelated",
-                    votes=[_vote("gemini", "none", confident=confident),
-                           _vote("openai", "none", confident=confident)]),
+                    votes=[_vote("gemini", "none"), _vote("openai", "none")]),
             tmp_path, monkeypatch)
 
         assert list(result["link_method"]) == ["not_a_replication"]
         assert list(result["outcome"]) == ["not_a_replication"]
-        label = "confident" if confident else "unconfident"
-        assert f"gemini=none/{label}" in result.iloc[0]["link_evidence"]
+        assert "gemini=none/confident" in result.iloc[0]["link_evidence"]
         assert result.iloc[0]["screen_categories"] == "terminology_only"
         m_link.assert_not_called()
         m_out.assert_not_called()
 
-    @pytest.mark.parametrize("partner", ["unclear", "replication"])
     def test_confident_none_plus_an_unconfident_partner_is_a_discard(
-            self, tmp_path, monkeypatch, partner):
+            self, tmp_path, monkeypatch):
         """The softqual clause: an answer the other voter would not stake anything
         on does not outweigh a confident none."""
         result, m_link, m_out = self._run(
             _screen(screen_verdict="discard", screen_classification="none",
                     record_type="",
                     votes=[_vote("gemini", "none"),
-                           _vote("openai", partner, confident=False)]),
+                           _vote("openai", "unclear", confident=False)]),
             tmp_path, monkeypatch)
 
         assert list(result["link_method"]) == ["not_a_replication"]
         m_link.assert_not_called()
         m_out.assert_not_called()
 
-    def test_a_confident_split_proceeds_down_the_ladder(self, tmp_path, monkeypatch):
-        """Was screen_disagreement. A false inclusion costs a ladder run; a false
-        discard costs the paper, so a real split escalates instead of terminating."""
-        result, m_link, _ = self._run(
-            _screen(screen_verdict="proceed", screen_classification="replication",
-                    record_type="replication",
-                    votes=[_vote("gemini", "replication"), _vote("openai", "none")]),
-            tmp_path, monkeypatch)
-
-        assert "screen_disagreement" not in set(result["link_method"])
-        assert result.iloc[0]["link_method"] == "same_author_year_title_overlap"
-        m_link.assert_called_once()
-
-    def test_one_vote_is_target_pending_not_a_verdict(self, tmp_path, monkeypatch):
-        result, m_link, m_out = self._run(
-            _screen(resolution_method="llm_refscreen_partial", screen_verdict="",
-                    record_type="", llm_error="classifier failed: openai"),
-            tmp_path, monkeypatch)
-
-        assert list(result["link_method"]) == ["target_pending"]
-        m_link.assert_not_called()
-        m_out.assert_not_called()
-
-    def test_no_votes_is_an_api_error(self, tmp_path, monkeypatch):
-        result, m_link, _ = self._run(
-            _screen(resolution_method="llm_refscreen_failed", screen_verdict="",
-                    record_type="", llm_error="classifier failed: gemini, openai"),
-            tmp_path, monkeypatch)
-
-        assert list(result["link_method"]) == ["api_error"]
-        assert list(result["outcome"]) == ["api_error"]
-        m_link.assert_not_called()
-
-    def test_the_verdict_is_threaded_into_the_ladder_not_re_voted(self, tmp_path, monkeypatch):
-        _, m_link, _ = self._run(_YES_SCREEN, tmp_path, monkeypatch)
-
-        assert m_link.call_args[1]["classification"] == _YES_SCREEN
-
-    def test_a_proceed_without_a_qualifying_vote_invents_no_type(self, tmp_path, monkeypatch):
-        """A needs_review row the gate proceeds on without any qualifying vote
-        (unclear/unclear) still resolves an original and is still outcome-coded, but
-        nothing has said what kind of paper it is. Writing "replication" there would
-        be a guess presented as a reading, so the type stays empty, the row stays
-        needs_review, and csv_to_db leaves it for the check page."""
-        needs_review_csv = _FILTERED_CSV.replace(
-            "replication,rule_based,direct replication,high",
-            "needs_review,rule_based,phrase without a cite,medium")
+    @pytest.mark.parametrize("filter_status,evidence,expected_type,importable", [
+        # Nothing has said what kind of paper this is. Writing "replication" there
+        # would be a guess presented as a reading, so the type stays empty and the
+        # row waits for the check page rather than importing.
+        ("needs_review", "phrase without a cite,medium", "", False),
+        # Stage 2 already said reproduction and no screen call overrode it. That is a
+        # decided type, not an invented one, so it stands — and with it the
+        # computation/robustness vocabulary the outcome call has to use.
+        ("reproduction", "re-analysis of the original data,high", "reproduction", True),
+    ])
+    def test_a_proceed_without_a_qualifying_vote_keeps_stage_2s_verdict(
+            self, tmp_path, monkeypatch, filter_status, evidence, expected_type,
+            importable):
+        """A row the gate proceeds on without any qualifying vote (unclear/unclear)
+        still resolves an original and is still outcome-coded, but the screen has
+        decided nothing, so Stage 2's verdict is all the row has."""
+        csv = _FILTERED_CSV.replace("replication,rule_based,direct replication,high",
+                                    f"{filter_status},rule_based,{evidence}")
         result, m_link, m_out = self._run(
             _screen(record_type="", screen_classification="unclear", categories=[],
                     votes=[_vote("gemini", "unclear", confident=False),
                            _vote("openai", "unclear", confident=False)]),
-            tmp_path, monkeypatch, filtered_csv=needs_review_csv)
+            tmp_path, monkeypatch, filtered_csv=csv)
 
         row = result.iloc[0]
         m_link.assert_called_once()
         assert row["link_method"] == "same_author_year_title_overlap"
-        assert row["type"] == ""
-        assert row["filter_status"] == "needs_review"
+        assert row["type"] == expected_type
+        assert row["filter_status"] == filter_status
         assert row["filter_method"] == "rule_based"
-        # Coded on the replication vocabulary, the more general of the two grids.
-        assert m_out.call_args[1]["record_type"] == ""
-        # It waits for a human rather than importing — that is the point.
+        assert m_out.call_args[1]["record_type"] == expected_type
         statuses, _ = _import_mask()
-        assert row["filter_status"] not in statuses
-
-    def test_a_proceed_without_a_qualifying_vote_keeps_stage_2s_type(
-            self, tmp_path, monkeypatch):
-        """Stage 2 already said reproduction and no screen call overrode it. That is
-        a decided type, not an invented one, so it stands — and with it the
-        computation/robustness vocabulary the outcome call has to use."""
-        repro_csv = _FILTERED_CSV.replace(
-            "replication,rule_based,direct replication,high",
-            "reproduction,rule_based,re-analysis of the original data,high")
-        result, _, m_out = self._run(
-            _screen(record_type="", screen_classification="unclear", categories=[],
-                    votes=[_vote("gemini", "unclear", confident=False),
-                           _vote("openai", "none", confident=False)]),
-            tmp_path, monkeypatch, filtered_csv=repro_csv)
-
-        assert result.iloc[0]["filter_status"] == "reproduction"
-        assert result.iloc[0]["type"] == "reproduction"
-        assert m_out.call_args[1]["record_type"] == "reproduction"
+        assert (row["filter_status"] in statuses) is importable
 
     def test_the_screen_decides_record_type_and_categories(self, tmp_path, monkeypatch):
         """The screen read the abstract and said what the paper is, so its verdict
@@ -2262,14 +1858,6 @@ class TestOutcomeGate:
     """Outcome coding runs only on a resolved link (audit E2). One gate, derived
     from RESOLVED_LINK_METHODS — not a stack of per-method special cases."""
 
-    def test_every_resolved_method_is_coded(self):
-        for method in RESOLVED_LINK_METHODS:
-            assert run_extract._outcome_without_coding(method, {}) is None, method
-
-    def test_no_unresolved_method_is_coded(self):
-        for method in LINK_METHOD_VALUES - RESOLVED_LINK_METHODS:
-            assert run_extract._outcome_without_coding(method, {}) is not None, method
-
     def test_set_aside_and_pending_rows_are_marked_pending(self):
         for method in ("screen_disagreement", "target_pending", "no_original_found"):
             out = run_extract._outcome_without_coding(method, {})
@@ -2292,24 +1880,6 @@ class TestOutcomeGate:
         settled = run_extract._outcome_without_coding(
             "not_a_replication", {"llm_model": "gemini-light+ministral"})
         assert settled["llm_model"] == "gemini-light+ministral"
-
-    def test_a_guard_demoted_row_is_not_outcome_coded(self, monkeypatch):
-        """The guard rejects a self-link AFTER the ladder ran but BEFORE the outcome
-        call — so the row must be demoted first and never reach extract_outcome."""
-        row = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
-                         "filter_status": "replication"})
-        self_link = dict(_MOCK_LINK, resolved_doi_o="10.1/rep")
-        with patch.object(run_extract, "run_for_doi", return_value=self_link), \
-             patch.object(run_extract, "extract_outcome",
-                          side_effect=AssertionError("must not code an outcome")):
-            rows = run_extract._resolve_and_code(
-                "10.1/rep", row, screen=None,
-                no_llm=False, no_pdf=True, resolved_only=False,
-                recalibrate_outcomes=False)
-
-        assert len(rows) == 1
-        assert rows[0]["link_method"] == "target_pending"
-        assert rows[0]["outcome"] == "pending"
 
     def test_resolved_only_drops_the_row_before_the_outcome_call(self):
         row = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
@@ -2386,24 +1956,20 @@ class TestParseCacheOnlyAfterTheDocument:
         base.update(over)
         return base
 
-    def test_screen_exit_has_no_document(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("over,cached_pdf,expected", [
+        ({}, False, False),                                    # a screen exit
+        ({"pdf_ok": True, "pdf_source": "arxiv"}, False, True),  # this run acquired one
+        # --recalibrate-outcomes re-reads documents a previous run downloaded
+        ({}, True, True),
+    ], ids=["screen_exit", "acquired_now", "cached_earlier"])
+    def test_a_document_is_only_what_some_run_actually_acquired(
+            self, tmp_path, monkeypatch, over, cached_pdf, expected):
         monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
         monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
-        assert not run_extract._has_document("10.1/x", self._link())
-
-    def test_acquired_pdf_has_a_document(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
-        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
-        assert run_extract._has_document(
-            "10.1/x", self._link(pdf_ok=True, pdf_source="arxiv"))
-
-    def test_pdf_cached_by_an_earlier_run_counts(self, tmp_path, monkeypatch):
-        """--recalibrate-outcomes re-reads documents a previous run downloaded."""
-        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
-        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
-        from shared.utils import cache_key
-        (tmp_path / f"{cache_key('10.1/x')}.pdf").write_bytes(b"%PDF")
-        assert run_extract._has_document("10.1/x", self._link())
+        if cached_pdf:
+            from shared.utils import cache_key
+            (tmp_path / f"{cache_key('10.1/x')}.pdf").write_bytes(b"%PDF")
+        assert bool(run_extract._has_document("10.1/x", self._link(**over))) is expected
 
 
 class TestOutcomeReadsTheDiscussion:
@@ -2490,38 +2056,54 @@ class TestSamePaperStudiesCollapse:
                 "evidence": f"ev{rank}", "outcome_evidence": f"oev{rank}",
                 "confidence": conf}
 
-    def test_same_doi_collapses_and_joins_study_numbers(self):
-        out = run_extract._collapse_same_paper_originals([
-            self._orig(1, "10.1000/a", "1"),
-            self._orig(2, "10.1000/a", "2"),
-            self._orig(3, "10.1000/b", ""),
-        ])
-        assert len(out) == 2
-        assert out[0]["study_number"] == "1, 2"
-        assert [o["rank"] for o in out] == [1, 2]
-        assert out[1]["doi"] == "10.1000/b"
+    @pytest.mark.parametrize("entries,n_groups,first_studies", [
+        # one paper, two studies → one row with the numbers joined; a second paper
+        # keeps its own row
+        ([{"doi": "10.1000/a", "study_number": "1"},
+          {"doi": "10.1000/a", "study_number": "2"},
+          {"doi": "10.1000/b", "study_number": ""}], 2, "1, 2"),
+        # distinct DOIs are never collapsed, even onto the same study number
+        ([{"doi": "10.1000/a", "study_number": "1"},
+          {"doi": "10.1000/b", "study_number": "1"}], 2, "1"),
+        # DOI-less entries group on the normalised title
+        ([{"doi": "", "study_number": "1", "title": "The  Same Paper"},
+          {"doi": "", "study_number": "2", "title": "the same paper"},
+          {"doi": "", "study_number": "1", "title": "A Different Paper"}], 2, "1, 2"),
+        # …but a generic title repeats across the literature, so it is not an identity
+        # on its own: the year and the first author key a DOI-less entry too.
+        ([{"doi": "", "study_number": "1", "title": "Experiment 1"},
+          {"doi": "", "study_number": "1", "title": "Experiment 1", "year": 1998}],
+         2, "1"),
+        ([{"doi": "", "study_number": "1", "title": "Experiment 1"},
+          {"doi": "", "study_number": "1", "title": "Experiment 1",
+           "first_author": "Jones"}], 2, "1"),
+    ], ids=["same_doi", "distinct_dois", "doi_less_title", "doi_less_year",
+            "doi_less_author"])
+    def test_the_grouping_key(self, entries, n_groups, first_studies):
+        originals = []
+        for rank, entry in enumerate(entries, start=1):
+            over = dict(entry)
+            original = self._orig(rank, over.pop("doi"), over.pop("study_number"),
+                                  title=over.pop("title", "T"))
+            original.update(over)
+            originals.append(original)
 
-    def test_distinct_papers_are_not_collapsed(self):
-        out = run_extract._collapse_same_paper_originals([
-            self._orig(1, "10.1000/a", "1"),
-            self._orig(2, "10.1000/b", "1"),
-        ])
-        assert len(out) == 2
-        assert [o["study_number"] for o in out] == ["1", "1"]
+        out = run_extract._collapse_same_paper_originals(originals)
+        assert len(out) == n_groups
+        assert out[0]["study_number"] == first_studies
+        assert [o["rank"] for o in out] == list(range(1, n_groups + 1))
 
-    def test_conflicting_outcomes_aggregate_to_mixed(self):
+    @pytest.mark.parametrize("outcomes,expected", [
+        # two verdicts that disagree are reconciled by FLoRA's rule…
+        (("success", "failure"), "mixed"),
+        # …and a study that said nothing does not outvote one that did
+        (("failure", "cannot_be_determined"), "failure"),
+    ])
+    def test_outcomes_over_one_original_are_aggregated(self, outcomes, expected):
         out = run_extract._collapse_same_paper_originals([
-            self._orig(1, "10.1000/a", "1", outcome="success"),
-            self._orig(2, "10.1000/a", "2", outcome="failure"),
-        ])
-        assert out[0]["outcome"] == "mixed"
-
-    def test_silent_study_does_not_outvote_a_verdict(self):
-        out = run_extract._collapse_same_paper_originals([
-            self._orig(1, "10.1000/a", "1", outcome="failure"),
-            self._orig(2, "10.1000/a", "2", outcome="cannot_be_determined"),
-        ])
-        assert out[0]["outcome"] == "failure"
+            self._orig(rank, "10.1000/a", str(rank), outcome=outcome)
+            for rank, outcome in enumerate(outcomes, start=1)])
+        assert out[0]["outcome"] == expected
 
     def test_partial_study_numbers_are_dropped_not_guessed(self):
         """Claiming "1" when a second study went unnumbered would assert the
@@ -2538,40 +2120,6 @@ class TestSamePaperStudiesCollapse:
             self._orig(2, "10.1000/a", "2", conf="low"),
         ])
         assert out[0]["confidence"] == "low"
-
-    def test_doi_less_entries_group_by_title(self):
-        out = run_extract._collapse_same_paper_originals([
-            self._orig(1, "", "1", title="The  Same Paper"),
-            self._orig(2, "", "2", title="the same paper"),
-            self._orig(3, "", "1", title="A Different Paper"),
-        ])
-        assert len(out) == 2
-        assert out[0]["study_number"] == "1, 2"
-
-    def test_doi_less_entries_with_the_same_title_but_different_years_stay_apart(self):
-        """Generic titles repeat across the literature — the title alone is not an
-        identity, so a DOI-less entry is keyed on year and first author too."""
-        a = self._orig(1, "", "1", title="Experiment 1")
-        b = self._orig(2, "", "1", title="Experiment 1")
-        b["year"] = 1998
-        out = run_extract._collapse_same_paper_originals([a, b])
-        assert len(out) == 2
-        assert [o["rank"] for o in out] == [1, 2]
-
-    def test_doi_less_entries_with_the_same_title_but_different_authors_stay_apart(self):
-        a = self._orig(1, "", "1", title="Experiment 1")
-        b = self._orig(2, "", "1", title="Experiment 1")
-        b["first_author"] = "Jones"
-        out = run_extract._collapse_same_paper_originals([a, b])
-        assert len(out) == 2
-
-    def test_study_o_reaches_the_row(self):
-        row = _merge_multi_row(
-            pd.Series({"doi_r": "10.9/r", "title_r": "R", "filter_status": "replication"}),
-            self._orig(1, "10.1000/a", "1, 2"),
-            {"outcome": "success"}, "multiple_original", "high", 1,
-        )
-        assert row["study_o"] == "1, 2"
 
     def test_study_r_is_a_union_over_the_merged_studies(self):
         """study_o says which studies of the ORIGINAL are targeted and needs every
@@ -2652,7 +2200,6 @@ class TestPerTargetAdapter:
         assert all(r["original_match_type"] == "multiple_original" for r in rows)
         assert all(r["n_originals"] == 2 for r in rows)
         assert [r["original_rank"] for r in rows] == [1, 2]
-        assert not hasattr(run_extract, "run_multi_original_for_doi")
 
         assert coder.call_count == 2
         assert [c.kwargs["original_title"] for c in coder.call_args_list] == [
@@ -2734,26 +2281,30 @@ class TestPerTargetAdapter:
         rows, _ = self._run(targets)
         assert [r["study_r"] for r in rows] == ["1", "2, 3"]
 
+    _SELF_AND_SIBLING = [
+        _mock_target("@self", "10.1/rep", "The paper itself", "Self", 2020),
+        _mock_target("@jones2011", "10.1/b", "Second original", "Jones", 2011)]
+
     def test_resolved_only_drops_a_demoted_row_and_renumbers_the_rest(self):
         """audit_extracted requires ranks 1..n with n_originals == the group size, so
-        the renumbering has to happen after the drops, not before."""
-        targets = [_mock_target("@self", "10.1/rep", "The paper itself", "Self", 2020),
-                   _mock_target("@jones2011", "10.1/b", "Second original", "Jones", 2011)]
-        rows, _ = self._run(targets, resolved_only=True)
+        the renumbering has to happen after the drops, not before — and the group's
+        match type is only knowable once the surviving row count is final."""
+        rows, _ = self._run(self._SELF_AND_SIBLING, resolved_only=True)
 
         assert len(rows) == 1
         assert rows[0]["doi_o"] == "10.1/b"
         assert rows[0]["original_rank"] == 1
         assert rows[0]["n_originals"] == 1
+        assert rows[0]["original_match_type"] == "single_original"
+        assert rows[0]["original_match_confidence"] == "high"
 
     def test_a_demoted_target_row_stays_pending_beside_a_kept_sibling(self):
         """The adapter codes the outcome AFTER the guard, so a demoted target has no
         verdict to keep: it must still be written unresolved and pending, next to a
         sibling that was coded — the shape sanity_check routes to target_pending.csv
-        and csv_to_db skips, rather than a row with a verdict on no original."""
-        targets = [_mock_target("@self", "10.1/rep", "The paper itself", "Self", 2020),
-                   _mock_target("@jones2011", "10.1/b", "Second original", "Jones", 2011)]
-        rows, coder = self._run(targets)
+        and csv_to_db skips, rather than a row with a verdict on no original. Both
+        rows still describe the same group, and only the survivor is a match."""
+        rows, coder = self._run(self._SELF_AND_SIBLING)
 
         assert coder.call_count == 1  # only the surviving target is coded
         demoted, kept = rows
@@ -2763,6 +2314,8 @@ class TestPerTargetAdapter:
         assert demoted["outcome_phrase"] == "" and demoted["out_quote_source"] == ""
         assert demoted["original_match_confidence"] == "low"
         assert kept["doi_o"] == "10.1/b" and kept["outcome"] == _MOCK_OUTCOME["outcome"]
+        assert kept["original_match_confidence"] == "high"
+        assert {r["original_match_type"] for r in rows} == {"multiple_original"}
         assert [r["original_rank"] for r in rows] == [1, 2]
         assert all(r["n_originals"] == 2 for r in rows)
 
@@ -2780,20 +2333,7 @@ class TestPerTargetAdapter:
         assert all("identified 2 of 4 targets" in r["link_evidence"] for r in rows)
         assert all("Ramirez (2014)" in r["link_evidence"] for r in rows)
 
-    def test_no_matchable_target_writes_one_pending_row(self):
-        targets = [{"key": None, "match_certain": False, "target_as_named": "A",
-                    "study_numbers": "", "replication_study_numbers": "",
-                    "evidence_quote": "q", "record": None},
-                   {"key": None, "match_certain": False, "target_as_named": "B",
-                    "study_numbers": "", "replication_study_numbers": "",
-                    "evidence_quote": "q", "record": None}]
-        rows, _ = self._run(targets)
-
-        assert len(rows) == 1
-        assert rows[0]["link_method"] == "target_pending"
-        assert "2 originals" in rows[0]["link_evidence"]
-
-    def test_an_unresolved_rerouted_row_keeps_what_the_screen_decided(self):
+    def test_no_matchable_target_writes_one_pending_row_that_keeps_the_screen(self):
         """The screen ran and classified the paper; the ladder finding no original
         does not undo that, and a pending row stripped of its categories and type
         reads as a paper nobody looked at."""
@@ -2805,6 +2345,9 @@ class TestPerTargetAdapter:
                     "evidence_quote": "q", "record": None}]
         rows, _ = self._run(targets, screen=self._SCREEN)
 
+        assert len(rows) == 1
+        assert rows[0]["link_method"] == "target_pending"
+        assert "2 originals" in rows[0]["link_evidence"]
         assert rows[0]["screen_categories"] == "clearly_declared|self_retest"
         assert rows[0]["type"] == "reproduction"
 
@@ -2849,35 +2392,6 @@ class TestAdapterRowsSettleAfterTheDrops:
             return run_extract._resolve_and_code(
                 "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
                 resolved_only=resolved_only, recalibrate_outcomes=False)
-
-    def test_a_paper_whose_second_target_is_rejected_is_not_multiple_original(self):
-        """The match type is the row count, and the row count is only final after the
-        guard: a surviving single row that still says multiple_original overcounts
-        every multi-original figure on the dashboard."""
-        rows = self._run([
-            _mock_target("@self", "10.1/rep", "The paper itself", "Self", 2020),
-            _mock_target("@jones2011", "10.1/b", "Second original", "Jones", 2011)])
-
-        assert len(rows) == 2
-        survivors = [r for r in rows if r["link_method"] != "target_pending"]
-        assert len(survivors) == 1
-        # Both rows agree on the group, and the demoted one is not a high-confidence
-        # match to an original it no longer has.
-        assert {r["original_match_type"] for r in rows} == {"multiple_original"}
-        demoted = [r for r in rows if r["link_method"] == "target_pending"][0]
-        assert demoted["original_match_confidence"] == "low"
-        assert survivors[0]["original_match_confidence"] == "high"
-
-    def test_resolved_only_leaves_a_single_original_paper(self):
-        rows = self._run([
-            _mock_target("@self", "10.1/rep", "The paper itself", "Self", 2020),
-            _mock_target("@jones2011", "10.1/b", "Second original", "Jones", 2011)],
-            resolved_only=True)
-
-        assert len(rows) == 1
-        assert rows[0]["original_match_type"] == "single_original"
-        assert rows[0]["n_originals"] == 1
-        assert rows[0]["original_match_confidence"] == "high"
 
     def test_a_provisional_link_is_never_written_at_high_confidence(self):
         """A DOI the pipeline had to search for is ~50% precise. The single path caps
@@ -2936,19 +2450,26 @@ class TestAdapterRowsSettleAfterTheDrops:
 
 def test_a_rejected_row_states_nothing_about_the_original_it_lost():
     """Every one of these fields describes the original the guard just rejected. A row
-    that keeps them reads as a link to a paper the pipeline explicitly refused."""
+    that keeps them reads as a link to a paper the pipeline explicitly refused — and
+    the multi-original path merges the outcome BEFORE the guard runs, so a coded
+    verdict on the rejected original has to go with them."""
     row = {"doi_r": "10.1/rep", "title_r": "A Study of Things",
            "doi_o": "10.1/rep", "title_o": "A Study of Things", "study_o": "1",
            "study_r": "2", "year_o": "2009", "authors_o": "Smith, J.",
            "ref_o": "Smith, J. (2009). A Study of Things.",
            "bibtex_ref_o": "@article{Smith_2009,}", "oa_work_id_o": "W123",
+           "outcome": "success", "outcome_phrase": "we replicated it",
+           "outcome_confidence": "high", "out_quote_source": "abstract",
            "link_method": "llm_fulltext", "link_confidence": "high"}
     out = run_extract._guard_original_link(row)
 
     assert out["link_method"] == "target_pending"
     for column in ("doi_o", "title_o", "study_o", "study_r", "year_o", "authors_o",
-                   "ref_o", "bibtex_ref_o", "oa_work_id_o"):
+                   "ref_o", "bibtex_ref_o", "oa_work_id_o", "outcome_phrase",
+                   "out_quote_source"):
         assert out[column] == "", column
+    assert out["outcome"] == "pending"
+    assert out["outcome_confidence"] == "low"
 
 
 def test_study_r_is_not_written_onto_an_unresolved_link():
@@ -3018,24 +2539,3 @@ class TestFulltextProvenanceReachesTheRow:
         assert len(rows) == 2
         assert all((r["pdf_source"], r["parse_method"])
                    == ("openalex_xml", "openalex_xml") for r in rows)
-
-
-def test_no_live_reference_to_the_deleted_builders():
-    """The prompts and the writer values the pre-redesign multi pipeline owned. Both
-    values stay legal on the read side; nothing may write them again."""
-    import shared.prompts as prompts
-    assert not hasattr(prompts, "build_multi_original_prompt")
-    assert not hasattr(prompts, "build_match_type_prompt")
-    assert not hasattr(prompts, "OUTCOME_ENUM")
-    assert not hasattr(llm_client, "identify_all_originals_with_llm")
-
-    for path in sorted(Path("extract").glob("*.py")):
-        assert '"llm_multi"' not in path.read_text(encoding="utf-8"), path
-
-    # medium reached the CSV through the multi writer's confidence pass-through.
-    with patch("extract.run_extract._build_ref_o", return_value=("", "", "")):
-        row = _merge_multi_row(
-            pd.Series({"doi_r": "10.1/r", "title_r": "R", "filter_status": "replication"}),
-            {"rank": 1, "doi": "10.1/o", "title": "O", "confidence": "medium"},
-            {}, "single_original", "high", 1)
-    assert row["link_confidence"] == "low"

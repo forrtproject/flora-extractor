@@ -3,8 +3,8 @@ HF dataset repo.
 
 One test per seam: the year sharding of remote paths, batched commits, push
 idempotence, the pool provenance sidecar, partial and skipping pulls, the
-prebuilt-build round trip and its provenance warnings, --years parsing, and the
-two "you have not configured this" errors. ``huggingface_hub`` is never installed
+prebuilt-build round trip and its provenance warnings, --years parsing, the
+pre-flight write check, and the "you have not configured this" errors. ``huggingface_hub`` is never installed
 here and never called: pool_sync imports it inside its functions, so a fake module
 in ``sys.modules`` is the whole mock, and any real network call would fail loudly
 rather than quietly succeed. The fake keeps the remote as a ``{path: bytes}``
@@ -81,6 +81,12 @@ class _FakeApi:
 
     def create_repo(self, repo_id, repo_type=None, private=None, exist_ok=None):
         self._calls.setdefault("create_repo", []).append(repo_id)
+
+    def whoami(self):
+        # The test flips this flag to play a token the Hub refuses to identify.
+        if self._calls.get("whoami_fails"):
+            raise RuntimeError("401 Unauthorized")
+        return {"name": "alice"}
 
     def list_repo_tree(self, repo_id, repo_type=None, recursive=False):
         return [_Entry(p, len(b)) for p, b in self._store.items()]
@@ -164,14 +170,13 @@ def _pool(tmp_path, files: dict[str, int]):
 
 
 def test_remote_path_shards_by_partition_year():
+    """The year prefix is what makes --years a partial download; a name whose date
+    cannot be read still goes up, under unknown/, because an unshareable file is
+    worse than an unsorted one."""
     assert ps._remote_path("part-2016-06-24-part_0000.parquet") == \
         "2016/part-2016-06-24-part_0000.parquet"
     assert ps._remote_path("part-2024-01-02-part_0011.parquet") == \
         "2024/part-2024-01-02-part_0011.parquet"
-
-
-def test_remote_path_of_malformed_name_is_shared_under_unknown():
-    """An unparseable date must not silently drop the file from the transfer."""
     assert ps._remote_path("part-notadate-part_0000.parquet") == \
         "unknown/part-notadate-part_0000.parquet"
     assert ps._remote_path("stray.parquet") == "unknown/stray.parquet"
@@ -274,27 +279,17 @@ def test_push_force_overrides_the_gate_conflict(tmp_path, monkeypatch, caplog):
 
 def test_push_refuses_when_the_manifest_cannot_be_read(tmp_path, monkeypatch):
     """A 503 on the manifest is not "there is no manifest": treating it as one would
-    bypass the gate check and then overwrite the fingerprint it never saw."""
+    bypass the gate check and then overwrite the fingerprint it never saw. Neither is
+    a LocalEntryNotFoundError, which subclasses EntryNotFoundError while meaning "no
+    network" — so absence must never be inferred from the class alone."""
     pool = _pool(tmp_path, {"part-2019-01-01-part_0000.parquet": 10})
-    calls = _fake_hub(monkeypatch, {},
-                      download_errors={ps._POOL_MANIFEST: _HubHTTPError("503 Service "
-                                                                       "Unavailable")})
 
-    with pytest.raises(RuntimeError, match="retry"):
-        ps.push_pool(pool, repo="me/pool")
-    assert "commits" not in calls, "nothing may be written while the gate is unknown"
-
-
-def test_push_refuses_when_the_hub_is_unreachable(tmp_path, monkeypatch):
-    """LocalEntryNotFoundError subclasses EntryNotFoundError but means "no network",
-    so absence must not be inferred from the class alone."""
-    pool = _pool(tmp_path, {"part-2019-01-01-part_0000.parquet": 10})
-    calls = _fake_hub(monkeypatch, {},
-                      download_errors={ps._POOL_MANIFEST: _LocalEntryNotFound("offline")})
-
-    with pytest.raises(RuntimeError, match="retry"):
-        ps.push_pool(pool, repo="me/pool")
-    assert "commits" not in calls
+    for failure in (_HubHTTPError("503 Service Unavailable"),
+                    _LocalEntryNotFound("offline")):
+        calls = _fake_hub(monkeypatch, {}, download_errors={ps._POOL_MANIFEST: failure})
+        with pytest.raises(RuntimeError, match="retry"):
+            ps.push_pool(pool, repo="me/pool")
+        assert "commits" not in calls, "nothing may be written while the gate is unknown"
 
 
 def test_push_commits_the_manifest_before_any_data(tmp_path, monkeypatch):
@@ -516,21 +511,25 @@ def test_pull_build_without_any_build_says_what_to_do_instead(tmp_path, monkeypa
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("spec,expected", [
-    ("2019", [2019]),
-    ("2019,2021", [2019, 2021]),
-    ("2019-2021", [2019, 2020, 2021]),
-    ("2019,2021-2023", [2019, 2021, 2022, 2023]),
-    (" 2020 , 2020 ", [2020]),
-])
-def test_parse_years(spec, expected):
-    assert ps.parse_years(spec) == expected
+def test_parse_years():
+    """Comma lists, ranges and both at once — deduplicated and sorted, because the
+    spec selects which shards are downloaded, not how often."""
+    for spec, expected in [
+        ("2019", [2019]),
+        ("2019,2021", [2019, 2021]),
+        ("2019-2021", [2019, 2020, 2021]),
+        ("2019,2021-2023", [2019, 2021, 2022, 2023]),
+        (" 2020 , 2020 ", [2020]),
+    ]:
+        assert ps.parse_years(spec) == expected, spec
 
 
-@pytest.mark.parametrize("spec", ["", "twenty", "2021-2019", "2019-"])
-def test_parse_years_rejects_nonsense(spec):
-    with pytest.raises(ValueError):
-        ps.parse_years(spec)
+def test_parse_years_rejects_nonsense():
+    """A spec that names no year, or an inverted range, must not quietly become "all
+    years" — that is a 2-3 GB download nobody asked for."""
+    for spec in ["", "twenty", "2021-2019", "2019-"]:
+        with pytest.raises(ValueError):
+            ps.parse_years(spec)
 
 
 # ---------------------------------------------------------------------------
@@ -538,19 +537,49 @@ def test_parse_years_rejects_nonsense(spec):
 # ---------------------------------------------------------------------------
 
 
-def test_missing_repo_names_the_env_var(tmp_path, monkeypatch):
+def test_an_unconfigured_transfer_names_the_env_var_to_set(tmp_path, monkeypatch):
+    """Both directions fail before any request, and say which of the two variables is
+    missing — a private repo's own answer to either is an unexplained 401."""
+    pool = _pool(tmp_path, {"part-2019-01-01-part_0000.parquet": 3})
+
     _fake_hub(monkeypatch, {})
     monkeypatch.setattr(ps, "FLORA_POOL_REPO", "")
     with pytest.raises(ValueError, match="FLORA_POOL_REPO"):
-        ps.push_pool(_pool(tmp_path, {"part-2019-01-01-part_0000.parquet": 3}))
+        ps.push_pool(pool)
     with pytest.raises(ValueError, match="FLORA_POOL_REPO"):
         ps.pull_pool(tmp_path / "pool")
 
-
-def test_missing_token_names_the_env_var(tmp_path, monkeypatch):
     _fake_hub(monkeypatch, {"2019/part-2019-01-01-part_0000.parquet": 3}, token="")
     with pytest.raises(ValueError, match="HF_TOKEN"):
-        ps.push_pool(_pool(tmp_path, {"part-2019-01-01-part_0000.parquet": 3}),
-                     repo="me/pool")
+        ps.push_pool(pool, repo="me/pool")
     with pytest.raises(ValueError, match="HF_TOKEN"):
         ps.pull_pool(tmp_path / "pool", repo="me/pool")
+
+
+# ---------------------------------------------------------------------------
+# Pre-flight write check
+# ---------------------------------------------------------------------------
+
+
+def test_check_access_proves_write_permission_by_writing(tmp_path, monkeypatch):
+    """The scan it precedes runs for hours and is worth nothing without the artifact
+    at the end, so a read-scoped or dead token must be caught BEFORE it starts — and
+    only a real commit catches it, since an existing repo answers
+    create_repo(exist_ok=True) happily for a read token."""
+    calls = _fake_hub(monkeypatch, {})
+
+    info = ps.check_access(repo="me/pool")
+
+    assert (info["repo"], info["by"]) == ("me/pool", "alice")
+    assert calls["create_repo"] == ["me/pool"]
+    assert _uploaded(calls) == ["preflight.json"], "the write itself is the proof"
+    payload = json.loads(calls["remote"]["preflight.json"])
+    assert payload["by"] == "alice" and payload["checked_at"]
+    assert payload["stage_a_fingerprint"] == ss.stage_a_fingerprint(), \
+        "the pre-flight records the gate the scan it precedes will run under"
+
+    # A token the Hub will not identify is exactly the failure this command exists
+    # to surface early, so it must raise rather than report an OK.
+    calls["whoami_fails"] = True
+    with pytest.raises(RuntimeError, match="HF_TOKEN"):
+        ps.check_access(repo="me/pool")
