@@ -301,7 +301,7 @@ python -m filter.engine status
 | `verify` | Runs both backends over the first batch of up to `--sample-files` pool files and prints every (spec, row) they disagree on. **Exit 1 on any mismatch** — it is meant for CI and for the check before a long run. |
 | `route` | Computes the routing release id from its six inputs, records the release, and streams the pool through the bundle into the store. Idempotent per release: re-running replaces that release's rows rather than duplicating them. |
 | `diagnose` | Routes the pool with and without `--spec` and reports rows moved per (pile without → pile with), overlap against every other rule (exclusive hits vs already-covered), a seeded readable sample, the holdout state and the spec's `measured` evidence. |
-| `export` | Writes one pile as `FILTERED_COLS` + `ENGINE_EXPORT_COLS`, `utf-8-sig`, plus `<out>.manifest.json` (release, pile, rows, sha256). `--pile pending` is refused, and an existing manifest is never overwritten. |
+| `export` | Writes one pile as `FILTERED_COLS` + `ENGINE_EXPORT_COLS`, `utf-8-sig`, plus `<out>.manifest.json` (release, pile, rows, sha256). `--pile pending` is refused, an existing manifest is never overwritten, and an export is refused outright when the spec bundle or alias file has changed since the release was routed — re-run `route` rather than looking for an override flag. |
 | `status` | Every release found beside the store, with its creation time and pile counts. |
 
 `--spec-dir` (before the subcommand) points at a different bundle; `--store`

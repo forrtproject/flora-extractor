@@ -133,3 +133,27 @@ def test_bundle_hash_follows_file_bytes_and_not_load_order(tmp_path):
 
     (second / "a.json").write_text(a + "\n")
     assert bundle_hash(first) != bundle_hash(second)
+
+
+def test_the_bundle_hash_binds_the_conventions_that_name_the_piles(tmp_path):
+    """conventions.json is not a filter, but it decides what a pile is CALLED in an
+    export — so a release that did not bind it could be exported under a different
+    status mapping than it was routed under."""
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "a.json").write_text(json.dumps(_valid_spec(id="a")))
+    without = bundle_hash(bundle)
+
+    conventions = bundle / "conventions.json"
+    conventions.write_text(json.dumps({"piles": {"discard": {"exported": True}}}))
+    with_policy = bundle_hash(bundle)
+    assert with_policy != without
+
+    conventions.write_text(json.dumps({"piles": {"discard": {"exported": False}}}))
+    assert bundle_hash(bundle) != with_policy
+
+    # aliases.json is deliberately NOT bound here: it has its own release input.
+    (bundle / "aliases.json").write_text(json.dumps({"version": 1, "aliases": {}}))
+    assert bundle_hash(bundle) != with_policy  # unchanged by the alias file
+    conventions.write_text(json.dumps({"piles": {"discard": {"exported": True}}}))
+    assert bundle_hash(bundle) == with_policy

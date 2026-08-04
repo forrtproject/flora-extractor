@@ -1,6 +1,6 @@
 {
   "id": "phrase-with-cite",
-  "description": "A replication or reproduction phrase AND an author-year citation: the shape of a paper that says what it replicated. The only route to the expensive two-voter screen. `none_of` carries the GWAS vocabulary \u2014 a discovery/replication-cohort design says 'we replicated one SNP' and means something else. Divergence 3 in docs/filter-engine.md: the guard was sentence-scoped in PHRASE_GUARDS and is row-scoped here, so a GWAS-flavoured row falls to screen_cheap rather than being suppressed. The cite clause is one RE2-safe approximation of an author-year citation (parenthetical, narrative and et-al forms); it replaces extract_author_year_patterns()'s lookahead-based patterns and its bare-name blacklist. Divergence 2 in docs/filter-engine.md: the cite only orders spend, it no longer admits, so an approximation is enough.",
+  "description": "A replication or reproduction phrase AND an author-year citation: the shape of a paper that says what it replicated. The only route to the expensive two-voter screen. `none_of` carries the GWAS vocabulary — a discovery/replication-cohort design says 'we replicated one SNP' and means something else. Divergence 3 in docs/filter-engine.md: the guard was sentence-scoped in PHRASE_GUARDS and is row-scoped here, so a GWAS-flavoured row falls to screen_cheap rather than being suppressed. The cite clause is one RE2-safe approximation of an author-year citation (parenthetical, narrative and et-al forms); it replaces extract_author_year_patterns()'s lookahead-based patterns and its bare-name blacklist. Divergence 2 in docs/filter-engine.md: the cite only orders spend, it no longer admits, so an approximation is enough. The name atom is a negated class rather than `\\w`: Python `re` reads `\\w` as Unicode-aware and RE2 (pyarrow) as ASCII, so an accented surname in the cite position — García et al. (2020) — matched one backend and not the other. The trailing `\\b` became an explicit non-digit for the same reason.",
   "match": {
     "all_of": [
       {
@@ -78,7 +78,7 @@
             "text_regex": "\\breplicat(?:e|es|ed|ing)\\s+(?:the\\s+)?(?:previous|prior|original|earlier|main|key|core|published)?\\s*(?:findings?|results?|effects?|analys[ei]s|stud(?:y|ies))\\b"
           },
           {
-            "text_regex": "\\b(?:(?:d(?:oes|o|id)|w(?:as|ere)|is|are|ha[sd]|have|could|would|should|can|may|might)\\s+(?:not|never)|cannot|can['\u2019]t)\\s+(?:(?:be|been)\\s+)?replicat\\w+\\b"
+            "text_regex": "\\b(?:(?:d(?:oes|o|id)|w(?:as|ere)|is|are|ha[sd]|have|could|would|should|can|may|might)\\s+(?:not|never)|cannot|can['’]t)\\s+(?:(?:be|been)\\s+)?replicat\\w+\\b"
           },
           {
             "text_regex": "\\b(?:unable|inabilit\\w+|failure)\\s+to\\s+replicate\\b"
@@ -87,7 +87,7 @@
             "text_regex": "\\bwe\\s+\\w+ly\\s+replicate[sd]?\\b"
           },
           {
-            "text_regex": "\\breproductions? of ['\\\"\u201c\u2018]"
+            "text_regex": "\\breproductions? of ['\\\"“‘]"
           },
           {
             "text_regex": "\\breproductions? of\\s+(?:the\\s+)?(?:(?:original|published|reported|previous|prior|main|key|core)\\s+)?(?:results?|findings?|analys[ei]s|estimates?|figures?|tables?|stud(?:y|ies)|experiments?|data)\\b"
@@ -119,7 +119,7 @@
         ]
       },
       {
-        "text_regex": "\\(\\s*[\\w'\u2019.-]{2,}(?:\\s+et\\s+al\\.?|(?:\\s*,\\s*[\\w'\u2019.-]{2,}){0,3}\\s*,?\\s*(?:and|&)\\s*[\\w'\u2019.-]{2,})?\\s*,?\\s*(?:19|20)\\d{2}[a-z]?\\s*[);,]|[\\w'\u2019-]{3,}(?:\\s+et\\s+al\\.?|\\s*(?:and|&)\\s*[\\w'\u2019-]{3,})?\\s*['\u2019]?s?\\s*\\(\\s*(?:19|20)\\d{2}[a-z]?\\s*\\)|\\b[\\w'\u2019-]{3,}\\s+et\\s+al\\.?,?\\s+(?:19|20)\\d{2}\\b"
+        "text_regex": "\\(\\s*[^ \\t\\n\\r\\f,;:()\\[\\]]{2,}(?:\\s+et\\s+al\\.?|(?:\\s*,\\s*[^ \\t\\n\\r\\f,;:()\\[\\]]{2,}){0,3}\\s*,?\\s*(?:and|&)\\s*[^ \\t\\n\\r\\f,;:()\\[\\]]{2,})?\\s*,?\\s*(?:19|20)\\d{2}[a-z]?\\s*[);,]|[^ \\t\\n\\r\\f,;:()\\[\\]]{3,}(?:\\s+et\\s+al\\.?|\\s*(?:and|&)\\s*[^ \\t\\n\\r\\f,;:()\\[\\]]{3,})?\\s*['’]?s?\\s*\\(\\s*(?:19|20)\\d{2}[a-z]?\\s*\\)|[^ \\t\\n\\r\\f,;:()\\[\\]]{3,}\\s+et\\s+al\\.?,?\\s+(?:19|20)\\d{2}(?:[^0-9]|$)"
       }
     ],
     "none_of": [

@@ -8,9 +8,15 @@ module interfaces.
 
 **Editing either file is a reviewed git change, not a code release.** A policy
 change lands as a diff a reviewer can read without reading the engine. Neither
-file is a filter, so neither is part of `bundle_hash()` — `conventions.json`,
-`aliases.json` and `holdout.json` are excluded from the spec glob, and
-`aliases.json` reaches the release id by its own hash (`alias_release`).
+file is a filter, so neither is loaded as a spec — `conventions.json`,
+`aliases.json` and `holdout.json` are all excluded from the spec glob.
+
+`conventions.json` is nonetheless part of `bundle_hash()`. It decides what a pile
+is *called* in an export, so a release that did not bind it could be exported
+under a different status mapping than it was routed under; editing it mints a new
+release, and an export against a stale bundle is refused. `aliases.json` reaches
+the release id by its own hash (`alias_release`) and `holdout.json` names an
+evaluation set that changes no row's status, so neither is in `bundle_hash()`.
 
 ## Pile → `filter_status`
 

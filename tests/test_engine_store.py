@@ -6,6 +6,7 @@ in one pile would not notice the store losing a column.
 """
 
 import json
+import shutil
 from pathlib import Path
 
 import pandas as pd
@@ -13,12 +14,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from filter.engine import cli
-from filter.engine.export import export_pile, load_conventions
-from filter.engine.spec import load_specs
+from filter.engine import cli, store
+from filter.engine.export import StaleBundleError, export_pile, load_conventions
+from filter.engine.spec import bundle_hash, load_specs
 from filter.engine.store import (
     build_routing, open_store, pile_counts, rule_hits, sample_pile,
 )
+from filter.engine.workids import alias_release
 from search.snapshot_scan import _POOL_SCHEMA
 from shared.schema import ENGINE_EXPORTED_COLS, validate_csv_columns
 
@@ -191,6 +193,73 @@ def test_year_bounds_drop_rows_outside_them(routed, pool, tmp_path):
     assert set(_exported(bounded)["year_r"]) == {"2023"}
 
 
+def test_an_export_refuses_a_bundle_that_is_not_the_one_the_release_routed(
+        routed, pool, tmp_path):
+    """The export reads the bundle for vocabulary and pile policy, so a bundle edited
+    after `route` would label rows with a release they do not match. No override:
+    a stale client re-routes."""
+    stale = tmp_path / "stale.csv"
+    with pytest.raises(StaleBundleError, match="bundle_hash"):
+        export_pile(routed, pool, "screen_cheap", stale, "rel-a",
+                    expect_bundle_hash="0" * 64)
+    assert not stale.exists()
+
+    with pytest.raises(StaleBundleError, match="alias_release"):
+        export_pile(routed, pool, "screen_cheap", stale, "rel-a",
+                    expect_alias_release="0" * 64)
+
+    # The hashes the bundle actually has are accepted.
+    export_pile(routed, pool, "screen_cheap", tmp_path / "fresh.csv", "rel-a",
+                expect_bundle_hash=bundle_hash(SPEC_DIR),
+                expect_alias_release=alias_release(SPEC_DIR / "aliases.json"))
+
+
+def test_an_aliased_pool_row_is_one_routed_work_and_one_exported_row(specs, tmp_path):
+    """A pool holding both a merged id and its canonical id holds two rows for one
+    work; routing and exporting it twice would double the work downstream."""
+    pool_dir = tmp_path / "pool"
+    pool_dir.mkdir()
+    duplicate = dict(POOL_ROWS[3], id="https://openalex.org/W900")
+    pq.write_table(pa.Table.from_pylist([POOL_ROWS[3], duplicate], schema=_POOL_SCHEMA),
+                   pool_dir / "2024.parquet")
+
+    con = open_store(Path(":memory:"))
+    counters = build_routing(con, pool_dir, specs, "rel-a", aliases={900: 4})
+    assert (counters["pool_rows"], counters["rows"]) == (2, 1)
+    assert sum(pile_counts(con, "rel-a").values()) == 1
+
+    out = tmp_path / "cheap.csv"
+    manifest = export_pile(con, pool_dir, "screen_cheap", out, "rel-a",
+                           aliases={900: 4})
+    assert manifest["rows"] == 1
+
+
+def test_a_build_that_raises_leaves_the_release_untouched(pool, specs, monkeypatch):
+    """The delete and every insert are one transaction: an interrupted build must not
+    leave a half-populated release that status and export would treat as complete."""
+    con = open_store(Path(":memory:"))
+    build_routing(con, pool, specs, "rel-a")
+    complete = pile_counts(con, "rel-a")
+
+    calls = {"n": 0}
+    real = store._insert_evaluations
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("disk went away")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(store, "_insert_evaluations", flaky)
+    with pytest.raises(RuntimeError, match="disk went away"):
+        build_routing(con, pool, specs, "rel-a", batch_size=1)
+    assert pile_counts(con, "rel-a") == complete
+
+    with pytest.raises(RuntimeError):
+        build_routing(con, pool, specs, "rel-b", batch_size=1)
+    assert pile_counts(con, "rel-b") == {}
+
+
 def test_the_conventions_file_maps_every_pile_the_router_can_produce():
     piles = load_conventions()["piles"]
     assert set(piles) >= {"discard", "screen_expensive", "screen_cheap",
@@ -209,14 +278,28 @@ def test_the_specs_command_lists_the_bundle(capsys):
     assert "dataset-type" in out and "bundle " in out
 
 
-def test_route_then_export_runs_end_to_end_over_a_pool(pool, tmp_path, capsys):
-    store = tmp_path / "engine.duckdb"
-    assert cli.main(["route", "--pool", str(pool), "--store", str(store),
-                     "--pool-manifest-hash", "test-pool"]) == 0
+def test_route_then_export_runs_end_to_end_and_then_refuses_a_touched_bundle(
+        pool, tmp_path, capsys):
+    spec_dir = tmp_path / "spec"
+    shutil.copytree(SPEC_DIR, spec_dir)
+    store_path = tmp_path / "engine.duckdb"
+    common = ["--spec-dir", str(spec_dir)]
+
+    assert cli.main(common + ["route", "--pool", str(pool), "--store", str(store_path),
+                              "--pool-manifest-hash", "test-pool"]) == 0
     assert "screen_cheap" in capsys.readouterr().out
 
     out = tmp_path / "cheap.csv"
-    assert cli.main(["export", "--pile", "screen_cheap", "--out", str(out),
-                     "--pool", str(pool), "--store", str(store)]) == 0
+    assert cli.main(common + ["export", "--pile", "screen_cheap", "--out", str(out),
+                              "--pool", str(pool), "--store", str(store_path)]) == 0
     assert Path(str(out) + ".manifest.json").exists()
     assert list(_exported(out).columns) == ENGINE_EXPORTED_COLS
+
+    # Editing the policy after routing invalidates the export, not just the specs.
+    (spec_dir / "conventions.json").write_text(
+        (spec_dir / "conventions.json").read_text() + "\n")
+    with pytest.raises(SystemExit, match="routed under a different bundle"):
+        cli.main(common + ["export", "--pile", "discard", "--out",
+                           str(tmp_path / "stale.csv"), "--pool", str(pool),
+                           "--store", str(store_path)])
+    assert not (tmp_path / "stale.csv").exists()

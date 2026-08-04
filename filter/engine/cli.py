@@ -24,7 +24,9 @@ import pyarrow.parquet as pq
 from filter.engine import ENGINE_VERSION
 from filter.engine.backends import verify_backends
 from filter.engine.diagnostics import diagnose, render_text
-from filter.engine.export import SPEC_DIR, export_pile
+from filter.engine.export import (
+    ALIASES_FILENAME, SPEC_DIR, StaleBundleError, export_pile,
+)
 from filter.engine.release import read_release, releases_dir, routing_release, write_release
 from filter.engine.spec import bundle_hash, load_specs
 from filter.engine.store import (
@@ -33,8 +35,6 @@ from filter.engine.store import (
 from filter.engine.workids import alias_release, load_aliases
 from shared.config import SNAPSHOT_POOL_DIR
 from shared.schema import ENGINE_EXPORTED_COLS
-
-ALIASES_PATH = SPEC_DIR / "aliases.json"
 
 UNMANIFESTED = "unmanifested"
 
@@ -61,7 +61,7 @@ def _release_inputs(spec_dir: Path, pool_manifest_hash: str) -> dict:
         "overlay_hash": None,            # M3: text overlays
         "bundle_hash": bundle_hash(spec_dir),
         "engine_version": ENGINE_VERSION,
-        "alias_release": alias_release(ALIASES_PATH),
+        "alias_release": alias_release(spec_dir / ALIASES_FILENAME),
         "schema_version": schema_version(),
     }
 
@@ -119,15 +119,19 @@ def cmd_route(args) -> int:
     specs = load_specs(args.spec_dir)
     inputs = _release_inputs(args.spec_dir, _pool_manifest_hash(args.pool_manifest_hash))
     release_id = routing_release(**inputs)
-    # The release record lives beside the store it describes, so a store pointed
-    # somewhere else does not deposit its releases in the default cache.
-    write_release(dict(inputs, created_at=_now()), cache_dir=args.store.parent)
 
     con = open_store(args.store)
     counters = build_routing(con, args.pool, specs, release_id,
-                             aliases=load_aliases(ALIASES_PATH))
+                             aliases=load_aliases(args.spec_dir / ALIASES_FILENAME))
+    # Only now: the release record is the claim that this release is routed, and
+    # a build that raised must not leave that claim behind. The record lives
+    # beside the store it describes, so a store pointed somewhere else does not
+    # deposit its releases in the default cache.
+    write_release(dict(inputs, created_at=_now()), cache_dir=args.store.parent)
+
     print(f"release {release_id}")
-    print(f"  pool {args.pool} — {counters['files']} file(s), {counters['rows']:,} row(s)")
+    print(f"  pool {args.pool} — {counters['files']} file(s), "
+          f"{counters['pool_rows']:,} pool row(s) -> {counters['rows']:,} work(s)")
     for pile, count in sorted(pile_counts(con, release_id).items()):
         print(f"  {pile:<18} {count:,}")
     con.close()
@@ -143,10 +147,24 @@ def cmd_diagnose(args) -> int:
 def cmd_export(args) -> int:
     con = open_store(args.store)
     release_id = _resolve_release(con, args.release)
-    manifest = export_pile(con, args.pool, args.pile, Path(args.out), release_id,
-                           from_year=args.from_year, to_year=args.to_year,
-                           specs=load_specs(args.spec_dir),
-                           aliases=load_aliases(ALIASES_PATH), created_at=_now())
+    try:
+        record = read_release(release_id, cache_dir=args.store.parent)
+    except FileNotFoundError:
+        raise SystemExit(
+            f"no release record for {release_id[:12]} beside {args.store} — the "
+            "export cannot prove which bundle routed it. Re-run "
+            "`python -m filter.engine route`.")
+    try:
+        manifest = export_pile(con, args.pool, args.pile, Path(args.out), release_id,
+                               from_year=args.from_year, to_year=args.to_year,
+                               specs=load_specs(args.spec_dir), spec_dir=args.spec_dir,
+                               aliases=load_aliases(args.spec_dir / ALIASES_FILENAME),
+                               expect_bundle_hash=record.get("bundle_hash"),
+                               expect_alias_release=record.get("alias_release"),
+                               created_at=_now())
+    except StaleBundleError as exc:
+        # An operator refusal, not a crash: the message IS the whole answer.
+        raise SystemExit(str(exc))
     con.close()
     print(f"{manifest['rows']:,} row(s) -> {args.out}")
     print(f"  release {manifest['release_id']}  pile {manifest['pile']}")

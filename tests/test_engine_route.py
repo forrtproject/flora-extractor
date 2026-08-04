@@ -6,6 +6,7 @@ running over rows that actually exercise the bundle.
 """
 
 import json
+import unicodedata
 from pathlib import Path
 
 import pyarrow as pa
@@ -113,6 +114,43 @@ CORPUS = [
 ]
 
 
+# Non-ASCII rows for the backend-equality check: accented Latin, NFD-decomposed
+# text, CJK, Hangul, Cyrillic, fullwidth forms, and accented surnames in the
+# citation position — the shapes where a Unicode `\w`/`\b` and an ASCII one part
+# company. Several rows deliberately carry an English phrase too, so the cite
+# clause is reached rather than short-circuited by the phrase block.
+_NFD = unicodedata.normalize("NFD", "réplication de l'étude")
+
+UNICODE_CORPUS = [
+    _row(title="Réplication d'une étude classique",
+         abstract="Nous avons répliqué l'effet d'ancrage, d'après Müller (2019)."),
+    _row(title="Replikationsstudie über Bienen",
+         abstract="Eine direkte Replikation der Ergebnisse, vgl. Müller et al. (2019)."),
+    _row(title=_NFD, abstract=_NFD + " des résultats, cf. García et al. (2020)."),
+    _row(title="Reprodução computacional dos resultados",
+         abstract="Reproduzimos os resultados originais, cf. Gonçalves (2021)."),
+    _row(title="追試研究：アンカリング効果の再現",
+         abstract="本研究は Smith (2019) の追試である。"),
+    _row(title="반복검증 연구", abstract="우리는 원래 결과를 재현했다 (Kim et al., 2020)."),
+    _row(title="Репликация исследования",
+         abstract="Мы воспроизвели результаты, Иванов (2018)."),
+    _row(title="A direct replication of the Müller effect",
+         abstract="We replicated the original findings, as reported by "
+                  "García et al. (2020)."),
+    _row(title="Replicación directa del efecto de anclaje",
+         abstract="Reproducimos los resultados originales de Peña (2019)."),
+    _row(title="DNA-Replikation in Hefé",
+         abstract="Molekularbiologie: die Zellen reproduzieren sich."),
+    _row(title="Ｒｅｐｌｉｃａｔｉｏｎ ｏｆ ｔｈｅ Ｓｍｉｔｈ ｅｆｆｅｃｔ",
+         abstract="Fullwidth forms."),
+    _row(title="replication of the original study",
+         abstract="A replication of the original findings, Smith (2019)."),
+    _row(title="Ré́plication", abstract="Double-accent junk, Smith et al. (2019)."),
+    _row(title="Реплика́ция и replication of the original",
+         abstract="We replicated the original findings, as reported by Müller (2019)."),
+]
+
+
 @pytest.fixture(scope="module")
 def specs() -> list:
     return load_specs(SPEC_DIR)
@@ -126,6 +164,25 @@ def specs() -> list:
 def test_the_two_backends_agree_on_the_shipped_bundle_over_the_corpus(specs):
     table = pa.Table.from_pylist(CORPUS, schema=_POOL_SCHEMA)
     assert verify_backends(specs, table) == []
+
+
+def test_the_two_backends_agree_on_non_ascii_text(specs):
+    """Python `re` is Unicode-aware for `\\w`/`\\b`/IGNORECASE; RE2 — and so pyarrow —
+    is ASCII for `\\w` and `\\b`. `re2_safe()` does not catch that, so the equality has
+    to be demonstrated over text that actually exercises it: accented and non-Latin
+    titles, and accented surnames in the citation position, which is where the cite
+    regex's name atom used to diverge (García et al. (2020) matched `re` only)."""
+    table = pa.Table.from_pylist(UNICODE_CORPUS, schema=_POOL_SCHEMA)
+    assert verify_backends(specs, table) == []
+
+
+def test_an_accented_surname_still_reads_as_a_citation(specs):
+    """The fix for the divergence above must not have removed the capability: a
+    non-ASCII author name in a cite is still a cite, in both backends."""
+    row = _row(title="A direct replication of the Müller effect",
+               abstract="We replicated the original findings, as reported by "
+                        "García et al. (2020).")
+    assert _routed(specs, [row])[0]["rule_id"] == "phrase-with-cite"
 
 
 def test_every_shipped_spec_claims_at_least_one_corpus_row(specs):

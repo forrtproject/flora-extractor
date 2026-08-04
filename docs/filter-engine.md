@@ -28,18 +28,60 @@ module interfaces; `filter/spec/CONVENTIONS.md` is the authority for policy
 
 | Module | Contract |
 | --- | --- |
-| `spec.py` | `FilterSpec` (frozen dataclass mirroring the JSON), `load_specs(spec_dir) -> list[FilterSpec]` (validated, sorted by precedence desc, ids unique), `bundle_hash(specs) -> str` (sha256 over each file's canonical bytes, order-independent), `validate_spec(dict) -> list[str]` (error strings), RE2-safety check `re2_safe(pattern) -> bool` (rejects lookaround, backreferences, conditionals, `\G`, atomic groups, possessive quantifiers). |
+| `spec.py` | `FilterSpec` (frozen dataclass mirroring the JSON), `load_specs(spec_dir) -> list[FilterSpec]` (validated, sorted by precedence desc, ids unique), `bundle_hash(specs) -> str` (sha256 over each file's canonical bytes, order-independent, **including `conventions.json`** — see "The bundle a release is bound to"), `validate_spec(dict) -> list[str]` (error strings), RE2-safety check `re2_safe(pattern) -> bool` (rejects lookaround, backreferences, conditionals, `\G`, atomic groups, possessive quantifiers). |
 | `backends.py` | Two evaluators with identical semantics: `eval_spec_rows(spec, rows: list[dict]) -> list[bool]` (Python `re`) and `eval_spec_batch(spec, batch: pa.RecordBatch) -> pa.BooleanArray` (pyarrow compute). `verify_backends(specs, table) -> list[str]` returns per-spec mismatch reports (empty = equal); used by tests and by `python -m filter.engine verify`. |
 | `route.py` | `route_batch(specs, batch) -> pa.Table` with columns `work_id (int64), pile (str), pending_reason (str), rule_id (str), precedence (int32), matched_rules (list<str>)`; `matched_rules` holds every non-shadow match (overlap diagnostics need the full cross-product), shadow matches are recorded separately in evaluations. |
 | `workids.py` | `work_id(openalex_id: str) -> int` (`https://openalex.org/W123` → `123`); `load_aliases(path) -> dict[int, int]` from `filter/spec/aliases.json` (old_id → canonical_id, empty to start); `alias_release(path) -> str` (file hash). |
 | `release.py` | `routing_release(pool_manifest_hash, overlay_hash, bundle_hash, engine_version, alias_release, schema_version) -> str` (sha256 of the canonical JSON); `write_release(...)`/`read_release(...)` under `cache/engine/releases/<id>.json`. Overlay hash is `None` until M3 (text overlays); pool manifest hash comes from `search.pool_sync.pool_manifest()`'s ledger hash or `--pool-manifest-hash`. |
-| `store.py` | Local DuckDB acceleration cache (gitignored, disposable): `open_store(path)`, `build_routing(store, pool_dir, specs, release_id)` (streams pool parquet through `route_batch`, persists `routing` and `evaluations(work_id, spec_id, spec_hash, matched)` incl. shadow specs), `pile_counts(store, release_id)`, `sample_pile(store, pile, n)`. Deleting the DB loses nothing: everything rebuilds from pool + specs. |
+| `store.py` | Local DuckDB acceleration cache (gitignored, disposable): `open_store(path)`, `build_routing(store, pool_dir, specs, release_id)` (streams pool parquet through `route_batch`, persists `routing` and `evaluations(work_id, spec_id, spec_hash, matched)` incl. shadow specs), `pile_counts(store, release_id)`, `sample_pile(store, pile, n)`. `routing` is keyed `PRIMARY KEY (release_id, work_id)` and inserts `ON CONFLICT DO NOTHING`: a pool holding both a merged id and its canonical id holds two rows for ONE work, and first-writer-wins is what keeps that one routed work and one exported row. A build is one transaction — the delete and every insert commit together — so an interrupted run leaves the release absent or as its previous complete build, never half-replaced. Deleting the DB loses nothing: everything rebuilds from pool + specs. |
 | `diagnostics.py` | `diagnose(store_before, store_after, spec_id, ...) -> dict` — the §3 rule-diagnostics function: rows moved per (source pile → destination pile); overlap/agreement matrix vs every other rule (exclusive hits vs covered); a readable random sample (n≈20, seeded) of moved rows; holdout effect (reads `filter/spec/holdout.json`; reports `"holdout": "not_constructed"` until decision #146-2 lands); for discard specs, whether a `measured` entry exists (else the spec must be shadow). Renders JSON + a human-readable text block. |
 | `export.py` | `export_pile(store, pile, out_csv, release_id, from_year, to_year)` — writes the Stage 3 contract: `FILTERED_COLS` + `ENGINE_EXPORT_COLS` (see below), `utf-8-sig`, `filter_status`/`filter_method`/`filter_evidence`/`filter_confidence` derived via the conventions mapping. Also `export_manifest(...)`: a JSON naming release id, pile, row count, and content hash next to the CSV (immutable once written). |
 | `cli.py` / `__main__.py` | `python -m filter.engine route\|verify\|diagnose\|export\|specs\|status` (see `docs/cli-reference.md`). |
 
 `ENGINE_VERSION` lives in `filter/engine/__init__.py` and is bumped whenever routing
 behavior changes without a spec change.
+
+### The bundle a release is bound to
+
+`bundle_hash()` covers the spec files **and `conventions.json`**. The engine routes
+a row into a pile; the conventions decide what that pile is *called* in an export
+(`filter_status`, `filter_confidence`, whether the winning rule's `vocabulary`
+names the status). A release that bound only the specs could be exported under a
+different status mapping than it was routed under, so the policy file is part of
+the bundle. `aliases.json` is not — it has its own release input,
+`alias_release` — and neither is `holdout.json`, which names an evaluation set and
+changes no row's status.
+
+The export enforces the binding rather than trusting it. `export_pile()` reads the
+bundle again (the routing table stores the winning rule id, not its vocabulary),
+so `cli.py` passes the release record's `bundle_hash` and `alias_release` and the
+export refuses outright when either has moved: a CSV labelled with a release id it
+does not match is worse than no CSV. **There is no override flag** — a stale client
+re-runs `route` and exports the new release (issue #146 §4).
+
+### Backend equality and Unicode
+
+`re2_safe()` rejects constructs one backend cannot run, but it does not make the
+two backends' character classes identical. Python `re` reads `\w`, `\b` and
+`IGNORECASE` as Unicode-aware; RE2 — and so pyarrow — reads `\w` and `\b` as
+ASCII. A pattern that is RE2-safe can still match different rows in the two
+engines on non-ASCII text. This is not hypothetical: the author-year cite clause
+of `phrase-with-cite` and `exclusion-rescue` used `[\w'’.-]` as its surname atom,
+and `García et al. (2020)` matched the `re` backend only. Both now use an explicit
+negated class (`[^ \t\n\r\f,;:()\[\]]`), which both engines read identically, and
+the trailing `\b` on the et-al form became an explicit non-digit.
+
+Two limits remain, deliberately. `\s` outside a character class is still
+Unicode-aware in `re` and ASCII in RE2, so text separated by non-breaking or
+ideographic spaces could in principle divide the backends; no shipped pattern has
+been shown to, and chasing it through all ~140 patterns would be a bigger change
+than the risk. And `python -m filter.engine verify` is **sample-based** — the
+first batch of up to `--sample-files` pool files — so it is evidence of equality,
+not proof of it. The standing proof is
+`test_the_two_backends_agree_on_non_ascii_text` in `tests/test_engine_route.py`,
+which runs the whole shipped bundle over a corpus of accented Latin, NFD, CJK,
+Hangul, Cyrillic and fullwidth rows. A new pattern that needs `\w` or `\b` next to
+text that may not be ASCII belongs in that corpus before it ships.
 
 ### Provenance columns (`ENGINE_EXPORT_COLS` in `shared/schema.py`)
 

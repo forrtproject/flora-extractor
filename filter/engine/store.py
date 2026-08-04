@@ -6,14 +6,16 @@ rebuild and nothing else. It exists because counting piles, sampling a pile and
 measuring rule overlap are queries, and re-streaming the pool parquet for each
 of them is not.
 
-Two storage decisions are worth stating. `routing` holds one row per pool row:
-a row always has a pile, `pending` included. `evaluations` holds only the
-matches — the dense spec × row matrix is ~19× the pool for a table that is
-almost all False, and absence IS False, so the cross-product diagnostics need is
-reconstructible by joining against `routing` rather than by storing it.
-
-Writes are idempotent per release: a rebuild deletes the release's rows first,
-so an interrupted run is repaired by re-running it, not by dropping the file.
+Three storage decisions are worth stating. `routing` holds one row per
+alias-resolved WORK — `PRIMARY KEY (release_id, work_id)`, first writer wins —
+not one per pool row: a pool that holds both a merged id and its canonical id
+holds two rows for one work, and routing it twice would export that work twice.
+`evaluations` holds only the matches — the dense spec × row matrix is ~19× the
+pool for a table that is almost all False, and absence IS False, so the
+cross-product diagnostics need is reconstructible by joining against `routing`
+rather than by storing it. And a build is one transaction: the delete and every
+insert commit together, so an interrupted run leaves the release exactly as it
+was — absent, or the previous complete build — rather than half-replaced.
 """
 
 import hashlib
@@ -44,7 +46,8 @@ _SCHEMA_SQL = (
         precedence INT,
         matched_rules TEXT[],
         evidence TEXT,
-        release_id TEXT
+        release_id TEXT,
+        PRIMARY KEY (release_id, work_id)
     )
     """,
     """
@@ -93,29 +96,38 @@ def build_routing(con: duckdb.DuckDBPyConnection, pool_dir: Path,
                   aliases: Optional[dict[int, int]] = None,
                   batch_size: int = 50_000) -> dict:
     """Route every pool row under *specs* and persist it as *release_id*."""
-    con.execute("DELETE FROM routing WHERE release_id = ?", [release_id])
-    con.execute("DELETE FROM evaluations WHERE release_id = ?", [release_id])
+    files = sorted(Path(pool_dir).glob("*.parquet"))
+    pool_rows = 0
+    con.execute("BEGIN TRANSACTION")
+    try:
+        con.execute("DELETE FROM routing WHERE release_id = ?", [release_id])
+        con.execute("DELETE FROM evaluations WHERE release_id = ?", [release_id])
+        hashes = {spec.id: spec_hash(spec) for spec in specs}
+        for path in files:
+            for batch in pq.ParquetFile(path).iter_batches(batch_size=batch_size):
+                evals = eval_all(specs, batch)
+                routed = route_batch(specs, batch, aliases=aliases, evals=evals)
+                _insert_routing(con, routed, release_id)
+                _insert_evaluations(con, routed.column("work_id"), evals, hashes,
+                                    release_id)
+                pool_rows += routed.num_rows
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
 
-    hashes = {spec.id: spec_hash(spec) for spec in specs}
-    piles: Counter = Counter()
-    rows = 0
-    for path in sorted(Path(pool_dir).glob("*.parquet")):
-        for batch in pq.ParquetFile(path).iter_batches(batch_size=batch_size):
-            evals = eval_all(specs, batch)
-            routed = route_batch(specs, batch, aliases=aliases, evals=evals)
-            _insert_routing(con, routed, release_id)
-            _insert_evaluations(con, routed.column("work_id"), evals, hashes,
-                                release_id)
-            rows += routed.num_rows
-            piles.update(routed.column("pile").to_pylist())
-    return {"rows": rows, "piles": dict(piles), "files": len(
-        sorted(Path(pool_dir).glob("*.parquet")))}
+    piles = pile_counts(con, release_id)
+    return {"rows": sum(piles.values()), "pool_rows": pool_rows, "piles": piles,
+            "files": len(files)}
 
 
 def _insert_routing(con: duckdb.DuckDBPyConnection, routed: pa.Table,
                     release_id: str) -> None:
+    # First writer wins on a (release, work) collision: pool files stream in name
+    # order and batches in file order, so which row that is, is deterministic.
     con.register("_routed", routed)
-    con.execute("INSERT INTO routing SELECT *, ? FROM _routed", [release_id])
+    con.execute("INSERT INTO routing SELECT *, ? FROM _routed "
+                "ON CONFLICT DO NOTHING", [release_id])
     con.unregister("_routed")
 
 
@@ -164,10 +176,15 @@ def sample_pile(con: duckdb.DuckDBPyConnection, release_id: str, pile: str,
 
 
 def rule_hits(con: duckdb.DuckDBPyConnection, release_id: str) -> dict[str, int]:
-    """Rows each spec matched under *release_id*, shadow specs included."""
+    """Works each spec matched under *release_id*, shadow specs included.
+
+    Counted DISTINCT by work: two pool rows for one aliased work are one routed
+    work, so a rule that matched both matched one work, not two.
+    """
     return dict(con.execute(
-        "SELECT spec_id, count(*) FROM evaluations WHERE release_id = ? "
-        "GROUP BY spec_id ORDER BY spec_id", [release_id]).fetchall())
+        "SELECT spec_id, count(DISTINCT work_id) FROM evaluations "
+        "WHERE release_id = ? GROUP BY spec_id ORDER BY spec_id",
+        [release_id]).fetchall())
 
 
 def releases(con: duckdb.DuckDBPyConnection) -> list[str]:

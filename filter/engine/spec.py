@@ -24,6 +24,14 @@ SPEC_VERSION = 1
 # Files in `filter/spec/` that are policy or lookup data, not filters.
 NON_SPEC_FILES = frozenset({"conventions.json", "aliases.json", "holdout.json"})
 
+# Policy files that are not filters but DO decide what a row ends up saying:
+# conventions.json holds the pile→filter_status mapping the export writes, so a
+# routing release that did not bind it could be exported under a different
+# vocabulary policy than the one it was routed under. `aliases.json` is
+# deliberately absent — it has its own release input (`alias_release`) — and
+# `holdout.json` names an evaluation set, which changes no row's status.
+POLICY_FILES = ("conventions.json",)
+
 PILES = ("discard", "screen_expensive", "screen_cheap", "needs_human")
 VOCABULARIES = ("replication", "reproduction")
 
@@ -362,10 +370,17 @@ def load_specs(spec_dir: Path) -> list[FilterSpec]:
 
 
 def bundle_hash(spec_dir: Path) -> str:
-    """sha256 over the (filename, bytes) pairs of the bundle, order-independent."""
+    """sha256 over the (filename, bytes) pairs of the bundle, order-independent.
+
+    Covers the spec files AND `POLICY_FILES`: the bundle is everything that
+    decides what a row is routed to and what that pile is then called. A missing
+    policy file hashes as absent rather than raising, so a bundle directory in a
+    test is still hashable.
+    """
     digest = hashlib.sha256()
-    for path in _spec_files(spec_dir):
+    for path in _spec_files(spec_dir) + [spec_dir / name for name in POLICY_FILES]:
         digest.update(path.name.encode("utf-8"))
         digest.update(b"\0")
-        digest.update(hashlib.sha256(path.read_bytes()).digest())
+        digest.update(hashlib.sha256(
+            path.read_bytes() if path.exists() else b"").digest())
     return digest.hexdigest()

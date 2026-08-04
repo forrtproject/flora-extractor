@@ -9,6 +9,13 @@ the engine decided — winning rule, precedence, every match, release.
 having an opinion about; materializing it would turn "we don't know" into a
 Stage 3 input, which is the exact conversion `no_text` exists to prevent.
 
+An export reads the bundle again — the winning rule's `vocabulary` and the
+pile→status mapping are not in the routing table — so it must prove that the
+bundle it is reading is the one the release was routed under. `expect_*` are how
+the caller passes the release's own record in; a mismatch is refused outright.
+There is no override: a stale client re-routes (issue #146 §4), because an
+export labelled with a release id it does not match is worse than no export.
+
 The manifest beside the CSV is immutable: an export names a release, a pile and
 a content hash, and a second export under the same name would silently change
 what a downstream reader believes it read.
@@ -22,12 +29,13 @@ from typing import Optional
 
 import pyarrow.parquet as pq
 
-from filter.engine.spec import FilterSpec, load_specs
-from filter.engine.workids import resolve, work_id
+from filter.engine.spec import FilterSpec, bundle_hash, load_specs
+from filter.engine.workids import alias_release, resolve, work_id
 from shared.schema import ENGINE_EXPORTED_COLS
 
 SPEC_DIR = Path(__file__).resolve().parents[2] / "filter" / "spec"
 CONVENTIONS_PATH = SPEC_DIR / "conventions.json"
+ALIASES_FILENAME = "aliases.json"
 
 
 def load_conventions(path: Optional[Path] = None) -> dict:
@@ -40,6 +48,9 @@ def export_pile(con, pool_dir: Path, pile: str, out_csv: Path, release_id: str,
                 conventions: Optional[dict] = None,
                 specs: Optional[list[FilterSpec]] = None,
                 aliases: Optional[dict[int, int]] = None,
+                spec_dir: Path = SPEC_DIR,
+                expect_bundle_hash: Optional[str] = None,
+                expect_alias_release: Optional[str] = None,
                 created_at: str = "") -> dict:
     """Write *pile* of *release_id* to *out_csv* and its manifest beside it.
 
@@ -48,7 +59,12 @@ def export_pile(con, pool_dir: Path, pile: str, out_csv: Path, release_id: str,
     the rule, so it is read back from the bundle rather than duplicated per row.
     *aliases* must be the map `build_routing()` ran with, or the join misses the
     rows whose ids were canonicalised.
+
+    *expect_bundle_hash* / *expect_alias_release* come from the release record and
+    are checked against *spec_dir* before anything is written.
     """
+    _check_release_binding(spec_dir, release_id, expect_bundle_hash,
+                           expect_alias_release)
     conventions = conventions or load_conventions()
     policy = (conventions.get("piles") or {}).get(pile)
     if policy is None:
@@ -66,16 +82,21 @@ def export_pile(con, pool_dir: Path, pile: str, out_csv: Path, release_id: str,
 
     routing = _routing_rows(con, release_id, pile)
     vocabularies = {spec.id: spec.vocabulary
-                    for spec in (specs if specs is not None else load_specs(SPEC_DIR))}
+                    for spec in (specs if specs is not None else load_specs(spec_dir))}
     prefix = conventions.get("filter_method_prefix", "engine:")
 
     rows: list[dict] = []
+    seen: set[int] = set()
     for path in sorted(Path(pool_dir).glob("*.parquet")):
         for batch in pq.ParquetFile(path).iter_batches(batch_size=50_000):
             for record in batch.to_pylist():
-                routed = routing.get(resolve(work_id(record["id"]), aliases or {}))
-                if routed is None:
+                # One row per WORK, matching the store's key: an aliased pool row
+                # and its canonical row are one work and must export once.
+                resolved = resolve(work_id(record["id"]), aliases or {})
+                routed = routing.get(resolved)
+                if routed is None or resolved in seen:
                     continue
+                seen.add(resolved)
                 year = record.get("publication_year")
                 if from_year is not None and (year is None or year < from_year):
                     continue
@@ -87,6 +108,33 @@ def export_pile(con, pool_dir: Path, pile: str, out_csv: Path, release_id: str,
     _write_csv(out_csv, rows)
     return _write_manifest(manifest_path, out_csv, release_id, pile, len(rows),
                            created_at)
+
+
+class StaleBundleError(RuntimeError):
+    """The bundle on disk is not the one *release_id* was routed under."""
+
+
+def _check_release_binding(spec_dir: Path, release_id: str,
+                           expect_bundle_hash: Optional[str],
+                           expect_alias_release: Optional[str]) -> None:
+    mismatches = []
+    if expect_bundle_hash:
+        actual = bundle_hash(spec_dir)
+        if actual != expect_bundle_hash:
+            mismatches.append(f"bundle_hash: release {expect_bundle_hash[:12]}, "
+                              f"{spec_dir} now {actual[:12]}")
+    if expect_alias_release:
+        actual = alias_release(spec_dir / ALIASES_FILENAME)
+        if actual != expect_alias_release:
+            mismatches.append(f"alias_release: release {expect_alias_release[:12]}, "
+                              f"{spec_dir} now {actual[:12]}")
+    if mismatches:
+        raise StaleBundleError(
+            f"release {release_id[:12]} was routed under a different bundle — "
+            + "; ".join(mismatches)
+            + ". The export reads the bundle for vocabulary and pile policy, so it "
+              "would label these rows with a release they do not match. Re-run "
+              "`python -m filter.engine route` and export the new release.")
 
 
 def _routing_rows(con, release_id: str, pile: str) -> dict[int, dict]:
