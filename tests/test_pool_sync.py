@@ -374,8 +374,9 @@ def test_pull_years_requests_only_those_years(tmp_path, monkeypatch):
     n = ps.pull_pool(pool, repo="me/pool", years=[2019])
 
     assert n == 2
-    assert calls["downloaded"] == ["2019/part-2019-01-01-part_0000.parquet",
-                                   "2019/part-2019-06-02-part_0001.parquet"]
+    # sorted(): files are fetched concurrently, so arrival order is not a contract
+    assert sorted(calls["downloaded"]) == ["2019/part-2019-01-01-part_0000.parquet",
+                                           "2019/part-2019-06-02-part_0001.parquet"]
     # The local pool is flat — admit_from_pool globs a single directory.
     assert sorted(p.name for p in pool.glob("*.parquet")) == [
         "part-2019-01-01-part_0000.parquet", "part-2019-06-02-part_0001.parquet"]
@@ -401,6 +402,19 @@ def test_pull_for_an_absent_year_says_so(tmp_path, monkeypatch):
     _fake_hub(monkeypatch, {"2019/part-2019-01-01-part_0000.parquet": 6})
     with pytest.raises(ValueError, match="2031"):
         ps.pull_pool(tmp_path / "pool", repo="me/pool", years=[2031])
+
+
+def test_a_failed_file_still_reaches_the_operator_as_an_auth_hint(tmp_path, monkeypatch):
+    """Files download concurrently, so a failure surfaces from a worker thread.
+    It must arrive as the same actionable RuntimeError a serial pull raised —
+    swallowed inside the pool it would look like a short but successful pull."""
+    _fake_hub(monkeypatch, {f"2019/part-2019-01-{d:02d}-part_0000.parquet": 6
+                            for d in range(1, 13)},
+              download_errors={"2019/part-2019-01-07-part_0000.parquet":
+                               _GatedRepo("403 Forbidden")})
+
+    with pytest.raises(RuntimeError, match="HF_TOKEN"):
+        ps.pull_pool(tmp_path / "pool", repo="me/pool")
 
 
 # ---------------------------------------------------------------------------

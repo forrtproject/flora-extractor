@@ -211,6 +211,13 @@ FLORA_POOL_REPO = os.getenv("FLORA_POOL_REPO", "")
 # pool push (~2,446 files) past the "few thousand commits" at which HF says repo UX
 # degrades, so uploads are batched into multi-file commits.
 FLORA_HF_COMMIT_BATCH = int(os.getenv("FLORA_HF_COMMIT_BATCH", "100"))
+# Concurrent file downloads in a pool pull. Each file costs ~0.7s of auth + CDN
+# redirect before its first byte and only ~0.8s of transfer, so a serial pull
+# spends about half its wall clock idle and never approaches the link's rate;
+# measured on a home connection, 8 streams moved 4.4 MB/s against 1.0 MB/s
+# serial. 8 is what huggingface_hub's own snapshot_download defaults to. Lower
+# it on a metered or rate-limited connection.
+FLORA_HF_PULL_WORKERS = max(1, int(os.getenv("FLORA_HF_PULL_WORKERS", "8")))
 # Where a prebuilt candidates artifact (chunked parquet + manifest.json) is written
 # and pulled into. Like the pool, not created at import time.
 SNAPSHOT_BUILD_DIR = Path(os.getenv("FLORA_BUILD_DIR") or (CACHE_DIR / "snapshot_build"))
