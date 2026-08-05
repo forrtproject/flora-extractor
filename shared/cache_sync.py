@@ -30,11 +30,11 @@ and Hugging Face asks for fewer than 10k entries per folder. Each shard holds th
 entries whose `cache_key(filename)` starts with its hex prefix, so a file's shard
 never moves and a re-push transfers only the shards that actually changed.
 
-Two things are deliberately NOT shared. `cache/pdfs` holds publisher PDFs, and a
-dataset repo is redistribution in a way a local cache is not; they re-download from
-the acquisition waterfall. `cache/engine/responses` is already pushed by
-`filter/engine/tiers.py` as each tier run decides a work — a second writer would
-just race it.
+`cache/pdfs` IS shared, on the maintainer's decision: the repo is private, the
+collaborators are named, and the acquisition waterfall is slow and lossy enough
+that re-running it does not reliably return the same documents. What is not shared
+is `cache/engine/responses` — `filter/engine/tiers.py` already pushes those blobs
+as each tier run decides a work, and a second writer would just race it.
 
 **Misses are shared too, and that is where the one asymmetry lives.** A cached
 `__none__` means "this source definitively has no abstract for this DOI", and not
@@ -68,6 +68,7 @@ from shared.config import (
     OA_XML_CACHE_DIR,
     OSF_TOKEN,
     PARSE_CACHE_DIR,
+    PDF_CACHE_DIR,
     S2_API_KEY,
     log,
 )
@@ -123,6 +124,11 @@ PARTS: dict[str, Part] = {p.name: p for p in [
     Part("parse", PARSE_CACHE_DIR, "*.json", 0),
     Part("grobid", GROBID_CACHE_DIR, "*", 0),
     Part("doi_verify", DOI_VERIFY_CACHE_DIR, "*.json", 1),
+    # The acquisition waterfall's documents (`*.pdf`) and the peer-review text some
+    # tiers write beside them (`*.txt`). Sharded despite being only ~110 files:
+    # they are ~195 MB, they are already-compressed streams so packing them buys
+    # nothing, and a single shard would re-upload all of it to share one new PDF.
+    Part("pdfs", PDF_CACHE_DIR, "*", 1),
 ]}
 
 # Abstract-source namespaces (the `<ns>:<id>` prefix fetch_abstracts checkpoints

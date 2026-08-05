@@ -209,16 +209,15 @@ python -m shared.cache_sync --push --dry-run
 ```
 
 Parts: `abstracts`, `llm`, `openalex`, `openalex_xml`, `parse`, `grobid`,
-`doi_verify` — 495k files, ~300 MB on disk, **44 MB** packed. Each part is
-split into `.tar.gz` shards by the hex prefix of `cache_key(filename)`, because
-`cache/abstracts` alone is 478k files of ~90 bytes and HF asks for fewer than 10k
-entries per folder. Shard membership is fixed, and a re-push transfers only the
-shards whose contents changed.
+`doi_verify`, `pdfs` — 495k files, ~500 MB on disk, **220 MB** packed (175 MB of
+which is the PDFs, already-compressed streams that packing cannot shrink). Each
+part is split into `.tar.gz` shards by the hex prefix of `cache_key(filename)`,
+because `cache/abstracts` alone is 478k files of ~90 bytes and HF asks for fewer
+than 10k entries per folder. Shard membership is fixed, and a re-push transfers
+only the shards whose contents changed.
 
-Two things are not shared: `cache/pdfs` (publisher PDFs — a dataset repo is
-redistribution in a way a local cache is not, and they re-download), and
-`cache/engine/responses` (already pushed by `filter/engine/tiers.py` as each tier
-run decides a work).
+`cache/engine/responses` is the one cache not shared here — `filter/engine/tiers.py`
+already pushes those blobs as each tier run decides a work.
 
 A pulled entry is safe to trust because the keys are **content-complete**:
 `content_key()` folds the prompt version and the model into the key, and model ids
