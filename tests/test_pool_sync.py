@@ -82,6 +82,11 @@ class _FakeApi:
     def create_repo(self, repo_id, repo_type=None, private=None, exist_ok=None):
         self._calls.setdefault("create_repo", []).append(repo_id)
 
+    def whoami(self):
+        if self._calls.get("whoami_fails"):
+            raise RuntimeError("401 Unauthorized")   # what a dead token gets
+        return {"name": "alice"}
+
     def list_repo_tree(self, repo_id, repo_type=None, recursive=False):
         return [_Entry(p, len(b)) for p, b in self._store.items()]
 
@@ -460,3 +465,35 @@ def test_missing_token_names_the_env_var(tmp_path, monkeypatch):
                      repo="me/pool")
     with pytest.raises(ValueError, match="HF_TOKEN"):
         ps.pull_pool(tmp_path / "pool", repo="me/pool")
+
+
+# ---------------------------------------------------------------------------
+# Pre-flight write check
+# ---------------------------------------------------------------------------
+
+
+def test_check_access_proves_write_permission_by_writing(tmp_path, monkeypatch):
+    """The scan it precedes runs for hours and is worth nothing without the artifact
+    at the end, so a read-scoped or dead token must be caught BEFORE it starts — and
+    only a real commit catches it, since an existing repo answers
+    create_repo(exist_ok=True) happily for a read token."""
+    calls = _fake_hub(monkeypatch, {})
+
+    info = ps.check_access(repo="me/pool")
+
+    assert (info["repo"], info["by"]) == ("me/pool", "alice")
+    assert calls["create_repo"] == ["me/pool"]
+    assert _uploaded(calls) == ["preflight.json"], "the write itself is the proof"
+    payload = json.loads(calls["remote"]["preflight.json"])
+    assert payload["by"] == "alice" and payload["checked_at"]
+    assert payload["stage_a_fingerprint"] == ss.search_gate_fingerprint(), \
+        "the pre-flight records the gate the scan it precedes will run under"
+
+
+def test_check_access_raises_on_a_token_the_hub_will_not_identify(monkeypatch):
+    """Exactly the failure this command exists to surface early, so it must raise
+    rather than report an OK."""
+    calls = _fake_hub(monkeypatch, {})
+    calls["whoami_fails"] = True
+    with pytest.raises(RuntimeError, match="HF_TOKEN"):
+        ps.check_access(repo="me/pool")

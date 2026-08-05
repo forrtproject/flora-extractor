@@ -67,6 +67,9 @@ class TestExtractTitleTarget:
         ("Can we replicate the Mozart effect?",             "Mozart effect"),
         ("Testing the replicability of social priming",     "social priming"),
         ("A Reproduction of the embodied cognition effect", "embodied cognition effect"),
+        # The two patterns the table above never reached.
+        ("Reproducing the analyses of Smith and Jones (2009)", "Smith and Jones"),
+        ("Does the facial feedback effect replicate?",       "facial feedback effect"),
     ])
     def test_extract_target(self, title, expected_contains):
         result = _extract_title_target(title)
