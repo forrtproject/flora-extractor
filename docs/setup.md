@@ -152,7 +152,7 @@ See `.env.example` for the full list with descriptions. Key variables:
 
 Model ids are **constants, not env vars** (`shared/config.py`, code-style rule 8):
 `PRESCREEN_MODEL_1`/`_2`, `SCREENING_MODEL_1`/`_2`, `LINKING_MODEL`,
-`OUTCOME_MODEL`, `PDF_PARSE_MODEL`, `LINKING_THINKING_LEVEL`. Each is named for the
+`OUTCOME_MODEL`, `PDF_PARSE_MODEL`, `LINKING_EFFORT`. Each is named for the
 QUESTION it answers rather than the vendor that serves it, and answers its call site
 alone — a call that fails is reported as a failure, never retried against another
 model. The provider follows the model id through `provider_for()`, so swapping one
