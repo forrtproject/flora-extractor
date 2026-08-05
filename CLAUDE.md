@@ -72,6 +72,9 @@ never been independently validated. Discuss shared changes with all stage teams.
 | `shared/dashboard_cache.py` | Parquet mirror + `data/dashboard/stats.json` so Stage 4 reads fast; each runner calls `refresh(stage)` |
 | `shared/flora_skip.py`      | Two skip lists: already-in-FLoRA (entry sheet + `flora.csv`), shared by `run_extract` and `csv_to_db`; and already-in-the-validation-tables (`data/validated_skip.csv`, work id or DOI), read by Stage 3 alone. The second is the frozen legacy `record_metadata` set, materialised once by `analysis/build_validated_skip.py` so a run needs no Supabase |
 | `shared/token_counter.py`   | In-process per-stage token attribution; `set_stage()` before a call block |
+| `shared/abstract_store.py`  | The abstract cache as one SQLite file (`cache/abstracts.sqlite`). One row per identifier: the text, or NULL for a definitive miss. **The row IS the checkpoint** — it absorbed `fetch_abstracts_done.txt` and the `fetch_abstracts_found.txt` sidecar, both of which existed only because file-per-key made whole-cache questions cost half a million syscalls, and either could drift from the cache it described. A transient failure is never recorded. Migration: `python -m shared.abstract_store --migrate` |
+| `shared/hf.py`              | The Hugging Face plumbing shared by `pool_sync`, `cache_sync` and the engine tiers: which exceptions establish ABSENCE as opposed to unreadability, which failures a different token would fix, batched commits. The caller imports `huggingface_hub` and passes it in |
+| `shared/cache_sync.py`      | Share the API caches through the same private dataset repo (`--push` / `--pull [--parts …]`). Safe because keys are content-complete; a differing checkout misses rather than mis-reads. Misses are shared too, except an unproven one — a gated source the pusher got zero hits from, that the puller is configured for, has its `__none__` entries AND checkpoint lines dropped. `cache/engine/responses` is the one cache it does not carry — the tiers push that themselves |
 
 | Stage | Files |
 | ----- | ----- |
@@ -252,6 +255,12 @@ thinking level changes the answer, so the two settings never share a cache entry
 prompt invalidates exactly its caches, nothing to register. Cache non-answers too (a
 decline is an answer; a 503 is not). Plain API responses keyed by identifier use
 `cache_key()`. Cache lives in `cache/` (gitignored).
+
+Content-complete keys are also what makes the cache **shareable**: an entry from
+another machine is provably the answer this checkout would have computed, so
+`python -m shared.cache_sync --pull` saves a collaborator the provider bill and the
+500k-identifier abstract crawl, and a checkout whose prompts or models differ simply
+misses. See `shared/cache_sync.py` and [`docs/cli-reference.md`](docs/cli-reference.md).
 
 ## Error Handling on API Failures
 

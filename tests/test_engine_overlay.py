@@ -207,14 +207,11 @@ def test_routing_under_unfrozen_chunks_is_refused(tmp_path):
 
 
 @pytest.fixture
-def isolated_cache(tmp_path, monkeypatch):
-    """Point fetch_abstracts' cache/checkpoint sidecars at tmp_path."""
-    import search.fetch_abstracts as fa
+def isolated_cache(tmp_path):
+    """The abstract store is already a throwaway database per test (conftest), so
+    this only names the directory the older tests wrote into."""
     cache = tmp_path / "abstracts"
     cache.mkdir()
-    monkeypatch.setattr(fa, "ABSTRACT_CACHE_DIR", cache)
-    monkeypatch.setattr(fa, "CHECKPOINT_PATH", tmp_path / "done.txt")
-    monkeypatch.setattr(fa, "FOUND_INDEX_PATH", tmp_path / "found.txt")
     return cache
 
 

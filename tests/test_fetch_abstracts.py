@@ -76,9 +76,7 @@ def test_scopus_parse_strips_tags_and_handles_missing():
 def test_scopus_fetch_404_is_clean_miss(monkeypatch):
     monkeypatch.setattr(fa._SESSION, "get",
                         lambda url, timeout, headers, **kw: DummyResponse({}, status_code=404))
-    abstract, exhausted = fa._fetch_scopus_abstract("10.1/x", "KEY")
-    assert abstract is None
-    assert exhausted is False
+    assert fa._fetch_scopus_abstract("10.1/x", "KEY") == (None, "empty")
 
 
 def test_scopus_fetch_quota_exhausted_via_header(monkeypatch):
@@ -89,9 +87,27 @@ def test_scopus_fetch_quota_exhausted_via_header(monkeypatch):
             {}, status_code=429, headers={"X-RateLimit-Remaining": "0"}
         ),
     )
-    abstract, exhausted = fa._fetch_scopus_abstract("10.1/x", "KEY")
-    assert abstract is None
-    assert exhausted is True
+    assert fa._fetch_scopus_abstract("10.1/x", "KEY") == (None, "stop")
+
+
+@pytest.mark.parametrize("status_code", [401, 403])
+def test_scopus_unentitled_is_not_a_miss(monkeypatch, tmp_path, status_code):
+    """Elsevier answers an unentitled request the same way it answers one for a
+    record it has: with no abstract. Recorded as a miss, that would mark every DOI
+    answered, so a machine that later gains the entitlement would skip them all
+    and never find out."""
+    monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(
+        fa._SESSION, "get",
+        lambda url, timeout, headers, **kw: DummyResponse({}, status_code=status_code))
+
+    assert fa._fetch_scopus_abstract("10.1/x", "KEY") == (None, "stop")
+
+    fa._run_item_phase("Scopus", "scopus", ["10.1/x", "10.1/y"], 0,
+                       lambda doi: fa._fetch_scopus_abstract(doi, "KEY"), set(),
+                       progress_every=100)
+    assert fa._load_checkpoint() == set()    # nothing recorded — and the row IS
+    assert fa._load_found_index() == set()   # the checkpoint, so neither is
 
 def test_crossref_uses_shared_session_without_auth(monkeypatch):
     """CrossRef fetches must go through the no-auth shared session: it 401s on an
@@ -112,16 +128,15 @@ def test_crossref_uses_shared_session_without_auth(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def _setup_run(monkeypatch, tmp_path):
-    """Redirect the module's cache, checkpoint and found-index into tmp_path."""
-    monkeypatch.setattr(fa, "ABSTRACT_CACHE_DIR", tmp_path / "abstracts")
-    fa.ABSTRACT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(fa, "CHECKPOINT_PATH", tmp_path / "done.txt")
-    monkeypatch.setattr(fa, "FOUND_INDEX_PATH", tmp_path / "found.txt")
+    """The abstract store is already a throwaway database per test (conftest);
+    only the retry sleep needs stubbing."""
     monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
 
 
 def _checkpoint(monkeypatch=None):
-    return fa.CHECKPOINT_PATH.read_text(encoding="utf-8") if fa.CHECKPOINT_PATH.exists() else ""
+    """Every identifier answered so far. The store IS the checkpoint now, so this
+    is the same question the old `fetch_abstracts_done.txt` answered."""
+    return " ".join(sorted(fa._load_checkpoint()))
 
 
 @pytest.mark.parametrize("payload,status_code,expected", [

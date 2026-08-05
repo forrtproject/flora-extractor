@@ -192,6 +192,57 @@ retired with it; the pool is the artifact to share.
 
 ---
 
+## Sharing the API caches — `shared.cache_sync`
+
+The pool is what nobody should have to re-scan; the caches are what nobody should
+have to re-buy. `cache/llm` is the provider bill, and because the models are not
+deterministic, re-running it does not reproduce our grading — it produces the
+collaborator's own. The abstract store is six rate-limited sources over ~500k
+identifiers. Both go to the same private dataset repo as the pool, under a
+`cache/` prefix (`pool_sync` only ever lists `*.parquet`, so the two never collide).
+
+```bash
+python -m shared.cache_sync --pull                      # everything
+python -m shared.cache_sync --pull --parts llm,abstracts
+python -m shared.cache_sync --push
+python -m shared.cache_sync --push --dry-run
+```
+
+Parts: `abstracts`, `llm`, `openalex`, `openalex_xml`, `parse`, `grobid`,
+`doi_verify`, `pdfs`. The file parts are split into `.tar.gz` shards by the hex
+prefix of `cache_key(filename)` — shard membership is fixed, so a re-push
+transfers only the shards whose contents changed.
+
+`abstracts` is the exception: it is one SQLite file
+(`shared/abstract_store.py`), pushed whole and **merged** on pull rather than
+replacing the local database. Merging is what keeps a puller's own abstracts, lets
+an identifier already answered locally keep its local answer, and lets the
+unproven-miss rule drop individual rows. The cost is granularity — a push moves the
+whole store rather than one shard — and that is the one axis on which it is worse
+than the directory it replaced.
+
+`cache/engine/responses` is the one cache not shared here — `filter/engine/tiers.py`
+already pushes those blobs as each tier run decides a work.
+
+A pulled entry is safe to trust because the keys are **content-complete**:
+`content_key()` folds the prompt version and the model into the key, and model ids
+are constants rather than per-machine env, so a differing checkout misses instead
+of reading someone else's answer as its own.
+
+**Misses travel too, with one exception.** A cached `__none__` means "this source
+definitively has no abstract for this DOI", and not re-buying a known miss is most
+of the value. But a miss from a machine that lacked an entitlement is not that
+fact, so the manifest records how many abstracts each source **actually
+recovered**, and a pull drops a miss when the pushing machine got zero hits from a
+gated source (`scopus`, `s2`, `osf`) that this machine is configured for. Because
+the row IS the checkpoint, not importing it is all it takes for this machine to
+fetch the DOI itself. Hits always import.
+
+**Output:** `cache/` (and `cache/.cache_sync_pulled.json`, which records the
+shards already unpacked; `--force` re-extracts them)
+
+---
+
 ## Stage 2 — Filter
 
 Stage 2 **is** the filter engine: `python -m filter.engine <command>`. The

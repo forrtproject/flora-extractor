@@ -10,7 +10,7 @@ from the routing table instead of `candidates.csv`, and the results land in an
 overlay chunk instead of being merged back into a CSV.
 
 Sharing the cache is deliberate. A DOI Stage 1 already asked Europe PMC about is
-answered from `cache/abstracts/` here for free, and a miss recorded here is a
+answered from the abstract store here for free, and a miss recorded here is a
 miss Stage 1 will not re-buy.
 
 The OSF source (registrant 10.17605, first in the order) is the one that is not
@@ -267,11 +267,10 @@ def run(worklist_path: Path, overlay_dir: Path, sources=SOURCE_ORDER,
 
 
 def _scopus_fetcher():
+    """Scopus on the phase runner's contract — which is now its own, so this only
+    binds the key."""
     def fetch(doi: str) -> tuple[Optional[str], str]:
-        abstract, quota_exhausted = _fetch_scopus_abstract(doi, ELSEVIER_API_KEY)
-        if quota_exhausted:
-            return None, "stop"
-        return (abstract, "ok") if abstract else (None, "empty")
+        return _fetch_scopus_abstract(doi, ELSEVIER_API_KEY)
     return fetch
 
 
