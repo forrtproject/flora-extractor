@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FLoRA Extractor — Current State (2026-08-05)</title>
+<title>FLoRA Extractor — Current State (2026-08-06)</title>
 <style>
   :root {
     --bg: #ffffff; --fg: #1a1a20; --muted: #5b6070; --line: #e3e5ec;
@@ -36,6 +36,8 @@
   th { background: var(--card); }
   .box { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
     padding: 1rem 1.25rem; margin: 1rem 0; }
+  .box.warn { border-left: 4px solid var(--red); }
+  .box.note { border-left: 4px solid var(--accent); }
   .tag { display: inline-block; font-size: .72rem; font-weight: 600; letter-spacing: .02em;
     padding: .1em .5em; border-radius: 99px; border: 1px solid; vertical-align: middle; }
   .t-red { color: var(--red); border-color: var(--red); }
@@ -45,614 +47,538 @@
   .src { color: var(--muted); font-size: .8rem; }
   details { margin: .6rem 0; }
   summary { cursor: pointer; font-weight: 600; }
-  .finding { border-left: 3px solid var(--line); padding: .2rem 0 .2rem 1rem; margin: 1.1rem 0; }
-  .finding.sev-high { border-left-color: var(--red); }
-  .finding.sev-med { border-left-color: var(--amber); }
-  .finding.sev-low { border-left-color: var(--grey); }
-  .finding p { margin: .3rem 0; }
+  .item { border-left: 3px solid var(--line); padding: .2rem 0 .2rem 1rem; margin: 1.1rem 0; }
+  .item.sev-high { border-left-color: var(--red); }
+  .item.sev-med { border-left-color: var(--amber); }
+  .item.sev-low { border-left-color: var(--grey); }
+  .item p { margin: .3rem 0; }
   ul { padding-left: 1.4rem; }
   a { color: var(--accent); }
+  .num { font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
 <main>
 
 <h1>FLoRA Extractor — current state</h1>
-<p class="sub">Mapped from code on 2026-08-05, at <code>main</code> @ <code>21a524f</code> (clean tree).
-Method: five parallel code-only deep-dive agents (one per stage, one for <code>shared/</code>, one repo-wide
-dead-code sweep), cross-checked against an independent read-only Codex review of the same tree; the
-highest-stakes claims were then re-verified by hand against the source. No documentation (CLAUDE.md,
-docs/, prior state pages) was used as input.</p>
+<p class="sub">The codebase as it stands on 2026-08-06, at <code>fix/current-state-findings</code> @ <code>6a83f96</code>
+(working tree clean apart from this page; not yet merged to <code>main</code>). Mapped by three code-only survey agents that were barred from
+reading CLAUDE.md, <code>docs/</code> or any earlier state page, so nothing here is inherited from the previous
+description. Every count was read off the artifact or produced by a command, never estimated. Test suite:
+<strong class="num">1217 passed, 6 skipped, 2 xfailed</strong>.</p>
 
-<div class="box">
-<strong>Legend for findings:</strong>
-<span class="tag t-green">verified</span> re-checked by hand in this session &nbsp;·&nbsp;
-<span class="tag t-grey">2×</span> found independently by both an agent and Codex &nbsp;·&nbsp;
-severity bars: <span style="color:var(--red)">■</span> correctness/data-loss,
-<span style="color:var(--amber)">■</span> cost/consistency, <span style="color:var(--grey)">■</span> hygiene.
+<div class="box warn">
+<p style="margin-top:0"><strong>Operationally, the pipeline cannot be run end-to-end right now.</strong> Two blocks,
+both consequences of the screen moving into Stage 2:</p>
+<ol style="margin-bottom:0">
+<li>The Stage 2 → Stage 3 export gained six <code>screen_*</code> columns. The column list is hashed into
+<code>schema_version</code>, which is one of the six inputs to a release id — so <strong>every stored release is
+stale</strong> and <code>export</code>, <code>screen</code> and <code>handoff</code> all refuse against it.
+A fresh <code>route</code> over the 5.1M-row pool is required first.</li>
+<li><code>data/filtered.csv</code> on disk predates that change (21 columns, no <code>screen_verdict</code>), so
+<code>python -m extract.run_extract</code> <strong>refuses to start</strong> against it — deliberately, rather than
+silently re-screening.</li>
+</ol>
 </div>
 
 <!-- ============================================================ -->
-<h2 id="summary">1 · High-level summary</h2>
+<h2 id="shape">1 · What the pipeline is</h2>
 
-<pre><code>Stage 1  search/           OpenAlex bulk-parquet snapshot scan (token-stem + concept gate)
-                           → survivor pool: flat parquet dir (cache/snapshot_pool/, ~2,446 files)
-                           → ledger cache/snapshot/ledger.json;  HF share via pool_sync
+<pre><code>Stage 1  search/           OpenAlex bulk-parquet snapshot scan (token-stem OR concept gate)
+                           → survivor pool: flat zstd parquet, 2,232 files / 7.1 GB / 5,146,160 rows
+                           → ledger-backed resume;  HF share via pool_sync
 
-Stage 2  filter/engine/    16 JSON specs, precedence-routed into piles, over the pool
-                           state: DuckDB (derived routing) + Supabase (claims/verdicts, the one
-                           mutable authority) + release JSONs + HF blob archive
-                           screen_expensive tier = Stage 3's front door run early (cache-shared)
-                           → handoff writes data/filtered.csv (screened-only by default)
+Stage 2  filter/engine/    16 JSON specs (10 live, 6 shadow) precedence-routed into piles
+                           state: DuckDB (derived) + Supabase (claims/verdicts, authoritative)
+                                  + release JSONs + HF blob archive
+                           screen_expensive tier = THE screen (2 voters, G-softqual gate)
+                           screen_cheap tier     = dormant by design, wired and tested
+                           → handoff writes data/filtered.csv, atomically
 
-Stage 3  extract/          front-door screen (2 voters, G-softqual gate) → 7-rung resolution
-                           ladder (free rungs → abstract LLM → reference LLM → title search →
-                           PDF waterfall (11 tiers) → full-text LLM) → outcome coding (2
-                           vocabularies, per-axis escalation) → DOI verify → data/extracted.csv
-                           sanity_check quarantines to 10+ set-aside CSVs on every exit
+Stage 3  extract/          reads the screen verdict off the row (does not re-screen)
+                           → 7-rung resolution ladder → outcome coding (2 vocabularies)
+                           → DOI verification → data/extracted.csv
+                           sanity_check quarantines into 9 set-aside CSVs on every exit
 
-Stage 4  csv_to_db + validate/   resolved rows → Supabase (unvalidated, record_metadata,
-                           validation_queue ×3 slots); Flask dashboard reads CSVs, parquet
-                           mirror, stats.json and Supabase — monitoring only</code></pre>
+Stage 4  validate/         Flask dashboard over CSVs, a parquet mirror and Supabase
+                           The Supabase import runs from the separate flora-validation repo</code></pre>
 
-<p><strong>Does the code match the intended design?</strong> Broadly yes — the load-bearing ideas are
-real in the code, not just described: content-complete cache keys with model + prompt-version +
-effort folded in; one model constant per question with provider dispatch on the id and no fallback;
-transient-vs-definitive separation in the abstract store and most fetchers; the withhold gate on
-deterministic picks; claims as the only cross-machine mutual-exclusion; screened-only handoff;
-first-success ladder ordered by cost. The screen-cache replay between Stage 2's expensive tier and
-Stage 3's front door was verified to key identically, so the "Stage 3 re-reads it for free" claim is
-true by construction.</p>
+<p>The load-bearing design ideas are real in the code rather than aspirational: content-complete cache keys with
+model, effort and prompt version folded in; one model constant per question with provider dispatch on the id and no
+fallback; a transient failure never checkpointed as a definitive answer; claims as the only cross-machine mutual
+exclusion; a first-success ladder ordered by cost; and evidence written before the verdict that names it.</p>
 
-<p><strong>Where it deviates from expectations</strong>, in order of consequence:</p>
+<h3>The one-line version of each stage boundary</h3>
+<div class="tablewrap"><table>
+<tr><th>Boundary</th><th>Artifact</th><th>Contract</th></tr>
+<tr><td>1 → 2</td><td>the survivor pool (parquet)</td><td>Stage 1 searches and never filters. Anything tripping either gate arm is admitted unconditionally; no year bound, no exclusions.</td></tr>
+<tr><td>2 → 3</td><td><code>data/filtered.csv</code>, 27 columns</td><td>Rules route and discard; only LLMs admit. A row arrives carrying its screen verdict, and Stage 3 trusts it.</td></tr>
+<tr><td>3 → 4</td><td><code>data/extracted.csv</code>, 53 columns</td><td>Only a resolved link is outcome-coded. The Supabase push lives in another repo.</td></tr>
+</table></div>
+
+<!-- ============================================================ -->
+<h2 id="stage1">2 · Stage 1 — <code>search/</code></h2>
+
+<p><strong>Entry point.</strong> <code>python -m search.run_search --scan</code>; <code>--scan</code> is required and a
+bare invocation exits with usage, because a bare call must never start a 400+ GB read. Other flags:
+<code>--survivor-pool</code>, <code>--snapshot-max-files</code>, <code>--force-gate</code>. Pilot mode is gone — a
+sample scan is done by pointing <code>FLORA_CACHE_DIR</code> at a scratch directory, which moves the ledger and the
+pool together. <code>python -m search.snapshot_scan</code> is a read-only status view;
+<code>python -m search.pool_sync --push|--pull|--check-access</code> shares the pool through a private HF dataset repo.</p>
+
+<p><strong>The gate</strong> is two vectorised pyarrow arms, OR'd. The token arm runs a 15-alternative stem regex
+(<code>replicat</code>, <code>reproduc</code>, <code>reanalys</code>, … plus 追試 and 반복검증) over the title and over
+the <em>raw inverted-index JSON string</em> — which is precisely why only single-token stems are sound there, since key
+order in an inverted index is arbitrary and a phrase regex would match by accident. The concept arm tests membership of
+OpenAlex concepts C12590798 and C9893847, with a separate code path for struct-list and JSON-string concept shapes
+(the string path is anchored on the closing quote because RE2 has no lookbehind and a bare <code>C9893847</code> also
+matches <code>C98938470</code>).</p>
+
+<div class="tablewrap"><table>
+<tr><th>Pool measurement</th><th class="num">Value</th></tr>
+<tr><td>parquet files / size on disk</td><td class="num">2,232 · 7.1 GB</td></tr>
+<tr><td>rows</td><td class="num">5,146,160</td></tr>
+<tr><td>title token hits · abstract token hits · concept hits</td><td class="num">895,516 · 4,583,033 · 385,279</td></tr>
+<tr><td>concept-only survivors (no token hit)</td><td class="num">86,950</td></tr>
+<tr><td>rows with an empty abstract</td><td class="num">347,463</td></tr>
+<tr><td>publication_year range (no year filter, by design)</td><td class="num">1027 – 2050</td></tr>
+</table></div>
+
+<p><strong>Resume</strong> is a per-partition transaction: ledger <code>merging</code> → pool file commit
+(<code>.tmp</code> → final) → ledger <code>done</code>. The ordering is explicit, so a crash can leave a partition
+unscanned but never scanned-without-its-pool. A read failure retries with counters and the temp file rolled back each
+attempt, so a retried partition is never double-counted; a terminal failure restores the previous ledger entry and
+records nothing as consumed. There is no dedup across partitions — a work updated twice sits in the pool twice, and
+Stage 2's first-writer-wins insert on <code>(release, work_id)</code> absorbs that.</p>
+
+<p><strong>Generation hygiene is now enforcing rather than advisory.</strong> A ledger naming a different gate
+fingerprint <em>refuses</em> to scan (<code>--force-gate</code> overrides and warns); a ledger that exists but will not
+parse is a hard error rather than a silently-empty fresh start, because the alternative is an unnoticed 725 GB rescan
+or a doubled pool. <code>pool_sync --push</code> refuses on a differing fingerprint or an unreadable remote manifest,
+commits the manifest first so an interruption cannot leave a large unfingerprinted pool, and proves <em>write</em>
+access by actually committing a preflight file (<code>create_repo(exist_ok=True)</code> succeeds for a read-only
+token). Pull still only warns on a mismatch.</p>
+
+<p><strong>Abstract retrieval</strong> (<code>fetch_abstracts.py</code>) is a library with no CLI; its consumer is
+<code>filter/engine/backfill.py</code>. Six sources are split into two pathways by cost. The <em>bulk</em> pathway
+(OpenAlex 50-id filter queries, Europe PMC 100-DOI <code>searchPOST</code>) runs first over every missing-abstract row;
+the <em>targeted</em> pathway (OSF, Semantic Scholar, CrossRef, Scopus last) then sees only what bulk left textless.
+OSF is the deliberate exception — it always sees the full worklist, because its registration template line is text two
+specs read and a Europe PMC abstract is not a substitute for it.</p>
+
+<p>The transient-vs-definitive contract here is the strictest in the repo, and it holds: a per-item fetch returns
+<code>ok</code> / <code>empty</code> / <code>transient</code> / <code>stop</code>, and <strong>only <code>empty</code>
+is ever written</strong> — meaning the source answered and holds nothing. A 401/403 is <code>stop</code>, not
+<code>empty</code>, in all four gated sources, because auth is host-wide and one refusal would otherwise write a
+permanent "no abstract exists" for every DOI it touched. A whole-batch failure checkpoints nobody, and Europe PMC
+refuses a page where <code>hitCount</code> exceeds the records returned, since a truncated page is not an answer.
+Twenty-five consecutive transients stop a phase. The SQLite abstract store's row <em>is</em> the checkpoint.</p>
+
+<!-- ============================================================ -->
+<h2 id="stage2">3 · Stage 2 — <code>filter/engine/</code></h2>
+
+<p><strong>Entry points.</strong> <code>python -m filter.engine</code> with nine subcommands (<code>specs</code>,
+<code>route</code>, <code>diagnose</code>, <code>export</code>, <code>screen</code>, <code>reconcile</code>,
+<code>handoff</code>, <code>worklist</code>, <code>status</code>), plus three modules with their own argparse —
+<code>backfill</code> (abstracts → overlay chunk), <code>supersede</code> (validation lineage) and <code>sizing</code>
+(Postgres storage estimate). Those three are now named in the main CLI epilog. There is no <code>verify</code>
+subcommand any more; it went with the second regex backend.</p>
+
+<h3>The rule book</h3>
+<p>18 JSON files in <code>filter/spec/</code>, of which three are not specs (<code>conventions.json</code>,
+<code>aliases.json</code>, and <code>holdout.json</code>, which does not exist) — so <strong>16 specs load, 10 live and
+6 shadow</strong>. The 10 live are 7 discards and 3 admissions. Specs sort by (−precedence, id); the first non-shadow
+match wins; shadow specs are evaluated and recorded but can never claim a row.</p>
+
+<p>Two policies are the engine's rather than any spec's: an unclaimed row becomes
+<code>pending / no_filter_matched</code> (a rule that did not fire has said nothing, not "keep"), and a screen-pile win
+on a row with an empty abstract is downgraded to <code>pending / no_text</code> — absence of evidence must not convert
+itself into a proceed. Discards are exempt, since structural rules do not read the abstract. A non-shadow
+<em>discard</em> must additionally carry a measurement at an autonomous level; <code>heuristic</code> alone is refused,
+though <code>trusted</code> remains self-certifying.</p>
+
+<p><strong>One regex engine.</strong> The Python-<code>re</code> evaluator and the sampling backend-equality
+<code>verify</code> command are gone. <code>eval_spec_batch()</code> (pyarrow/RE2) decides every match for every
+caller; the row-shaped <code>eval_spec_rows()</code> is a thin entry point that builds a one-row batch and calls it, so
+analysis scripts provably agree with routing. RE2 syntax is validated by asking pyarrow itself at spec-load time rather
+than by a hand-maintained list of banned constructs. Python <code>re</code> survives in exactly one place —
+<code>match_evidence()</code> asks it <em>where</em> a match sits, never <em>whether</em>, because it is the only engine
+in the process that reports a span; when the two disagree on a span the evidence falls back to naming the condition
+rather than inventing a phrase, and no row's pile depends on it.</p>
+
+<div class="box note">
+<p style="margin:0"><strong>Why that consolidation was worth doing.</strong> Before deleting the equality checker, it
+was run over 289,141 real pool rows and found a genuine disagreement: an abstract containing mojibake
+(<code>toÂ apply</code>) where the <code>Â</code> sits exactly where a trailing <code>\b</code> looks. Python's
+Unicode-aware <code>\b</code> saw a word character, ASCII RE2 did not, and the two backends returned different verdicts.
+The sampling <code>verify</code> — first batch of the first 200 files — was never going to prove that absent. Routing
+already ran on RE2, so no pile moved; the full routing table over 853,836 pool rows hashes identically before and after
+the change.</p>
+</div>
+
+<h3>State, and what is authoritative</h3>
+<div class="tablewrap"><table>
+<tr><th>Location</th><th>Holds</th><th>Standing</th></tr>
+<tr><td>Supabase / Postgres</td><td>claims, claim items, verdicts, supersessions, audit</td><td><strong>The authority.</strong> Nothing local is checkpointed; permanence is enforced by DB triggers.</td></tr>
+<tr><td><code>cache/engine/engine.duckdb</code></td><td><code>routing</code>, <code>evaluations</code></td><td>Derived and disposable by contract — a pure function of (pool, specs, aliases, engine version). Rebuilt in one transaction.</td></tr>
+<tr><td><code>cache/engine/releases/*.json</code></td><td>the six release inputs</td><td>Local record; the claim RPC keeps its own copy.</td></tr>
+<tr><td><code>cache/engine/responses/*.json</code> + HF</td><td>raw LLM response blobs</td><td>Evidence. Written to disk <em>before</em> the verdict row that names them; HF upload follows in batched commits, with <code>reconcile</code> as the sweeper.</td></tr>
+</table></div>
+
+<p>A <strong>release</strong> is a sha256 over exactly six inputs: pool-manifest hash, overlay hash, bundle hash (the
+16 specs plus conventions, whitespace-sensitive), engine version, alias release, and CSV schema hash. Every consumer
+re-checks the binding and there is no override — which is exactly why adding the screen columns invalidated every
+stored release.</p>
+
+<h3>The tiers</h3>
+<p>Dry run is the default and needs no state authority at all; it prints row counts, per-row token quantiles and a
+price estimate from a constant table that sits next to its only reader. <code>--run</code> claims the whole batch in
+one RPC before the first voter — all-or-nothing under a per-tier advisory lock, so a conflict ends the run with nothing
+spent. Budget is checked per work inside the worker, and an exhausted budget fails the claim while keeping the verdicts
+already written, because the budget did not un-spend them.</p>
+
+<p><strong>Verdicts are keyed to a screening generation</strong> — a hash of the sorted voter models plus the classify
+prompt version, the same ingredients as the LLM cache key, carried in the claim's metadata. Change a voter or the
+prompt and old verdicts stop counting: those works become claimable again and stop steering the handoff. Within a
+generation, verdicts are read across <em>all</em> releases deliberately, so a pure re-route does not unask a voter.
+Rows predating the field are grandfathered on their recorded model set. Models are sorted, so swapping voter slots is
+not a new generation.</p>
+
+<p><strong>The expensive tier is the screen</strong>, and now the only one:
+<code>classify_replication()</code> + <code>screen_gate()</code> run here and nowhere else. It writes one verdict row
+per voter plus a blob holding the votes, the gate and the full screen dict. On read, the gate and record type are
+<em>recomputed</em> from the stored votes rather than trusting a stored summary, and the votes are re-sorted into call
+order because a split is broken by taking the first qualifying voter.</p>
+
+<p><strong>The cheap tier is dormant by design</strong>, and this is deliberate rather than neglect. The reason it is
+inert is singular and structural: all three <code>screen_cheap</code> specs are shadow, so nothing routes to the pile
+and a claim finds nothing. Three further facts shape what waking it would mean, but are not themselves the cause — its
+verdicts may only discard, never admit (the handoff counts only expensive-tier verdicts as deciding, which is the
+intended semantics); its curated-source bypass arm can never fire, because the pool schema carries no
+<code>source</code> column, so that safety net is currently absent; and its two OpenRouter voter models have no key
+configured on this machine, which is local state rather than a property of the codebase. The apparatus — voters,
+prices, the <code>prescreen_discard</code> set-aside, <code>--rescreen</code>'s reopening — stays wired and tested, so
+promoting a spec is the only <em>code</em> change needed; a run would additionally need an OpenRouter key and, before
+it may discard anything, the re-measurement described under §7.</p>
+
+<h3>The handoff</h3>
+<p><code>handoff</code> writes <code>data/filtered.csv</code> from the two screen piles, expensive first so a
+<code>--limit</code>ed Stage 3 run meets the strongest signal first. Screened-only is the default: a row is dropped if a
+live tier verdict discarded it, and skipped if it was never screened. It writes to a sibling <code>.tmp</code> and
+<code>os.replace()</code>s it in, so the file is either the old handoff or the new one and never half of either.
+<code>--as-routed</code> is the only mode that works without Supabase, and it is also the only way a row can arrive at
+Stage 3 with blank screen columns.</p>
+
+<h3>The 27-column contract, and the six columns that carry the screen</h3>
+<div class="tablewrap"><table>
+<tr><th>Column</th><th>Comes from</th><th>What Stage 3 does with it</th></tr>
+<tr><td><code>screen_verdict</code></td><td>verdict rows (gate recomputed)</td><td><strong>Hard gate.</strong> Absent from the header → the run refuses to start. Blank on a present column → that row becomes <code>target_pending</code>. <code>discard</code> ends the paper as <code>not_a_replication</code>.</td></tr>
+<tr><td><code>screen_record_type</code></td><td>verdict rows</td><td>Becomes the row's <code>type</code>, and overwrites <code>filter_status</code> in the handoff itself.</td></tr>
+<tr><td><code>screen_votes</code></td><td>verdict rows</td><td><strong>Load-bearing.</strong> <code>&lt;model&gt;=&lt;classification&gt;/&lt;confident|unconfident&gt;</code>, pipe-joined in call order. The pre-PDF title-search rung fires only when both voters gave a qualifying answer <em>and</em> stood behind it — a fact no summary of the gate preserves.</td></tr>
+<tr><td><code>screen_evidence</code></td><td>verdict rows (first voter's quote)</td><td>Written through to <code>llm_evidence</code>.</td></tr>
+<tr><td><code>screen_categories</code></td><td><em>the local classify cache</em></td><td>Recorded, never decided on.</td></tr>
+<tr><td><code>screen_reasoning</code></td><td><em>the local classify cache</em></td><td>Recorded, never decided on.</td></tr>
+</table></div>
+<p>The split is intentional: everything Stage 3 <em>decides</em> with comes from Postgres verdict rows, while the two
+descriptive fields come from the content-keyed LLM cache and are simply written blank on a checkout that lacks it. The
+cache reader can never make a model call.</p>
+
+<!-- ============================================================ -->
+<h2 id="stage3">4 · Stage 3 — <code>extract/</code></h2>
+
+<p><strong>The screen is not here any more.</strong> Stage 3 reads the six columns and rebuilds the verdict dict
+in-process, so the downstream consumers — record typing, the reference-screen gate, the title-search gate — are
+unchanged and no second opinion is bought. Three cases are distinguished deliberately: a <em>missing column</em> is a
+startup refusal naming the two commands that fix it (one loud failure beats a million silent
+<code>target_pending</code>s); a <em>blank value</em> writes that row <code>target_pending</code> with a note, which is
+the same ending an incomplete screen always had; and <code>--screen-here</code> is the explicit opt-in that screens in
+Stage 3 for verdictless rows, requiring both voters' API keys at startup. Nothing silently re-screens. The one thing
+the CSV cannot round-trip is per-voter categories and reasoning; anything needing those must go back to Postgres.</p>
+
+<p><strong>Row lifecycle.</strong> <code>filtered.csv</code> is read in 50k chunks in two passes (abstract-bearing rows
+first) → a six-step skip chain (FLoRA lists → validated-skip → resumed → already-extracted → <code>false_positive</code>
+→ reproduction flags) → a thread pool (<code>EXTRACT_WORKERS</code>=4, back-pressure at 2× in flight, one lock per
+paper's write set) → screen → ladder → guard → outcome → finalise → append. The <code>finally:</code> runs the token
+summary, the new OpenAlex search-query summary, <code>sanity_check</code> and the dashboard refresh even on Ctrl-C or a
+budget stop, and budget/quota exceptions win over incidental errors in reporting.</p>
+
+<p><strong>The ladder</strong> returns at its first success, ordered by cost: candidates re-query → title-pattern match
+→ rule-based citation/candidate match → abstract LLM (only where author-year patterns exist) → reference-list LLM →
+pre-PDF title search → PDF acquisition (11 tiers) → six-parser parse and scoring → full-text LLM. A content-free
+OpenAlex XML shell is not a document — it ends the row at <code>no_fulltext_available</code>, and that check is now
+applied consistently by the parse-cache probe as well as the ladder.</p>
+
+<p>The <strong>withhold gate</strong> holds a deterministic pick back whenever the paper's own text does not rule out a
+second target, and restores it at every exit where nothing that could enumerate targets has spoken — including after a
+full-text call that named nothing or named the same work. A provider failure is not that answer, so it does not
+restore. <code>llm_title_search</code> stays outside the resolved set at roughly 50% precision: never outcome-coded,
+never imported, set aside for human confirmation. It is also the ladder's dominant OpenAlex cost, since a free-text
+search is billed at 10× a filter query, which is the second reason it sits last.</p>
+
+<p><strong>Outcome coding</strong> runs only on a resolved link. Replications use the eight-value vocabulary;
+reproductions are coded on two independent axes (computation, robustness), each with its own escape and quote, and
+escalation to full text is per axis, with the escalated call replacing both. Naming the other vocabulary re-codes the
+row once and corrects its type. An <code>api_error</code> is never cached, and neither is an abstract verdict returned
+only because the full-text escalation itself failed.</p>
+
+<h3>Verification, and what a resume costs</h3>
+<p>Every written row's <code>doi_o</code> is checked against the metadata it actually points at. The important recent
+change is a third outcome: <strong>unverifiable</strong>. A partial outage — CrossRef down, OpenAlex reachable but
+holding nothing — used to look identical to "no replacement exists", which writes <code>mismatch</code>, which
+<em>deletes the row's <code>doi_o</code></em>. Now a source that never answered yields a falsy sentinel that is never
+cached, the row keeps its DOI, and its verification records <code>api_error</code>. Both verification caches were
+key-versioned rather than declared equivalent, because the meaning of a stored "no match" genuinely changed and old
+entries must miss.</p>
+
+<p>A resume no longer re-verifies rows whose verification is settled; <code>api_error</code> and blank are retried,
+which is the point of the sentinel. Carried rows still get the free half (year normalisation, work-id fill, control
+characters). Worth stating honestly: with a warm local cache (3,675 entries) the recurring cost this avoids was disk
+reads rather than HTTP — the real bill lands on a cold cache, a fresh machine or CI, and grows with
+<code>extracted.csv</code>.</p>
+
+<div class="box note">
+<p style="margin-top:0"><strong>The four known in-process ways a resume could lose rows are closed</strong>, after a
+documented 76-row loss:</p>
 <ol>
-  <li><strong>Stage 2's live screening path is broken out of the box</strong> — nothing ever registers a
-      release in Supabase, so <code>screen --run</code> dies in the claim RPC unless the release row was
-      inserted by hand (§4, F1).</li>
-  <li><strong>Several "never checkpoint a transient failure" violations survive</strong> in exactly the
-      places the rule was written for: CrossRef abstract fetches, DOI verification, the journal cache,
-      the GROBID/Gemini reference path (§4, F3).</li>
-  <li><strong>A whole tier of Stage 2 is dormant</strong>: every <code>screen_cheap</code> spec is shadow, no
-      spec targets <code>needs_human</code>, so the cheap tier, its price table, and Stage 3's
-      <code>prescreen_discard</code> handling currently serve no live rows (§4, F7).</li>
-  <li><strong>Resume, the default mode of Stage 3, has a real truncation path</strong> — the shape of the
-      documented 76-row loss is still in the code (§4, F2).</li>
-  <li><strong>One retired subsystem still ships</strong>: the <code>/batch</code> blueprint (631 lines +
-      state + 16 KB JS + four config paths) whose input files no longer exist, yet which registers into
-      the app and can spend money (§5).</li>
+<li>The header is written up front, on both <code>--fresh</code> and resume, so no later write can be the one that
+truncates.</li>
+<li>Every carried row is written; a row whose finalisation raises is written as-is rather than dropped.</li>
+<li>An exception mid-carry flushes the remaining carried rows before unwinding — which also closes a Ctrl-C window
+that existed even with no bug at all.</li>
+<li>Pending papers the run never handled are written back unchanged in the <code>finally</code>.</li>
+</ol>
+<p style="margin-bottom:0">What that does <em>not</em> establish is an absolute guarantee. The output is still
+rewritten in place: the header write truncates the file before the carried rows go back, and there is no
+temp-file-plus-atomic-replace transaction around the Stage 3 output as a whole. A <code>SIGKILL</code>, host loss or
+disk failure inside that window still leaves a header-only or partial file. Closing that properly is listed in §7.</p>
+</div>
+
+<h3>Set-asides</h3>
+<p><code>sanity_check</code> runs on every exit and files rows first-match-wins into nine CSVs across twelve buckets.
+Resume treats every destination as settled except the two a run always redoes — <code>target_pending.csv</code> and
+<code>api_error.csv</code>, the latter because an <code>api_error</code> row carries no verdict and a transient failure
+must never become permanent. <code>--rescreen</code> reopens only the three screening files, and now means
+<em>reopen</em> rather than <em>re-screen</em>: it lets a new Stage 2 screening generation re-admit those rows.
+Set-asides live beside the CSV they came from, so a <code>--extracted-test</code> run can no longer file a discard into
+the production set-asides and thereby settle a paper the production run never processed.</p>
+
+<div class="tablewrap"><table>
+<tr><th>Artifact</th><th class="num">Rows</th><th>Note</th></tr>
+<tr><td><code>data/extracted.csv</code></td><td class="num">285</td><td>283 verified, 2 <code>no_doi</code>; 277 replication / 8 reproduction</td></tr>
+<tr><td><code>data/filtered.csv</code></td><td class="num">1,614</td><td>21 columns — predates the screen columns</td></tr>
+<tr><td><code>data/target_pending.csv</code></td><td class="num">1,061</td><td>reopened every run</td></tr>
+<tr><td><code>data/provisional_title_search.csv</code></td><td class="num">39</td><td>the <code>llm_title_search</code> queue, awaiting human confirmation</td></tr>
+<tr><td><code>data/no_original_found.csv</code> · <code>not_a_replication.csv</code> · <code>api_error.csv</code></td><td class="num">35 · 23 · 17</td><td></td></tr>
+<tr><td>skip lists: <code>validated_skip</code> · <code>flora.csv</code> · entry sheet</td><td class="num">1,770 · 2,504 · 3,851</td><td>an unreadable skip list now raises rather than skipping nothing</td></tr>
+</table></div>
+
+<!-- ============================================================ -->
+<h2 id="crosscutting">5 · Cross-cutting machinery</h2>
+
+<h3>Models, providers, caching</h3>
+<p>Seven model constants live in <code>config.py</code>, each named for the question it answers, each with one call
+site and no <code>os.getenv</code>. The provider follows the id shape — a "/" means OpenRouter, a leading
+<code>gemini</code> means Google, anything else OpenAI — and an import-time guard pins the PDF model to Gemini, whose
+document calls have no OpenAI-compatible form. There is no fallback ladder: when a provider fails, the call fails.
+Effort is a per-call-site argument rather than a property inferred from the model id, which matters because three of the
+constants are currently the same string.</p>
+
+<p>A cache key names everything the answer depends on: prompt version, model-with-effort, and the inputs sent.
+<code>prompt_version()</code> is an AST-transitive hash of the builder and every constant it splices, so editing a
+shared fragment invalidates exactly its users and nothing needs registering. The <strong>declared-equivalence</strong>
+mechanism is the one opt-in exception, used in two places today, and it is worth knowing which is which:</p>
+<ul>
+<li>The classify voter component carries two legacy labels, so cache entries written before the key named an effort are
+still found, re-stored under the current key with a migration note, and left in place for other checkouts. The
+equivalence is rebuilt from the <em>current</em> prompt, so it self-expires the moment anything else moves.</li>
+<li>The retired provider system message is <em>still hashed</em> under its original part name although it is now sent to
+nobody. This is a deliberate project-wide equivalence: dropping it from the hash would move every prompt version at once
+and orphan every LLM cache the project holds. All seven prompt versions are byte-identical to what they were, and the
+constant carries a warning that editing the string re-buys every cached answer.</li>
+</ul>
+<p>The two versioned <code>doi_verify</code> keys are the <em>opposite</em> decision made on purpose, and are described
+above: there the meaning of a cached answer changed, so old entries must miss.</p>
+
+<p><code>cache_sync</code> shares seven cache parts plus the abstract SQLite through the same private HF repo. The
+correctness argument is that content-complete keys make a differing checkout <em>miss</em> rather than mis-read. A pull
+never overwrites a local file; a push now refuses to replace a remote shard that holds entries the local one lacks
+(<code>--force</code> overrides), which closes the hole where a partial cache could shrink the shared shard and pullers
+would then record the smaller digest as current.</p>
+
+<h3>Cost and rate</h3>
+<p>Every LLM call records input and output tokens per day, provider and model, recorded <em>before</em> the truncation
+early-return since a response cut off at the cap is the most expensive shape there is. Only OpenAI is hard-capped.
+OpenAlex is metered per request against a daily budget with rotation on exhaustion, and a run now prints how many
+free-text searches it issued — the 10× tier. Uninstrumented still: OpenAlex content downloads (the 100× tier), plain
+filter queries, and every non-OpenAlex HTTP source. <code>throttle()</code> is one reservation queue per service so N
+worker threads share one rate; one CrossRef path in <code>doi_verify</code> still sleeps after its request instead of
+reserving before it.</p>
+
+<h3>Tests</h3>
+<p>1,217 pass in about 12 seconds. Five autouse fixtures make the isolation real rather than conventional: sockets
+raise, backoff sleeps are nulled, and the token store and abstract store are redirected to temp directories. Live tests
+sit behind <code>TEST_LIVE_API</code>. There is no pytest config file, no CI job that runs the suite, and
+<code>TEST_LIVE_API</code> is a global switch rather than a per-directory one — so setting it would lift the socket
+block for all 1,200-odd mocked tests at once.</p>
+
+<!-- ============================================================ -->
+<h2 id="weak">6 · Where the code is weak</h2>
+
+<p>These are current defects, ranked. Everything the 2026-08-05 review raised has been fixed, dissolved, or is listed
+below with its reason for still being open.</p>
+
+<div class="item sev-high">
+<p><strong>W1 · Every stored release is stale, so nothing can be handed off.</strong> <span class="tag t-red">blocks the pipeline</span></p>
+<p>Adding <code>SCREEN_COLS</code> moved <code>schema_version</code>, one of the six release inputs. All six stored
+releases were routed under the old bundle and schema hashes, and <code>export</code>, <code>screen</code> and
+<code>handoff</code> correctly refuse against them. This is the binding mechanism working as designed, but the
+consequence is a required <code>route</code> re-run over 5.1M rows before Stage 3 can be fed again. Verdicts are not
+lost — they are read across releases within a generation.</p>
+</div>
+
+<div class="item sev-high">
+<p><strong>W2 · A missing ledger silently produces a real-looking pool provenance hash.</strong></p>
+<p><code>pool_manifest_hash</code> falls back to the honest string <code>"unmanifested"</code> only on an
+<em>exception</em>. A missing <code>cache/snapshot/ledger.json</code> does not raise — it yields a fresh empty ledger,
+whose hash is the SHA-256 of the empty string. That is the actual state on this machine: the four newest releases all
+carry <code>e3b0c442…</code>. Two consequences: a push from here would advertise <code>ledger_files: 0</code>, and since
+<code>ledger_hash</code> covers only URL and content-length, <strong>the gate fingerprint is not part of the release id
+at all</strong> — a pool pulled from a differently-gated repo would route under an identically-shaped release.</p>
+</div>
+
+<div class="item sev-med">
+<p><strong>W3 · A stranded claim is permanent and silent.</strong></p>
+<p>There is no <code>expires_at</code>, heartbeat, TTL or reaper. A claim is released in exactly one place, inside the
+run's completion path, so a <code>SIGKILL</code> or a lost host leaves it active forever — and because the next batch
+<em>subtracts</em> claimed works, those rows are quietly excluded from every future run rather than raising. No CLI
+exposes a release; the only remedy is hand SQL.</p>
+</div>
+
+<div class="item sev-med">
+<p><strong>W4 · A transient read failure can erase the spend record.</strong></p>
+<p><code>token_usage._read_all()</code> returns <code>{}</code> on any <code>OSError</code>. The daily OpenAI budget
+then reads as unspent, and the next <code>record()</code> read-modify-writes from that empty dict — destroying the
+accumulated multi-day record. It is the one place where a transient failure is promoted to a definitive fact about
+money.</p>
+</div>
+
+<div class="item sev-high">
+<p><strong>W5 · The dashboard exposes unauthenticated endpoints that can spend money.</strong></p>
+<p>The <code>/batch</code> blueprint registers on any run where <code>FLORA_READONLY</code> is unset — which is the
+default locally — and its POST endpoints call the extraction ladder directly, making live OpenAlex, LLM and PDF calls
+and writing CSVs. Nothing authenticates them. They are inert today <em>only</em> because the input CSVs they read do
+not exist, which is an accident of the filesystem rather than a control. On a dashboard described elsewhere as
+read-only, that is the wrong thing to be relying on: either delete the blueprint or gate it deliberately.</p>
+</div>
+
+<div class="item sev-med">
+<p><strong>W6 · The dashboard's numbers are stale, and Stage 2 never refreshes them.</strong></p>
+<p><code>stats.json</code> reports 2,582,749 filtered rows against 1,614 on disk, and 1,813 extracted against 285,
+because nothing under <code>filter/</code> ever calls the refresh and the presence of the cached key suppresses the
+recompute. The shipped template also still instructs users to run <code>python -m filter.run_filter</code>, a module
+that no longer exists.</p>
+</div>
+
+<div class="item sev-med">
+<p><strong>W7 · Postgres schema gaps.</strong></p>
+<p>The hottest read — verdicts by tier with offset paging — has no supporting index, and <code>mark_uploaded</code>
+PATCHes on an unindexed hash repeatedly per run. There is no migration-tracking table or runner, and
+<code>0001</code> was retro-edited in place, so <code>0003</code> is a no-op against a fresh database and nothing
+detects the checksum change. <code>engine_verdicts.prompt_hash</code> is written only by the cheap tier, so every
+expensive-tier verdict — the tier that actually gates Stage 3 — stores an empty string. Several Python-side invariants
+have no DB constraint, including tier spelling, which a typo makes silently invisible.</p>
+</div>
+
+<div class="item sev-low">
+<p><strong>W8 · Provider asymmetries that remain.</strong> Gemini retries twice per key at a flat 3 s while OpenAI and
+OpenRouter retry three times at 1 s/2 s; Gemini's output cap is a hardcoded 8192 against 4096 elsewhere, so the same
+logical call truncates at different points; only OpenAI is budget-checked; only Gemini prints to stdout. Token
+recording, the retry loop's existence and the absence of a system message are now uniform.</p>
+</div>
+
+<div class="item sev-low">
+<p><strong>W9 · Self-contradicting and drifted surfaces — including inside the reworked code.</strong>
+<code>link_original.py</code> still narrates the <em>previous</em> architecture in its docstrings: that Stage 3 votes at
+its own front door, an incomplete-screen and disagreement flow that no longer exists, seven PDF sources where there are
+eleven, and a title-search rung running after the PDF stage rather than before it. Those are the most dangerous stale
+passages in the repo, because they sit in the file a reader trusts most about the ladder.
+<code>pool_reader.py</code>'s docstrings say an overlay "fills and never replaces" while the code — and its test, and an
+inline comment arguing for it — replace always. <code>docs/cli-reference.md</code> still documents a Stage 1 CLI with
+nine flags that no longer exist. Three spec descriptions name a rule family that was renamed. CLAUDE.md still lists the
+deleted <code>shared/csv_index.py</code> and a <code>--rebuild-index</code> flag, and still says
+<code>filtered.csv</code> exceeds 1M rows. Eight value-set constants in <code>schema.py</code> validate nothing.</p>
+</div>
+
+<h3>Deliberate trade-offs, so they are not re-litigated as bugs</h3>
+<ul>
+<li><strong>The frozen system-message salt.</strong> An independent review flagged that one cache key now names two
+different request shapes — an answer produced with the guard is reused for a request without it. That is the accepted
+cost of not re-buying every cached answer for a change judged answer-preserving; it is documented at the constant.</li>
+<li><strong>The cheap tier stays dormant</strong> rather than being deleted, because its evidence needs re-measuring on
+this distribution before it can discard, and the apparatus is cheaper to keep wired than to rebuild.</li>
+<li><strong><code>llm_title_search</code> stays in the ladder</strong> despite ~50% precision, because it is quarantined
+rather than trusted, and it is the only rung that can resolve a DOI-less reference.</li>
+<li><strong>Reading verdicts across releases</strong> is intentional: a re-route must not unask a voter. The generation
+hash is what stops that from becoming staleness.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="next">7 · Remaining work</h2>
+
+<h3>Before the pipeline runs again, in this order</h3>
+<ol>
+<li><strong>Settle the pool provenance first</strong> (W2) — before paying for a route, not after. A route run today
+would mint <em>another</em> release whose pool-manifest input is the hash of nothing, which is how the existing four
+came to carry <code>e3b0c442…</code>. At minimum make an absent ledger say <code>unmanifested</code> rather than
+hashing an empty dict; the larger question is whether the gate fingerprint belongs in the release id, which today it
+does not. If the decision is to proceed regardless, record explicitly that the new release is knowingly
+unmanifested.</li>
+<li><strong>Then re-route and re-hand-off</strong> (W1). <code>route</code> over the 5.1M-row pool, then
+<code>screen --tier screen_expensive --run</code>, then <code>handoff</code>. Existing verdicts survive the new release
+— they are read across releases within a generation — so the cost is the routing pass, not the screening. Until this
+runs, Stage 3 has no valid input.</li>
+<li><strong>Decide the fate of <code>/batch</code></strong> (W5). It is the one open defect where the current safety
+rests on a missing file rather than on a control.</li>
 </ol>
 
-<!-- ============================================================ -->
-<h2 id="stage1">2 · Deep dive, stage by stage</h2>
-
-<h3>Stage 1 — <code>search/</code></h3>
-<p><strong>Entry points.</strong> <code>python -m search.run_search</code> requires exactly one of
-<code>--scan</code> | <code>--snapshot-pilot PATH</code> (a bare invocation exits; pinned by test).
-<code>python -m search.snapshot_scan --status</code> is a read-only status view (the <code>--status</code>
-flag itself is decorative — status is always printed). <code>python -m search.pool_sync
---push|--pull|--check-access</code> shares the pool through a private HF dataset repo.
-A <code>finally:</code> in <code>run_search</code> refreshes the dashboard stats even on Ctrl-C.</p>
-
-<p><strong>The gate.</strong> Two vectorized pyarrow arms, OR'd: a token arm
-(<code>REPLICATION_STEM_PATTERN</code> from <code>filter/phrase_detection.py</code> — 38 lines, single-token
-stems including CJK/Korean, deliberately order-blind because it also matches the <em>raw inverted-index
-JSON string</em>) and a concept arm (OpenAlex concepts C12590798/C9893847, with two separate code paths
-for JSON-string vs struct-list concepts). Anything that trips either arm is admitted unconditionally.</p>
-
-<p><strong>The pool.</strong> A flat directory of zstd parquet, one file per snapshot partition
-(<code>part-&lt;updated_date&gt;-&lt;stem&gt;.parquet</code>), 14 columns including reading-order
-<code>abstract_text</code> and three provenance booleans (<code>hit_token_title / hit_token_abstract /
-hit_concept</code>). There is <em>no dedup across partitions</em> — a work updated twice is in the pool
-twice; Stage 2's first-writer-wins insert on <code>(release, work_id)</code> is what absorbs that.</p>
-
-<p><strong>Ledger/resume.</strong> Per-partition transaction: ledger <code>merging</code> → pool file commit
-(<code>.tmp</code>→final) → ledger <code>done</code> with counts. Read failures retry 3× (1/2/4 s) then the
-partition is skipped and its ledger entry restored — nothing recorded as consumed. Rescan triggers:
-unknown, non-<code>done</code>, or changed <code>content_length</code>. The gate fingerprint
-(sha256 of stems + concept ids) is stored, with the legacy key <code>stage_a_fingerprint</code> still
-honoured; a mismatch only <em>warns</em> (see F10).</p>
-
-<p><strong>pool_sync.</strong> Push refuses on a differing gate fingerprint (unless <code>--force</code>)
-or an unreadable remote manifest; commits the manifest first, then data in 100-file batches; skips
-same-size files. Pull warns (never refuses) on mismatch, downloads with 8 threads.
-<code>--check-access</code> proves <em>write</em> access by actually committing a preflight file, because
-<code>create_repo(exist_ok=True)</code> succeeds for a read-only token.</p>
-
-<p><strong>fetch_abstracts.</strong> No CLI, no Stage 1 caller — despite its location it is a library
-whose only consumer is <code>filter/engine/backfill.py</code>. Six sources (OSF, OpenAlex, Europe PMC,
-S2, CrossRef, Scopus — the caller runs OSF first, the module docstring numbers it sixth). The
-transient-vs-definitive contract is real: <code>(None, "transient")</code> is never checkpointed, a
-25-consecutive-transients breaker stops a phase, and the SQLite abstract store's row-is-the-checkpoint
-property holds — with the CrossRef exception in F3.</p>
-
-<h3>Stage 2 — <code>filter/engine/</code></h3>
-<p><strong>Entry points.</strong> Not one CLI but four: <code>python -m filter.engine</code> (specs,
-verify, route, diagnose, export, screen, reconcile, handoff, worklist, status) plus standalone
-<code>python -m filter.engine.supersede</code>, <code>…backfill</code> and <code>…sizing</code> with their own
-argparse — the latter three are invisible from the main CLI's help.</p>
-
-<p><strong>State, four places with split authority.</strong> DuckDB
-(<code>cache/engine/engine.duckdb</code>: <code>routing</code> + <code>evaluations</code>, explicitly
-derived/disposable, rebuilt in one transaction); Supabase (claims, claim items, permanent verdicts,
-audit — the sole mutable authority, permanence enforced by DB triggers); files
-(<code>releases/*.json</code>, <code>responses/&lt;sha256&gt;.json</code>, run reports, overlay chunks); and
-the HF repo as the response-blob archive.</p>
-
-<p><strong>A release</strong> is a sha256 over exactly six inputs: pool-manifest hash, overlay hash,
-bundle hash (specs + conventions, whitespace-sensitive), engine version, alias release, CSV schema
-hash. Every consumer re-checks the binding (<code>StaleBundleError</code>, no override).</p>
-
-<p><strong>Routing.</strong> Specs sorted by (−precedence, id); first non-shadow match wins; shadow specs
-are evaluated and recorded but can never win. Engine-level policies not expressible in a spec: no
-match → <code>pending/no_filter_matched</code>; a screen-pile winner with an empty abstract is downgraded
-to <code>pending/no_text</code> (discards never are). A non-shadow <em>discard</em> spec must carry an
-autonomous measurement level; <code>heuristic</code> alone is refused — though <code>trusted</code> is
-self-certifying (F14). Two regex backends (Python <code>re</code> row-wise, pyarrow batch-wise) are held
-equal by an RE2-safety validator and a <code>verify</code> command — which samples only the first batch of
-the first 200 files (F15).</p>
-
-<p><strong>Tiers.</strong> Dry-run is the default; <code>--run</code> claims (all-or-nothing, per-tier
-advisory lock), judges with per-work budget checks (<code>TokenBudgetExhausted</code> fails the claim but
-keeps written verdicts), records verdicts + raw blobs (disk first, HF later in 100-blob commits, with a
-reconcile sweeper for the stragglers). The expensive tier <em>is</em> Stage 3's front door
-(<code>classify_replication</code> + <code>screen_gate</code>) — verified to share the exact cache key, so
-Stage 3 replays it free. The cheap tier delegates to <code>shared/prescreen.py</code>'s voters (voter 2
-asked only after voter 1 says no; two noes = discard; bypasses recorded as verdicts) and defaults to
-validation mode where <em>nothing is dropped</em>.</p>
-
-<p><strong>Verdicts never touch the routing table.</strong> They flow
-<code>engine_verdicts → tier_decisions(mode="live") → handoff.decisions</code>, are read across
-<em>all</em> releases deliberately (a re-route must not unask a voter — but see F5), and the gate/record
-type are recomputed from stored votes at read time so they cannot disagree with them.</p>
-
-<p><strong>Handoff.</strong> <code>data/filtered.csv</code> from piles (screen_expensive, screen_cheap),
-screened-only by default (<code>skipped_unscreened</code> counted; <code>--as-routed</code> to include),
-tier effects applied here (<code>drop</code>; <code>record_types</code> → <code>filter_status</code> +
-<code>filter_method="screen"</code>), row bodies rebuilt through Stage 1's own
-<code>_row_from_snapshot</code> so overlay text travels into <code>abstract_r</code>.</p>
-
-<h3>Stage 3 — <code>extract/</code></h3>
-<p><strong>Row lifecycle.</strong> <code>filtered.csv</code> read in 50k chunks, two passes
-(abstract-bearing rows first) → skip chain (FLoRA lists → validated-skip → resumed → already-extracted
-→ <code>false_positive</code> → reproduction flags) → thread pool (<code>EXTRACT_WORKERS</code>=4,
-read-ahead 2×, one lock per paper's write set) → screen → ladder → guard → outcome → finalise
-(DOI verify + work-id fill + control-char strip) → append to <code>extracted.csv</code>. The
-<code>finally:</code> runs token summary, <code>sanity_check</code> and the dashboard refresh even on
-Ctrl-C or budget stop. Budget/quota exceptions win over incidental errors in reporting.</p>
-
-<p><strong>Resume is the default</strong>: the whole of <code>extracted.csv</code> plus three set-aside
-CSVs is loaded into RAM, grouped by <code>primary_key</code>; resolved rows are re-written up front
-<em>and re-finalised — meaning DOI verification and its OpenAlex/CrossRef calls re-run for every
-carried-forward row on every resume</em> (F12). A paper with any <code>target_pending</code> row is
-re-run whole. <code>--fresh</code> discards; <code>--rescreen</code> reopens screen set-asides.</p>
-
-<p><strong>The ladder</strong> (first success returns): candidates-row → <code>find_all_candidates</code>
-(OpenAlex references; a failed fetch is logged and continues with <code>[]</code>) → title-pattern match
-(9 regexes, Jaccard ≥0.4 and ≥1.5× runner-up) → rule-based (single-candidate auto-accept at 1.0 with
-no semantic check; citation-context scoring; same-author/year Jaccard) → abstract LLM (only when
-author-year patterns exist) → reference-list LLM → pre-PDF title search (only when both screen voters
-were qualifying <em>and</em> confident; provisional) → PDF waterfall (11 tiers: OpenAlex XML with the
-empty-shell rejection, arXiv, OSF, OA URL, Unpaywall, S2, CORE, EPMC, landing-page scrape, SerpAPI,
-Playwright) → 6-parser parse + scoring → full-text LLM. The withhold gate
-(<code>may_stop_at_a_rule</code>: exactly one author-year pair, no stated study count) holds a rule pick
-until something that can enumerate targets speaks, and is restored at every exit where nothing did;
-<code>_keep</code> retains the answer with the <em>most</em> certain targets.</p>
-
-<p><strong>Outcome coding</strong> runs only on resolved links; reproduction rows are coded on two axes
-with per-axis escalation to full text (the escalated call replaces both);
-<code>record_type_check == "neither"</code> → <code>not_a_replication</code>; naming the other vocabulary
-re-codes once (loop-guarded). Deliberately not cached: <code>api_error</code>, and the abstract verdict
-when escalation failed. <code>sanity_check</code> demotes resolved-without-<code>doi_o</code> rows, then
-files rows first-match-wins into 10 set-aside CSVs (order is load-bearing and maintained by hand in
-three places).</p>
-
-<p><strong>csv_to_db.</strong> Filters to resolved replication/reproduction rows, then per row inserts
-<code>unvalidated</code> → <code>validation_queue</code> ×3 → <code>record_metadata</code> last (the dedup
-anchor). Plain PostgREST inserts — non-atomic, no retry (F6).</p>
-
-<h3>Stage 4 — <code>validate/</code></h3>
-<p>Flask app, gunicorn via Procfile. Live pages: <code>/dashboard</code> (per-stage tabs + one per
-set-aside CSV; reads <code>stats.json</code>, the parquet mirror, pool footers, CSVs, Supabase with a
-5-minute cache) and <code>/check</code> (search/download). Supabase access is genuinely read-only (GET
-only), but the app is not: download endpoints copy CSVs, and the <em>legacy <code>/batch</code>
-blueprint</em> writes CSVs and can trigger paid re-extraction (§5). Nothing under <code>filter/</code>
-ever calls <code>dashboard_cache.refresh</code>, so the Stage 2 tab only updates when another stage or a
-hand-run tool refreshes it.</p>
-
-<h3><code>shared/</code> — the plumbing that makes the invariants true</h3>
-<ul>
-  <li><strong>Models:</strong> seven constants in <code>config.py</code>, each with exactly one call site,
-      no <code>os.getenv</code>; provider dispatch via <code>provider_for()</code> ("/" → OpenRouter,
-      <code>gemini*</code> → Google, else OpenAI); an import-time guard pins <code>PDF_PARSE_MODEL</code> to
-      Gemini. Flex on both Gemini (per key slot) and OpenAI (account-level, structured refusal
-      detection, refused flex retried at standard within the same attempt).</li>
-  <li><strong>Caching:</strong> <code>content_key</code> everywhere an answer depends on content;
-      <code>cache_model_id()</code> = <code>model@effort=…</code> is the single funnel into keys (but see
-      F4); <code>prompt_version()</code> is an AST-transitive hash of the builder and everything it
-      references; atomic writes via pid/tid temp files. <code>cache_sync</code> ships seven cache parts +
-      the abstract SQLite as deterministic tars; the miss-vs-misread argument holds; unproven gated-source
-      misses are dropped at pull.</li>
-  <li><strong>OpenAlex:</strong> reservation-queue throttling, budget-refusal key rotation that never burns
-      N keys for one exhaustion, all-or-nothing reference-batch fetches (<code>None</code> ≠
-      <code>[]</code>), title-search misses cached but failures not.</li>
-  <li><strong>Token accounting:</strong> per day/provider/model with thread + cross-process locks;
-      only OpenAI hard-capped; per-thread stage attribution.</li>
-</ul>
-
-<!-- ============================================================ -->
-<h2 id="findings">3 · How the pieces were confirmed</h2>
-<p>Codex reviewed the same tree independently, with docs off-limits, before seeing any of our findings.
-The two efforts converged on the biggest items from different directions — the unregistered-release
-break, the generation-blind tier verdicts, the non-atomic import, the sample-CSV fallback, the
-mixed-generation pool — which is strong evidence they are real rather than reading artifacts. Where
-only one side saw a finding, I re-verified the consequential ones by hand; those carry
-<span class="tag t-green">verified</span> below. Codex's ten risks all survived cross-checking; its dead-code
-list was a strict subset of the agents' (it missed the dormant cheap tier and the batch subsystem).</p>
-
-<!-- ============================================================ -->
-<h2 id="risks">4 · Findings — correctness and cost, ranked</h2>
-
-<div class="finding sev-high">
-<p><strong>F1 · <code>screen --run</code> cannot work against a fresh route.</strong>
-<span class="tag t-grey">2×</span> <span class="tag t-green">verified</span></p>
-<p>The claim RPC rejects unknown releases (<code>db/migrations/0001_engine_baseline.sql:318</code>), but
-<code>route</code> writes only a local JSON and <code>ClaimsClient.register_release()</code>
-(<code>filter/engine/claims.py:155</code>) has zero callers — its only mention is its own module
-docstring. Every live tier run to date must have had its release row inserted out-of-band, and the
-failure message ("refresh and re-route before claiming") tells the operator to do the wrong thing.
-Fix: call <code>register_release</code> from <code>cmd_route</code> (or a <code>publish-release</code> step
-<code>screen</code> checks).</p>
-</div>
-
-<div class="finding sev-high">
-<p><strong>F2 · Resume can truncate <code>extracted.csv</code>.</strong> <span class="tag t-green">verified</span></p>
-<p>If the existing file holds only <code>target_pending</code> rows (or rows whose papers have left
-<code>filtered.csv</code>), <code>resolved_rows</code> is empty, nothing is pre-written, and the first new
-row opens the file with <code>mode="w"</code> (<code>extract/run_extract.py:1285</code>). This is the shape
-of the documented 2026-08-05 76-row loss; the sanity-check demotion is a backstop, not a fix. Related
-(Codex): <code>--fresh</code> warns "will be overwritten" but truncates only at the first written row, so
-an all-skipped run leaves stale output looking fresh; and a missing <code>data/filtered.csv</code>
-silently falls back to <code>misc/sample_filtered.csv</code> (<code>run_extract.py:1845</code>) — a
-production run can "succeed" against a fixture.</p>
-</div>
-
-<div class="finding sev-high">
-<p><strong>F3 · Transient failures frozen as definitive answers — five live violations of the
-project's own rule.</strong> <span class="tag t-green">verified</span> (a, c)</p>
-<ul>
-<li>(a) CrossRef abstract fetch maps <em>every</em> non-429/5xx 4xx to a permanent recorded miss
-(<code>search/fetch_abstracts.py:366</code>) — a 401/403 (the exact stray-header failure the session
-setup guards against) would checkpoint "no abstract exists" per DOI. Scopus handles this case; CrossRef
-doesn't.</li>
-<li>(b) DOI verification cannot distinguish outage from no-match: <code>resolve_doi_by_metadata</code>
-returns <code>None</code> for both and caches <code>{"found": false}</code>; on a partial outage
-(CrossRef down, OpenAlex empty) a row is written <code>mismatch</code>, which <em>deletes its
-<code>doi_o</code></em> and quarantines it (<code>shared/doi_verify.py:295–366</code>,
-<code>run_extract.py:1216</code>).</li>
-<li>(c) <code>_fetch_journal_cached</code> (<code>extract/link_original.py:296–315</code>) caches
-<code>""</code> after <em>any</em> exception — one blip permanently disables the citation path's +3.0
-journal score for that DOI. It also bypasses <code>throttle()</code> and sends no OpenAlex key.</li>
-<li>(d) <code>fetch_doi_metadata</code> can cache <code>{"registered": false}</code> when CrossRef 404s and
-OpenAlex is merely down (<code>doi_verify.py:185–213</code>).</li>
-<li>(e) The GROBID/Gemini reference path returns <code>[]</code> on provider failure
-(<code>shared/grobid.py:333, 420, 455</code>): <code>call_gemini_with_pdf/images</code> return no error
-value at all, so "provider down" is indistinguishable from "no references" — the documented
-swallowed-error anti-pattern, in the one family of calls that never adopted the fix.</li>
-<li>Also: bare <code>except</code>s in <code>_build_ref_o</code> and <code>_guard_original_link</code> swallow
-the deliberate <code>_TitleSearchUnavailable</code> signal, permanently degrading <code>ref_o</code> or
-writing <code>no_doi</code> on resolved rows that never re-run; and <code>abstract_store.record()</code>
-turns an empty-string abstract into a definitive miss.</li>
-</ul>
-</div>
-
-<div class="finding sev-high">
-<p><strong>F4 · <code>effort_for()</code> dispatches on the model <em>string</em>, and three call sites
-share it.</strong> <span class="tag t-green">verified</span></p>
-<p><code>LINKING_MODEL = OUTCOME_MODEL = SCREENING_MODEL_2 = "gpt-5.4-mini"</code>
-(<code>config.py:177/193/200</code>). <code>effort_for(model)</code> tests <code>model ==
-LINKING_MODEL</code> (<code>llm_client.py:209</code>), so: outcome coding — which passes no effort —
-silently bills reasoning at "medium" although the docstring says only linking does; and the screen's
-cache key names <code>@effort=medium</code> while the call actually sent <code>low</code>. The
-two-settings-never-share-a-key invariant currently holds by coincidence; changing
-<code>LINKING_EFFORT</code> would spuriously invalidate the screen and outcome caches. Fix: make effort a
-per-call-site argument (it already is for the screen), not a property inferred from the id.</p>
-</div>
-
-<div class="finding sev-high">
-<p><strong>F5 · Tier verdicts and handoff are generation-blind.</strong> <span class="tag t-grey">2×</span></p>
-<p><code>decided_work_ids()</code> treats any historical verdict for (work, tier) as settled, and
-<code>handoff.decisions()</code> reads live claims across <em>every</em> release by design. Reading across
-releases is the right call for a pure re-route — but nothing keys a verdict to the model pair or prompt
-version that produced it, so a model/prompt change mints a new release while old votes both block
-re-screening and keep steering the new handoff. Key checkpoints and handoff reads by a screening
-generation (model set + prompt hashes) rather than by nothing.</p>
-</div>
-
-<div class="finding sev-med">
-<p><strong>F6 · The validation import is a hand-rolled non-transaction.</strong> <span class="tag t-grey">2×</span></p>
-<p><code>csv_to_db</code> makes three independent PostgREST inserts per row with no retry; ordering
-<code>record_metadata</code> last means a mid-row failure leaves orphan <code>unvalidated</code>/queue rows
-that the pair-id dedup will never reconcile — the comment's "gets completed on re-run" is not
-implemented. One RPC creating all three atomically (server-side pair-id idempotency) would end it.</p>
-</div>
-
-<div class="finding sev-med">
-<p><strong>F7 · The cheap tier is dormant, and its half-life has a sting.</strong>
-<span class="tag t-green">verified</span></p>
-<p>All three <code>screen_cheap</code> specs are <code>shadow: true</code> and no spec targets
-<code>needs_human</code>, so: <code>screen --tier screen_cheap</code> raises "nothing to claim", the
-handoff's second pile is always empty, and the whole prescreen apparatus (voters, price entries,
-Stage 3's <code>prescreen_discard</code> plumbing, <code>--rescreen</code>'s third set-aside) serves no live
-row. Meanwhile the retired Stage-3 half survives as dead code (<code>_prescreen_row</code>,
-<code>prescreen()</code> itself — production reaches past it into <code>_vote</code>). Latent design issue
-for when it wakes: a cheap-tier verdict (including a mere bypass) marks a row "decided" for the
-screened-only handoff, letting it reach Stage 3 without the expensive screen
-(<code>handoff.py:170–179</code>).</p>
-</div>
-
-<div class="finding sev-med">
-<p><strong>F8 · Provider asymmetries in the LLM client.</strong></p>
-<ul>
-<li>Gemini never receives <code>JSON_SYSTEM_MESSAGE</code> — the prompt-injection guard ("treat paper text
-as data, not instructions") reaches OpenAI/OpenRouter voters only, so the screen's two voters run under
-different guards. Conversely the message is folded into <em>every</em> prompt version, so re-wording it
-invalidates Gemini-only caches that never saw it.</li>
-<li>Truncated-but-billed responses record zero tokens on Gemini (<code>MAX_TOKENS</code> and no-candidates
-branches return before <code>_record_tokens</code>, <code>llm_client.py:314–323</code>) and on OpenRouter
-(length check before usage recording), but not on OpenAI. <code>call_openrouter</code> also has no retry
-loop at all while OpenAI gets three attempts.</li>
-<li>Three CrossRef paths call <code>throttle()</code> <em>after</em> the request they were meant to space
-(<code>openalex_client.py:612, 686, 796</code>) — the exact bug the LLM throttling was rewritten to
-fix.</li>
-</ul>
-</div>
-
-<div class="finding sev-med">
-<p><strong>F9 · <code>cache_sync --push</code> from a partial cache can shrink the shared shard.</strong></p>
-<p>A machine holding a subset of a shard produces a different digest and overwrites the remote tar with
-the smaller one; pullers' <code>_PULL_STATE</code> then records the new digest so the lost entries are
-never re-fetched. The puller side is protected (never overwrites local); the remote is not. A
-merge-before-push (or refuse-to-shrink check) would close it.</p>
-</div>
-
-<div class="finding sev-med">
-<p><strong>F10 · Stage 1 generation hygiene is warn-only.</strong> <span class="tag t-grey">2×</span></p>
-<p>A changed search gate only warns and then continues, producing a mixed-generation pool (partitions
-scanned under the old gate stay "done"); only the HF <em>push</em> refuses. A pilot run writes real
-parquet into the <em>production</em> pool directory by default, with no ledger entries — pool and ledger
-then disagree, and <code>ledger_hash</code> misdescribes the pool. The year filters don't protect it
-(pool write happens before the year filter). Splitting pilot from production in
-<code>scan_snapshot()</code> (~190 lines, seven <code>if pilot_csv</code> branches) would make both
-impossible. Also warn-only-adjacent: a corrupt ledger silently becomes an empty one; per-partition
-retry double-counts scan counters; <code>ledger_hash</code> names URL + content-length, not bytes.</p>
-</div>
-
-<div class="finding sev-med">
-<p><strong>F11 · Confidence and identity inconsistencies in Stage 3.</strong></p>
-<ul>
-<li><code>original_match_confidence</code> uses two rules: the single-link path writes "high" for any
-resolved method — including <code>single_candidate_after_requery</code>, an auto-accept with no semantic
-check that <code>_link_confidence</code> deliberately caps at medium — while the per-target path demands
-resolved <em>and</em> high link confidence (<code>run_extract.py:1509</code> vs <code>1463</code>).</li>
-<li>Two definitions of row identity: <code>row_key.primary_key</code> (doi → oa → url → title, raw
-OpenAlex id) vs <code>sanity_check._dedup_key</code> (bare work id first) — set-asides are deduped under
-one and read back under the other.</li>
-<li><code>_has_document</code> counts a cached content-free OpenAlex XML shell as a document
-(<code>run_extract.py:562</code>), skipping the <code>openalex_xml_has_content()</code> check the ladder
-applies.</li>
-<li><code>flora_skip</code> turns any read problem into "skip nothing" via three bare excepts, and
-<code>run_extract</code> hardcodes the two filenames while <code>csv_to_db</code> goes through the shared
-helper — the exact divergence the module was extracted to prevent.</li>
-</ul>
-</div>
-
-<div class="finding sev-med">
-<p><strong>F12 · Uninstrumented OpenAlex spend in DOI verification.</strong></p>
-<p><code>resolve_doi_by_metadata</code> issues free-text <code>search</code> queries (10× a filter query)
-up to three times per written row, bypassing both <code>throttle()</code> and the key-rotation module —
-and because resume re-finalises every carried-forward row, this bill recurs on every restart. Given the
-project's own cost table, this is likely the dominant OpenAlex line of a long run. Caching exists but
-outages aren't distinguished (F3b).</p>
-</div>
-
-<div class="finding sev-low">
-<p><strong>F13 · Memory footprints that contradict the streaming design.</strong>
-<code>run_extract</code> accumulates every output row in RAM and returns a DataFrame nobody needs
-(<code>output_rows</code>); resume loads all of <code>extracted.csv</code> + set-asides; the handoff
-materialises both piles as lists then rewrites <code>filtered.csv</code> in place with
-<code>mode="w"</code> (non-atomic, interruption destroys the previous handoff — Codex); the abstract
-backfill loads ~500k identifiers into sets twice per run despite the indexed SQLite store; every tier
-<code>screen</code> run streams all 5.1M pool rows to serve a <code>--limit 500</code> batch.</p>
-</div>
-
-<div class="finding sev-low">
-<p><strong>F14 · Small governance gaps.</strong> The <code>trusted</code> measurement level satisfies the
-discard evidence gate by assertion (no precision/n). The prescreen cheap-tier votes fail open on a bare
-<code>except</code> (correct direction, but a provider outage looks identical to a pass-through).
-<code>abstract_store</code> reads bypass the write lock on a shared
-<code>check_same_thread=False</code> connection. An <code>assert</code> guards the screen-pile
-non-empty-abstract invariant (vanishes under <code>-O</code>). <code>audit_dois</code> rewrites
-<code>extracted.csv</code> without <code>csv_lock</code>.</p>
-</div>
-
-<div class="finding sev-low">
-<p><strong>F15 · Weak verification surfaces.</strong> <code>filter.engine verify</code> samples only the
-first batch of the first 200 files; a green result is much weaker than it reads.
-<code>_expensive_judge</code>'s model attribution silently degrades to <code>model=""</code> when the
-stored <code>llm_model</code> has fewer "+"-parts than votes, corrupting replayed call order for exactly
-those rows. Dry-run estimates include already-decided works, so the printed price is not the price of
-the next <code>--run</code>.</p>
-</div>
-
-<!-- ============================================================ -->
-<h2 id="dead">5 · Dead code inventory</h2>
-
-<p>Everything below was verified by repo-wide reference search (the sweep agent additionally ran an
-AST-based scan over every tracked module; 1,138 tests collect cleanly, so none of this is load-bearing
-for the suite except where noted).</p>
-
-<h3>Whole subsystems</h3>
+<h3>Open design questions, with the decision that is actually blocked</h3>
 <div class="tablewrap"><table>
-<tr><th>What</th><th>Evidence</th><th>Suggested action</th></tr>
-<tr><td><strong>The <code>/batch</code> blueprint</strong>: <code>validate/routes/batch.py</code> (631
-lines), <code>validate/state.py</code>, <code>validate/static/render.js</code> (16 KB, its
-<code>renderResults</code> never called), the off-schema CSV vocabulary, and four config paths
-(<code>FLORA_SHEET_PATH</code>, <code>OPENALEX_CANDS_PATH</code>, <code>FILTERED_CSV_PATH</code>,
-<code>FINAL_OUTPUT_PATH</code>)</td>
-<td>Input files (<code>openalex_candidates.csv</code>, all <code>multiple_match_*</code>) absent from
-<code>data/</code>; nothing produces them; zero test coverage; yet it registers on any non-readonly run
-and <code>api_run</code> can make paid calls. <code>FILTERED_CSV_PATH</code> =
-<code>multiple_match_candidates.csv</code> — a name trap against the real <code>data/filtered.csv</code>.</td>
-<td>Delete (confirm the maintainer doesn't feed it an unchecked-in CSV first).</td></tr>
-<tr><td><strong>The retired Stage-3 pre-screen half</strong>: <code>_prescreen_row</code>
-(<code>run_extract.py:1526</code>), <code>prescreen()</code> (<code>shared/prescreen.py:161</code> — the
-module's public entry point; production reaches into <code>_vote</code>), the
-<code>extract_prescreen</code> token stage, schema column <code>prescreen_verdict</code></td>
-<td>Zero callers each (grep + AST). The live tier is in <code>filter/engine/tiers.py</code>.</td>
-<td>Delete the two functions and the schema column; give <code>tiers</code> a public voting seam.</td></tr>
-<tr><td><strong><code>requirements-web.txt</code></strong></td>
-<td>Referenced by nothing; nixpacks auto-installs <code>requirements.txt</code>, so Railway gets the heavy
-deps anyway — its stated purpose is unachieved.</td>
-<td>Delete, or actually wire it into the deploy.</td></tr>
+<tr><th>Question</th><th>Blocked on</th><th>Issue</th></tr>
+<tr><td><strong>Promote a <code>screen_cheap</code> spec?</strong> Until one is live, the cheap tier's zero-miss evidence cannot be re-measured on this distribution, and the 16 newly-landed pre-screen patterns (33 total) stay inert.</td><td>A maintainer decision to promote, then a validation-mode run.</td><td>#168, #146</td></tr>
+<tr><td><strong>Shareable resume state.</strong> Resume is a local artifact; two machines cannot divide a run without re-paying. The proposed Supabase <code>processed</code> table is a design, not code.</td><td>Design agreement.</td><td>#136 §3</td></tr>
+<tr><td><strong>Study identifiers, end to end.</strong> The live validation importer writes <em>titles</em> into the <code>study_r</code>/<code>study_o</code> columns, so the study numbers Stage 3 extracts have nowhere to land.</td><td>A change in the validation repo.</td><td>#103</td></tr>
+<tr><td><strong>Engine lineage on validated records.</strong> The live importer sends neither <code>work_id</code> nor <code>release_id</code>, so every record pushed so far carries null lineage and is invisible to <code>supersede.py</code> — we cannot currently tell which validated records a re-route invalidated.</td><td>Same.</td><td>#172</td></tr>
+<tr><td><strong>Gold-corpus provenance.</strong> 62% of the gold corpus is old-pipeline LLM output; recall figures quoted from it are not independent.</td><td>Stratification before any recall claim is published.</td><td>#151</td></tr>
 </table></div>
 
-<h3>Functions, flags, constants</h3>
-<div class="tablewrap"><table>
-<tr><th>Symbol</th><th>Where</th><th>Status</th></tr>
-<tr><td><code>ClaimsClient.register_release</code> / <code>active_claims</code></td><td><code>filter/engine/claims.py:155/228</code></td><td>No caller — the first is F1's missing wire, not deletable.</td></tr>
-<tr><td><code>_map_method</code>'s <code>llm_no_target</code> branch; <code>_METHOD_MAP</code> entries <code>grobid_ref_match</code>, <code>llm_none</code></td><td><code>run_extract.py:277/219/259</code></td><td>Unreachable / no producer anywhere. <code>grobid_ref_match</code> also sits in <code>RESOLVED_LINK_METHODS</code> unannotated, reading as a live rung.</td></tr>
-<tr><td><code>_VALID_OUTCOMES</code></td><td><code>run_extract.py:262</code> <em>and</em> <code>code_outcome.py:170</code></td><td>Assigned, never read — twice.</td></tr>
-<tr><td><code>snapshot_scan._gate_mask</code>; <code>fetch_abstracts._fetch_s2_abstract</code> (+ its import in backfill), <code>_DOI_PREFIX_RE</code>; <code>fetch_manifest(refresh=True)</code></td><td><code>search/</code></td><td>Test-only or definition-only. Production never refreshes the cached manifest.</td></tr>
-<tr><td><code>_MergeFailed</code> production narrative</td><td><code>snapshot_scan.py:610</code></td><td>Only raisable in pilot mode; docstring describes a retired index path.</td></tr>
-<tr><td><code>cache.clear_cache</code>; <code>disambiguation._is_umbrella_paper</code>; <code>pdf_parsing.PARSE_METHODS</code>; <code>parse_docling</code> (stub); unreachable <code>return result</code> (would <code>NameError</code>); unused <code>pattern_str</code> param</td><td><code>shared/</code> (<code>openalex_client.py:1032/471</code>)</td><td>Zero callers / unreachable.</td></tr>
-<tr><td><code>config.S2_RATE_SEC</code>; <code>config.SERPAPI_KEY</code> (+ unused import in pdf_sources); <code>REVIEW_CSV_PATH</code>; orphan comment for moved <code>SNAPSHOT_POOL_COMPRESSION</code> (<code>config.py:250</code>)</td><td><code>shared/config.py</code></td><td>Nothing reads them.</td></tr>
-<tr><td>Test-only public API: <code>utils.non_article_title</code>, <code>utils.sentence_spans</code>, <code>abstract_store.drop_misses</code>, <code>store.rule_hits</code>, <code>store.sample_pile</code> (+ unused cli import), <code>overlay.read_manifest</code></td><td>various</td><td>Definition + tests only.</td></tr>
-<tr><td><code>validate/state.all_rep_df</code>; dead routes <code>/api/dashboard/supabase-corrections</code>, <code>/api/batch/stats</code>; unused <code>request/session</code> imports in <code>app.py</code></td><td><code>validate/</code></td><td>Never referenced from any template or script.</td></tr>
-</table></div>
-
-<h3>Schema and spec surface</h3>
-<div class="tablewrap"><table>
-<tr><th>What</th><th>Status</th></tr>
-<tr><td>Seven value-set constants (<code>FILTER_STATUS_VALUES</code>, <code>TYPE_VALUES</code>, …) and <code>LINK_METHOD_VALUES</code> itself</td><td>Defined, never used to validate anything; only <code>RESOLVED_LINK_METHODS</code> is live. <code>validate_csv_columns</code> has no pipeline caller (tests only); its <code>"validated"</code> branch is unreachable. Of <code>SOURCE_VALUES</code>, only <code>openalex_snapshot</code> has a producer since the API-harvest retirement. <code>metadata_matches</code>'s <code>author</code> parameter is accepted and never used.</td></tr>
-<tr><td><code>VALIDATE_ADDED_COLS</code> / <code>VALIDATED_COLS</code> block; <code>CANDIDATES_COLS</code> as a "stage"</td><td>Vestigial — no <code>data/validated.csv</code> exists; <code>CANDIDATES_COLS</code> survives only as the pool→row rebuild contract.</td></tr>
-<tr><td><code>ENGINE_EXPORT_COLS</code> as CSV data; <code>classify_llm_model</code>; <code>prescreen_verdict</code></td><td>Write-only in the CSV: every reader gets these facts from DuckDB, the pool, or the manifest instead. <code>route_precedence</code> has no reader anywhere. <code>classify_llm_model</code> is always <code>""</code> (one test exercises a parameter no caller sets).</td></tr>
-<tr><td>Spec-format features: <code>pyre_regex</code>, <code>abstract_missing</code>, <code>fields.publication_year</code>; conventions keys <code>measurement_levels</code>, <code>pending_reasons</code>; empty <code>aliases.json</code>; missing <code>holdout.json</code></td><td>No spec uses the first three; no Python reads the two keys; the alias map is empty (yet a release input); the holdout diagnostics permanently print <code>not_constructed</code>.</td></tr>
-<tr><td>Six shadow specs (31% of the bundle) incl. all of <code>screen_cheap</code>; SQL tables <code>engine_human_labels</code>, <code>engine_alias_exceptions</code>, <code>engine_holdout</code>; claim tiers <code>human</code>/<code>measurement</code></td><td>Never promoted / never touched by any code.</td></tr>
-<tr><td><strong><code>shared/csv_index.py</code> does not exist</strong></td><td>Deleted in <code>350b6df</code>; no code references remain, but <code>row_key.py</code> still justifies its format by the deleted sidecar contract and external docs still describe <code>--rebuild-index</code>. Stage 3's resume is a full in-RAM read now.</td></tr>
-</table></div>
-
-<h3>Repo hygiene</h3>
+<h3>Worth doing, not urgent</h3>
 <ul>
-<li><code>.github/workflows/deploy.yml</code> still triggers on the long-superseded
-<code>feature/extract</code> branch (exists on origin) — deploys can fire from stale code.</li>
-<li><code>.env.example</code> is tracked yet listed in <code>.gitignore</code>;
-<code>SUPABASE_ACCESS_TOKEN</code> in it has zero code references; <code>OSF_RATE_SEC</code> is read but
-absent from it.</li>
-<li>Four <code>analysis/</code> scripts hard-code absolute user paths; one writes into a git worktree
-under <code>.claude/</code>; the <code>analysis</code> subdirs lack <code>__init__.py</code> so
-<code>python -m</code> never works on them. <code>misc/sample_candidates.csv</code> backs only an
-<code>xfail</code> tripwire.</li>
-<li>Dashboard set-aside registry drift: four registered CSVs absent on disk; three existing set-asides
-(<code>api_error</code>, <code>no_original_found</code>, <code>provisional_title_search</code> — the whole
-<code>llm_title_search</code> queue) have no tab.</li>
+<li>Claim expiry and a <code>release-claim</code> CLI (W3); an index for the verdict read and a migration runner (W7).</li>
+<li>Make <code>token_usage</code> distinguish an unreadable ledger from an empty one (W4), and give the dashboard a
+refresh from Stage 2 (W6).</li>
+<li>Write the Stage 3 output through a temp file and an atomic replace, so a kill during the header rewrite cannot
+leave a header-only <code>extracted.csv</code> — the one row-loss window the four in-process guards do not cover.</li>
+<li>Correct <code>link_original.py</code>'s docstrings, which still describe the pre-move architecture, and reconcile
+<code>pool_reader</code>'s two stated overlay policies by deciding which is the contract (W9).</li>
+<li>Rewrite the Stage 1 section of <code>docs/cli-reference.md</code>, which documents a CLI that no longer exists, and
+sweep CLAUDE.md for the deleted <code>csv_index</code> and the 1M-row claim.</li>
+<li>Untested load-bearing modules: <code>openalex_keys</code> (rotation for a metered, budgeted API),
+<code>token_counter</code>, <code>backfill_authors</code> (a write path over production data).</li>
+<li>Add a CI job that runs the suite — today nothing does — and retire the <code>feature/extract</code> deploy trigger,
+which still ships three-week-old code to production on push.</li>
 </ul>
 
-<!-- ============================================================ -->
-<h2 id="refactor">6 · Unnecessary complication &amp; refactoring opportunities</h2>
-
-<h3>Highest leverage</h3>
-<ol>
-<li><strong>Merge the provider call bodies.</strong> <code>call_openai</code>/<code>call_openrouter</code>
-are the same function twice (differing base URL, token param, budget check, flex, retry count); the
-three Gemini builders re-implement rotation/parsing/recording with accidental-looking divergences. One
-OpenAI-compatible core and one <code>_gemini_generate</code> would fix F8's asymmetries (unrecorded
-truncation, missing retry) <em>by construction</em>.</li>
-<li><strong>Split <code>run_extract.py</code> (2,265 lines ≈ four modules).</strong> BibTeX/reference
-building, row builders (three near-identical <code>_merge_row</code> variants), parse-cache plumbing,
-resume/IO, orchestrator, plus a second entry point. External tools already import private helpers from
-it, dragging in the whole extraction stack.</li>
-<li><strong>Split <code>scan_snapshot()</code> into production vs pilot.</strong> Seven
-<code>if pilot_csv</code> interleavings; the split makes F10's pool pollution and the unreachable
-<code>_MergeFailed</code> story impossible to express.</li>
-<li><strong>Make handoff a streamed, atomic DuckDB export.</strong> Today it reconstructs a materialized
-view in Python lists and rewrites <code>filtered.csv</code> in place (Codex; F13).</li>
-<li><strong>Give <code>tiers.py</code> (868 lines, five concerns) a split</strong> — the HF/reconcile half
-shares nothing with the judging half — and promote the three underscore-crossing imports
-(<code>_hf_upload_blockers</code>, <code>_screen_record_type</code>, <code>_vote</code>) into public
-seams.</li>
-</ol>
-
-<h3>Duplication worth collapsing</h3>
-<ul>
-<li>Four copies of the CrossRef/CSL metadata-extraction block in <code>openalex_client.py</code>
-(<code>:626, :705, :805, :880</code> — one function computes the year twice); duplicated Jaccard
-(<code>openalex_client</code> vs <code>disambiguation</code>, the canonical copy); duplicated
-concept-id-regex workaround (<code>snapshot_scan</code> vs <code>engine/backends</code>).</li>
-<li>Duplicated CSV writers (<code>export._write_csv</code> ≡ <code>handoff._write_csv</code>);
-<code>_now()</code> written four times; three hand-rolled PostgREST paginators
-(<code>claims</code>, <code>supersede</code>, <code>supabase_client</code>); the six-source dispatch
-written twice in <code>backfill</code>; <code>run_extract:1324</code> re-implements the provider→key-env
-rule that <code>_PROVIDER_KEY_ENV</code> already owns (and gets a hypothetical Gemini
-<code>OUTCOME_MODEL</code> wrong).</li>
-<li><code>--resolved-only</code> applied at three places with one predicate; sanity_check's bucket order
-maintained by hand in three places; <code>_UNPICKED_TARGET</code> vs <code>base</code> — two hand-synced
-default dicts for one resolver contract.</li>
-</ul>
-
-<h3>Indirection that could go</h3>
-<ul>
-<li><code>pool_sync</code>'s four one-line shims over <code>shared/hf</code> (with import-renaming to make
-room for them); <code>pool_reader.py</code> as a 74-line pass-through that belongs inside
-<code>overlay.py</code>; <code>cache_sync.abstract_source_evidence</code> (docstring longer than body);
-the <code>__none__</code>-sentinel translation layer in <code>fetch_abstracts</code> preserved only so old
-runner code paths needn't change; <code>backfill._scopus_fetcher</code> closure vs
-<code>functools.partial</code>.</li>
-<li><code>SPEC_DIR</code> defined in <code>export.py</code> and imported backwards by
-<code>cli</code>/<code>handoff</code>; <code>UNCHECKED</code>/<code>_UNCHECKED</code> double alias; three
-unrelated <code>estimate()</code>s in one package; <code>supersede</code>/<code>backfill</code> as separate
-argparse programs (with a no-op <code>--dry-run</code>) rather than subcommands;
-<code>dashboard_cache._compute_large_stage_stats</code>'s dead generality (it is
-<code>_compute_filtered_stats</code>).</li>
-<li>Import-time side effects in <code>config.py</code> (ten <code>mkdir</code>s and a global
-<code>logging.basicConfig</code>) — worth making explicit, since every tool inherits them.</li>
-<li>Every <code>cache/llm</code> and classify entry stores its full ~5k-token prompt
-(<code>llm_prompt</code>), and these are exactly the shards <code>cache_sync</code> ships — dropping the
-field (it's reconstructible) would shrink the shared cache substantially.</li>
-</ul>
-
-<!-- ============================================================ -->
-<h2 id="drift">7 · Where the written story has drifted from the code</h2>
-<p>This review deliberately ignored documentation as input; these are places where code contradicts its
-own <em>in-repo</em> narration (docstrings/comments), found while reading:</p>
-<ul>
-<li><code>pool_reader.py</code>'s docstring says an overlay "fills and never replaces"; the code (and its
-test) implement replace-always. One of the two is the intended contract — worth deciding which.</li>
-<li><code>claims.py</code> says blobs upload to HF <em>before</em> their verdict rows; <code>tiers.py</code>
-implements (and correctly documents) disk-before-row with HF after.</li>
-<li><code>pdf_sources.py</code>'s header lists 8 acquisition tiers; the code has 11 in a different
-order. <code>fetch_abstracts.py</code>'s header numbers OSF sixth; its only caller runs OSF first.
-<code>token_counter.py</code> lists a stage that is never set and omits three that are.</li>
-<li><code>row_key.py</code> justifies its key format by a sidecar-index contract whose module was
-deleted. External docs (CLAUDE.md, cli-reference) still describe <code>csv_index</code>,
-<code>--rebuild-index</code>, and retired model-constant names.</li>
-<li><code>run_for_doi</code>'s docstring still describes a post-PDF <code>llm_title_search</code> rung;
-no such rung exists — <code>llm_title_search_{provider}</code> is now minted inside
-<code>identify_targets_with_llm</code> when a DOI-less reference is resolved by search.
-<code>_prescreen_row</code>'s docstring likewise describes a path that no longer runs.</li>
-<li>Helpers with real, load-bearing logic and no tests: <code>_aggregate_outcomes</code>,
-<code>_merge_duplicate_originals</code>, <code>_union_targets</code>, <code>_fetch_journal_cached</code>.</li>
-</ul>
-
-<p class="src" style="margin-top:3rem">Produced 2026-08-05 by a five-agent code survey plus an
-independent Codex cross-review; key claims hand-verified. Supersedes earlier current-state pages
-(not consulted).</p>
+<p class="src" style="margin-top:3rem">Mapped 2026-08-06 from <code>fix/current-state-findings</code> @
+<code>6a83f96</code> by three code-only survey agents (Stage 1+2, Stage 3+4, <code>shared/</code> and repo-wide), each
+barred from reading project documentation, with every count verified against the artifact. Supersedes the 2026-08-05
+page.</p>
 
 </main>
 <script>
 (function () {
   window.HC_CONFIG = {
     endpoint: 'https://script.google.com/macros/s/AKfycbyx858xfSCgHQ8RmbfbMsdzcmzrkNs_JZVmqeEBVrH-S6g8YJbI32CY7if-k8oTzg-eyQ/exec',
-    project: 'flora-extractor-current-state-2026-08-05'
+    project: 'flora-extractor-current-state-2026-08-06'
   };
   var BASE = 'https://html-comments.surge.sh/';
   var link = document.createElement('link');
