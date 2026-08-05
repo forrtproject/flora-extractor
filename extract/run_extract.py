@@ -8,22 +8,31 @@ For every row in filtered.csv:
 Each completed row is appended to data/extracted.csv immediately so that
 Stage 4 validation can begin before the full run finishes.
 
+Rows are independent and each is minutes of provider and download latency, so
+EXTRACT_WORKERS of them are in flight at once (1 runs the loop straight through,
+with no pool). They therefore finish out of order; a paper's rows are still written
+together, under the one write lock.
+
 Usage:
     python -m extract.run_extract
 """
 import json
 import re
+import threading
+from concurrent.futures import (FIRST_COMPLETED, Future, ThreadPoolExecutor,
+                                wait)
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 
 from shared.config import (
-    BASE_DIR, DATA_DIR, GEMINI_API_KEYS,
+    BASE_DIR, DATA_DIR, EXTRACT_WORKERS, GEMINI_API_KEYS,
     OA_XML_CACHE_DIR, OPENAI_API_KEY, OPENROUTER_API_KEY, PARSE_CACHE_DIR,
     PDF_CACHE_DIR, log,
 )
 from shared import token_counter
+from shared.cache import write_json
 from shared.llm_client import (
     _clean_study_numbers, classify_replication, screen_voters,
 )
@@ -54,7 +63,10 @@ from shared.utils import (bare_work_id, cache_key, citation_fragment,
 # Shared with csv_to_db so extraction and validation skip the same set (see shared/flora_skip.py)
 from shared.flora_skip import (
     FLORA_VALIDATED_STATUSES,
+    VALIDATED_SKIP_NAME,
     load_flora_skip_dois as _load_flora_skip_dois,
+    load_validated_skip as _load_validated_skip,
+    validated_work_id as _validated_work_id,
 )
 from extract.link_original import run_for_doi
 from extract.code_outcome import extract_outcome, predict_outcome_keyword
@@ -582,8 +594,7 @@ def _save_parse_cache(doi_r: str) -> None:
         log.debug("[%s] parse produced no text — not caching", doi_r)
         return
     try:
-        with out_file.open("w", encoding="utf-8") as fh:
-            json.dump(results, fh, ensure_ascii=False, indent=2)
+        write_json(out_file, results, indent=2)
     except Exception as exc:
         log.debug("[%s] _save_parse_cache write failed: %s", doi_r, exc)
 
@@ -963,7 +974,7 @@ def _screen_set_aside_keys(data_dir) -> set[str]:
 
 
 def _load_extracted_rows(out_path, rescreen: bool = False) -> tuple[dict[str, list[dict]], set[str]]:
-    """Partition extracted.csv rows by resolution status for --resume mode.
+    """Partition extracted.csv rows by resolution status for a resuming run.
 
     Also reads the screen's set-aside CSVs, which hold papers sanity_check moved out
     of extracted.csv; without them a resume re-screens every paper the screen already
@@ -1214,11 +1225,12 @@ def _fill_work_ids(row: dict) -> dict:
     return row
 
 
-def _append_row(out_path, result_row: dict, first: bool) -> None:
-    """Write one result row to the output CSV immediately after processing.
+def _finalise_row(result_row: dict) -> dict:
+    """Verify doi_o, fill the work ids, and make the row's text safe to write.
 
-    first=True  → open with mode='w' (creates / truncates the file) and write header.
-    first=False → open with mode='a' (append) and skip header.
+    Split out of _append_row because it is the part that calls APIs: two lookups per
+    row, which the workers must make on their own time rather than while holding the
+    write lock the whole pool queues on.
     """
     result_row = _fill_work_ids(_verify_row(result_row))
 
@@ -1228,7 +1240,15 @@ def _append_row(out_path, result_row: dict, first: bool) -> None:
             # Replace control characters and problematic whitespace
             # but preserve newlines within fields (they'll be quoted)
             result_row[key] = val.replace('\x00', '').replace('\r', ' ')
+    return result_row
 
+
+def _write_row(out_path, result_row: dict, first: bool) -> None:
+    """Append one already-finalised row to the output CSV.
+
+    first=True  → open with mode='w' (creates / truncates the file) and write header.
+    first=False → open with mode='a' (append) and skip header.
+    """
     row_df = pd.DataFrame([result_row])
     for col in EXTRACTED_COLS:
         if col not in row_df.columns:
@@ -1248,6 +1268,11 @@ def _append_row(out_path, result_row: dict, first: bool) -> None:
         log.error("Failed to write row for DOI %s: %s",
                   result_row.get("doi_r", "unknown"), str(e))
         raise
+
+
+def _append_row(out_path, result_row: dict, first: bool) -> None:
+    """Finalise one result row and stream it to the output CSV."""
+    _write_row(out_path, _finalise_row(result_row), first)
 
 
 # Read at call time, so a run picks up the keys config actually loaded.
@@ -1628,7 +1653,8 @@ def _iter_filtered_rows(filtered_path,
 
 
 def _should_skip(row: pd.Series, row_key: str, doi_r_clean: str,
-                 flora_skip: "set[str]", resolved_rows: dict,
+                 flora_skip: "set[str]",
+                 validated_skip: "tuple[set[int], set[str]]", resolved_rows: dict,
                  resolved_main: dict, doi_r_targets: "set[str]",
                  only_reproductions: bool) -> "str | None":
     """Why this row is not processed, or None to process it.
@@ -1636,9 +1662,20 @@ def _should_skip(row: pd.Series, row_key: str, doi_r_clean: str,
     Ordered by cost: the memory-set checks first, and --only-reproductions ahead of
     the caller's --limit counter, so `--limit N` counts reproductions rather than
     the replications it scanned past.
+
+    `flora` and `validated` are different facts and are reported separately: the
+    first is "already in published FLoRA", the second "already in the validation
+    tables". Either identifier settles the second — a legacy record with only a DOI
+    still blocks the row, and a row with no OpenAlex id can still be blocked by its
+    DOI.
     """
     if doi_r_clean in flora_skip:
         return "flora"
+    validated_ids, validated_dois = validated_skip
+    work = _validated_work_id(row.get("openalex_id_r"))
+    if (work is not None and work in validated_ids) or \
+            (doi_r_clean and doi_r_clean in validated_dois):
+        return "validated"
     if row_key and row_key in resolved_rows:
         return "resumed"
     # --extracted-test: skip DOIs already resolved in the production extracted.csv.
@@ -1723,7 +1760,8 @@ def run_extract(no_llm: bool = False,
                 no_reproductions: bool = False,
                 only_reproductions: bool = False,
                 skip_flora_validated: bool = True,
-                resume: bool = False,
+                skip_validated: bool = True,
+                fresh: bool = False,
                 resolved_only: bool = False,
                 from_year: "int | None" = None,
                 to_year: "int | None" = None,
@@ -1745,13 +1783,18 @@ def run_extract(no_llm: bool = False,
     skip_flora_validated — skip DOIs already in FLoRA: validated entry-sheet rows
                            (FLORA_VALIDATED_STATUSES) plus every row in flora.csv.
                            ON by default; disable with --no-skip-flora-validated.
-    resume              — carry forward already-resolved rows from extracted.csv unchanged;
-                           re-run only rows with link_method == "target_pending".
+    skip_validated      — skip works already in the Supabase validation tables, read
+                          from the static data/validated_skip.csv (work id or DOI).
+                          ON by default; disable with --no-skip-validated.
+    fresh               — DISCARD the existing output CSV and re-extract every row,
+                           paying for all of it again. Off by default: an ordinary run
+                           carries already-resolved rows forward unchanged and re-runs
+                           only rows with link_method == "target_pending".
     resolved_only       — only write rows that are fully resolved (any rule-based or
                            llm_cited_candidates / llm_fulltext link_method with a non-empty doi_o).
                            target_pending / api_error / no_original_found rows are silently skipped.
                            Use with --no-llm --no-pdf for a fast rule-based-only pass, then
-                           follow up with --resume for the LLM pass on remaining rows.
+                           run again without them for the LLM pass on the remaining rows.
     rescreen            — reopen the rows a previous run set aside on the classification screen's
                            own verdict (not_a_replication, screen_disagreement) so the current
                            voter pair decides them again. Without it those rows are carried
@@ -1781,6 +1824,12 @@ def run_extract(no_llm: bool = False,
             DATA_DIR / "flora.csv",
         )
 
+    # The frozen legacy set in the Supabase validation tables, materialised once into
+    # a committed CSV (analysis/build_validated_skip.py) so a run needs no database.
+    validated_skip: tuple[set[int], set[str]] = (set(), set())
+    if skip_validated:
+        validated_skip = _load_validated_skip(DATA_DIR / VALIDATED_SKIP_NAME)
+
     prod_path = DATA_DIR / "extracted.csv"
     if out_path is None:
         out_path = prod_path
@@ -1792,7 +1841,7 @@ def run_extract(no_llm: bool = False,
 
     # In test mode: always load the production CSV to identify which DOIs to skip
     # (those already resolved in extracted.csv should not be re-processed or written
-    #  to extracted-test.csv, even without --resume).
+    #  to extracted-test.csv, even on a --fresh run).
     resolved_main: dict[str, list[dict]] = {}
     if test_mode:
         resolved_main, _ = _load_extracted_rows(prod_path, rescreen=rescreen)
@@ -1801,12 +1850,17 @@ def run_extract(no_llm: bool = False,
             len(resolved_main),
         )
 
+    # Resuming is the default: a run that re-decided rows it had already paid for
+    # would be the expensive accident, so it takes --fresh to ask for one.
     resolved_rows: dict[str, list[dict]] = {}
-    if resume:
+    if fresh:
+        log.warning("--fresh: %s will be overwritten and every row re-extracted",
+                    out_path.name)
+    else:
         resolved_rows, pending_dois = _load_extracted_rows(out_path, rescreen=rescreen)
         n_resolved_rows = sum(len(v) for v in resolved_rows.values())
         log.info(
-            "--resume: %d DOIs already resolved (%d rows), %d pending re-processing",
+            "resuming: %d DOIs already resolved (%d rows), %d pending re-processing",
             len(resolved_rows), n_resolved_rows, len(pending_dois),
         )
         # Write ALL resolved rows to the output file immediately, before processing
@@ -1817,27 +1871,32 @@ def run_extract(no_llm: bool = False,
                 _append_row(out_path, result_row, first=first_write)
                 first_write = False
                 output_rows.append(result_row)
-        log.info("--resume: wrote %d resolved rows to %s (safe to interrupt)",
+        log.info("resuming: wrote %d resolved rows to %s (safe to interrupt)",
                  len(output_rows), out_path.name)
 
     doi_r_targets = {clean_doi(d) for d in (doi_r_filter or [])}
     flora_skip_count = 0
+    validated_skip_count = 0
 
-    for row in _iter_filtered_rows(filtered_path, from_year, to_year,
-                                   predicted_outcome, source, doi_r_filter):
-        doi_r_clean = clean_doi(str(row.get("doi_r", "")))
-        skip = _should_skip(row, _extract_row_key(row), doi_r_clean, flora_skip,
-                            resolved_rows, resolved_main, doi_r_targets,
-                            only_reproductions)
-        if skip is not None:
-            log.debug("[%s] skipping — %s", doi_r_clean, skip)
-            if skip == "flora":
-                flora_skip_count += 1
-            continue
+    workers = max(1, EXTRACT_WORKERS)
+    # One lock over a paper's whole write, so its rows land contiguously and the
+    # header is written exactly once. Papers finish out of order under a pool, and
+    # nothing downstream reads extracted.csv in order: every row is keyed
+    # (primary_key / pair_id) and a resumed run partitions by that key.
+    write_lock = threading.Lock()
+    stop = threading.Event()
+    failures: list[BaseException] = []
 
-        if limit is not None and processed >= limit:
-            break
-        processed += 1
+    def _run_row(row: pd.Series, doi_r_clean: str) -> None:
+        """One filtered.csv row, start to finish, on a worker thread.
+
+        `stop` makes rows that were queued behind a failure no-ops rather than
+        cancellations, so a run that is ending still drains and the rows already in
+        flight finish and write what they were paid for.
+        """
+        nonlocal first_write
+        if stop.is_set():
+            return
 
         # If DOI is missing, try to resolve one from the URL before processing.
         # This lets I4R / Replication Network rows participate in the full pipeline.
@@ -1862,15 +1921,83 @@ def run_extract(no_llm: bool = False,
 
         # Self-links and unrecoverable doi_o are already rejected by
         # _guard_original_link at each producer, ahead of outcome coding.
+        kept = []
         for result_row in result_rows:
             if resolved_only and result_row.get("link_method") in _NO_LINK_METHODS:
                 log.debug("[%s] --resolved-only: skipping %s row",
                           doi_r, result_row.get("link_method"))
                 continue
-            _append_row(out_path, result_row, first=first_write)
-            first_write = False
-            output_rows.append(result_row)
-            log.info("Streamed %d rows → %s", len(output_rows), out_path.name)
+            # The verification lookups happen here, off the write lock.
+            kept.append(_finalise_row(result_row))
+
+        with write_lock:
+            for result_row in kept:
+                _write_row(out_path, result_row, first=first_write)
+                first_write = False
+                output_rows.append(result_row)
+                log.info("Streamed %d rows → %s", len(output_rows), out_path.name)
+
+    def _reap(done) -> None:
+        for future in done:
+            futures.discard(future)
+            try:
+                future.result()
+            except BaseException as exc:  # noqa: BLE001 — one row must not cost
+                stop.set()                # the others the rows they already wrote
+                failures.append(exc)
+
+    futures: set[Future] = set()
+    pool = (ThreadPoolExecutor(max_workers=workers, thread_name_prefix="extract")
+            if workers > 1 else None)
+    try:
+        for row in _iter_filtered_rows(filtered_path, from_year, to_year,
+                                       predicted_outcome, source, doi_r_filter):
+            if stop.is_set():
+                break
+            doi_r_clean = clean_doi(str(row.get("doi_r", "")))
+            skip = _should_skip(row, _extract_row_key(row), doi_r_clean, flora_skip,
+                                validated_skip, resolved_rows, resolved_main,
+                                doi_r_targets, only_reproductions)
+            if skip is not None:
+                log.debug("[%s] skipping — %s", doi_r_clean, skip)
+                if skip == "flora":
+                    flora_skip_count += 1
+                elif skip == "validated":
+                    validated_skip_count += 1
+                continue
+
+            # --limit counts rows HANDED to the pool, on this thread, exactly where
+            # it counted rows entered before: the skips it must not count are
+            # decided here too.
+            if limit is not None and processed >= limit:
+                break
+            processed += 1
+
+            if pool is None:
+                _run_row(row, doi_r_clean)
+                continue
+            futures.add(pool.submit(_run_row, row, doi_r_clean))
+            # Read ahead by one round of work and no further: filtered.csv is over a
+            # million rows, and submitting them all would queue every survivor's row
+            # object in memory ahead of the pool.
+            if len(futures) >= 2 * workers:
+                _reap(wait(futures, return_when=FIRST_COMPLETED).done)
+    except BaseException:
+        # Ctrl-C, or an error on this thread: start nothing new, but still let the
+        # rows in flight finish and write in the `finally` below.
+        stop.set()
+        raise
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=True)
+            _reap(list(futures))
+
+    if failures:
+        # A budget stop is the failure with a handler of its own (log + sanity_check
+        # in __main__), and it wins over an incidental error raised alongside it.
+        raise next((exc for exc in failures
+                    if isinstance(exc, (TokenBudgetExhausted, OpenAlexQuotaExhausted))),
+                   failures[0])
 
     log.info("Stage 3 complete: %d rows → %s", len(output_rows), out_path)
 
@@ -1883,6 +2010,9 @@ def run_extract(no_llm: bool = False,
     print(f"  Flora-validated skipped:  {flora_skip_count}")
     if skip_flora_validated:
         print(f"    (from flora_entry_sheet.csv + flora.csv)")
+    print(f"  Validation-table skipped: {validated_skip_count}")
+    if skip_validated:
+        print(f"    (from data/{VALIDATED_SKIP_NAME} — the validation tables)")
     if limit:
         print(f"  Limit reached:            {processed >= limit}")
     print("=" * 70 + "\n")
@@ -1972,18 +2102,28 @@ if __name__ == "__main__":
              "--no-skip-flora-validated to re-extract them anyway.",
     )
     parser.add_argument(
-        "--resume", action="store_true",
-        help="Carry forward already-resolved rows from extracted.csv; "
-             "re-run only rows with link_method == 'target_pending'.",
+        "--skip-validated", action=argparse.BooleanOptionalAction, default=True,
+        help="Skip works already in the Supabase validation tables — the frozen "
+             "legacy set materialised in data/validated_skip.csv, matched on the "
+             "OpenAlex work id or the DOI. ON by default; pass --no-skip-validated "
+             "to extract them again anyway.",
+    )
+    parser.add_argument(
+        "--fresh", action="store_true",
+        help="DISCARD the existing output CSV and start over: every already-resolved "
+             "row is re-extracted and paid for again, and the old file is overwritten "
+             "rather than carried forward. Resuming is the DEFAULT — an ordinary run "
+             "keeps every resolved row and re-runs only 'target_pending' ones — so "
+             "pass this only when you actually want the whole run repeated.",
     )
     parser.add_argument(
         "--rescreen", action="store_true",
-        help="With --resume (or --extracted-test): also re-process rows a previous run "
+        help="Also re-process rows a previous run "
              "settled from the abstract alone — the classification screen's verdicts "
              "(not_a_replication, screen_disagreement) and the optional cheap "
              "pre-screen's discards (prescreen_discard) — so a changed voter pair, "
-             "prompt or bypass list decides them again. This is the ONLY way back: a "
-             "resume without it treats every key in data/not_a_replication.csv, "
+             "prompt or bypass list decides them again. This is the ONLY way back: an "
+             "ordinary (resuming) run treats every key in data/not_a_replication.csv, "
              "data/screen_disagreement.csv and data/prescreen_discard.csv as settled and "
              "skips the paper. Historical prescreen_discard rows are reopened the "
              "same way.",
@@ -1992,8 +2132,8 @@ if __name__ == "__main__":
         "--resolved-only", action="store_true",
         help="Only write rows that are fully resolved (any rule-based method or llm_cited_candidates / llm_fulltext). "
              "target_pending / api_error / no_original_found rows are silently skipped. "
-             "Combine with --no-llm --no-pdf for a fast rule-based pass, then use --resume "
-             "for the LLM pass on the remaining rows.",
+             "Combine with --no-llm --no-pdf for a fast rule-based pass, then run again "
+             "without them for the LLM pass on the remaining rows.",
     )
     parser.add_argument(
         "--from-year", type=int, default=None, metavar="YYYY",
@@ -2042,7 +2182,7 @@ if __name__ == "__main__":
         help=(
             "Run the full outcome pipeline (PDF download + LLM) even when --no-pdf "
             "or --no-llm are set. Only the outcome step is affected; link resolution "
-            "still respects those flags. Useful with --no-llm --no-pdf --resume to "
+            "still respects those flags. Useful with --no-llm --no-pdf to "
             "carry forward links but upgrade cannot_be_determined outcomes."
         ),
     )
@@ -2063,7 +2203,8 @@ if __name__ == "__main__":
                 no_reproductions=args.no_reproductions,
                 only_reproductions=args.only_reproductions,
                 skip_flora_validated=args.skip_flora_validated,
-                resume=args.resume,
+                skip_validated=args.skip_validated,
+                fresh=args.fresh,
                 resolved_only=args.resolved_only,
                 from_year=args.from_year,
                 to_year=args.to_year,
@@ -2076,7 +2217,8 @@ if __name__ == "__main__":
             )
     except (OpenAlexQuotaExhausted, TokenBudgetExhausted) as exc:
         log.error("%s", exc)
-        log.error("Rows written before the stop are intact; re-run with --resume to continue.")
+        log.error("Rows written before the stop are intact; re-run to continue — "
+                  "an ordinary run resumes from them.")
     finally:
         token_counter.print_summary()
         # Sanity pass over whatever was written — runs on normal completion AND on

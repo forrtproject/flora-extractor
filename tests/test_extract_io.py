@@ -66,10 +66,12 @@ class TestAppendRow:
 class TestShouldSkip:
     _ROW = pd.Series({"doi_r": "10.1/a", "filter_status": "replication"})
 
-    def _skip(self, *, resolved=None, resolved_main=None, targets=(), row=None):
+    def _skip(self, *, resolved=None, resolved_main=None, targets=(), row=None,
+              validated=None):
         return run_extract._should_skip(
             row if row is not None else self._ROW, "10.1/a", "10.1/a",
-            flora_skip=set(), resolved_rows=resolved or {},
+            flora_skip=set(), validated_skip=validated or (set(), set()),
+            resolved_rows=resolved or {},
             resolved_main=resolved_main or {}, doi_r_targets=set(targets),
             only_reproductions=False)
 
@@ -93,7 +95,8 @@ class TestShouldSkip:
         """--doi-r overrides only the extracted.csv skip: a row already in FLoRA, and
         a Stage 2 false positive, are still not extracted."""
         assert run_extract._should_skip(
-            self._ROW, "10.1/a", "10.1/a", flora_skip={"10.1/a"}, resolved_rows={},
+            self._ROW, "10.1/a", "10.1/a", flora_skip={"10.1/a"},
+            validated_skip=(set(), set()), resolved_rows={},
             resolved_main={}, doi_r_targets={"10.1/a"}, only_reproductions=False) == "flora"
         fp = pd.Series({"doi_r": "10.1/a", "filter_status": "false_positive"})
         assert self._skip(row=fp) == "false_positive"

@@ -115,6 +115,41 @@ class TestExtractedTestFlag:
         assert doi_resolved not in dois_in_test, "resolved DOI should be skipped in test mode"
         assert doi_new in dois_in_test, "new DOI should be processed in test mode"
 
+    def test_default_run_resumes_and_fresh_reprocesses(self, tmp_path):
+        """Resuming is the default; only --fresh re-spends on a settled row.
+
+        The expensive accident is re-extracting everything, so a bare run must carry
+        an already-resolved row forward untouched and never call the ladder for it.
+        """
+        import extract.run_extract as rex
+        done, todo = "10.1111/done", "10.2222/todo"
+        _make_filtered_csv(tmp_path, [done, todo])
+        _make_extracted_csv(tmp_path, done, "grobid_ref_match")
+        ladder = MagicMock(return_value=_EMPTY_LINK)
+
+        def _run(**kwargs):
+            ladder.reset_mock()
+            with patch.object(rex, "DATA_DIR", tmp_path), \
+                 patch("extract.run_extract.run_for_doi", ladder), \
+                 patch("extract.run_extract._get_outcome", return_value=_EMPTY_OUTCOME), \
+                 patch("extract.run_extract._save_parse_cache"), \
+                 patch("extract.run_extract.verify_and_correct",
+                       side_effect=lambda doi, *a, **k: {"doi_o": doi,
+                                                         "doi_o_verification": "skipped",
+                                                         "evidence_note": ""}), \
+                 patch("extract.run_extract._oa_by_doi", return_value=None):
+                return rex.run_extract(no_llm=True, no_pdf=True, **kwargs)
+
+        resumed = _run()
+        assert [c[0][0] for c in ladder.call_args_list] == [todo], \
+            "the resolved row was re-extracted by a default run"
+        assert set(resumed["doi_r"]) == {done, todo}, \
+            "the carried-forward row is missing from the output"
+
+        _run(fresh=True)
+        assert sorted(c[0][0] for c in ladder.call_args_list) == [done, todo], \
+            "--fresh must re-extract the resolved row too"
+
     def test_processes_target_pending_doi_from_main_csv(self, tmp_path):
         """DOI with target_pending in extracted.csv must be re-processed in test mode."""
         doi_pending = "10.3333/pending"
