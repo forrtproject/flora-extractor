@@ -10,7 +10,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6887711839,10.17605/osf.io/ryphn,,untouched,False,False,0
 2900719800,10.17605/osf.io/p94q6,Preregistration Template from AsPredicted.org,discard,False,True,1860
 6963061945,10.17605/osf.io/zsmsx,OSF-Standard Pre-Data Collection Registration,discard,False,True,467
-2780383114,10.17605/osf.io/csm3d,Open-Ended Registration,admit,False,True,96
+2780383114,10.17605/osf.io/csm3d,Open-Ended Registration,admit,True,True,96
 6906364250,10.17605/osf.io/p7h46,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,1986
 6906389016,10.17605/osf.io/nc2t9,OSF-Standard Pre-Data Collection Registration,discard,False,True,248
 6887731496,10.17605/osf.io/csgv4,,untouched,False,False,0
@@ -26,11 +26,11 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6925311406,10.17605/osf.io/vn6s3,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
 6925202644,10.17605/osf.io/txgzv,,untouched,False,False,0
 6925029080,10.17605/osf.io/af9u2,OSF-Standard Pre-Data Collection Registration,discard,False,True,147
-2781449863,10.17605/osf.io/suyfc,Open-Ended Registration,admit,False,True,96
+2781449863,10.17605/osf.io/suyfc,Open-Ended Registration,admit,True,True,96
 6963173925,10.17605/osf.io/r8wu7,Prereg Challenge,discard,False,True,7339
 6943961930,10.17605/osf.io/q9mzk,OSF Preregistration,discard,False,True,5213
 6943961137,10.17605/osf.io/zd5ps,,untouched,False,False,0
-2782921657,10.17605/osf.io/pxr93,Open-Ended Registration,admit,False,True,96
+2782921657,10.17605/osf.io/pxr93,Open-Ended Registration,admit,True,True,96
 6906234663,10.17605/osf.io/9vxsf,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,3274
 6906593824,10.17605/osf.io/8jteq,,untouched,False,False,0
 6962554731,10.17605/osf.io/gfqvr,EGAP Registration,discard,False,True,808
@@ -71,7 +71,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6943968613,10.17605/osf.io/zhqkv,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
 6887751601,10.17605/osf.io/7bdav,OSF Preregistration,discard,False,True,9892
 6944220728,10.17605/osf.io/rjc4y,OSF-Standard Pre-Data Collection Registration,discard,False,True,444
-6925339838,10.17605/osf.io/2fu9t,Open-Ended Registration,admit,False,True,97
+6925339838,10.17605/osf.io/2fu9t,Open-Ended Registration,admit,True,True,97
 6925199946,10.17605/osf.io/2wpbk,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,2303
 6944355918,10.17605/osf.io/7ks6x,OSF Preregistration,discard,False,True,1499
 6906548779,10.17605/osf.io/kyn8a,EGAP Registration,discard,False,True,5498
@@ -142,7 +142,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6906431725,10.17605/osf.io/94mt6,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,4533
 6887798420,10.17605/osf.io/b246j,OSF-Standard Pre-Data Collection Registration,discard,False,True,179
 7084748685,10.17605/osf.io/uyaz2,,untouched,False,False,0
-2781439405,10.17605/osf.io/zdw87,Open-Ended Registration,admit,False,True,97
+2781439405,10.17605/osf.io/zdw87,Open-Ended Registration,admit,True,True,97
 6906675799,10.17605/osf.io/sy65d,EGAP Registration,discard,False,True,29092
 6944122615,10.17605/osf.io/9969g,OSF-Standard Pre-Data Collection Registration,discard,False,True,467
 6943949083,10.17605/osf.io/yw3fp,Prereg Challenge,discard,False,True,6854
@@ -186,7 +186,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6925463540,10.17605/osf.io/4q9x3,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,2044
 2904023500,10.17605/osf.io/n3abr,OSF-Standard Pre-Data Collection Registration,discard,False,True,438
 6906434310,10.17605/osf.io/u53v2,OSF-Standard Pre-Data Collection Registration,discard,False,True,147
-2783948930,10.17605/osf.io/cehgp,Open-Ended Registration,admit,False,True,96
+2783948930,10.17605/osf.io/cehgp,Open-Ended Registration,admit,True,True,96
 6962646072,10.17605/osf.io/yrq75,,untouched,False,False,0
 6887708899,10.17605/osf.io/ha7je,Prereg Challenge,discard,False,True,4344
 6906569258,10.17605/osf.io/sxqt4,OSF-Standard Pre-Data Collection Registration,discard,False,True,467
@@ -208,7 +208,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6906615056,10.17605/osf.io/wbgjf,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
 6887741479,10.17605/osf.io/6pzv8,OSF-Standard Pre-Data Collection Registration,discard,False,True,146
 6925059625,10.17605/osf.io/hn9vm,,untouched,False,False,0
-6962632301,10.17605/osf.io/bhnkq,Open-Ended Registration,admit,False,True,96
+6962632301,10.17605/osf.io/bhnkq,Open-Ended Registration,admit,True,True,96
 6962721820,10.17605/osf.io/jzfcg,OSF Preregistration,discard,False,True,12576
 6962956691,10.17605/osf.io/9fj4n,,untouched,False,False,0
 6944225799,10.17605/osf.io/mjvkn,,untouched,False,False,0
@@ -227,7 +227,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6944003305,10.17605/osf.io/vmksp,OSF Preregistration,discard,False,True,3736
 6925166736,10.17605/osf.io/3xj6v,OSF-Standard Pre-Data Collection Registration,discard,False,True,226
 6943964938,10.17605/osf.io/dg9m4,Prereg Challenge,discard,False,True,18121
-2782406163,10.17605/osf.io/rkqw2,Open-Ended Registration,admit,False,True,96
+2782406163,10.17605/osf.io/rkqw2,Open-Ended Registration,admit,True,True,96
 6962344582,10.17605/osf.io/68uj3,Preregistration Template from AsPredicted.org,discard,False,True,8817
 6962644548,10.17605/osf.io/2t9j6,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
 6963274343,10.17605/osf.io/kn4bg,Preregistration Template from AsPredicted.org,discard,False,True,10548
@@ -272,7 +272,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6925202596,10.17605/osf.io/gjr5k,,untouched,False,False,0
 6925020910,10.17605/osf.io/cxatn,OSF-Standard Pre-Data Collection Registration,discard,False,True,417
 6962525664,10.17605/osf.io/b6xv9,OSF Preregistration,discard,False,True,12743
-2777533466,10.17605/osf.io/pktma,Open-Ended Registration,admit,False,True,96
+2777533466,10.17605/osf.io/pktma,Open-Ended Registration,admit,True,True,96
 6906418101,10.17605/osf.io/bqpzm,Preregistration Template from AsPredicted.org,discard,False,True,708
 6925259922,10.17605/osf.io/c6n3t,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
 6906602272,10.17605/osf.io/b3p9c,OSF-Standard Pre-Data Collection Registration,discard,False,True,451
@@ -290,7 +290,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6887653501,10.17605/osf.io/4jv6t,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,4416
 6887668770,10.17605/osf.io/67qat,EGAP Registration,discard,False,True,2170
 7102645912,10.17605/osf.io/xznpa,Open-Ended Registration,discard,False,True,451
-6944160020,10.17605/osf.io/v8w2c,Open-Ended Registration,admit,False,True,96
+6944160020,10.17605/osf.io/v8w2c,Open-Ended Registration,admit,True,True,96
 2892708563,10.17605/osf.io/ejmyw,,untouched,True,False,0
 6887706793,10.17605/osf.io/u3xgs,OSF Preregistration,discard,False,True,9630
 6887613528,10.17605/osf.io/86be3,OSF-Standard Pre-Data Collection Registration,discard,False,True,146
@@ -302,7 +302,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6887729460,10.17605/osf.io/deqk7,OSF-Standard Pre-Data Collection Registration,discard,False,True,176
 6962623181,10.17605/osf.io/vckbj,,untouched,False,False,0
 6944126589,10.17605/osf.io/uscgq,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,2079
-2777851906,10.17605/osf.io/ht9du,Open-Ended Registration,admit,False,True,97
+2777851906,10.17605/osf.io/ht9du,Open-Ended Registration,admit,True,True,97
 6887619298,10.17605/osf.io/dvu6z,OSF-Standard Pre-Data Collection Registration,discard,False,True,225
 6943839549,10.17605/osf.io/q43sn,Preregistration Template from AsPredicted.org,discard,False,True,6718
 6925418297,10.17605/osf.io/nxrks,OSF Preregistration,discard,False,True,7257
@@ -311,7 +311,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6925107042,10.17605/osf.io/j6ucr,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,4554
 7103998872,10.17605/osf.io/gkqvn,,untouched,False,False,0
 6925279747,10.17605/osf.io/py3xu,OSF-Standard Pre-Data Collection Registration,discard,False,True,370
-2777199226,10.17605/osf.io/z6qw2,Open-Ended Registration,admit,False,True,97
+2777199226,10.17605/osf.io/z6qw2,Open-Ended Registration,admit,True,True,97
 6925065541,10.17605/osf.io/q9h3m,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
 6887801397,10.17605/osf.io/uphgn,OSF-Standard Pre-Data Collection Registration,discard,False,True,344
 2905108855,10.17605/osf.io/za4r3,OSF-Standard Pre-Data Collection Registration,discard,False,True,84
@@ -359,7 +359,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6887750660,10.17605/osf.io/7678x,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,2929
 6887798611,10.17605/osf.io/q896f,,untouched,False,False,0
 6906599353,10.17605/osf.io/wd4qz,Preregistration Template from AsPredicted.org,discard,False,True,2150
-2784989579,10.17605/osf.io/2kryw,Open-Ended Registration,admit,False,True,96
+2784989579,10.17605/osf.io/2kryw,Open-Ended Registration,admit,True,True,96
 6925124074,10.17605/osf.io/3cre2,Prereg Challenge,discard,False,True,12415
 6887732354,10.17605/osf.io/epjk2,"Pre-Registration in Social Psychology (van 't Veer & Giner-Sorolla, 2016): Pre-Registration",discard,False,True,13028
 6887686322,10.17605/osf.io/hxryh,Preregistration Template from AsPredicted.org,discard,False,True,6984
@@ -470,8 +470,8 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 2775942806,10.17605/osf.io/fxqpr,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,1937
 6906538614,10.17605/osf.io/et3xm,Preregistration Template from AsPredicted.org,discard,False,True,2376
 6906632896,10.17605/osf.io/h6ddq,OSF-Standard Pre-Data Collection Registration,discard,False,True,467
-6962657395,10.17605/osf.io/jhn4g,Open-Ended Registration,admit,False,True,97
-2777214647,10.17605/osf.io/f59hn,Open-Ended Registration,admit,False,True,97
+6962657395,10.17605/osf.io/jhn4g,Open-Ended Registration,admit,True,True,97
+2777214647,10.17605/osf.io/f59hn,Open-Ended Registration,admit,True,True,97
 6925355668,10.17605/osf.io/843na,OSF-Standard Pre-Data Collection Registration,discard,False,True,3488
 6943857426,10.17605/osf.io/r5sfu,OSF Preregistration,discard,False,True,9744
 6887711571,10.17605/osf.io/ek5rz,Registered Report Protocol Preregistration,discard,False,True,736
@@ -507,7 +507,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6962486822,10.17605/osf.io/3ebwj,Prereg Challenge,discard,False,True,6803
 6925053273,10.17605/osf.io/7zcnu,Preregistration Template from AsPredicted.org,discard,False,True,1710
 6962849490,10.17605/osf.io/j5y2z,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
-2777193537,10.17605/osf.io/k5cwt,Open-Ended Registration,admit,False,True,96
+2777193537,10.17605/osf.io/k5cwt,Open-Ended Registration,admit,True,True,96
 6887705675,10.17605/osf.io/5d2s3,,untouched,False,False,0
 6887750083,10.17605/osf.io/hrdpm,OSF-Standard Pre-Data Collection Registration,discard,False,True,453
 6943933724,10.17605/osf.io/e8nz8,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,3336
@@ -519,7 +519,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6906464101,10.17605/osf.io/x64b5,Preregistration Template from AsPredicted.org,discard,False,True,5232
 6906289477,10.17605/osf.io/5f8c2,OSF-Standard Pre-Data Collection Registration,discard,False,True,147
 6962438491,10.17605/osf.io/ncuqt,,untouched,False,False,0
-2779337956,10.17605/osf.io/cy9v4,Open-Ended Registration,admit,False,True,96
+2779337956,10.17605/osf.io/cy9v4,Open-Ended Registration,admit,True,True,96
 6944043321,10.17605/osf.io/mu6vg,,untouched,False,False,0
 6906479086,10.17605/osf.io/fhtjp,,untouched,False,False,0
 6887639667,10.17605/osf.io/7d2wn,Prereg Challenge,discard,False,True,6198
@@ -579,7 +579,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6962694341,10.17605/osf.io/7gcjf,,untouched,False,False,0
 2900443611,10.17605/osf.io/crnsh,Preregistration Template from AsPredicted.org,discard,False,True,1367
 6962288493,10.17605/osf.io/e2k87,,untouched,False,False,0
-2782921558,10.17605/osf.io/wzxq9,Open-Ended Registration,admit,False,True,96
+2782921558,10.17605/osf.io/wzxq9,Open-Ended Registration,admit,True,True,96
 2780275205,10.17605/osf.io/kxg7e,OSF-Standard Pre-Data Collection Registration,discard,False,True,176
 6887842044,10.17605/osf.io/h2d9m,Prereg Challenge,discard,False,True,2483
 6943720386,10.17605/osf.io/cv7ps,OSF-Standard Pre-Data Collection Registration,discard,False,True,174
@@ -596,7 +596,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6925072695,10.17605/osf.io/jsbdn,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,2079
 6906561146,10.17605/osf.io/g3paq,Preregistration Template from AsPredicted.org,discard,False,True,2813
 6962590972,10.17605/osf.io/5grc9,OSF Preregistration,discard,False,True,6028
-2777795948,10.17605/osf.io/pyt4e,Open-Ended Registration,admit,False,True,96
+2777795948,10.17605/osf.io/pyt4e,Open-Ended Registration,admit,True,True,96
 6925288080,10.17605/osf.io/jnv4k,,untouched,False,False,0
 6962624258,10.17605/osf.io/ar57z,,untouched,False,False,0
 6963176982,10.17605/osf.io/j3sud,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
@@ -616,7 +616,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6962921213,10.17605/osf.io/zq7kc,Prereg Challenge,discard,False,True,8071
 6906496926,10.17605/osf.io/d9xmr,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,9105
 6943944637,10.17605/osf.io/d3j2y,,untouched,False,False,0
-6962750111,10.17605/osf.io/px56h,Open-Ended Registration,admit,False,True,96
+6962750111,10.17605/osf.io/px56h,Open-Ended Registration,admit,True,True,96
 6906255669,10.17605/osf.io/gz93b,,untouched,False,False,0
 6925449667,10.17605/osf.io/pvpfw,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
 6906427987,10.17605/osf.io/u28aj,OSF Preregistration,discard,False,True,5363
@@ -639,7 +639,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6943918080,10.17605/osf.io/qtaer,OSF-Standard Pre-Data Collection Registration,discard,False,True,467
 6944169334,10.17605/osf.io/d6tjm,OSF-Standard Pre-Data Collection Registration,discard,False,True,540
 6963024014,10.17605/osf.io/hc97q,,untouched,False,False,0
-2778579930,10.17605/osf.io/zc468,Open-Ended Registration,admit,False,True,97
+2778579930,10.17605/osf.io/zc468,Open-Ended Registration,admit,True,True,97
 6906625967,10.17605/osf.io/xvj8e,,untouched,False,False,0
 6962524711,10.17605/osf.io/2f74y,,untouched,False,False,0
 6887707145,10.17605/osf.io/4r7mc,Prereg Challenge,discard,False,True,4265
@@ -745,7 +745,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6925261260,10.17605/osf.io/tz4wf,,untouched,False,False,0
 6906495304,10.17605/osf.io/xdsrw,,untouched,False,False,0
 6906534138,10.17605/osf.io/yq5br,Prereg Challenge,discard,False,True,6848
-2781934702,10.17605/osf.io/tys7b,Open-Ended Registration,admit,False,True,96
+2781934702,10.17605/osf.io/tys7b,Open-Ended Registration,admit,True,True,96
 2995419994,10.17605/osf.io/5zk7s,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
 6925350805,10.17605/osf.io/2zwck,,untouched,False,False,0
 6963061883,10.17605/osf.io/n3b5z,OSF Preregistration,discard,False,True,2520
@@ -782,7 +782,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6887688845,10.17605/osf.io/sdbdx,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
 6944264460,10.17605/osf.io/ucz92,OSF Preregistration,discard,False,True,6059
 6906435731,10.17605/osf.io/x54bj,OSF Preregistration,discard,False,True,6898
-2782967142,10.17605/osf.io/76j48,Open-Ended Registration,admit,False,True,96
+2782967142,10.17605/osf.io/76j48,Open-Ended Registration,admit,True,True,96
 6906514619,10.17605/osf.io/m3z9g,,untouched,False,False,0
 6887801429,10.17605/osf.io/weg8q,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,85
 6887763922,10.17605/osf.io/ncbq2,,untouched,False,False,0
@@ -897,7 +897,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6906513443,10.17605/osf.io/4bhsz,,untouched,False,False,0
 6943729166,10.17605/osf.io/35cag,OSF-Standard Pre-Data Collection Registration,discard,False,True,188
 6963005732,10.17605/osf.io/tgcb9,Prereg Challenge,discard,False,True,4386
-6887790169,10.17605/osf.io/p6jxm,Open-Ended Registration,admit,False,True,97
+6887790169,10.17605/osf.io/p6jxm,Open-Ended Registration,admit,True,True,97
 6962804399,10.17605/osf.io/693vn,,untouched,False,False,0
 6906334179,10.17605/osf.io/ymdxv,Preregistration Template from AsPredicted.org,discard,False,True,10620
 6962880429,10.17605/osf.io/dzk3q,Preregistration Template from AsPredicted.org,discard,False,True,2461
@@ -914,13 +914,13 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6925246529,10.17605/osf.io/8t4ze,Prereg Challenge,discard,False,True,9282
 6906196488,10.17605/osf.io/n4kua,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,2364
 6925776612,10.17605/osf.io/zrxwh,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
-2777065411,10.17605/osf.io/rc2kz,Open-Ended Registration,admit,False,True,97
+2777065411,10.17605/osf.io/rc2kz,Open-Ended Registration,admit,True,True,97
 6962532923,10.17605/osf.io/3k6rv,,untouched,False,False,0
 6962388072,10.17605/osf.io/pjf3t,OSF Preregistration,discard,False,True,44048
 6906235400,10.17605/osf.io/xgvnc,OSF-Standard Pre-Data Collection Registration,discard,False,True,123
 6906320572,10.17605/osf.io/3svkp,Prereg Challenge,discard,False,True,6969
 6925268627,10.17605/osf.io/7a2j8,,untouched,False,False,0
-6925117786,10.17605/osf.io/s2d6t,Open-Ended Registration,admit,False,True,97
+6925117786,10.17605/osf.io/s2d6t,Open-Ended Registration,admit,True,True,97
 6887837788,10.17605/osf.io/v4fra,Open-Ended Registration,admit,False,True,96
 2905680822,10.17605/osf.io/jz2dy,"Replication Recipe (Brandt et al., 2013): Post-Completion",admit,False,True,1097
 6887772997,10.17605/osf.io/tm2c8,,untouched,False,False,0
@@ -942,7 +942,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6925213766,10.17605/osf.io/3fqmr,,untouched,False,False,0
 6944112773,10.17605/osf.io/x6kqc,OSF Preregistration,discard,False,True,6848
 6906612246,10.17605/osf.io/fdcse,Preregistration Template from AsPredicted.org,discard,False,True,18725
-6944242425,10.17605/osf.io/p5en6,Open-Ended Registration,admit,False,True,96
+6944242425,10.17605/osf.io/p5en6,Open-Ended Registration,admit,True,True,96
 6906475220,10.17605/osf.io/8ptmb,OSF-Standard Pre-Data Collection Registration,discard,False,True,467
 6943970510,10.17605/osf.io/uvke6,EGAP Registration,discard,False,True,1601
 6962838875,10.17605/osf.io/hvg3d,,untouched,False,False,0
@@ -1047,7 +1047,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6944131553,10.17605/osf.io/hvqcp,Preregistration Template from AsPredicted.org,discard,False,True,2512
 2807035479,10.17605/osf.io/utpj6,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
 6906406300,10.17605/osf.io/8wd2b,,untouched,False,False,0
-2778680106,10.17605/osf.io/y8njt,Open-Ended Registration,admit,False,True,96
+2778680106,10.17605/osf.io/y8njt,Open-Ended Registration,admit,True,True,96
 6887625042,10.17605/osf.io/674yb,EGAP Registration,discard,False,True,2138
 2777226917,10.17605/osf.io/snfa7,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,1150
 6906433926,10.17605/osf.io/wgtku,,untouched,False,False,0
@@ -1095,7 +1095,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6887728458,10.17605/osf.io/zh4vx,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
 6925397444,10.17605/osf.io/5ws62,OSF-Standard Pre-Data Collection Registration,discard,False,True,9332
 6944091271,10.17605/osf.io/u4xf5,Preregistration Template from AsPredicted.org,discard,False,True,653
-2782165552,10.17605/osf.io/j3cfm,Open-Ended Registration,admit,False,True,96
+2782165552,10.17605/osf.io/j3cfm,Open-Ended Registration,admit,True,True,96
 6962677658,10.17605/osf.io/f53k6,,untouched,False,False,0
 6887679129,10.17605/osf.io/enwca,,untouched,False,False,0
 6944199858,10.17605/osf.io/ms64g,Preregistration Template from AsPredicted.org,discard,False,True,22397
@@ -1204,11 +1204,11 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6944036369,10.17605/osf.io/tj4aw,Registered Report Protocol Preregistration,discard,False,True,685
 6943856780,10.17605/osf.io/7a5qm,,untouched,False,False,0
 6925256544,10.17605/osf.io/ncb6d,,untouched,False,False,0
-2777647585,10.17605/osf.io/chf7m,Open-Ended Registration,admit,False,True,96
+2777647585,10.17605/osf.io/chf7m,Open-Ended Registration,admit,True,True,96
 6906609447,10.17605/osf.io/j5zpk,Preregistration Template from AsPredicted.org,discard,False,True,1683
 6906540005,10.17605/osf.io/gea6p,"Pre-Registration in Social Psychology (van 't Veer & Giner-Sorolla, 2016): Pre-Registration",discard,False,True,4014
 6906576843,10.17605/osf.io/zxde4,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,1303
-2782966907,10.17605/osf.io/ngxye,Open-Ended Registration,admit,False,True,96
+2782966907,10.17605/osf.io/ngxye,Open-Ended Registration,admit,True,True,96
 6962942270,10.17605/osf.io/nqg3e,Preregistration Template from AsPredicted.org,discard,False,True,3016
 6962866104,10.17605/osf.io/z4u6w,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
 6944147887,10.17605/osf.io/kmpdh,OSF Preregistration,discard,False,True,14244
@@ -1217,7 +1217,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6887685359,10.17605/osf.io/56syp,OSF-Standard Pre-Data Collection Registration,discard,False,True,123
 6887736586,10.17605/osf.io/54cya,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
 6962473290,10.17605/osf.io/cynv8,,untouched,False,False,0
-6962364674,10.17605/osf.io/3va2j,Open-Ended Registration,admit,False,True,96
+6962364674,10.17605/osf.io/3va2j,Open-Ended Registration,admit,True,True,96
 6906557544,10.17605/osf.io/2xnpt,OSF-Standard Pre-Data Collection Registration,discard,False,True,226
 6925110665,10.17605/osf.io/hu58m,EGAP Registration,discard,False,True,1936
 2954884924,10.17605/osf.io/6q73v,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,2975
@@ -1266,7 +1266,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6962543378,10.17605/osf.io/afw29,OSF Preregistration,discard,False,True,20860
 6887766988,10.17605/osf.io/n39c6,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,435
 6943680166,10.17605/osf.io/qdg6w,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,6161
-2780302592,10.17605/osf.io/8dzpj,Open-Ended Registration,admit,False,True,97
+2780302592,10.17605/osf.io/8dzpj,Open-Ended Registration,admit,True,True,97
 6925254223,10.17605/osf.io/sptvm,OSF-Standard Pre-Data Collection Registration,discard,False,True,238
 6943984402,10.17605/osf.io/rx9zp,"Replication Recipe (Brandt et al., 2013): Pre-Registration",discard,False,True,85
 6906442304,10.17605/osf.io/26eku,,untouched,False,False,0
@@ -1330,7 +1330,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6906626763,10.17605/osf.io/327zy,Preregistration Template from AsPredicted.org,discard,False,True,788
 6925351746,10.17605/osf.io/qtwu2,OSF Preregistration,discard,False,True,14437
 6944038111,10.17605/osf.io/fxt69,,untouched,False,False,0
-2776363194,10.17605/osf.io/bk79y,Open-Ended Registration,admit,False,True,96
+2776363194,10.17605/osf.io/bk79y,Open-Ended Registration,admit,True,True,96
 6962435007,10.17605/osf.io/9acsf,Prereg Challenge,discard,False,True,15825
 6943795217,10.17605/osf.io/5a826,"Pre-Registration in Social Psychology (van 't Veer & Giner-Sorolla, 2016): Pre-Registration",discard,False,True,14111
 6887734426,10.17605/osf.io/ykc29,Prereg Challenge,discard,False,True,9317
@@ -1485,7 +1485,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6943671188,10.17605/osf.io/n7fpt,Preregistration Template from AsPredicted.org,discard,False,True,3403
 6962782991,10.17605/osf.io/5kxdu,,untouched,False,False,0
 6962572232,10.17605/osf.io/4yj2f,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
-2782965303,10.17605/osf.io/e35y2,Open-Ended Registration,admit,False,True,96
+2782965303,10.17605/osf.io/e35y2,Open-Ended Registration,admit,True,True,96
 6925479620,10.17605/osf.io/q9jb3,,untouched,False,False,0
 6887709483,10.17605/osf.io/hf7tj,OSF-Standard Pre-Data Collection Registration,discard,False,True,945
 6887769425,10.17605/osf.io/6zvqe,,untouched,False,False,0
@@ -1509,7 +1509,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6944030745,10.17605/osf.io/vywmy,"Replication Recipe (Brandt et al., 2013): Post-Completion",admit,False,True,1432
 6943714792,10.17605/osf.io/kf6yd,,untouched,False,False,0
 2903594989,10.17605/osf.io/fd9pz,OSF-Standard Pre-Data Collection Registration,discard,False,True,433
-6963092504,10.17605/osf.io/bx64z,Open-Ended Registration,admit,False,True,96
+6963092504,10.17605/osf.io/bx64z,Open-Ended Registration,admit,True,True,96
 6906370837,10.17605/osf.io/zc34p,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
 6943834618,10.17605/osf.io/8b5s9,OSF-Standard Pre-Data Collection Registration,discard,False,True,147
 6943847862,10.17605/osf.io/39at4,OSF-Standard Pre-Data Collection Registration,discard,False,True,135
@@ -1610,25 +1610,25 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6962991331,10.17605/osf.io/6zgcx,Prereg Challenge,discard,False,True,6271
 6944015249,10.17605/osf.io/mryv9,,untouched,False,False,0
 6906657950,10.17605/osf.io/ycxh3,,untouched,False,False,0
-2776464837,10.17605/osf.io/bvu64,Open-Ended Registration,admit,False,True,96
+2776464837,10.17605/osf.io/bvu64,Open-Ended Registration,admit,True,True,96
 2776112123,10.17605/osf.io/vk6d9,Open-Ended Registration,admit,False,True,96
-2780755327,10.17605/osf.io/6vsc4,Open-Ended Registration,admit,False,True,96
+2780755327,10.17605/osf.io/6vsc4,Open-Ended Registration,admit,True,True,96
 2778844705,10.17605/osf.io/7xupr,Open-Ended Registration,admit,False,True,97
 2883042178,10.17605/osf.io/p4rgd,,untouched,False,False,0
-2783075628,10.17605/osf.io/6xjqm,Open-Ended Registration,admit,False,True,96
+2783075628,10.17605/osf.io/6xjqm,Open-Ended Registration,admit,True,True,96
 2777061199,10.17605/osf.io/zsnxb,Open-Ended Registration,discard,False,True,141
 7105695234,10.17605/osf.io/uyrnm,Preregistration Template from AsPredicted.org,discard,False,True,3425
-2778150755,10.17605/osf.io/45vwm,Open-Ended Registration,admit,False,True,96
+2778150755,10.17605/osf.io/45vwm,Open-Ended Registration,admit,True,True,96
 2807804983,10.17605/osf.io/dt3q5,,untouched,False,False,0
 2785090784,10.17605/osf.io/wch5r,,untouched,False,False,0
 2884290428,10.17605/osf.io/za7t2,,untouched,False,False,0
-2776554849,10.17605/osf.io/a9vrq,Open-Ended Registration,admit,False,True,96
+2776554849,10.17605/osf.io/a9vrq,Open-Ended Registration,admit,True,True,96
 2783337316,10.17605/osf.io/48f2z,Open-Ended Registration,discard,False,True,71
-2778873052,10.17605/osf.io/rne5u,Open-Ended Registration,admit,False,True,96
-2786965715,10.17605/osf.io/36dr5,Open-Ended Registration,admit,False,True,96
+2778873052,10.17605/osf.io/rne5u,Open-Ended Registration,admit,True,True,96
+2786965715,10.17605/osf.io/36dr5,Open-Ended Registration,admit,True,True,96
 2943771682,10.17605/osf.io/tfj9z,,untouched,False,False,0
 2777168463,10.17605/osf.io/7bnfp,Open-Ended Registration,admit,False,True,96
-2781497247,10.17605/osf.io/gknau,Open-Ended Registration,admit,False,True,96
+2781497247,10.17605/osf.io/gknau,Open-Ended Registration,admit,True,True,96
 2780062826,10.17605/osf.io/j3fyq,,untouched,False,False,0
 6943736495,10.17605/osf.io/3m7qw,Open-Ended Registration,admit,False,True,97
 6943830611,10.17605/osf.io/4cpm3,,untouched,False,False,0
@@ -1641,10 +1641,10 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6925476908,10.17605/osf.io/v3sp7,,untouched,False,False,0
 6925331516,10.17605/osf.io/dusg3,,untouched,False,False,0
 6925308590,10.17605/osf.io/vch8w,Open-Ended Registration,admit,False,True,1211
-6925253460,10.17605/osf.io/wbs96,Open-Ended Registration,admit,False,True,96
+6925253460,10.17605/osf.io/wbs96,Open-Ended Registration,admit,True,True,96
 6925547453,10.17605/osf.io/2f8ba,Open-Ended Registration,admit,False,True,1162
-6906566978,10.17605/osf.io/q7hm4,Open-Ended Registration,admit,False,True,96
-6887709872,10.17605/osf.io/dwr2m,Open-Ended Registration,admit,False,True,97
+6906566978,10.17605/osf.io/q7hm4,Open-Ended Registration,admit,True,True,96
+6887709872,10.17605/osf.io/dwr2m,Open-Ended Registration,admit,True,True,97
 6906412627,10.17605/osf.io/mt3pw,Open-Ended Registration,admit,False,True,608
 6906509159,10.17605/osf.io/p8cuv,Open-Ended Registration,admit,False,True,421
 6906518262,10.17605/osf.io/wu5cf,,untouched,False,False,0
@@ -1951,7 +1951,7 @@ work_id,doi,template,verdict,in_flora,fetched,chars
 6887690525,10.17605/osf.io/cje9b,,untouched,False,False,0
 6887692651,10.17605/osf.io/n34rx,Open-Ended Registration,admit,False,True,191
 6906512638,10.17605/osf.io/4hjck,,untouched,True,False,0
-6887764231,10.17605/osf.io/ca8t3,Open-Ended Registration,admit,False,True,96
+6887764231,10.17605/osf.io/ca8t3,Open-Ended Registration,admit,True,True,96
 6887741696,10.17605/osf.io/qcevp,,untouched,False,False,0
 6906643286,10.17605/osf.io/xsvz3,,untouched,False,False,0
 6887768785,10.17605/osf.io/jqzet,,untouched,False,False,0

@@ -646,12 +646,18 @@ in Models 4-6 in Table 2."* One real study in 300 of 1,308 is ~4.4 papers lost t
 rule, and CONVENTIONS.md's step 4 is explicit about what that means. The rule stays
 shadow; the report holds three candidate narrowings, none measured.
 
-**Two numbers above are wrong and are corrected by that census.** The no-abstract
-population holds **8** known FLoRA papers, not 10 — four are Post-Completion
-registrations and are admitted, four are OSF projects with no registration record at
-all and are reached by neither rule. And **no post-data-collection template exists
-anywhere in the 1,674 registrations**, so the keep arm dropped above cost nothing;
-that is now a count rather than a ruling awaiting one.
+**Two numbers above are wrong and are corrected by that census.** **No
+post-data-collection template exists anywhere in the 1,674 registrations**, so the keep
+arm dropped above cost nothing — a count rather than a ruling awaiting one. And the
+"10 known FLoRA papers among the no-abstract rows" was both wrong and the wrong shape
+of claim: that count is a moving denominator, not a property of these rows. It reads
+**8** by a DOI-only match, **16** once OSF records FLoRA names by URL are counted
+(`_osf_doi_keys()`), and **64** against the `flora.csv` regenerated on 2026-08-05 —
+the first release carrying the OSF registration DOIs written to the COS source sheet
+that day, which turned 49 of the Open-Ended admits into records FLoRA demonstrably
+already holds. What is invariant, and what the promotion argument actually rests on:
+**0 of the 1,308 discards is a known FLoRA paper under every one of those three
+counts.**
 
 One thing the census found that nobody was looking for: the Open-Ended arm's
 `replicat*` marker fires on the OpenAlex **title** in 99% of the 336 rows it admits,
