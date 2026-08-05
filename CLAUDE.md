@@ -369,6 +369,8 @@ constants in `shared/doi_verify.py`.
 - **[`docs/README.md`](docs/README.md) — the documentation index.** Every guide and
   reference is listed there; this file keeps no second list.
 - Seeding from prior FLoRA data (skip Stages 1–2): the prior-pipeline CSVs on the
-  shared drive. `data/all_replications.csv` and `data/flora_entry_sheet.csv` are the
-  two a local checkout is expected to have; ask the maintainer for the drive listing
-  rather than assuming a filename.
+  shared drive. `data/all_replications.csv` and
+  `data/FLoRA entry sheet - replication list.csv` are the two a local checkout is
+  expected to have — the latter is the file `shared/flora_skip.py` and
+  `shared/config.py` actually read. Ask the maintainer for the drive listing rather
+  than assuming a filename.
