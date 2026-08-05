@@ -313,6 +313,9 @@ def test_route_reads_the_standard_overlay_and_says_which_one_it_read(
     monkeypatch.setattr(cli, "load_aliases", lambda path: {})
     monkeypatch.setattr(cli, "bundle_hash", lambda spec_dir: "bundle-x")
     monkeypatch.setattr(cli, "alias_release", lambda path: "alias-x")
+    # Registering the release with Supabase is `route`'s other job and has its own
+    # test; here it would only be a blocked socket.
+    monkeypatch.setattr(cli, "_register_release", lambda release_id, cache_dir: True)
     store = tmp_path / "engine.duckdb"
     args = argparse.Namespace(spec_dir=tmp_path, pool=pool, store=store,
                               pool_manifest_hash="pool-x", overlay=None,

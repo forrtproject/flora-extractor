@@ -133,13 +133,16 @@ def _vote(prompt: str, provider: str, model: str, doi_r: str, title: str) -> "st
     """
     key = content_key("prescreen_vote", doi_r or title,
                       prompt_version("build_prescreen_prompt"),
-                      cache_model_id(model), provider, prompt)
+                      # No reasoning: the tier's whole point is a one-field answer
+                      # from a tiny model, and the empty effort is passed to both the
+                      # key and the call so neither can be given one by accident.
+                      cache_model_id(model, ""), provider, prompt)
     try:
         cached = read_cache(LLM_CACHE_DIR, key)
         if isinstance(cached, dict) and cached.get("verdict") in {"yes", "no"}:
             return cached["verdict"]
 
-        result, _provider, error = call_model(prompt, model)
+        result, _provider, error = call_model(prompt, model, reasoning_effort="")
         if not isinstance(result, dict):
             log.debug("prescreen %s/%s no usable answer: %s", provider, model, error)
             return None

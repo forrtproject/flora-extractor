@@ -156,6 +156,12 @@ def decisions(client) -> tuple[set[int], dict[int, str], set[int]]:
     file would then be silently short of every row the engine had actually paid to
     decide.
 
+    Across every release but only within the current SCREENING GENERATION: a
+    verdict from a superseded voter pair or classify prompt says what an older
+    screen thought, and steering the handoff with it would hand Stage 3 rows the
+    current screen has never judged. Those works read as unscreened here and are
+    claimable again by the tier (`tiers._generation_current`).
+
     *decided* is only the works the tier actually SETTLED: a work whose votes are
     still short of a gate decision reads `incomplete` and belongs with the
     unscreened, not with the proceeds — a half-screened row is exactly the row the

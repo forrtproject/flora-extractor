@@ -24,7 +24,7 @@ import pytest
 
 from filter.engine import handoff as handoff_mod
 from filter.engine import tiers
-from filter.engine.claims import PENDING_UPLOAD, ClaimConflict
+from filter.engine.claims import PENDING_UPLOAD, ClaimConflict, UnknownRelease
 from filter.engine.export import export_pile
 from filter.engine.store import build_routing, open_store
 from search.snapshot_scan import _POOL_SCHEMA
@@ -39,6 +39,11 @@ from tests import engine_bundle
 RELEASE = "rel-m4"
 
 _CITE = "as reported by Smith et al. (2019)"
+
+# `_decided_client`'s default: stamp the claim with whatever generation the code
+# is at now, as a real run does. A sentinel rather than None, because None is the
+# legacy claim a test asks for on purpose.
+_CURRENT = object()
 
 
 def _row(work: int, title: str, abstract: str, year: int = 2024,
@@ -201,8 +206,130 @@ def test_a_run_claims_before_it_asks_any_voter(con, pool):
     _, args, kwargs = calls[0]
     assert args[0] == RELEASE and args[1] == "screen_cheap"
     assert kwargs["meta"] == {"batch": "wave-1", "mode": "validation",
-                              "engine_tier": "screen_cheap"}
+                              "engine_tier": "screen_cheap",
+                              "generation": tiers.screening_generation("screen_cheap")}
     assert calls[-1] == ("release_claim", ("claim-1", "complete"))
+
+
+def _route_args(pool: Path, tmp_path: Path, monkeypatch) -> argparse.Namespace:
+    from filter.engine import cli
+
+    monkeypatch.setattr(cli, "load_specs", lambda spec_dir: engine_bundle.specs())
+    monkeypatch.setattr(cli, "load_aliases", lambda path: {})
+    monkeypatch.setattr(cli, "bundle_hash", lambda spec_dir: "bundle-x")
+    monkeypatch.setattr(cli, "alias_release", lambda path: "alias-x")
+    return argparse.Namespace(spec_dir=tmp_path, pool=pool,
+                              store=tmp_path / "engine.duckdb",
+                              pool_manifest_hash="pool-x", overlay=None,
+                              no_overlay=True)
+
+
+def test_route_registers_the_release_it_just_wrote(pool, tmp_path, monkeypatch,
+                                                   capsys):
+    """Without this row in `engine_releases` the claim RPC rejects every batch."""
+    from filter.engine import cli
+
+    client = MagicMock()
+    registered: list = []
+    client.register_release.side_effect = lambda record: registered.append(record)
+    monkeypatch.setattr("filter.engine.claims.ClaimsClient", lambda: client)
+
+    assert cli.cmd_route(_route_args(pool, tmp_path, monkeypatch)) == 0
+
+    assert len(registered) == 1
+    assert registered[0]["release_id"] and registered[0]["bundle_hash"] == "bundle-x"
+    assert "registered with the state authority" in capsys.readouterr().out
+
+
+def test_route_without_a_state_authority_warns_and_still_routes(pool, tmp_path,
+                                                                monkeypatch, capsys):
+    """Routing stays usable offline; the warning says what will be missing."""
+    from filter.engine import cli
+    from filter.engine.claims import ClaimsNotConfigured
+
+    monkeypatch.setattr("filter.engine.claims.ClaimsClient",
+                        MagicMock(side_effect=ClaimsNotConfigured("SUPABASE_URL unset")))
+
+    assert cli.cmd_route(_route_args(pool, tmp_path, monkeypatch)) == 0
+
+    out = capsys.readouterr().out
+    assert "WARNING: release not registered" in out and "screen --run" in out
+    # The routing itself happened, and the local record is there for the claim
+    # path to register from.
+    assert list((tmp_path / "releases").glob("*.json"))
+
+
+def test_an_unregistered_release_is_registered_and_the_claim_retried_once(con, pool):
+    """`route` writes the release locally; only a registered one can be claimed.
+
+    The production failure: every `screen --run` died with `unknown_release`
+    because nothing ever inserted the row. The claim path repairs it from the
+    record on disk rather than telling the operator to re-route.
+    """
+    calls: list = []
+    client = _client(calls)
+    _write_release_record(pool.parent)
+    claimed: list = []
+
+    def claim(*args, **kwargs):
+        calls.append(("claim", args, kwargs))
+        claimed.append(args)
+        if len(claimed) == 1:
+            raise UnknownRelease("unknown_release: rel — refresh and re-route")
+        return "claim-1"
+
+    client.claim.side_effect = claim
+    client.register_release.side_effect = lambda record: calls.append(
+        ("register_release", record["release_id"])) or record["release_id"]
+
+    patcher, _ = _cheap_votes("yes")
+    with patcher:
+        report = tiers.run_screen_cheap(con, client, RELEASE, pool_dir=pool, run=True,
+                                        cache_dir=pool.parent)
+
+    assert [c[0] for c in calls[:3]] == ["claim", "register_release", "claim"]
+    assert calls[1][1] == RELEASE
+    assert report["claim_id"] == "claim-1"
+    assert report["decided"] == 2
+
+
+def test_a_failed_registration_names_registration_not_re_routing(con, pool):
+    """The old message told the operator to re-route, which fixes nothing."""
+    from filter.engine.claims import ClaimsError
+
+    client = _client([])
+    _write_release_record(pool.parent)
+    client.claim.side_effect = UnknownRelease("unknown_release: rel")
+    client.register_release.side_effect = ClaimsError("HTTP 401: no insert rights")
+
+    with patch("shared.prescreen._vote") as vote:
+        with pytest.raises(SystemExit) as excinfo:
+            tiers.run_screen_cheap(con, client, RELEASE, pool_dir=pool, run=True,
+                                   cache_dir=pool.parent)
+
+    message = str(excinfo.value)
+    assert vote.call_count == 0
+    assert "registering it failed" in message and "HTTP 401" in message
+    assert "re-route" not in message
+
+
+def _write_release_record(cache_dir: Path) -> dict:
+    """The record `route` leaves beside the store, filed under this test's id.
+
+    Written directly rather than through `write_release()`, which derives the id
+    from the six inputs: the store here is routed under RELEASE, and the record
+    has to be the one `read_release(RELEASE)` finds.
+    """
+    from filter.engine.release import releases_dir
+
+    record = {"release_id": RELEASE, "pool_manifest_hash": "pool-x",
+              "overlay_hash": None, "bundle_hash": "bundle-x",
+              "engine_version": "e", "alias_release": "alias-x",
+              "schema_version": "csv:1", "created_at": "2026-08-05"}
+    path = releases_dir(cache_dir) / f"{RELEASE}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record), encoding="utf-8")
+    return record
 
 
 def test_a_claim_conflict_refuses_without_spending(con, pool):
@@ -473,21 +600,31 @@ def _handoff(con, pool, tmp_path, client=None, name="filtered.csv",
 
 
 def _decided_client(ran_tier: str, mode: str, verdicts: list[dict],
-                    release: str = RELEASE) -> MagicMock:
+                    release: str = RELEASE,
+                    generation: object = _CURRENT) -> MagicMock:
     """A client that reports one finished run of *ran_tier* in *mode* under *release*.
 
     Asked about any other tier it answers with nothing, which is what a real
     deployment that has only run one of them looks like. `release_id` is filtered
     the way PostgREST filters it — omitted means every release — so a caller that
     scopes to the wrong release really does see nothing here.
+
+    The claim carries the CURRENT screening generation unless a test says
+    otherwise, so a fixture using placeholder model names still reads as a
+    verdict today's code would stand behind; `None` makes it a legacy claim,
+    judged on its models instead.
     """
     client = MagicMock()
+    meta = {"mode": mode}
+    if generation is _CURRENT:
+        meta["generation"] = tiers.screening_generation(ran_tier)
+    elif generation is not None:
+        meta["generation"] = generation
     client.claims.side_effect = lambda release_id=None, tier=None, status=None: (
-        [{"id": "claim-1", "release_id": release, "tier": ran_tier,
-          "meta": {"mode": mode}}]
+        [{"id": "claim-1", "release_id": release, "tier": ran_tier, "meta": meta}]
         if tier in (None, ran_tier) and release_id in (None, release) else [])
     client.verdicts.side_effect = lambda t, claim_ids=None: (
-        verdicts if t == ran_tier else [])
+        [dict(v, claim_id="claim-1") for v in verdicts] if t == ran_tier else [])
     return client
 
 
@@ -684,7 +821,7 @@ def test_a_live_expensive_verdict_types_the_row_stage_three_reads(con, pool, tmp
 
 def _voter_models() -> list[str]:
     from shared.llm_client import screen_voters
-    return [m for _, m, _ in screen_voters()]
+    return [m for _, m, _, _ in screen_voters()]
 
 
 def test_export_pile_still_writes_one_pile(con, pool, tmp_path):
@@ -743,6 +880,74 @@ def test_the_stored_verdict_read_carries_the_confidence_column():
     with patch.object(ClaimsClient, "_get_paged", return_value=[]) as paged:
         client.verdicts("screen_expensive")
     assert "confidence" in paged.call_args[0][1]["select"].split(",")
+
+
+# ---------------------------------------------------------------------------
+# The screening generation
+# ---------------------------------------------------------------------------
+
+
+def test_the_generation_moves_with_a_voter_model_and_with_the_prompt(monkeypatch):
+    """The two things a verdict depends on, and nothing else."""
+    before = tiers.screening_generation("screen_expensive")
+    assert tiers.screening_generation("screen_expensive") == before
+    assert tiers.screening_generation("screen_cheap") != before
+
+    monkeypatch.setattr(tiers, "SCREENING_MODEL_2", "some-other-model")
+    assert tiers.screening_generation("screen_expensive") != before
+
+    monkeypatch.undo()
+    # `prompt_version` itself is the seam: it is lru_cached over the prompt text,
+    # so an edited prompt reaches this hash only through the version it returns.
+    monkeypatch.setattr("shared.prompts.prompt_version",
+                        lambda name: "edited" if name == "build_classify_prompt"
+                        else "unchanged")
+    assert tiers.screening_generation("screen_expensive") != before
+
+
+def _expensive_votes(work: int = 11) -> list[dict]:
+    voter1, voter2 = _voter_models()
+    return [{"work_id": work, "verdict": "none", "model": voter1,
+             "confidence": "confident"},
+            {"work_id": work, "verdict": "none", "model": voter2,
+             "confidence": "confident"}]
+
+
+def test_a_verdict_from_another_generation_neither_settles_nor_blocks(
+        con, pool, tmp_path):
+    """A model or prompt change unasks the question the old answer answered: the
+    work is screenable again and stops steering the handoff."""
+    stale = _decided_client("screen_expensive", "live", _expensive_votes(),
+                            generation="an-older-code-state")
+
+    assert tiers.tier_decisions(stale, None, "screen_expensive") == {}
+    assert tiers.decided_work_ids(stale, "screen_expensive") == set()
+    assert handoff_mod.decisions(stale) == (set(), {}, set())
+
+    # The same rows under the current generation do all three.
+    current = _decided_client("screen_expensive", "live", _expensive_votes())
+    assert tiers.decided_work_ids(current, "screen_expensive") == {11}
+    drop, _, decided = handoff_mod.decisions(current)
+    assert drop == {11} and decided == {11}
+
+
+def test_a_legacy_verdict_counts_when_its_models_are_todays(con, pool, tmp_path):
+    """Rows written before the field exists: the prompt is unknowable, the model
+    pair is recorded and is the dominant determinant, so it is grandfathered."""
+    legacy = _decided_client("screen_expensive", "live", _expensive_votes(),
+                             generation=None)
+    assert tiers.decided_work_ids(legacy, "screen_expensive") == {11}
+    assert handoff_mod.decisions(legacy)[0] == {11}
+
+    # A legacy row from models nobody screens with any more is not grandfathered.
+    other = _decided_client("screen_expensive", "live",
+                            [{"work_id": 11, "verdict": "none", "model": "old-model-1",
+                              "confidence": "confident"},
+                             {"work_id": 11, "verdict": "none", "model": "old-model-2",
+                              "confidence": "confident"}],
+                            generation=None)
+    assert tiers.decided_work_ids(other, "screen_expensive") == set()
+    assert handoff_mod.decisions(other) == (set(), {}, set())
 
 
 # ---------------------------------------------------------------------------

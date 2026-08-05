@@ -33,7 +33,7 @@ import re
 import time
 from typing import Optional
 
-from shared.config import LLM_CACHE_DIR, OUTCOME_MODEL, log
+from shared.config import LLM_CACHE_DIR, OUTCOME_EFFORT, OUTCOME_MODEL, log
 
 # When the abstract-based outcome call returns cannot_be_determined (or there is no
 # abstract) and parsed fulltext is available, escalate to a second, fulltext-based
@@ -245,7 +245,12 @@ def _call_outcome_llm(prompt: str, doi_r: str) -> tuple[Optional[dict], str]:
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            result, _provider, err = call_model(prompt, OUTCOME_MODEL)
+            # OUTCOME_EFFORT is stated here rather than inherited from whichever
+            # constant happens to name the same model id — and it pins medium, which
+            # is what the pre-refactor code actually sent and therefore what coded
+            # every outcome on disk.
+            result, _provider, err = call_model(prompt, OUTCOME_MODEL,
+                                                reasoning_effort=OUTCOME_EFFORT)
             if result:
                 return result, OUTCOME_MODEL
         except TokenBudgetExhausted:
@@ -409,7 +414,7 @@ def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
     # that did not exist before, and a key component that is always present would move
     # every single-original key and orphan the outcome cache — the most expensive
     # entries the pipeline holds, because they may carry a full-text escalation.
-    key = content_key("outcome", doi_r, cache_model_id(OUTCOME_MODEL),
+    key = content_key("outcome", doi_r, cache_model_id(OUTCOME_MODEL, OUTCOME_EFFORT),
                       version, record_type,
                       title_r, abstract_snip,
                       original_authors, original_year, original_title, text_snip,

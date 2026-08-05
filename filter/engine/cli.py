@@ -181,6 +181,7 @@ def cmd_route(args) -> int:
     write_release(dict(inputs, created_at=_now()), cache_dir=args.store.parent)
 
     print(f"release {release_id}")
+    _register_release(release_id, args.store.parent)
     print(f"  pool {args.pool} — {counters['files']} file(s), "
           f"{counters['pool_rows']:,} pool row(s) -> {counters['rows']:,} work(s)")
     _print_overlay(overlay_dir, indent="  ")
@@ -188,6 +189,28 @@ def cmd_route(args) -> int:
         print(f"  {pile:<18} {count:,}")
     con.close()
     return 0
+
+
+def _register_release(release_id: str, cache_dir: Path) -> bool:
+    """Tell the state authority the release exists, best-effort. True if it took.
+
+    The claim RPC rejects a release it has no row for, so a routing run that only
+    wrote the local record left `screen --run` unable to claim anything at all.
+    Registering here is best-effort because routing must stay usable offline —
+    the claim path registers on demand as well, and this is the cheap moment to
+    do it rather than the only one.
+    """
+    from filter.engine.claims import ClaimsClient
+
+    try:
+        ClaimsClient().register_release(read_release(release_id, cache_dir=cache_dir))
+    except Exception as exc:  # noqa: BLE001 — network boundary
+        print(f"  WARNING: release not registered in the state authority ({exc}). "
+              "`screen --run` will try to register it before claiming; if that "
+              "fails too, no claim can be made under this release.")
+        return False
+    print("  registered with the state authority")
+    return True
 
 
 def cmd_diagnose(args) -> int:
@@ -275,7 +298,7 @@ def cmd_screen(args) -> int:
     report = runner(con, client, release_id, mode=mode, batch_label=args.batch_label,
                     limit=args.limit, pool_dir=args.pool, overlay_dir=overlay_dir,
                     aliases=load_aliases(args.spec_dir / ALIASES_FILENAME),
-                    run=args.run)
+                    run=args.run, cache_dir=args.store.parent)
     con.close()
     if report.get("dry_run"):
         return 0

@@ -67,6 +67,17 @@ class ClaimsNotConfigured(ClaimsError):
     """SUPABASE_URL is unset — the engine must not run unclaimed."""
 
 
+class UnknownRelease(ClaimsError):
+    """The state authority has no `engine_releases` row for this release.
+
+    Its own class because it is repairable where it is raised: the release record
+    on disk holds the six inputs the id hashes, so registering it is a restatement
+    of what routing already decided rather than a new claim about the world. The
+    RPC raises it with `foreign_key_violation`, which PostgREST returns as 409 —
+    the same status as a claim conflict — so it is recognised by its message.
+    """
+
+
 class ClaimConflict(ClaimsError):
     """Some work in the batch is already held by an active claim of this tier."""
 
@@ -114,6 +125,8 @@ class ClaimsClient:
     def _parse(self, resp, path: str) -> Any:
         if resp.status_code >= 400:
             body = resp.text or ""
+            if "unknown_release" in body:
+                raise UnknownRelease(body.strip())
             # The RPC raises unique_violation for a conflict, which PostgREST
             # returns as 409; the message prefix keeps it distinguishable from a
             # plain duplicate-key error on some other table.

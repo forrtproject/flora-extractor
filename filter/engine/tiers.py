@@ -42,6 +42,13 @@ Four properties both runners share, and the reasons they are not optional:
   local is checkpointed: the server holds the state, and a local file that
   disagreed with it would be the thing we trusted.
 
+  **A verdict belongs to a generation.** Each claim's meta carries
+  `screening_generation(tier)` — the hash of the tier's voter pair and its prompt
+  — and every read of the verdicts filters on it. Change a voter model or the
+  classify prompt and the old answers stop counting: the works are claimable
+  again and no longer steer the handoff. Rows written before the field exists are
+  grandfathered on their recorded models (`_generation_current`).
+
 Neither runner touches the routing table. A live `screen_cheap` discard is applied
 where the rows leave the engine (`handoff.py`), because routing is derived data —
 recomputed from pool and specs — and a decision written into it would be erased by
@@ -60,13 +67,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
-from filter.engine.claims import PENDING_UPLOAD, ClaimConflict, ClaimsClient
+from filter.engine.claims import (PENDING_UPLOAD, ClaimConflict, ClaimsClient,
+                                  ClaimsError, UnknownRelease)
 from filter.engine.pool_reader import iter_pool_batches
+from filter.engine.release import read_release
 from filter.engine.workids import resolve, work_id
 from shared import token_counter
 from shared.config import (ENGINE_CACHE_DIR, ENGINE_TIER_HF_UPLOAD,
                            ENGINE_TIER_WORKERS, FLORA_HF_COMMIT_BATCH,
-                           FLORA_POOL_REPO, SNAPSHOT_POOL_DIR)
+                           FLORA_POOL_REPO, PRESCREEN_MODEL_1, PRESCREEN_MODEL_2,
+                           SCREENING_MODEL_1, SCREENING_MODEL_2, SNAPSHOT_POOL_DIR)
 from shared.llm_client import classify_replication, screen_gate, screen_voters
 from shared.prescreen import prescreen_bypass, prescreen_voters
 from shared.token_usage import TokenBudgetExhausted, check_openai_budget
@@ -111,6 +121,59 @@ RUNS_DIR = ENGINE_CACHE_DIR / "runs"
 # besides discard.
 DISCARD = "discard"
 PROCEED = "proceed"
+
+
+# ── The screening generation ─────────────────────────────────────────────────
+# What a verdict was produced BY, in one hash: the tier's voter pair and the
+# prompt they were asked. A constant of the code state, like release.py's release
+# id, and for the same reason — a verdict is only an answer to the question the
+# code asks today if the code still asks that question. It travels in the claim's
+# meta, so every verdict a claim covers inherits it with no schema change.
+_TIER_PROMPT = {TIER_CHEAP: "build_prescreen_prompt",
+                TIER_EXPENSIVE: "build_classify_prompt"}
+# Recorded models that name no voter: a cheap-tier bypass, and the empty model a
+# failed call's placeholder row can carry.
+_NON_MODEL_MARKERS = {"prescreen_bypass", ""}
+
+
+def _tier_models(tier: str) -> tuple[str, str]:
+    """The tier's voter pair, read at call time so a changed constant is seen."""
+    return ((PRESCREEN_MODEL_1, PRESCREEN_MODEL_2) if tier == TIER_CHEAP
+            else (SCREENING_MODEL_1, SCREENING_MODEL_2))
+
+
+def screening_generation(tier: str) -> str:
+    """Fingerprint of the models and prompt *tier* screens with right now.
+
+    Sorted models: which slot a model sits in reroutes the call but not the
+    question, and a swap of the two would otherwise read as a new generation.
+    """
+    from shared.prompts import prompt_version
+
+    payload = json.dumps({"models": sorted(_tier_models(tier)),
+                          "prompt": prompt_version(_TIER_PROMPT[tier])},
+                         sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _generation_current(tier: str, generation: Optional[str],
+                        rows: list[dict]) -> bool:
+    """Whether one claim's verdicts still answer the question this tier asks.
+
+    A recorded generation answers it exactly. Its absence means the row predates
+    the field: the prompt it was asked under is not recoverable, but the model
+    pair is the dominant determinant of what it said and IS recorded, so a legacy
+    row asked of today's models is grandfathered in. Everything else is ignored —
+    the work is claimable again and no longer steers the handoff.
+    """
+    if generation:
+        return generation == screening_generation(tier)
+    # An expensive-tier placeholder row records the "+"-joined pair rather than
+    # one voter, which is why this splits before comparing.
+    recorded = {part for row in rows
+                for part in str(row.get("model") or "").split("+")
+                if part not in _NON_MODEL_MARKERS}
+    return recorded <= set(_tier_models(tier))
 
 
 @dataclass(frozen=True)
@@ -227,7 +290,7 @@ def _quantiles(values: list[float]) -> dict:
 def render_estimate(est: dict) -> str:
     q = est["tokens_per_row"]
     voters = (prescreen_voters() if est["tier"] == TIER_CHEAP
-              else [(p, m) for p, m, _ in screen_voters()])
+              else [(p, m) for p, m, _, _ in screen_voters()])
     lines = [
         "DRY RUN — nothing claimed, nothing fetched, nothing spent.",
         f"  tier          {est['tier']}  ({' + '.join(m for _, m in voters)})",
@@ -461,9 +524,45 @@ def render_reconcile(report: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _claim(client: ClaimsClient, release_id: str, tier: str,
+           items: list[tuple[int, str]], meta: dict,
+           cache_dir: Optional[Path] = None) -> str:
+    """Claim *items*, registering the release once if the server has never seen it.
+
+    `route` registers the release it writes, but best-effort — routing must stay
+    usable with no Supabase — so the first claim under a release routed offline is
+    where the gap surfaces. The record on disk holds the six inputs the release id
+    hashes, so registering it here restates a decision that has already been made
+    rather than inventing one. Exactly one retry: a second `unknown_release` means
+    the registration did not take, and looping would only spend the operator's time.
+    """
+    try:
+        return client.claim(release_id, tier, items, meta=meta)
+    except UnknownRelease:
+        pass
+    try:
+        record = read_release(release_id, cache_dir=cache_dir)
+    except OSError as exc:
+        raise SystemExit(
+            f"release {release_id[:12]} is not registered in the state authority "
+            f"and its record could not be read ({exc}), so it cannot be "
+            "registered from here. Re-run `python -m filter.engine route` on the "
+            "machine holding this store.")
+    try:
+        client.register_release(record)
+    except ClaimsError as exc:
+        raise SystemExit(
+            f"release {release_id[:12]} is not registered in the state authority "
+            f"and registering it failed: {exc}. Nothing was claimed or spent. "
+            "Fix the Supabase credentials (SUPABASE_SERVICE_KEY must be allowed "
+            "to insert into engine_releases) and re-run.")
+    return client.claim(release_id, tier, items, meta=meta)
+
+
 def _run_tier(con, client: ClaimsClient, release_id: str, tier: str,
               works: list[Work], judge: Callable[[Work], tuple[str, list[dict]]],
-              *, mode: str, batch_label: str, run: bool) -> dict:
+              *, mode: str, batch_label: str, run: bool,
+              cache_dir: Optional[Path] = None) -> dict:
     """Claim *works* for *tier*, judge each one, record its verdicts, complete.
 
     *judge* returns `(outcome, votes)`: the tier's decision for the work and one
@@ -483,10 +582,11 @@ def _run_tier(con, client: ClaimsClient, release_id: str, tier: str,
         raise SystemExit(f"nothing to claim for tier {tier}: the pile is empty or "
                          "every work in it already has a verdict")
 
-    meta = {"batch": batch_label, "mode": mode, "engine_tier": tier}
+    meta = {"batch": batch_label, "mode": mode, "engine_tier": tier,
+            "generation": screening_generation(tier)}
     try:
-        claim_id = client.claim(release_id, tier,
-                                [(w.work_id, w.pile) for w in works], meta=meta)
+        claim_id = _claim(client, release_id, tier,
+                          [(w.work_id, w.pile) for w in works], meta, cache_dir)
     except ClaimConflict as exc:
         raise SystemExit(
             f"refusing to run tier {tier}: {exc}. Another run holds some of these "
@@ -601,8 +701,20 @@ def _write_run_report(report: dict) -> Path:
 
 
 def decided_work_ids(client: ClaimsClient, tier: str) -> set[int]:
-    """Works this tier has already recorded a verdict for — the checkpoint."""
-    return {int(row["work_id"]) for row in client.verdicts(tier)}
+    """Works this tier has decided in the CURRENT generation — the checkpoint.
+
+    A verdict is what one model pair, asked one prompt, said; change either and it
+    stops answering the question this run asks, so the work becomes claimable
+    again. Rows are grouped by their claim because the generation is recorded on
+    the claim and one claim is one screening of that work.
+    """
+    generations = {c["id"]: (c.get("meta") or {}).get("generation")
+                   for c in client.claims(tier=tier)}
+    by_claim: dict[tuple, list[dict]] = {}
+    for row in client.verdicts(tier):
+        by_claim.setdefault((row.get("claim_id"), int(row["work_id"])), []).append(row)
+    return {work for (claim_id, work), rows in by_claim.items()
+            if _generation_current(tier, generations.get(claim_id), rows)}
 
 
 def tier_decisions(client: ClaimsClient, release_id: Optional[str], tier: str,
@@ -627,14 +739,24 @@ def tier_decisions(client: ClaimsClient, release_id: Optional[str], tier: str,
     "verdicts recorded, no pile effect" has to mean downstream. Superseded
     verdict rows never arrive: `ClaimsClient.verdicts()` filters
     `superseded_by is null`, so a corrected vote is counted once.
+
+    The claim's `meta.generation` is the second filter, and it is a different axis
+    from the release: a verdict from a superseded model pair or prompt is not
+    evidence about what today's screen would say, so it neither settles the work
+    nor reaches the handoff (`_generation_current()`).
     """
     claims = [c for c in client.claims(release_id=release_id, tier=tier)
               if (c.get("meta") or {}).get("mode") == mode]
     if not claims:
         return {}
+    generations = {c["id"]: (c.get("meta") or {}).get("generation") for c in claims}
+    by_claim: dict[tuple, list[dict]] = {}
+    for row in client.verdicts(tier, list(generations)):
+        by_claim.setdefault((row.get("claim_id"), int(row["work_id"])), []).append(row)
     by_work: dict[int, list[dict]] = {}
-    for row in client.verdicts(tier, [c["id"] for c in claims]):
-        by_work.setdefault(int(row["work_id"]), []).append(row)
+    for (claim_id, wid), rows in by_claim.items():
+        if _generation_current(tier, generations.get(claim_id), rows):
+            by_work.setdefault(wid, []).extend(rows)
     return {wid: (_cheap_decision(votes) if tier == TIER_CHEAP
                   else _expensive_decision(votes))
             for wid, votes in by_work.items()}
@@ -663,7 +785,7 @@ def _votes_from_rows(rows: list[dict]) -> list[dict]:
     not the order they were asked in. A row with no verdict, or the `no_answer`
     placeholder a failed call writes, is not a vote and is dropped.
     """
-    order = [m for _, m, _ in screen_voters()]
+    order = [m for _, m, _, _ in screen_voters()]
     ordered = sorted(rows, key=lambda r: (order.index(r["model"])
                                           if r.get("model") in order else len(order)))
     return [{"classification": str(r.get("verdict", "")),
@@ -740,7 +862,8 @@ def run_screen_cheap(con, client: ClaimsClient, release_id: str,
                      pool_dir: Path = SNAPSHOT_POOL_DIR,
                      overlay_dir: Optional[Path] = None,
                      aliases: Optional[dict[int, int]] = None,
-                     run: bool = False) -> dict:
+                     run: bool = False,
+                     cache_dir: Optional[Path] = None) -> dict:
     """Run the discard-only tier over the `screen_cheap` pile of *release_id*.
 
     `mode="validation"` (the default) records both votes and changes nothing: the
@@ -752,7 +875,8 @@ def run_screen_cheap(con, client: ClaimsClient, release_id: str,
     works = _batch(con, client, release_id, TIER_CHEAP, work_ids, limit,
                    pool_dir, overlay_dir, aliases, run)
     report = _run_tier(con, client, release_id, TIER_CHEAP, works, _cheap_judge,
-                       mode=mode, batch_label=batch_label, run=run)
+                       mode=mode, batch_label=batch_label, run=run,
+                       cache_dir=cache_dir)
     if run and mode == "validation":
         report["revalidation"] = _revalidation(con, release_id,
                                                report["discarded_work_ids"])
@@ -828,7 +952,8 @@ def run_screen_expensive(con, client: ClaimsClient, release_id: str,
                          pool_dir: Path = SNAPSHOT_POOL_DIR,
                          overlay_dir: Optional[Path] = None,
                          aliases: Optional[dict[int, int]] = None,
-                         run: bool = False) -> dict:
+                         run: bool = False,
+                         cache_dir: Optional[Path] = None) -> dict:
     """Run Stage 3's validated front door over the `screen_expensive` pile.
 
     This tier has no validation mode to earn: it IS the validated screen, and its
@@ -839,7 +964,8 @@ def run_screen_expensive(con, client: ClaimsClient, release_id: str,
     works = _batch(con, client, release_id, TIER_EXPENSIVE, work_ids, limit,
                    pool_dir, overlay_dir, aliases, run)
     return _run_tier(con, client, release_id, TIER_EXPENSIVE, works,
-                     _expensive_judge, mode=mode, batch_label=batch_label, run=run)
+                     _expensive_judge, mode=mode, batch_label=batch_label, run=run,
+                     cache_dir=cache_dir)
 
 
 # ---------------------------------------------------------------------------

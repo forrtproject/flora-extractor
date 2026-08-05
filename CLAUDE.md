@@ -244,19 +244,40 @@ for an LLM call: the prompt version, the model, and the inputs sent:
 
 ```python
 key = content_key("outcome", doi_r, prompt_version("build_outcome_prompt"),
-                  cache_model_id(OUTCOME_MODEL), prompt)
+                  cache_model_id(OUTCOME_MODEL, OUTCOME_EFFORT), prompt)
 ```
 
-A model reaches a key only through `cache_model_id()`, which appends any active
-reasoning effort (`LINKING_EFFORT`) — how hard a model thinks changes its answer, so
-the two settings never share a cache entry. That constant is one per call site rather
-than one per provider, and `llm_client` sends it under whichever name the id routes
-to: Gemini's `thinkingLevel`, OpenAI's and OpenRouter's `reasoning_effort`.
+A model reaches a key only through `cache_model_id(model, effort)`, which appends the
+reasoning effort the call sends — how hard a model thinks changes its answer, so the
+two settings never share a cache entry. **The effort belongs to the call site, never
+to the model id**: `LINKING_MODEL`, `OUTCOME_MODEL` and `SCREENING_MODEL_2` are the
+same string today, so each caller passes its own value (`LINKING_EFFORT`,
+`OUTCOME_EFFORT`, the screen's per-voter `SCREENING_EFFORT_1`/`SCREENING_EFFORT_2`, or
+`""` for the pre-screen) to `call_model` AND the same value to `cache_model_id`. Each
+is a constant per call site rather than one per provider, and `llm_client` sends it
+under whichever name the id routes to: Gemini's `thinkingLevel`, OpenAI's and
+OpenRouter's `reasoning_effort`. The screen carries one per VOTER, from the
+`screen_voters()` slot that names the model, because the two voters were evaluated at
+different rungs — and Gemini's is stated as `"minimal"` rather than left off, so a
+changed provider default cannot move the voter without moving the key.
 
 `prompt_version(name)` hashes the prompt text plus every spliced fragment — editing a
 prompt invalidates exactly its caches, nothing to register. Cache non-answers too (a
 decline is an answer; a 503 is not). Plain API responses keyed by identifier use
 `cache_key()`. Cache lives in `cache/` (gitignored).
+
+**Declared equivalences** (issue #171) are the one opt-in exception, for when a key
+moved but the answer provably did not — a mislabelled key component, or a prompt edit
+reviewed and judged answer-preserving. The default is unchanged: invalidation is
+automatic and strict. A call site that wants otherwise registers the LEGACY key parts
+in a module-level constant with the rationale in a comment (`_CLASSIFY_LEGACY_KEY_PARTS`
+in `shared/llm_client.py` is the first) and reads through
+`read_cache_migrating(cache_dir, key, legacy_keys, migrate_note)`. Only the declared
+component is substituted, so an equivalence stops matching by itself once anything else
+about the call changes. A legacy hit is re-stored under the current key carrying a
+`cache_migrated` note — the prompt version and models it is now filed under, and the
+key it came from — so every response on disk stays traceable to what produced it; the
+legacy entry is left in place for other checkouts and the shared HF cache.
 
 Content-complete keys are also what makes the cache **shareable**: an entry from
 another machine is provably the answer this checkout would have computed, so

@@ -12,6 +12,7 @@ purged with a glob; it is never the whole key.
 
 Public API:
     read_cache(cache_dir, key, suffix=".json") → dict | None
+    read_cache_migrating(cache_dir, key, legacy_keys, migrate_note) → dict | None
     write_cache(cache_dir, key, data, suffix=".json") → None
     content_key(prefix, doi, *parts) → str
     clear_cache(cache_dir, key, suffixes=None) → list[str]
@@ -21,7 +22,7 @@ import json
 import os
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 from .utils import cache_key
 
@@ -36,6 +37,34 @@ def read_cache(cache_dir: Path, key: str, suffix: str = ".json") -> Optional[dic
             return json.load(fh)
     except Exception:
         return None
+
+
+def read_cache_migrating(cache_dir: Path, key: str, legacy_keys: Sequence[str],
+                         migrate_note: dict) -> Optional[dict]:
+    """read_cache(*key*), falling back to keys a maintainer declared equivalent.
+
+    Keys stay strict and automatic: a changed prompt or model still writes a new key
+    and re-pays for the answer. This is the opt-in escape hatch (issue #171) for the
+    case where the key moved but the answer provably did not — a mislabelled key
+    component, or a prompt edit reviewed and judged answer-preserving. Each
+    *legacy_keys* entry is registered at its call site with a rationale comment, so
+    accepting one is a commit, not a runtime guess.
+
+    A legacy hit is re-stored under *key* with a `cache_migrated` note (whatever the
+    call site declares, plus the key it came from), so any response on disk stays
+    traceable to the prompt version and models that produced it. The legacy file is
+    left untouched: other checkouts and the shared HF cache still hit it.
+    """
+    entry = read_cache(cache_dir, key)
+    if entry is not None:
+        return entry
+    for legacy in legacy_keys:
+        entry = read_cache(cache_dir, legacy)
+        if entry is not None:
+            migrated = {**entry, "cache_migrated": {**migrate_note, "from_key": legacy}}
+            write_cache(cache_dir, key, migrated)
+            return migrated
+    return None
 
 
 def write_json(path: Path, data: object, indent: "int | None" = None) -> None:

@@ -27,7 +27,7 @@ import requests
 from .config import (
     GEMINI_API_KEYS, PDF_PARSE_MODEL, SCREENING_MODEL_1, LINKING_MODEL,
     GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT, GEMINI_PAID_KEY_SLOTS, GEMINI_RATE_SEC,
-    LINKING_EFFORT,
+    LINKING_EFFORT, SCREENING_EFFORT_1, SCREENING_EFFORT_2,
     LLM_CACHE_DIR,
     OPENAI_API_KEY, OPENAI_RATE_SEC,
     OPENAI_USE_FLEX, OPENAI_FLEX_TIMEOUT,
@@ -36,7 +36,7 @@ from .config import (
     log,
 )
 from . import token_counter, token_usage
-from .cache import content_key, read_cache, write_cache
+from .cache import content_key, read_cache, read_cache_migrating, write_cache
 from .rate_limit import throttle
 from .prompts import (
     JSON_SYSTEM_MESSAGE,
@@ -185,45 +185,43 @@ def _gemini_post(url: str, payload: dict, key_idx: int, base_timeout: int):
     return r
 
 
-# ── Gemini thinking level ─────────────────────────────────────────────────────
+# ── Reasoning effort ──────────────────────────────────────────────────────────
 # How hard a model is asked to think is a spend lever — reasoning tokens are billed
 # as output — but unlike flex it changes the answer, so it cannot be switched on
-# silently over a cache full of answers produced without it. Two functions keep the
-# request and the cache key in step: effort_for() decides what is sent, and
-# cache_model_id() is the ONLY way a model string enters a cache key. Fold it in one
-# place and no call site can forget it.
+# silently over a cache full of answers produced without it.
 #
-# The setting is one constant per call site, not one per provider, so it survives a
+# Effort belongs to the CALL SITE, never to the model id. Three call sites name the
+# same string today (LINKING_MODEL == OUTCOME_MODEL == SCREENING_MODEL_2), so
+# deriving an effort from the id sent linking's "medium" to outcome coding, which
+# asked for none, and labelled the screen's key "medium" while it sent "low". Each
+# caller now passes its effort to call_model AND the same value to cache_model_id(),
+# which is the ONLY way a model string enters a cache key — what was sent and what
+# the key says are one value, written once per call site.
+#
+# The effort is one constant per call site, not one per provider, so it survives a
 # model being repointed: each provider is sent the same intent under its own name —
-# Gemini's `thinkingLevel`, OpenAI's and OpenRouter's `reasoning_effort`. Only the
-# linking call has one today; the screen passes its own "low" at the call site.
+# Gemini's `thinkingLevel`, OpenAI's and OpenRouter's `reasoning_effort`.
 
-def effort_for(model: str) -> str:
-    """The reasoning effort to send for *model* — set only where a constant names one.
-
-    Linking is where the thinking bill is, and the only model whose answers are keyed
-    through cache_model_id(). The PDF and image calls do not consult this at all: they
-    are cached by GROBID filenames that name the bare model string, so an effort
-    applied there would not be named by the key that stores the answer.
-    """
-    return LINKING_EFFORT if (LINKING_EFFORT and model == LINKING_MODEL) else ""
-
-
-def cache_model_id(model: str) -> str:
-    """The model string as a cache key names it — with any active reasoning effort.
+def cache_model_id(model: str, effort: str = "") -> str:
+    """The model string as a cache key names it — with the effort the call sends.
 
     An answer produced at effort=minimal is a different answer from one produced at
-    the model's default, so the two must not share a cache entry.
+    the model's default, so the two must not share a cache entry. An empty effort
+    leaves the bare model string, so a call site that asks for no reasoning keys the
+    same way one that cannot do any does.
     """
-    effort = effort_for(model)
     return f"{model}@effort={effort}" if effort else model
 
 
 # ── Gemini (primary) ──────────────────────────────────────────────────────────
 
-def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL) -> tuple[Optional[dict], str]:
+def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL, *,
+                reasoning_effort: str = "") -> tuple[Optional[dict], str]:
     """
     Call Gemini via the REST API with responseMimeType=application/json.
+
+    reasoning_effort is sent as `thinkingLevel` and only when set — it comes from the
+    call site, so a Gemini id and an OpenAI id under the same constant think alike.
 
     Rotates through all keys in GEMINI_API_KEYS when a 429 (quota exhausted)
     is returned — useful when running on multiple free-tier projects.
@@ -252,11 +250,10 @@ def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL) -> tuple[Optional[dic
         },
     }
 
-    level = effort_for(model)
-    if level:
+    if reasoning_effort:
         # thinkingLevel (gemini-3): "minimal" buys back most of the output bill on
         # the heavy model. Safe alongside responseMimeType, unlike thinkingBudget:0.
-        payload["generationConfig"]["thinkingLevel"] = level
+        payload["generationConfig"]["thinkingLevel"] = reasoning_effort
 
     if GEMINI_USE_FLEX:
         log.debug("Gemini flex inference enabled on paid keys %s (timeout=%ds)",
@@ -559,23 +556,25 @@ def call_model(prompt: str, model: str, *,
                reasoning_effort: str = "") -> tuple[Optional[dict], str, str]:
     """One JSON call to *model*, on whichever provider serves it.
 
-    How hard the model thinks comes from one of two places, and the caller's wins:
-    an explicit reasoning_effort (the screen's "low"), or effort_for(model), which is
-    the constant that names an effort for this call site. Whichever it is reaches the
-    provider under its own name — Gemini's thinkingLevel is set inside call_gemini,
-    which reads the same effort_for(), so a Gemini id and an OpenAI id under the same
-    constant are asked to think alike.
+    How hard the model thinks comes from the caller and nowhere else: nothing is
+    inferred from the model id, because three call sites name the same id today.
+    The effort reaches whichever provider serves it under that provider's own name —
+    Gemini's thinkingLevel, OpenAI's and OpenRouter's reasoning_effort — so the same
+    constant asks a Gemini id and an OpenAI id to think alike. An empty value sends
+    nothing and leaves the provider default.
 
     Returns (result_dict_or_None, provider, error_description).
     """
     provider = provider_for(model)
-    effort = reasoning_effort or effort_for(model)
     if provider == "gemini":
-        result, err = call_gemini(prompt, model=model)
+        result, err = call_gemini(prompt, model=model,
+                                  reasoning_effort=reasoning_effort)
     elif provider == "openrouter":
-        result, err = call_openrouter(prompt, model=model, reasoning_effort=effort)
+        result, err = call_openrouter(prompt, model=model,
+                                      reasoning_effort=reasoning_effort)
     else:
-        result, err = call_openai(prompt, model=model, reasoning_effort=effort)
+        result, err = call_openai(prompt, model=model,
+                                  reasoning_effort=reasoning_effort)
     return result, provider, err
 
 
@@ -671,7 +670,7 @@ def identify_targets_with_llm(doi_r:          str,
                           for e in entries)
     key = content_key(cache_prefix, doi_r or study_r,
                       prompt_version("build_target_prompt"),
-                      cache_model_id(LINKING_MODEL),
+                      cache_model_id(LINKING_MODEL, LINKING_EFFORT),
                       abstract_only, identities, prompt)
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
@@ -693,7 +692,8 @@ def identify_targets_with_llm(doi_r:          str,
                 t["record"] = key_map.get(t["key"])
         return cached
 
-    result, provider, llm_error = call_model(prompt, LINKING_MODEL)
+    result, provider, llm_error = call_model(prompt, LINKING_MODEL,
+                                             reasoning_effort=LINKING_EFFORT)
     llm_source = provider if result else "none"
     llm_model  = LINKING_MODEL if result else ""
 
@@ -1042,17 +1042,22 @@ SCREEN_CATEGORIES = (
 )
 
 
-def screen_voters() -> list[tuple[str, str, str]]:
-    """Q1's voters in call order, as (provider, model, env var holding its key).
+def screen_voters() -> list[tuple[str, str, str, str]]:
+    """Q1's voters in call order, as (provider, model, env var holding its key, effort).
 
     The one place the voter pair is configured: it drives the per-vote dispatch, the
     "+".join fingerprint the classification cache is keyed on, and run_extract's
     startup key check. Swapping either model therefore reroutes the call, the cache
     key and the required key together — the provider follows the id, through
     provider_for(), so a slot is not tied to the vendor that happens to fill it.
+
+    The effort rides along per slot rather than as one value for the pair: the two
+    voters were evaluated at different rungs, and a vote's effort must reach both the
+    request and that voter's component of the key from the same place.
     """
-    return [(provider_for(m), m, _PROVIDER_KEY_ENV[provider_for(m)])
-            for m in (SCREENING_MODEL_1, SCREENING_MODEL_2)]
+    return [(provider_for(m), m, _PROVIDER_KEY_ENV[provider_for(m)], effort)
+            for m, effort in ((SCREENING_MODEL_1, SCREENING_EFFORT_1),
+                              (SCREENING_MODEL_2, SCREENING_EFFORT_2))]
 
 
 _PROVIDER_KEY_ENV = {
@@ -1062,15 +1067,16 @@ _PROVIDER_KEY_ENV = {
 }
 
 
-def _classify_once(prompt: str, model: str) -> "dict | None":
-    """One classification vote on the v3.2 five-field schema.
+def _classify_once(prompt: str, model: str, effort: str) -> "dict | None":
+    """One classification vote on the v3.2 five-field schema, at this voter's effort.
 
     The provider is not passed in: it follows the model id through call_model, and
     the vote is labelled with the provider that actually served it. Passing one
     alongside the id would let a caller label a vote with a provider that never saw
-    the prompt.
+    the prompt. The effort IS passed in, from the same screen_voters() slot that
+    names the model, because it is what the key claims the vote was produced at.
     """
-    result, provider, _err = call_model(prompt, model, reasoning_effort="low")
+    result, provider, _err = call_model(prompt, model, reasoning_effort=effort)
     if not result:
         return None
 
@@ -1145,6 +1151,32 @@ def _screen_categories(votes: list[dict]) -> list[str]:
     return [c for c in SCREEN_CATEGORIES if c in seen]
 
 
+# Declared cache equivalences for the classify key (issue #171). Each entry is one
+# LEGACY value of the key's voter component that a maintainer has reviewed and judged
+# to name the same computation as today's — registering one is a commit with the
+# reasoning attached, exactly as a model constant is. Everything else about the key is
+# unchanged, so an equivalence stops matching by itself the moment the prompt or a
+# voter model moves: the legacy key is rebuilt from the CURRENT prompt version and
+# prompt text, and only the voter component is substituted.
+#
+# Both declared entries name the same computation as today's: the Gemini voter at the
+# API default — no thinkingLevel in the request, which for gemini-3.5-flash-lite is
+# "minimal" — and the GPT voter at an explicit "low", which is exactly what
+# SCREENING_EFFORT_1 / SCREENING_EFFORT_2 now send. Only the LABEL differed.
+#
+#   "gemini-3.5-flash-lite+gpt-5.4-mini"  — the unlabelled pair, before the key named
+#   an effort at all. This is what the entries on disk are under (4,767 of the 4,817
+#   local classify entries when this was written).
+#
+#   "…@effort=medium"  — the label dcc0ba6 briefly derived from the model id, because
+#   the voter id matched LINKING_MODEL. That value was never sent to any provider; it
+#   is registered because a collaborator's cache pulled from HF may carry it.
+_CLASSIFY_LEGACY_KEY_PARTS = (
+    "gemini-3.5-flash-lite+gpt-5.4-mini",
+    "gemini-3.5-flash-lite+gpt-5.4-mini@effort=medium",
+)
+
+
 def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
     """Q1 alone: two models judge whether this paper is the kind of study the
     database collects, and screen_gate() turns their two votes into one decision.
@@ -1173,11 +1205,14 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
     # The voter pair is part of the verdict — the two models disagree often enough
     # that this is the question the audit measured a model effect on — so both
     # models are in the key alongside the prompt version and the text they see.
-    key = content_key("classify", doi_r or study_r,
-                      prompt_version("build_classify_prompt"),
-                      "+".join(cache_model_id(model) for _, model, _ in voters),
-                      cls_prompt)
-    cached = read_cache(LLM_CACHE_DIR, key)
+    pv       = prompt_version("build_classify_prompt")
+    voter_id = "+".join(cache_model_id(model, effort)
+                        for _, model, _, effort in voters)
+    key = content_key("classify", doi_r or study_r, pv, voter_id, cls_prompt)
+    legacy = [content_key("classify", doi_r or study_r, pv, part, cls_prompt)
+              for part in _CLASSIFY_LEGACY_KEY_PARTS]
+    cached = read_cache_migrating(LLM_CACHE_DIR, key, legacy,
+                                  {"prompt_version": pv, "voters": voter_id})
     if cached is not None:
         return cached
 
@@ -1190,7 +1225,8 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
     }
 
     out["llm_prompt"] = cls_prompt
-    votes = [v for v in (_classify_once(cls_prompt, m) for _p, m, _e in voters) if v]
+    votes = [v for v in (_classify_once(cls_prompt, m, eff)
+                         for _p, m, _e, eff in voters) if v]
 
     # Keep the individual votes: the gate's decision is not reviewable without
     # knowing who said what.
@@ -1211,7 +1247,7 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
         out["resolution_method"] = ("llm_refscreen_partial" if votes
                                     else "llm_refscreen_failed")
         out["llm_error"] = "classifier failed: " + ", ".join(
-            p for p, _, _ in voters if p not in answered)
+            p for p, _, _, _ in voters if p not in answered)
         return out
 
     out["screen_verdict"] = screen_gate(votes)

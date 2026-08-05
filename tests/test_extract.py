@@ -533,6 +533,15 @@ class TestOutcomeCacheKey:
         assert mock.call_count == 1
         assert len(list(tmp_path.glob("outcome_*.json"))) == 2
 
+    def test_outcome_sends_the_effort_that_coded_the_rows_on_disk(self, tmp_path):
+        """The effort is the call site's, not one inferred from a model id shared with
+        linking and the screen — and the value it pins is medium, which is what the
+        inferring code actually sent while every outcome in the cache was coded."""
+        from shared.config import OUTCOME_EFFORT
+        assert OUTCOME_EFFORT == "medium"
+        mock = self._run(tmp_path, abstract_r="a", title_r="T")
+        assert mock.call_args.kwargs["reasoning_effort"] == "medium"
+
     def test_changed_record_type_misses(self, tmp_path):
         self._run(tmp_path, abstract_r="a", title_r="T")
         mock = self._run(tmp_path, abstract_r="a", title_r="T", record_type="reproduction")
@@ -554,10 +563,15 @@ class TestOutcomeCacheKey:
         one written before the flag existed."""
         from shared.cache import content_key
         from shared.llm_client import cache_model_id
-        from shared.config import OUTCOME_MODEL
+        from shared.config import OUTCOME_EFFORT, OUTCOME_MODEL
         from shared.prompts import prompt_version
 
-        parts = (cache_model_id(OUTCOME_MODEL),
+        # The historical model component, byte for byte: the pre-refactor key derived
+        # "medium" from the model id AND the call sent it, so this whole namespace is
+        # still the answers this configuration produces.
+        assert cache_model_id(OUTCOME_MODEL, OUTCOME_EFFORT) == "gpt-5.4-mini@effort=medium"
+
+        parts = (cache_model_id(OUTCOME_MODEL, OUTCOME_EFFORT),
                  prompt_version("build_outcome_prompt"), "replication",
                  "T", "a", "", "", "", "")
         pre_pr = content_key("outcome", "10.1234/key", *parts)
@@ -1843,13 +1857,13 @@ class TestRescreenReopensSetAsides:
     def test_without_the_flag_set_asides_are_carried_forward(self, tmp_path):
         resolved, pending = run_extract._load_extracted_rows(self._csv(tmp_path, self._ROWS))
         assert set(resolved) == {"10.1/keep", "10.1/nar", "10.1/dis"}
-        assert pending == set()
+        assert pending == {}
 
     def test_rescreen_reopens_only_the_set_asides(self, tmp_path):
         resolved, pending = run_extract._load_extracted_rows(
             self._csv(tmp_path, self._ROWS), rescreen=True)
         assert set(resolved) == {"10.1/keep"}
-        assert pending == set()   # reopened rows are re-processed, not carried as pending
+        assert pending == {}   # reopened rows are re-processed, not carried as pending
 
     def test_rescreen_reopens_the_whole_multi_original_paper(self, tmp_path):
         rows = [
@@ -1891,7 +1905,7 @@ class TestResumeReadsTheScreenSetAsides:
     def test_set_aside_papers_count_as_resolved(self, tmp_path):
         resolved, pending = run_extract._load_extracted_rows(self._setup(tmp_path))
         assert set(resolved) == {"10.1/keep", "10.1/nar", "10.1/dis"}
-        assert pending == set()
+        assert pending == {}
 
     def test_set_aside_rows_are_not_written_back_to_extracted_csv(self, tmp_path):
         resolved, _ = run_extract._load_extracted_rows(self._setup(tmp_path))
@@ -2989,3 +3003,143 @@ def test_no_live_reference_to_the_deleted_builders():
             {"rank": 1, "doi": "10.1/o", "title": "O", "confidence": "medium"},
             {}, "single_original", "high", 1)
     assert row["link_confidence"] == "low"
+
+
+# ── The output file's state at the start of a run ────────────────────────────
+
+class TestOutputFileStartState:
+    """extracted.csv is settled before the first row is worked, not by the first row
+    written. Lazily truncating at the first write is how a resume over a file of
+    nothing but target_pending rows deleted 76 rows whose papers had left
+    filtered.csv (2026-08-05), and how a --fresh run that wrote nothing left the
+    stale file looking like its result."""
+
+    @staticmethod
+    def _filtered(tmp_path: Path, rows: list[dict]) -> Path:
+        from shared.schema import FILTERED_COLS
+        out = []
+        for r in rows:
+            row = {col: "" for col in FILTERED_COLS}
+            row.update({"title_r": "T", "abstract_r": "abstract",
+                        "filter_status": "replication", "year_r": "2020"})
+            row.update(r)
+            out.append(row)
+        path = tmp_path / "filtered.csv"
+        pd.DataFrame(out, columns=FILTERED_COLS).to_csv(
+            path, index=False, encoding="utf-8-sig")
+        return path
+
+    @staticmethod
+    def _extracted(tmp_path: Path, rows: list[dict], name: str = "extracted.csv") -> Path:
+        out = []
+        for r in rows:
+            row = {col: "" for col in EXTRACTED_COLS}
+            row.update({"title_r": "T", "filter_status": "replication"})
+            row.update(r)
+            out.append(row)
+        path = tmp_path / name
+        pd.DataFrame(out, columns=EXTRACTED_COLS).to_csv(
+            path, index=False, encoding="utf-8-sig")
+        return path
+
+    @staticmethod
+    def _result(doi_r: str) -> dict:
+        row = {col: "" for col in EXTRACTED_COLS}
+        row.update({"doi_r": doi_r, "link_method": "llm_fulltext", "doi_o": "10.9/o",
+                    "original_rank": 1, "n_originals": 1,
+                    "filter_status": "replication"})
+        return row
+
+    def _run(self, tmp_path, **kwargs) -> pd.DataFrame:
+        def fake(row, doi_r, **kw):
+            return [self._result(doi_r)]
+
+        with patch.object(run_extract, "DATA_DIR", tmp_path), \
+             patch.object(run_extract, "EXTRACT_WORKERS", 1), \
+             patch.object(run_extract, "_process_row", fake), \
+             patch.object(run_extract, "_check_screen_providers"), \
+             patch.object(run_extract, "verify_and_correct",
+                          side_effect=lambda doi, *a, **k: {
+                              "doi_o": doi, "doi_o_verification": "skipped",
+                              "evidence_note": ""}), \
+             patch.object(run_extract, "_oa_by_doi", return_value=None):
+            run_extract.run_extract(**kwargs)
+        return pd.read_csv(tmp_path / "extracted.csv", dtype=str,
+                           encoding="utf-8-sig").fillna("")
+
+    def test_resume_over_only_pending_rows_does_not_truncate(self, tmp_path):
+        """No resolved row is pre-written here, so under lazy truncation the first
+        new row opened the file with mode='w' and the gone paper's row went with it."""
+        self._filtered(tmp_path, [{"doi_r": "10.1/here"}])
+        self._extracted(tmp_path, [
+            {"doi_r": "10.1/here", "link_method": "target_pending", "outcome": "pending"},
+            {"doi_r": "10.1/gone", "link_method": "target_pending", "outcome": "pending"},
+        ])
+        df = self._run(tmp_path)
+        assert set(df["doi_r"]) == {"10.1/here", "10.1/gone"}
+        # The paper still in filtered.csv was re-run; the one that left was not.
+        assert df[df["doi_r"] == "10.1/here"].iloc[0]["link_method"] == "llm_fulltext"
+        assert df[df["doi_r"] == "10.1/gone"].iloc[0]["link_method"] == "target_pending"
+
+    def test_pending_rows_survive_a_run_that_never_reaches_them(self, tmp_path):
+        """--limit stops the loop early; the pending rows it never reached were in
+        the file before and must still be in it after."""
+        self._filtered(tmp_path, [{"doi_r": "10.1/a"}, {"doi_r": "10.1/b"}])
+        self._extracted(tmp_path, [
+            {"doi_r": "10.1/a", "link_method": "target_pending", "outcome": "pending"},
+            {"doi_r": "10.1/b", "link_method": "target_pending", "outcome": "pending"},
+        ])
+        df = self._run(tmp_path, limit=1)
+        assert set(df["doi_r"]) == {"10.1/a", "10.1/b"}
+        assert sorted(df["link_method"]) == ["llm_fulltext", "target_pending"]
+
+    def test_a_run_that_stops_keeps_the_pending_row_it_was_working_on(self, tmp_path):
+        """The budget stop writes nothing for the row it stopped on, so that row's
+        carried-forward version is still the best the file has."""
+        self._filtered(tmp_path, [{"doi_r": "10.1/a"}])
+        self._extracted(tmp_path, [
+            {"doi_r": "10.1/a", "link_method": "target_pending", "outcome": "pending"},
+        ])
+
+        def boom(row, doi_r, **kw):
+            raise TokenBudgetExhausted("out of budget")
+
+        with patch.object(run_extract, "DATA_DIR", tmp_path), \
+             patch.object(run_extract, "EXTRACT_WORKERS", 1), \
+             patch.object(run_extract, "_process_row", boom), \
+             patch.object(run_extract, "_check_screen_providers"):
+            with pytest.raises(TokenBudgetExhausted):
+                run_extract.run_extract()
+        df = pd.read_csv(tmp_path / "extracted.csv", dtype=str,
+                         encoding="utf-8-sig").fillna("")
+        assert list(df["doi_r"]) == ["10.1/a"]
+        assert list(df["link_method"]) == ["target_pending"]
+
+    def test_fresh_truncates_even_when_every_row_is_skipped(self, tmp_path):
+        """The warning says the file is overwritten, so it is — before the row work,
+        not by a row that a filtered input may never produce."""
+        self._filtered(tmp_path, [{"doi_r": "10.1/a", "filter_status": "false_positive"}])
+        self._extracted(tmp_path, [
+            {"doi_r": "10.1/stale", "link_method": "llm_fulltext", "doi_o": "10.9/o"},
+        ])
+        df = self._run(tmp_path, fresh=True)
+        assert df.empty
+        assert list(df.columns) == list(EXTRACTED_COLS)
+
+    def test_missing_input_csv_errors_instead_of_using_the_sample(self, tmp_path):
+        with patch.object(run_extract, "DATA_DIR", tmp_path), \
+             patch.object(run_extract, "_check_screen_providers"):
+            with pytest.raises(FileNotFoundError) as exc:
+                run_extract.run_extract()
+        assert "filter.engine handoff" in str(exc.value)
+        assert not (tmp_path / "extracted.csv").exists()
+
+    def test_the_sample_is_used_only_when_it_is_named(self, tmp_path):
+        """--filtered-csv is the only way in — for the fixture or any other input."""
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        named = self._filtered(elsewhere, [{"doi_r": "10.1/named"}])
+        # DATA_DIR (tmp_path) holds no filtered.csv at all, so the run can only have
+        # read the file it was handed.
+        df = self._run(tmp_path, filtered_csv=named)
+        assert set(df["doi_r"]) == {"10.1/named"}

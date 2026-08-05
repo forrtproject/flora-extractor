@@ -13,7 +13,7 @@ import re
 import pytest
 
 from shared.cache import (
-    clear_content_keys, content_key, read_cache, write_cache,
+    clear_content_keys, content_key, read_cache, read_cache_migrating, write_cache,
 )
 
 
@@ -74,3 +74,42 @@ class TestClearContentKeys:
 
     def test_clearing_an_uncached_paper_is_a_no_op(self, tmp_path):
         assert clear_content_keys(tmp_path, "outcome", "10.1/never-cached") == []
+
+
+class TestReadCacheMigrating:
+    """Declared equivalences (issue #171): keys stay strict, but a call site may name
+    legacy keys a maintainer reviewed as the same computation. The registered case at
+    the classify call site is a mislabelled model component; the case this class
+    covers is the other one the mechanism must serve without extra code — a legacy
+    PROMPT VERSION, where a prompt edit was judged answer-preserving."""
+
+    def _keys(self):
+        return (content_key("outcome", "10.1/abc", "v2", "m", "the prompt"),
+                content_key("outcome", "10.1/abc", "v1", "m", "the prompt"))
+
+    def test_a_legacy_prompt_version_answers_and_is_refiled_with_provenance(self, tmp_path):
+        current, legacy = self._keys()
+        write_cache(tmp_path, legacy, {"outcome": "success"})
+
+        got = read_cache_migrating(tmp_path, current, [legacy],
+                                   {"prompt_version": "v2", "model": "m"})
+
+        assert got["outcome"] == "success"
+        assert got["cache_migrated"] == {"prompt_version": "v2", "model": "m",
+                                         "from_key": legacy}
+        # Re-filed under the current key, and the legacy entry is left for other
+        # checkouts and the shared HF cache to keep hitting.
+        assert read_cache(tmp_path, current) == got
+        assert read_cache(tmp_path, legacy) == {"outcome": "success"}
+
+    def test_the_current_key_wins_and_is_not_annotated(self, tmp_path):
+        current, legacy = self._keys()
+        write_cache(tmp_path, current, {"outcome": "failure"})
+        write_cache(tmp_path, legacy, {"outcome": "success"})
+
+        assert read_cache_migrating(tmp_path, current, [legacy], {}) == {"outcome": "failure"}
+
+    def test_no_declared_key_hits_is_a_plain_miss(self, tmp_path):
+        current, legacy = self._keys()
+        assert read_cache_migrating(tmp_path, current, [legacy], {}) is None
+        assert not list(tmp_path.glob("*.json"))

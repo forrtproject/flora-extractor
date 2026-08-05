@@ -403,9 +403,13 @@ python -m extract.run_extract --limit 50
 
 # Re-extract papers already in FLoRA (the skip is ON by default)
 python -m extract.run_extract --no-skip-flora-validated
+
+# Run against another input — the fixture, say. There is no silent fallback to it
+python -m extract.run_extract --filtered-csv misc/sample_filtered.csv
 ```
 
-**Input:** `data/filtered.csv`  
+**Input:** `data/filtered.csv` (Stage 2's handoff writes it; a missing file is an
+error, not a reason to fall back to the fixture)  
 **Output:** `data/extracted.csv` (or `data/extracted-test.csv` with `--extracted-test`)
 
 The examples above are a selection, not the flag list. For the complete, current set

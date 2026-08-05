@@ -216,10 +216,38 @@ PDF_PARSE_MODEL = "gemini-3-flash-preview"
 # ladder's Gemini leg was effectively spending at the model's own default with no one
 # naming it.
 #
-# It applies to LINKING_MODEL calls alone, and a non-empty value is folded into every
-# cache key naming that model (cache_model_id() in shared/llm_client.py), so two
-# settings never share an answer.
+# It reaches the request because the linking call site passes it explicitly, and it
+# names that call's cache entries because the same call site passes it to
+# cache_model_id() (shared/llm_client.py), so two settings never share an answer.
+# Nothing is inferred from the model id: LINKING_MODEL, OUTCOME_MODEL and
+# SCREENING_MODEL_2 are the same string today, and dispatching on it once sent
+# linking's effort to calls that never asked for one.
 LINKING_EFFORT = "medium"
+
+# How hard each of the screen's two voters is asked to think. The screen answers a
+# small fixed schema over one abstract, so it buys the cheapest rung above nothing;
+# these are constants rather than literals at the call site because they reach the
+# classify cache key, and a value that decides what an entry means is changed by a
+# commit.
+#
+# One per voter, not one for the pair: these pin the configuration the screen was
+# EVALUATED at, and the two voters were evaluated at different rungs. Voter 1
+# (Gemini) ran with no thinking level in the request at all, i.e. at the model's own
+# default, which for gemini-3.5-flash-lite is "minimal". Naming it explicitly is the
+# point: Google has changed model defaults before, and an implicit default could
+# silently move the voter with no change to the cache key — every entry would keep
+# claiming to be the evaluated configuration. Voter 2 was evaluated at "low".
+SCREENING_EFFORT_1 = "minimal"
+SCREENING_EFFORT_2 = "low"
+
+# How hard OUTCOME_MODEL is asked to think (extract/code_outcome.py, both passes).
+# This pins what actually coded the rows on disk: before efforts became a per-call-site
+# value, the outcome call derived "medium" from its model id and sent it, so every
+# outcome entry in the cache was produced at medium. Naming it here keeps that, and
+# keeps the outcome cache key at its historical "gpt-5.4-mini@effort=medium" string,
+# so the whole namespace stays valid. Outcome coding may well not need medium —
+# lowering it is a deliberate, evaluated change that re-codes rows, not a default.
+OUTCOME_EFFORT = "medium"
 
 # OpenRouter (OpenAI-compatible API at openrouter.ai). Nothing routes here by
 # default: it is reached only by a model id that names it — the pre-screen's two

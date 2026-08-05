@@ -142,7 +142,7 @@ def test_a_classification_outside_the_enum_becomes_unclear(monkeypatch):
                         lambda p, model=None, **kw: ({"classification": "maybe",
                                                 "confident": True,
                                                 "categories": ["clearly_declared"]}, None))
-    assert llm._classify_once("p", "gemini-3.5-flash-lite")["classification"] == "unclear"
+    assert llm._classify_once("p", "gemini-3.5-flash-lite", "minimal")["classification"] == "unclear"
 
 
 @pytest.mark.parametrize("raw,expected", [
@@ -154,7 +154,7 @@ def test_confident_is_coerced_to_a_bool(monkeypatch, raw, expected):
     monkeypatch.setattr(llm, "call_gemini",
                         lambda p, model=None, **kw: ({"classification": "replication",
                                                 "confident": raw, "categories": []}, None))
-    vote = llm._classify_once("p", "gemini-3.5-flash-lite")
+    vote = llm._classify_once("p", "gemini-3.5-flash-lite", "minimal")
     assert vote["confident"] is expected
 
 
@@ -162,7 +162,7 @@ def test_categories_keep_enum_values_in_order_and_drop_the_rest(monkeypatch):
     monkeypatch.setattr(llm, "call_gemini", lambda p, model=None, **kw: (
         {"classification": "replication", "confident": True,
          "categories": ["context_transfer", "not_a_category", "clearly_declared"]}, None))
-    vote = llm._classify_once("p", "gemini-3.5-flash-lite")
+    vote = llm._classify_once("p", "gemini-3.5-flash-lite", "minimal")
     assert vote["categories"] == ["context_transfer", "clearly_declared"]
 
 
@@ -194,7 +194,7 @@ def test_the_voter_id_decides_which_provider_is_called(monkeypatch, voter_id, pr
         AssertionError(f"a {provider} voter id must not reach {other}")))
 
     assert [v[0] for v in llm.screen_voters()] == ["gemini", provider]
-    assert llm._classify_once("p", voter_id)["provider"] == provider
+    assert llm._classify_once("p", voter_id, llm.SCREENING_EFFORT_2)["provider"] == provider
     assert seen["model"] == voter_id
     if provider == "openai":
         assert seen["reasoning_effort"] == "low"
@@ -705,19 +705,15 @@ def test_openai_flex_off_by_default(monkeypatch):
     assert all("service_tier" not in c for c in calls)
 
 
-# ── Gemini thinking level ────────────────────────────────────────────────────
-# A spend lever that changes the answer: it may only be sent on the heavy model,
-# and whenever it is sent it must be part of that model's cache key.
+# ── Reasoning effort ─────────────────────────────────────────────────────────
+# A spend lever that changes the answer: it comes from the call site, reaches the
+# provider under that provider's own name, and is named by the cache key.
 
-def _thinking_env(monkeypatch, level="minimal"):
-    monkeypatch.setattr(llm, "LINKING_EFFORT", level)
-    monkeypatch.setattr(llm, "LINKING_MODEL", "gemini-3-flash-preview")
+def test_thinking_level_comes_from_the_caller(monkeypatch):
+    """The same model id serves three call sites, so call_gemini sends the effort it
+    is given and never derives one — an id must not carry another call's thinking."""
     monkeypatch.setattr(llm, "GEMINI_API_KEYS", ["k1"])
     monkeypatch.setattr(llm, "GEMINI_USE_FLEX", False)
-
-
-def test_thinking_level_is_sent_only_on_the_heavy_model(monkeypatch):
-    _thinking_env(monkeypatch)
     posts: list = []
 
     def post(url, json=None, timeout=None):
@@ -725,28 +721,137 @@ def test_thinking_level_is_sent_only_on_the_heavy_model(monkeypatch):
         return _gemini_ok()
 
     monkeypatch.setattr(llm.requests, "post", post)
+    llm.call_gemini("prompt", model="gemini-3-flash-preview", reasoning_effort="minimal")
     llm.call_gemini("prompt", model="gemini-3-flash-preview")
-    llm.call_gemini("prompt", model="gemini-3.5-flash-lite")
 
     assert posts[0]["generationConfig"]["thinkingLevel"] == "minimal"
-    assert "thinkingLevel" not in posts[1]["generationConfig"]   # light model untouched
+    assert "thinkingLevel" not in posts[1]["generationConfig"]
 
-    # Unset is the default and must send nothing at all.
+    # call_model passes the caller's value straight through to the Gemini leg.
     posts.clear()
-    monkeypatch.setattr(llm, "LINKING_EFFORT", "")
-    llm.call_gemini("prompt", model="gemini-3-flash-preview")
-    assert "thinkingLevel" not in posts[0]["generationConfig"]
+    llm.call_model("prompt", "gemini-3-flash-preview", reasoning_effort="high")
+    assert posts[0]["generationConfig"]["thinkingLevel"] == "high"
 
 
-def test_thinking_level_changes_the_heavy_model_cache_key(monkeypatch):
-    _thinking_env(monkeypatch, level="")
-    default_key   = llm.cache_model_id("gemini-3-flash-preview")
-    light_default = llm.cache_model_id("gemini-3.5-flash-lite")
+def test_cache_model_id_names_the_effort_it_is_given(monkeypatch):
+    """The key states what the call sent — nothing is read off the model id."""
+    assert llm.cache_model_id("m", "minimal") == "m@effort=minimal"
+    assert llm.cache_model_id("m", "") == "m"
+    assert llm.cache_model_id("m") == "m"
 
-    monkeypatch.setattr(llm, "LINKING_EFFORT", "minimal")
-    assert llm.cache_model_id("gemini-3-flash-preview") != default_key
-    # Only the heavy model's answers were produced under the level.
-    assert llm.cache_model_id("gemini-3.5-flash-lite") == light_default
+    # No global is consulted: the id that names LINKING_MODEL keys the same as any
+    # other, whatever LINKING_EFFORT happens to be.
+    monkeypatch.setattr(llm, "LINKING_EFFORT", "high")
+    assert llm.cache_model_id(llm.LINKING_MODEL) == llm.LINKING_MODEL
+
+
+def test_the_linking_key_format_is_unchanged():
+    """The linking cache is the one whose entries were labelled with the effort they
+    were actually produced at, so its key string must survive this change byte for
+    byte — a new format re-pays for every link on disk."""
+    assert llm.cache_model_id(llm.LINKING_MODEL, "medium") == \
+        f"{llm.LINKING_MODEL}@effort=medium"
+
+
+def test_the_screen_key_names_each_voters_own_effort(monkeypatch, tmp_path):
+    """The two voters were evaluated at different rungs, so each key component names
+    the effort ITS voter was called with — not one value stamped on the pair."""
+    calls: list = []
+    _classify(monkeypatch, tmp_path, calls)
+    llm.classify_replication("10.1/x", "Title", "Abstract")
+
+    voters = "+".join(llm.cache_model_id(m, eff)
+                      for _, m, _, eff in llm.screen_voters())
+    assert (llm.SCREENING_EFFORT_1, llm.SCREENING_EFFORT_2) == ("minimal", "low")
+    assert voters.endswith("@effort=low") and "@effort=minimal+" in voters
+    expected = llm.content_key("classify", "10.1/x",
+                               llm.prompt_version("build_classify_prompt"),
+                               voters,
+                               llm.build_classify_prompt("Title", "Abstract"))
+    assert [f.stem for f in tmp_path.glob("classify_*.json")] == [expected]
+
+
+def test_the_gemini_voter_is_sent_minimal_rather_than_left_to_the_default(monkeypatch):
+    """Voter 1 ran at the model's own default, which today IS minimal. Sending it
+    explicitly is what stops a changed provider default from moving the voter without
+    moving the key."""
+    monkeypatch.setattr(llm, "GEMINI_API_KEYS", ["k1"])
+    monkeypatch.setattr(llm, "GEMINI_USE_FLEX", False)
+    posts: list = []
+    monkeypatch.setattr(llm.requests, "post",
+                        lambda url, json=None, timeout=None: (posts.append(dict(json)),
+                                                              _gemini_ok())[1])
+
+    _p, model, _e, effort = llm.screen_voters()[0]
+    llm._classify_once("prompt", model, effort)
+    assert posts[0]["generationConfig"]["thinkingLevel"] == "minimal"
+
+
+# ── Declared cache equivalences (issue #171) ─────────────────────────────────
+# Keys stay strict by default; a maintainer may register a legacy key that names the
+# same computation. The registered one is the classify key's old voter component,
+# whose "medium" label was never sent to any provider.
+
+def _classify_key(voter_component: str, prompt: str) -> str:
+    return llm.content_key("classify", "10.1/x",
+                           llm.prompt_version("build_classify_prompt"),
+                           voter_component, prompt)
+
+
+def test_a_declared_legacy_key_is_migrated_onto_the_current_key(monkeypatch, tmp_path):
+    """An entry under the reviewed legacy key answers the call, is re-filed under the
+    current key with provenance, and is left where it is for other checkouts."""
+    calls: list = []
+    _classify(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(llm, "_CLASSIFY_LEGACY_KEY_PARTS", ("legacy-voters",))
+    legacy = _classify_key("legacy-voters", llm.build_classify_prompt("Title", "Abstract"))
+    llm.write_cache(tmp_path, legacy, dict(_VERDICT_YES))
+
+    out = llm.classify_replication("10.1/x", "Title", "Abstract")
+
+    assert calls == []                       # nothing was re-asked
+    assert out["screen_verdict"] == "proceed"
+    assert out["cache_migrated"]["from_key"] == legacy
+    assert out["cache_migrated"]["prompt_version"] == \
+        llm.prompt_version("build_classify_prompt")
+    assert "@effort=minimal" in out["cache_migrated"]["voters"]
+    # The legacy file is untouched and the answer is now also under the current key.
+    assert llm.read_cache(tmp_path, legacy) == _VERDICT_YES
+    assert len(list(tmp_path.glob("classify_*.json"))) == 2
+
+
+def test_the_equivalence_does_not_fire_across_a_prompt_change(monkeypatch, tmp_path):
+    """Only the declared component is substituted; every other component is shared
+    with the current key, so an entry from a different prompt cannot be claimed."""
+    calls: list = []
+    _classify(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(llm, "_CLASSIFY_LEGACY_KEY_PARTS", ("legacy-voters",))
+    stale = _classify_key("legacy-voters",
+                          llm.build_classify_prompt("Other title", "Other abstract"))
+    llm.write_cache(tmp_path, stale, dict(_VERDICT_YES))
+
+    llm.classify_replication("10.1/x", "Title", "Abstract")
+    assert [c[0] for c in calls] == ["gemini", "openrouter"]   # it voted for itself
+
+
+def test_the_registered_equivalences_are_the_two_older_labels(monkeypatch, tmp_path):
+    """Both declared parts name minimal+low under an older label: the unlabelled pair
+    the entries on disk are under, and the "@effort=medium" the key briefly derived
+    from a model id and never sent. Each must be a live legacy key, not a comment."""
+    assert llm._CLASSIFY_LEGACY_KEY_PARTS == (
+        "gemini-3.5-flash-lite+gpt-5.4-mini",
+        "gemini-3.5-flash-lite+gpt-5.4-mini@effort=medium")
+
+    calls: list = []
+    _classify(monkeypatch, tmp_path, calls)
+    prompt = llm.build_classify_prompt("Title", "Abstract")
+    for part in llm._CLASSIFY_LEGACY_KEY_PARTS:
+        for f in tmp_path.glob("classify_*.json"):
+            f.unlink()
+        llm.write_cache(tmp_path, _classify_key(part, prompt), dict(_VERDICT_YES))
+        out = llm.classify_replication("10.1/x", "Title", "Abstract")
+        assert out["cache_migrated"]["from_key"].startswith("classify_")
+        assert calls == []
 
 
 # ── Cache keys (audit E3) ────────────────────────────────────────────────────

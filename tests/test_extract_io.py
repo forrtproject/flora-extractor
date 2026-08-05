@@ -30,8 +30,9 @@ class TestAppendRow:
                               "doi_o": doi, "doi_o_verification": "skipped",
                               "evidence_note": ""}), \
              patch.object(run_extract, "_oa_by_doi", return_value=None):
-            for i, row in enumerate(rows):
-                _append_row(path, dict(row), first=(i == 0))
+            run_extract._write_header(path)
+            for row in rows:
+                _append_row(path, dict(row))
         return pd.read_csv(path, dtype=str, encoding="utf-8-sig").fillna("")
 
     def test_columns_are_written_in_schema_order(self, tmp_path):

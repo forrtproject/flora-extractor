@@ -983,7 +983,8 @@ def _screen_set_aside_keys(data_dir) -> set[str]:
     return keys
 
 
-def _load_extracted_rows(out_path, rescreen: bool = False) -> tuple[dict[str, list[dict]], set[str]]:
+def _load_extracted_rows(out_path, rescreen: bool = False
+                         ) -> tuple[dict[str, list[dict]], dict[str, list[dict]]]:
     """Partition extracted.csv rows by resolution status for a resuming run.
 
     Also reads the screen's set-aside CSVs, which hold papers sanity_check moved out
@@ -1000,13 +1001,16 @@ def _load_extracted_rows(out_path, rescreen: bool = False) -> tuple[dict[str, li
 
     Returns:
         resolved — row_key → list of rows that are fully resolved (link_method != target_pending)
-        pending  — set of row_key where at least one row has link_method == target_pending
+        pending  — row_key → its rows, where at least one has link_method == target_pending.
+                   The rows come back too because a resume that never sees the key
+                   again (the paper left filtered.csv) has to write them back
+                   unchanged rather than let the rewritten file drop them.
     """
     # An empty list of rows: the paper is settled, so it is skipped, but its row
     # stays in the set-aside CSV rather than being written back to extracted.csv.
     set_aside_keys = set() if rescreen else _screen_set_aside_keys(Path(out_path).parent)
     if not out_path.exists():
-        return {k: [] for k in set_aside_keys}, set()
+        return {k: [] for k in set_aside_keys}, {}
     df = pd.read_csv(out_path, dtype=str, encoding="utf-8-sig").fillna("")
     # Drop false_positive rows that were incorrectly written in a prior run.
     df = df[df["filter_status"] != "false_positive"]
@@ -1018,7 +1022,7 @@ def _load_extracted_rows(out_path, rescreen: bool = False) -> tuple[dict[str, li
         keys = df.apply(_extract_row_key, axis=1)
         df = df[~keys.isin(set(keys[set_aside]))]
     resolved: dict[str, list[dict]] = {}
-    pending: set[str] = set()
+    pending: dict[str, list[dict]] = {}
     for row_key, group in df.groupby(df.apply(_extract_row_key, axis=1), sort=False):
         if not row_key:
             continue  # rows with no DOI, no OA ID, and no title — skip; can't dedup
@@ -1043,14 +1047,16 @@ def _load_extracted_rows(out_path, rescreen: bool = False) -> tuple[dict[str, li
                         "dropped from the resume state — they are re-processed only "
                         "if the paper is still in filtered.csv", row_key, len(stale))
         if not rows:
-            pending.add(row_key)
+            # Every row was a stale artifact: the key is unresolved, and there is
+            # nothing worth carrying forward if the paper never comes back.
+            pending[row_key] = []
             continue
         is_pending = any(r.get("link_method") == "target_pending" for r in rows)
         if is_pending:
-            pending.add(row_key)
+            pending[row_key] = rows
         else:
             resolved[row_key] = rows
-    for key in set_aside_keys - pending:
+    for key in set_aside_keys - pending.keys():
         resolved.setdefault(key, [])
     return resolved, pending
 
@@ -1265,12 +1271,46 @@ def _finalise_row(result_row: dict) -> dict:
     return result_row
 
 
-def _write_row(out_path, result_row: dict, first: bool) -> None:
-    """Append one already-finalised row to the output CSV.
+def _require_input_csv(filtered_path: Path) -> None:
+    """Refuse to run without the input CSV, rather than falling back to the fixture.
 
-    first=True  → open with mode='w' (creates / truncates the file) and write header.
-    first=False → open with mode='a' (append) and skip header.
+    A missing data/filtered.csv used to be answered silently with
+    misc/sample_filtered.csv — a handful of demo rows — so a production run could
+    report success having extracted a fixture. The sample is now reachable only by
+    naming it.
     """
+    if filtered_path.exists():
+        return
+    raise FileNotFoundError(
+        f"input CSV not found: {filtered_path}\n"
+        "Stage 2's handoff writes it: "
+        "python -m filter.engine handoff --out data/filtered.csv\n"
+        "To run against the small fixture instead, name it explicitly: "
+        "--filtered-csv misc/sample_filtered.csv"
+    )
+
+
+def _write_header(out_path) -> None:
+    """Create the output CSV with its header — the run's ONLY mode='w' write.
+
+    The file's state is settled here, before any row work: --fresh truncates here,
+    and a resume writes the header (and then the rows it carries forward) here.
+    Truncation used to be lazy — the first row written opened mode='w' — with two
+    consequences. A resume whose carried-forward set was empty (an extracted.csv of
+    nothing but target_pending rows) truncated the file at the first NEW row, taking
+    with it every row whose paper had meanwhile left filtered.csv; that is how 76
+    rows vanished on 2026-08-05. And a --fresh run that wrote no row at all left the
+    stale file in place, looking like the fresh result.
+    """
+    with csv_lock(out_path):
+        pd.DataFrame(columns=list(EXTRACTED_COLS)).to_csv(
+            out_path, mode="w", index=False, encoding="utf-8-sig",
+            quoting=1, quotechar='"',
+        )
+
+
+def _write_row(out_path, result_row: dict) -> None:
+    """Append one already-finalised row to the output CSV (header written already)."""
     row_df = pd.DataFrame([result_row])
     for col in EXTRACTED_COLS:
         if col not in row_df.columns:
@@ -1281,8 +1321,8 @@ def _write_row(out_path, result_row: dict, first: bool) -> None:
         # clobber this append (and vice versa) when both run against extracted.csv (#49).
         with csv_lock(out_path):
             row_df[EXTRACTED_COLS].to_csv(
-                out_path, mode="w" if first else "a",
-                index=False, encoding="utf-8-sig", header=first,
+                out_path, mode="a",
+                index=False, encoding="utf-8", header=False,
                 quoting=1,  # csv.QUOTE_ALL to quote fields with special characters
                 quotechar='"',
             )
@@ -1292,9 +1332,9 @@ def _write_row(out_path, result_row: dict, first: bool) -> None:
         raise
 
 
-def _append_row(out_path, result_row: dict, first: bool) -> None:
+def _append_row(out_path, result_row: dict) -> None:
     """Finalise one result row and stream it to the output CSV."""
-    _write_row(out_path, _finalise_row(result_row), first)
+    _write_row(out_path, _finalise_row(result_row))
 
 
 # Read at call time, so a run picks up the keys config actually loaded.
@@ -1322,7 +1362,7 @@ def _check_screen_providers(no_llm: bool) -> None:
     if no_llm:
         return
     outcome_key = "OPENROUTER_API_KEY" if "/" in OUTCOME_MODEL else "OPENAI_API_KEY"
-    needed = {env for _, _, env in screen_voters()} | {outcome_key}
+    needed = {env for _, _, env, _ in screen_voters()} | {outcome_key}
     missing = sorted(env for env in needed if not _SCREEN_KEYS[env]())
     if missing:
         raise RuntimeError(
@@ -1804,7 +1844,8 @@ def run_extract(no_llm: bool = False,
                 source: "str | None" = None,
                 doi_r_filter: "list[str] | None" = None,
                 recalibrate_outcomes: bool = False,
-                rescreen: bool = False) -> pd.DataFrame:
+                rescreen: bool = False,
+                filtered_csv: "Path | str | None" = None) -> pd.DataFrame:
     """
     Run Stage 3 and stream results to data/extracted.csv.
 
@@ -1837,19 +1878,14 @@ def run_extract(no_llm: bool = False,
                            or --no-llm are set. Only the outcome step is affected; link resolution
                            still respects those flags. Useful for a fast --no-llm --no-pdf pass
                            that still gets proper outcomes.
+    filtered_csv        — the input CSV. Defaults to data/filtered.csv, which Stage 2's
+                           handoff writes; pass misc/sample_filtered.csv explicitly to
+                           run against the fixture.
     """
     _check_screen_providers(no_llm)
 
-    filtered_path = DATA_DIR / "filtered.csv"
-    if not filtered_path.exists():
-        sample_path = BASE_DIR / "misc" / "sample_filtered.csv"
-        if sample_path.exists():
-            log.info("data/filtered.csv not found — using misc/sample_filtered.csv")
-            filtered_path = sample_path
-        else:
-            raise FileNotFoundError(
-                f"filtered.csv not found at {filtered_path}. Run Stage 2 first."
-            )
+    filtered_path = Path(filtered_csv) if filtered_csv else DATA_DIR / "filtered.csv"
+    _require_input_csv(filtered_path)
 
     flora_skip: set[str] = set()
     if skip_flora_validated:
@@ -1870,7 +1906,6 @@ def run_extract(no_llm: bool = False,
     test_mode = (str(out_path.resolve()) != str(prod_path.resolve()))
 
     output_rows: list[dict] = []
-    first_write = True
     processed = 0
 
     # In test mode: always load the production CSV to identify which DOIs to skip
@@ -1887,23 +1922,29 @@ def run_extract(no_llm: bool = False,
     # Resuming is the default: a run that re-decided rows it had already paid for
     # would be the expensive accident, so it takes --fresh to ask for one.
     resolved_rows: dict[str, list[dict]] = {}
+    pending_rows: dict[str, list[dict]] = {}
     if fresh:
-        log.warning("--fresh: %s will be overwritten and every row re-extracted",
+        log.warning("--fresh: %s is overwritten now and every row re-extracted",
                     out_path.name)
+        # Truncate before any row work, not at the first row written: a --fresh run
+        # that skips every row must still leave a fresh (empty) file behind.
+        _write_header(out_path)
     else:
-        resolved_rows, pending_dois = _load_extracted_rows(out_path, rescreen=rescreen)
+        resolved_rows, pending_rows = _load_extracted_rows(out_path, rescreen=rescreen)
         n_resolved_rows = sum(len(v) for v in resolved_rows.values())
         log.info(
             "resuming: %d DOIs already resolved (%d rows), %d pending re-processing",
-            len(resolved_rows), n_resolved_rows, len(pending_dois),
+            len(resolved_rows), n_resolved_rows, len(pending_rows),
         )
-        # Write ALL resolved rows to the output file immediately, before processing
-        # any pending rows. This prevents data loss if the run is interrupted later —
-        # resolved work is committed up front, not interleaved with slow PDF/LLM calls.
+        # Write the header and ALL resolved rows to the output file immediately,
+        # before processing any pending rows: resolved work is committed up front,
+        # not interleaved with slow PDF/LLM calls. The header goes down even when
+        # there are no resolved rows at all, so that nothing written later can be
+        # the write that truncates the file.
+        _write_header(out_path)
         for rows in resolved_rows.values():
             for result_row in rows:
-                _append_row(out_path, result_row, first=first_write)
-                first_write = False
+                _append_row(out_path, result_row)
                 output_rows.append(result_row)
         log.info("resuming: wrote %d resolved rows to %s (safe to interrupt)",
                  len(output_rows), out_path.name)
@@ -1911,6 +1952,13 @@ def run_extract(no_llm: bool = False,
     doi_r_targets = {clean_doi(d) for d in (doi_r_filter or [])}
     flora_skip_count = 0
     validated_skip_count = 0
+
+    # Which carried-forward pending papers this run has taken responsibility for:
+    # the keys of the rows it actually processed, plus the keys those rows were
+    # written under (a row whose DOI was resolved from its URL is written under a
+    # different key than the input row). Whatever is left over is written back
+    # unchanged at the end of the run.
+    handled_keys: set[str] = set()
 
     workers = max(1, EXTRACT_WORKERS)
     # One lock over a paper's whole write, so its rows land contiguously and the
@@ -1928,9 +1976,9 @@ def run_extract(no_llm: bool = False,
         cancellations, so a run that is ending still drains and the rows already in
         flight finish and write what they were paid for.
         """
-        nonlocal first_write
         if stop.is_set():
             return
+        row_key = _extract_row_key(row)
 
         # If DOI is missing, try to resolve one from the URL before processing.
         # This lets I4R / Replication Network rows participate in the full pipeline.
@@ -1965,9 +2013,13 @@ def run_extract(no_llm: bool = False,
             kept.append(_finalise_row(result_row))
 
         with write_lock:
+            # Marked here, not at submission: a row that never ran (the run stopped)
+            # or that raised has written nothing, so its carried-forward pending rows
+            # are still the best the file has and must survive.
+            handled_keys.add(row_key)
             for result_row in kept:
-                _write_row(out_path, result_row, first=first_write)
-                first_write = False
+                _write_row(out_path, result_row)
+                handled_keys.add(_extract_row_key(result_row))
                 output_rows.append(result_row)
                 log.info("Streamed %d rows → %s", len(output_rows), out_path.name)
 
@@ -1989,7 +2041,8 @@ def run_extract(no_llm: bool = False,
             if stop.is_set():
                 break
             doi_r_clean = clean_doi(str(row.get("doi_r", "")))
-            skip = _should_skip(row, _extract_row_key(row), doi_r_clean, flora_skip,
+            row_key = _extract_row_key(row)
+            skip = _should_skip(row, row_key, doi_r_clean, flora_skip,
                                 validated_skip, resolved_rows, resolved_main,
                                 doi_r_targets, only_reproductions)
             if skip is not None:
@@ -2025,6 +2078,22 @@ def run_extract(no_llm: bool = False,
         if pool is not None:
             pool.shutdown(wait=True)
             _reap(list(futures))
+        # A resumed run rewrites the file, so a pending paper the run never took on —
+        # because it has left filtered.csv, or was skipped, or the run stopped before
+        # reaching it — has to be written back or it is deleted. In the `finally` so
+        # a Ctrl-C or a budget stop preserves it too.
+        carried_back = 0
+        with write_lock:
+            for key, rows in pending_rows.items():
+                if key in handled_keys:
+                    continue
+                for result_row in rows:
+                    _write_row(out_path, result_row)
+                    output_rows.append(result_row)
+                    carried_back += 1
+        if carried_back:
+            log.info("carried %d unprocessed pending row(s) forward unchanged into %s",
+                     carried_back, out_path.name)
 
     if failures:
         # A budget stop is the failure with a handler of its own (log + sanity_check
@@ -2056,14 +2125,14 @@ def run_extract(no_llm: bool = False,
 
 
 def run_outcome_only(no_llm: bool = False,
-                     limit: "int | None" = None) -> pd.DataFrame:
+                     limit: "int | None" = None,
+                     filtered_csv: "Path | str | None" = None) -> pd.DataFrame:
     """
     Read filtered.csv, classify outcome per row, write data/outcome_only.csv.
     Useful for evaluating outcome classification in isolation.
     """
-    filtered_path = DATA_DIR / "filtered.csv"
-    if not filtered_path.exists():
-        filtered_path = BASE_DIR / "misc" / "sample_filtered.csv"
+    filtered_path = Path(filtered_csv) if filtered_csv else DATA_DIR / "filtered.csv"
+    _require_input_csv(filtered_path)
     df = pd.read_csv(filtered_path, dtype=str, encoding="utf-8-sig").fillna("")
     eligible = df[df["filter_status"] != "false_positive"]
     if limit is not None:
@@ -2212,6 +2281,15 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--filtered-csv", type=str, default=None, metavar="PATH",
+        help=(
+            "Input CSV. Defaults to data/filtered.csv, which Stage 2's handoff "
+            "writes (python -m filter.engine handoff --out data/filtered.csv). "
+            "Pass misc/sample_filtered.csv to run against the small fixture — "
+            "there is no silent fallback to it."
+        ),
+    )
+    parser.add_argument(
         "--recalibrate-outcomes", action="store_true",
         help=(
             "Run the full outcome pipeline (PDF download + LLM) even when --no-pdf "
@@ -2224,7 +2302,8 @@ if __name__ == "__main__":
 
     try:
         if args.outcome_only:
-            run_outcome_only(no_llm=args.no_llm, limit=args.limit)
+            run_outcome_only(no_llm=args.no_llm, limit=args.limit,
+                             filtered_csv=args.filtered_csv)
         else:
             doi_r_list = (
                 [d.strip() for d in args.doi_r.split(",") if d.strip()]
@@ -2248,6 +2327,7 @@ if __name__ == "__main__":
                 doi_r_filter=doi_r_list,
                 recalibrate_outcomes=args.recalibrate_outcomes,
                 rescreen=args.rescreen,
+                filtered_csv=args.filtered_csv,
             )
     except (OpenAlexQuotaExhausted, TokenBudgetExhausted) as exc:
         log.error("%s", exc)
