@@ -7,8 +7,11 @@ from the main line. Nothing else on this branch differs from that commit.
 ## Why it is parked
 
 The push of resolved `data/extracted.csv` rows into the Supabase validation tables
-(`unvalidated`, `record_metadata`, `validation_queue`) is **believed to be performed by
-code in the separate validation repo**, not by this module. `csv_to_db.py` has never
+(`unvalidated`, `record_metadata`, `validation_queue`) is performed by
+[`flora-validation/csv_to_db.py`](https://github.com/forrtproject/flora-validation/blob/main/csv_to_db.py),
+in the separate validation repo — confirmed by @Rohan-Tondlekar in
+[flora-extractor#172](https://github.com/forrtproject/flora-extractor/issues/172) — not
+by this module. `csv_to_db.py` has never
 been run against the current schema — its own docstring says it is blocked on a
 `title_r` / `title_o` migration in the validation repo — and nothing in this repo
 imports it: the only references were tests of its own contracts. Keeping a second,
@@ -45,24 +48,27 @@ would make it correct:
    import is safe by construction rather than by a client-side pre-read that can only
    ever see one of the three tables.
 
+## Status of the live importer
+
+Read on 2026-08-06 from `flora-validation@main`. It does **not** have the F6 problem:
+psycopg2, the whole run inside one `with conn:` transaction, and `_insert_unvalidated`
+uses `ON CONFLICT (pair_id) DO NOTHING` — the atomic, server-side-idempotent shape the
+two fixes above describe. Two gaps were raised on #172 instead:
+
+- it sends `title_r` / `title_o` into the `study_r` / `study_o` columns (issue #103),
+  so the extracted study numbers have nowhere to land;
+- it sends neither `record_metadata.work_id` nor `release_id`, so pushed records carry
+  no engine lineage and `filter/engine/supersede.py` cannot see them.
+
 ## Ask — @Rohan-Tondlekar
 
-Please confirm and document:
+Still open on #172: **move the importer into this repo** (or vendor a copy here) so the
+output contract of Stage 3 is visible in one place, or document in `flora-validation`
+how it is run (manual / cron / app action) and against which input. Once either is
+done, this branch can be deleted rather than left as a second possible answer.
 
-- **Where does the import into `unvalidated` / `record_metadata` / `validation_queue`
-  actually run today?** Which repo, which file, triggered how (manual, cron, app
-  action)?
-- **What is its input contract** — does it read `data/extracted.csv` as produced here,
-  and which columns/filters does it apply (we filter on `filter_status` ∈
-  {replication, reproduction} and a resolved `link_method`)?
-- **Is it atomic / idempotent**, i.e. does the live importer have the F6 problem too?
-
-Ideally, **move that importer into this repo** (or vendor a copy of it here) so the
-output contract of Stage 3 is visible in one place, and this branch can be deleted
-rather than left as a second possible answer.
-
-Once confirmed, either merge a corrected version of this module back, or delete this
-branch and the tracking issue with a note saying where the import lives.
+Once that is done, delete this branch — there is no reason to merge a corrected
+version of this module back while a working importer exists elsewhere.
 
 ## Restoring
 
