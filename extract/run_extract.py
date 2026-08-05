@@ -69,7 +69,8 @@ from shared.schema import (
 )
 from shared.utils import (bare_work_id, cache_key, citation_fragment,
                           clean_citation_title, clean_doi, csv_lock, usable_title)
-# Shared with csv_to_db so extraction and validation skip the same set (see shared/flora_skip.py)
+# Shared with the validation hand-off so extraction and validation skip the same set
+# (see shared/flora_skip.py)
 from shared.flora_skip import (
     VALIDATED_SKIP_NAME,
     default_flora_skip_dois as _default_flora_skip_dois,
@@ -394,7 +395,7 @@ def _record_type(filter_row: pd.Series, screen: "dict | None") -> str:
     nobody has classified is not a replication because replication is the commoner
     answer. Such a row still resolves an original and is still outcome-coded (on the
     replication vocabulary, the more general of the two grids), but it carries no
-    type into the CSV and csv_to_db leaves it for a human.
+    type into the CSV, and the validation import leaves it for a human.
     """
     if screen and screen.get("record_type"):
         return str(screen["record_type"])
@@ -2036,7 +2037,7 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
         # qualifying vote (unclear/unclear, or an unconfident none against an
         # unconfident qualifying answer) said nothing, and the row keeps whatever
         # Stage 2 left — a needs_review row stays needs_review, waits for a human
-        # on the check page, and is not imported by csv_to_db.
+        # on the check page, and is not pushed for validation.
         if screen.get("record_type"):
             row["filter_status"] = screen["record_type"]
             row["filter_method"] = "screen"   # the screen decided the type
@@ -2140,8 +2141,8 @@ def run_extract(no_llm: bool = False,
 
     flora_skip: set[str] = set()
     if skip_flora_validated:
-        # Through the shared helper, so Stage 3 and csv_to_db cannot end up reading
-        # two different files — the filenames live in shared/flora_skip.py alone.
+        # Through the shared helper, so Stage 3 and the validation hand-off cannot end
+        # up reading two different files — the filenames live in shared/flora_skip.py.
         flora_skip = _default_flora_skip_dois(DATA_DIR)
 
     # The frozen legacy set in the Supabase validation tables, materialised once into

@@ -244,7 +244,7 @@ SET_FILES: dict[str, dict] = {
         "file": "pre_validation_audit.csv",
         "why": "Per-row audit findings raised before rows are pushed to Supabase. One row per "
                "finding (check / severity / detail), so a record may appear several times.",
-        "action": "Clear high-severity findings before the next csv_to_db push.",
+        "action": "Clear high-severity findings before the next push to validation.",
     },
     "doi_audit_report": {
         "title": "DOI Audit Report",

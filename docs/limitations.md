@@ -176,7 +176,7 @@ intuition — `we`, `not`, `did` and `could` were each measured *not* to be drop
 `shared/prescreen.py` is off by default and should stay off until someone decides the
 trade deliberately. `screen_gate()` has a measured *zero* settled misses; a pre-screen
 discard is terminal — the row never reaches the validated screen, never reaches
-`csv_to_db`, never reaches a human — so nothing about the screen's property extends to
+validation, never reaches a human — so nothing about the screen's property extends to
 the tier in front of it.
 
 Two limits of the evidence in `analysis/prescreen_eval/REPORT.md` are structural and no

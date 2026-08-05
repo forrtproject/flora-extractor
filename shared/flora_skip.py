@@ -15,9 +15,10 @@ has already done.
 
 Two consumers need the FLoRA list and must agree:
   * Stage 3 (`extract/run_extract.py`) — do not re-extract them.
-  * the validation hand-off (`extract/csv_to_db.py`) — do not re-validate them.
+  * the validation hand-off, which runs from the `flora-validation` repo — do not
+    re-validate them.
 
-It lives in `shared/` rather than in run_extract so csv_to_db can import it without
+It lives in `shared/` rather than in run_extract so a hand-off can import it without
 pulling in the extraction stack (pymupdf, pdfminer, openai, …), which a lean
 FLORA_READONLY environment may not have installed.
 """

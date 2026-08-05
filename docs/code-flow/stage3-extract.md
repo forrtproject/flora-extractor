@@ -252,8 +252,8 @@ the model named, and both record `llm_title_search`. This is the one link method
 answer is not chosen from a bounded candidate set — a paper that is not a replication
 can be confidently linked to a landmark it merely cites — and a hand-check measured it
 near 50% precision. It is therefore **not** in `RESOLVED_LINK_METHODS`:
-`link_confidence` is forced to `low`, no outcome is coded, `csv_to_db` does not import
-the row, and `sanity_check` moves it to `data/provisional_title_search.csv` for human
+`link_confidence` is forced to `low`, no outcome is coded, the validation import does
+not take the row, and `sanity_check` moves it to `data/provisional_title_search.csv` for human
 confirmation. Rung 4.6 is additionally gated on both voters having called the paper a
 replication at high confidence.
 

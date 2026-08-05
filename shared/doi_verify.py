@@ -550,7 +550,7 @@ def verify_and_correct(doi_o, title_o, author_o, year_o,
                                    exclude_title=exclude_title)
     if repl is UNVERIFIABLE:
         # "not_found" below is a finding about the original — audit_extracted and
-        # csv_to_db both read it as one. An unanswered search is not a finding.
+        # the validation import both read it as one. An unanswered search is not one.
         return {"doi_o_verification": "api_error", "doi_o": "",
                 "evidence_note": ("DOI search incomplete: CrossRef or OpenAlex "
                                   "unavailable")}

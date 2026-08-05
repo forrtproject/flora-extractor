@@ -1,27 +1,15 @@
 """Tests for validation-table supersession (#146 M5) — all HTTP is mocked.
 
-One test per seam: the routing diff, the lineage csv_to_db writes, the affected-
-record lookup (paging + validated/unvalidated split), the dry-run's silence, and
-what a live run does and does not write.
+One test per seam: the routing diff, the affected-record lookup (paging +
+validated/unvalidated split), the dry-run's silence, and what a live run does and
+does not write.
 """
-import sys
-import types
 from unittest.mock import MagicMock, patch
 
-import pandas as pd
 import pytest
 
 from filter.engine import supersede as sup
 from filter.engine.store import open_store
-
-# extract.csv_to_db imports the `supabase` package, which is not a test dependency.
-if "supabase" not in sys.modules:
-    _stub = types.ModuleType("supabase")
-    _stub.create_client = lambda url, key: None
-    _stub.Client = object
-    sys.modules["supabase"] = _stub
-
-import extract.csv_to_db as csv_to_db  # noqa: E402
 
 
 def _store_with(rows):
@@ -61,43 +49,6 @@ def test_diff_releases_finds_rerouted_works_only():
     assert diffs[0]["new_rule"] == "rule-discard"
     assert sup.supersession_kind("screen_expensive", "discard") == "withdrawal"
     assert sup.supersession_kind("screen_cheap", "screen_expensive") == "reroute"
-
-
-# ── the lineage csv_to_db writes ─────────────────────────────────────────────
-
-def test_metadata_row_carries_work_id_and_release_id():
-    """Both halves of the lineage reach record_metadata, from their own sources.
-
-    `work_id` comes off the row; `release_id` does NOT, and never could —
-    `EXTRACTED_COLS` excludes the engine's export columns, so a Stage 3 row has
-    no release to read. The release names the whole handoff (one per
-    `filtered.csv.manifest.json`), so it is an argument to the import, not a
-    column: provenance is linked by `work_id`, not copied per row.
-    """
-    row = pd.Series({
-        "pair_id": "p1",
-        "openalex_id_r": "https://openalex.org/W2741809807",
-    })
-    out = csv_to_db._build_metadata_row("rec-1", row, release_id="rel-abc")
-    assert out["work_id"] == 2741809807
-    assert out["release_id"] == "rel-abc"
-
-    # A release carried on the row is ignored — it cannot be there legitimately.
-    stowaway = pd.Series({**row.to_dict(), "release_id": "rel-from-row"})
-    assert csv_to_db._build_metadata_row("rec-1", stowaway)["release_id"] is None
-
-
-def test_metadata_row_lineage_is_null_when_the_row_predates_the_engine():
-    """Unparseable/absent ids are null, not an error and not an empty string:
-    reconciliation must be able to see that a row has no engine lineage."""
-    out = csv_to_db._build_metadata_row("rec-2", pd.Series({
-        "pair_id": "p2", "openalex_id_r": "not-an-openalex-id",
-    }))
-    assert out["work_id"] is None
-    assert out["release_id"] is None
-
-    empty = csv_to_db._build_metadata_row("rec-3", pd.Series({"pair_id": "p3"}))
-    assert empty["work_id"] is None and empty["release_id"] is None
 
 
 # ── the affected-record lookup ───────────────────────────────────────────────

@@ -35,8 +35,9 @@ CSV (the same files the dashboard's "set-aside" tab reads), one bucket per probl
                                                     (only with --deep: doi.org 404 check)
 
 What is left in extracted.csv is validation-ready and nothing else: every remaining row
-has a resolved link_method, a doi_o and an outcome. That is the contract csv_to_db reads
-— its own link_method/status filters are a second lock on the same door, not the door.
+has a resolved link_method, a doi_o and an outcome. That is the contract the validation
+import reads — its own link_method/status filters are a second lock on the same door,
+not the door.
 A row that is merely unresolved, errored or malformed lives in a set-aside file, and a
 row demoted here (a resolved link_method with no doi_o) is filed as target_pending.
 

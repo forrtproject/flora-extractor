@@ -16,7 +16,7 @@ was asked; the supersession record is the lineage on top of it, and the validati
 repo decides downstream what to show. Deleting or rewriting the sent row would
 destroy the only account of what the validator actually judged.
 
-Reconciliation keys on **work_id**, not DOI — `extract/csv_to_db.py` writes
+Reconciliation keys on **work_id**, not DOI — the validation repo's import writes
 `work_id` (and `release_id`) into `record_metadata` at push time. Rows imported
 before the engine carry a null work_id and are therefore invisible here: they have
 no engine lineage to supersede, which is the truth about them.

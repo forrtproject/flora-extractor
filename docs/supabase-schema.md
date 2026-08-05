@@ -2,16 +2,33 @@
 
 The validation repo uses Supabase (PostgreSQL) as its backend. This document describes the four tables used, and the columns that the monitoring dashboard reads.
 
+**Who writes them.** This repo does not. Stage 3's output is `data/extracted.csv`;
+the import of resolved rows into `unvalidated`, `record_metadata` and
+`validation_queue` runs from the validation repo —
+[`forrtproject/flora-validation/csv_to_db.py`](https://github.com/forrtproject/flora-validation/blob/main/csv_to_db.py)
+(confirmed by @Rohan-Tondlekar in
+[#172](https://github.com/forrtproject/flora-extractor/issues/172)). It reads
+`data/extracted.csv` directly, connects with psycopg2, wraps the whole run in one
+transaction and inserts `ON CONFLICT (pair_id) DO NOTHING`, so it is atomic and
+idempotent. This repo only *reads* the tables, through `shared/supabase_client.py`,
+for the Stage 4 dashboard.
+
+An older importer lived here as `extract/csv_to_db.py`. It was never run against the
+current schema and is parked on the `wip/csv-to-db` branch, with `WIP.md` recording
+the non-atomic three-insert defect it carried. Its `_build_unvalidated_row()` /
+`_build_queue_rows()` / `_build_metadata_row()` are referenced below only as written
+descriptions of the payload shape — the live column list is the validation repo's.
+
 ## Tables
 
 ### `unvalidated`
 
-All records pushed for validation. `extract/csv_to_db.py` writes them; the payload is
-built by `_build_unvalidated_row()`, which is the authoritative column list — a
-column added there needs a matching `alter table` in the validation repo first,
-because PostgREST rejects the whole insert when the payload names a column the table
-does not have. The fields the dashboard reads back are the `select` strings in
-`shared/supabase_client.py`. The ones worth naming here:
+All records pushed for validation. The importer must keep its payload in step with
+the table: PostgREST rejects the whole insert when the payload names a column the
+table does not have, so a new column needs an `alter table` first. The payload shape
+is described by `_build_unvalidated_row()` on the `wip/csv-to-db` branch. The fields
+the dashboard reads back are the `select` strings in `shared/supabase_client.py`. The
+ones worth naming here:
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -25,13 +42,13 @@ does not have. The fields the dashboard reads back are the `select` strings in
 ### `validation_queue`
 
 Individual validator assignments, their completion status, and the judgements
-themselves. **This repo writes only the skeleton**: `_build_queue_rows()` in
-`extract/csv_to_db.py` inserts one row per validator slot with exactly four fields —
+themselves. **The import writes only the skeleton** — one row per validator slot with
+exactly four fields (`_build_queue_rows()` on the `wip/csv-to-db` branch) —
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `record_id` | text | The record being validated |
-| `validator_slot` | text | One of `_VALIDATOR_SLOTS` in `extract/csv_to_db.py` (`human_1`, `human_2`, `llm`); a DB CHECK constraint enforces the same three |
+| `validator_slot` | text | One of `human_1`, `human_2`, `llm`; a DB CHECK constraint enforces the same three, and `_SLOT_PREFIX` in `shared/supabase_client.py` maps them to the `validated` table's column prefixes |
 | `is_shown` | bool | Written `false`; the validation app flips it |
 | `is_validated` | bool | Written `false`; the validation app flips it |
 
@@ -66,15 +83,16 @@ Completed validation records with per-validator and LLM check results.
 
 ### `record_metadata`
 
-Per-record metadata. Not currently used by the monitoring dashboard. Written by
-`extract/csv_to_db.py::_build_metadata_row` — the filter, link and outcome method /
-confidence / model fields, the author, journal and OpenAlex id fields, and the
-original rank and count. A column added there needs a matching
+Per-record metadata. Not currently used by the monitoring dashboard — the filter,
+link and outcome method / confidence / model fields, the author, journal and OpenAlex
+id fields, and the original rank and count (`_build_metadata_row` on the
+`wip/csv-to-db` branch). A column added to the payload needs a matching
 `alter table record_metadata add column …` before the next import: PostgREST
 rejects the whole insert when the payload names a column the table does not have.
 
-**Pending migration.** `_build_metadata_row` already sends these; the validation repo
-has to add them before the next import runs (tracked in forrtproject/flora-validation#3):
+**Not sent by the live import.** The parked payload builder sends these; the live
+`flora-validation/csv_to_db.py` does not, and the columns have to exist before an
+import that sends them runs (tracked in forrtproject/flora-validation#3):
 
 | Column | Type | Sent since | Description |
 |--------|------|-----------|-------------|
@@ -85,18 +103,21 @@ has to add them before the next import runs (tracked in forrtproject/flora-valid
 **Engine lineage: `work_id` and `release_id`.** Added by
 `db/migrations/0002_validation_lineage.sql` (run in the Supabase SQL editor after
 0001), both nullable because every row imported before the filter engine existed
-has neither.
+has neither. **The live import does not populate them yet** — it sends
+`openalex_id_r` as text and no release — so every record it writes carries null
+lineage and is invisible to `filter/engine/supersede.py`. Wiring them up is part of
+issue #172.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `work_id` | bigint | The alias-resolved int64 OpenAlex id of the replication, derived by `csv_to_db` from `openalex_id_r` via `filter/engine/workids.work_id()`. Null when the row carries no parseable OpenAlex id |
+| `work_id` | bigint | The alias-resolved int64 OpenAlex id of the replication, derived from `openalex_id_r` via `filter/engine/workids.work_id()`. Null when the row carries no parseable OpenAlex id |
 | `release_id` | text | The routing release the row was handed off under. Null unless the import was given `--release-id` |
 
 `work_id` is the load-bearing one. **Routing provenance is linked, not copied**:
 `extracted.csv` carries none of `ENGINE_EXPORT_COLS` (`route_rule`,
 `matched_rules`, `pending_reason`, `release_id`, …) because `EXTRACTED_COLS`
-excludes them by design, so `csv_to_db` cannot read a release id off a row and
-does not pretend to. What it writes instead is the identity everything else can be
+excludes them by design, so an importer cannot read a release id off a row and must
+not pretend to. What it writes instead is the identity everything else can be
 joined on:
 
 - **Which pile, rule and release a validated record came from** — join
@@ -115,13 +136,8 @@ joined on:
 
 `release_id` is a property of the **handoff**, not of a row: every row of one
 Stage 3 run came through one `filter.engine handoff`, and that command's
-`data/filtered.csv.manifest.json` names its `release_id`. Pass it to the import to
-stamp it:
-
-```bash
-python -m extract.csv_to_db --input data/extracted.csv \
-    --release-id "$(python -c 'import json;print(json.load(open("data/filtered.csv.manifest.json"))["release_id"])')"
-```
+`data/filtered.csv.manifest.json` names its `release_id`. The import should take it
+as one argument for the whole run and stamp every row with it.
 
 Omitting it costs nothing that cannot be recovered — the `work_id` join above
 still answers every routing question — it only means the record does not record

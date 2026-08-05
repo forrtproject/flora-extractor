@@ -289,8 +289,8 @@ def test_set_reader_drops_phantom_unnamed_columns(tmp_path, monkeypatch):
     assert list(df.columns) == ["doi_r", "note"]
 
 
-def test_validator_slot_prefixes_match_the_writer():
-    """csv_to_db writes these slot names; the drilldown flattening must agree or
-    the per-validator columns silently render blank."""
-    from extract.csv_to_db import _VALIDATOR_SLOTS
-    assert set(supa._SLOT_PREFIX) == set(_VALIDATOR_SLOTS)
+def test_validator_slot_prefixes_match_the_validation_tables():
+    """The importer in the validation repo writes these three slot names; the
+    drilldown flattening must agree or the per-validator columns silently render
+    blank. The set is a cross-repo contract, so it is pinned literally here."""
+    assert set(supa._SLOT_PREFIX) == {"human_1", "human_2", "llm"}

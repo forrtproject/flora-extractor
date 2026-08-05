@@ -1,19 +1,16 @@
 """
 Cross-module agreement on the link_method enum.
 
-Three modules read link_method independently: run_extract's outcome gate decides
-whether a row is coded at all, csv_to_db decides whether it reaches the validation
-DB, and sanity_check decides whether it stays in extracted.csv. Nothing forces them
-to agree, and a link method added to shared/schema.py that one of them has never
-heard of fails silently in the direction that is hardest to notice — an unresolved
-row that gets an outcome coded and imported as settled.
+Two modules read link_method independently: run_extract's outcome gate decides
+whether a row is coded at all, and sanity_check decides whether it stays in
+extracted.csv. Nothing forces them to agree, and a link method added to
+shared/schema.py that one of them has never heard of fails silently in the
+direction that is hardest to notice — an unresolved row that gets an outcome
+coded and presented as settled.
 
 These tests hold each consumer against LINK_METHOD_VALUES, so a new method has to
-be classified by all three before the suite goes green.
+be classified by both before the suite goes green.
 """
-import sys
-import types
-
 import pandas as pd
 import pytest
 
@@ -22,15 +19,6 @@ from extract.run_extract import _outcome_without_coding
 from shared.schema import (EXTRACTED_COLS, LINK_METHOD_VALUES, RESOLVED_LINK_METHODS,
                            REOPENED_SET_ASIDE_FILES, SCREEN_SET_ASIDE_FILES,
                            SET_ASIDE_DESTINATIONS, SETTLED_SET_ASIDE_FILES)
-
-# `supabase` is not a test dependency; csv_to_db imports it at module scope.
-if "supabase" not in sys.modules:
-    _stub = types.ModuleType("supabase")
-    _stub.create_client = lambda url, key: None
-    _stub.Client = object
-    sys.modules["supabase"] = _stub
-
-from extract.csv_to_db import _RESOLVED_METHODS  # noqa: E402
 
 # Unresolved methods sanity_check moves to a set-aside CSV — all of them. extracted.csv
 # is validation-ready rows and nothing else, so no unresolved method survives the pass.
@@ -110,14 +98,6 @@ def test_sanity_check_writes_no_unclassified_destination(tmp_path, monkeypatch):
     assert written <= set(SET_ASIDE_DESTINATIONS.values()), (
         f"set-aside file(s) unknown to shared/schema.py: "
         f"{written - set(SET_ASIDE_DESTINATIONS.values())}")
-
-
-def test_csv_to_db_imports_exactly_the_resolved_methods():
-    """csv_to_db's filter may add the legacy alias, but must not admit any live
-    unresolved method — an imported row is presented to validators as settled."""
-    assert RESOLVED_LINK_METHODS <= _RESOLVED_METHODS
-    assert _RESOLVED_METHODS - RESOLVED_LINK_METHODS == {"author_year_match_legacy"}
-    assert not _RESOLVED_METHODS & _QUARANTINED
 
 
 @pytest.mark.parametrize("method", sorted(LINK_METHOD_VALUES))

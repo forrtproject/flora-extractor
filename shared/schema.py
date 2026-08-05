@@ -117,8 +117,8 @@ EXTRACT_ADDED_COLS = [
     # stay one row, while several original PAPERS are several rows. Both link paths
     # fill it from the LLM's study_numbers — the per-target adapter additionally
     # groups on it, see _collapse_same_paper_originals() in extract/run_extract.py.
-    # The validation DB's `study_o` used to hold a title; csv_to_db now sends this
-    # number there and the titles to title_o — see extract/csv_to_db.py.
+    # The validation DB's `study_o` used to hold a title; the validation repo's
+    # import now sends this number there and the titles to title_o (issue #103).
     "study_o",             # str   — target study number(s) within the original paper
     "year_o",              # int   — original study publication year
     "authors_o",           # str   — original study authors, semicolon-separated APA names (e.g. "Bransford, J. D.; Franks, J. J.")
@@ -210,7 +210,7 @@ ORIGINAL_MATCH_TYPE_VALUES = {"single_original", "multiple_match", "multiple_ori
 # methods used to collapse into a single "author_year_match" value; they are now
 # kept distinct because their reliability differs sharply (e.g.
 # single_candidate_after_requery auto-accepts a lone candidate at score 1.0 with no
-# semantic check). These are the methods csv_to_db imports for validation.
+# semantic check). These are the methods the validation import takes.
 RESOLVED_LINK_METHODS = {
     "citation_context_match",
     "same_author_year_title_overlap",
@@ -492,7 +492,7 @@ def make_pair_id(doi_r: str, doi_o: str, oa_work_id_o: str = "",
 
     Some originals genuinely have no registered DOI (books, chapters, pre-DOI-era
     papers), so doi_o stays blank and every DOI-less original of the same
-    replication used to hash to the same "doi_r|" — csv_to_db dedupes on pair_id
+    replication used to hash to the same "doi_r|" — the import dedupes on pair_id
     and silently dropped all but one. Fall back to the OpenAlex work id, then the
     title, so those rows keep distinct identities.
 

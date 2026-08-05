@@ -1,8 +1,8 @@
 """
 audit_extracted.py — Pre-validation audit of extracted.csv.
 
-Runs read-only over extracted.csv *before* csv_to_db hands rows to human
-validators, and reports per-row problems at two severities:
+Runs read-only over extracted.csv *before* the validation repo's import hands rows
+to human validators, and reports per-row problems at two severities:
 
   BLOCKER — the row should not reach a validator (unverified doi_o, self-link,
             duplicate pair_id, an unfinished pipeline stage, or a missing display
@@ -16,8 +16,8 @@ validators, and reports per-row problems at two severities:
 
 The tool never writes to extracted.csv; it only writes a report CSV with columns
 (pair_id, doi_r, check, severity, detail) and prints a summary. Exit code is 1 if
-any BLOCKER fired, so it can gate a shell pipeline. csv_to_db.py can consume the
-report via --audit-report to drop BLOCKER rows before import.
+any BLOCKER fired, so it can gate a shell pipeline. `blocked_pair_ids()` exposes the
+BLOCKER set for an importer that wants to drop those rows.
 
 Usage:
     python -m extract.audit_extracted                    # dry-run over data/extracted.csv

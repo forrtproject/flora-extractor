@@ -1002,8 +1002,8 @@ class TestGranularLinkMethods:
 
 class TestMakePairId:
     def test_doi_pair_hashes_are_frozen(self):
-        """pair_id is the identity key the validation DB already holds, and csv_to_db
-        skips pair_ids it has seen. If the hash of a row with a doi_o ever changes,
+        """pair_id is the identity key the validation DB already holds, and the validation
+        import skips pair_ids it has seen. If the hash of a row with a doi_o ever changes,
         every imported record re-imports as a duplicate — so these literals are the
         pre-fallback md5("doi_r|doi_o") values and must never move."""
         assert (make_pair_id("10.1/rep", "10.2/orig")
@@ -1026,7 +1026,7 @@ class TestMakePairId:
 
     def test_two_doi_less_originals_of_one_replication_are_distinct(self):
         """The collision this fallback exists to fix: without it both originals
-        hash to "doi_r|" and csv_to_db silently drops one of them."""
+        hash to "doi_r|" and the validation import silently drops one of them."""
         a = make_pair_id("10.1/rep", "", "W1")
         b = make_pair_id("10.1/rep", "", "W2")
         c = make_pair_id("10.1/rep", "", "", "Gender Advertisements")
@@ -1737,8 +1737,8 @@ class TestTitleSearchProvenance:
 
 class TestLinkMethodEnumCoverage:
     """Every link_method the pipeline writes must be in LINK_METHOD_VALUES, and every
-    method that identifies an original must be in RESOLVED_LINK_METHODS — csv_to_db
-    filters DB imports on that set, so an omission silently drops resolved rows
+    method that identifies an original must be in RESOLVED_LINK_METHODS — the
+    validation import filters on that set, so an omission silently drops resolved rows
     (llm_references, 25% of extracted-test.csv, was dropped this way)."""
 
     def _emitted(self) -> set:
@@ -1767,7 +1767,7 @@ class TestLinkMethodEnumCoverage:
             assert run_extract._map_method(value) == value
 
     def test_the_reference_screen_resolves(self):
-        """csv_to_db filters DB imports on RESOLVED_LINK_METHODS, so an omission
+        """The validation import filters on RESOLVED_LINK_METHODS, so an omission
         silently drops resolved rows — llm_references, 25% of extracted-test.csv,
         was dropped exactly this way."""
         assert "llm_references" in RESOLVED_LINK_METHODS
@@ -2091,22 +2091,6 @@ def _screen(**over) -> dict:
     return {**_YES_SCREEN, **over}
 
 
-def _import_mask() -> tuple[set, set]:
-    """csv_to_db's (filter_status, link_method) import mask.
-
-    The `supabase` package is not a test dependency, so stub it before importing —
-    the same idiom tests/test_csv_to_db.py uses.
-    """
-    import sys, types
-    if "supabase" not in sys.modules:
-        stub = types.ModuleType("supabase")
-        stub.create_client = lambda url, key: None
-        stub.Client = object
-        sys.modules["supabase"] = stub
-    from extract.csv_to_db import _RESOLVED_METHODS, _RESOLVED_STATUSES
-    return _RESOLVED_STATUSES, _RESOLVED_METHODS
-
-
 class TestFrontDoorScreen:
     """The screen's verdict, as Stage 3 now meets it: written on the input row.
 
@@ -2282,8 +2266,8 @@ class TestFrontDoorScreen:
         """A needs_review row the gate proceeds on without any qualifying vote
         (unclear/unclear) still resolves an original and is still outcome-coded, but
         nothing has said what kind of paper it is. Writing "replication" there would
-        be a guess presented as a reading, so the type stays empty, the row stays
-        needs_review, and csv_to_db leaves it for the check page."""
+        be a guess presented as a reading, so the type stays empty and the row stays
+        needs_review, for the check page."""
         needs_review_csv = _FILTERED_CSV.replace(
             "replication,rule_based,direct replication,high",
             "needs_review,rule_based,phrase without a cite,medium")
@@ -2301,9 +2285,9 @@ class TestFrontDoorScreen:
         assert row["filter_method"] == "rule_based"
         # Coded on the replication vocabulary, the more general of the two grids.
         assert m_out.call_args[1]["record_type"] == ""
-        # It waits for a human rather than importing — that is the point.
-        statuses, _ = _import_mask()
-        assert row["filter_status"] not in statuses
+        # It waits for a human rather than being pushed for validation — the
+        # validation import takes replication/reproduction rows only.
+        assert row["filter_status"] not in {"replication", "reproduction"}
 
     def test_a_proceed_without_a_qualifying_vote_keeps_stage_2s_type(
             self, tmp_path, monkeypatch):
@@ -2890,7 +2874,7 @@ class TestPerTargetAdapter:
         """The adapter codes the outcome AFTER the guard, so a demoted target has no
         verdict to keep: it must still be written unresolved and pending, next to a
         sibling that was coded — the shape sanity_check routes to target_pending.csv
-        and csv_to_db skips, rather than a row with a verdict on no original."""
+        and the validation import skips, rather than a row with a verdict on no original."""
         targets = [_mock_target("@self", "10.1/rep", "The paper itself", "Self", 2020),
                    _mock_target("@jones2011", "10.1/b", "Second original", "Jones", 2011)]
         rows, coder = self._run(targets)
@@ -3372,7 +3356,7 @@ class TestYearNormalisation:
 
     pandas promotes an int column holding any NaN to float64 and to_csv then renders
     "2018.0" — which is not equal to "2018" for any consumer that compares strings,
-    and which reached Supabase through csv_to_db.
+    and which reaches Supabase through the validation import.
     """
 
     @pytest.mark.parametrize("raw,expected", [

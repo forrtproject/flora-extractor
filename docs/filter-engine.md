@@ -132,8 +132,8 @@ release_id`. (`matched_rules` is |-joined; match by substring/split like
 contract is untouched.
 
 **They stop here, on purpose.** `EXTRACTED_COLS` excludes `ENGINE_EXPORT_COLS`, so
-Stage 3 does not carry the block into `extracted.csv` and `csv_to_db` does not push
-it. Provenance is **linked, not duplicated**: `extract/csv_to_db.py` writes
+Stage 3 does not carry the block into `extracted.csv` and the validation import does
+not push it. Provenance is **linked, not duplicated**: that import writes
 `record_metadata.work_id` (the int64 id, via `filter/engine/workids.work_id()`),
 and every routing column is recoverable by joining that against the `routing` table
 for a release — the same join `filter/engine/supersede.py` already uses. Widening
@@ -626,10 +626,10 @@ changes create superseding records with lineage.* M5 supplies both halves.
 
 ### Lineage flows through Stage 3
 
-`extract/csv_to_db.py` writes two columns into `record_metadata` when it pushes a
-row: `work_id` (the int64 OpenAlex id derived from `openalex_id_r` via
-`filter/engine/workids.work_id`) and `release_id` (from the row's `release_id`
-column, which engine handoff rows carry and legacy `extracted.csv` rows do not).
+Two columns on `record_metadata` carry it: `work_id` (the int64 OpenAlex id derived
+from `openalex_id_r` via `filter/engine/workids.work_id`) and `release_id` (the
+handoff's release). The live import in the `flora-validation` repo does not send
+either yet — see issue #172 — so records pushed so far have null lineage.
 Both are nullable and null on rows imported before the engine — that is the shape of
 the data, not a shim. Reconciliation keys on **work_id, not DOI**: a work is the
 engine's identity, a DOI is a string a row may lack, share, or spell differently.
@@ -650,7 +650,7 @@ affects:
 | `verdict` | an expensive-tier verdict was superseded upstream (`engine_verdicts.superseded_by`) |
 
 `affected_record_ids` is `text[]`, because `record_id` in the validation schema is a
-uuid string minted by `csv_to_db.py`.
+uuid string minted by the validation repo's import.
 
 ### What reconciliation does — and does not — write
 

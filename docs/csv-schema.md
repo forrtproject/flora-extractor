@@ -110,9 +110,10 @@ screen piles only, so an exported row's `pending_reason` is always empty.
 > routing state already holds all of it.
 >
 > The join key is **`work_id`** — the int64 OpenAlex id (`filter/engine/workids.py`
-> derives it from `openalex_id_r`). `extract/csv_to_db.py` writes it into
-> `record_metadata.work_id` for every pushed row, so any routing column can be
-> recovered by joining back to the engine's `routing` table for a release.
+> derives it from `openalex_id_r`). It belongs in `record_metadata.work_id` for
+> every pushed row, so any routing column can be recovered by joining back to the
+> engine's `routing` table for a release. (The live import does not send it yet —
+> issue #172.)
 > Reconciliation keys on `work_id` rather than DOI throughout
 > (`filter/engine/supersede.py`), because a work is the engine's identity while a
 > DOI is a string a row may lack, share or spell differently. See
@@ -138,8 +139,8 @@ sets `filter_method` to `screen`, recording which call made the call. When the g
 proceeds without any qualifying vote (unclear/unclear, or an unconfident `none`
 against an unconfident qualifying answer) no call has said what the paper is, so both
 fields keep Stage 2's values and `type` is left empty. Such a row is resolved and
-outcome-coded but stays at `needs_review`, which `csv_to_db` does not import: it waits
-on the check page for a human to say what it is.
+outcome-coded but stays at `needs_review`, which the validation import does not take:
+it waits on the check page for a human to say what it is.
 
 `rule_based`, `llm` and `both` are **historical** `filter_method` values: they were
 written by the retired per-row rule classifier and its LLM escalation. Rows on disk
@@ -212,7 +213,7 @@ sharply, so a consumer has to be able to tell them apart.
 | `api_error` | Extraction failed after retries, including a front-door screen where **both** classifiers failed |
 
 The enum lives in `shared/schema.py` as `LINK_METHOD_VALUES`. The subset that counts
-as a resolved link — the rows `extract/csv_to_db.py` imports into the validation DB —
+as a resolved link — the rows the validation repo's import takes into the DB —
 is `RESOLVED_LINK_METHODS`: the five rule-based methods plus `llm_cited_candidates`,
 `llm_references` and `llm_fulltext`. Every other value above marks
 a row that is unresolved, quarantined, or a pipeline-state marker, and is never
@@ -303,9 +304,13 @@ where a row sits in the pipeline.
 There is **no `data/validated.csv`**. The old SQLite/CSV voting output has been removed.
 Human validation runs in a **separate repo backed by Supabase**.
 
-`extract/csv_to_db.py` pushes resolved `extracted.csv` rows (those with
+The push is **not done from this repo**: `csv_to_db.py` in the
+[`flora-validation`](https://github.com/forrtproject/flora-validation/blob/main/csv_to_db.py)
+repo reads resolved `extracted.csv` rows (those with
 `filter_status ∈ {replication, reproduction}` and a resolved `link_method`) into three
-Supabase tables.
+Supabase tables, in one psycopg2 transaction with `ON CONFLICT (pair_id) DO NOTHING`.
+(An older importer here, `extract/csv_to_db.py`, is parked on the `wip/csv-to-db`
+branch and is not run — see issue #172.)
 
 > **The import needs a schema change in the validation repo before it will run.**
 > `unvalidated` needs `title_r` and `title_o` columns: `study_r` / `study_o` are study

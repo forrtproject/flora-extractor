@@ -26,14 +26,25 @@ python -m filter.engine route       # Stage 2 → routing release in the DuckDB 
 python -m filter.engine screen --tier screen_expensive --run   # the claimed LLM tier
 python -m filter.engine handoff --out data/filtered.csv        # → Stage 3's input
 python -m extract.run_extract       # Stage 3 → data/extracted.csv (streamed row-by-row)
-python -m extract.csv_to_db         # push resolved rows into the Supabase validation tables
 python -m validate.app              # Stage 4 dashboard → http://localhost:5001
 ```
 
-Human validation lives in a separate Supabase-backed repo. `extract/csv_to_db.py`
-pushes resolved rows into three Supabase tables (`unvalidated`, `record_metadata`,
-`validation_queue`; validator slots `human_1`/`human_2`/`llm`). The final artifact is
-the Supabase `validated` table — there is no `data/validated.csv`.
+**Stage 3's output is `data/extracted.csv`, and that is where this repo stops
+writing.** Human validation lives in a separate Supabase-backed repo, and the push of
+resolved rows into the three Supabase validation tables (`unvalidated`,
+`record_metadata`, `validation_queue`; validator slots `human_1`/`human_2`/`llm`) is
+performed there, by `csv_to_db.py` in the `flora-validation` repo (confirmed in
+issue #172). That script reads `data/extracted.csv`, runs one psycopg2 transaction
+and inserts `ON CONFLICT (pair_id) DO NOTHING`, so it is atomic and idempotent. This
+repo only READS those tables, through `shared/supabase_client.py`, for the Stage 4
+dashboard. The final artifact is the Supabase `validated` table — there is no
+`data/validated.csv`.
+
+A second, older importer used to live here as `extract/csv_to_db.py`. Nothing
+imported it, it was never run against the current schema, and it carried a real
+defect (three non-atomic PostgREST inserts per row, no retry, orphan rows the pair-id
+dedup never reconciles). It is parked on the `wip/csv-to-db` branch with a `WIP.md`
+explaining what would make it correct; do not revive it.
 
 **Test sandbox:** `python -m extract.run_extract --extracted-test` writes to
 extracted-test.csv (skipping DOIs already resolved in extracted.csv). Every Stage 3
@@ -70,7 +81,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 | `shared/schema.py`          | CSV column definitions — the contract between stages |
 | `shared/supabase_client.py` | Read client for the Supabase validation tables |
 | `shared/dashboard_cache.py` | Parquet mirror + `data/dashboard/stats.json` so Stage 4 reads fast; each runner calls `refresh(stage)` |
-| `shared/flora_skip.py`      | Two skip lists: already-in-FLoRA (entry sheet + `flora.csv`), shared by `run_extract` and `csv_to_db`; and already-in-the-validation-tables (`data/validated_skip.csv`, work id or DOI), read by Stage 3 alone. The second is the frozen legacy `record_metadata` set, materialised once by `analysis/build_validated_skip.py` so a run needs no Supabase |
+| `shared/flora_skip.py`      | Two skip lists: already-in-FLoRA (entry sheet + `flora.csv`), read by `run_extract`; and already-in-the-validation-tables (`data/validated_skip.csv`, work id or DOI), read by Stage 3 alone. The second is the frozen legacy `record_metadata` set, materialised once by `analysis/build_validated_skip.py` so a run needs no Supabase |
 | `shared/token_counter.py`   | In-process per-stage token attribution; `set_stage()` before a call block |
 | `shared/abstract_store.py`  | The abstract cache as one SQLite file (`cache/abstracts.sqlite`). One row per identifier: the text, or NULL for a definitive miss. **The row IS the checkpoint** — it absorbed `fetch_abstracts_done.txt` and the `fetch_abstracts_found.txt` sidecar, both of which existed only because file-per-key made whole-cache questions cost half a million syscalls, and either could drift from the cache it described. A transient failure is never recorded. Migration: `python -m shared.abstract_store --migrate` |
 | `shared/hf.py`              | The Hugging Face plumbing shared by `pool_sync`, `cache_sync` and the engine tiers: which exceptions establish ABSENCE as opposed to unreadability, which failures a different token would fix, batched commits. The caller imports `huggingface_hub` and passes it in |
@@ -82,7 +93,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 | `filter/` | `phrase_detection.py` — the token/stem vocabulary the **search gate** is built from. It is Stage 1's only keyword logic; Stage 2 does not call it. The old `rule_filter.py`/`run_filter.py` path is retired (#146) |
 | `filter/engine/` | The issue #146 filter engine, which IS Stage 2: declarative JSON specs in `filter/spec/` routed by precedence into piles (`discard` / `screen_expensive` / `screen_cheap` / `needs_human` / `pending`) over the survivor pool; claimed, budget-gated LLM tiers; `handoff` writes Stage 3's input. Rules route and discard; only LLMs admit. Design: [`docs/filter-engine.md`](docs/filter-engine.md); policy (precedence bands, pile→status mapping, measurement levels): `filter/spec/CONVENTIONS.md`. CLI: `python -m filter.engine specs\|route\|diagnose\|worklist\|screen\|export\|reconcile\|handoff\|status` |
 | `db/migrations/` | The engine's Postgres state authority (claims, permanent verdicts, audit, validation lineage) — SQL the maintainer runs in Supabase |
-| `extract/` | `run_extract.py` (orchestrator: chunked read, the screen verdict read off the row, per-target adapter), `link_original.py` (resolution ladder), `code_outcome.py` (outcome coding; reproductions use the computation/robustness axes), `sanity_check.py` (post-run quarantine to set-aside CSVs; runs on completion and Ctrl-C), `promote_test.py`, `audit_dois.py`, `audit_extracted.py` (read-only pre-validation audit), `backfill_authors.py` (retroactive `authors_o`/`ref_o` from OpenAlex), `csv_to_db.py`, `clean_parse_cache.py` |
+| `extract/` | `run_extract.py` (orchestrator: chunked read, the screen verdict read off the row, per-target adapter), `link_original.py` (resolution ladder), `code_outcome.py` (outcome coding; reproductions use the computation/robustness axes), `sanity_check.py` (post-run quarantine to set-aside CSVs; runs on completion and Ctrl-C), `promote_test.py`, `audit_dois.py`, `audit_extracted.py` (read-only pre-validation audit), `backfill_authors.py` (retroactive `authors_o`/`ref_o` from OpenAlex), `clean_parse_cache.py` |
 | `validate/` | Read-only Flask dashboard: `app.py` registers the `dashboard`, `check` and `batch` blueprints only |
 | `misc/` | Reference examples and small sample CSVs — do not import |
 
@@ -97,7 +108,7 @@ Never change a column name without updating `schema.py` and notifying all teams.
   one paper = one row; several papers = several rows).
 - `api_error` in any field = failed after retries; distinct from `pending`.
 - `type` may be empty on a screened row where nothing (screen or Stage 2) assigned a
-  paper type; such rows are not imported by `csv_to_db`.
+  paper type; such rows are not ready for validation.
 - `screen_categories` is |-joined multi-select — match by substring/split, never equality.
 - `pdf_source` and `parse_method` are full-text provenance: the acquisition tier that
   supplied the document and the parser that won `best_parse_result()`. Both blank when

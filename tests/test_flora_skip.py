@@ -8,7 +8,7 @@ every row of which is by definition already in FLoRA. Both also name OSF records
 URL rather than DOI, so both contribute the DOI those URLs resolve to.
 
 Tested against `shared.flora_skip` directly rather than through `run_extract`'s
-alias: `csv_to_db` is the other consumer, and the contract belongs to neither.
+alias: the contract belongs to `shared/`, not to any one caller.
 """
 import pandas as pd
 import pytest

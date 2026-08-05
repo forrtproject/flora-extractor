@@ -1,10 +1,14 @@
 # Pre-Validation Audit — Design Spec
 **Date:** 2026-07-16
-**Status:** **SHIPPED** (verified 2026-08-04). `extract/audit_extracted.py` and
-`csv_to_db.py --audit-report` implement this spec, with the `--input` / `--report`
-/ `--doi` flags exactly as written below. Kept in place rather than archived
-because `docs/cli-reference.md` does not yet cover `audit_extracted`: this spec is
-still the only written reference for the check list and the two severities.
+**Status:** **PARTLY SHIPPED** (re-verified 2026-08-06). `extract/audit_extracted.py`
+implements the audit half of this spec, with the `--input` / `--report` / `--doi`
+flags exactly as written below. The `--audit-report` gate half is **gone**: the
+importer it hung off, `extract/csv_to_db.py`, was removed from this repo (the live
+import runs from the `flora-validation` repo — issue #172; the old module is parked
+on the `wip/csv-to-db` branch). Every mention of `csv_to_db` below is therefore
+historical. Kept in place rather than archived because `docs/cli-reference.md` does
+not yet cover `audit_extracted`: this spec is still the only written reference for
+the check list and the two severities.
 
 ---
 
