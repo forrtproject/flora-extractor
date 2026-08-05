@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from filter.engine.spec import bundle_hash, load_specs, re2_safe, validate_spec
+from filter.engine.spec import bundle_hash, load_specs, re2_error, validate_spec
 
 SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
 
@@ -138,8 +138,10 @@ def test_pending_is_not_a_legal_spec_pile():
     r"(replicat)\1", r"(?>replicat)+", r"replicat*+", r"replicat++", r"replicat?+",
     r"(?(1)a|b)", r"(?P<x>a)(?P=x)", r"\Greplicat",
 ])
-def test_re2_safe_rejects_each_banned_construct(pattern):
-    assert re2_safe(pattern) is False
+def test_a_pattern_re2_cannot_run_is_a_load_time_error(pattern):
+    assert re2_error(pattern) is not None
+    errors = validate_spec(_valid_spec(match={"text_regex": pattern}))
+    assert any("RE2 cannot run it" in e for e in errors)
 
 
 @pytest.mark.parametrize("pattern", [
@@ -147,15 +149,16 @@ def test_re2_safe_rejects_each_banned_construct(pattern):
     r"\breplicat\w*\b", r"[\w'-]{3,}\s+et\s+al\.?,?\s+(?:19|20)\d{2}\b",
     r"a{2,3}?", r"\(\s*(?:19|20)\d{2}\s*\)", r"(?P<year>(?:19|20)\d{2})",
 ])
-def test_re2_safe_accepts_ordinary_syntax_including_inline_flags(pattern):
-    assert re2_safe(pattern) is True
+def test_re2_accepts_ordinary_syntax_including_inline_flags(pattern):
+    assert re2_error(pattern) is None
 
 
 def test_a_regex_that_does_not_compile_is_rejected():
-    # RE2-safety says nothing about balance: an unterminated group passes every
-    # banned-construct check and then explodes in whichever backend compiles it.
+    # An unterminated group: RE2 rejects it as the evaluator, and `re` rejects it
+    # as the evidence locator. Both complaints name the spec rather than crashing.
     errors = validate_spec(_valid_spec(match={"text_regex": r"\breplication of (?:a|b"}))
     assert any("does not compile" in e for e in errors)
+    assert any("RE2 cannot run it" in e for e in errors)
 
 
 def test_the_pyre_regex_key_is_rejected_outside_a_decomposed_match():

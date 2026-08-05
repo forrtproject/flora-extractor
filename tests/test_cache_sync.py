@@ -70,6 +70,31 @@ def test_push_skips_shards_the_remote_already_holds(_isolated_cache, monkeypatch
     assert [p for commit in calls2["commits"] for p in commit] == [cs._MANIFEST]
 
 
+def test_push_refuses_to_replace_a_shard_with_a_smaller_one(_isolated_cache,
+                                                            monkeypatch):
+    """The transfer unit is the whole shard, so a machine holding a subset of one
+    would shrink the shared cache — and the pullers' recorded digest would then
+    stop them ever fetching the lost entries again."""
+    # One shard for the part, so both entries land in the tar the push replaces.
+    monkeypatch.setattr(cs.PARTS["llm"], "hex_chars", 0)
+    a = _llm_entry(_isolated_cache, "a.json", "A")
+    b = _llm_entry(_isolated_cache, "b.json", "B")
+    remote_blob = cs.pack_shard([a, b])
+    b.unlink()                                    # this machine never had b.json
+    remote = cs._remote_shard(cs.PARTS["llm"], "all")
+    store = {remote: remote_blob,
+             cs._MANIFEST: json.dumps({"parts": {"llm": {"all": "stale"}}}).encode()}
+
+    calls = _fake_hub(monkeypatch, {}, store=dict(store))
+    with pytest.raises(RuntimeError, match="b.json"):
+        cs.push_cache([cs.PARTS["llm"]])
+    assert not calls.get("commits")
+
+    forced = _fake_hub(monkeypatch, {}, store=dict(store))
+    assert cs.push_cache([cs.PARTS["llm"]], force=True) == 1
+    assert remote in [p for commit in forced["commits"] for p in commit]
+
+
 def test_push_records_what_each_source_actually_recovered(_isolated_cache, monkeypatch):
     """Not which keys were configured — entitlement is IP-bound, so a configured
     key can still be refused. Hits are the only evidence a source was readable."""

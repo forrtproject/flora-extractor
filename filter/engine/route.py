@@ -101,11 +101,11 @@ def _work_ids(batch: pa.RecordBatch, aliases: dict[int, int]) -> list[int]:
 
 
 def _evidence(batch: pa.RecordBatch, winner: list[Optional[FilterSpec]]) -> list[str]:
-    """What the winning rule matched, recovered row-wise for the winners only.
+    """What the winning rule matched, recovered for the winners only.
 
-    The vectorized backend answers whether a row matched, not where; recovering
-    the matched substring costs a Python regex per row, so it is paid once, for
-    one rule, on the rows that rule actually claimed.
+    The backend answers whether a row matched, not where; recovering the matched
+    substring costs a regex span per row, so it is paid once, for one rule, over
+    the sub-batch of the rows that rule actually claimed.
     """
     evidence = [""] * len(winner)
     by_spec: dict[str, tuple[FilterSpec, list[int]]] = {}
@@ -113,7 +113,7 @@ def _evidence(batch: pa.RecordBatch, winner: list[Optional[FilterSpec]]) -> list
         if spec is not None:
             by_spec.setdefault(spec.id, (spec, []))[1].append(index)
     for spec, indices in by_spec.values():
-        rows = batch.take(pa.array(indices, type=pa.int64())).to_pylist()
-        for index, row in zip(indices, rows):
-            evidence[index] = match_evidence(spec, row)
+        claimed = batch.take(pa.array(indices, type=pa.int64()))
+        for index, found in zip(indices, match_evidence(spec, claimed)):
+            evidence[index] = found
     return evidence

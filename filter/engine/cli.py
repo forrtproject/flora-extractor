@@ -22,11 +22,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-import pyarrow as pa
-import pyarrow.parquet as pq
-
 from filter.engine import ENGINE_VERSION
-from filter.engine.backends import verify_backends
 from filter.engine.diagnostics import diagnose, render_text
 from filter.engine.export import (
     ALIASES_FILENAME, SPEC_DIR, StaleBundleError, check_release_binding, export_pile,
@@ -107,18 +103,6 @@ def _print_overlay(overlay_dir: Optional[Path], indent: str = "") -> None:
     print(f"{indent}overlay: {overlay_dir} (hash {digest[:12]})")
 
 
-def _sample_batches(pool_dir: Path, sample_files: int) -> pa.Table:
-    files = sorted(Path(pool_dir).glob("*.parquet"))[:sample_files]
-    if not files:
-        raise SystemExit(f"no parquet files under {pool_dir}")
-    batches = []
-    for path in files:
-        for batch in pq.ParquetFile(path).iter_batches(batch_size=50_000):
-            batches.append(batch)
-            break
-    return pa.Table.from_batches(batches)
-
-
 def _resolve_release(con, given: Optional[str]) -> str:
     if given:
         return given
@@ -144,16 +128,6 @@ def cmd_specs(args) -> int:
     print(f"\n{len(specs)} spec(s)  bundle {bundle_hash(args.spec_dir)[:12]}  "
           f"engine {ENGINE_VERSION}  schema {schema_version()}")
     return 0
-
-
-def cmd_verify(args) -> int:
-    specs = load_specs(args.spec_dir)
-    table = _sample_batches(args.pool, args.sample_files)
-    mismatches = verify_backends(specs, table)
-    for line in mismatches[:50]:
-        print(line)
-    print(f"{len(mismatches)} mismatch(es) over {table.num_rows:,} sampled row(s)")
-    return 1 if mismatches else 0
 
 
 def cmd_route(args) -> int:
@@ -363,10 +337,10 @@ def cmd_handoff(args) -> int:
     from filter.engine.claims import ClaimsClient, ClaimsNotConfigured
 
     drop: set[int] = set()
-    record_types: dict[int, str] = {}
+    screen: dict[int, dict] = {}
     decided: Optional[set[int]] = None
     try:
-        drop, record_types, screened = decisions(ClaimsClient())
+        drop, screen, screened = decisions(ClaimsClient())
         decided = None if args.as_routed else screened
     except ClaimsNotConfigured:
         # Without a claims client there are no verdicts, so screened-only would
@@ -385,7 +359,7 @@ def cmd_handoff(args) -> int:
     try:
         manifest = write_handoff(
             con, args.pool, Path(args.out), release_id, drop=drop,
-            record_types=record_types, decided=decided,
+            screen=screen, decided=decided,
             specs=load_specs(args.spec_dir),
             spec_dir=args.spec_dir,
             aliases=load_aliases(args.spec_dir / ALIASES_FILENAME),
@@ -464,21 +438,24 @@ def build_parser() -> argparse.ArgumentParser:
         description=("Route the survivor pool through the declarative filter bundle "
                      "(issue #146). Rules route and discard; only LLM tiers admit."),
         epilog=(f"Default pool: {SNAPSHOT_POOL_DIR} · default spec dir: {SPEC_DIR} · "
-                f"default store: {DEFAULT_STORE_PATH}"))
+                f"default store: {DEFAULT_STORE_PATH}\n\n"
+                "Three engine tools are their own commands rather than "
+                "subcommands, because each is a one-off run outside the routing "
+                "loop:\n"
+                "  python -m filter.engine.backfill --worklist F [--run] [--freeze]\n"
+                "      fetch abstracts for the no_text worklist into a text overlay\n"
+                "  python -m filter.engine.supersede --old R1 --new R2 [--run]\n"
+                "      record lineage where a re-route moved works already sent "
+                "for validation\n"
+                "  python -m filter.engine.sizing [--rows N] [--verdict-rate R]\n"
+                "      estimate how much Postgres the engine's state tables need"),
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--spec-dir", type=Path, default=SPEC_DIR,
                         help="Filter spec bundle directory.")
     sub = parser.add_subparsers(dest="command", required=True)
 
     specs = sub.add_parser("specs", help="List the loaded bundle and its hash.")
     specs.set_defaults(func=cmd_specs)
-
-    verify = sub.add_parser("verify", help="Check the two backends agree on pool rows.")
-    verify.add_argument("--pool", type=Path, default=SNAPSHOT_POOL_DIR)
-    verify.add_argument("--sample-files", type=int, default=200,
-                        help="Pool files to sample the first batch of (default 200; "
-                             "the oldest partitions are tiny, so a small sample "
-                             "checks almost no rows).")
-    verify.set_defaults(func=cmd_verify)
 
     route = sub.add_parser("route", help="Route the pool into a release in the store.")
     route.add_argument("--pool", type=Path, default=SNAPSHOT_POOL_DIR)

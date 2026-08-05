@@ -1,16 +1,24 @@
-"""The optional cheap pre-screen in front of Stage 3's validated front-door screen.
+"""The cheap discard-only tier's vocabulary: its bypasses, its voters, its one vote.
 
 Two very small models are asked, in sequence, whether a paper could possibly be
 re-testing an earlier study. They can only DISCARD, and only when both say no — every
-other outcome (one keep, an unreadable reply, an API failure, a bypass) falls through to
-the validated screen unchanged. So this tier can lose papers but can never add them,
-which is why it is off by default and why everything below is built to fail open.
+other outcome (one keep, an unreadable reply, an API failure, a bypass) leaves the row
+on its way to the validated screen. So this tier can lose papers but can never add
+them, which is why everything below is built to fail open.
 
-The whole tier lives in one module, calling into llm_client for transport only, so it
-can be removed in one piece without touching the validated screen's semantics.
+**Where the tier runs.** Stage 2, over the `screen_cheap` pile
+(`run_screen_cheap()` / `_cheap_judge()` in `filter/engine/tiers.py`): which rows get
+it is a routing decision, claimed and budget-gated like every other spend. This
+module is not a tier runner — it holds what the tier ASKS, so the question, the
+bypasses and the parsing live in one place and the claim/verdict plumbing lives in
+the other. `prescreen_vote()` is the seam between them.
 
-A pre-screen discard is terminal: the row never reaches the validated Stage 3 screen and
-never reaches a human. Small models are cheap enough to gate the corpus but not reliable
+Stage 3 never calls any of this. It used to run the tier itself, in front of its own
+screen; that half is deleted, because a global on/off would have re-applied the cheap
+gate to rows the rule book deliberately routed to the expensive tier.
+
+A pre-screen discard is terminal: the row never reaches the validated screen and never
+reaches a human. Small models are cheap enough to gate the corpus but not reliable
 enough to be trusted alone — issue #130 measured both cheap voters discarding a paper
 whose abstract opens "The purpose of this ... systematic replication study was to...".
 
@@ -27,8 +35,7 @@ from .config import (
     CURATED_SOURCES, LLM_CACHE_DIR, PRESCREEN_MODEL_1, PRESCREEN_MODEL_2,
 )
 from .llm_client import cache_model_id, call_model, provider_for
-from .prompts import build_prescreen_prompt, prompt_version
-from . import token_counter
+from .prompts import prompt_version
 
 # Below this many characters of abstract there is not enough text for a 3B-class model
 # to be trusted with a terminal verdict, so the row bypasses the tier.
@@ -70,6 +77,38 @@ _SIGNAL_PATTERNS = (
     # the large coordinated efforts, which name themselves
     r"\bmany\s?labs\b",
     r"\breproducibility\s+project\b",
+
+    # Everything below was derived from the vocabulary of 7,505 FLoRA papers rather than
+    # from the four misses that motivated the block above, and measured on a held-out
+    # half those patterns were never shown: recall 80% -> 94%, for ~$7 of extra screen
+    # calls per corpus pass. Evidence: analysis/prescreen_eval/OVERRIDE_EVAL.md.
+    r"\b(?:stud(?:y|ies)|paper|article|experiments?|analys[ei]s|work|note|report|research"
+    r"|investigation|manuscript)\s+(?:\w+\s+){0,2}replicat(?:e|es|ed|ing)\b",
+    r"\b(?:results?|findings?|effects?|data)\s+(?:\w+\s+){0,1}replicat(?:e|es|ed)\b",
+    r"\breplicat(?:e|es|ed|ing|ion|ions)\s+and\s+(?:extend|expand|generali[sz]|elaborat|explor)\w*"
+    r"|\b(?:extend|expand)\w*\s+and\s+replicat\w+",
+    r"\breplicat(?:e|es|ed|ing)\s+(?:the\s+|their\s+|these\s+|a\s+|an\s+)?"
+    r"(?:previous|prior|earlier|original|published|key|main|core|central)\b",
+    r"\breplicat(?:e|es|ed|ing)\s+(?:the\s+|their\s+|these\s+|our\s+|its\s+|his\s+|her\s+|a\s+|an\s+)?"
+    r"(?:findings?|results?|effects?|analys[ei]s|procedures?|estimates?|experiments?|stud(?:y|ies))\b",
+    r"\breplicating\b",
+    r"\b(?:narrow|wide|long|partial|approximate|full|successful|unsuccessful|failed"
+    r"|methodological|experimental|attempted|scientific|near|quasi|constructive"
+    r"|cross-?cultural|cross-?national|online|field|lab(?:oratory)?)[\s-]+replicat(?:ion|ions)\b",
+    r"\b(?:aim|goal|purpose|objective)[^.]{0,40}\breplicat",
+    r"\b(?:failure|failures|attempt|attempts|attempting|efforts?)\s+to\s+replicat",
+    r"\b(?:did|does|do|was|were|could|can|would|is|are)\s+not\s+(?:be\s+)?replicat(?:e|ed)\b",
+    r"\breplication\s+(?:analys[ei]s|sample|cohort|data\s?sets?|set|stage|phase|series"
+    r"|trial|attempt|effort|package|material)",
+    r"\b(?:identification|discovery|fine-?mapping|detection|association|validation"
+    r"|extension|confirmation)\s+and\s+replication\b",
+    r"\breproduc(?:e|es|ed|ing|tion)\s+(?:the|their|these|his|her|its|our|previously|original)\s+"
+    r"(?:published\s+)?(?:results?|findings?|analys[ei]s|estimates?|numbers?|tables?|figures?"
+    r"|work|stud(?:y|ies)|experiments?)\b",
+    r"\breplicated\s+in\s+(?:a|an|the|two|three|our|independent|separate)\b",
+    r"\breplications?\s+of\s+[^.;:]{0,60}?(?:\(?(?:19|20)\d{2}\)?|et\s+al)",
+    r"\breplications?\s+of\s+(?:the\s+|a\s+|an\s+|their\s+|this\s+|that\s+|these\s+|our\s+)?"
+    r"(?:previous|prior|earlier|original|published|previously|older|existing|classic|seminal|key)",
 )
 
 _SIGNAL_RE = re.compile("|".join(f"(?:{p})" for p in _SIGNAL_PATTERNS), re.IGNORECASE)
@@ -124,8 +163,14 @@ def prescreen_voters() -> list[tuple[str, str]]:
     return [(provider_for(m), m) for m in (PRESCREEN_MODEL_1, PRESCREEN_MODEL_2)]
 
 
-def _vote(prompt: str, provider: str, model: str, doi_r: str, title: str) -> "str | None":
+def prescreen_vote(prompt: str, provider: str, model: str, doi_r: str,
+                   title: str) -> "str | None":
     """One voter's answer: "yes", "no", or None when there is no usable answer.
+
+    The public seam between this module and the tier runner: `_cheap_judge()` in
+    `filter/engine/tiers.py` asks the voters through here, so the prompt, the cache
+    key, the parsing and the rule that an unrecognised label is a NON-answer rather
+    than a "no" are defined once, on the side that owns the question.
 
     Cached per voter rather than per gate, so a re-run reuses the vote that succeeded
     and retries only the one that failed. A non-answer is never cached: an unparseable
@@ -159,37 +204,3 @@ def _vote(prompt: str, provider: str, model: str, doi_r: str, title: str) -> "st
         # saving, never the run and never the paper.
         log.debug("prescreen %s/%s failed: %s", provider, model, e)
         return None
-
-
-def prescreen(doi_r: str, title: str, abstract: str, source: str = "") -> dict:
-    """Ask the cheap voters whether to discard this row before the validated screen.
-
-    Returns a dict with `verdict` ("discard" or "proceed"), the `bypass` reason if one
-    fired, and `evidence` naming every voter and what it said — a discard is terminal,
-    so the row has to record who ended it.
-
-    Voter 2 is only asked when voter 1 said "no": once the row can no longer be
-    discarded, a second opinion cannot change the outcome and is not worth paying for.
-    """
-    out = {"verdict": "proceed", "bypass": "", "evidence": "",
-           "models": "+".join(m for _, m in prescreen_voters())}
-
-    bypass = prescreen_bypass(title, abstract, source)
-    if bypass:
-        out["bypass"] = bypass
-        out["evidence"] = f"prescreen bypassed: {bypass}"
-        return out
-
-    token_counter.set_stage("extract_prescreen")
-    prompt = build_prescreen_prompt(title, abstract)
-    said: list[str] = []
-    for provider, model in prescreen_voters():
-        verdict = _vote(prompt, provider, model, doi_r, title)
-        said.append(f"{model}={verdict or 'no-answer'}")
-        if verdict != "no":
-            out["evidence"] = f"prescreen proceed: {'; '.join(said)}"
-            return out
-
-    out["verdict"] = "discard"
-    out["evidence"] = f"prescreen discard: {'; '.join(said)}"
-    return out

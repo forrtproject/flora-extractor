@@ -18,13 +18,11 @@ from __future__ import annotations
 import html
 import json
 import re
-import time
 from functools import partial
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
-import requests
 
 from shared.cache import clear_content_keys, write_json
 from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_CACHE_DIR, RESEARCHER_EMAIL, log
@@ -38,7 +36,7 @@ from shared.pdf_parsing import (
     best_parse_result as _best_parse_shared,
     parse_result_is_empty,
 )
-from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
+from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_opencitations_references, fetch_referenced_works_metadata, _oa_get, _search_crossref_by_title, _search_openalex_by_title
 from shared.prompts import (
     TARGET_INTRO_CHARS, TARGET_METHODS_CHARS,
     _abstract_tail, rendered_reference_entries,
@@ -283,7 +281,21 @@ def _journal_token_sim(a: str, b: str) -> float:
 
 
 def _fetch_journal_cached(doi: str) -> str:
-    """Return the journal display name for a DOI from OpenAlex. Result cached."""
+    """Return the journal display name for a DOI from OpenAlex. Result cached.
+
+    Only an ANSWER is cached. The request used to be wrapped in a bare `except:
+    journal = ""` whose result was then written to disk, so a single timeout or a
+    429 permanently taught this DOI that it has no journal — and the journal is
+    worth +3.0 in `_resolve_rule_based`'s citation scoring, the largest single term
+    there. One blip therefore demoted the deterministic path for that original
+    forever, on every later run and every row that cited it.
+
+    It also goes through `_oa_get` rather than its own `requests.get`, so it takes a
+    slot in the shared OpenAlex reservation queue, sends the Bearer key, rotates on a
+    drained key and raises OpenAlexQuotaExhausted like every other OpenAlex call.
+    Bypassing all of that made it the one caller that could not be rate-limited or
+    accounted for.
+    """
     doi = clean_doi(doi)
     if not doi:
         return ""
@@ -293,27 +305,25 @@ def _fetch_journal_cached(doi: str) -> str:
             return json.loads(cache_path.read_text(encoding="utf-8")).get("journal", "")
         except Exception:
             pass
-    try:
-        r = requests.get(
-            "https://api.openalex.org/works",
-            params={"filter": f"doi:{doi}",
+
+    data = _oa_get("https://api.openalex.org/works",
+                   {"filter": f"doi:{doi}",
                     "select": "id,primary_location",
-                    "mailto": RESEARCHER_EMAIL},
-            headers={"User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})"},
-            timeout=15,
-        )
-        r.raise_for_status()
-        data = r.json()
-        journal = ""
-        if data and data.get("results"):
-            loc = (data["results"][0].get("primary_location") or {})
-            src = (loc.get("source") or {})
-            journal = (src.get("display_name") or "").strip()
-    except Exception:
-        journal = ""
+                    "mailto": RESEARCHER_EMAIL})
+    if data is None:
+        # No answer. Not "no journal" — nothing is written, and the next run asks again.
+        log.debug("[%s] journal lookup got no response — not cached", doi)
+        return ""
+
+    journal = ""
+    if data.get("results"):
+        loc = (data["results"][0].get("primary_location") or {})
+        src = (loc.get("source") or {})
+        journal = (src.get("display_name") or "").strip()
+    # A DOI OpenAlex does not index, or indexes without a source, genuinely has no
+    # journal name to offer: that IS the answer, and caching "" saves re-asking.
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(json.dumps({"journal": journal}), encoding="utf-8")
-    time.sleep(0.12)
     return journal
 
 

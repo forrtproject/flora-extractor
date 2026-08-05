@@ -40,13 +40,12 @@ run_extract.py
     │
     └── for each remaining row:
             │
-            ├── FRONT DOOR — classify_replication(doi_r, title_r, abstract_r)
-            │       (optional cheap PRE-SCREEN runs first — see below)
-            │       two models vote on the v3.3 schema; screen_gate() decides
-            │       ├── gate says "discard"                → not_a_replication, row done
-            │       ├── one vote answered                  → target_pending, row done
-            │       ├── no votes answered                  → api_error, row done
-            │       └── gate says "proceed"                → continue, carrying the
+            ├── FRONT DOOR — _screen_from_row(row): the verdict Stage 2 wrote
+            │       into SCREEN_COLS, rebuilt as the classify_replication() dict.
+            │       No call is made here (see below for --screen-here)
+            │       ├── screen_verdict "discard"           → not_a_replication, row done
+            │       ├── screen_verdict blank               → target_pending, row done
+            │       └── screen_verdict "proceed"           → continue, carrying the
             │           screen's record_type and screen_categories into the row
             │
             └── _resolve_and_code():
@@ -72,18 +71,21 @@ adapter wrote more than one row, `single_original` otherwise).
 
 A row that the front door ends never pays for the ladder, PDF acquisition or outcome
 coding. `--rescreen` reopens exactly the rows a previous run set
-aside on the screen's own verdict, wherever a previous run's rows are being read
+aside on a screen verdict, wherever a previous run's rows are being read
 (the output CSV a resuming run reloads, or the production CSV that `--extracted-test`
-skips against), so a changed
-voter pair or prompt decides them again. Every other resolved row is carried forward
-untouched, and a multi-original paper is reopened as a unit.
+skips against). It reopens rather than re-screens: the screen is Stage 2's, so the
+paper returns only if the current screening generation admitted it to the handoff.
+Every other resolved row is carried forward untouched, and a multi-original paper is
+reopened as a unit.
 
-## The cheap discard-only tier (`shared/prescreen.py`)
+## The cheap discard-only tier (`shared/prescreen.py` + `filter/engine/tiers.py`)
 
-Not part of Stage 3. Which rows get it is a Stage 2 routing decision — the rule book
-sends a row to the `screen_cheap` pile and `filter/engine/tiers.py` runs the tier over
-that pile — so a row arriving at the front door has already been routed past it. It is
-described here because its verdicts land in Stage 3's CSV. Two
+Not part of Stage 3, and currently DORMANT — all three `screen_cheap` specs are
+`shadow: true`, so nothing is routed to the pile (waking it: `docs/filter-engine.md`,
+"Activating the cheap tier"). Which rows would get it is a Stage 2 routing decision —
+the rule book sends a row to the `screen_cheap` pile and `filter/engine/tiers.py` runs
+the tier over that pile — so a row arriving at the front door has already been routed
+past it. It is described here because its verdicts decide Stage 3's rows. Two
 very small models (`PRESCREEN_MODEL_1`, `PRESCREEN_MODEL_2`, OpenRouter by
 default) answer one question with one field; voter 2 is asked only when voter 1 said
 "no", because once the row can no longer be discarded a second opinion changes nothing.
@@ -94,12 +96,24 @@ door unchanged, and non-answers are never cached. Three classes of row are never
 pre-screened at all: text stating the design outright (`hard_signal()`), rows from a
 `CURATED_SOURCES` list, and rows with under `PRESCREEN_MIN_ABSTRACT_CHARS` of abstract.
 
-A discard writes `link_method = prescreen_discard`, is quarantined to its own
-`data/prescreen_discard.csv`, and is reopened only by `--rescreen`. Evidence on the
-tier's precision: `analysis/prescreen_eval/REPORT.md` and
+A live discard drops the row at the handoff, so Stage 3 never sees it and writes
+nothing. `link_method = prescreen_discard` therefore has no live writer: rows on disk
+from when the tier ran inside Stage 3 still carry it, `sanity_check` still files them
+in `data/prescreen_discard.csv`, and `--rescreen` still reopens them. A cheap verdict
+never ADMITS a row either — its `proceed` means "on to the expensive screen", so it
+leaves the work unscreened for the screened-only handoff. Evidence on the tier's
+precision: `analysis/prescreen_eval/REPORT.md` and
 [limitations.md](../limitations.md) §(g).
 
-## The front door (`shared/llm_client.classify_replication`)
+## The front door (`shared/llm_client.classify_replication`), run by Stage 2
+
+The call lives in Stage 2's `screen_expensive` tier. Stage 3 reads its answer off
+the input row (`SCREEN_COLS`: `screen_verdict`, `screen_record_type`,
+`screen_categories`, `screen_votes`, `screen_evidence`, `screen_reasoning`) and
+rebuilds this dict with `_screen_from_row()`. It runs the call itself only under
+`--screen-here`, for a row whose verdict is missing; without the flag such a row is
+written `target_pending`, and an input file with no `screen_verdict` column at all is
+refused at startup. What the two voters do, below, is unchanged — only where.
 
 Two providers vote on the validated schema, at prompt version **v3.3** (v3.2 plus the
 partial-overlap rule; evaluated copy `analysis/screening_eval/prompt_v33.txt`, evidence
@@ -112,9 +126,10 @@ array of `categories` from an 11-value enum, `evidence_quote`, `reasoning`:
 | 1 | Gemini | `SCREENING_MODEL_1` |
 | 2 | OpenAI, or OpenRouter when the id contains `/` | `SCREENING_MODEL_2` (default `gpt-5.4-mini`) |
 
-`run_extract` refuses to start without `GEMINI_API_KEY` and whichever of
-`OPENAI_API_KEY` / `OPENROUTER_API_KEY` voter 2 needs (unless `--no-llm`), because with
-one provider every row returns a single vote, which is not a verdict. Voter 2 sits
+Under `--screen-here`, `run_extract` refuses to start without `GEMINI_API_KEY` and
+whichever of `OPENAI_API_KEY` / `OPENROUTER_API_KEY` voter 2 needs, because with
+one provider every row returns a single vote, which is not a verdict. An ordinary
+run calls neither voter and needs neither key. Voter 2 sits
 outside the Google lineage on purpose: its errors overlap little with voter 1's.
 
 **The gate is `screen_gate()`** — G-softqual from the v3.2 sweep, defined once and
@@ -347,7 +362,7 @@ wording, with nothing to bump by hand.
 
 | Cache | Contents |
 | ----- | -------- |
-| `cache/llm/classify_*.json` | front-door verdicts (complete screens only) |
+| `cache/llm/classify_*.json` | front-door verdicts (complete screens only). Written by Stage 2's expensive tier; read here only under `--screen-here`, and read by the handoff through `cached_classification()` for the category union and the voters' reasoning |
 | `cache/llm/reftarget_*.json` | reference-list target picks |
 | `cache/llm/llm_*.json` | abstract-level and full-text identification |
 | `cache/llm/outcome_*.json` | outcome verdicts, including escalations |

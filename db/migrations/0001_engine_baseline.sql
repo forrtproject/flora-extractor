@@ -316,7 +316,7 @@ BEGIN
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM engine_releases WHERE release_id = p_release_id) THEN
-        RAISE EXCEPTION 'unknown_release: % — refresh and re-route before claiming', p_release_id
+        RAISE EXCEPTION 'unknown_release: % — no engine_releases row; register the release before claiming (route registers it, and screen --run re-registers on demand)', p_release_id
             USING ERRCODE = 'foreign_key_violation';
     END IF;
 

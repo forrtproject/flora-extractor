@@ -6,10 +6,18 @@ and proposes corrections for hallucinated or missing DOIs. Dry-run by default;
 --apply writes corrections (doi_o, pair_id, doi_o_verification, link_evidence,
 link_confidence) back into the CSV.
 
+This is the ONLY tool that re-verifies a row whose verification already settled: a
+resumed run_extract carries such rows forward untouched (each re-verification costs
+up to three OpenAlex free-text searches at 10× a filter query, and the row already
+holds the answer). It re-verifies unsettled rows itself, so the audit's job here is
+the retroactive pass — after a threshold change, a doi_verify fix, or a spot check.
+
 Usage:
-    python -m extract.audit_dois                  # dry-run report
+    python -m extract.audit_dois                  # dry-run report, every row
     python -m extract.audit_dois --apply          # write corrections
     python -m extract.audit_dois --doi 10.x/y     # single row
+    python -m extract.audit_dois --status api_error   # only rows whose verification
+                                                  #   failed last time (repeatable)
     python -m extract.audit_dois --extracted-test # audit extracted-test.csv
 """
 from __future__ import annotations
@@ -36,8 +44,16 @@ _SKIP_LINK_METHODS = {"target_pending", "api_error"}
 def audit_file(csv_path: Path,
                apply: bool = False,
                report_path: "Path | None" = None,
-               only_doi: "str | None" = None) -> dict:
-    """Audit every row of *csv_path*. Returns per-status counts."""
+               only_doi: "str | None" = None,
+               only_status: "list[str] | None" = None) -> dict:
+    """Audit every row of *csv_path*. Returns per-status counts.
+
+    only_status: restrict to rows whose CURRENT doi_o_verification is one of these
+    (use "" for rows that have never been verified). The reason it exists is
+    `--status api_error`: a row whose verification could not be completed keeps its
+    doi_o and says so, and this is how those rows get asked again without paying for
+    a full-file re-verification.
+    """
     csv_path = Path(csv_path)
     if not csv_path.exists():
         raise FileNotFoundError(f"{csv_path} not found")
@@ -47,11 +63,14 @@ def audit_file(csv_path: Path,
         df["doi_o_verification"] = ""
 
     only = clean_doi(only_doi) if only_doi else None
+    wanted = set(only_status) if only_status else None
     counts: Counter = Counter()
     report_rows: list[dict] = []
 
     for idx, row in df.iterrows():
         if only and clean_doi(str(row["doi_r"])) != only:
+            continue
+        if wanted is not None and str(row.get("doi_o_verification", "") or "").strip() not in wanted:
             continue
 
         if str(row.get("link_method", "")) in _SKIP_LINK_METHODS:
@@ -126,12 +145,17 @@ def main() -> None:
     ap.add_argument("--apply", action="store_true",
                     help="write corrections into the CSV (default: dry-run)")
     ap.add_argument("--doi", help="audit a single row by doi_r")
+    ap.add_argument("--status", action="append", metavar="VALUE",
+                    help=("only rows whose current doi_o_verification is VALUE "
+                          "(repeatable; '' means never verified). --status api_error "
+                          "re-asks the rows whose verification could not be completed"))
     ap.add_argument("--extracted-test", action="store_true",
                     help="audit extracted-test.csv instead of extracted.csv")
     args = ap.parse_args()
 
     path = _TEST_PATH if args.extracted_test else _MAIN_PATH
-    summary = audit_file(path, apply=args.apply, only_doi=args.doi)
+    summary = audit_file(path, apply=args.apply, only_doi=args.doi,
+                         only_status=args.status)
 
     print(f"\nDOI audit of {path.name}{' (APPLIED)' if args.apply else ' (dry-run)'}:")
     for status, n in sorted(summary.items()):

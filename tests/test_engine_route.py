@@ -1,11 +1,12 @@
-"""Wave B: the two backends, routing, work ids and routing releases.
+"""Wave B: the backend, routing, work ids and routing releases.
 
 One test per seam, in two layers that do not overlap.
 
-The BACKEND tests run the shipped bundle, because backend equality is a claim
-about the shipped patterns and nothing else would exercise them: the corpus below
-is crafted so every shipped spec — shadow ones included — claims at least one
-row. They assert what a pattern matches, never where a row is routed.
+The BACKEND tests run the shipped bundle over a corpus crafted so every shipped
+spec — shadow ones included — claims at least one row. They assert what a pattern
+matches, never where a row is routed. There is one evaluator (pyarrow compute),
+so what they pin is that every entry point reaches it: `eval_spec_rows()` is the
+row-shaped door onto `eval_spec_batch()`, not a second implementation.
 
 The ROUTING tests run the synthetic bundle of `tests/engine_bundle.py`, because
 precedence, the shadow contract and the `no_text` downgrade are properties of
@@ -20,7 +21,7 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 
-from filter.engine.backends import eval_spec_batch, eval_spec_rows, verify_backends
+from filter.engine.backends import eval_spec_batch, eval_spec_rows, match_evidence
 from filter.engine.release import read_release, routing_release, write_release
 from filter.engine.route import eval_all, route_batch
 from filter.engine.spec import FilterSpec, load_specs
@@ -196,31 +197,30 @@ def specs() -> list:
 # ---------------------------------------------------------------------------
 
 
-def test_the_two_backends_agree_on_the_shipped_bundle_over_the_corpus(specs):
-    table = pa.Table.from_pylist(CORPUS, schema=_POOL_SCHEMA)
-    assert verify_backends(specs, table) == []
+@pytest.mark.parametrize("corpus", ["CORPUS", "UNICODE_CORPUS"])
+def test_the_row_entry_point_is_the_batch_backend(specs, corpus):
+    """`eval_spec_rows()` must be a door onto `eval_spec_batch()`, not a second
+    implementation of it. Asserted over both corpora and every shipped spec —
+    including UNICODE_CORPUS, where a second engine would part company first:
+    accented and non-Latin titles, NFD, and accented surnames in the citation
+    position, `\\w`/`\\b` being Unicode-aware in `re` and ASCII in RE2."""
+    rows = globals()[corpus]
+    batch = _batch(rows)
+    for spec in specs:
+        assert eval_spec_rows(spec, rows) == eval_spec_batch(spec, batch).to_pylist(), spec.id
 
 
-def test_the_two_backends_agree_on_non_ascii_text(specs):
-    """Python `re` is Unicode-aware for `\\w`/`\\b`/IGNORECASE; RE2 — and so pyarrow —
-    is ASCII for `\\w` and `\\b`. `re2_safe()` does not catch that, so the equality has
-    to be demonstrated over text that actually exercises it: accented and non-Latin
-    titles, and accented surnames in the citation position, which is where the cite
-    regex's name atom used to diverge (García et al. (2020) matched `re` only)."""
-    table = pa.Table.from_pylist(UNICODE_CORPUS, schema=_POOL_SCHEMA)
-    assert verify_backends(specs, table) == []
-
-
-def test_an_accented_name_does_not_part_the_backends_inside_an_arm(specs):
-    """`replication-claim-text`'s first arm is written with `\\w+`, which Python `re`
-    reads as Unicode-aware and RE2 as ASCII. An accented word in the gap must give
-    the same answer in both backends."""
+def test_evidence_is_recovered_for_matched_rows_and_never_decides_one(specs):
+    """`match_evidence()` reports WHERE a matched row matched. Every row the
+    backend claims gets a non-empty string, and no row it did not claim is asked."""
+    spec = next(s for s in specs if s.id == "replication-claim-text")
     rows = [_row(title="A replication of the Müller effect",
                  abstract="We successivement répliqué; we thereby replicated the "
                           "original findings of Müller.")]
-    spec = next(s for s in specs if s.id == "replication-claim-text")
+    batch = _batch(rows)
     assert eval_spec_rows(spec, rows) == [True]
-    assert eval_spec_batch(spec, _batch(rows)).to_pylist() == [True]
+    assert eval_spec_batch(spec, batch).to_pylist() == [True]
+    assert all(match_evidence(spec, batch))
 
 
 def test_every_shipped_spec_claims_at_least_one_corpus_row(specs):
@@ -230,9 +230,10 @@ def test_every_shipped_spec_claims_at_least_one_corpus_row(specs):
     assert unexercised == []
 
 
-def test_the_backends_ignore_the_loader_only_pyre_regex():
-    """Both backends read the decomposition, never the loader-only `pyre_regex`.
-    No shipped rule carries the key, so the spec is built here."""
+def test_the_backend_ignores_the_loader_only_pyre_regex():
+    """The evaluator reads the decomposition, never the loader-only `pyre_regex` —
+    which RE2 could not run anyway. No shipped rule carries the key, so the spec
+    is built here."""
     spec = FilterSpec.from_dict({
         "id": "pyre-example",
         "description": "the decomposition is wider than the lookaround original",

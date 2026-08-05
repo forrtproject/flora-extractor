@@ -11,14 +11,26 @@ Tested against `shared.flora_skip` directly rather than through `run_extract`'s
 alias: `csv_to_db` is the other consumer, and the contract belongs to neither.
 """
 import pandas as pd
+import pytest
 
-from shared.flora_skip import load_flora_skip_dois
+from shared.flora_skip import (
+    ENTRY_SHEET_NAME,
+    FLORA_CSV_NAME,
+    SkipListUnreadable,
+    default_flora_skip_dois,
+    load_flora_skip_dois,
+)
 
 
 def _sheet(tmp_path, rows):
     p = tmp_path / "sheet.csv"
     pd.DataFrame(rows).to_csv(p, index=False, encoding="utf-8-sig")
     return p
+
+
+def _sheet_at(path, rows):
+    pd.DataFrame(rows).to_csv(path, index=False, encoding="utf-8-sig")
+    return path
 
 
 def _flora(tmp_path, rows):
@@ -102,3 +114,33 @@ def test_the_entry_sheet_contributes_osf_urls_only_when_validated(tmp_path):
     ])
     assert load_flora_skip_dois(sheet, None) == {
         "10.1/chosen", "10.17605/osf.io/aaaaa"}
+
+
+def test_an_unreadable_file_stops_the_run(tmp_path):
+    """Absent and unreadable are different facts. An empty skip list is
+    indistinguishable downstream from "nothing to skip", and the cost of that
+    mistake is re-extracting and re-importing records already adjudicated — so a
+    file that is present and cannot be parsed raises instead of warning."""
+    flora = tmp_path / "flora.csv"
+    flora.write_text('doi_r,alt_identifier_r\n"unterminated,\n', encoding="utf-8")
+    with pytest.raises(SkipListUnreadable) as exc:
+        load_flora_skip_dois(None, flora)
+    assert str(flora) in str(exc.value)
+
+
+def test_an_entry_sheet_without_its_status_column_stops_the_run(tmp_path):
+    """A sheet with no validation_status cannot say which rows are validated; reading
+    it as "none of them" silently disables the skip list."""
+    sheet = _sheet(tmp_path, [{"doi_r": "10.1/a"}])
+    with pytest.raises(SkipListUnreadable):
+        load_flora_skip_dois(sheet, None)
+
+
+def test_default_skip_list_reads_the_two_standard_names(tmp_path):
+    """Both consumers come through default_flora_skip_dois, so the filenames live in
+    one place — run_extract used to spell them out itself."""
+    _sheet_at(tmp_path / ENTRY_SHEET_NAME,
+              [{"doi_r": "10.1/chosen", "validation_status": "validated - chosen"}])
+    _sheet_at(tmp_path / FLORA_CSV_NAME,
+              [{"doi_r": "10.2/a", "alt_identifier_r": ""}])
+    assert default_flora_skip_dois(tmp_path) == {"10.1/chosen", "10.2/a"}

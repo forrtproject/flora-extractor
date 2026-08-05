@@ -104,7 +104,8 @@ The filter engine no longer decides such a row at all: a work routed to a screen
 pile with no abstract is downgraded to `pending/no_text`, because absence of
 evidence must not convert into a proceed. Text arrives through a **text overlay** —
 `python -m filter.engine worklist` exports the `no_text` rows,
-`python -m filter.engine.backfill` fetches them through Stage 1's five sources, and
+`python -m filter.engine.backfill` fetches them through Stage 1's six sources — a
+cheap bulk pathway over everything, then a gated one over what is still missing — and
 a frozen overlay folds into the release id, so re-routing under it genuinely
 re-decides those rows.
 

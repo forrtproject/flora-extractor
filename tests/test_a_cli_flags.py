@@ -138,7 +138,10 @@ class TestExtractedTestFlag:
                                                          "doi_o_verification": "skipped",
                                                          "evidence_note": ""}), \
                  patch("extract.run_extract._oa_by_doi", return_value=None):
-                return rex.run_extract(no_llm=True, no_pdf=True, **kwargs)
+                rex.run_extract(no_llm=True, no_pdf=True, **kwargs)
+            # run_extract returns nothing: the output CSV is the run's only result.
+            return pd.read_csv(tmp_path / "extracted.csv", dtype=str,
+                               encoding="utf-8-sig").fillna("")
 
         resumed = _run()
         assert [c[0][0] for c in ladder.call_args_list] == [todo], \

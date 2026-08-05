@@ -1,27 +1,29 @@
-r"""Two evaluators for a filter spec over the survivor pool, equal by construction.
+r"""The one evaluator for a filter spec over the survivor pool: pyarrow compute.
 
-`eval_spec_rows()` is Python `re` over row dicts; `eval_spec_batch()` is the same
-semantics in pyarrow compute. Neither is the reference: `verify_backends()` runs
-both over a corpus and reports every row they disagree on, which is what keeps a
-vectorized production run honest against a readable implementation.
+`eval_spec_batch()` decides every match, for every caller. There used to be a
+second implementation in Python `re` for row-at-a-time callers, held equal to
+this one by an RE2-safety check and a sampling `verify` command; a spec that
+matched differently in the two was a live hazard the sampling could miss, so the
+duplicate is gone. `eval_spec_rows()` survives as the row-shaped ENTRY POINT to
+the same backend — it builds a one-batch table and calls `eval_spec_batch()` —
+which is why an analysis script and a routing run cannot disagree about what a
+rule matches.
 
-Three things make the equality achievable rather than merely hoped for. Specs
-are RE2-safe (`spec.re2_safe()`), so no pattern exists that only one engine can
-run; both backends read the DECOMPOSED match, never the loader-only `pyre_regex`
-key — that key is a record of the lookaround original the decomposition replaced,
-evaluated by nothing, and evaluating it here would divide the backends by
-construction; and both read the same characters, because `_normalize()` /
-`_normalize_array()` fold the pool's encoding artifacts at the one seam per
-backend — every Unicode space separator to a plain space, the zero-width space
-and BOM away — so a phrase separated by U+00A0 reads the same to RE2's
-ASCII-only `\s` as to Python's Unicode one.
+Two things the evaluator still depends on. Specs must be regexes RE2 can run
+(`spec.re2_error()` makes an unrunnable one a load-time error rather than a
+mid-route crash); and it reads the DECOMPOSED match, never the loader-only
+`pyre_regex` key — that key is a record of the lookaround original the
+decomposition replaced, evaluated by nothing. Text is folded and NFC-normalised
+where it becomes matchable (`_normalize_array()`): every Unicode space separator
+to a plain space, the zero-width space and BOM away, so a phrase separated by
+U+00A0 still reads as separated to RE2's ASCII-only `\s`.
 
-One asymmetry survives and is not worth closing: Python's `\b`/`\w` are
-Unicode-aware where RE2's are ASCII, so a pattern edge landing on a non-Latin or
-mojibake character can still split the backends. `re.ASCII` would align those
-escapes and break Unicode case folding, which RE2 does perform — a far larger
-divergence than the handful of rows it would fix. `verify` samples the pool for
-what is left.
+Python `re` appears once more, in `match_evidence()`, and decides nothing: RE2
+through pyarrow answers whether a condition matched, and `re` is asked only WHERE
+in the string, because it is the only engine in the process that reports a span.
+When the two read a span differently — `\w`/`\b` are Unicode-aware in `re` and
+ASCII in RE2 — the locator finds nothing and the evidence names the condition
+instead of inventing a phrase. No row's pile depends on it.
 """
 
 import re
@@ -33,32 +35,24 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from filter.engine.spec import FilterSpec, MatchBlock
-from shared.utils import clean_doi
 
-# The pool's identity column (search/snapshot_scan.py::_POOL_SCHEMA).
-_ID_COL = "id"
-
-_COMPILED: dict[str, re.Pattern] = {}
-
-
-def _compiled(pattern: str) -> re.Pattern:
-    """*pattern* compiled for the row backend.
-
-    Not `re.ASCII`, though RE2's `\\b`/`\\w`/`\\s` are ASCII-only and Python's are
-    not: the flag also makes `IGNORECASE` ASCII-only, while RE2's `(?i)` case-folds
-    Unicode, so an accented capital would stop matching its lowercase stem. Aligning
-    the class escapes that way costs far more rows than the asymmetry it fixes.
-    """
-    rx = _COMPILED.get(pattern)
-    if rx is None:
-        rx = _COMPILED[pattern] = re.compile(pattern, re.IGNORECASE)
-    return rx
+# The pool columns a match block can read (`spec._MATCH_KEYS` / `_FIELD_KEYS`),
+# with the types the backend expects. `eval_spec_rows()` builds its batch from
+# exactly these, so a row dict reaches the same code as a pool batch.
+_ROW_SCHEMA = pa.schema([
+    ("doi", pa.string()),
+    ("title", pa.string()),
+    ("display_name", pa.string()),
+    ("abstract_text", pa.string()),
+    ("concepts", pa.string()),
+    ("type", pa.string()),
+    ("publication_year", pa.int64()),
+])
 
 
 def _ci(pattern: str) -> str:
     """*pattern* case-insensitive for RE2. A leading `(?i)` already in the spec
-    is harmless — RE2 accepts a repeated flag group, Python's `re` would not,
-    which is why the row backend uses the IGNORECASE flag instead."""
+    is harmless — RE2 accepts a repeated flag group."""
     return "(?i)" + pattern
 
 
@@ -73,28 +67,10 @@ def _concept_pattern(ids: tuple[Any, ...]) -> str:
     return "|".join(f"{re.escape(str(c))}(?:[^0-9]|$)" for c in ids)
 
 
-# ---------------------------------------------------------------------------
-# Row backend (Python re)
-# ---------------------------------------------------------------------------
-
-
-def _row_title(row: dict) -> str:
-    # coalesce(display_name, title): NULL falls through, an empty string does
-    # not — pyarrow's coalesce works that way and the backends must not differ.
-    display_name = row.get("display_name")
-    title = (display_name if display_name is not None else row.get("title")) or ""
-    return _normalize(title)
-
-
-def _row_abstract(row: dict) -> str:
-    return _normalize(row.get("abstract_text") or "")
-
-
 # The pool's common encoding artifacts, folded away where text becomes
 # matchable: every Unicode space separator (Zs) becomes a plain space, and the
-# zero-width space / BOM vanish. RE2's `\s` is ASCII-only while Python's is
-# not, so an abstract using U+00A0 as its word separator otherwise matches one
-# backend and not the other — and matches no spec's literal space in either.
+# zero-width space / BOM vanish. RE2's `\s` is ASCII-only, so an abstract using
+# U+00A0 as its word separator otherwise matches no spec's literal space.
 _FOLD = {**{cp: " " for cp in (0x00A0, 0x1680, *range(0x2000, 0x200B),
                                0x202F, 0x205F, 0x3000)},
          0x200B: None, 0xFEFF: None}
@@ -107,108 +83,17 @@ def _normalize(text: str) -> str:
     NFC is the `nfd-stems` retirement: OpenAlex does not normalise, so a title
     spelled "re" + U+0301 + "plicat" matched no spec whose accented stem was
     written composed. That used to need a second stem rule with the decomposed
-    spellings next to every composed one; normalising at the one seam per
-    backend gives every rule the same text instead. DOIs are not normalised —
-    `clean_doi()` owns their canonical form.
+    spellings next to every composed one; normalising at the one seam where text
+    becomes matchable gives every rule the same text instead. DOIs are not
+    normalised — `_clean_doi_array()` owns their canonical form.
     """
     if _FOLD_RX.search(text):
         text = text.translate(_FOLD)
     return unicodedata.normalize("NFC", text)
 
 
-def _row_text(row: dict) -> str:
-    return _row_title(row) + "\n" + _row_abstract(row)
-
-
-def _row_doi(row: dict) -> str:
-    return clean_doi(row.get("doi") or "")
-
-
-def _match_row(block: MatchBlock, row: dict) -> bool:
-    """True if *row* satisfies every present condition of *block*."""
-    if block.doi_prefix:
-        doi = _row_doi(row)
-        if doi.split("/", 1)[0] not in block.doi_prefix:
-            return False
-    if block.doi_regex is not None and not _compiled(block.doi_regex).search(_row_doi(row)):
-        return False
-    if block.title_regex is not None and not _compiled(block.title_regex).search(_row_title(row)):
-        return False
-    if block.abstract_regex is not None \
-            and not _compiled(block.abstract_regex).search(_row_abstract(row)):
-        return False
-    if block.text_regex is not None and not _compiled(block.text_regex).search(_row_text(row)):
-        return False
-    for name, values in block.fields:
-        if name == "concept_ids":
-            if not _compiled(_concept_pattern(values)).search(row.get("concepts") or ""):
-                return False
-        elif row.get(name) not in values:
-            return False
-    if block.abstract_missing is not None:
-        if (not _row_abstract(row).strip()) is not block.abstract_missing:
-            return False
-    if block.any_of and not any(_match_row(b, row) for b in block.any_of):
-        return False
-    if block.all_of and not all(_match_row(b, row) for b in block.all_of):
-        return False
-    if block.none_of and any(_match_row(b, row) for b in block.none_of):
-        return False
-    return True
-
-
-def eval_spec_rows(spec: FilterSpec, rows: list[dict]) -> list[bool]:
-    """Whether each row in *rows* matches *spec*, evaluated with Python `re`."""
-    return [_match_row(spec.match, row) for row in rows]
-
-
 # ---------------------------------------------------------------------------
-# Evidence (row-wise only — the winning rule on matching rows)
-# ---------------------------------------------------------------------------
-
-
-def match_evidence(spec: FilterSpec, row: dict) -> str:
-    """The first piece of *row* that made *spec* match, for `filter_evidence`."""
-    return _block_evidence(spec.match, row) or ""
-
-
-def _block_evidence(block: MatchBlock, row: dict) -> str:
-    if block.doi_prefix:
-        registrant = _row_doi(row).split("/", 1)[0]
-        if registrant in block.doi_prefix:
-            return registrant
-    for pattern, text in ((block.doi_regex, _row_doi(row)),
-                          (block.title_regex, _row_title(row)),
-                          (block.abstract_regex, _row_abstract(row)),
-                          (block.text_regex, _row_text(row))):
-        if pattern is None:
-            continue
-        found = _compiled(pattern).search(text)
-        if found:
-            return found.group(0)
-    for name, values in block.fields:
-        if name == "concept_ids":
-            found = _compiled(_concept_pattern(values)).search(row.get("concepts") or "")
-            if found:
-                # The pattern consumes one character past the id unless the id
-                # ended the string (see _concept_pattern); report the id itself.
-                raw = found.group(0)
-                return "concept_ids=" + (raw if raw[-1].isdigit() else raw[:-1])
-        elif row.get(name) in values:
-            return f"{name}={row.get(name)}"
-    if block.abstract_missing is not None:
-        return f"abstract_missing={block.abstract_missing}"
-    for nested in (block.any_of, block.all_of):
-        for child in nested:
-            if _match_row(child, row):
-                evidence = _block_evidence(child, row)
-                if evidence:
-                    return evidence
-    return ""
-
-
-# ---------------------------------------------------------------------------
-# Batch backend (pyarrow compute)
+# The backend (pyarrow compute)
 # ---------------------------------------------------------------------------
 
 
@@ -320,23 +205,114 @@ def eval_spec_batch(spec: FilterSpec, batch: pa.RecordBatch,
     return _match_batch(spec.match, ctx or BatchContext(batch))
 
 
+def rows_to_batch(rows: list[dict]) -> pa.RecordBatch:
+    """Row dicts as a batch of the columns a match block can read (`_ROW_SCHEMA`).
+
+    Keys the schema does not name are dropped rather than inferred: a spec cannot
+    read them, and inferring types from a handful of rows is how a column of all
+    NULLs arrives as `pa.null()` and breaks a kernel that a pool batch feeds fine.
+    """
+    columns = {name: [row.get(name) for row in rows] for name in _ROW_SCHEMA.names}
+    return pa.RecordBatch.from_pydict(columns, schema=_ROW_SCHEMA)
+
+
+def eval_spec_rows(spec: FilterSpec, rows: list[dict]) -> list[bool]:
+    """Whether each row in *rows* matches *spec* — the row-shaped entry point.
+
+    Same backend, same answer: the rows become one batch and `eval_spec_batch()`
+    decides. The Python `re` implementation this used to be is deleted, so an
+    analysis script and a routing run cannot read a spec differently.
+    """
+    if not rows:
+        return []
+    return eval_spec_batch(spec, rows_to_batch(rows)).to_pylist()
+
+
 # ---------------------------------------------------------------------------
-# Equality check
+# Evidence — WHERE a matched row matched, for `filter_evidence`
 # ---------------------------------------------------------------------------
 
 
-def verify_backends(specs: list[FilterSpec], table: pa.Table) -> list[str]:
-    """Every (spec, row) the two backends disagree on. Empty means they agree."""
-    reports: list[str] = []
-    rows = table.to_pylist()
-    for spec in specs:
-        by_row = eval_spec_rows(spec, rows)
-        by_batch: list[bool] = []
-        for batch in table.to_batches():
-            by_batch.extend(eval_spec_batch(spec, batch).to_pylist())
-        for row, row_value, batch_value in zip(rows, by_row, by_batch):
-            if bool(row_value) != bool(batch_value):
-                reports.append(
-                    f"{spec.id}: work {row.get(_ID_COL)!r}: "
-                    f"eval_spec_rows={row_value} eval_spec_batch={batch_value}")
-    return reports
+def match_evidence(spec: FilterSpec, batch: pa.RecordBatch,
+                   ctx: Optional[BatchContext] = None) -> list[str]:
+    """The first piece of each row of *batch* that made *spec* match ("" if none).
+
+    Every match decision here is the backend's (`_match_batch`, `_re_match`);
+    only the SPAN inside an already-matched string comes from Python `re`, which
+    is the one engine in the process that reports one. A span RE2 and `re` read
+    differently yields the condition's name instead of a phrase — a worse
+    evidence string, never a different verdict.
+    """
+    return _block_evidence(spec.match, ctx or BatchContext(batch))
+
+
+def _locate(pattern: str, text: str) -> Optional[str]:
+    """The substring *pattern* matched in *text*, or None if `re` cannot find one."""
+    found = re.search(pattern, text, re.IGNORECASE)
+    return found.group(0) if found else None
+
+
+def _block_evidence(block: MatchBlock, ctx: BatchContext) -> list[str]:
+    out = [""] * ctx.n
+    if block.doi_prefix:
+        for index, doi in enumerate(ctx.doi.to_pylist()):
+            registrant = (doi or "").split("/", 1)[0]
+            if not out[index] and registrant in block.doi_prefix:
+                out[index] = registrant
+    for label, pattern, column in (("doi_regex", block.doi_regex, ctx.doi),
+                                   ("title_regex", block.title_regex, ctx.title),
+                                   ("abstract_regex", block.abstract_regex, ctx.abstract),
+                                   ("text_regex", block.text_regex, ctx.text)):
+        if pattern is None:
+            continue
+        _fill(out, _re_match(column, pattern), column,
+              lambda text, pattern=pattern, label=label: _locate(pattern, text) or label)
+    for name, values in block.fields:
+        if name == "concept_ids":
+            pattern = _concept_pattern(values)
+            _fill(out, _re_match(ctx.concepts, pattern), ctx.concepts,
+                  lambda text, pattern=pattern: _concept_evidence(pattern, text))
+            continue
+        column = ctx.column(name)
+        if column is None:
+            continue
+        for index, value in enumerate(column.to_pylist()):
+            if not out[index] and value in values:
+                out[index] = f"{name}={value}"
+    if block.abstract_missing is not None:
+        for index in range(ctx.n):
+            if not out[index]:
+                out[index] = f"abstract_missing={block.abstract_missing}"
+    for nested in (block.any_of, block.all_of):
+        for child in nested:
+            if all(out):
+                break
+            hits = _match_batch(child, ctx).to_pylist()
+            child_evidence: Optional[list[str]] = None
+            for index, hit in enumerate(hits):
+                if hit and not out[index]:
+                    if child_evidence is None:
+                        child_evidence = _block_evidence(child, ctx)
+                    out[index] = child_evidence[index]
+    return out
+
+
+def _fill(out: list[str], mask: pa.Array, column: pa.Array, evidence) -> None:
+    """Write *evidence* of each matched, still-empty row; read the text lazily."""
+    texts: Optional[list[str]] = None
+    for index, hit in enumerate(mask.to_pylist()):
+        if hit and not out[index]:
+            if texts is None:
+                texts = column.to_pylist()
+            out[index] = evidence(texts[index] or "")
+
+
+def _concept_evidence(pattern: str, text: str) -> str:
+    # The pattern consumes one character past the id unless the id ended the
+    # string (see _concept_pattern); report the id itself.
+    raw = _locate(pattern, text)
+    if raw is None:
+        return "concept_ids"
+    return "concept_ids=" + (raw if raw[-1].isdigit() else raw[:-1])
+
+

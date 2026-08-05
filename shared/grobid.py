@@ -293,13 +293,28 @@ def _pdf_fingerprint(pdf_path: Path) -> str:
         return "nohash"
 
 
+class ReferenceExtractionUnavailable(RuntimeError):
+    """The reference extractor never answered.
+
+    Distinct from "this document has no reference list", which is a finding. A
+    provider outage is not, and the two arrived as the same empty list: run_grobid
+    reported `success` with zero references, run_extract cached the whole parse
+    result to disk, and from then on the paper was one that cites nothing — on
+    every later run, without another request ever being made.
+    """
+
+
 def _extract_refs_via_pdf_direct(doi_r: str, pdf_path: Path) -> list[dict]:
     """
     Send the full PDF directly to Gemini with MEDIA_RESOLUTION_LOW for reference
     extraction. This is more accurate than image rendering for native-text PDFs
     and uses fewer tokens (Gemini reads embedded text natively without image billing).
 
-    Falls back silently if the PDF exceeds 45 MB or if no API keys are configured.
+    Returns the references the model found — possibly none, which is an answer.
+    Raises ReferenceExtractionUnavailable when the provider never answered.
+
+    Falls back silently (returning []) when the PDF exceeds 45 MB or cannot be read:
+    those are settled facts about this document, not failures to reach a model.
     """
     import json
 
@@ -328,8 +343,10 @@ def _extract_refs_via_pdf_direct(doi_r: str, pdf_path: Path) -> list[dict]:
         return []
 
     from .llm_client import call_gemini_with_pdf
-    result = call_gemini_with_pdf(PDF_REFERENCES_PROMPT, pdf_bytes)
+    result, err = call_gemini_with_pdf(PDF_REFERENCES_PROMPT, pdf_bytes)
 
+    if err:
+        raise ReferenceExtractionUnavailable(f"direct-PDF Gemini: {err}")
     if not result or not isinstance(result.get("references"), list):
         log.info("[%s] Direct-PDF Gemini returned no references", doi_r)
         return []
@@ -368,7 +385,9 @@ def _extract_refs_via_pdf_images(doi_r: str, pdf_path: Path) -> list[dict]:
     but extracts 0 references (e.g. two-column or non-standard layouts).
 
     Requires: pip install pymupdf
-    Returns [] silently when PyMuPDF is not installed.
+    Returns [] silently when PyMuPDF is not installed (a fact about this machine,
+    settled without asking anyone). Raises ReferenceExtractionUnavailable when the
+    provider never answered — see _extract_refs_via_pdf_direct.
     """
     import json
 
@@ -415,8 +434,10 @@ def _extract_refs_via_pdf_images(doi_r: str, pdf_path: Path) -> list[dict]:
 
     # Lazy import to avoid circular dependency at module load time
     from .llm_client import call_gemini_with_images
-    result = call_gemini_with_images(PDF_IMAGE_REFERENCES_PROMPT, images)
+    result, err = call_gemini_with_images(PDF_IMAGE_REFERENCES_PROMPT, images)
 
+    if err:
+        raise ReferenceExtractionUnavailable(f"image-based Gemini: {err}")
     if not result or not isinstance(result.get("references"), list):
         log.info("[%s] Image-based ref extraction returned nothing", doi_r)
         return []
@@ -468,7 +489,8 @@ def run_grobid(doi_r: str, pdf_path: Optional[Path],
 
     Returns:
         grobid_status   "success" | "success_grobid" | "success_direct_llm" |
-                        "success_image_llm" | "pdfminer_failed" | "no_pdf"
+                        "success_image_llm" | "refs_unavailable" |
+                        "pdfminer_failed" | "no_pdf"
         sections        dict (abstract, intro, methods, references)
         n_refs_parsed   int
 
@@ -476,6 +498,13 @@ def run_grobid(doi_r: str, pdf_path: Optional[Path],
         1. GROBID public server (https://kermitt2-grobid.hf.space)
         2. Gemini with full PDF bytes   (success_direct_llm)  — skipped when no_llm=True
         3. Gemini with rendered images  (success_image_llm)   — skipped when no_llm=True
+
+    `refs_unavailable` is the status for a run that ended the fallback chain without
+    an ANSWER about the references — the provider was unreachable. It is deliberately
+    not `success`: the reference list is the evidence one whole rung of the resolution
+    ladder reads, and reporting an outage as "zero references" both wastes that rung
+    and gets frozen into run_extract's parse cache. parse_grobid() turns it into an
+    error result so no reader can mistake it for a finding.
     """
     if not pdf_path:
         return {"grobid_status": "no_pdf", "sections": {}, "n_refs_parsed": 0}
@@ -499,19 +528,28 @@ def run_grobid(doi_r: str, pdf_path: Optional[Path],
             status  = "success_grobid"
             log.info("[%s] Used GROBID fallback: %d refs", doi_r, n_refs)
         elif not no_llm:
-            direct_refs = _extract_refs_via_pdf_direct(doi_r, pdf_path)
-            if direct_refs:
-                sections["references"] = direct_refs
-                n_refs  = len(direct_refs)
-                status  = "success_direct_llm"
-                log.info("[%s] Used direct-PDF-LLM fallback: %d refs", doi_r, n_refs)
-            else:
-                img_refs = _extract_refs_via_pdf_images(doi_r, pdf_path)
-                if img_refs:
-                    sections["references"] = img_refs
-                    n_refs  = len(img_refs)
-                    status  = "success_image_llm"
-                    log.info("[%s] Used image-LLM fallback: %d refs", doi_r, n_refs)
+            # The unavailability of either LLM rung ends the chain as unanswered,
+            # rather than falling through to a zero-reference "success". The image
+            # rung is a fallback for a document the direct rung read and found no
+            # references IN — not for a request that never arrived.
+            try:
+                direct_refs = _extract_refs_via_pdf_direct(doi_r, pdf_path)
+                if direct_refs:
+                    sections["references"] = direct_refs
+                    n_refs  = len(direct_refs)
+                    status  = "success_direct_llm"
+                    log.info("[%s] Used direct-PDF-LLM fallback: %d refs", doi_r, n_refs)
+                else:
+                    img_refs = _extract_refs_via_pdf_images(doi_r, pdf_path)
+                    if img_refs:
+                        sections["references"] = img_refs
+                        n_refs  = len(img_refs)
+                        status  = "success_image_llm"
+                        log.info("[%s] Used image-LLM fallback: %d refs", doi_r, n_refs)
+            except ReferenceExtractionUnavailable as exc:
+                log.warning("[%s] reference extraction unavailable (%s) — reporting "
+                            "no answer rather than zero references", doi_r, exc)
+                status = "refs_unavailable"
 
     return {
         "grobid_status" : status,

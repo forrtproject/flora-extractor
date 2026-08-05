@@ -278,6 +278,93 @@ def test_a_run_writes_an_overlay_chunk_and_a_rerun_resumes_without_refetching(
 
 
 # ---------------------------------------------------------------------------
+# The two pathways: cheap bulk first, gated sources only on what is left
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def wl_osf(tmp_path) -> Path:
+    """The worklist plus an OSF registration, whose phase is the one exception to
+    the targeted pathway's narrowing."""
+    path = tmp_path / "worklist-osf.parquet"
+    pq.write_table(pa.Table.from_pylist(
+        [{"work_id": 1, "doi": "10.1234/one", "title": "T1", "year": 2021},
+         {"work_id": 2, "doi": "10.1234/two", "title": "T2", "year": 2022},
+         {"work_id": 4, "doi": "10.17605/osf.io/ab12d", "title": "R", "year": 2023}],
+        schema=overlay.WORKLIST_SCHEMA), path)
+    return path
+
+
+def _trace(monkeypatch, calls: list, epmc_finds=()) -> None:
+    """Record every source's fetch in call order; Europe PMC answers *epmc_finds*."""
+    def _fake(name, result):
+        def fetch(arg, *rest):
+            calls.append((name, arg))
+            return result(arg) if callable(result) else result
+        return fetch
+
+    monkeypatch.setattr(backfill, "_fetch_openalex_batch",
+                        _fake("openalex", lambda ids: {i: None for i in ids}))
+    monkeypatch.setattr(backfill, "_fetch_epmc_batch", _fake(
+        "epmc", lambda dois: {d: (f"Recovered {d}" if d in epmc_finds else None)
+                              for d in dois}))
+    monkeypatch.setattr(backfill, "_fetch_s2_batch",
+                        _fake("s2", lambda dois: {d: None for d in dois}))
+    monkeypatch.setattr(backfill, "_fetch_crossref_abstract", _fake("crossref", (None, "empty")))
+    monkeypatch.setattr(backfill, "_fetch_scopus_abstract", _fake("scopus", (None, "empty")))
+    monkeypatch.setattr(backfill, "_fetch_osf_registration", _fake("osf", (None, "empty")))
+    monkeypatch.setattr(backfill, "S2_API_KEY", "KEY")
+    monkeypatch.setattr(backfill, "ELSEVIER_API_KEY", "KEY")
+
+
+def test_the_bulk_pathway_is_exhausted_before_any_gated_source_is_asked(
+        wl_osf, isolated_cache, tmp_path, monkeypatch):
+    """Every batched, keyless source runs before every per-item or gated one, and
+    Scopus — a key, an IP-bound entitlement and a ~10k/week quota — is last."""
+    calls: list = []
+    _trace(monkeypatch, calls)
+    backfill.run(wl_osf, tmp_path / "ov")
+
+    order = [name for name, _ in calls]
+    assert order[:2] == list(backfill.BULK_SOURCES)
+    # One name per source, in the order calls were spent: the whole bulk pathway,
+    # then the targeted one, with Scopus last.
+    assert sorted(set(order[2:])) == sorted(backfill.TARGETED_SOURCES)
+    assert order[-1] == "scopus"
+
+
+def test_the_targeted_pathway_only_sees_rows_bulk_left_without_text(
+        wl, isolated_cache, tmp_path, monkeypatch):
+    """The whole point of the split: a CrossRef or Scopus call spent on a row Europe
+    PMC already answered buys nothing. The worklist's other DOI is still asked about."""
+    calls: list = []
+    _trace(monkeypatch, calls, epmc_finds={"10.1234/one"})
+    result = backfill.run(wl, tmp_path / "ov")
+
+    assert [arg for name, arg in calls if name == "crossref"] == ["10.1234/two"]
+    assert [arg for name, arg in calls if name == "scopus"] == ["10.1234/two"]
+    assert [arg for name, arg in calls if name == "s2"] == [["10.1234/two"]]
+    assert result["by_source"] == {"epmc": 1}
+
+
+def test_a_phase_restricts_the_run_to_one_pathway(wl, isolated_cache, tmp_path,
+                                                  monkeypatch):
+    """A wide cheap pass and a narrow expensive pass are run over different
+    worklists, so each pathway has to be requestable on its own."""
+    calls: list = []
+    _trace(monkeypatch, calls)
+    backfill.run(wl, tmp_path / "ov", phase="bulk")
+    assert {name for name, _ in calls} == set(backfill.BULK_SOURCES)
+
+    calls.clear()
+    backfill.run(wl, tmp_path / "ov2", phase="targeted")
+    assert {name for name, _ in calls} == {"s2", "crossref", "scopus"}   # no OSF DOI here
+
+    with pytest.raises(ValueError, match="unknown phase"):
+        backfill.run(wl, tmp_path / "ov3", phase="cheap")
+
+
+# ---------------------------------------------------------------------------
 # The standard overlay location: safe by default
 # ---------------------------------------------------------------------------
 

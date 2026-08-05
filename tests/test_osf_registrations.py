@@ -96,13 +96,24 @@ def test_only_osf_registrant_dois_are_targeted():
     rows = [{"work_id": 1, "oa": "https://openalex.org/W1", "doi_r": "10.17605/osf.io/ab12d"},
             {"work_id": 2, "oa": "https://openalex.org/W2", "doi_r": "10.1016/j.jesp.2020.1"},
             {"work_id": 3, "oa": "https://openalex.org/W3", "doi_r": ""}]
-    assert backfill._osf_targets(rows, set(), set()) == ["10.17605/osf.io/ab12d"]
+    assert backfill._osf_targets(rows, set()) == ["10.17605/osf.io/ab12d"]
 
 
-def test_osf_leads_the_source_order():
-    """A later source's abstract for the same row would displace the template line."""
+def test_osf_leads_the_attribution_order_and_ignores_what_others_found():
+    """SOURCE_ORDER is the order a recovered abstract is ATTRIBUTED in (not the order
+    calls are spent in), and OSF leads it: another source's abstract for the same row
+    would otherwise displace the template line. For the same reason the OSF phase is
+    the one whose targets are not narrowed by the found-index — a Europe PMC abstract
+    for a registration is not a substitute for its template."""
     assert backfill.SOURCE_ORDER[0] == "osf"
     assert backfill._source_shape("osf")["skipped"] == ""   # keyless: never skipped
+
+    rows = [{"work_id": 1, "oa": "https://openalex.org/W1",
+             "doi_r": "10.17605/osf.io/ab12d"}]
+    found = {"epmc:10.17605/osf.io/ab12d"}
+    assert backfill._targets("osf", rows, set(), found) == ["10.17605/osf.io/ab12d"]
+    # Every other source does drop a row something already answered with text.
+    assert backfill._targets("crossref", rows, set(), found) == []
 
 
 # ---------------------------------------------------------------------------

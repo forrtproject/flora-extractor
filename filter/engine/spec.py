@@ -5,19 +5,23 @@ version, so `bundle_hash()` is whitespace-sensitive on purpose: an edit that
 changes nothing but formatting still mints a new routing release, which is
 cheaper than trying to define "meaningful" change.
 
-Regexes must be RE2-safe. Both backends (Python `re` and pyarrow, milestone 1
-`backends.py`) have to agree row for row, and pyarrow's matcher is RE2: a
-lookaround or backreference would evaluate in one backend and raise in the
-other. `re2_safe()` is what makes that a load-time error rather than a
-production divergence.
+Regexes must be ones RE2 can run. The engine has one evaluator, pyarrow compute
+(`backends.py`), and pyarrow's matcher is RE2: a lookaround or backreference
+raises there. `re2_error()` asks RE2 itself, at spec load, so an unrunnable
+pattern is a named error against a named file instead of a crash partway through
+a routing run.
 """
 
 import hashlib
 import json
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
+
+import pyarrow as pa
+import pyarrow.compute as pc
 
 SPEC_VERSION = 1
 
@@ -126,67 +130,31 @@ class FilterSpec:
 
 
 # ---------------------------------------------------------------------------
-# RE2 safety
+# RE2 syntax
 # ---------------------------------------------------------------------------
 
-_BANNED_GROUPS = {
-    "(?=": "lookahead",
-    "(?!": "negative lookahead",
-    "(?<=": "lookbehind",
-    "(?<!": "negative lookbehind",
-    "(?>": "atomic group",
-    "(?(": "conditional",
-    "(?P=": "backreference",
-}
+# One row is enough to make pyarrow build the RE2 program; a pattern RE2 refuses
+# raises here rather than mid-route. Cached because load_specs() runs on every
+# command and the bundle holds ~140 patterns.
+_PROBE = pa.array([""])
 
 
-def re2_safe(pattern: str) -> bool:
-    """True if *pattern* uses only constructs RE2 (and so pyarrow) implements.
+@lru_cache(maxsize=None)
+def re2_error(pattern: str) -> Optional[str]:
+    """RE2's complaint about *pattern*, or None if RE2 can run it.
 
-    Rejects lookaround, backreferences, atomic groups, possessive quantifiers,
-    conditionals and `\\G`. Ordinary syntax passes, including non-capturing
-    groups, named groups and inline flags such as `(?i)`.
+    Asked of RE2 itself through pyarrow, which is the engine that will run the
+    pattern — a hand-written scanner of banned constructs (lookaround,
+    backreferences, atomic groups, possessive quantifiers, `\\G`) could only
+    reject what its author thought of, and RE2 rejects more than that. The
+    engine's evaluator is pyarrow alone, so this is a syntax check, not a
+    claim that two implementations agree.
     """
-    i, n = 0, len(pattern)
-    in_class = False
-    prev_was_quantifiable_close = False
-    while i < n:
-        ch = pattern[i]
-        if ch == "\\":
-            nxt = pattern[i + 1] if i + 1 < n else ""
-            if not in_class and (nxt.isdigit() and nxt != "0"):
-                return False            # \1..\9 backreference
-            if nxt == "G":
-                return False
-            i += 2
-            prev_was_quantifiable_close = not in_class
-            continue
-        if in_class:
-            if ch == "]":
-                in_class = False
-                prev_was_quantifiable_close = True
-            i += 1
-            continue
-        if ch == "[":
-            in_class = True
-            i += 1
-            continue
-        if ch == "(":
-            for opener, _label in _BANNED_GROUPS.items():
-                if pattern.startswith(opener, i):
-                    return False
-            # Skip the `(?` so the flag/type char is never read as a quantifier.
-            i += 2 if pattern.startswith("(?", i) else 1
-            prev_was_quantifiable_close = False
-            continue
-        if ch in "*+?}" and prev_was_quantifiable_close:
-            if i + 1 < n and pattern[i + 1] == "+":
-                return False            # possessive quantifier
-            i += 1
-            continue                    # stays quantifiable: `a*?`, `a{2,}?`
-        prev_was_quantifiable_close = ch not in "|("
-        i += 1
-    return True
+    try:
+        pc.match_substring_regex(_PROBE, pattern)
+    except pa.ArrowInvalid as exc:
+        return str(exc).split("\n", 1)[0]
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -217,9 +185,13 @@ def _validate_match(raw: Any, path: str, top: bool, errors: list[str]) -> None:
         if not isinstance(value, str):
             errors.append(f"{path}.{key}: must be a string")
             continue
-        if not re2_safe(value):
-            errors.append(f"{path}.{key}: not RE2-safe: {value!r}")
+        complaint = re2_error(value)
+        if complaint:
+            errors.append(f"{path}.{key}: RE2 cannot run it ({complaint}): {value!r}")
         try:
+            # Not a second evaluator: `match_evidence()` asks `re` where an
+            # already-matched pattern matched, and a pattern it cannot compile
+            # would raise there instead of naming the spec that shipped it.
             re.compile(value)
         except re.error as exc:
             errors.append(f"{path}.{key}: does not compile ({exc}): {value!r}")

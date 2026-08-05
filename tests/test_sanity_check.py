@@ -207,3 +207,41 @@ def test_provisional_title_search_rows_are_set_aside(tmp_path, monkeypatch):
     moved = pd.read_csv(tmp_path / "provisional_title_search.csv",
                         dtype=str, keep_default_na=False)
     assert set(moved["doi_r"]) == {"10.1/prov"}
+
+
+def test_the_set_aside_key_is_the_key_a_resume_reads_back(tmp_path, monkeypatch):
+    """One definition of row identity. This pass deduped set-asides under its own
+    chain (bare work id first), while run_extract reads the same files back under
+    `shared.row_key.primary_key` (doi first) — so a paper carrying both identifiers
+    was filed under one key and looked up under another."""
+    import extract.run_extract as rex
+    monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
+    ex = tmp_path / "extracted.csv"
+    _write(ex, [{"doi_r": "10.1/nar", "openalex_id_r": "https://openalex.org/W7",
+                 "outcome": "not_a_replication", "link_method": "not_a_replication"}])
+
+    sc.run_sanity_check(ex, move=True, deep=False)
+
+    moved = pd.read_csv(tmp_path / "not_a_replication.csv", dtype=str,
+                        keep_default_na=False)
+    assert [sc._dedup_key(r) for _, r in moved.iterrows()] == ["10.1/nar"]
+    # The resume reads the same file and must recognise the same paper.
+    assert rex._screen_set_aside_keys(tmp_path) >= {"10.1/nar"}
+
+
+def test_two_papers_sharing_no_identifier_are_not_merged(tmp_path, monkeypatch):
+    """primary_key returns "" for a row with no identifier at all, and "" is not an
+    identity: such rows must be kept, not collapsed into one."""
+    monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
+    ex = tmp_path / "extracted.csv"
+    _write(ex, [
+        {"doi_r": "", "openalex_id_r": "", "url_r": "", "title_r": "",
+         "outcome": "not_a_replication"},
+        {"doi_r": "", "openalex_id_r": "", "url_r": "", "title_r": "",
+         "outcome": "not_a_replication"},
+    ])
+    s = sc.run_sanity_check(ex, move=True, deep=False)
+    assert s["moved"]["not_a_replication"] == 2
+    moved = pd.read_csv(tmp_path / "not_a_replication.csv", dtype=str,
+                        keep_default_na=False)
+    assert len(moved) == 2

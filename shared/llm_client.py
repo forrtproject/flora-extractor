@@ -39,7 +39,6 @@ from . import token_counter, token_usage
 from .cache import content_key, read_cache, read_cache_migrating, write_cache
 from .rate_limit import throttle
 from .prompts import (
-    JSON_SYSTEM_MESSAGE,
     build_classify_prompt, build_target_prompt,
     prompt_version,
 )
@@ -302,6 +301,13 @@ def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL, *,
                     break   # non-retryable error on this key → try next
 
                 body = r.json()
+                # Recorded before any early return: a 200 was served and billed
+                # whatever its content, and a truncated or blocked response is the
+                # MOST expensive kind — it ran to the output cap. Returning first, as
+                # the two branches below used to, made Gemini's recorded spend an
+                # undercount of exactly the calls that cost the most.
+                _record_tokens("gemini", model, *_gemini_usage(body))
+
                 if not body.get("candidates"):
                     blocked = body.get("promptFeedback", {}).get("blockReason", "unknown")
                     last_error = f"no candidates on {key_label} — blockReason={blocked}"
@@ -316,8 +322,6 @@ def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL, *,
                     return None, last_error
 
                 text = body["candidates"][0]["content"]["parts"][0]["text"]
-                # Recorded before parsing: a non-JSON response was still billed.
-                _record_tokens("gemini", model, *_gemini_usage(body))
                 result = _parse_llm_json(text)
                 if result is not None:
                     if key_idx > 0:
@@ -418,10 +422,14 @@ def call_openai(prompt: str, model: str,
         tier = ({"service_tier": "flex", "timeout": OPENAI_FLEX_TIMEOUT} if flex else {})
         return client.chat.completions.create(
             model=model,
-            messages=[
-                {"role": "system", "content": JSON_SYSTEM_MESSAGE},
-                {"role": "user", "content": prompt},
-            ],
+            # No system message. Every prompt states its own JSON schema, and
+            # response_format already pins the output to one JSON object; the
+            # generic instruction that used to ride along was paid for on every
+            # OpenAI-served call and was never sent to Gemini at all, so dropping it
+            # also makes the three providers ask the same question. See
+            # _LEGACY_JSON_SYSTEM_MESSAGE in shared/prompts.py for why the retired
+            # text still appears in every prompt_version() hash.
+            messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             max_completion_tokens=JSON_MAX_OUTPUT_TOKENS,
             **tier,
@@ -499,32 +507,42 @@ def call_openrouter(prompt: str, model: str,
 
     use_model = model
     extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
-    try:
-        _throttle("openrouter")
-        response = client.chat.completions.create(
-            model=use_model,
-            messages=[
-                {"role": "system", "content": JSON_SYSTEM_MESSAGE},
-                {"role": "user", "content": prompt},
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=JSON_MAX_OUTPUT_TOKENS,
-            **extra,
-        )
-        if response.choices[0].finish_reason == "length":
-            log.warning("OpenRouter response hit the %d-token cap and was cut off — "
-                        "the truncated JSON will fail to parse (model=%s)",
-                        JSON_MAX_OUTPUT_TOKENS, use_model)
-            return None, "response truncated at max_tokens"
-        if response.usage:
-            _record_tokens("openrouter", use_model,
-                           response.usage.prompt_tokens,
-                           response.usage.completion_tokens)
-        result = _parse_llm_json(response.choices[0].message.content)
-        return result, ("" if result else "response was not valid JSON")
-    except Exception as e:
-        log.warning("OpenRouter call failed (model=%s): %s", use_model, e)
-        return None, f"exception: {e}"
+    # The same three attempts with 1s/2s backoff call_openai runs, for the same
+    # reason: a single transient failure at the provider must not be the answer a
+    # row records. OpenRouter had one attempt, so the pre-screen's two voters and
+    # any OpenRouter-served screen slot gave up where the OpenAI slot retried —
+    # a difference in how hard the pipeline tried, not in what the model thought.
+    last_error = "no attempts made"
+    for attempt in range(3):
+        try:
+            _throttle("openrouter")
+            response = client.chat.completions.create(
+                model=use_model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                max_tokens=JSON_MAX_OUTPUT_TOKENS,
+                **extra,
+            )
+            # Before the truncation check: a response cut off at the cap was served
+            # and billed in full, and it is the most expensive shape there is.
+            if response.usage:
+                _record_tokens("openrouter", use_model,
+                               response.usage.prompt_tokens,
+                               response.usage.completion_tokens)
+            if response.choices[0].finish_reason == "length":
+                log.warning("OpenRouter response hit the %d-token cap and was cut off — "
+                            "the truncated JSON will fail to parse (model=%s)",
+                            JSON_MAX_OUTPUT_TOKENS, use_model)
+                return None, "response truncated at max_tokens"
+            result = _parse_llm_json(response.choices[0].message.content)
+            return result, ("" if result else "response was not valid JSON")
+        except Exception as e:
+            last_error = f"exception: {e}"
+            log.warning("OpenRouter call failed (attempt %d/3, model=%s): %s",
+                        attempt + 1, use_model, e)
+            if attempt < 2:
+                time.sleep(2 ** attempt)  # 1s, 2s
+    return None, last_error
 
 
 # ── Which provider serves a model ────────────────────────────────────────────
@@ -846,16 +864,23 @@ if provider_for(PDF_PARSE_MODEL) != "gemini":
 
 def call_gemini_with_images(prompt: str,
                              image_b64_list: list[dict],
-                             model: str = PDF_PARSE_MODEL) -> Optional[dict]:
+                             model: str = PDF_PARSE_MODEL
+                             ) -> tuple[Optional[dict], str]:
     """
     Call Gemini with inline image parts (base64 PNG/JPEG).
 
     image_b64_list: [{"mime_type": "image/png", "data": "<base64>"}]
 
+    Returns (result_dict_or_None, error_description) — the same contract as every
+    other call in this module. (None, "") means the model answered and had nothing
+    to give; (None, "<error>") means it never answered. The two used to be one
+    None, so the caller could not tell an outage from a document with no reference
+    list, and recorded the outage as the second.
+
     Requires PyMuPDF (fitz) for rendering — callers must catch ImportError.
     """
     if not GEMINI_API_KEYS:
-        return None
+        return None, "no API keys configured"
 
     parts: list[dict] = [{"text": prompt}]
     for img in image_b64_list:
@@ -869,6 +894,7 @@ def call_gemini_with_images(prompt: str,
         },
     }
 
+    last_error = "all keys exhausted"
     for key_idx, api_key in enumerate(GEMINI_API_KEYS):
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
                f":generateContent?key={api_key}")
@@ -876,27 +902,34 @@ def call_gemini_with_images(prompt: str,
             _throttle("gemini")
             r = _gemini_post(url, payload, key_idx, 120)
             if r.status_code == 429:
+                last_error = f"quota exhausted on key {key_idx + 1} (429)"
                 continue
             if r.status_code != 200:
+                last_error = f"HTTP {r.status_code} on key {key_idx + 1}"
                 log.warning("Gemini image call HTTP %s", r.status_code)
                 continue
             body = r.json()
-            if not body.get("candidates"):
-                return None
             _record_tokens("gemini", model, *_gemini_usage(body))
+            if not body.get("candidates"):
+                # The model was asked and declined (a safety block, most often).
+                # That is an answer: no error string, and the caller may record it.
+                return None, ""
             text = body["candidates"][0]["content"]["parts"][0]["text"]
-            return _parse_llm_json(text)
+            result = _parse_llm_json(text)
+            return result, ("" if result else "response was not valid JSON")
         except Exception as e:
+            last_error = f"exception on key {key_idx + 1}: {e}"
             log.warning("Gemini image call failed: %s", e)
 
-    return None
+    return None, last_error
 
 
 # ── Gemini with inline PDF (for direct PDF reference extraction) ──────────────
 
 def call_gemini_with_pdf(prompt: str,
                           pdf_bytes: bytes,
-                          model: str = PDF_PARSE_MODEL) -> Optional[dict]:
+                          model: str = PDF_PARSE_MODEL
+                          ) -> tuple[Optional[dict], str]:
     """
     Call Gemini with an inline PDF payload.
 
@@ -904,10 +937,12 @@ def call_gemini_with_pdf(prompt: str,
     Gemini reads the embedded text directly (not billed as image tokens); for
     scanned PDFs it applies lower-resolution OCR.  Max supported: 50 MB / 1 000 pages.
 
-    Returns a parsed dict or None.
+    Returns (result_dict_or_None, error_description), as call_gemini_with_images
+    does and for the same reason: "the model gave nothing" and "the model was never
+    reached" are different answers to the question the caller is asking.
     """
     if not GEMINI_API_KEYS:
-        return None
+        return None, "no API keys configured"
 
     pdf_b64 = base64.b64encode(pdf_bytes).decode()
 
@@ -925,6 +960,7 @@ def call_gemini_with_pdf(prompt: str,
         },
     }
 
+    last_error = "all keys exhausted"
     for key_idx, api_key in enumerate(GEMINI_API_KEYS):
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
                f":generateContent?key={api_key}")
@@ -933,29 +969,34 @@ def call_gemini_with_pdf(prompt: str,
                 _throttle("gemini")
                 r = _gemini_post(url, payload, key_idx, 45)
                 if r.status_code == 429:
+                    last_error = f"quota exhausted on key {key_idx + 1} (429)"
                     break
                 if r.status_code in (500, 503) and attempt == 0:
+                    last_error = f"HTTP {r.status_code} on key {key_idx + 1}"
                     time.sleep(3)
                     continue
                 if r.status_code != 200:
+                    last_error = f"HTTP {r.status_code} on key {key_idx + 1}"
                     log.warning("Gemini PDF call HTTP %s on key %d", r.status_code, key_idx + 1)
                     if attempt == 0:
                         time.sleep(3)
                         continue
                     break
                 body = r.json()
-                if not body.get("candidates"):
-                    return None
                 _record_tokens("gemini", model, *_gemini_usage(body))
+                if not body.get("candidates"):
+                    return None, ""
                 text = body["candidates"][0]["content"]["parts"][0]["text"]
-                return _parse_llm_json(text)
+                result = _parse_llm_json(text)
+                return result, ("" if result else "response was not valid JSON")
             except Exception as e:
+                last_error = f"exception on key {key_idx + 1}: {e}"
                 log.warning("Gemini PDF call failed (key %d, attempt %d): %s",
                             key_idx + 1, attempt + 1, e)
                 if attempt == 0:
                     time.sleep(3)
 
-    return None
+    return None, last_error
 
 
 # ── Study-number cleaning ─────────────────────────────────────────────────────
@@ -1177,6 +1218,40 @@ _CLASSIFY_LEGACY_KEY_PARTS = (
 )
 
 
+def _classify_keys(doi_r: str, study_r: str, abstract_r: str) -> tuple[str, list[str], dict]:
+    """`(key, legacy_keys, migrate_note)` for one classify call's cache entry.
+
+    Split out so the cache can be READ without any possibility of a call being
+    made — `cached_classification()` below — while the key stays defined exactly
+    once. The voter pair is part of the key because the two models disagree often
+    enough that this is the question the audit measured a model effect on.
+    """
+    voters = screen_voters()
+    cls_prompt = build_classify_prompt(study_r, abstract_r)
+    pv = prompt_version("build_classify_prompt")
+    voter_id = "+".join(cache_model_id(model, effort)
+                        for _, model, _, effort in voters)
+    key = content_key("classify", doi_r or study_r, pv, voter_id, cls_prompt)
+    legacy = [content_key("classify", doi_r or study_r, pv, part, cls_prompt)
+              for part in _CLASSIFY_LEGACY_KEY_PARTS]
+    return key, legacy, {"prompt_version": pv, "voters": voter_id}
+
+
+def cached_classification(doi_r: str, study_r: str, abstract_r: str) -> "dict | None":
+    """The stored `classify_replication()` answer for this row, or None. Never calls.
+
+    The one read-only door onto the screen's cache. `filter/engine/handoff.py` uses
+    it to put the two descriptive fields the verdict table does not hold — the
+    category union and the voters' reasoning — onto the row Stage 3 reads. A miss
+    is not an error and must never become a call: the handoff is a materialising
+    step over rows that were already paid for, and a cache miss there means the
+    row travels with those two columns blank, not that the screen runs again.
+    """
+    key, legacy, note = _classify_keys(doi_r, study_r, abstract_r)
+    cached = read_cache_migrating(LLM_CACHE_DIR, key, legacy, note)
+    return cached if isinstance(cached, dict) else None
+
+
 def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
     """Q1 alone: two models judge whether this paper is the kind of study the
     database collects, and screen_gate() turns their two votes into one decision.
@@ -1202,17 +1277,8 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
     """
     voters     = screen_voters()
     cls_prompt = build_classify_prompt(study_r, abstract_r)
-    # The voter pair is part of the verdict — the two models disagree often enough
-    # that this is the question the audit measured a model effect on — so both
-    # models are in the key alongside the prompt version and the text they see.
-    pv       = prompt_version("build_classify_prompt")
-    voter_id = "+".join(cache_model_id(model, effort)
-                        for _, model, _, effort in voters)
-    key = content_key("classify", doi_r or study_r, pv, voter_id, cls_prompt)
-    legacy = [content_key("classify", doi_r or study_r, pv, part, cls_prompt)
-              for part in _CLASSIFY_LEGACY_KEY_PARTS]
-    cached = read_cache_migrating(LLM_CACHE_DIR, key, legacy,
-                                  {"prompt_version": pv, "voters": voter_id})
+    key, legacy, note = _classify_keys(doi_r, study_r, abstract_r)
+    cached = read_cache_migrating(LLM_CACHE_DIR, key, legacy, note)
     if cached is not None:
         return cached
 

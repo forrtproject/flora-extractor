@@ -78,7 +78,7 @@ from shared.config import (ENGINE_CACHE_DIR, ENGINE_TIER_HF_UPLOAD,
                            FLORA_POOL_REPO, PRESCREEN_MODEL_1, PRESCREEN_MODEL_2,
                            SCREENING_MODEL_1, SCREENING_MODEL_2, SNAPSHOT_POOL_DIR)
 from shared.llm_client import classify_replication, screen_gate, screen_voters
-from shared.prescreen import prescreen_bypass, prescreen_voters
+from shared.prescreen import prescreen_bypass, prescreen_vote, prescreen_voters
 from shared.token_usage import TokenBudgetExhausted, check_openai_budget
 from shared.utils import clean_doi
 
@@ -245,6 +245,12 @@ def pile_works(con, release_id: str, pile: str, pool_dir: Path = SNAPSHOT_POOL_D
             works.append(Work(wid, clean_doi(record.get("doi") or ""), title,
                               abstract, pile, record.get("source") or ""))
             if limit is not None and len(works) >= limit:
+                return works
+            # Every wanted work has been found, so the rest of the 5.1M-row pool
+            # can only be rows this call is not asking for. The order works come
+            # back in is the pool's either way — this stops the scan, it does not
+            # choose differently.
+            if len(works) >= len(routed):
                 return works
     return works
 
@@ -766,7 +772,8 @@ def _cheap_decision(votes: list[dict]) -> dict:
     """Two explicit noes and nothing else is a discard. Every other shape proceeds."""
     said = [str(v.get("verdict", "")) for v in votes]
     discard = len(said) >= 2 and all(s == "no" for s in said)
-    return {"outcome": DISCARD if discard else PROCEED, "record_type": ""}
+    return {"outcome": DISCARD if discard else PROCEED, "record_type": "",
+            "votes": []}
 
 
 def _votes_from_rows(rows: list[dict]) -> list[dict]:
@@ -790,19 +797,30 @@ def _votes_from_rows(rows: list[dict]) -> list[dict]:
                                           if r.get("model") in order else len(order)))
     return [{"classification": str(r.get("verdict", "")),
              "confident": r.get("confidence") == "confident",
-             "categories": []}
+             "categories": [],
+             # Not read by the gate; carried because the handoff writes the vote
+             # detail onto the row and a vote is only attributable with its model.
+             "model": str(r.get("model") or ""),
+             "quote": str(r.get("quote") or "")}
             for r in ordered if r.get("verdict") not in ("", "no_answer")]
 
 
 def _expensive_decision(votes: list[dict]) -> dict:
-    """The gate and the record type, rebuilt from the stored votes."""
+    """The gate, the record type and the votes, rebuilt from the stored rows.
+
+    The votes travel with the decision because Stage 3 no longer screens: it reads
+    this verdict off its input CSV, and one of its rungs (the pre-PDF title search)
+    is gated on both voters having given a qualifying answer AND stood behind it —
+    a fact no summary of the gate preserves.
+    """
     from shared.llm_client import _screen_record_type
 
     rebuilt = _votes_from_rows(votes)
     if len(rebuilt) < 2:
-        return {"outcome": "incomplete", "record_type": ""}
+        return {"outcome": "incomplete", "record_type": "", "votes": []}
     return {"outcome": screen_gate(rebuilt) or "incomplete",
-            "record_type": _screen_record_type(rebuilt)}
+            "record_type": _screen_record_type(rebuilt),
+            "votes": rebuilt}
 
 
 # ---------------------------------------------------------------------------
@@ -813,13 +831,13 @@ def _expensive_decision(votes: list[dict]) -> dict:
 def _cheap_judge(work: Work) -> tuple[str, list[dict]]:
     """Both cheap voters on one work, exactly as `shared/prescreen.py` asks them.
 
-    `prescreen._vote()` is the seam: it holds the prompt, the parsing, the cache
-    key and the rule that an unrecognised label is a non-answer rather than a no.
-    Voter 2 is asked only when voter 1 said no, for the reason prescreen gives —
-    once the row can no longer be discarded, a second opinion changes nothing and
-    is not worth paying for.
+    `prescreen_vote()` is the public seam: it holds the prompt's cache key, the
+    parsing and the rule that an unrecognised label is a non-answer rather than a
+    no. THIS function holds the gate — two explicit noes discard, everything else
+    proceeds — because the gate is a tier decision and the tier is here. Voter 2 is
+    asked only when voter 1 said no: once the row can no longer be discarded, a
+    second opinion changes nothing and is not worth paying for.
     """
-    from shared.prescreen import _vote  # the tier's one call seam
     from shared.prompts import build_prescreen_prompt, prompt_version
 
     token_counter.set_stage("engine_screen_cheap")
@@ -841,7 +859,7 @@ def _cheap_judge(work: Work) -> tuple[str, list[dict]]:
 
     votes: list[dict] = []
     for provider, model in prescreen_voters():
-        verdict = _vote(prompt, provider, model, work.doi, work.title)
+        verdict = prescreen_vote(prompt, provider, model, work.doi, work.title)
         votes.append({
             "model": model,
             "verdict": verdict or "no_answer",

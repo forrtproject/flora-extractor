@@ -756,3 +756,31 @@ def test_targets_found_at_the_reference_rung_survive_a_no_document_exit():
     assert row["target_stage"] == "llm_references"
     assert row["unidentified_count"] == 1
     assert row["resolved_study_r"] == "2"
+
+
+class TestJournalLookupCachesOnlyAnswers:
+    """The journal name is worth +3.0 in _resolve_rule_based's citation scoring —
+    the largest single term. Caching "" after an outage disabled that term for the
+    DOI permanently, on every later run."""
+
+    def test_no_response_is_not_cached(self, tmp_path):
+        with patch.object(link_original, "OA_CACHE_DIR", tmp_path), \
+             patch.object(link_original, "_oa_get", return_value=None) as get:
+            assert link_original._fetch_journal_cached("10.1/x") == ""
+        assert list(tmp_path.glob("journal_*.json")) == []
+        assert get.call_count == 1
+
+        # …and the next run asks again rather than reading the outage back.
+        with patch.object(link_original, "OA_CACHE_DIR", tmp_path), \
+             patch.object(link_original, "_oa_get",
+                          return_value={"results": [{"primary_location": {
+                              "source": {"display_name": "Nature"}}}]}):
+            assert link_original._fetch_journal_cached("10.1/x") == "Nature"
+        assert len(list(tmp_path.glob("journal_*.json"))) == 1
+
+    def test_a_work_openalex_does_not_index_is_a_real_empty_answer(self, tmp_path):
+        """OpenAlex answering "no results" IS the answer, so it is cached."""
+        with patch.object(link_original, "OA_CACHE_DIR", tmp_path), \
+             patch.object(link_original, "_oa_get", return_value={"results": []}):
+            assert link_original._fetch_journal_cached("10.1/x") == ""
+        assert len(list(tmp_path.glob("journal_*.json"))) == 1

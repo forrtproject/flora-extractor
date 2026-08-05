@@ -1,0 +1,4 @@
+# Rebuilt by build_override_sets.py; 16 MB together, and the copies OVERRIDE_EVAL.md's
+# tables were computed from are on the kept branch origin/issue-130-prescreen-followup.
+override_positives.json
+override_negatives.json

@@ -12,16 +12,19 @@ import pytest
 from unittest.mock import patch
 
 import extract.run_extract as rex
-from shared.schema import EXTRACTED_COLS, FILTERED_COLS
+from shared.schema import EXTRACTED_COLS, FILTERED_COLS, SCREEN_COLS
+from tests.conftest import SCREEN_PROCEED, screen_cells
 from shared.token_usage import TokenBudgetExhausted
 
 
 def _filtered_csv(tmp_path, dois: list[str]):
     rows = []
     for i, doi in enumerate(dois):
-        row = {col: "" for col in FILTERED_COLS}
+        row = {col: "" for col in list(FILTERED_COLS) + SCREEN_COLS}
         row.update({"doi_r": doi, "title_r": f"Title {i}", "abstract_r": "abstract",
                     "filter_status": "replication", "year_r": "2020"})
+        # Stage 2's screen verdict: the input contract Stage 3 refuses a file without.
+        row.update(screen_cells(SCREEN_PROCEED))
         rows.append(row)
     pd.DataFrame(rows).to_csv(tmp_path / "filtered.csv", index=False,
                               encoding="utf-8-sig")

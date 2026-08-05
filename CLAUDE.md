@@ -51,12 +51,12 @@ never been independently validated. Discuss shared changes with all stage teams.
 | ---- | ------- |
 | `shared/openalex_client.py` | OpenAlex API wrapper + `find_all_candidates()` (Stage 3 logic) |
 | `shared/openalex_keys.py`   | OpenAlex key rotation, shared by all stages |
-| `shared/llm_client.py`      | Gemini/OpenAI/OpenRouter calls — one model per call site, named explicitly, with no fallback to another provider — JSON parsing; `classify_replication()` (front-door screen), `screen_gate()`, `screen_voters()`, `identify_targets_with_llm()` (the one target call behind the abstract, reference-list and full-text rungs), `screen_references_with_llm()` (reference-list target pick) |
+| `shared/llm_client.py`      | Gemini/OpenAI/OpenRouter calls — one model per call site, named explicitly, with no fallback to another provider — JSON parsing; `classify_replication()` (front-door screen, called by Stage 2's expensive tier), `cached_classification()` (read-only cache door, for the handoff), `screen_gate()`, `screen_voters()`, `identify_targets_with_llm()` (the one target call behind the abstract, reference-list and full-text rungs), `screen_references_with_llm()` (reference-list target pick) |
 | `shared/target_keys.py`     | `assign_target_keys()` — one deduplicated `@smith2009` namespace over a paper's candidates and references, plus the key → record map |
 | `shared/token_usage.py`     | Per-day/provider/model token recording (`cache/token_usage.json`) + the OpenAI daily budget check |
 | `shared/rate_limit.py`      | `throttle(service, interval)` — one reservation queue per remote service, so N worker threads share one rate rather than each sleeping its own |
 | `shared/prompts.py`         | Every LLM prompt + `prompt_version()` (hash of the prompt text and every spliced fragment) |
-| `shared/prescreen.py`       | The cheap discard-only tier: `hard_signal()`, `prescreen_bypass()`, `prescreen()`. Run by Stage 2 over the `screen_cheap` pile |
+| `shared/prescreen.py`       | What the cheap discard-only tier ASKS: `hard_signal()`, `prescreen_bypass()`, `prescreen_voters()`, `prescreen_vote()` (the public seam). The gate and the run loop are Stage 2's, in `filter/engine/tiers.py`; the tier is dormant (its specs are all shadow) |
 | `shared/cache.py`           | Cache helpers; `content_key()` builds the content-complete LLM cache key |
 | `shared/row_key.py`         | Row identity: `row_keys()` / `primary_key()` (doi → oa: → url: → title:) |
 | `shared/csv_index.py`       | Sidecar index load/save/append/build + shared CSV dedup (streaming writes) |
@@ -78,11 +78,11 @@ never been independently validated. Discuss shared changes with all stage teams.
 
 | Stage | Files |
 | ----- | ----- |
-| `search/` | `run_search.py` (the Stage 1 entry point: `--scan` runs the ledger-backed snapshot scan, `--snapshot-pilot` a sample; a bare invocation never starts a 400 GB scan), `snapshot_scan.py` (the bulk-parquet scan: **the search gate** → the survivor pool), `pool_sync.py` (share the pool through a private HF dataset repo: `--push` / `--pull`), `fetch_abstracts.py` (the six abstract-source phase runners — a library now, whose one consumer is `filter/engine/backfill.py`). Stage 1 searches and does not filter: the non-snapshot discovery sources were retired to `wip/api-harvest-sources` (PR #158) because nothing downstream read `data/candidates.csv` |
+| `search/` | `run_search.py` (the Stage 1 entry point: `--scan` runs the ledger-backed snapshot scan (sample scans use a scratch `FLORA_CACHE_DIR`); a bare invocation never starts a 400 GB scan), `snapshot_scan.py` (the bulk-parquet scan: **the search gate** → the survivor pool), `pool_sync.py` (share the pool through a private HF dataset repo: `--push` / `--pull`), `fetch_abstracts.py` (the six abstract-source phase runners — a library now, whose one consumer is `filter/engine/backfill.py`). Stage 1 searches and does not filter: the non-snapshot discovery sources were retired to `wip/api-harvest-sources` (PR #158) because nothing downstream read `data/candidates.csv` |
 | `filter/` | `phrase_detection.py` — the token/stem vocabulary the **search gate** is built from. It is Stage 1's only keyword logic; Stage 2 does not call it. The old `rule_filter.py`/`run_filter.py` path is retired (#146) |
-| `filter/engine/` | The issue #146 filter engine, which IS Stage 2: declarative JSON specs in `filter/spec/` routed by precedence into piles (`discard` / `screen_expensive` / `screen_cheap` / `needs_human` / `pending`) over the survivor pool; claimed, budget-gated LLM tiers; `handoff` writes Stage 3's input. Rules route and discard; only LLMs admit. Design: [`docs/filter-engine.md`](docs/filter-engine.md); policy (precedence bands, pile→status mapping, measurement levels): `filter/spec/CONVENTIONS.md`. CLI: `python -m filter.engine specs\|verify\|route\|diagnose\|worklist\|screen\|export\|reconcile\|handoff\|status` |
+| `filter/engine/` | The issue #146 filter engine, which IS Stage 2: declarative JSON specs in `filter/spec/` routed by precedence into piles (`discard` / `screen_expensive` / `screen_cheap` / `needs_human` / `pending`) over the survivor pool; claimed, budget-gated LLM tiers; `handoff` writes Stage 3's input. Rules route and discard; only LLMs admit. Design: [`docs/filter-engine.md`](docs/filter-engine.md); policy (precedence bands, pile→status mapping, measurement levels): `filter/spec/CONVENTIONS.md`. CLI: `python -m filter.engine specs\|route\|diagnose\|worklist\|screen\|export\|reconcile\|handoff\|status` |
 | `db/migrations/` | The engine's Postgres state authority (claims, permanent verdicts, audit, validation lineage) — SQL the maintainer runs in Supabase |
-| `extract/` | `run_extract.py` (orchestrator: chunked read, front-door screen, per-target adapter), `link_original.py` (resolution ladder), `code_outcome.py` (outcome coding; reproductions use the computation/robustness axes), `sanity_check.py` (post-run quarantine to set-aside CSVs; runs on completion and Ctrl-C), `promote_test.py`, `audit_dois.py`, `audit_extracted.py` (read-only pre-validation audit), `backfill_authors.py` (retroactive `authors_o`/`ref_o` from OpenAlex), `csv_to_db.py`, `clean_parse_cache.py` |
+| `extract/` | `run_extract.py` (orchestrator: chunked read, the screen verdict read off the row, per-target adapter), `link_original.py` (resolution ladder), `code_outcome.py` (outcome coding; reproductions use the computation/robustness axes), `sanity_check.py` (post-run quarantine to set-aside CSVs; runs on completion and Ctrl-C), `promote_test.py`, `audit_dois.py`, `audit_extracted.py` (read-only pre-validation audit), `backfill_authors.py` (retroactive `authors_o`/`ref_o` from OpenAlex), `csv_to_db.py`, `clean_parse_cache.py` |
 | `validate/` | Read-only Flask dashboard: `app.py` registers the `dashboard`, `check` and `batch` blueprints only |
 | `misc/` | Reference examples and small sample CSVs — do not import |
 
@@ -109,12 +109,22 @@ Never change a column name without updating `schema.py` and notifying all teams.
 
 ## Stage 3 — Front Door and Resolution
 
-**The cheap discard-only tier** (`shared/prescreen.py`) is NOT part of Stage 3: which
-rows get it is a Stage 2 routing decision — the rule book sends a row to the
-`screen_cheap` pile and `filter/engine/tiers.py` runs the tier over that pile, claimed
-and budget-gated. It is described here because its verdicts land in Stage 3's CSV.
-There is no global on/off, deliberately: a flag would apply the cheap gate to rows the
-rule book routed to the expensive tier. Two very small models
+**Both screens are Stage 2's.** Neither the cheap tier nor the validated front door
+runs here any more: the rule book routes a row to the `screen_cheap` or
+`screen_expensive` pile and `filter/engine/tiers.py` runs the tier over it, claimed
+and budget-gated. They are described here because their verdicts decide Stage 3's
+rows. Stage 3 READS the expensive screen's answer off its input CSV (`SCREEN_COLS`)
+and never votes: an input with no `screen_verdict` column is refused at startup, a
+row whose value is blank is written `target_pending`, and `--screen-here` is the
+explicit fallback that screens such rows in Stage 3 (an `--as-routed` handoff, a
+hand-made CSV).
+
+**The cheap discard-only tier** (`shared/prescreen.py` asks; `_cheap_judge()` in
+`filter/engine/tiers.py` gates) is DORMANT — all three `screen_cheap` specs are
+`shadow: true`, so no live row reaches it; waking it is one spec promotion plus the
+re-measurement (`docs/filter-engine.md`, "Activating the cheap tier"). There is no
+global on/off, deliberately: a flag would apply the cheap gate to rows the rule book
+routed to the expensive tier. Two very small models
 (`PRESCREEN_MODEL_1`, `PRESCREEN_MODEL_2` in `shared/config.py`, both OpenRouter
 ids by default) are asked one question with one field of answer; voter 2 is asked only when voter 1 said
 "no", because once the row can no longer be discarded a second opinion changes nothing.
@@ -124,12 +134,15 @@ unchanged, and non-answers are never cached. Three classes of row are never pre-
 at all: text that states the design outright (`hard_signal()`), rows from a
 `CURATED_SOURCES` list, and rows with under `PRESCREEN_MIN_ABSTRACT_CHARS` of abstract.
 Stage 2's own high-confidence `replication` verdict is deliberately not a bypass — 98%
-of rows reaching Stage 3 carry it, including every screen-confirmed negative. A discard
-writes `link_method = prescreen_discard`, is quarantined by `sanity_check` to its own
-`data/prescreen_discard.csv`, and is reopened by `--rescreen`.
-Evidence: `analysis/prescreen_eval/REPORT.md`.
+of rows reaching Stage 3 carry it, including every screen-confirmed negative. A cheap
+verdict never ADMITS: its `proceed` means "on to the expensive screen", so it settles
+nothing for the screened-only handoff, and a live discard simply drops the row there.
+`link_method = prescreen_discard` has no live writer for that reason; historical rows
+carry it, `sanity_check` still files them in `data/prescreen_discard.csv`, and
+`--rescreen` still reopens them. Evidence: `analysis/prescreen_eval/REPORT.md`.
 
-**Front-door screen** (`classify_replication()`): two voters — `SCREENING_MODEL_1`
+**Front-door screen** (`classify_replication()`, run by `screen --tier
+screen_expensive`): two voters — `SCREENING_MODEL_1`
 (default `gemini-3.5-flash-lite`) and `SCREENING_MODEL_2` (default `gpt-5.4-mini`);
 each id routes to its own provider through `provider_for()` — each answer the validated v3.2
 schema: `classification` ∈ {replication, reproduction, both, none, unclear}, boolean
@@ -154,7 +167,17 @@ the first qualifying voter; `both` → replication) becomes `type` and overwrite
 `filter_status` (`filter_method = "screen"`); with no qualifying vote at all, Stage 2's
 values are kept and `type` stays empty. `screen_categories` (union of both voters) is
 written on every screened row. Voter models are folded into the classify cache key, so
-changing a voter or the prompt invalidates exactly those verdicts.
+changing a voter or the prompt invalidates exactly those verdicts — and mints a new
+SCREENING GENERATION, which is what makes those works claimable again and is the
+first half of what `--rescreen` needs (the second is re-running `handoff`).
+
+The verdict reaches Stage 3 through the handoff, in `SCREEN_COLS`:
+`screen_verdict`, `screen_record_type`, `screen_categories`, `screen_votes`,
+`screen_evidence`, `screen_reasoning`. `screen_votes` carries each voter's
+classification and confidence because a summary of the gate is not enough — the
+`llm_title_search` rung is gated on both voters qualifying AND confident.
+`_screen_from_row()` in `run_extract.py` rebuilds the `classify_replication()` dict
+from them, so everything below the front door is unchanged.
 
 **Resolution ladder** (`run_for_doi()`, cheapest first, returns at first resolution):
 title-pattern match → rule-based citation/candidate match → abstract LLM over
@@ -413,12 +436,20 @@ gitignored — samples go in `misc/`.
 
 ## DOI Verification
 
-Every written row passes `_verify_row()`: the metadata `doi_o` actually points to is
-fetched (CrossRef → OpenAlex) and compared; mismatches are re-resolved from
+Every newly written row passes `_verify_row()`: the metadata `doi_o` actually points to
+is fetched (CrossRef → OpenAlex) and compared; mismatches are re-resolved from
 title+author (three tiers, strictest first — a wrong correction is worse than a flag),
-with `doi_r` always excluded as a correction target. Retroactive audit:
-`python -m extract.audit_dois [--apply|--doi …|--extracted-test]`. Thresholds are
-constants in `shared/doi_verify.py`.
+with `doi_r` always excluded as a correction target. **Verification happens once**: the
+three tiers issue up to three OpenAlex free-text searches per row at 10× a filter query,
+so a resume carries a row whose `doi_o_verification` is already settled forward as
+written (`SETTLED_VERIFICATIONS` in `run_extract.py`) and only re-verifies the unsettled
+values — `api_error` and blank. The cheap half of `_finalise_row` (work-id fill, control
+characters, the year assertion) still runs on every written row. Retroactive audit:
+`python -m extract.audit_dois [--apply|--doi …|--status api_error|--extracted-test]` —
+the only thing that re-verifies a settled row. Thresholds are constants in
+`shared/doi_verify.py`. The searches go through `_oa_get`, so they are throttled,
+key-rotated, counted (`search_query_count()`, printed at the end of a run) and a quota
+refusal raises `OpenAlexQuotaExhausted` instead of reading as "no match".
 
 ## Further Reference
 

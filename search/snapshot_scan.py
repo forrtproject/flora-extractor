@@ -40,7 +40,13 @@ booleans recording WHY the gate kept the row: ``hit_token_title``,
 
 Usage (via Stage 1's entry point):
     python -m search.run_search --scan --survivor-pool data/pool
-    python -m search.run_search --snapshot-pilot data/snapshot_pilot.csv --snapshot-max-files 3
+
+A sample scan is the same command against a scratch state directory:
+``FLORA_CACHE_DIR=/tmp/flora-sample python -m search.run_search --scan
+--snapshot-max-files 3`` puts the ledger AND the pool (``FLORA_POOL_DIR``
+defaults under the cache dir) somewhere throwaway. There is no separate sample
+mode: one that wrote into the production pool without ledger entries left the two
+disagreeing about what had been consumed.
 
 Progress of a running scan (read-only, safe to run concurrently):
     python -m search.snapshot_scan --status
@@ -56,7 +62,6 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import pandas as pd
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
@@ -78,8 +83,6 @@ from shared.config import (
 # per-machine value would produce shards the rest of the team cannot open. zstd is
 # the best size/speed trade pyarrow ships by default.
 SNAPSHOT_POOL_COMPRESSION = "zstd"
-from shared.row_key import row_keys
-from shared.schema import CANDIDATES_COLS
 from shared.utils import clean_doi, reconstruct_abstract
 from filter.phrase_detection import CONCEPT_IDS, REPLICATION_STEM_PATTERN
 
@@ -253,15 +256,32 @@ def ledger_hash(ledger: dict) -> str:
 
 
 def load_ledger() -> dict:
-    """Load the scan ledger, or a fresh one when absent or corrupt."""
+    """Load the scan ledger, or a fresh one when there is none.
+
+    A ledger that exists but cannot be parsed is a hard error, not a fresh start:
+    it records which of 2,446 partitions were consumed, and silently replacing it
+    with an empty one turns a damaged file into an order to rescan 725 GB — or,
+    worse, into a pool that gets a second copy of every partition it already holds.
+    The operator decides: restore the file, or move it aside deliberately.
+    """
     if _LEDGER_PATH.exists():
         try:
             with open(_LEDGER_PATH, encoding="utf-8") as f:
                 ledger = json.load(f)
-            ledger.setdefault("files", {})
-            return ledger
-        except Exception:
-            log.warning("Corrupt snapshot ledger at %s — starting fresh", _LEDGER_PATH)
+        except Exception as exc:  # noqa: BLE001 — unreadable local state, reported not guessed
+            raise RuntimeError(
+                f"The snapshot ledger at {_LEDGER_PATH} exists but cannot be read ({exc}). "
+                "It is the record of which partitions have been consumed, so this run "
+                "will not guess. Restore it from a backup, or move it aside "
+                f"(mv {_LEDGER_PATH} {_LEDGER_PATH}.broken) to start a fresh scan — "
+                "which will re-read every partition and overwrite the pool file of "
+                "each one it re-reads.") from exc
+        if not isinstance(ledger, dict):
+            raise RuntimeError(
+                f"The snapshot ledger at {_LEDGER_PATH} is not a JSON object. See above: "
+                "restore it or move it aside deliberately.")
+        ledger.setdefault("files", {})
+        return ledger
     return {"snapshot_date": "", _GATE_KEY: search_gate_fingerprint(), "files": {}}
 
 
@@ -581,49 +601,19 @@ def _open_parquet(url: str) -> pq.ParquetFile:
     return pq.ParquetFile(fsspec.open(url, "rb").open())
 
 
-def _pilot_keys(pilot_csv: Path) -> set[str]:
-    """Every row key already in the pilot CSV — pilot mode's whole dedup state."""
-    keys: set[str] = set()
-    if not pilot_csv.exists():
-        return keys
-    for chunk in pd.read_csv(pilot_csv, encoding="utf-8-sig", dtype=str,
-                             chunksize=50_000, low_memory=False):
-        for row in chunk.fillna("").to_dict("records"):
-            keys.update(k for k in row_keys(row) if k)
-    return keys
-
-
-def _write_pilot(df: pd.DataFrame, pilot_csv: Path) -> None:
-    """Append *df* to the pilot CSV (utf-8-sig on creation, plain utf-8 after)."""
-    if pilot_csv.exists():
-        df.to_csv(pilot_csv, mode="a", index=False, encoding="utf-8", header=False)
-    else:
-        pilot_csv.parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(pilot_csv, mode="w", index=False, encoding="utf-8-sig")
-
-
 # Per-record parse defects are logged individually up to this many, then only counted:
 # a partition can hold a systematic defect, and one line per record would bury the run.
 _MAX_ROW_ERROR_LOGS = 20
 
 
-class _MergeFailed(Exception):
-    """The pilot CSV write failed — never a retryable read error.
-
-    Retrying it is unsafe: the rows it was appending are already recorded as seen
-    in memory, so a second attempt would write a partial duplicate. This wrapper
-    carries such failures past the read-retry handler so they propagate out of
-    ``scan_snapshot`` with the ledger left at "merging".
-    """
-
-
-def _batch_rows(batch: pa.RecordBatch, from_year: Optional[int], to_year: Optional[int],
-                counters: dict, pool: Optional["_PoolWriter"] = None) -> list[dict]:
+def _batch_rows(batch: pa.RecordBatch, counters: dict,
+                pool: Optional["_PoolWriter"] = None) -> list[dict]:
     """Gate one batch and return the admitted candidate rows, updating *counters*.
 
-    Every survivor goes to *pool* when one is given — before the year filter, because
-    the pool exists precisely so that that decision can be revisited without the
-    snapshot.
+    Every survivor goes to *pool* when one is given. Stage 1 applies no filter of its
+    own beyond the search gate — a year bound here would put rows in the pool that the
+    ledger then records as a consumed partition, which is not a checkpoint anything
+    could trust. Year bounds are Stage 2's (``filter.engine export/handoff``).
     """
     counters["scanned"] += batch.num_rows
 
@@ -659,12 +649,6 @@ def _batch_rows(batch: pa.RecordBatch, from_year: Optional[int], to_year: Option
             if pool is not None:
                 pool_records.append(_pool_record(rec, abstract, bool(title_hit),
                                                  bool(abstract_hit), bool(concept_hit)))
-            year = rec.get("publication_year")
-            if year is not None:
-                if from_year is not None and year < from_year:
-                    continue
-                if to_year is not None and year > to_year:
-                    continue
             rows.append(_admitted_row(rec, counters, abstract=abstract))
         except Exception as exc:  # noqa: BLE001 — one unparseable record, not a read failure
             counters["row_errors"] += 1
@@ -679,47 +663,36 @@ def _batch_rows(batch: pa.RecordBatch, from_year: Optional[int], to_year: Option
 
 
 def scan_snapshot(max_files: Optional[int] = None,
-                  from_year: Optional[int] = None,
-                  to_year: Optional[int] = None,
-                  pilot_csv: Optional[Path] = None,
                   files: Optional[list[str]] = None,
-                  survivor_pool: Optional[Path] = None) -> int:
+                  survivor_pool: Optional[Path] = None,
+                  force_gate: bool = False) -> int:
     """Scan OpenAlex snapshot partitions and write every survivor to the pool.
 
-    Production mode (``pilot_csv=None``) is ledger-backed and full-corpus: it scans
-    every manifest file not already marked done and writes the survivors to
-    *survivor_pool*, one parquet file per partition. The pool is the output —
-    Stage 2 reads it directly.
+    One mode, ledger-backed: it scans every manifest file not already marked done
+    and writes the survivors to *survivor_pool*, one parquet file per partition.
+    The pool is the output — Stage 2 reads it directly. To scan a handful of
+    partitions for a look, point ``FLORA_CACHE_DIR`` at a scratch directory (which
+    moves the ledger and, with it, the pool) and cap ``max_files``.
 
-    Pilot mode (``pilot_csv`` set) also writes the admitted rows to that CSV, keeps
-    NO ledger, dedupes in memory against it, and prints a gate report. It is the
-    only mode where *from_year*/*to_year* apply — a production file marked done
-    under a narrow year filter would be an unsound checkpoint, so year bounds are
-    ignored (with a warning) outside pilot mode.
+    *files* pins an explicit list of partition URLs (used by the live test) and
+    skips the manifest fetch entirely; otherwise the manifest order is followed,
+    capped by *max_files*.
 
-    *files* pins an explicit list of partition URLs (used by pilot runs and the
-    live test) and skips the manifest fetch entirely; otherwise the manifest order
-    is followed, capped by *max_files*.
-
-    A partition that cannot be READ is retried and then skipped, but a failure of
-    the merge or of the pilot write propagates out of this function immediately —
-    it leaves local state half-written, which is not something a retry can repair.
-    A single malformed RECORD is neither: it is logged, skipped, and the rest of its
-    partition is consumed (see ``_batch_rows``).
+    A partition that cannot be READ is retried and then skipped; the counters and
+    the pool file of a retried attempt are rolled back first, so a partition is
+    counted once however many times it was read. A single malformed RECORD is not
+    a read failure: it is logged, skipped, and the rest of its partition is
+    consumed (see ``_batch_rows``).
 
     *survivor_pool* persists every search-gate survivor under that directory, one
-    parquet file per partition, before the year filter — so a later gate-independent
-    question is answered locally instead of by a 13-21 hour rescan.
+    parquet file per partition — so a later gate-independent question is answered
+    locally instead of by a 13-21 hour rescan.
 
-    Returns the number of rows admitted (in pilot mode, the number appended to the
-    pilot CSV).
+    A ledger written under a different search gate stops the run unless
+    *force_gate*: see the message below for why.
+
+    Returns the number of rows admitted.
     """
-    if pilot_csv is None and (from_year is not None or to_year is not None):
-        log.warning("Snapshot production scan ignores --from-year/--to-year: the ledger "
-                    "records whole files as done, so a year-filtered scan cannot be "
-                    "checkpointed. Use --snapshot-pilot for year-bounded exploration.")
-        from_year = to_year = None
-
     # An explicit file list is self-sufficient: fetching the manifest for it would be
     # a network call the caller did not ask for (and the unit tests never allow one).
     manifest: dict = {}
@@ -731,30 +704,36 @@ def scan_snapshot(max_files: Optional[int] = None,
         else all_files
     n_available = len(files) if files is not None else len(all_files)
 
-    ledger: dict = {}
+    ledger = load_ledger()
+    theirs = ledger_gate_fingerprint(ledger)
+    if theirs not in (None, search_gate_fingerprint()):
+        # Refusing rather than warning: continuing appends this gate's survivors to a
+        # pool whose other partitions were gated differently, and the rows the OTHER
+        # gate rejected are in no pool at all. The result is complete under neither
+        # gate, and nothing downstream — not the pool, not ledger_hash — can tell.
+        if not force_gate:
+            raise RuntimeError(
+                f"The snapshot ledger at {_LEDGER_PATH} was written under a DIFFERENT "
+                f"search gate (ledger {str(theirs)[:12]}, this checkout "
+                f"{search_gate_fingerprint()[:12]}). The partitions it marks done were "
+                "not read with the current tokens/concepts, and the rows that gate "
+                "rejected were never stored, so continuing would build a pool that is "
+                "complete under neither gate. Either rescan from scratch into a fresh "
+                "pool directory and a fresh ledger (move both aside, or set "
+                "FLORA_CACHE_DIR), or pass --force-gate to add this gate's partitions "
+                "to that pool knowing the mixture.")
+        log.warning("--force-gate: scanning under gate %s into a pool whose ledger names "
+                    "%s. The pool will be complete under neither gate.",
+                    search_gate_fingerprint()[:12], str(theirs)[:12])
+    if files is None:
+        ledger["snapshot_date"] = (manifest.get("meta") or {}).get("updated_date", "") \
+            or ledger.get("snapshot_date", "")
+    targets = [(u, m) for u, m in source_files if _needs_scan(u, m, ledger)]
+    if max_files is not None:
+        targets = targets[:max_files]
 
-    if pilot_csv is not None:
-        targets = source_files
-        if max_files is not None:
-            targets = targets[:max_files]
-        seen_keys = _pilot_keys(pilot_csv)
-    else:
-        ledger = load_ledger()
-        if ledger_gate_fingerprint(ledger) not in (None, search_gate_fingerprint()):
-            log.warning("Snapshot ledger was written under a DIFFERENT gate — files already "
-                        "marked done were not scanned with the current tokens/concepts, and "
-                        "the rows that gate rejected were never stored. "
-                        "Delete %s to force a full rescan.", _LEDGER_PATH)
-        if files is None:
-            ledger["snapshot_date"] = (manifest.get("meta") or {}).get("updated_date", "") \
-                or ledger.get("snapshot_date", "")
-        targets = [(u, m) for u, m in source_files if _needs_scan(u, m, ledger)]
-        if max_files is not None:
-            targets = targets[:max_files]
-        seen_keys = set()
-
-    log.info("Snapshot scan: %d of %d manifest files to read%s",
-             len(targets), n_available, " (pilot)" if pilot_csv is not None else "")
+    log.info("Snapshot scan: %d of %d manifest files to read",
+             len(targets), n_available)
 
     counters = {"scanned": 0, "gate_survivors": 0, "gate_token": 0, "gate_concept": 0,
                 "admitted": 0, "no_abstract": 0, "pooled": 0, "row_errors": 0}
@@ -765,72 +744,56 @@ def scan_snapshot(max_files: Optional[int] = None,
         # What the ledger said about this partition before this attempt. A partition is
         # re-targeted when the manifest rewrote it, and a failed rescan must leave the
         # earlier completed record standing rather than erase what WAS consumed.
-        previous_entry = ledger.get("files", {}).get(url) if pilot_csv is None else None
-        if pilot_csv is None:
-            ledger["files"][url] = {**meta, "status": "merging"}
-            # Only ever recorded on a ledger that names no gate at all: overwriting a
-            # mismatching fingerprint would silence the warning above from the first file
-            # scanned onwards, while most files on record were still scanned under the old
-            # gate. A ledger holding only the legacy key keeps it — the value is the same
-            # under either name, so rewriting it would gain nothing and could look like a
-            # gate change to an older checkout.
-            if ledger_gate_fingerprint(ledger) is None:
-                ledger[_GATE_KEY] = search_gate_fingerprint()
-            save_ledger(ledger)
+        previous_entry = ledger.get("files", {}).get(url)
+        ledger["files"][url] = {**meta, "status": "merging"}
+        # Only ever recorded on a ledger that names no gate at all: overwriting a
+        # mismatching fingerprint is what --force-gate decides, and a ledger holding
+        # only the legacy key keeps it — the value is the same under either name, so
+        # rewriting it would gain nothing and could look like a gate change to an
+        # older checkout.
+        if ledger_gate_fingerprint(ledger) is None:
+            ledger[_GATE_KEY] = search_gate_fingerprint()
+        save_ledger(ledger)
 
         pool = _PoolWriter(survivor_pool, url) if survivor_pool is not None else None
+        # A retry re-reads the partition from row zero, so everything the failed
+        # attempt counted must go back too — otherwise its rows are counted twice in
+        # the run's scanned/gate/admitted totals, which is what the report is read off.
+        before_partition = dict(counters)
         file_merged = 0
         for attempt in range(SNAPSHOT_HTTP_RETRIES):
+            counters.update(before_partition)
+            file_merged = 0
             try:
                 if pool is not None:
-                    pool.reset()  # a retry re-reads the partition from row zero
+                    pool.reset()
                 pf = _open_parquet(url)
                 columns = [c for c in _SCAN_COLUMNS if c in pf.schema_arrow.names]
                 for batch in pf.iter_batches(batch_size=SNAPSHOT_BATCH_ROWS, columns=columns):
-                    rows = _batch_rows(batch, from_year, to_year, counters, pool=pool)
-                    if not rows:
-                        continue
+                    rows = _batch_rows(batch, counters, pool=pool)
                     file_merged += len(rows)
-                    if pilot_csv is not None:
-                        fresh = []
-                        for row in rows:
-                            keys = [k for k in row_keys(row) if k]
-                            if keys and any(k in seen_keys for k in keys):
-                                continue
-                            seen_keys.update(keys)
-                            fresh.append(row)
-                        file_merged -= len(rows) - len(fresh)
-                        if fresh:
-                            try:
-                                _write_pilot(pd.DataFrame(fresh, columns=CANDIDATES_COLS),
-                                             pilot_csv)
-                            except Exception as exc:
-                                raise _MergeFailed(url) from exc
                 break
-            except _MergeFailed as failure:
-                # Out of the retry loop untouched, and with the ledger entry left at
-                # "merging" so the next run rebuilds the index before rescanning.
-                if pool is not None:
-                    pool.abandon()
-                raise failure.__cause__ from None
             except Exception as exc:  # noqa: BLE001 — any read failure is retried, then skipped
                 if attempt == SNAPSHOT_HTTP_RETRIES - 1:
                     log.error("Snapshot file failed after %d attempts — skipping %s (%s)",
                               SNAPSHOT_HTTP_RETRIES, url, exc)
                     skipped.append(url)
+                    # Nothing of this partition was consumed: not its pool file, not
+                    # its ledger entry, and not the rows the abandoned read counted.
+                    counters.update(before_partition)
+                    file_merged = 0
                     if pool is not None:
                         pool.abandon()
-                    if pilot_csv is None:
-                        # Never leave a skipped file at "merging": it was not consumed,
-                        # and "merging" would trigger an index rebuild on every later
-                        # run. What it said BEFORE this attempt still holds, though —
-                        # a rewritten partition whose rescan failed is still on record
-                        # as consumed at its old size, and will be re-targeted again.
-                        if previous_entry is not None:
-                            ledger["files"][url] = previous_entry
-                        else:
-                            ledger["files"].pop(url, None)
-                        save_ledger(ledger)
+                    # Never leave a skipped file at "merging": it was not consumed,
+                    # and "merging" would trigger an index rebuild on every later
+                    # run. What it said BEFORE this attempt still holds, though —
+                    # a rewritten partition whose rescan failed is still on record
+                    # as consumed at its old size, and will be re-targeted again.
+                    if previous_entry is not None:
+                        ledger["files"][url] = previous_entry
+                    else:
+                        ledger["files"].pop(url, None)
+                    save_ledger(ledger)
                     break
                 wait = 2 ** attempt
                 log.warning("Snapshot read error on %s (%s) — retry %d/%d in %ds",
@@ -842,7 +805,7 @@ def scan_snapshot(max_files: Optional[int] = None,
         # crash can leave a partition unscanned but never scanned-without-its-pool.
         if pool is not None and url not in skipped:
             counters["pooled"] += pool.commit()
-        if pilot_csv is None and url not in skipped:
+        if url not in skipped:
             ledger["files"][url] = {**meta, "status": "done", "kept": file_merged,
                                     "scanned_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}
             save_ledger(ledger)
@@ -856,32 +819,19 @@ def scan_snapshot(max_files: Optional[int] = None,
         log.warning("Snapshot scan skipped %d malformed record(s); their partitions were "
                     "otherwise consumed in full.", counters["row_errors"])
 
+    # The gate report the retired pilot mode printed, now over whatever this run
+    # consumed: the same numbers, and the only place they are visible per run.
+    log.info("Snapshot gate report: %d row(s) scanned, %d survivor(s) "
+             "(token %d, concept %d), %d admitted, %d with no abstract",
+             counters["scanned"], counters["gate_survivors"], counters["gate_token"],
+             counters["gate_concept"], counters["admitted"], counters["no_abstract"])
+
     if survivor_pool is not None:
         log.info("Snapshot survivor pool: %d rows, %.1f MB at %s (gate=%s)",
                  counters["pooled"], _pool_size_bytes(survivor_pool) / 1e6, survivor_pool,
                  search_gate_fingerprint()[:12])
 
-    if pilot_csv is not None:
-        _print_pilot_report(counters, total_merged, len(targets), pilot_csv, survivor_pool)
-
     return total_merged
-
-
-def _print_pilot_report(counters: dict, written: int, n_files: int, pilot_csv: Path,
-                        survivor_pool: Optional[Path] = None) -> None:
-    """Print the Phase 0 numbers the admission rule is meant to be judged on."""
-    print(f"\n=== Snapshot pilot report ({n_files} file(s) -> {pilot_csv}) ===")
-    print(f"  rows scanned                          {counters['scanned']:,}")
-    print(f"  search-gate survivors                 {counters['gate_survivors']:,}"
-          f"  (token {counters['gate_token']:,}, concept {counters['gate_concept']:,})")
-    print(f"  admitted                              {counters['admitted']:,}")
-    print(f"  admitted with no abstract             {counters['no_abstract']:,}")
-    print(f"  rows written to pilot CSV             {written:,}")
-    if survivor_pool is not None:
-        print(f"  rows written to survivor pool         {counters['pooled']:,}")
-        print(f"  survivor pool on disk                 "
-              f"{_pool_size_bytes(survivor_pool) / 1e6:,.1f} MB  ({survivor_pool})")
-    print(f"  search-gate fingerprint               {search_gate_fingerprint()[:12]}\n")
 
 
 # ---------------------------------------------------------------------------

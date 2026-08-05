@@ -7,8 +7,10 @@ Stages used in this pipeline:
   extract_classify   — Stage 3 match-type classification
   extract_abstract   — Stage 3 abstract-level LLM linking
   extract_fulltext   — Stage 3 fulltext LLM linking
-  extract_prescreen  — Stage 3 cheap pre-screen (optional, see shared/prescreen.py)
+  extract_refscreen  — Stage 3's reference-list target pick, and the --screen-here
+                       front-door fallback (the screen itself is Stage 2's)
   extract_outcome    — Stage 3 outcome extraction
+  engine_screen_cheap / engine_screen_expensive — Stage 2's two LLM tiers
 
 Usage:
     from shared import token_counter

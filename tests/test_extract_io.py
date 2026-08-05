@@ -4,7 +4,7 @@ filters, the outcome writer's reproduction axes, and the reference builders.
 
 These are the seams every run passes through on every row but that the behavioural
 tests reach only indirectly — a column-order regression or a quoting failure in
-_append_row corrupts extracted.csv for every consumer downstream, and nothing else
+the finalise+write pair corrupts extracted.csv for every consumer downstream, and nothing else
 asserts against it. All external calls are mocked.
 """
 import io
@@ -14,13 +14,13 @@ import pytest
 from unittest.mock import patch
 
 import extract.run_extract as run_extract
-from extract.run_extract import _apply_filters, _apply_outcome, _append_row, build_bibtex
-from shared.schema import EXTRACTED_COLS
+from extract.run_extract import _apply_filters, _apply_outcome, build_bibtex
+from shared.schema import EXTRACTED_COLS, FILTERED_COLS, SCREEN_COLS
 
 
-# ── _append_row: the only writer of extracted.csv ────────────────────────────
+# ── _finalise_row + _write_row: the only writer of extracted.csv ─────────────
 
-class TestAppendRow:
+class TestWriteRow:
     """Every row is streamed straight to disk, so the header written by the first
     row is the contract every later append has to match."""
 
@@ -32,7 +32,7 @@ class TestAppendRow:
              patch.object(run_extract, "_oa_by_doi", return_value=None):
             run_extract._write_header(path)
             for row in rows:
-                _append_row(path, dict(row))
+                run_extract._write_row(path, run_extract._finalise_row(dict(row)))
         return pd.read_csv(path, dtype=str, encoding="utf-8-sig").fillna("")
 
     def test_columns_are_written_in_schema_order(self, tmp_path):
@@ -60,6 +60,88 @@ class TestAppendRow:
         assert df.iloc[0]["link_evidence"] == evidence
         assert df.iloc[0]["title_r"] == 'A "quoted" title'
         assert df.iloc[1]["outcome_phrase"] == "we failed, and then, again\nnext line"
+
+
+# ── the resume write: what a carried-forward row does NOT pay for again ──────
+
+class TestResumeDoesNotReverify:
+    """A resume re-wrote every resolved row through _finalise_row, so it re-ran
+    verify_and_correct — up to three OpenAlex free-text searches at 10x a filter
+    query — on every restart, to re-derive an answer the row already carried."""
+
+    def _resume(self, tmp_path, rows: list[dict]):
+        """Resume over an extracted.csv of *rows* with an empty filtered.csv."""
+        out = tmp_path / "extracted.csv"
+        pd.DataFrame([{**{c: "" for c in EXTRACTED_COLS}, **r} for r in rows]).to_csv(
+            out, index=False, encoding="utf-8-sig")
+        pd.DataFrame(columns=list(FILTERED_COLS) + SCREEN_COLS).to_csv(
+            tmp_path / "filtered.csv", index=False, encoding="utf-8-sig")
+        with patch.object(run_extract, "DATA_DIR", tmp_path), \
+             patch.object(run_extract, "_check_screen_providers"), \
+             patch.object(run_extract, "_oa_by_doi", return_value=None), \
+             patch.object(run_extract, "verify_and_correct",
+                          side_effect=lambda doi, *a, **k: {
+                              "doi_o": doi, "doi_o_verification": "verified",
+                              "evidence_note": ""}) as vc:
+            run_extract.run_extract(out_path=out)
+        return vc, pd.read_csv(out, dtype=str, encoding="utf-8-sig").fillna("")
+
+    _SETTLED = {"doi_r": "10.1/a", "doi_o": "10.9/a", "link_method": "llm_fulltext",
+                "doi_o_verification": "verified"}
+    _FAILED  = {"doi_r": "10.1/b", "doi_o": "10.9/b", "link_method": "llm_fulltext",
+                "doi_o_verification": "api_error"}
+
+    def test_a_settled_row_is_carried_forward_unverified(self, tmp_path):
+        vc, df = self._resume(tmp_path, [self._SETTLED])
+        vc.assert_not_called()
+        assert list(df["doi_o"]) == ["10.9/a"]
+        assert list(df["doi_o_verification"]) == ["verified"]
+
+    def test_an_api_error_row_is_verified_again(self, tmp_path):
+        """The point of the api_error status: the registries were unreachable, so the
+        row holds no answer to trust and the next run asks again."""
+        vc, df = self._resume(tmp_path, [self._SETTLED, self._FAILED])
+        assert [c.args[0] for c in vc.call_args_list] == ["10.9/b"]
+        assert set(df["doi_o_verification"]) == {"verified"}
+
+    def test_a_row_that_was_never_verified_is_verified(self, tmp_path):
+        """A blank column — a row from before verification reached it — is not a
+        settled answer either."""
+        vc, _ = self._resume(tmp_path, [{**self._SETTLED, "doi_o_verification": ""}])
+        assert vc.call_count == 1
+
+
+class TestResumeNeverLosesRowsOnDisk:
+    """The output is truncated to its header before the carried rows are written, so
+    anything that can raise between the two costs the run rows it already had."""
+
+    _resume  = TestResumeDoesNotReverify._resume
+    _SETTLED = TestResumeDoesNotReverify._SETTLED
+
+    def test_a_legacy_float_year_row_survives_the_resume(self, tmp_path):
+        """#140's assertion belongs to rows this run BUILDS. A carried row comes from
+        a CSV an older checkout wrote, where "2018.0" legitimately lives."""
+        _, df = self._resume(tmp_path, [{**self._SETTLED, "year_r": "2018.0",
+                                         "year_o": "2009.0"}])
+        assert list(df["doi_r"]) == ["10.1/a"]
+        assert (df.iloc[0]["year_r"], df.iloc[0]["year_o"]) == ("2018", "2009")
+
+    def test_a_row_that_cannot_be_finalised_is_written_anyway(self, tmp_path):
+        """A quota exhaustion or an outage inside the work-id fill must not empty the
+        file: the row goes back as it stood on disk, with a warning."""
+        out = tmp_path / "extracted.csv"
+        rows = [self._SETTLED, {**self._SETTLED, "doi_r": "10.1/b"}]
+        pd.DataFrame([{**{c: "" for c in EXTRACTED_COLS}, **r} for r in rows]).to_csv(
+            out, index=False, encoding="utf-8-sig")
+        pd.DataFrame(columns=list(FILTERED_COLS) + SCREEN_COLS).to_csv(
+            tmp_path / "filtered.csv", index=False, encoding="utf-8-sig")
+        with patch.object(run_extract, "DATA_DIR", tmp_path), \
+             patch.object(run_extract, "_check_screen_providers"), \
+             patch.object(run_extract, "_finalise_carried_row",
+                          side_effect=RuntimeError("OpenAlex quota exhausted")):
+            run_extract.run_extract(out_path=out)
+        df = pd.read_csv(out, dtype=str, encoding="utf-8-sig").fillna("")
+        assert sorted(df["doi_r"]) == ["10.1/a", "10.1/b"]
 
 
 # ── _should_skip: what a resumed or test-mode run does not re-process ─────────

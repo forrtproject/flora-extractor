@@ -31,6 +31,16 @@ from extract.run_extract import (
     _score_to_confidence,
 )
 from shared.token_usage import TokenBudgetExhausted
+from tests.conftest import SCREEN_PROCEED, screen_cells, with_screen
+
+
+def _read_extracted(path) -> pd.DataFrame:
+    """A run's output CSV as a DataFrame — run_extract itself returns nothing."""
+    path = Path(path)
+    if not path.exists():
+        return pd.DataFrame(columns=list(EXTRACTED_COLS))
+    return pd.read_csv(path, dtype=str, encoding="utf-8-sig",
+                       keep_default_na=False)
 
 
 # ── Sentence expansion unit tests ────────────────────────────────────────────
@@ -679,8 +689,17 @@ class TestRunExtract:
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["test-key"])
         monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "test-key")
 
-    def _run(self, filtered_csv: str, link=None, screen=None, **run_kwargs):
-        """Helper: write a temp CSV, run extract with mocked APIs, return result DataFrame."""
+    def _run(self, filtered_csv: str, link=None, screen=None,
+             screen_row=SCREEN_PROCEED, **run_kwargs):
+        """Helper: write a temp CSV, run extract with mocked APIs, return extracted.csv.
+
+        *screen_row* is the Stage 2 verdict written onto every input row, which is
+        where Stage 3 reads its screen from; `None` writes the columns blank, i.e.
+        a row nothing has screened.
+
+        run_extract returns nothing — the output CSV is the run's only result — so the
+        assertions read the file it wrote.
+        """
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv",
                                         delete=False, encoding="utf-8-sig") as f:
             f.write(filtered_csv)
@@ -699,10 +718,12 @@ class TestRunExtract:
              patch("extract.run_extract.BASE_DIR", tmp.parent):
             filtered_path = tmp.parent / "filtered.csv"
             if not filtered_path.exists():
-                filtered_path.write_text(tmp.read_text(encoding="utf-8-sig"),
-                                         encoding="utf-8-sig")
+                filtered_path.write_text(
+                    with_screen(tmp.read_text(encoding="utf-8-sig"), screen_row),
+                    encoding="utf-8-sig")
             from extract.run_extract import run_extract
-            result = run_extract(**run_kwargs)
+            run_extract(**run_kwargs)
+            result = _read_extracted(tmp.parent / "extracted.csv")
 
         tmp.unlink(missing_ok=True)
         (tmp.parent / "filtered.csv").unlink(missing_ok=True)
@@ -747,9 +768,11 @@ class TestRunExtract:
              patch("extract.run_extract.DATA_DIR", tmp.parent), \
              patch("extract.run_extract.BASE_DIR", tmp.parent):
             fp_path = tmp.parent / "filtered.csv"
-            fp_path.write_text(tmp.read_text(encoding="utf-8-sig"), encoding="utf-8-sig")
+            fp_path.write_text(with_screen(tmp.read_text(encoding="utf-8-sig")),
+                               encoding="utf-8-sig")
             from extract.run_extract import run_extract
-            result = run_extract()
+            run_extract()
+            result = _read_extracted(tmp.parent / "extracted.csv")
 
         tmp.unlink(missing_ok=True)
         fp_path.unlink(missing_ok=True)
@@ -789,8 +812,9 @@ class TestRunExtract:
     )
 
     def test_type_column_falls_back_to_filter_status_without_an_llm(self):
-        """--no-llm runs no screen, so Stage 2's filter_status is all there is."""
-        result = self._run(self._TYPE_CSV, no_llm=True)
+        """--no-llm calls no voter, and these rows carry no Stage 2 verdict either,
+        so Stage 2's filter_status is all there is."""
+        result = self._run(self._TYPE_CSV, no_llm=True, screen_row=None)
         types = dict(zip(result["doi_r"], result["type"]))
         assert types["10.1000/rep"] == "replication"
         assert types["10.1000/repro"] == "reproduction"
@@ -837,7 +861,8 @@ class TestRunExtract:
              patch("extract.run_extract.DATA_DIR", tmp.parent), \
              patch("extract.run_extract.BASE_DIR", tmp.parent):
             fp_path = tmp.parent / "filtered.csv"
-            fp_path.write_text(tmp.read_text(encoding="utf-8-sig"), encoding="utf-8-sig")
+            fp_path.write_text(with_screen(tmp.read_text(encoding="utf-8-sig")),
+                               encoding="utf-8-sig")
             from extract.run_extract import run_extract
             run_extract()
 
@@ -880,9 +905,11 @@ class TestRunExtract:
              patch("extract.run_extract.DATA_DIR", tmp.parent), \
              patch("extract.run_extract.BASE_DIR", tmp.parent):
             fp_path = tmp.parent / "filtered.csv"
-            fp_path.write_text(tmp.read_text(encoding="utf-8-sig"), encoding="utf-8-sig")
+            fp_path.write_text(with_screen(tmp.read_text(encoding="utf-8-sig")),
+                               encoding="utf-8-sig")
             from extract.run_extract import run_extract
-            result = run_extract()
+            run_extract()
+            result = _read_extracted(tmp.parent / "extracted.csv")
 
         tmp.unlink(missing_ok=True)
         fp_path.unlink(missing_ok=True)
@@ -914,7 +941,7 @@ class TestRunExtract:
              patch("extract.run_extract.DATA_DIR", Path(tempfile.gettempdir())), \
              patch("extract.run_extract.BASE_DIR", Path(tempfile.gettempdir())):
             fp = Path(tempfile.gettempdir()) / "filtered.csv"
-            fp.write_text(csv, encoding="utf-8-sig")
+            fp.write_text(with_screen(csv), encoding="utf-8-sig")
             out = Path(tempfile.gettempdir()) / "extracted.csv"
             from extract.run_extract import run_extract
             run_extract()
@@ -1931,9 +1958,11 @@ class TestResumeReadsTheScreenSetAsides:
 
 
 class TestScreenProviderPrecheck:
-    """The front-door screen needs two providers to have anything to weigh against
-    each other, so a run configured with one must fail at startup, not 2,000 rows
-    in. Which second key it needs follows SCREENING_MODEL_2."""
+    """Under --screen-here the front-door screen needs two providers to have
+    anything to weigh against each other, so a run configured with one must fail at
+    startup, not 2,000 rows in. Which second key it needs follows SCREENING_MODEL_2.
+    An ordinary run calls neither voter — the verdict arrives on the row — and needs
+    neither key."""
 
     @pytest.mark.parametrize("voter2,missing", [
         ("gpt-5.4-mini",                  "OPENAI_API_KEY"),
@@ -1946,13 +1975,21 @@ class TestScreenProviderPrecheck:
         monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "k")
         monkeypatch.setattr(run_extract, missing, "")
         with pytest.raises(RuntimeError, match=missing):
-            run_extract._check_screen_providers(no_llm=False)
+            run_extract._check_screen_providers(no_llm=False, screen_here=True)
 
     def test_missing_gemini_key_raises(self, monkeypatch):
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", [])
         monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "k")
         with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
-            run_extract._check_screen_providers(no_llm=False)
+            run_extract._check_screen_providers(no_llm=False, screen_here=True)
+
+    def test_a_run_that_does_not_screen_needs_no_voter_key(self, monkeypatch):
+        """The screen runs in Stage 2. Demanding its keys of a run that reads the
+        verdict off the row would refuse runs that call neither voter."""
+        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", [])
+        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "")
+        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "k")   # OUTCOME_MODEL's
+        run_extract._check_screen_providers(no_llm=False)
 
     def test_a_configured_run_passes_and_no_llm_skips_the_check(self, monkeypatch):
         monkeypatch.setattr(llm_client, "SCREENING_MODEL_2", "gpt-5.4-mini")
@@ -1964,6 +2001,47 @@ class TestScreenProviderPrecheck:
         monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "")
         monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "")
         run_extract._check_screen_providers(no_llm=True)
+
+
+# ── One match-confidence rule for both writing paths ─────────────────────────
+
+class TestMatchConfidenceIsOneRule:
+    """`original_match_confidence` is derived from `_link_confidence` wherever a row
+    is written. The single-link path used to write "high" for any resolved method,
+    which promoted exactly the link `_link_confidence` caps at medium:
+    single_candidate_after_requery auto-accepts a lone candidate with no semantic
+    check, so the same evidence read high there and low on the per-target path."""
+
+    def _row(self, link: dict) -> dict:
+        row = pd.Series({"doi_r": "10.1/repl", "title_r": "R",
+                         "filter_status": "replication"})
+        with patch.object(run_extract, "run_for_doi", return_value=link), \
+             patch.object(run_extract, "_build_ref_o", return_value=("", "", "")), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch.object(run_extract, "_get_outcome", return_value={}), \
+             patch.object(run_extract, "_verify_row", side_effect=lambda r: r):
+            rows = run_extract._resolve_and_code(
+                "10.1/repl", row, screen=None, no_llm=True, no_pdf=True,
+                resolved_only=False, recalibrate_outcomes=False)
+        assert len(rows) == 1
+        return rows[0]
+
+    _BASE = {"resolved": True, "resolved_doi_o": "10.2/orig",
+             "resolved_title_o": "An Original Study", "resolved_year_o": "2009",
+             "resolved_author_o": "Smith", "resolution_score": 1.0}
+
+    def test_a_requery_auto_accept_is_not_a_high_confidence_match(self):
+        row = self._row({**self._BASE,
+                         "resolution_method": "single_candidate_after_requery"})
+        assert row["link_method"] in RESOLVED_LINK_METHODS
+        assert row["link_confidence"] == "medium"
+        assert row["original_match_confidence"] == "low"
+
+    def test_a_checkable_single_link_is_still_high(self):
+        row = self._row({**self._BASE, "resolution_method": "llm_gemini",
+                         "llm_confidence": "high"})
+        assert row["link_confidence"] == "high"
+        assert row["original_match_confidence"] == "high"
 
 
 # ── Title-search links are provisional, not settled (audit D2) ───────────────
@@ -2030,19 +2108,36 @@ def _import_mask() -> tuple[set, set]:
 
 
 class TestFrontDoorScreen:
-    def _run(self, screen, tmp_path, monkeypatch, filtered_csv: str = ""):
-        """Run Stage 3 over one row with the screen returning `screen`.
+    """The screen's verdict, as Stage 3 now meets it: written on the input row.
+
+    The two-voter call itself runs in Stage 2's `screen_expensive` tier. What is
+    tested here is that Stage 3 reads that verdict off the CSV and acts on it
+    exactly as it acted on its own call — and never votes again, which is what
+    `m_screen.assert_not_called()` in `_run` pins.
+    """
+
+    def _run(self, screen, tmp_path, monkeypatch, filtered_csv: str = "",
+             screen_here: bool = False):
+        """Run Stage 3 over one row whose input CSV carries the verdict `screen`.
 
         Returns (result_df, ladder_mock, outcome_mock) so a test can assert that the
         heavy calls after the front door were never made.
+
+        *screen_here* instead runs the fallback path — the verdict is left off the
+        row and `classify_replication` supplies it — which is the only way to reach
+        the incomplete-screen endings, since an incomplete screen produces no
+        verdict for a handoff to carry.
         """
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["test-key"])
         monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "test-key")
-        (tmp_path / "filtered.csv").write_text(filtered_csv or _FILTERED_CSV,
-                                               encoding="utf-8-sig")
+        (tmp_path / "filtered.csv").write_text(
+            with_screen(filtered_csv or _FILTERED_CSV,
+                        None if screen_here else screen),
+            encoding="utf-8-sig")
         m_link  = MagicMock(return_value=_MOCK_LINK)
         m_out   = MagicMock(return_value=_MOCK_OUTCOME)
-        with patch.object(run_extract, "classify_replication", return_value=screen), \
+        m_screen = MagicMock(return_value=screen)
+        with patch.object(run_extract, "classify_replication", m_screen), \
              patch.object(run_extract, "run_for_doi", m_link), \
              patch.object(run_extract, "extract_outcome", m_out), \
              patch.object(run_extract, "verify_and_correct",
@@ -2052,8 +2147,10 @@ class TestFrontDoorScreen:
              patch.object(run_extract, "_oa_by_doi", return_value=None), \
              patch.object(run_extract, "DATA_DIR", tmp_path), \
              patch.object(run_extract, "BASE_DIR", tmp_path):
-            result = run_extract.run_extract()
-        return result, m_link, m_out
+            run_extract.run_extract(screen_here=screen_here)
+        if not screen_here:
+            m_screen.assert_not_called()
+        return _read_extracted(tmp_path / "extracted.csv"), m_link, m_out
 
     @pytest.mark.parametrize("confident", [True, False])
     def test_agreed_none_is_written_without_any_further_call(self, tmp_path, monkeypatch,
@@ -2105,10 +2202,13 @@ class TestFrontDoorScreen:
         m_link.assert_called_once()
 
     def test_one_vote_is_target_pending_not_a_verdict(self, tmp_path, monkeypatch):
+        """--screen-here only: an incomplete screen reaches no verdict, so there is
+        nothing for a handoff to carry and this ending exists only where the screen
+        actually runs."""
         result, m_link, m_out = self._run(
             _screen(resolution_method="llm_refscreen_partial", screen_verdict="",
                     record_type="", llm_error="classifier failed: openai"),
-            tmp_path, monkeypatch)
+            tmp_path, monkeypatch, screen_here=True)
 
         assert list(result["link_method"]) == ["target_pending"]
         m_link.assert_not_called()
@@ -2118,16 +2218,65 @@ class TestFrontDoorScreen:
         result, m_link, _ = self._run(
             _screen(resolution_method="llm_refscreen_failed", screen_verdict="",
                     record_type="", llm_error="classifier failed: gemini, openai"),
-            tmp_path, monkeypatch)
+            tmp_path, monkeypatch, screen_here=True)
 
         assert list(result["link_method"]) == ["api_error"]
         assert list(result["outcome"]) == ["api_error"]
         m_link.assert_not_called()
 
+    def test_a_row_with_no_verdict_is_pending_and_is_not_re_screened(
+            self, tmp_path, monkeypatch):
+        """The `--as-routed` case. Stage 3 does not screen any more, so a row that
+        arrives unscreened is not extractable — and the one thing it must not do is
+        quietly vote on it. target_pending, because a re-run after Stage 2 has
+        screened the work decides it."""
+        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["test-key"])
+        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "test-key")
+        (tmp_path / "filtered.csv").write_text(with_screen(_FILTERED_CSV, None),
+                                               encoding="utf-8-sig")
+        m_screen, m_link = MagicMock(), MagicMock(return_value=_MOCK_LINK)
+        with patch.object(run_extract, "classify_replication", m_screen), \
+             patch.object(run_extract, "run_for_doi", m_link), \
+             patch.object(run_extract, "verify_and_correct",
+                          side_effect=lambda doi, *a, **k: {
+                              "doi_o": doi, "doi_o_verification": "skipped",
+                              "evidence_note": ""}), \
+             patch.object(run_extract, "_oa_by_doi", return_value=None), \
+             patch.object(run_extract, "DATA_DIR", tmp_path), \
+             patch.object(run_extract, "BASE_DIR", tmp_path):
+            run_extract.run_extract()
+
+        result = _read_extracted(tmp_path / "extracted.csv")
+        assert list(result["link_method"]) == ["target_pending"]
+        assert "no screen verdict" in result.iloc[0]["link_evidence"]
+        m_screen.assert_not_called()
+        m_link.assert_not_called()
+
+    def test_an_input_with_no_screen_column_at_all_is_refused(self, tmp_path,
+                                                              monkeypatch):
+        """A file that cannot carry a verdict is refused once, at startup, rather
+        than a million times one row at a time."""
+        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["test-key"])
+        monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "test-key")
+        (tmp_path / "filtered.csv").write_text(_FILTERED_CSV, encoding="utf-8-sig")
+        with patch.object(run_extract, "DATA_DIR", tmp_path), \
+             patch.object(run_extract, "BASE_DIR", tmp_path):
+            with pytest.raises(RuntimeError, match="no screen_verdict column"):
+                run_extract.run_extract()
+
     def test_the_verdict_is_threaded_into_the_ladder_not_re_voted(self, tmp_path, monkeypatch):
+        """The ladder's Stage 4.5 takes the screen's verdict rather than voting, and
+        it now takes the one rebuilt from the row — including the per-voter
+        classification and confidence its pre-PDF title-search rung is gated on."""
         _, m_link, _ = self._run(_YES_SCREEN, tmp_path, monkeypatch)
 
-        assert m_link.call_args[1]["classification"] == _YES_SCREEN
+        passed = m_link.call_args[1]["classification"]
+        assert passed["screen_verdict"] == "proceed"
+        assert passed["record_type"] == "replication"
+        assert passed["screen_classification"] == "replication"
+        assert [(v["classification"], v["confident"]) for v in passed["votes"]] == [
+            ("replication", True), ("replication", True)]
+        assert [v["provider"] for v in passed["votes"]] == ["gemini", "openai"]
 
     def test_a_proceed_without_a_qualifying_vote_invents_no_type(self, tmp_path, monkeypatch):
         """A needs_review row the gate proceeds on without any qualifying vote
@@ -2200,12 +2349,19 @@ class TestDailyTokenBudgetStops:
     def test_the_run_stops_and_keeps_the_rows_written_before_it(self, tmp_path, monkeypatch):
         monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["test-key"])
         monkeypatch.setattr(run_extract, "OPENAI_API_KEY", "test-key")
-        (tmp_path / "filtered.csv").write_text(self._TWO_ROWS, encoding="utf-8-sig")
-        screen = MagicMock(side_effect=[_YES_SCREEN,
-                                        TokenBudgetExhausted("budget spent")])
+        (tmp_path / "filtered.csv").write_text(with_screen(self._TWO_ROWS),
+                                              encoding="utf-8-sig")
+        # The budget is spent on the second row. The screen is Stage 2's now, so the
+        # ladder is the first thing Stage 3 spends on. One worker, so "second" is a
+        # fact about the run rather than about which thread got there first.
+        monkeypatch.setattr(run_extract, "EXTRACT_WORKERS", 1)
 
-        with patch.object(run_extract, "classify_replication", screen), \
-             patch.object(run_extract, "run_for_doi", return_value=_MOCK_LINK), \
+        def ladder(doi_r, *a, **k):
+            if doi_r == "10.1000/rep2":
+                raise TokenBudgetExhausted("budget spent")
+            return _MOCK_LINK
+
+        with patch.object(run_extract, "run_for_doi", side_effect=ladder), \
              patch.object(run_extract, "extract_outcome", return_value=_MOCK_OUTCOME), \
              patch.object(run_extract, "verify_and_correct",
                           side_effect=lambda doi, *a, **k: {
@@ -2367,6 +2523,26 @@ class TestParseCacheOnlyAfterTheDocument:
         monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
         from shared.utils import cache_key
         (tmp_path / f"{cache_key('10.1/x')}.pdf").write_bytes(b"%PDF")
+        assert run_extract._has_document("10.1/x", self._link())
+
+    def _oa_xml(self, tmp_path, monkeypatch, sections: dict) -> None:
+        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
+        from shared.utils import cache_key
+        (tmp_path / f"oa_xml_{cache_key('10.1/x')}.json").write_text(
+            json.dumps({"sections": sections}), encoding="utf-8")
+
+    def test_a_content_free_openalex_xml_shell_is_no_document(self, tmp_path, monkeypatch):
+        """The ladder applies openalex_xml_has_content() before it will read one; a
+        reader of the same cache file that skips the test counts the 174-byte shell as
+        full text and codes an outcome from nothing."""
+        self._oa_xml(tmp_path, monkeypatch,
+                     {"abstract": "", "body": "  ", "references": []})
+        assert not run_extract._has_document("10.1/x", self._link())
+
+    def test_openalex_xml_with_text_is_a_document(self, tmp_path, monkeypatch):
+        self._oa_xml(tmp_path, monkeypatch,
+                     {"body": "We replicated the original.", "references": []})
         assert run_extract._has_document("10.1/x", self._link())
 
 
@@ -3016,16 +3192,17 @@ class TestOutputFileStartState:
 
     @staticmethod
     def _filtered(tmp_path: Path, rows: list[dict]) -> Path:
-        from shared.schema import FILTERED_COLS
+        from shared.schema import FILTERED_COLS, SCREEN_COLS
         out = []
         for r in rows:
             row = {col: "" for col in FILTERED_COLS}
             row.update({"title_r": "T", "abstract_r": "abstract",
                         "filter_status": "replication", "year_r": "2020"})
+            row.update(screen_cells(SCREEN_PROCEED))
             row.update(r)
             out.append(row)
         path = tmp_path / "filtered.csv"
-        pd.DataFrame(out, columns=FILTERED_COLS).to_csv(
+        pd.DataFrame(out, columns=list(FILTERED_COLS) + SCREEN_COLS).to_csv(
             path, index=False, encoding="utf-8-sig")
         return path
 
@@ -3143,3 +3320,111 @@ class TestOutputFileStartState:
         # read the file it was handed.
         df = self._run(tmp_path, filtered_csv=named)
         assert set(df["doi_r"]) == {"10.1/named"}
+
+
+class TestDeliberateSignalsAreNotSwallowed:
+    """`except Exception: pass` around the metadata lookups turned two signals the
+    API layer raises ON PURPOSE into "no metadata found". OpenAlexQuotaExhausted
+    means every later row will fail the same way and the run must stop;
+    _TitleSearchUnavailable means the search never happened. Absorbed here, the
+    first degraded ref_o on every remaining row of a run nobody knew had lost its
+    quota, and the second let the link guard write no_doi on a resolved row —
+    permanently, because nothing re-runs a row that got a verdict."""
+
+    def test_build_ref_o_propagates_a_drained_quota(self):
+        from shared.openalex_client import OpenAlexQuotaExhausted
+        with patch.object(run_extract, "_oa_full_meta",
+                          side_effect=OpenAlexQuotaExhausted("no credits")):
+            with pytest.raises(OpenAlexQuotaExhausted):
+                run_extract._build_ref_o("10.2/orig", "Smith", "2009", "A title")
+
+    def test_build_ref_o_propagates_an_unavailable_title_search(self):
+        from shared.openalex_client import _TitleSearchUnavailable
+        with patch.object(run_extract, "_oa_full_meta", return_value=None), \
+             patch.object(run_extract, "_search_crossref_by_title",
+                          side_effect=_TitleSearchUnavailable("timeout")):
+            with pytest.raises(_TitleSearchUnavailable):
+                run_extract._build_ref_o("", "Smith", "2009", "A findable title")
+
+    def test_build_ref_o_still_falls_back_on_an_ordinary_failure(self):
+        """The narrowing must not turn every lookup failure into a crash: an
+        unfindable original is still surname · year."""
+        with patch.object(run_extract, "_oa_full_meta",
+                          side_effect=RuntimeError("404 from the registry")), \
+             patch.object(run_extract, "_search_crossref_by_title", return_value=None), \
+             patch.object(run_extract, "_search_openalex_by_title", return_value=None):
+            assert run_extract._build_ref_o("10.2/orig", "Jane Smith", "2009",
+                                            "A title") == ("Smith · 2009", "Smith", "")
+
+    def test_the_link_guard_propagates_a_drained_quota(self):
+        from shared.openalex_client import OpenAlexQuotaExhausted
+        row = {"doi_r": "10.1/rep", "doi_o": "", "title_o": "An original study title",
+               "title_r": "A replication", "link_method": "llm_fulltext",
+               "year_o": "2009"}
+        with patch.object(run_extract, "_search_crossref_by_title",
+                          side_effect=OpenAlexQuotaExhausted("no credits")):
+            with pytest.raises(OpenAlexQuotaExhausted):
+                run_extract._guard_original_link(dict(row))
+
+
+class TestYearNormalisation:
+    """#140: a year column reaches CSV as a bare integer or as nothing.
+
+    pandas promotes an int column holding any NaN to float64 and to_csv then renders
+    "2018.0" — which is not equal to "2018" for any consumer that compares strings,
+    and which reached Supabase through csv_to_db.
+    """
+
+    @pytest.mark.parametrize("raw,expected", [
+        (2018, "2018"),
+        (2018.0, "2018"),
+        ("2018.0", "2018"),
+        ("2018", "2018"),
+        (" 2018 ", "2018"),
+        ("", ""),
+        (None, ""),
+        (float("nan"), ""),
+        ("nan", ""),
+        ("n.d.", "n.d."),      # not a number: carried through, not discarded
+        ("2018-2019", "2018-2019"),
+    ])
+    def test_year_str_normalises(self, raw, expected):
+        from shared.schema import year_str
+        assert year_str(raw) == expected
+
+    def test_row_builder_normalises_a_float_year(self):
+        filter_row = pd.Series({"doi_r": "10.1/rep", "title_r": "A replication",
+                                "year_r": 2018.0})
+        row = _merge_multi_row(
+            filter_row,
+            {"doi": "10.2/orig", "title": "An original", "year": 2009.0,
+             "confidence": "high", "rank": 1},
+            {"outcome": "success"}, "single_original", "high", 1,
+        )
+        assert row["year_r"] == "2018"
+        assert row["year_o"] == "2009"
+
+    def test_finalise_rejects_a_float_year(self):
+        """The assertion is the regression guard: a new write path that skips
+        year_str() must fail loudly rather than write "2018.0" again."""
+        row = {"doi_r": "10.1/rep", "doi_o": "", "year_r": "2018.0", "year_o": ""}
+        with patch.object(run_extract, "_verify_row", side_effect=lambda r: r), \
+             patch.object(run_extract, "_fill_work_ids", side_effect=lambda r: r):
+            with pytest.raises(ValueError, match=r"year_r written as a float year"):
+                run_extract._finalise_row(dict(row))
+
+    def test_carried_row_normalises_rather_than_asserting(self):
+        """The other side of the same assertion: a row a resume carries forward came
+        off disk, where legacy "2018.0" values legitimately live, and the output has
+        already been truncated to its header — so it is normalised, not rejected."""
+        row = {"doi_r": "10.1/rep", "doi_o": "", "year_r": "2018.0",
+               "year_o": "2009.0", "doi_o_verification": "verified"}
+        with patch.object(run_extract, "_fill_work_ids", side_effect=lambda r: r):
+            out = run_extract._finalise_carried_row(dict(row))
+        assert (out["year_r"], out["year_o"]) == ("2018", "2009")
+
+    def test_finalise_accepts_a_bare_year(self):
+        row = {"doi_r": "10.1/rep", "doi_o": "", "year_r": "2018", "year_o": ""}
+        with patch.object(run_extract, "_verify_row", side_effect=lambda r: r), \
+             patch.object(run_extract, "_fill_work_ids", side_effect=lambda r: r):
+            assert run_extract._finalise_row(dict(row))["year_r"] == "2018"

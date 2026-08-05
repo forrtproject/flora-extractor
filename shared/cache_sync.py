@@ -24,6 +24,13 @@ wasted download, never a silent disagreement.
     python -m shared.cache_sync --pull
     python -m shared.cache_sync --pull --parts llm,abstracts
 
+Sharing is additive in BOTH directions. A pull never overwrites a local entry;
+a push refuses when a shard (or the abstract store) it would replace holds
+entries this machine does not, because the transfer unit is the whole shard and
+a partial cache would otherwise shrink the shared one — after which the pullers'
+recorded digest would stop them ever fetching the lost entries again. `--pull`,
+then push again; `--force` is how "publish mine and drop those" is said out loud.
+
 Remote layout: `cache/<part>/<shard>.tar.gz`, plus `cache/cache_manifest.json`.
 Shards exist because of FILE COUNT, not size: Hugging Face asks for fewer than 10k
 entries per folder, and a part is a whole directory of content-keyed files. Each
@@ -284,6 +291,10 @@ def cache_manifest(parts: list[Part], shard_hashes: dict[str, dict[str, str]],
     pushing_abstracts = any(p.name == "abstracts" for p in parts)
     sources = (abstract_source_evidence() if pushing_abstracts
                else (previous or {}).get("abstract_sources") or {})
+    # What the shared store holds, so the next push can tell a machine that has
+    # only part of it from one that added to it (`push_cache`'s shrink refusal).
+    rows = (abstract_store.count()[0] if pushing_abstracts
+            else int((previous or {}).get("abstract_rows") or 0))
     return {
         "pushed_at": datetime.datetime.now(
             datetime.timezone.utc).isoformat(timespec="seconds"),
@@ -295,6 +306,7 @@ def cache_manifest(parts: list[Part], shard_hashes: dict[str, dict[str, str]],
             "build_outcome_prompt", "build_repro_outcome_prompt")},
         "capabilities": capabilities(),
         "abstract_sources": sources,
+        "abstract_rows": rows,
         "parts": {part.name: shard_hashes.get(part.name, {}) for part in parts},
     }
 
@@ -303,14 +315,49 @@ def _remote_shard(part: Part, shard: str) -> str:
     return f"cache/{part.name}/{shard}.tar.gz"
 
 
+def _remote_only_entries(hf, repo_id: str, token: str, remote: str,
+                         local_names: set[str]) -> set[str]:
+    """Entry names the remote shard holds and this machine does not.
+
+    A shard is uploaded WHOLE, so a machine holding a subset of one replaces the
+    remote copy with the smaller tar — and the pull state a puller then records
+    names the new digest, so the dropped entries are never fetched again. The
+    puller side refuses to overwrite a local entry; this is the same refusal on
+    the other side, and it needs the members rather than the digest because a
+    digest only says the shards differ, not which way.
+    """
+    blob = _download_shard(hf, repo_id, token, remote)
+    if blob is None:
+        return set()
+    with tarfile.open(fileobj=io.BytesIO(gzip.decompress(blob)), mode="r") as tar:
+        remote_names = {Path(member.name).name for member in tar if member.isfile()}
+    return remote_names - local_names
+
+
+def _refuse_shrinking_push(losses: dict[str, set[str]]) -> None:
+    lost = sum(len(names) for names in losses.values())
+    sample = sorted(next(iter(losses.values())))[:3]
+    raise RuntimeError(
+        f"refusing to push: {lost} entr(y/ies) in {len(losses)} shard(s) are on "
+        f"the remote and not on this machine, and a push replaces the shard whole "
+        f"— e.g. {', '.join(sample)} in {sorted(losses)[0]}. Nothing was uploaded. "
+        "Run `python -m shared.cache_sync --pull` first (it never overwrites a "
+        "local entry) and push again, or pass --force to publish this machine's "
+        "cache as the shared one and drop those entries.")
+
+
 def push_cache(parts: list[Part], repo: Optional[str] = None,
-               dry_run: bool = False) -> int:
+               dry_run: bool = False, force: bool = False) -> int:
     """Pack each part into shards and upload the ones the remote does not have.
 
     Returns the number of shards uploaded (or, under *dry_run*, that would be). The
     manifest goes up LAST here — unlike the pool's, it is a description of what was
     uploaded rather than a claim on the repo, and a manifest naming shards that a
     failed push never delivered would make the next pull skip them.
+
+    A shard that would LOSE entries the remote has stops the whole push unless
+    *force* is set: the transfer unit is the whole shard, so a partial local cache
+    would otherwise shrink the shared one silently.
     """
     import huggingface_hub as hf  # pipeline-only: read-only deployments never install it
 
@@ -330,6 +377,7 @@ def push_cache(parts: list[Part], repo: Optional[str] = None,
 
     uploads: list[tuple[str, bytes]] = []
     hashes: dict[str, dict[str, str]] = {}
+    losses: dict[str, set[str]] = {}
     for part in parts:
         if part.sqlite:
             continue
@@ -344,13 +392,34 @@ def push_cache(parts: list[Part], repo: Optional[str] = None,
             hashes.setdefault(part.name, {})[shard] = digest
             files += len(paths)
             if (known.get(part.name) or {}).get(shard) != digest:
-                uploads.append((_remote_shard(part, shard), blob))
+                remote = _remote_shard(part, shard)
+                if not force:
+                    missing = _remote_only_entries(hf, repo_id, token, remote,
+                                                   {p.name for p in paths})
+                    if missing:
+                        losses[remote] = missing
+                uploads.append((remote, blob))
                 changed += 1
         log.info("Cache push: %s — %d file(s) in %d shard(s), %d to upload",
                  part.name, files, len(shards), changed)
+    if losses:
+        _refuse_shrinking_push(losses)
 
     abstracts_sent = False
     if any(p.name == ABSTRACTS_PART for p in parts):
+        # The store goes up as ONE file, so the same shrink applies to it whole:
+        # a machine that pulled a subset (or none) of it would replace the shared
+        # store with its own. Rows, not membership — a merged store only grows,
+        # so fewer rows than the last push already names the loss.
+        remote_rows = int((remote_manifest or {}).get("abstract_rows") or 0)
+        local_rows = abstract_store.count()[0]
+        if not force and local_rows < remote_rows:
+            raise RuntimeError(
+                f"refusing to push the abstract store: it holds {local_rows:,} row(s) "
+                f"and the last push recorded {remote_rows:,}, so this upload would "
+                "drop the difference. Nothing was uploaded. Run "
+                "`python -m shared.cache_sync --pull --parts abstracts` first (it "
+                "merges rather than replacing) and push again, or pass --force.")
         abstracts_sent = push_abstracts(api, hf, repo_id, known, dry_run)
         digest = abstracts_digest()
         if digest:
@@ -582,17 +651,17 @@ def main() -> None:
     parser.add_argument("--repo", metavar="ID", default=None,
                         help="Hugging Face dataset repo (default: FLORA_POOL_REPO).")
     parser.add_argument("--force", action="store_true",
-                        help="--pull only: re-unpack shards already recorded as pulled.")
+                        help="--pull: re-unpack shards already recorded as pulled. "
+                             "--push: publish this machine's cache even where the "
+                             "remote holds entries it does not, dropping them.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Report what would transfer, transfer nothing.")
     args = parser.parse_args()
 
     parts = parse_parts(args.parts)
-    if args.force and not args.pull:
-        parser.error("--force applies to --pull only")
 
     if args.push:
-        n = push_cache(parts, repo=args.repo, dry_run=args.dry_run)
+        n = push_cache(parts, repo=args.repo, dry_run=args.dry_run, force=args.force)
         print(f"{'Would upload' if args.dry_run else 'Uploaded'} {n} shard(s)")
     else:
         n = pull_cache(parts, repo=args.repo, dry_run=args.dry_run, force=args.force)

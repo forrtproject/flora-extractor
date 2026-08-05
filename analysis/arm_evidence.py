@@ -449,7 +449,7 @@ def admission(store: Path, release: Optional[str], work_ids: list[int],
 
 
 def _label_patterns(arms: list[Arm], rows: list[dict]) -> np.ndarray:
-    """Bitmask per labelled row, evaluated with the backend's `re` path."""
+    """Bitmask per labelled row, evaluated through the backend's row entry point."""
     pattern = np.zeros(len(rows), dtype=np.uint64)
     for i, arm in enumerate(arms):
         matched = np.array(eval_spec_rows(arm.spec, rows), dtype=bool)

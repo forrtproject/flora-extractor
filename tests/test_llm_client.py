@@ -448,7 +448,7 @@ def test_flex_rides_on_the_largest_payload_calls(monkeypatch, call_site, standar
         return _gemini_ok()
 
     monkeypatch.setattr(llm.requests, "post", post)
-    assert call_site() == {"ok": True}
+    assert call_site() == ({"ok": True}, "")
     if use_flex:
         assert posts[0][0]["service_tier"] == "flex"
         assert posts[0][1] == 900   # flex calls can queue — not the 45s standard timeout
@@ -490,7 +490,7 @@ def test_flex_rejection_falls_back_to_standard_tier(monkeypatch):
         return _gemini_ok()
 
     monkeypatch.setattr(llm.requests, "post", post)
-    assert llm.call_gemini_with_pdf("prompt", b"%PDF-1.4") == {"ok": True}
+    assert llm.call_gemini_with_pdf("prompt", b"%PDF-1.4") == ({"ok": True}, "")
     assert len(posts) == 2
     assert "service_tier" not in posts[1][0]
     assert posts[1][1] == 45
@@ -1365,3 +1365,93 @@ class TestStudyNumberCleaning:
         assert _clean_study_numbers("Experiment 3a, 3b")     == "3a, 3b"
         assert _clean_study_numbers("the main study")        == ""
         assert _clean_study_numbers("")                      == ""
+
+
+# ── Every billed response is recorded, truncated ones above all ───────────────
+# A response cut off at the output cap is the MOST expensive shape a reasoning
+# model produces — it ran to the ceiling. Gemini returned before _record_tokens on
+# both the MAX_TOKENS and the no-candidates branch, and OpenRouter checked the
+# length before recording, so the two providers under-reported exactly the calls
+# that cost the most while OpenAI reported them.
+
+def _gemini_truncated():
+    r = MagicMock()
+    r.status_code = 200
+    r.text = ""
+    r.json.return_value = {
+        "candidates": [{"content": {"parts": [{"text": "{\"partial\""}]},
+                        "finishReason": "MAX_TOKENS"}],
+        "usageMetadata": {"promptTokenCount": 900, "totalTokenCount": 5000},
+    }
+    return r
+
+
+def _gemini_blocked():
+    r = MagicMock()
+    r.status_code = 200
+    r.text = ""
+    r.json.return_value = {
+        "candidates": [],
+        "promptFeedback": {"blockReason": "SAFETY"},
+        "usageMetadata": {"promptTokenCount": 900, "totalTokenCount": 900},
+    }
+    return r
+
+
+@pytest.mark.parametrize("response,expected", [
+    (_gemini_truncated, ("gemini", "m", 900, 4100)),
+    (_gemini_blocked,   ("gemini", "m", 900, 0)),
+], ids=["truncated", "blocked"])
+def test_gemini_records_tokens_on_every_billed_response(monkeypatch, response, expected):
+    _flex_env(monkeypatch, use_flex=False, keys=("k1",))
+    recorded: list = []
+    monkeypatch.setattr(llm, "_record_tokens", lambda *a: recorded.append(a))
+    monkeypatch.setattr(llm.requests, "post",
+                        lambda url, json=None, timeout=None: response())
+    result, err = llm.call_gemini("prompt", model="m")
+    assert result is None and err
+    assert recorded == [expected]
+
+
+def test_openrouter_records_a_truncated_response(monkeypatch):
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "or-test")
+    recorded: list = []
+    monkeypatch.setattr(llm, "_record_tokens", lambda *a: recorded.append(a))
+
+    cut_off = _resp('{"partial"')
+    cut_off.usage = MagicMock(prompt_tokens=900, completion_tokens=4096)
+    cut_off.choices[0].finish_reason = "length"
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = cut_off
+    with patch("openai.OpenAI", return_value=fake_client):
+        result, err = llm.call_openrouter("prompt", model="v/m")
+
+    assert result is None and "truncated" in err
+    assert recorded == [("openrouter", "v/m", 900, 4096)]
+
+
+def test_openrouter_retries_three_times_like_openai(monkeypatch):
+    """OpenRouter had one attempt where OpenAI had three, so a single blip at the
+    provider serving the pre-screen or a screen slot was the row's answer."""
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "or-test")
+    sleeps: list = []
+    monkeypatch.setattr(llm.time, "sleep", lambda s: sleeps.append(s))
+    calls = {"n": 0}
+
+    def create(**kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RuntimeError("transient 503")
+        return _resp('{"ok": true}')
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.side_effect = create
+    with patch("openai.OpenAI", return_value=fake_client):
+        assert llm.call_openrouter("prompt", model="v/m") == ({"ok": True}, "")
+    assert calls["n"] == 3
+    assert sleeps == [1, 2]
+
+    calls["n"] = -10        # never reaches the success branch
+    with patch("openai.OpenAI", return_value=fake_client):
+        result, err = llm.call_openrouter("prompt", model="v/m")
+    assert result is None and "transient 503" in err

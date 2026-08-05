@@ -8,6 +8,8 @@ Usage:
     from shared.schema import CANDIDATES_COLS, FILTERED_COLS, EXTRACTED_COLS, VALIDATED_COLS
 """
 
+import re
+
 # ── Stage 1 output: candidates.csv ───────────────────────────────────────────
 CANDIDATES_COLS = [
     "doi_r",          # str   — DOI, cleaned (no https://doi.org/ prefix)
@@ -48,7 +50,33 @@ ENGINE_EXPORT_COLS = [
                          #       (a text pile downgraded because the abstract is empty)
     "release_id",        # str — the routing release the pile came from
 ]
-ENGINE_EXPORTED_COLS = FILTERED_COLS + ENGINE_EXPORT_COLS
+# ── The screen verdict, carried from Stage 2 to Stage 3 ──────────────────────
+# The two-voter front-door screen runs ONCE, in Stage 2's `screen_expensive` tier
+# (`filter/engine/tiers.py`), and its answer travels here. Stage 3 reads these
+# columns instead of voting again: `extract/run_extract.py` rebuilds the
+# `classify_replication()` dict from them, which is why the vote detail is on the
+# row and not just the summary — the pre-PDF title-search rung fires only when
+# BOTH voters gave a qualifying answer AND stood behind it, and that gate cannot
+# be reconstructed from a record type.
+#
+# Blank on every row no expensive-tier run settled (an `--as-routed` handoff, a
+# hand-made CSV, an `export`ed pile). Stage 3 refuses to start on an input whose
+# header lacks them; a row whose values are blank is written `target_pending`.
+SCREEN_COLS = [
+    "screen_verdict",      # str — discard | proceed; blank = no verdict exists
+    "screen_record_type",  # str — replication | reproduction, the screen's own answer
+                           #       ("both" already mapped to replication); blank when
+                           #       neither voter gave a qualifying label
+    "screen_categories",   # str — |-joined union of both voters' category labels;
+                           #       multi-valued, so match by substring/split
+    "screen_votes",        # str — |-joined <model>=<classification>/<confident|
+                           #       unconfident>, in call order. The vote detail the
+                           #       gate and the title-search rung are computed from
+    "screen_evidence",     # str — the first voter's justifying quote
+    "screen_reasoning",    # str — "<provider>: <reasoning>" per voter, " | "-joined
+]
+
+ENGINE_EXPORTED_COLS = FILTERED_COLS + ENGINE_EXPORT_COLS + SCREEN_COLS
 
 # ── Stage 3 output: extracted.csv ────────────────────────────────────────────
 # All FILTERED_COLS + the following:
@@ -106,11 +134,6 @@ EXTRACT_ADDED_COLS = [
     "screen_categories",   # str   — |-joined union of the front-door screen's category
                            #         labels (SCREEN_CATEGORIES in shared/llm_client.py);
                            #         multi-valued, so filter it by substring, never equality
-    "prescreen_verdict",   # str   — the cheap pre-screen's answer, blank when the tier
-                           #         was off: discard | proceed | bypass:<reason>. A
-                           #         discard is terminal and never reaches a human, so
-                           #         which models ended the row is recorded in
-                           #         link_evidence alongside it
     "doi_o_verification",  # str   — verified | corrected | mismatch | no_doi | not_found | no_metadata | api_error | skipped
 
     # Full-text provenance. A row coded llm_fulltext asserts that a model read the
@@ -234,10 +257,43 @@ LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
     "target_pending", "api_error",
 }
 
-# Where the screening tiers park the rows they settled from the abstract alone. These
-# are the files --rescreen reopens, and the files sanity_check must purge a key from
-# when a later pass files that same paper somewhere else: a resume treats any key in
-# them as settled, so a record left behind after the paper moved on strands it forever.
+# Every file sanity_check parks a row in — quarantine bucket → destination, mirroring
+# the rule list in extract/sanity_check.py (several buckets share a file). This map is
+# the single place a set-aside destination is named: sanity_check reports through it and
+# run_extract's resume reads it, so a new destination cannot be added to one and go
+# unclassified by the other (tests/test_link_method_contract.py pins the partition).
+SET_ASIDE_DESTINATIONS = {
+    "screen_disagreement": "screen_disagreement.csv",
+    "non_article": "not_a_replication.csv",
+    "non_article_type": "not_a_replication.csv",
+    "title_search_provisional": "provisional_title_search.csv",
+    "target_pending": "target_pending.csv",
+    "prescreen_discard": "prescreen_discard.csv",
+    "not_a_replication": "not_a_replication.csv",
+    "api_error": "api_error.csv",
+    "no_original_found": "no_original_found.csv",
+    "self_link": "unresolved_self_links.csv",
+    "doi_mismatch": "unresolved_doi_mismatch.csv",
+    "fabricated_doi_o": "fabricated_original_doi.csv",
+}
+
+# The two destinations a re-run is MEANT to redo, so resume must not count them as
+# settled. target_pending is "re-run decides" by construction, and an api_error row
+# records a transient provider failure — checkpointing either as settled would turn a
+# 503 into a permanent hole in the corpus. They need no flag to reopen: every run does.
+REOPENED_SET_ASIDE_FILES = ("target_pending.csv", "api_error.csv")
+
+# What resume treats as settled: every set-aside destination except those two. Each of
+# these rows already paid for a screen, a ladder pass and sometimes a PDF; re-running
+# them buys the same answer twice.
+SETTLED_SET_ASIDE_FILES = tuple(sorted(
+    set(SET_ASIDE_DESTINATIONS.values()) - set(REOPENED_SET_ASIDE_FILES)))
+
+# The settled files whose verdicts came from the abstract alone, i.e. the ones
+# --rescreen reopens — a changed voter pair or prompt would decide them differently.
+# The screen that produced them is Stage 2's now, so reopening them here is only
+# half the work: the rows come back only if a NEW screening generation re-admitted
+# them to the handoff (see run_extract's --rescreen help).
 SCREEN_SET_ASIDE_FILES = ("not_a_replication.csv", "screen_disagreement.csv",
                           "prescreen_discard.csv")
 
@@ -375,6 +431,59 @@ VALIDATION_STATUS_VALUES = {"confirmed", "rejected", "pending", "needs_review"}
 # keyword filter on the day the fetchers are wired in.
 SOURCE_VALUES = {"openalex", "openalex_concept", "openalex_snapshot", "semantic_scholar",
                  "backfill_old_pipeline"}
+
+
+# ── Year columns ──────────────────────────────────────────────────────────────
+# A year is written as a bare integer or as nothing. pandas promotes an integer
+# column holding any NaN to float64, and to_csv then renders every value with a
+# ".0" suffix, so "2018.0" reaches the CSV and from there Supabase and every
+# consumer that compares years as strings (issue #140). Normalising on write is
+# the fix; the assertion below is what stops a new float path reappearing.
+YEAR_COLS = ("year_r", "year_o")
+
+_FLOAT_YEAR_RE = re.compile(r"^\d+\.0$")
+
+
+def year_str(value) -> str:
+    """Normalise any year representation to a bare integer string or "".
+
+    int/float/str/None/NaN → "2018" or "". A value that is not an integral number
+    is passed through stripped rather than discarded: the column's job is to carry
+    what is known about the year, and only the float artifact is being removed.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return "" if value != value else str(int(value))  # NaN != NaN
+    text = str(value).strip()
+    if text == "" or text.lower() in {"nan", "none", "<na>"}:
+        return ""
+    try:
+        num = float(text)
+    except ValueError:
+        return text
+    if num != num or num != int(num):
+        return text
+    return str(int(num))
+
+
+def assert_no_float_years(row: dict) -> None:
+    """Raise if a year column carries the float artifact ("2018.0").
+
+    Loud by design: a violation means a new write path bypassed year_str(), and a
+    silently-tolerated one is how 93% of extracted.csv came to hold float years.
+    """
+    for col in YEAR_COLS:
+        val = row.get(col)
+        if isinstance(val, str) and _FLOAT_YEAR_RE.match(val):
+            raise ValueError(
+                f"{col} written as a float year: {val!r} "
+                f"(doi_r={row.get('doi_r', '')!r}). Normalise with shared.schema.year_str()."
+            )
 
 
 def make_pair_id(doi_r: str, doi_o: str, oa_work_id_o: str = "",

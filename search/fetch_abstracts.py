@@ -7,13 +7,26 @@ This module is a library of phase runners, not a command. Its one consumer is
 and decides where the recovered text lands (an overlay chunk). Everything about
 HOW an abstract is fetched lives here so there is exactly one copy of it.
 
-Waterfall by identifier type, in the order a run should spend calls:
+**Two pathways, because the six sources do not cost the same thing.** Two of them
+answer about many identifiers per request and are neither keyed nor quota'd, so
+they can be run over a whole corpus up front; the other four are one request per
+identifier, or gated by a key, an entitlement or a weekly quota, so they are worth
+spending only on the rows that are still missing text AND that some caller
+actually needs. `filter.engine.backfill` runs them as two phases in that order —
+the runners here are the same either way; the pathway is which worklist they see.
+
+CHEAP BULK — run first, over every missing-abstract row:
 
   1. OpenAlex batch   — rows with an OpenAlex id, OA_BATCH_SIZE ids per call.
-                        Near-zero yield when the corpus was itself discovered via
-                        OpenAlex (measured 2026-07-27: 0/200 random sample).
-  2. Europe PMC batch — rows with a DOI, 25 DOIs/call. No API key. Ordered ahead of
-                        every other DOI phase: on 960 never-tried missing-abstract
+                        Single-entity and filter queries are the free/1× end of
+                        OpenAlex's price list. Near-zero yield when the corpus was
+                        itself discovered via OpenAlex (measured 2026-07-27: 0/200
+                        random sample), but it costs almost nothing to ask.
+  2. Europe PMC batch — rows with a DOI, EPMC_BATCH_SIZE DOIs per call, no API key
+                        and no quota; the one source that can be pointed at
+                        hundreds of thousands of DOIs without a budget
+                        conversation. Ordered ahead of every other DOI phase: on
+                        960 never-tried missing-abstract
                         DOIs sampled across this corpus's dominant prefixes
                         (2026-07-29) it recovered 47.7%, against Semantic Scholar's
                         8.5% and CrossRef's 0.3% on the same DOIs. The gap is
@@ -22,28 +35,42 @@ Waterfall by identifier type, in the order a run should spend calls:
                         deposits abstracts to CrossRef, and OpenAlex's abstract index
                         derives from that same deposit stream. Europe PMC indexes the
                         publisher record instead, so it sees what they do not.
-  3. Semantic Scholar batch — rows with a DOI, up to 500 DOIs/call (requires
-                        S2_API_KEY in .env). Still worth running after Europe PMC:
+
+EXPENSIVE TARGETED — run only over the rows the bulk pathway left without text,
+and only for a worklist that matters:
+
+  3. OSF registrations — rows on the OSF registrant (10.17605) ONLY, one call per
+                        DOI, keyless. Not an abstract source in the ordinary
+                        sense: these records HAVE no abstract, they have a
+                        registration template and a responses form, and the
+                        template is what says whether the record reports a
+                        completed replication or announces a planned one. Because
+                        that template line must be the text the overlay records —
+                        two specs in `filter/spec/` read the first line — the OSF
+                        phase is the one targeted phase whose targets are NOT
+                        narrowed by what the bulk pathway found: a Europe PMC
+                        abstract for an OSF DOI is not a substitute for it. It is
+                        first in the targeted order because it is free and its
+                        target set is one registrant wide.
+  4. Semantic Scholar batch — rows with a DOI, up to 500 DOIs/call, but requires
+                        S2_API_KEY, which is why it is not in the bulk pathway.
+                        Still worth running after Europe PMC:
                         the two are complementary, not nested — on the sample above
                         S2 added +10 Elsevier and +11 SSRN (10.2139) abstracts Europe
                         PMC missed entirely (SSRN: EPMC 2%, S2 10%). Measured over a
                         494,406-row target list (2026-07-27/28), ~49.8 DOIs/sec
                         sustained at a 14.5% hit rate, vs CrossRef's ~3/sec at ~0.6%.
-  4. CrossRef by DOI  — fallback for rows Phases 2-3 didn't resolve (one DOI/call;
-                        CrossRef has no equivalent batch-by-DOI-list endpoint)
-  5. Scopus by DOI    — Elsevier Abstract Retrieval API fallback (requires
-                        ELSEVIER_API_KEY; ~10k requests/week quota, so a caller
-                        should cap its Scopus phase)
-  6. OSF registrations — rows on the OSF registrant (10.17605) ONLY, one call per
-                        DOI, keyless. Not an abstract source in the ordinary
-                        sense: these records HAVE no abstract, they have a
-                        registration template and a responses form, and the
-                        template is what says whether the record reports a
-                        completed replication or announces a planned one. It runs
-                        FIRST because it is free, because nothing else holds text
-                        for these rows, and because its text must be the text the
-                        overlay records — the template name leads it, and two
-                        specs in `filter/spec/` read that first line.
+  5. CrossRef by DOI  — one DOI per call; CrossRef has no batch-by-DOI-list
+                        endpoint, so its cost is linear in the worklist.
+  6. Scopus by DOI    — Elsevier Abstract Retrieval API, last because it is the
+                        most gated of all: an ELSEVIER_API_KEY, an IP-bound
+                        entitlement, and a ~10k requests/week quota, so a caller
+                        must cap its Scopus phase.
+
+The order above is the order calls are SPENT. It is not the order a recovered
+abstract is attributed in — `filter.engine.backfill.SOURCE_ORDER` keeps OSF first
+for that, so an OSF registration's template line wins over any abstract another
+source happened to hold for the same DOI.
 
 Rows whose DOI prefix registers datasets rather than articles (_DATASET_PREFIXES)
 should be dropped from a worklist entirely — they have no abstract to find, so
@@ -149,7 +176,7 @@ def _already_resolved(oa_id: str, doi_r: str, found_index: set[str]) -> bool:
     if oa_id and f"oa:{oa_id}" in found_index:
         return True
     return bool(doi) and any(
-        f"{p}:{doi}" in found_index for p in ("epmc", "doi", "s2", "scopus"))
+        f"{p}:{doi}" in found_index for p in ("epmc", "doi", "s2", "scopus", "osf"))
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +197,7 @@ def _checkpoint_batch(entries: list[tuple[str, Optional[str]]]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Source 1: OpenAlex batch (phase 1)
+# Source 1: OpenAlex batch — bulk pathway
 # ---------------------------------------------------------------------------
 
 def _fetch_openalex_batch(oa_ids: list[str]) -> Optional[dict[str, Optional[str]]]:
@@ -289,17 +316,31 @@ def _request_with_retry(label: str, send, *, backoff=None, stop_on=None,
 
 
 # ---------------------------------------------------------------------------
-# Source 2: Europe PMC by DOI, batched (phase 2)
+# Source 2: Europe PMC by DOI, batched — the bulk pathway's workhorse
 # ---------------------------------------------------------------------------
+
+# Europe PMC's search page ceiling. A batch asks for headroom on top of its own
+# size because one DOI can match several records; the batch is refused rather
+# than truncated if even that is not enough (see below).
+_EPMC_MAX_PAGE_SIZE = 1000
+_EPMC_SEARCH_POST = "https://www.ebi.ac.uk/europepmc/webservices/rest/searchPOST"
+
 
 def _fetch_epmc_batch(dois: list[str]) -> Optional[dict[str, Optional[str]]]:
     """Fetch abstracts for up to EPMC_BATCH_SIZE DOIs in one Europe PMC search.
 
     Europe PMC has no id-list endpoint, so the batch is expressed as a boolean
-    query: 'DOI:"a" OR DOI:"b" ...'. Results come back unordered and a DOI may
-    match more than one record (a preprint and its published version), so the
-    join is by DOI rather than by position — the first record carrying an
-    abstract wins.
+    query: 'DOI:"a" OR DOI:"b" ...'. That IS its batch API, and the reason this
+    source carries the bulk pathway: it is keyless, unquota'd, and one request
+    answers about a whole chunk of the corpus. The request goes to `searchPOST`,
+    the form-encoded twin of `/search`, so the query has no URL-length ceiling
+    and EPMC_BATCH_SIZE can be raised without the URL silently truncating
+    (verified live 2026-08-05: a 500-DOI OR query, 12.9k characters, answered
+    HTTP 200).
+
+    Results come back unordered and a DOI may match more than one record (a
+    preprint and its published version), so the join is by DOI rather than by
+    position — the first record carrying an abstract wins.
 
     resultType=core is REQUIRED: the lighter 'lite' view omits abstractText
     entirely, so with it every DOI would look like a miss.
@@ -310,20 +351,17 @@ def _fetch_epmc_batch(dois: list[str]) -> Optional[dict[str, Optional[str]]]:
     from a successful response is a definitive miss, mapped to None.
     """
     query = " OR ".join(f'DOI:"{d}"' for d in dois)
-    params = {
+    data = {
         "query": query,
         "format": "json",
         "resultType": "core",
         # A DOI can match several records; ask for headroom so a duplicate
         # cannot push a distinct DOI's only record off the first page.
-        "pageSize": min(len(dois) * 2, 100),
+        "pageSize": min(len(dois) * 3, _EPMC_MAX_PAGE_SIZE),
     }
     resp, status = _request_with_retry(
         "EuropePMC batch",
-        lambda: _SESSION.get(
-            "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
-            params=params, timeout=40,
-        ),
+        lambda: _SESSION.post(_EPMC_SEARCH_POST, data=data, timeout=60),
         backoff=lambda attempt: EPMC_RATE_SEC * (attempt + 1),
     )
     if status == "transient":
@@ -333,8 +371,20 @@ def _fetch_epmc_batch(dois: list[str]) -> Optional[dict[str, Optional[str]]]:
                     resp.status_code, resp.text[:200])
         return None
 
+    payload = resp.json()
+    records = ((payload.get("resultList") or {}).get("result") or [])
+    # A truncated page is not an answer about the DOIs it left out, and recording
+    # them as misses would be permanent. Refuse the whole batch instead and say
+    # what to change — the same "never checkpoint what the source did not say"
+    # rule the per-item phases run on.
+    if int(payload.get("hitCount") or 0) > len(records):
+        log.warning("EuropePMC batch returned %d of %d matches (page truncated; batch "
+                    "not checkpointed). Lower EPMC_BATCH_SIZE.",
+                    len(records), payload.get("hitCount"))
+        return None
+
     result: dict[str, Optional[str]] = {d: None for d in dois}
-    for record in ((resp.json().get("resultList") or {}).get("result") or []):
+    for record in records:
         doi = str(record.get("doi") or "").strip().lower()
         abstract = record.get("abstractText") or None
         if doi in result and abstract and not result[doi]:
@@ -343,7 +393,7 @@ def _fetch_epmc_batch(dois: list[str]) -> Optional[dict[str, Optional[str]]]:
 
 
 # ---------------------------------------------------------------------------
-# Source 4: CrossRef by DOI (phase 4)
+# Source 5: CrossRef by DOI — targeted pathway, one call per DOI
 # ---------------------------------------------------------------------------
 
 def _fetch_crossref_abstract(doi: str) -> tuple[Optional[str], str]:
@@ -351,9 +401,19 @@ def _fetch_crossref_abstract(doi: str) -> tuple[Optional[str], str]:
 
     Returns (abstract, status) where status is:
       "ok"        — an abstract was found
-      "empty"     — HTTP 200/404 but no abstract (a DEFINITIVE miss to checkpoint)
+      "empty"     — a response that POSITIVELY ESTABLISHES ABSENCE: 404 (CrossRef
+                    does not have this DOI) or 200 with no abstract field. Only
+                    these are checkpointed.
       "transient" — 429/5xx/network failure that persisted through all retries
                     (must NOT be checkpointed, so a later run retries the DOI)
+      "stop"      — 401/403: the request was refused, not answered
+
+    **A 401/403 is "stop", never "empty"** — the same rule the Scopus phase runs on.
+    A refused request establishes nothing about whether CrossRef holds an abstract
+    for this DOI, and every 4xx used to map to "empty": one misconfigured polite-pool
+    header or a WAF block would have written `__none__` for every DOI the phase
+    touched, permanently, and no later run would look again. Auth is host-wide rather
+    than per-record, so the first one ends the phase.
 
     The polite-pool ?mailto= param earns better rate limits. Transient failures
     retry 3× with 1s/2s/4s backoff, honouring a 429 Retry-After header when present.
@@ -363,22 +423,33 @@ def _fetch_crossref_abstract(doi: str) -> tuple[Optional[str], str]:
         f"CrossRef {doi}", lambda: _SESSION.get(url, timeout=20))
     if status == "transient":
         return None, "transient"
-    if resp.status_code >= 400:
+    if resp.status_code in (401, 403):
+        log.warning(
+            "CrossRef refused the request for %s (HTTP %d) — stopping the phase "
+            "rather than recording a miss it cannot establish. Check RESEARCHER_EMAIL "
+            "and whether this IP is being blocked.", doi, resp.status_code)
+        return None, "stop"
+    if resp.status_code == 404 or resp.status_code == 400:
         return None, "empty"
+    if resp.status_code >= 400:
+        # Any other 4xx: unrecognised, so not evidence of absence either.
+        return None, "transient"
     raw = resp.json().get("message", {}).get("abstract", "")
     cleaned = _JATS_RE.sub("", raw).strip() if raw else ""
     return (cleaned, "ok") if cleaned else (None, "empty")
 
 
 # ---------------------------------------------------------------------------
-# Source 3: Semantic Scholar by DOI (phase 3)
+# Source 4: Semantic Scholar by DOI — targeted pathway (needs S2_API_KEY)
 # ---------------------------------------------------------------------------
 
 def _fetch_s2_abstract(doi: str, s2_key: str) -> tuple[Optional[str], str]:
     """Fetch an abstract from Semantic Scholar by DOI.
 
     Returns (abstract, status) with the same contract as _fetch_crossref_abstract:
-    "ok" / "empty" (definitive miss) / "transient" (429/5xx/network, retried 3×).
+    "ok" / "empty" (definitive miss) / "transient" (429/5xx/network, retried 3×) /
+    "stop" (401/403 — a rejected key is not evidence that S2 has no abstract, and it
+    will reject every remaining DOI too).
     A 429 was previously treated as a clean miss and checkpointed — that permanently
     suppressed the row. It is now transient so a later run retries it.
     """
@@ -388,8 +459,14 @@ def _fetch_s2_abstract(doi: str, s2_key: str) -> tuple[Optional[str], str]:
         f"S2 {doi}", lambda: _SESSION.get(url, timeout=20, headers=headers))
     if status == "transient":
         return None, "transient"
-    if resp.status_code >= 400:
+    if resp.status_code in (401, 403):
+        log.warning("Semantic Scholar refused the request for %s (HTTP %d) — stopping "
+                    "the phase; check S2_API_KEY.", doi, resp.status_code)
+        return None, "stop"
+    if resp.status_code == 404:
         return None, "empty"
+    if resp.status_code >= 400:
+        return None, "transient"
     abstract = resp.json().get("abstract") or None
     return (abstract, "ok") if abstract else (None, "empty")
 
@@ -428,7 +505,7 @@ def _fetch_s2_batch(dois: list[str], s2_key: str) -> Optional[dict[str, Optional
 
 
 # ---------------------------------------------------------------------------
-# Source 5: Elsevier Scopus by DOI (phase 5)
+# Source 6: Elsevier Scopus by DOI — targeted pathway, last (weekly quota)
 # ---------------------------------------------------------------------------
 
 def _parse_scopus_abstract(payload: dict) -> Optional[str]:
@@ -505,7 +582,7 @@ def _fetch_scopus_abstract(doi: str, api_key: str) -> tuple[Optional[str], str]:
 
 
 # ---------------------------------------------------------------------------
-# Source 6: OSF registrations by DOI (registrant 10.17605 only)
+# Source 3: OSF registrations by DOI — targeted pathway (registrant 10.17605 only)
 # ---------------------------------------------------------------------------
 
 # The registrant OSF mints its registration and project DOIs on.
@@ -557,7 +634,9 @@ def _fetch_osf_registration(doi: str) -> tuple[Optional[str], str]:
 
     Same (abstract, status) contract as the other per-item sources. A 404 is a
     definitive `empty`: the DOI is an OSF project or component rather than a
-    registration, and no later run should re-buy that answer.
+    registration, and no later run should re-buy that answer. A 401/403 is not —
+    an absent or expired OSF_TOKEN makes a private registration answer exactly like
+    a non-existent one, so it stops the phase instead of writing a miss per DOI.
     """
     guid = _osf_guid(doi)
     if not guid:
@@ -568,8 +647,14 @@ def _fetch_osf_registration(doi: str) -> tuple[Optional[str], str]:
         lambda: _SESSION.get(_OSF_API.format(guid=guid), timeout=30, headers=headers))
     if status == "transient":
         return None, "transient"
-    if resp.status_code >= 400:
+    if resp.status_code in (401, 403):
+        log.warning("OSF refused the request for %s (HTTP %d) — stopping the phase; "
+                    "check OSF_TOKEN.", doi, resp.status_code)
+        return None, "stop"
+    if resp.status_code == 410 or resp.status_code == 404:
         return None, "empty"
+    if resp.status_code >= 400:
+        return None, "transient"
     attributes = (resp.json().get("data") or {}).get("attributes") or {}
     if not attributes:
         return None, "empty"
@@ -674,8 +759,14 @@ def _run_item_phase(label: str, namespace: str, dois: list[str], rate_sec: float
 
     *fetch* returns (abstract, status) with status ``ok`` / ``empty`` (a definitive
     miss, cached and checkpointed) / ``transient`` (neither, so a later run retries
-    the DOI) / ``stop`` (end the phase now — Scopus's spent weekly quota).
+    the DOI) / ``stop`` (end the phase now — a spent weekly quota, or an auth
+    refusal that will refuse every remaining DOI just as blankly).
     TRANSIENT_BREAKER_LIMIT transient failures in a row stop the phase too.
+
+    Only ``empty`` is ever written. ``empty`` therefore has one meaning across all
+    six sources: the source ANSWERED, and its answer was that it holds no abstract
+    for this identifier. A response that was refused rather than answered — 401,
+    403, a rate limit, a network failure — is never it.
     """
     log.info("%s: %d rows to try.", label, len(dois))
     found = 0

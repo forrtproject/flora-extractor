@@ -68,26 +68,41 @@ import pandas as pd
 import requests
 
 from shared.config import DATA_DIR, RESEARCHER_EMAIL
-from shared.schema import EXTRACTED_COLS, RESOLVED_LINK_METHODS, SCREEN_SET_ASIDE_FILES
+from shared.schema import (EXTRACTED_COLS, RESOLVED_LINK_METHODS,
+                           SET_ASIDE_DESTINATIONS, SETTLED_SET_ASIDE_FILES,
+                           YEAR_COLS, year_str)
 from shared.doi_verify import fetch_doi_metadata
+from shared.row_key import primary_key
 from shared.utils import bare_work_id, clean_doi, csv_lock, non_article_doi, non_article_type
 
 
 def _norm(df: pd.DataFrame) -> pd.DataFrame:
+    """Schema-normalise a frame: every column present, no NaN, bare-integer years.
+
+    Every to_csv in this module writes a frame that came through here, so this is
+    where the float-year artifact ("2018.0", #140) is kept out of the set-aside CSVs
+    — whether it arrived from an older row on disk or from a float-typed read.
+    """
     for c in EXTRACTED_COLS:
         if c not in df.columns:
             df[c] = ""
-    return df[EXTRACTED_COLS].fillna("")
+    out = df[EXTRACTED_COLS].fillna("")
+    for c in YEAR_COLS:
+        out[c] = out[c].map(year_str)
+    return out
 
 
 def _dedup_key(r) -> str:
-    """Stable identity. openalex_id_r before doi_r so DOI-less rows (whose pair_id all
-    collapse to md5('|')) are not merged into one."""
-    oa = bare_work_id(str(r.get("openalex_id_r", "")))
-    if oa:
-        return f"oa:{oa}"
-    doi = clean_doi(str(r.get("doi_r", "")))
-    return doi if doi else "t:" + str(r.get("title_r", "")).strip().lower()
+    """Row identity — `shared.row_key.primary_key`, the same key run_extract resumes on.
+
+    This used to be its own chain (bare work id first, then DOI, then title), so a
+    paper carrying both identifiers was deduped here under `oa:W…` and read back by
+    `_screen_set_aside_keys` under its DOI: the set-aside file said one thing to the
+    pass that wrote it and another to the run that reads it. One definition now, and
+    the ordering difference costs nothing — a row with no identifier at all still gets
+    no key, and `_quarantine` keeps those rather than collapsing them into one.
+    """
+    return primary_key(r)
 
 
 def _quarantine(df: pd.DataFrame, mask: pd.Series, dest: Path) -> int:
@@ -103,22 +118,25 @@ def _quarantine(df: pd.DataFrame, mask: pd.Series, dest: Path) -> int:
         frame.loc[blank, "oa_work_id_r"] = frame.loc[blank, "openalex_id_r"].map(bare_work_id)
     combined = pd.concat([existing, _norm(move)], ignore_index=True)
     combined["_k"] = combined.apply(_dedup_key, axis=1)
-    combined = combined.drop_duplicates(subset="_k", keep="last").drop(columns="_k")
+    # Rows that share "no identifier" are not the same paper, so only keyed rows dedup.
+    dup = (combined["_k"] != "") & combined["_k"].duplicated(keep="last")
+    combined = combined[~dup].drop(columns="_k")
     combined.to_csv(dest, index=False, encoding="utf-8-sig")
     return len(move)
 
 
 def _purge_stale_screen_keys(refiled: dict[str, set]) -> int:
-    """Drop papers from a screening set-aside file once this pass filed them elsewhere.
+    """Drop papers from a settled set-aside file once this pass filed them elsewhere.
 
     A resume treats any key in these files as settled (`_load_extracted_rows` in
     run_extract), so a record left behind after the paper moved on strands it. The
     sequence that bites: `--rescreen` reopens a pre-screen discard, the paper is decided
     again and this time comes back `target_pending`, sanity_check files it in
     target_pending.csv — and the old key still sitting in prescreen_discard.csv marks it
-    settled on the next ordinary resume, forever.
+    settled on the next ordinary resume, forever. Every settled destination can strand a
+    paper the same way, not just the screening ones, so all of them are swept.
 
-    Only keys this pass actively re-filed are touched, and only in the OTHER screening
+    Only keys this pass actively re-filed are touched, and only in the OTHER set-aside
     files. Being in a file is not evidence of belonging there — not_a_replication.csv
     also holds the non_article buckets, whose rows carry any link_method — so nothing
     is inferred from a row's verdict.
@@ -126,11 +144,12 @@ def _purge_stale_screen_keys(refiled: dict[str, set]) -> int:
     refiled — destination filename → the dedup keys quarantined there this pass.
     """
     purged = 0
-    for fname in SCREEN_SET_ASIDE_FILES:
+    for fname in SETTLED_SET_ASIDE_FILES:
         path = DATA_DIR / fname
         if not path.exists():
             continue
-        elsewhere = {k for dest, keys in refiled.items() if dest != fname for k in keys}
+        elsewhere = {k for dest, keys in refiled.items() if dest != fname
+                     for k in keys if k}
         if not elsewhere:
             continue
         frame = _norm(pd.read_csv(path, dtype=str, keep_default_na=False))
@@ -312,17 +331,9 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
     print("=" * 70)
     print(f"  rows {n_before} -> {len(df)}")
     print("  -- moved to set-aside CSVs --")
-    dest = {"screen_disagreement": "screen_disagreement.csv",
-            "not_a_replication": "not_a_replication.csv", "non_article": "not_a_replication.csv",
-            "non_article_type": "not_a_replication.csv",
-            "self_link": "unresolved_self_links.csv",
-            "doi_mismatch": "unresolved_doi_mismatch.csv",
-            "title_search_provisional": "provisional_title_search.csv",
-            "target_pending": "target_pending.csv",
-            "api_error": "api_error.csv",
-            "no_original_found": "no_original_found.csv",
-            "prescreen_discard": "prescreen_discard.csv",
-            "fabricated_doi_o": "fabricated_original_doi.csv"}
+    # bucket → file, from shared/schema.py: the same map run_extract's resume reads to
+    # decide what is settled, so a destination cannot exist here and be unknown there.
+    dest = SET_ASIDE_DESTINATIONS
     for name in dest:
         if name in moved:
             print(f"  {name:20s} -> {dest[name]:30s} {moved[name]}")

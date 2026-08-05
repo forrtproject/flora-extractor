@@ -1,7 +1,7 @@
 """Tests for the OpenAlex bulk-parquet snapshot scanner (issue #129, Stage 1).
 
 One test per seam of the plan: manifest, ledger, crash recovery, the two-stage
-gate, row construction, the enrichment bypass, snapshot opt-in, and pilot dedup.
+gate, row construction, the enrichment bypass, and snapshot opt-in.
 
 Nothing here touches the network, the real ``cache/`` or the real ``data/``:
 parquet fixtures are written into tmp_path by the tests themselves (matching the
@@ -214,10 +214,11 @@ def test_a_failed_rescan_leaves_the_previous_record_standing(snap_env, monkeypat
         "a failed rescan must not erase what the previous scan consumed"
 
 
-def test_an_old_gate_fingerprint_is_never_overwritten(snap_env, caplog):
-    """The mismatch warning must keep firing every run until the user deletes the
-    ledger — scanning one file under the new gate does not make the files marked done
-    under the old one any less stale."""
+def test_a_ledger_from_another_gate_refuses_to_scan(snap_env):
+    """Warning and continuing produced a mixed-generation pool: this gate's survivors
+    appended to partitions read under another gate, whose rejects are in no pool at
+    all. Nothing downstream can tell, so the scan refuses and says what the options
+    are — and touches neither the ledger nor the pool on the way out."""
     old_files = {f"https://openalex.s3.amazonaws.com/old_{i}.parquet":
                  {"content_length": 10 + i, "status": "done", "kept": 0} for i in range(3)}
     ss.save_ledger({"snapshot_date": "", "search_gate_fingerprint": "OLD-GATE",
@@ -226,22 +227,57 @@ def test_an_old_gate_fingerprint_is_never_overwritten(snap_env, caplog):
     parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", [
         _record(doi="https://doi.org/10.1/a", title="A direct replication of Smith (2009)"),
     ])
+    pool = snap_env.tmp / "pool"
+
+    with pytest.raises(RuntimeError) as exc:
+        ss.scan_snapshot(files=[parquet], survivor_pool=pool)
+    assert "DIFFERENT" in str(exc.value)
+    assert "--force-gate" in str(exc.value), "the message must name the way through"
+
+    assert not pool.exists(), "a refused scan writes no pool file"
+    assert ss.load_ledger()["files"].keys() == old_files.keys(), \
+        "a refused scan leaves the ledger exactly as it found it"
+
+
+def test_force_gate_scans_and_keeps_the_old_fingerprint(snap_env, caplog):
+    """--force-gate is the operator saying they mean the mixture. The scan proceeds
+    and says so — and the ledger keeps naming the gate most of its files were read
+    under, because overwriting it would hide the mixture from the next run."""
+    old_files = {"https://openalex.s3.amazonaws.com/old_0.parquet":
+                 {"content_length": 10, "status": "done", "kept": 0}}
+    ss.save_ledger({"snapshot_date": "", "search_gate_fingerprint": "OLD-GATE",
+                    "files": old_files})
+    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", [
+        _record(doi="https://doi.org/10.1/a", title="A direct replication of Smith (2009)"),
+    ])
 
     with caplog.at_level("WARNING"):
-        ss.scan_snapshot(files=[parquet])
+        assert ss.scan_snapshot(files=[parquet], force_gate=True) == 1
 
-    assert any("DIFFERENT gate" in r.message for r in caplog.records), \
-        "the mismatch must be reported"
+    assert any("force-gate" in r.getMessage() for r in caplog.records)
     ledger = ss.load_ledger()
     assert ss.ledger_gate_fingerprint(ledger) == "OLD-GATE"
     assert ledger["files"][parquet]["status"] == "done"
-    assert all(ledger["files"][u]["status"] == "done" for u in old_files)
 
 
-def test_a_ledger_written_under_the_old_key_name_still_resumes(snap_env, caplog):
+def test_a_corrupt_ledger_is_a_hard_error(snap_env):
+    """An unreadable ledger silently became an empty one, which reads as "nothing has
+    been scanned" — a 725 GB rescan, and a second pass over partitions whose pool
+    files are already on disk. A missing ledger still means a fresh start."""
+    snap_env.ledger.write_text('{"files": {"a": {"status": "do', encoding="utf-8")
+
+    with pytest.raises(RuntimeError) as exc:
+        ss.load_ledger()
+    assert str(snap_env.ledger) in str(exc.value)
+
+    snap_env.ledger.unlink()
+    assert ss.load_ledger()["files"] == {}
+
+
+def test_a_ledger_written_under_the_old_key_name_still_resumes(snap_env):
     """A 510M-row scan checkpointed as `stage_a_fingerprint` must not look like a new
-    gate after the rename. Same value, older key name: no rescan warning, and the
-    partitions already marked done stay done."""
+    gate after the rename. Same value, older key name: the scan runs (a mismatch would
+    now refuse to), and the partitions already marked done stay done."""
     old_files = {f"https://openalex.s3.amazonaws.com/old_{i}.parquet":
                  {"content_length": 10 + i, "status": "done", "kept": 0} for i in range(3)}
     ss.save_ledger({"snapshot_date": "",
@@ -252,11 +288,9 @@ def test_a_ledger_written_under_the_old_key_name_still_resumes(snap_env, caplog)
         _record(doi="https://doi.org/10.1/a", title="A direct replication of Smith (2009)"),
     ])
 
-    with caplog.at_level("WARNING"):
-        ss.scan_snapshot(files=[parquet])
+    # No refusal: the legacy key name must never demand a 725 GB rescan.
+    assert ss.scan_snapshot(files=[parquet]) == 1
 
-    assert not any("DIFFERENT gate" in r.message for r in caplog.records), \
-        "the legacy key name must never demand a 725 GB rescan"
     ledger = ss.load_ledger()
     assert ledger["stage_a_fingerprint"] == ss.search_gate_fingerprint()
     assert "search_gate_fingerprint" not in ledger, \
@@ -275,7 +309,6 @@ def test_explicit_files_never_fetch_the_manifest(snap_env, monkeypatch):
         _record(doi="https://doi.org/10.1/a", title="A direct replication of Smith (2009)"),
     ])
 
-    assert ss.scan_snapshot(files=[parquet], pilot_csv=snap_env.tmp / "pilot.csv") == 1
     assert ss.scan_snapshot(files=[parquet]) == 1
     assert not snap_env.manifest.exists()
 
@@ -379,13 +412,12 @@ def test_a_defective_record_costs_one_row_not_the_partition(snap_env, monkeypatc
 
     monkeypatch.setattr(ss, "_admitted_row", explode_on_w2)
 
-    pilot = snap_env.tmp / "pilot.csv"
     with caplog.at_level("WARNING"):
-        merged = ss.scan_snapshot(files=[parquet], pilot_csv=pilot)
+        merged = ss.scan_snapshot(files=[parquet])
 
     assert merged == 2, "the two sound records must still be admitted"
     assert len(opens) == 1, "a record defect is not a read failure — no retry"
-    assert list(pd.read_csv(pilot, encoding="utf-8-sig")["doi_r"]) == ["10.1/a", "10.1/c"]
+    assert ss.load_ledger()["files"][parquet]["kept"] == 2
     assert any("https://openalex.org/W2" in r.getMessage() for r in caplog.records), \
         "the skipped record must be named"
 
@@ -404,7 +436,7 @@ def test_a_defective_record_does_not_stop_the_pool(snap_env, monkeypatch):
         return real_admit(rec, counters, abstract=abstract)
 
     monkeypatch.setattr(ss, "_admitted_row", explode_on_w2)
-    ss.scan_snapshot(files=[parquet], pilot_csv=snap_env.tmp / "pilot.csv", survivor_pool=pool)
+    ss.scan_snapshot(files=[parquet], survivor_pool=pool)
 
     assert list(pd.read_parquet(pool)["id"]) == [f"https://openalex.org/W{i}" for i in (1, 2, 3, 4)]
 # Stage 1 no longer has a keyword decision: a search-gate survivor is admitted, and
@@ -521,7 +553,7 @@ def test_snapshot_row_has_exactly_the_candidates_schema(snap_env):
 
 def test_a_bare_invocation_never_starts_a_scan(monkeypatch):
     """A2: `python -m search.run_search` with no flags must never start a 400+ GB
-    read. --scan (or --snapshot-pilot) is required, and argparse must say so."""
+    read. --scan is required — there is no other mode — and argparse must say so."""
     import runpy
 
     fake = types.ModuleType("search.snapshot_scan")
@@ -595,46 +627,51 @@ def test_scan_reaches_the_scanner_with_the_operator_flags(monkeypatch, tmp_path)
 
 
 # ---------------------------------------------------------------------------
-# Pilot mode
+# Retries
 # ---------------------------------------------------------------------------
 
-def test_a_pilot_write_failure_comes_straight_out(snap_env, monkeypatch):
-    """A half-written pilot CSV must NOT be retried: the rows it was appending are
-    already recorded as seen in memory, so a retry would write partial duplicates."""
-    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", [
-        _record(work_id="https://openalex.org/W1", doi="https://doi.org/10.1/a",
-                title="A direct replication of Smith (2009)"),
-    ])
-    attempts = []
+def test_a_retried_partition_is_counted_once(snap_env, monkeypatch, caplog):
+    """A read that dies late has already counted its rows, and the retry re-reads the
+    partition from row zero. Counting both passes inflated every number the run
+    reports — scanned, survivors, admitted, kept — by a whole partition."""
+    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
+    pool = snap_env.tmp / "pool"
+    monkeypatch.setattr(ss.time, "sleep", lambda s: None)
 
-    def die(df, path):
-        attempts.append(len(df))
-        raise RuntimeError("disk gave out mid-write")
+    real_open = ss._open_parquet
+    attempts = {"n": 0}
 
-    monkeypatch.setattr(ss, "_write_pilot", die)
-    with pytest.raises(RuntimeError, match="disk gave out"):
-        ss.scan_snapshot(files=[parquet], pilot_csv=snap_env.tmp / "pilot.csv")
-    assert attempts == [1], "a local-write failure must not be retried"
+    class _DiesAtTheEnd:
+        """Yields the partition's batches in full, then fails — like a connection
+        dropped after the last range request."""
 
+        def __init__(self, pf):
+            self._pf = pf
 
+        @property
+        def schema_arrow(self):
+            return self._pf.schema_arrow
 
-def test_pilot_dedups_against_its_own_csv(snap_env):
-    """A6: pilot mode keeps no ledger, so re-running the same partition is expected —
-    it must dedup against the pilot CSV in memory rather than growing it."""
-    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", [
-        _record(doi="https://doi.org/10.1/a", title="A direct replication of Smith (2009)"),
-    ])
-    pilot = snap_env.tmp / "pilot.csv"
+        def iter_batches(self, **kwargs):
+            yield from self._pf.iter_batches(**kwargs)
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise OSError("connection reset")
 
-    first = ss.scan_snapshot(files=[parquet], pilot_csv=pilot)
-    assert first == 1
-    df = pd.read_csv(pilot, encoding="utf-8-sig")
-    assert list(df.columns) == CANDIDATES_COLS
-    assert df.loc[0, "source"] == ss.SOURCE_TAG_SNAPSHOT
+    monkeypatch.setattr(ss, "_open_parquet", lambda url: _DiesAtTheEnd(real_open(url)))
 
-    assert ss.scan_snapshot(files=[parquet], pilot_csv=pilot) == 0
-    assert len(pd.read_csv(pilot, encoding="utf-8-sig")) == 1
-    assert not snap_env.ledger.exists(), "pilot mode must not write the production ledger"
+    with caplog.at_level("INFO"):
+        merged = ss.scan_snapshot(files=[parquet], survivor_pool=pool)
+
+    assert attempts["n"] == 2, "the partition must actually have been read twice"
+    assert merged == 4, "four of the five records survive the gate — once, not twice"
+    assert ss.load_ledger()["files"][parquet]["kept"] == 4
+    assert len(pd.read_parquet(pool)) == 4
+
+    report = next(r.getMessage() for r in caplog.records
+                  if "Snapshot gate report" in r.getMessage())
+    assert f"{len(_POOL_RECORDS)} row(s) scanned" in report
+    assert "4 survivor(s)" in report and "4 admitted" in report
 
 
 # ---------------------------------------------------------------------------
@@ -668,7 +705,7 @@ def test_pool_stores_every_stage_a_survivor_with_why_it_survived(snap_env):
     parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
     pool = snap_env.tmp / "pool"
 
-    ss.scan_snapshot(files=[parquet], pilot_csv=snap_env.tmp / "pilot.csv", survivor_pool=pool)
+    ss.scan_snapshot(files=[parquet], survivor_pool=pool)
 
     files = list(pool.glob("*.parquet"))
     assert len(files) == 1, "one pool file per partition"
@@ -699,11 +736,15 @@ def test_rescanning_a_partition_overwrites_its_pool_file(snap_env):
     would double every one of its rows the next time the pool is read."""
     parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
     pool = snap_env.tmp / "pool"
-    pilot = snap_env.tmp / "pilot.csv"
 
-    ss.scan_snapshot(files=[parquet], pilot_csv=pilot, survivor_pool=pool)
+    ss.scan_snapshot(files=[parquet], survivor_pool=pool)
     first = pd.read_parquet(pool)
-    ss.scan_snapshot(files=[parquet], pilot_csv=pilot, survivor_pool=pool)
+
+    # The crash: the ledger says this partition was left mid-scan, so it is re-read.
+    ledger = ss.load_ledger()
+    ledger["files"][parquet]["status"] = "merging"
+    ss.save_ledger(ledger)
+    ss.scan_snapshot(files=[parquet], survivor_pool=pool)
 
     assert len(list(pool.glob("*.parquet"))) == 1
     assert len(pd.read_parquet(pool)) == len(first) == 4

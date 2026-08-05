@@ -110,7 +110,10 @@ def parse_grobid(doi_r: str, pdf_path, no_llm: bool = False) -> dict:
     if not pdf_path.exists():
         return _error_result("grobid", f"file not found: {pdf_path}")
     result = run_grobid(doi_r, pdf_path, no_llm=no_llm)
-    if result.get("grobid_status") in ("no_pdf", "pdfminer_failed"):
+    # refs_unavailable belongs with the failures, not with the successes: the method
+    # has no answer about this document's references, and a shape carrying [] would
+    # be read — and cached — as the answer "none".
+    if result.get("grobid_status") in ("no_pdf", "pdfminer_failed", "refs_unavailable"):
         return _error_result("grobid", result["grobid_status"])
     sections = result.get("sections", {})
     return _uniform_shape("grobid", {

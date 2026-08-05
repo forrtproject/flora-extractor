@@ -374,9 +374,15 @@ OSF_RATE_SEC       = float(os.getenv("OSF_RATE_SEC",       "1.0"))
 # OpenAlex filter= accepts up to 50 pipe-separated ids per call.
 OA_BATCH_SIZE   = int(os.getenv("OA_BATCH_SIZE", "50"))
 # Europe PMC's search endpoint takes a boolean query, so a batch is
-# 'DOI:"a" OR DOI:"b" ...' in one GET. 25 keeps the URL near 1.3 kB, well inside
-# what the endpoint accepts.
-EPMC_BATCH_SIZE = int(os.getenv("EPMC_BATCH_SIZE", "25"))
+# 'DOI:"a" OR DOI:"b" ...' in one request. The request is a form POST
+# (`searchPOST`), so there is no URL-length ceiling: verified live 2026-08-05,
+# a 500-DOI query (12.9 kB) answers HTTP 200. 100 is the working size — it keeps
+# the requested page (3x the batch, for DOIs matching several records) an order
+# of magnitude under EPMC's 1000-row page limit, above which the fetcher refuses
+# the batch rather than record a truncated page's absences as misses. This is the
+# bulk pathway's throughput knob: keyless and unquota'd, so the only cost of a
+# bigger batch is a longer single request.
+EPMC_BATCH_SIZE = int(os.getenv("EPMC_BATCH_SIZE", "100"))
 # S2's /graph/v1/paper/batch endpoint accepts up to 500 ids per call. Verified
 # 2026-07-27/28 on a full production run over this corpus's entire 494,406-row S2
 # target list: ~49.8 DOIs/sec sustained at a 14.5% hit rate, vs CrossRef's ~3/sec
