@@ -140,6 +140,12 @@ CORPUS = [
          title="Registered study",
          abstract="OSF registration template: OSF Preregistration\n\nWe will run a "
                   "direct replication of the Smith (2019) effect."),
+    # figshare-attachment (956): the prefix alone must not discard (D1), the
+    # attachment-shaped title on the prefix must
+    _row(work="https://openalex.org/W27", doi="10.6084/m9.figshare.123456",
+         title="Supplementary material from \"A direct replication of the Smith "
+               "(2019) effect\"",
+         abstract="Tables and analysis code accompanying the replication."),
 ]
 
 
