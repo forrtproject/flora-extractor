@@ -49,23 +49,55 @@ form, which is the claim the shadow existed to test:
 Three things follow directly.
 
 **The recall gate passes, exactly rather than by sample.** Zero known FLoRA papers are
-discarded, over the whole population. All four FLoRA registrations that have text are
-Post-Completion and all four are admitted; the other four FLoRA rows are 404s and are
-untouched. Note the population holds **8** known FLoRA papers, not the 10 the earlier
-60-row estimate implied — that number in `rule_ideas.md` §2b was wrong and is corrected.
+discarded, over the whole population. The population holds **16** known FLoRA papers —
+not the 10 the earlier 60-row estimate implied, and not the 8 a DOI-only match finds
+(see "FLoRA names OSF records by URL" below). Five are admitted; eleven are 404s with no
+registration record and are untouched by either rule.
 
 **No post-data-collection template exists here at all.** The keep arm was drafted to
 cover them and the arm was dropped on the maintainer's ruling (2026-08-04) that
 registering after collection still registers a design. The census settles it: there was
 never anything to lose.
 
-**The Open-Ended arm is admitting the Reproducibility Project: Psychology.** 336 of the
-393 Open-Ended rows are RPP registrations — "Replication of Janiszewski & Uy (2008, PS,
+**The Open-Ended arm is admitting the Reproducibility Project: Psychology, which FLoRA
+already covers.** 336 of the 393 Open-Ended rows are RPP registrations — "Replication of Janiszewski & Uy (2008, PS,
 Study 4b)", whose entire text is "Registered prior to RPP publication". The `replicat*`
 marker fires on the OpenAlex **title** in 99% of them, not on the responses form. The
-arm works, but not by the route its spec described, and that wording is corrected. Worth
-a scope decision separately: for an individual RPP study the OSF registration may be the
-only record that exists.
+arm works, but not by the route its spec described, and that wording is corrected.
+
+What sits behind it is a scope question, not a rule question. FLoRA **does** hold the
+RPP results — 92 rows, one per replicated original, 55 failed / 34 successful / 3 mixed,
+`source = COS` — but keyed to the aggregate paper, with the individual report reachable
+only through `url_r`. Of the 336 registrations this arm admits, 95 parse as
+"Replication of <Author> (<year>…", and **42 of those 95 match an original FLoRA already
+lists under the RPP paper** (first-author family name + year). Admitting them produces a
+second record for a replication FLoRA already has, unless the individual RPP report is
+wanted as a record in its own right — which is a FLoRA data-model call for the
+maintainer. Note the guid fix above does NOT catch these: FLoRA's `url_r` names the RPP
+*report* page, the pool row is the *registration*, and the two have different GUIDs.
+
+## FLoRA names OSF records by URL, and our matching did not
+
+Found while checking whether the Reproducibility Project belongs in scope, and it is a
+production bug rather than a fact about this census. Over `flora.csv`:
+
+| how FLoRA identifies an OSF record | rows |
+| --- | --: |
+| an `osf.io/<guid>` URL in `url_r` / `url_o` / `oa_url_*` | **366** |
+| an OSF DOI (`10.17605/…`) in `doi_r` / `doi_r_alt` | 51 |
+| both | 9 |
+
+So ~357 OSF records FLoRA already holds are invisible to any DOI-keyed matcher. Every
+GUID resolves to exactly one DOI (`10.17605/OSF.IO/<guid>`), which is the form the pool
+carries, so the two spellings meet by construction — `_osf_doi_keys()` in
+`shared/flora_skip.py` is now the one place that mapping lives, and both the skip list
+and this census read it. The effect here: 16 known FLoRA rows in the population rather
+than 8. **The discard count is 0 under either matching**, so nothing below changes.
+
+The RPP rows are what exposed it. All 92 carry the aggregate Science paper in `doi_r`
+and `title_r`, and the individual replication's OSF page only in `url_r` — 91 distinct
+`https://osf.io/<guid>` URLs. Stage 3's skip list read `doi_r` alone, so every one of
+them could be extracted and pushed to validation a second time.
 
 ## The read: 300 of the 1,308 discards
 

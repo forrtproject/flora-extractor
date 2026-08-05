@@ -18,6 +18,7 @@ from filter.engine.overlay import chunk_paths
 from filter.engine.spec import load_specs
 from search.fetch_abstracts import OSF_TEMPLATE_PREFIX
 from shared.config import BASE_DIR
+from shared.flora_skip import _osf_doi_keys
 from shared.utils import clean_doi
 
 HERE = Path(__file__).resolve().parent
@@ -32,9 +33,14 @@ def main(overlay_dir: Path, worklist_path: Path) -> int:
         overlay.update(zip(table.column("work_id").to_pylist(),
                            table.column("abstract_text").to_pylist()))
 
+    # Both spellings, or the recall check under-counts by half: FLoRA names an
+    # OSF record by URL far more often than by DOI (366 rows against 51 over
+    # flora.csv), and `_osf_doi_keys()` is the one place that mapping lives.
     flora = pd.read_csv(BASE_DIR / "data" / "flora.csv", low_memory=False)
-    flora_dois = {clean_doi(str(d)) for column in ("doi_r", "doi_o")
+    flora_dois = {clean_doi(str(d))
+                  for column in ("doi_r", "doi_r_alt", "doi_o", "doi_o_alt")
                   for d in flora[column].dropna()}
+    flora_dois |= _osf_doi_keys(flora)
 
     specs = load_specs(BASE_DIR / "filter" / "spec")
     rows, records = [], []

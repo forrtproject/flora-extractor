@@ -1132,6 +1132,34 @@ class TestFloraSkipDois:
         assert run_extract._load_flora_skip_dois(
             tmp_path / "nope.csv", tmp_path / "also-nope.csv") == set()
 
+    def test_an_osf_record_named_only_by_url_is_still_skipped(self, tmp_path):
+        """FLoRA identifies an OSF record by URL five times more often than by DOI
+        — over flora.csv, 366 rows by URL against 51 by DOI. The Reproducibility
+        Project rows are the case that found it: all 92 carry the aggregate Science
+        paper in `doi_r` and the individual replication's OSF page in `url_r`, so a
+        DOI-keyed skip list re-extracts every one of them."""
+        flora = self._flora(tmp_path, [
+            {"doi_r": "10.1126/science.aac4716", "doi_r_alt": "",
+             "url_r": "https://osf.io/su6bm"},
+            {"doi_r": "", "doi_r_alt": "", "url_r": "http://osf.io/XSE7Q/"},
+            {"doi_r": "", "doi_r_alt": "", "url_r": "https://example.com/paper"},
+        ])
+        got = run_extract._load_flora_skip_dois(None, flora)
+        assert "10.17605/osf.io/su6bm" in got
+        assert "10.17605/osf.io/xse7q" in got          # case and trailing slash
+        assert got == {"10.1126/science.aac4716", "10.17605/osf.io/su6bm",
+                       "10.17605/osf.io/xse7q"}
+
+    def test_the_entry_sheet_contributes_osf_urls_only_when_validated(self, tmp_path):
+        sheet = self._sheet(tmp_path, [
+            {"doi_r": "10.1/chosen", "validation_status": "validated - chosen",
+             "url_r": "https://osf.io/aaaaa"},
+            {"doi_r": "10.1/blank", "validation_status": "",
+             "url_r": "https://osf.io/bbbbb"},
+        ])
+        assert run_extract._load_flora_skip_dois(sheet, None) == {
+            "10.1/chosen", "10.17605/osf.io/aaaaa"}
+
 
 # ── Reproduction outcome coding (3x3 computation/robustness grid) ────────────
 
