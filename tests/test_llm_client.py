@@ -69,7 +69,7 @@ def _screen(monkeypatch, tmp_path, gemini_ok: bool, voter2_ok: bool,
     """Run screen_references_with_llm with each voter either answering or failing."""
     monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
-    monkeypatch.setattr(llm, "SCREEN_VOTER2_MODEL", "mistralai/ministral-14b-2512")
+    monkeypatch.setattr(llm, "SCREENING_MODEL_2", "mistralai/ministral-14b-2512")
     vote = vote or _v()
 
     def gemini(prompt, model=None):
@@ -127,7 +127,7 @@ def test_a_classification_outside_the_enum_becomes_unclear(monkeypatch):
                         lambda p, model=None: ({"classification": "maybe",
                                                 "confident": True,
                                                 "categories": ["clearly_declared"]}, None))
-    assert llm._classify_once("p", "gemini", "flash-lite")["classification"] == "unclear"
+    assert llm._classify_once("p", "gemini-3.5-flash-lite")["classification"] == "unclear"
 
 
 @pytest.mark.parametrize("raw,expected", [
@@ -139,7 +139,7 @@ def test_confident_is_coerced_to_a_bool(monkeypatch, raw, expected):
     monkeypatch.setattr(llm, "call_gemini",
                         lambda p, model=None: ({"classification": "replication",
                                                 "confident": raw, "categories": []}, None))
-    vote = llm._classify_once("p", "gemini", "flash-lite")
+    vote = llm._classify_once("p", "gemini-3.5-flash-lite")
     assert vote["confident"] is expected
 
 
@@ -147,7 +147,7 @@ def test_categories_keep_enum_values_in_order_and_drop_the_rest(monkeypatch):
     monkeypatch.setattr(llm, "call_gemini", lambda p, model=None: (
         {"classification": "replication", "confident": True,
          "categories": ["context_transfer", "not_a_category", "clearly_declared"]}, None))
-    vote = llm._classify_once("p", "gemini", "flash-lite")
+    vote = llm._classify_once("p", "gemini-3.5-flash-lite")
     assert vote["categories"] == ["context_transfer", "clearly_declared"]
 
 
@@ -167,7 +167,7 @@ def test_a_trailing_comma_still_parses():
 def test_the_voter_id_decides_which_provider_is_called(monkeypatch, voter_id, provider, other):
     """A slash in the voter id means an OpenRouter model; without one it is an
     OpenAI model. The wrong provider must never see the call."""
-    monkeypatch.setattr(llm, "SCREEN_VOTER2_MODEL", voter_id)
+    monkeypatch.setattr(llm, "SCREENING_MODEL_2", voter_id)
     seen: dict = {}
 
     def answer(prompt, model=None, **kw):
@@ -179,7 +179,7 @@ def test_the_voter_id_decides_which_provider_is_called(monkeypatch, voter_id, pr
         AssertionError(f"a {provider} voter id must not reach {other}")))
 
     assert [v[0] for v in llm.screen_voters()] == ["gemini", provider]
-    assert llm._classify_once("p", provider, voter_id)["provider"] == provider
+    assert llm._classify_once("p", voter_id)["provider"] == provider
     assert seen["model"] == voter_id
     if provider == "openai":
         assert seen["reasoning_effort"] == "low"
@@ -197,7 +197,7 @@ def test_screen_attributes_each_vote_to_its_model(monkeypatch, tmp_path):
     assert calls == ["mistralai/ministral-14b-2512"]
     assert [v["provider"] for v in out["votes"]] == ["gemini", "openrouter"]
     assert out["llm_source"] == "gemini+openrouter"
-    assert out["llm_model"] == f"{llm.GEMINI_LIGHT_MODEL}+mistralai/ministral-14b-2512"
+    assert out["llm_model"] == f"{llm.SCREENING_MODEL_1}+mistralai/ministral-14b-2512"
     assert list(tmp_path.glob("classify_*.json"))   # a real verdict is cached
 
 
@@ -218,7 +218,7 @@ def test_an_incomplete_screen_is_reported_not_cached(monkeypatch, tmp_path,
     if not gemini_ok:
         assert "gemini" in out["llm_error"]
     # Only the model that actually answered is named.
-    assert out["llm_model"] == (llm.GEMINI_LIGHT_MODEL if model else "")
+    assert out["llm_model"] == (llm.SCREENING_MODEL_1 if model else "")
     assert not list(tmp_path.glob("classify_*.json"))  # uncached: a retry must succeed
 
 
@@ -242,7 +242,7 @@ def test_the_row_names_whoever_actually_decided_it(monkeypatch, tmp_path, target
 
         assert out["resolution_method"] == "llm_references"
         assert out["resolved_doi_o"] == "10.1/orig"
-        assert out["llm_model"] == llm.GEMINI_HEAVY_MODEL
+        assert out["llm_model"] == llm.LINKING_MODEL
         assert out["llm_source"] == "gemini"
         assert out["llm_evidence"] == "we re-test Smith (2015)"
     else:
@@ -252,7 +252,7 @@ def test_the_row_names_whoever_actually_decided_it(monkeypatch, tmp_path, target
         assert out["screen_verdict"] == "discard"
         assert out["screen_classification"] == "none"
         assert out["record_type"] == ""
-        assert out["llm_model"] == f"{llm.GEMINI_LIGHT_MODEL}+mistralai/ministral-14b-2512"
+        assert out["llm_model"] == f"{llm.SCREENING_MODEL_1}+mistralai/ministral-14b-2512"
         assert out["llm_evidence"] == "q"
         assert "gemini: r" in out["llm_reasoning"] and "openrouter: r" in out["llm_reasoning"]
 
@@ -262,7 +262,7 @@ def test_the_row_names_whoever_actually_decided_it(monkeypatch, tmp_path, target
 def _two_votes(monkeypatch, tmp_path, v1, v2):
     monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
-    monkeypatch.setattr(llm, "SCREEN_VOTER2_MODEL", "mistralai/ministral-14b-2512")
+    monkeypatch.setattr(llm, "SCREENING_MODEL_2", "mistralai/ministral-14b-2512")
     monkeypatch.setattr(llm, "call_gemini", lambda p, model=None: (dict(v1), None))
     monkeypatch.setattr(llm, "call_openrouter", lambda p, model="": (dict(v2), None))
     return llm.classify_replication("10.1/x", "Title", "Abstract")
@@ -302,7 +302,7 @@ def test_categories_are_the_union_of_both_voters_in_enum_order(monkeypatch, tmp_
 def _classify(monkeypatch, tmp_path, calls: list, vote=None):
     monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
-    monkeypatch.setattr(llm, "SCREEN_VOTER2_MODEL", "mistralai/ministral-14b-2512")
+    monkeypatch.setattr(llm, "SCREENING_MODEL_2", "mistralai/ministral-14b-2512")
     vote = vote or _v()
 
     def gemini(prompt, model=None):
@@ -695,8 +695,8 @@ def test_openai_flex_off_by_default(monkeypatch):
 # and whenever it is sent it must be part of that model's cache key.
 
 def _thinking_env(monkeypatch, level="minimal"):
-    monkeypatch.setattr(llm, "GEMINI_THINKING_LEVEL", level)
-    monkeypatch.setattr(llm, "GEMINI_HEAVY_MODEL", "gemini-3-flash-preview")
+    monkeypatch.setattr(llm, "LINKING_THINKING_LEVEL", level)
+    monkeypatch.setattr(llm, "LINKING_MODEL", "gemini-3-flash-preview")
     monkeypatch.setattr(llm, "GEMINI_API_KEYS", ["k1"])
     monkeypatch.setattr(llm, "GEMINI_USE_FLEX", False)
 
@@ -718,7 +718,7 @@ def test_thinking_level_is_sent_only_on_the_heavy_model(monkeypatch):
 
     # Unset is the default and must send nothing at all.
     posts.clear()
-    monkeypatch.setattr(llm, "GEMINI_THINKING_LEVEL", "")
+    monkeypatch.setattr(llm, "LINKING_THINKING_LEVEL", "")
     llm.call_gemini("prompt", model="gemini-3-flash-preview")
     assert "thinkingLevel" not in posts[0]["generationConfig"]
 
@@ -728,7 +728,7 @@ def test_thinking_level_changes_the_heavy_model_cache_key(monkeypatch):
     default_key   = llm.cache_model_id("gemini-3-flash-preview")
     light_default = llm.cache_model_id("gemini-3.5-flash-lite")
 
-    monkeypatch.setattr(llm, "GEMINI_THINKING_LEVEL", "minimal")
+    monkeypatch.setattr(llm, "LINKING_THINKING_LEVEL", "minimal")
     assert llm.cache_model_id("gemini-3-flash-preview") != default_key
     # Only the heavy model's answers were produced under the level.
     assert llm.cache_model_id("gemini-3.5-flash-lite") == light_default
@@ -803,7 +803,7 @@ def test_classify_key_follows_the_voter_models(monkeypatch, tmp_path):
     _classify(monkeypatch, tmp_path, calls)
     llm.classify_replication("10.1/x", "Title", "Abstract")
     assert len(calls) == 2
-    monkeypatch.setattr(llm, "SCREEN_VOTER2_MODEL", "some/other-voter")
+    monkeypatch.setattr(llm, "SCREENING_MODEL_2", "some/other-voter")
     llm.classify_replication("10.1/x", "Title", "Abstract")
     assert len(calls) == 4                                   # re-voted, not replayed
 
@@ -922,10 +922,32 @@ def test_a_provider_waits_only_on_its_own_last_call(clock):
     assert clock.slept == []
 
 
+# ── The provider follows the model id ────────────────────────────────────────
+
+@pytest.mark.parametrize("model,provider", [
+    ("gemini-3.5-flash-lite",            "gemini"),
+    ("gpt-5.4-mini",                     "openai"),
+    ("mistralai/ministral-14b-2512",     "openrouter"),
+])
+def test_swapping_a_model_swaps_its_provider(monkeypatch, model, provider):
+    """The model constants are named for the question they answer, so changing one
+    may move the call to another vendor. Nothing may hardcode 'this call site goes to
+    Gemini' — that turns a one-line config change into a 404 from the wrong API."""
+    served: list = []
+    for name in ("call_gemini", "call_openai", "call_openrouter"):
+        monkeypatch.setattr(llm, name, (lambda who: (
+            lambda p, model=None, **kw: (served.append(who), ({"ok": True}, ""))[1]))(name))
+
+    result, got, err = llm.call_model("p", model)
+
+    assert (llm.provider_for(model), got, result, err) == (provider, provider, {"ok": True}, "")
+    assert served == [f"call_{provider}"]
+
+
 # ── No fallback (audit C1) ───────────────────────────────────────────────────
 
 def test_a_gemini_outage_ends_the_target_call(monkeypatch, tmp_path):
-    """The target pick is GEMINI_HEAVY_MODEL's or nobody's. A ladder used to hand it
+    """The target pick is LINKING_MODEL's or nobody's. A ladder used to hand it
     to OpenAI and then to a cheap OpenRouter model, so an outage produced a link that
     looked exactly like a resolved one."""
     monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "sk-or")
@@ -972,10 +994,10 @@ def _reftarget():
     # The one model that can answer is named by the key, at every rung.
     ("the model",
      lambda mp: _ident(),
-     lambda mp: (mp.setattr(llm, "GEMINI_HEAVY_MODEL", "gem-next"), _ident())[1]),
+     lambda mp: (mp.setattr(llm, "LINKING_MODEL", "gemini-next"), _ident())[1]),
     ("the model, at the reference-target stage",
      lambda mp: _reftarget(),
-     lambda mp: (mp.setattr(llm, "GEMINI_HEAVY_MODEL", "gem-next"), _reftarget())[1]),
+     lambda mp: (mp.setattr(llm, "LINKING_MODEL", "gemini-next"), _reftarget())[1]),
 ])
 def test_changing_an_axis_of_the_key_re_asks(monkeypatch, tmp_path, axis, first, second):
     """A cache key must name everything the answer depends on: change any one of

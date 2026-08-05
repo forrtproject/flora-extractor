@@ -84,7 +84,7 @@ Not part of Stage 3. Which rows get it is a Stage 2 routing decision — the rul
 sends a row to the `screen_cheap` pile and `filter/engine/tiers.py` runs the tier over
 that pile — so a row arriving at the front door has already been routed past it. It is
 described here because its verdicts land in Stage 3's CSV. Two
-very small models (`PRESCREEN_VOTER1_MODEL`, `PRESCREEN_VOTER2_MODEL`, OpenRouter by
+very small models (`PRESCREEN_MODEL_1`, `PRESCREEN_MODEL_2`, OpenRouter by
 default) answer one question with one field; voter 2 is asked only when voter 1 said
 "no", because once the row can no longer be discarded a second opinion changes nothing.
 
@@ -109,8 +109,8 @@ array of `categories` from an 11-value enum, `evidence_quote`, `reasoning`:
 
 | Voter | Provider | Model |
 | ----- | -------- | ----- |
-| 1 | Gemini | `GEMINI_LIGHT_MODEL` |
-| 2 | OpenAI, or OpenRouter when the id contains `/` | `SCREEN_VOTER2_MODEL` (default `gpt-5.4-mini`) |
+| 1 | Gemini | `SCREENING_MODEL_1` |
+| 2 | OpenAI, or OpenRouter when the id contains `/` | `SCREENING_MODEL_2` (default `gpt-5.4-mini`) |
 
 `run_extract` refuses to start without `GEMINI_API_KEY` and whichever of
 `OPENAI_API_KEY` / `OPENROUTER_API_KEY` voter 2 needs (unless `--no-llm`), because with
@@ -292,7 +292,7 @@ extract_outcome(doi_r, abstract_r, fulltext, title_r, record_type=…)
     │   background prose about OTHER studies' outcomes misfires the patterns
     │
     └── otherwise → _llm_outcome():
-            abstract pass (GEMINI_HEAVY_MODEL, OpenAI preferred on retry)
+            abstract pass (LINKING_MODEL, OpenAI preferred on retry)
             └── leaves the verdict unsettled (a reproduction: EITHER axis at
                 cannot_be_determined), or there is no abstract, and parsed fulltext
                 exists → second call over the paper's DISCUSSION AND CONCLUSION

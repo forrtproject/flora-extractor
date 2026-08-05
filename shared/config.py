@@ -138,42 +138,76 @@ OSF_TOKEN = os.getenv("OSF_TOKEN", "").strip()
 # graded by the second-choice provider is not comparable to its neighbours and the
 # outage that caused it leaves no trace. Every constant below therefore names exactly
 # one place in the pipeline, and every provider call names its model explicitly.
-GEMINI_MODEL = "gemini-3-flash-preview"
+# Each is named for the QUESTION it answers, not for the provider that serves it:
+# the id already says the provider, and the pipeline is described by what a model is
+# asked. Every model the pipeline calls is here — nothing is set further in, so this
+# block is the whole answer to "what graded this row".
 
-# Per-task model selection — light for the screen's Gemini voter, heavy for the
-# identify_targets_with_llm linking step (all three of its rungs).
-# Light is gemini-3.5-flash-lite (cheap, high rate limits); it is also one of the two
-# independent voters in the front-door replication screen.
-GEMINI_LIGHT_MODEL = "gemini-3.5-flash-lite"
-GEMINI_HEAVY_MODEL = GEMINI_MODEL
+# The cheap discard-only tier (shared/prescreen.py) — is this obviously out of scope?
+# The tier may only DISCARD, and only on two explicit noes, so the two must not be the
+# same model: two votes from one model are one vote.
+#
+# Both measured on the full eval and both reliable under concurrency: 8/8 clean replies,
+# 9 output tokens, ~$0.027 per 1,000 rows each. The model matters as much as the prompt —
+# on identical text, discard rates across the cheap field ran from 15% to 97%.
+#
+# Order is a cost choice, not a verdict choice: the gate discards only when BOTH say no,
+# so model 2 is asked only about the rows model 1 rejects. qwen goes first because it
+# rejects slightly less often, which is what model 2 is billed for.
+#
+# mistral-nemo would be $1/pass cheaper for a marginally better discard rate and was NOT
+# chosen: alone on this prompt it discards 39 of 567 gold positives, against 5 and 12 for
+# these two. The pair's measured loss is still zero, but a voter that says no to one
+# genuine replication in fourteen makes the AND gate a single-voter gate with a noisy
+# co-signer, and the tier's whole safety argument is that two independent voters agree.
+#
+# Not inclusionai/ling-2.6-flash, 3x cheaper again: it has a single OpenRouter endpoint
+# (Novita) that returned 429 for every call on 2026-08-02 under every routing mode, with
+# credit on the account. If that clears it is worth re-measuring.
+# Evidence: analysis/prescreen_eval/REPORT.md.
+PRESCREEN_MODEL_1 = "qwen/qwen3-30b-a3b-instruct-2507"
+PRESCREEN_MODEL_2 = "mistralai/mistral-small-24b-instruct-2501"
 
-# Outcome coding (extract/code_outcome.py), both the abstract and full-text passes.
-# The ladder this replaced tried OpenAI first and fell through to GEMINI_HEAVY_MODEL,
-# so OpenAI is what actually coded the rows on disk; naming gpt-5.4-mini keeps that
-# and moves it off the older gpt-5-mini the ladder defaulted to.
+# The front-door screen (classify_replication) — is this a replication at all? Two
+# independent voters on the validated v3.2 schema. On the v3.2 gate sweep this pair
+# discards 89% of adjudicated hard negatives with zero settled misses; Ministral via
+# OpenRouter in slot 2 reached 73% on the same gate. An id containing "/" is routed to
+# OpenRouter, anything else to OpenAI direct.
+SCREENING_MODEL_1 = "gemini-3.5-flash-lite"
+SCREENING_MODEL_2 = "gpt-5.4-mini"
+
+# Linking (identify_targets_with_llm) — WHICH original does this paper re-test? One
+# model for all three rungs: the abstract, the reference list and the full text ask
+# the same question of different evidence.
+LINKING_MODEL = "gemini-3-flash-preview"
+
+# Outcome coding (extract/code_outcome.py) — WHAT was the outcome? Both the abstract
+# pass and the full-text escalation. The ladder this replaced tried OpenAI first here
+# and fell through to the linking model, so OpenAI is what actually coded the rows on
+# disk; gpt-5.4-mini keeps that and moves it off the older gpt-5-mini the ladder
+# defaulted to.
 OUTCOME_MODEL = "gpt-5.4-mini"
 
-# Thinking level for the heavy model (gemini-3-flash-preview accepts "minimal" or
+# Reference extraction from a document (shared/grobid.py) — the only call that is sent
+# a PDF or page images rather than text. Its answers are cached under filenames that
+# name this id, so changing it re-parses rather than mis-reads.
+PDF_PARSE_MODEL = "gemini-3-flash-preview"
+
+# Thinking level for the linking model (gemini-3-flash-preview accepts "minimal" or
 # "high"). Empty — the default — sends nothing and keeps the model's own default,
 # which is what every cached answer on disk was produced under. The redesign wants
 # this flipped to "minimal": thinking tokens are billed as output and dominate the
-# heavy model's cost, but the flip must follow a quality spot-check on linking and
-# outcome coding, not precede it. It only applies to GEMINI_HEAVY_MODEL calls, and
-# a non-empty value is folded into every cache key naming that model
-# (cache_model_id() in shared/llm_client.py), so the two settings never share an
-# answer.
+# linking bill, but the flip must follow a quality spot-check on linking and outcome
+# coding, not precede it. It applies to LINKING_MODEL calls alone, and a non-empty
+# value is folded into every cache key naming that model (cache_model_id() in
+# shared/llm_client.py), so the two settings never share an answer.
 # Empty is the current decision, pending that spot-check; flipping it is a commit.
-GEMINI_THINKING_LEVEL = ""
+LINKING_THINKING_LEVEL = ""
 
 # OpenRouter (OpenAI-compatible API at openrouter.ai). Nothing routes here by
 # default: it is reached only by a model id that names it — the pre-screen's two
-# voters in shared/prescreen.py, and SCREEN_VOTER2_MODEL when it carries a "/".
+# models, and SCREENING_MODEL_2 when it carries a "/".
 OPENROUTER_API_KEY    = os.getenv("OPENROUTER_API_KEY",    "")
-# Second voter of the front-door replication screen. On the v3.2 gate sweep this
-# model paired with Gemini Flash-Lite discards 89% of adjudicated hard negatives
-# with zero settled misses; Ministral via OpenRouter reached 73% on the same gate.
-# An id containing "/" is routed to OpenRouter, anything else to OpenAI direct.
-SCREEN_VOTER2_MODEL = "gpt-5.4-mini"
 
 # ── Stage 2 curated sources ───────────────────────────────────────────────────
 # Rows from these sources were put on a curated replication/reproduction list by a

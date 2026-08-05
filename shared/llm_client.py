@@ -25,14 +25,14 @@ from typing import Optional
 import requests
 
 from .config import (
-    GEMINI_API_KEYS, GEMINI_MODEL, GEMINI_LIGHT_MODEL, GEMINI_HEAVY_MODEL,
+    GEMINI_API_KEYS, PDF_PARSE_MODEL, SCREENING_MODEL_1, LINKING_MODEL,
     GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT, GEMINI_PAID_KEY_SLOTS, GEMINI_RATE_SEC,
-    GEMINI_THINKING_LEVEL,
+    LINKING_THINKING_LEVEL,
     LLM_CACHE_DIR,
     OPENAI_API_KEY, OPENAI_RATE_SEC,
     OPENAI_USE_FLEX, OPENAI_FLEX_TIMEOUT,
     OPENROUTER_API_KEY, OPENROUTER_RATE_SEC,
-    SCREEN_VOTER2_MODEL,
+    SCREENING_MODEL_2,
     log,
 )
 from . import token_counter, token_usage
@@ -201,7 +201,7 @@ def thinking_level(model: str) -> str:
     this at all: they are cached by GROBID filenames that name the bare model string,
     so a level applied there would not be named by the key that stores the answer.
     """
-    return GEMINI_THINKING_LEVEL if (GEMINI_THINKING_LEVEL and model == GEMINI_HEAVY_MODEL) else ""
+    return LINKING_THINKING_LEVEL if (LINKING_THINKING_LEVEL and model == LINKING_MODEL) else ""
 
 
 def cache_model_id(model: str) -> str:
@@ -216,7 +216,7 @@ def cache_model_id(model: str) -> str:
 
 # ── Gemini (primary) ──────────────────────────────────────────────────────────
 
-def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict], str]:
+def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL) -> tuple[Optional[dict], str]:
     """
     Call Gemini via the REST API with responseMimeType=application/json.
 
@@ -279,8 +279,8 @@ def call_gemini(prompt: str, model: str = GEMINI_MODEL) -> tuple[Optional[dict],
                     # Model not found — changing keys won't help; bail out immediately.
                     err_msg = r.json().get("error", {}).get("message", r.text[:200])
                     log.error(
-                        "Gemini model not found: %s — update GEMINI_LIGHT_MODEL or "
-                        "GEMINI_HEAVY_MODEL in .env. API said: %s", model, err_msg
+                        "Gemini model not found: %s — update SCREENING_MODEL_1 or "
+                        "LINKING_MODEL in .env. API said: %s", model, err_msg
                     )
                     return None, f"model not found: {model}"
 
@@ -519,6 +519,52 @@ def call_openrouter(prompt: str, model: str) -> tuple[Optional[dict], str]:
         return None, f"exception: {e}"
 
 
+# ── Which provider serves a model ────────────────────────────────────────────
+# The model constants in config.py are named for the question they answer, not the
+# provider that serves them, and they are meant to be swapped by a commit. That only
+# works if the provider follows the id: a call site that hardcodes "this one goes to
+# Gemini" turns a model swap into a 404 from the wrong API.
+#
+# This is a dispatcher, not a ladder. It picks the ONE provider that can serve the
+# named model; when that provider fails, the call fails.
+
+def provider_for(model: str) -> str:
+    """The provider that serves *model*, from the shape of its id.
+
+    A "/" means an OpenRouter id (`vendor/model`), which is also how the screen and
+    the pre-screen have always routed their second slot. A leading "gemini" is Google;
+    anything else is OpenAI direct. Vendor prefixes are stable enough to route on, and
+    an id that reaches the wrong API fails loudly on the first call rather than
+    quietly grading rows.
+    """
+    if "/" in model:
+        return "openrouter"
+    if model.startswith("gemini"):
+        return "gemini"
+    return "openai"
+
+
+def call_model(prompt: str, model: str, *,
+               reasoning_effort: str = "") -> tuple[Optional[dict], str, str]:
+    """One JSON call to *model*, on whichever provider serves it.
+
+    reasoning_effort is passed through where the provider accepts it (OpenAI) and
+    ignored elsewhere, so a call site can ask for a cheap short answer without
+    knowing who will serve it.
+
+    Returns (result_dict_or_None, provider, error_description).
+    """
+    provider = provider_for(model)
+    if provider == "gemini":
+        result, err = call_gemini(prompt, model=model)
+    elif provider == "openrouter":
+        result, err = call_openrouter(prompt, model=model)
+    else:
+        result, err = call_openai(prompt, model=model,
+                                  reasoning_effort=reasoning_effort)
+    return result, provider, err
+
+
 # ── Target identification ────────────────────────────────────────────────────
 
 def _validate_targets(raw: list, key_map: dict[str, dict],
@@ -591,8 +637,8 @@ def identify_targets_with_llm(doi_r:          str,
     screen uses "reftarget". Two stages rendering the same prompt for the same paper
     therefore still cache — and are answerable — separately.
 
-    GEMINI_HEAVY_MODEL answers all three rungs, and only it: a wrong original is
-    worse than an unresolved one, so a Gemini outage ends the row at llm_failed
+    LINKING_MODEL answers all three rungs, and only it: a wrong original is worse
+    than an unresolved one, so an outage at its provider ends the row at llm_failed
     rather than handing the pick to whatever else was reachable.
 
     Every parsed answer is cached, a decline included; provider failures are not.
@@ -611,7 +657,7 @@ def identify_targets_with_llm(doi_r:          str,
                           for e in entries)
     key = content_key(cache_prefix, doi_r or study_r,
                       prompt_version("build_target_prompt"),
-                      cache_model_id(GEMINI_HEAVY_MODEL),
+                      cache_model_id(LINKING_MODEL),
                       abstract_only, identities, prompt)
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
@@ -633,9 +679,9 @@ def identify_targets_with_llm(doi_r:          str,
                 t["record"] = key_map.get(t["key"])
         return cached
 
-    result, llm_error = call_gemini(prompt, model=GEMINI_HEAVY_MODEL)
-    llm_source = "gemini" if result else "none"
-    llm_model  = GEMINI_HEAVY_MODEL if result else ""
+    result, provider, llm_error = call_model(prompt, LINKING_MODEL)
+    llm_source = provider if result else "none"
+    llm_model  = LINKING_MODEL if result else ""
 
     base = {
         "resolved"          : False,
@@ -767,11 +813,26 @@ def identify_targets_with_llm(doi_r:          str,
     return output
 
 
-# ── Gemini with image parts (for PDF reference-page parsing) ──────────────────
+# ── Gemini with document parts (for PDF reference extraction) ─────────────────
+# The one pair of calls that does NOT go through call_model. They send inline_data
+# parts — a PDF or rendered page images — in Gemini's own request shape, which has no
+# equivalent in the OpenAI-compatible body the other providers are called with. So
+# PDF_PARSE_MODEL is the one model constant that cannot be swapped across providers;
+# pointing it elsewhere is a code change here, not a one-line edit in config.py.
+
+if provider_for(PDF_PARSE_MODEL) != "gemini":
+    raise RuntimeError(
+        f"PDF_PARSE_MODEL is {PDF_PARSE_MODEL!r}, which provider_for() routes to "
+        f"{provider_for(PDF_PARSE_MODEL)}. The document calls below build a Gemini "
+        "request body and have no other implementation — send a Gemini id, or "
+        "write the call for the provider you want."
+    )
+
+
 
 def call_gemini_with_images(prompt: str,
                              image_b64_list: list[dict],
-                             model: str = GEMINI_MODEL) -> Optional[dict]:
+                             model: str = PDF_PARSE_MODEL) -> Optional[dict]:
     """
     Call Gemini with inline image parts (base64 PNG/JPEG).
 
@@ -821,7 +882,7 @@ def call_gemini_with_images(prompt: str,
 
 def call_gemini_with_pdf(prompt: str,
                           pdf_bytes: bytes,
-                          model: str = GEMINI_MODEL) -> Optional[dict]:
+                          model: str = PDF_PARSE_MODEL) -> Optional[dict]:
     """
     Call Gemini with an inline PDF payload.
 
@@ -972,25 +1033,30 @@ def screen_voters() -> list[tuple[str, str, str]]:
 
     The one place the voter pair is configured: it drives the per-vote dispatch, the
     "+".join fingerprint the classification cache is keyed on, and run_extract's
-    startup key check. Swapping SCREEN_VOTER2_MODEL therefore reroutes the call, the
-    cache key and the required key together — a model id containing "/" is an
-    OpenRouter id, anything else is called on OpenAI direct.
+    startup key check. Swapping either model therefore reroutes the call, the cache
+    key and the required key together — the provider follows the id, through
+    provider_for(), so a slot is not tied to the vendor that happens to fill it.
     """
-    if "/" in SCREEN_VOTER2_MODEL:
-        voter2 = ("openrouter", SCREEN_VOTER2_MODEL, "OPENROUTER_API_KEY")
-    else:
-        voter2 = ("openai", SCREEN_VOTER2_MODEL, "OPENAI_API_KEY")
-    return [("gemini", GEMINI_LIGHT_MODEL, "GEMINI_API_KEY"), voter2]
+    return [(provider_for(m), m, _PROVIDER_KEY_ENV[provider_for(m)])
+            for m in (SCREENING_MODEL_1, SCREENING_MODEL_2)]
 
 
-def _classify_once(prompt: str, provider: str, model: str) -> "dict | None":
-    """One classification vote on the v3.2 five-field schema."""
-    if provider == "gemini":
-        result, _ = call_gemini(prompt, model=model)
-    elif provider == "openrouter":
-        result, _ = call_openrouter(prompt, model=model)
-    else:
-        result, _ = call_openai(prompt, model=model, reasoning_effort="low")
+_PROVIDER_KEY_ENV = {
+    "gemini":     "GEMINI_API_KEY",
+    "openai":     "OPENAI_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+}
+
+
+def _classify_once(prompt: str, model: str) -> "dict | None":
+    """One classification vote on the v3.2 five-field schema.
+
+    The provider is not passed in: it follows the model id through call_model, and
+    the vote is labelled with the provider that actually served it. Passing one
+    alongside the id would let a caller label a vote with a provider that never saw
+    the prompt.
+    """
+    result, provider, _err = call_model(prompt, model, reasoning_effort="low")
     if not result:
         return None
 
@@ -1110,7 +1176,7 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
     }
 
     out["llm_prompt"] = cls_prompt
-    votes = [v for v in (_classify_once(cls_prompt, p, m) for p, m, _ in voters) if v]
+    votes = [v for v in (_classify_once(cls_prompt, m) for _p, m, _e in voters) if v]
 
     # Keep the individual votes: the gate's decision is not reviewable without
     # knowing who said what.

@@ -247,7 +247,7 @@ class TestDirectRefsCacheIdentity:
         pdf = tmp_path / "10.1_x.pdf"
         pdf.write_bytes(b"%PDF-1.4 first version")
         self._run(tmp_path, pdf)
-        monkeypatch.setattr(grobid, "GEMINI_MODEL", "gemini-next")
+        monkeypatch.setattr(grobid, "PDF_PARSE_MODEL", "gemini-next")
         assert self._run(tmp_path, pdf).call_count == 1
 
 

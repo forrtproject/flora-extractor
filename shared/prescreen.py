@@ -23,36 +23,16 @@ import logging
 import re
 
 from .cache import content_key, read_cache, write_cache
-from .config import CURATED_SOURCES, LLM_CACHE_DIR
+from .config import (
+    CURATED_SOURCES, LLM_CACHE_DIR, PRESCREEN_MODEL_1, PRESCREEN_MODEL_2,
+)
+from .llm_client import cache_model_id, call_model, provider_for
+from .prompts import build_prescreen_prompt, prompt_version
+from . import token_counter
 
-# Both measured on the full eval and both reliable under concurrency: 8/8 clean replies,
-# 9 output tokens, ~$0.027 per 1,000 rows each. The model matters as much as the prompt —
-# on identical text, discard rates across the cheap field ran from 15% to 97%.
-#
-# Order is a cost choice, not a verdict choice: the gate discards only when BOTH say no,
-# so voter 2 is asked only about the rows voter 1 rejects. qwen goes first because it
-# rejects slightly less often, which is what voter 2 is billed for.
-#
-# mistral-nemo would be $1/pass cheaper for a marginally better discard rate and was NOT
-# chosen: alone on this prompt it discards 39 of 567 gold positives, against 5 and 12 for
-# these two. The pair's measured loss is still zero, but a voter that says no to one
-# genuine replication in fourteen makes the AND gate a single-voter gate with a noisy
-# co-signer, and the tier's whole safety argument is that two independent voters agree.
-#
-# Not inclusionai/ling-2.6-flash, 3x cheaper again: it has a single OpenRouter endpoint
-# (Novita) that returned 429 for every call on 2026-08-02 under every routing mode, with
-# credit on the account. If that clears it is worth re-measuring.
-#
-# Not settable from the environment: these two models ARE the tier, they are folded into
-# its cache keys, and analysis/prescreen_eval/REPORT.md is evidence about these exact ids.
-PRESCREEN_VOTER1_MODEL = "qwen/qwen3-30b-a3b-instruct-2507"
-PRESCREEN_VOTER2_MODEL = "mistralai/mistral-small-24b-instruct-2501"
 # Below this many characters of abstract there is not enough text for a 3B-class model
 # to be trusted with a terminal verdict, so the row bypasses the tier.
 PRESCREEN_MIN_ABSTRACT_CHARS = 200
-from .llm_client import cache_model_id, call_openai, call_openrouter
-from .prompts import build_prescreen_prompt, prompt_version
-from . import token_counter
 
 log = logging.getLogger(__name__)
 
@@ -127,22 +107,21 @@ def prescreen_bypass(title: str, abstract: str, source: str = "") -> str:
 
 
 def prescreen_voters() -> list[tuple[str, str]]:
-    """(provider, model) in call order. A model id containing "/" routes to OpenRouter,
-    anything else to OpenAI direct — the same rule screen_voters() uses.
+    """(provider, model) in call order. The provider follows the model id, through
+    provider_for() — the same rule screen_voters() uses.
 
     Configuring the same model twice would silently collapse the AND gate: the second
     vote hits the first one's cache key, replays its "no", and one answer becomes a
     terminal discard that the row records as two voters agreeing. Refused outright —
     two calls to one model are not two-model agreement.
     """
-    if PRESCREEN_VOTER1_MODEL == PRESCREEN_VOTER2_MODEL:
+    if PRESCREEN_MODEL_1 == PRESCREEN_MODEL_2:
         raise RuntimeError(
-            "PRESCREEN_VOTER1_MODEL and PRESCREEN_VOTER2_MODEL are both "
-            f"{PRESCREEN_VOTER1_MODEL!r}. The pre-screen may only discard on two "
+            "PRESCREEN_MODEL_1 and PRESCREEN_MODEL_2 are both "
+            f"{PRESCREEN_MODEL_1!r}. The pre-screen may only discard on two "
             "independent voters agreeing; set them to different models."
         )
-    return [("openrouter" if "/" in m else "openai", m)
-            for m in (PRESCREEN_VOTER1_MODEL, PRESCREEN_VOTER2_MODEL)]
+    return [(provider_for(m), m) for m in (PRESCREEN_MODEL_1, PRESCREEN_MODEL_2)]
 
 
 def _vote(prompt: str, provider: str, model: str, doi_r: str, title: str) -> "str | None":
@@ -160,8 +139,7 @@ def _vote(prompt: str, provider: str, model: str, doi_r: str, title: str) -> "st
         if isinstance(cached, dict) and cached.get("verdict") in {"yes", "no"}:
             return cached["verdict"]
 
-        result, error = (call_openrouter(prompt, model=model) if provider == "openrouter"
-                         else call_openai(prompt, model=model))
+        result, _provider, error = call_model(prompt, model)
         if not isinstance(result, dict):
             log.debug("prescreen %s/%s no usable answer: %s", provider, model, error)
             return None

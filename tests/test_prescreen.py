@@ -40,8 +40,9 @@ def test_curated_and_short_rows_are_never_pre_screened():
 
 def _votes(*answers):
     """Patch each voter's raw call to return the given answers in order."""
-    replies = [({"maybe_replication": a}, "") if a else (None, "boom") for a in answers]
-    return patch.object(ps, "call_openrouter", side_effect=replies)
+    replies = [({"maybe_replication": a}, "openrouter", "") if a else (None, "openrouter", "boom")
+               for a in answers]
+    return patch.object(ps, "call_model", side_effect=replies)
 
 
 @pytest.mark.parametrize("answers,verdict,calls", [
@@ -63,18 +64,19 @@ def test_an_unreadable_label_is_not_a_discard(tmp_path, monkeypatch):
     """A model that answers "maybe", or anything outside the two legal values, has not
     said the paper is out of scope — collapsing that to "no" would be a silent loss."""
     monkeypatch.setattr(ps, "LLM_CACHE_DIR", tmp_path)
-    with patch.object(ps, "call_openrouter",
-                      return_value=({"maybe_replication": "maybe"}, "")):
+    with patch.object(ps, "call_model",
+                      return_value=({"maybe_replication": "maybe"}, "openrouter", "")):
         assert ps.prescreen("10.1/x", "T", "y" * 400)["verdict"] == "proceed"
 
 
 def test_a_non_answer_is_never_cached(tmp_path, monkeypatch):
     """A 503 is "ask again", not "this paper is out of scope"."""
     monkeypatch.setattr(ps, "LLM_CACHE_DIR", tmp_path)
-    with patch.object(ps, "call_openrouter", side_effect=[(None, "503"), ({"maybe_replication": "no"}, "")]):
+    with patch.object(ps, "call_model", side_effect=[(None, "openrouter", "503"),
+                                                 ({"maybe_replication": "no"}, "openrouter", "")]):
         ps.prescreen("10.1/x", "T", "y" * 400)
-    with patch.object(ps, "call_openrouter", side_effect=[({"maybe_replication": "no"}, ""),
-                                                          ({"maybe_replication": "no"}, "")]) as call:
+    with patch.object(ps, "call_model", side_effect=[({"maybe_replication": "no"}, "openrouter", ""),
+                                                 ({"maybe_replication": "no"}, "openrouter", "")]) as call:
         assert ps.prescreen("10.1/x", "T", "y" * 400)["verdict"] == "discard"
     assert call.call_count == 2   # the failed vote was re-asked, the good one was not
 
@@ -120,7 +122,7 @@ def test_stage3_never_runs_the_cheap_tier(tmp_path, monkeypatch):
     screen = {"resolution_method": "llm_refscreen_failed", "screen_verdict": "",
               "votes": [], "categories": [], "llm_error": "boom",
               "llm_reasoning": "", "llm_model": "m"}
-    with patch.object(ps, "call_openrouter") as call, \
+    with patch.object(ps, "call_model") as call, \
          patch.object(rx, "classify_replication", return_value=screen):
         out = rx._process_row(row, "10.1/x", no_llm=False, no_pdf=True,
                               no_reproductions=False, resolved_only=False,
@@ -134,8 +136,8 @@ def test_one_model_configured_twice_is_refused():
     """Both voters on one model would hit one cache key: the second call replays the
     first's "no" and a single answer becomes a terminal discard the row reports as two
     voters agreeing."""
-    with patch.object(ps, "PRESCREEN_VOTER1_MODEL", "a/b"), \
-         patch.object(ps, "PRESCREEN_VOTER2_MODEL", "a/b"):
+    with patch.object(ps, "PRESCREEN_MODEL_1", "a/b"), \
+         patch.object(ps, "PRESCREEN_MODEL_2", "a/b"):
         with pytest.raises(RuntimeError, match="different models"):
             ps.prescreen_voters()
 
@@ -149,14 +151,14 @@ def test_a_malformed_answer_proceeds_instead_of_crashing(broken, tmp_path, monke
     """The tier is optional; a transport returning something unexpected must cost this
     row its saving, never the run and never the paper."""
     monkeypatch.setattr(ps, "LLM_CACHE_DIR", tmp_path)
-    with patch.object(ps, "call_openrouter", return_value=(broken, "")):
+    with patch.object(ps, "call_model", return_value=(broken, "openrouter", "")):
         assert ps.prescreen("10.1/x", "T", "y" * 400)["verdict"] == "proceed"
 
 
 def test_a_corrupt_cache_entry_proceeds(tmp_path, monkeypatch):
     monkeypatch.setattr(ps, "LLM_CACHE_DIR", tmp_path)
     with patch.object(ps, "read_cache", return_value=["junk"]), \
-         patch.object(ps, "call_openrouter", return_value=(None, "down")):
+         patch.object(ps, "call_model", return_value=(None, "openrouter", "down")):
         assert ps.prescreen("10.1/x", "T", "y" * 400)["verdict"] == "proceed"
 
 

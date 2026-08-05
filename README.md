@@ -66,11 +66,11 @@ See [docs/setup.md](docs/setup.md) for full setup instructions.
 ```
 RESEARCHER_EMAIL=you@example.com   # for OpenAlex/Crossref API politeness
 GEMINI_API_KEY=...                 # primary LLM (free at aistudio.google.com)
-OPENAI_API_KEY=...                 # Stage 3's second screen voter (default SCREEN_VOTER2_MODEL)
+OPENAI_API_KEY=...                 # Stage 3's second screen voter (default SCREENING_MODEL_2)
 ```
 
 `OPENROUTER_API_KEY` is needed only when a model id contains a `/` (e.g. a
-`SCREEN_VOTER2_MODEL` or the optional pre-screen voters routed through OpenRouter).
+`SCREENING_MODEL_2` or the optional pre-screen voters routed through OpenRouter).
 Optional: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `GROBID_URL`.
 
 `.env.example` is the authoritative list of every variable and its default — copy it
