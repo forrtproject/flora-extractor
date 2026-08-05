@@ -1014,12 +1014,24 @@ def _load_extracted_rows(out_path, rescreen: bool = False) -> tuple[dict[str, li
             continue  # rows with no DOI, no OA ID, and no title — skip; can't dedup
         rows = group.to_dict("records")
         # Stale artifact: LLM method written before the no_original_found fix — these
-        # have link_method=llm_fulltext/llm_cited_candidates but an empty doi_o. Re-process them.
-        rows = [
-            r for r in rows
-            if not (r.get("link_method") in {"llm_fulltext", "llm_cited_candidates"}
-                    and not r.get("doi_o", "").strip())
-        ]
+        # have link_method=llm_fulltext/llm_cited_candidates but an empty doi_o. Drop
+        # them from the resume state so they are re-processed.
+        #
+        # Dropping is only safe for a paper still in filtered.csv: a key marked pending
+        # is NOT written back, so one whose paper has left the input is deleted from
+        # extracted.csv outright. That is how 76 rows vanished on 2026-08-05, when the
+        # engine handoff shrank the input below the corpus this file was built from.
+        # sanity_check now demotes these to target_pending before they can reach here,
+        # so the filter is a backstop — and a loud one, because a silent deletion is
+        # what made the loss invisible in the first place.
+        stale = [r for r in rows
+                 if r.get("link_method") in {"llm_fulltext", "llm_cited_candidates"}
+                 and not r.get("doi_o", "").strip()]
+        rows = [r for r in rows if r not in stale]
+        if stale:
+            log.warning("[%s] %d row(s) with a resolved link_method but no doi_o "
+                        "dropped from the resume state — they are re-processed only "
+                        "if the paper is still in filtered.csv", row_key, len(stale))
         if not rows:
             pending.add(row_key)
             continue

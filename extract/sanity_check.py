@@ -18,8 +18,13 @@ CSV (the same files the dashboard's "set-aside" tab reads), one bucket per probl
     title_search_provisional → provisional_title_search.csv  link_method ==
                                                    llm_title_search: a provisional
                                                    link awaiting human confirmation
-    target_pending     → target_pending.csv        link_method == target_pending
+    target_pending     → target_pending.csv        link_method == target_pending,
+                                                   plus rows demoted to it below
     not_a_replication  → not_a_replication.csv     outcome == not_a_replication
+    api_error          → api_error.csv             link_method == api_error: a
+                                                   transient failure the next run retries
+    no_original_found  → no_original_found.csv     the LLM ran and concluded no
+                                                   identifiable original exists
     self_link          → unresolved_self_links.csv doi_o == doi_r
     doi_mismatch       → unresolved_doi_mismatch.csv doi_o_verification == mismatch
     non_article_type   → not_a_replication.csv     the registry types doi_r as a
@@ -28,6 +33,12 @@ CSV (the same files the dashboard's "set-aside" tab reads), one bucket per probl
                                                    (only with --deep: metadata lookup)
     fabricated_doi_o   → fabricated_original_doi.csv doi_o present but registered nowhere
                                                     (only with --deep: doi.org 404 check)
+
+What is left in extracted.csv is validation-ready and nothing else: every remaining row
+has a resolved link_method, a doi_o and an outcome. That is the contract csv_to_db reads
+— its own link_method/status filters are a second lock on the same door, not the door.
+A row that is merely unresolved, errored or malformed lives in a set-aside file, and a
+row demoted here (a resolved link_method with no doi_o) is filed as target_pending.
 
 Each row lands in the FIRST bucket it matches (rules applied in listed order), so a
 row is never double-counted or duplicated across files. Where a row stands in the
@@ -57,7 +68,7 @@ import pandas as pd
 import requests
 
 from shared.config import DATA_DIR, RESEARCHER_EMAIL
-from shared.schema import EXTRACTED_COLS, SCREEN_SET_ASIDE_FILES
+from shared.schema import EXTRACTED_COLS, RESOLVED_LINK_METHODS, SCREEN_SET_ASIDE_FILES
 from shared.doi_verify import fetch_doi_metadata
 from shared.utils import bare_work_id, clean_doi, csv_lock, non_article_doi, non_article_type
 
@@ -170,6 +181,19 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
     doi_o = df["doi_o"].map(clean_doi)
     doi_r = df["doi_r"].map(clean_doi)
 
+    # A resolved link_method with no doi_o is a malformed row, not a finding: it claims
+    # a target it cannot name. Demote it to target_pending BEFORE the rules, so it is
+    # filed as what it is. These rows used to be dropped from the resume state by
+    # _load_extracted_rows to force re-processing, which silently DELETED every one
+    # whose paper is no longer in filtered.csv (76 rows on 2026-08-05); filing them
+    # keeps them on disk and lets a re-run redo the ones still in the pile.
+    malformed = df["link_method"].isin(RESOLVED_LINK_METHODS) & (doi_o == "")
+    if malformed.any():
+        df.loc[malformed, "link_method"] = "target_pending"
+        df.loc[malformed, "link_evidence"] = (
+            "demoted by sanity_check: resolved link_method with no doi_o; "
+            + df.loc[malformed, "link_evidence"].fillna("")).str.slice(0, 2000)
+
     # (bucket name, destination file, row mask) — first match wins per row.
     # The link_method rules come first, and the outcome rule last of the discard
     # buckets: WHERE a row stands in the pipeline decides which file it belongs in,
@@ -207,6 +231,15 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
         ("prescreen_discard", "prescreen_discard.csv",
          df["link_method"] == "prescreen_discard"),
         ("not_a_replication", "not_a_replication.csv", df["outcome"] == "not_a_replication"),
+        # extracted.csv holds validation-ready rows only, so the two states that are
+        # neither a finding nor a pending target leave it as well. They are separated
+        # because a re-run treats them differently: api_error is a transient failure
+        # the next run must retry (its rows carry no verdict at all — the catch-all in
+        # run_extract drops even the screen's), while no_original_found is a settled
+        # LLM verdict that a re-run would only pay to reproduce.
+        ("api_error", "api_error.csv", df["link_method"] == "api_error"),
+        ("no_original_found", "no_original_found.csv",
+         df["link_method"] == "no_original_found"),
         ("self_link", "unresolved_self_links.csv", (doi_o != "") & (doi_o == doi_r)),
         ("doi_mismatch", "unresolved_doi_mismatch.csv", df["doi_o_verification"] == "mismatch"),
     ]
@@ -286,6 +319,8 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
             "doi_mismatch": "unresolved_doi_mismatch.csv",
             "title_search_provisional": "provisional_title_search.csv",
             "target_pending": "target_pending.csv",
+            "api_error": "api_error.csv",
+            "no_original_found": "no_original_found.csv",
             "prescreen_discard": "prescreen_discard.csv",
             "fabricated_doi_o": "fabricated_original_doi.csv"}
     for name in dest:

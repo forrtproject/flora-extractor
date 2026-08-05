@@ -342,11 +342,25 @@ def flora_replication_dois(path: Path) -> set[str]:
 
 
 def negative_rows(path: Path) -> list[dict]:
-    """Screen-confirmed `not_a_replication` rows, as backend row dicts."""
-    with open(path, encoding="utf-8-sig", newline="") as handle:
-        return [{"title": row.get("title_r") or "",
-                 "abstract_text": row.get("abstract_r") or ""}
-                for row in csv.DictReader(handle)]
+    """Screen-confirmed `not_a_replication` rows, as backend row dicts.
+
+    Read from *path* AND its twin under data/legacy_pre_engine/. Those are the
+    discards made on the pre-engine corpus: the papers left the input when the #146
+    handoff replaced Stage 3's input, but a screen verdict is a fact about the paper,
+    not about which pile it was in, and it is the only negative evidence there is at
+    that volume. Scoring rules against only the negatives the current rule book still
+    admits measures the book against its own selection.
+    """
+    paths = [Path(path), Path(path).parent / "legacy_pre_engine" / Path(path).name]
+    rows: list[dict] = []
+    for p in paths:
+        if not p.exists():
+            continue
+        with open(p, encoding="utf-8-sig", newline="") as handle:
+            rows += [{"title": row.get("title_r") or "",
+                      "abstract_text": row.get("abstract_r") or ""}
+                     for row in csv.DictReader(handle)]
+    return rows
 
 
 def _template(prompt: str) -> Optional[str]:
