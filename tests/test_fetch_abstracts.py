@@ -76,9 +76,7 @@ def test_scopus_parse_strips_tags_and_handles_missing():
 def test_scopus_fetch_404_is_clean_miss(monkeypatch):
     monkeypatch.setattr(fa._SESSION, "get",
                         lambda url, timeout, headers, **kw: DummyResponse({}, status_code=404))
-    abstract, exhausted = fa._fetch_scopus_abstract("10.1/x", "KEY")
-    assert abstract is None
-    assert exhausted is False
+    assert fa._fetch_scopus_abstract("10.1/x", "KEY") == (None, "empty")
 
 
 def test_scopus_fetch_quota_exhausted_via_header(monkeypatch):
@@ -89,9 +87,29 @@ def test_scopus_fetch_quota_exhausted_via_header(monkeypatch):
             {}, status_code=429, headers={"X-RateLimit-Remaining": "0"}
         ),
     )
-    abstract, exhausted = fa._fetch_scopus_abstract("10.1/x", "KEY")
-    assert abstract is None
-    assert exhausted is True
+    assert fa._fetch_scopus_abstract("10.1/x", "KEY") == (None, "stop")
+
+
+@pytest.mark.parametrize("status_code", [401, 403])
+def test_scopus_unentitled_is_not_a_miss(monkeypatch, tmp_path, status_code):
+    """Elsevier answers an unentitled request the same way it answers one for a
+    record it has: with no abstract. Cached as a miss, that would write __none__
+    and a checkpoint line for every DOI, so a machine that later gains the
+    entitlement would skip them all and never find out."""
+    monkeypatch.setattr(fa, "ABSTRACT_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(fa, "CHECKPOINT_PATH", tmp_path / "done.txt")
+    monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(
+        fa._SESSION, "get",
+        lambda url, timeout, headers, **kw: DummyResponse({}, status_code=status_code))
+
+    assert fa._fetch_scopus_abstract("10.1/x", "KEY") == (None, "stop")
+
+    fa._run_item_phase("Scopus", "scopus", ["10.1/x", "10.1/y"], 0,
+                       lambda doi: fa._fetch_scopus_abstract(doi, "KEY"), set(),
+                       progress_every=100)
+    assert list(tmp_path.glob("*.json")) == []          # nothing cached as a miss
+    assert not (tmp_path / "done.txt").exists()         # nothing checkpointed
 
 def test_crossref_uses_shared_session_without_auth(monkeypatch):
     """CrossRef fetches must go through the no-auth shared session: it 401s on an

@@ -267,11 +267,10 @@ def run(worklist_path: Path, overlay_dir: Path, sources=SOURCE_ORDER,
 
 
 def _scopus_fetcher():
+    """Scopus on the phase runner's contract — which is now its own, so this only
+    binds the key."""
     def fetch(doi: str) -> tuple[Optional[str], str]:
-        abstract, quota_exhausted = _fetch_scopus_abstract(doi, ELSEVIER_API_KEY)
-        if quota_exhausted:
-            return None, "stop"
-        return (abstract, "ok") if abstract else (None, "empty")
+        return _fetch_scopus_abstract(doi, ELSEVIER_API_KEY)
     return fetch
 
 

@@ -488,14 +488,22 @@ def _parse_scopus_abstract(payload: dict) -> Optional[str]:
     return _JATS_RE.sub("", str(desc)).strip() or None
 
 
-def _fetch_scopus_abstract(doi: str, api_key: str) -> tuple[Optional[str], bool]:
+def _fetch_scopus_abstract(doi: str, api_key: str) -> tuple[Optional[str], str]:
     """Fetch an abstract from Elsevier Scopus by DOI.
 
-    Returns (abstract_or_none, quota_exhausted). On a 429 whose
-    X-RateLimit-Remaining header is "0" — or after 3 backed-off retries still
-    hitting 429 — the ~10k/week quota is treated as spent and quota_exhausted is
-    True so the caller stops the phase gracefully. Transient errors retry 3× with
-    1s/2s/4s backoff per repo convention.
+    Returns (abstract_or_none, status) on the same contract as the sibling
+    fetchers: "ok" / "empty" (a DEFINITIVE miss, cached and checkpointed) /
+    "stop" (end the phase now). Transient errors retry 3× with 1s/2s/4s backoff
+    per repo convention; on a 429 whose X-RateLimit-Remaining header is "0" — or
+    after 3 backed-off retries still hitting 429 — the ~10k/week quota is treated
+    as spent and the phase stops gracefully.
+
+    **A 401/403 is "stop", never "empty".** Elsevier answers an unentitled request
+    the same way it answers one for a record it has: with no abstract. Recording
+    that as a definitive miss would write `__none__` and a checkpoint line for
+    every DOI the phase touched, so a machine that later GAINS the entitlement
+    would skip them all and never find out. Entitlement is account- and IP-wide
+    rather than per-record, so the first one is enough to end the phase.
     """
     url = f"https://api.elsevier.com/content/abstract/doi/{doi}"
     headers = {"X-ELS-APIKey": api_key, "Accept": "application/json"}
@@ -518,20 +526,23 @@ def _fetch_scopus_abstract(doi: str, api_key: str) -> tuple[Optional[str], bool]
     # Retries exhausted on 429/5xx — assume the weekly quota is gone rather than
     # keep spending calls to find out.
     if status == "transient" or _quota_spent(resp):
-        return None, True
+        return None, "stop"
     if resp.status_code in (400, 404):
-        return None, False
+        return None, "empty"
     if resp.status_code in (401, 403):
         # AUTHORIZATION_ERROR — the key is valid but not entitled to the abstract
-        # view. Retrying cannot help, and it is NOT a spent quota.
+        # view. Retrying cannot help, and it is NOT a spent quota; what it is NOT
+        # either is evidence that Scopus holds no abstract for this DOI.
         log.warning(
-            "Scopus not entitled to the abstract view for %s (HTTP %d). "
-            "Elsevier entitlement is IP-bound: run from the subscribing "
-            "network/VPN, or set ELSEVIER_INSTTOKEN.", doi, resp.status_code)
-        return None, False
+            "Scopus not entitled to the abstract view for %s (HTTP %d) — stopping the "
+            "phase rather than recording a miss it cannot establish. Elsevier "
+            "entitlement is IP-bound: run from the subscribing network/VPN, or set "
+            "ELSEVIER_INSTTOKEN.", doi, resp.status_code)
+        return None, "stop"
     if resp.status_code >= 400:
-        return None, True
-    return _parse_scopus_abstract(resp.json()), False
+        return None, "stop"
+    abstract = _parse_scopus_abstract(resp.json())
+    return (abstract, "ok") if abstract else (None, "empty")
 
 
 # ---------------------------------------------------------------------------
