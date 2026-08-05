@@ -381,10 +381,9 @@ GROBID is optional: an unreachable `GROBID_URL` logs a warning and falls back.
 ## Git Workflow
 
 Base feature branches on `origin/main`, open PRs with `--base main` (the `dev` branch
-is stale — do not use it). `main` is NOT protected — no branch protection, no rulesets
-(checked 2026-08-05) — so a direct push works and the PR is a convention, not a gate.
-Keep to it for anything reviewable; a one-file analysis or a doc fix does not need the
-detour. Open PRs when a feature is stable, not just at the end. **`data/` is NOT gitignored** — over twenty files under
+is stale — do not use it). Use PRs for larger bits of work that should be reviewable,
+and commit directly to `main` for minor fixes made on clear instructions. Open PRs when
+a feature is stable, not just at the end. **`data/` is NOT gitignored** — over twenty files under
 it are tracked (`extracted.csv`, the set-aside CSVs, `flora.csv`, the entry sheet, the
 `.zip.dvc` pointers). What is ignored is specific: the multi-GB zips and their unzipped
 working copies (`data/.gitignore` + the `data/*.zip` / `data/*.bak` rules in the root
