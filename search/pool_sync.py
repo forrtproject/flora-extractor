@@ -33,11 +33,14 @@ import json
 import re
 import shutil
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, Union
 
 from shared.config import (
     FLORA_HF_COMMIT_BATCH,
+    FLORA_HF_PULL_WORKERS,
     FLORA_POOL_REPO,
     SNAPSHOT_POOL_DIR,
     log,
@@ -447,7 +450,8 @@ def pull_pool(pool_dir: Path, repo: Optional[str] = None,
 
     Per-file downloads rather than a whole-repo snapshot: that is what makes
     ``--years`` partial, and each file is independently resumable and locally
-    cached. Files already present at the remote's size are skipped. Returns the
+    cached. Files already present at the remote's size are skipped, and the rest
+    are fetched several at a time (see ``_download_pool_files``). Returns the
     number of files downloaded (or, under *dry_run*, that would be).
     """
     import huggingface_hub as hf  # pipeline-only: read-only deployments never install it
@@ -483,39 +487,73 @@ def pull_pool(pool_dir: Path, repo: Optional[str] = None,
 
     sizes = _remote_sizes(api, repo_id)
     pool_dir.mkdir(parents=True, exist_ok=True)
-    downloaded = 0
-    skipped = 0
+    wanted, skipped = [], 0
     for remote_file in sorted(remote_files):
-        name = remote_file.rsplit("/", 1)[-1]
-        local = pool_dir / name
+        local = pool_dir / remote_file.rsplit("/", 1)[-1]
         if local.exists() and sizes.get(remote_file) == local.stat().st_size:
             skipped += 1
-            continue
-        if dry_run:
-            downloaded += 1
-            continue
-        try:
-            got = hf.hf_hub_download(repo_id=repo_id, filename=remote_file,
-                                     repo_type=_REPO_TYPE, token=token,
-                                     local_dir=str(pool_dir))
-        except Exception as exc:  # noqa: BLE001 — boundary: turn 401/403 into instructions
-            raise RuntimeError(_auth_hint(hf, repo_id, exc)) from exc
-        # local_dir reproduces the remote's year folder; the pool itself is flat,
-        # because the pool row builder globs one directory.
-        got_path = Path(got)
-        if got_path.resolve() != local.resolve():
-            shutil.move(str(got_path), str(local))
-            shard = pool_dir / _year_of(remote_file)
-            if shard.is_dir() and not any(shard.iterdir()):
-                shard.rmdir()
-        downloaded += 1
-        if downloaded % 50 == 0:
-            log.info("Pool pull: %d downloaded, %d already present", downloaded, skipped)
+        else:
+            wanted.append(remote_file)
 
+    if not dry_run and wanted:
+        _download_pool_files(hf, repo_id, token, pool_dir, wanted, skipped)
+
+    downloaded = len(wanted)
     log.info("Pool pull%s: %d downloaded, %d already present (%d remote files from %s -> %s)",
              " (dry run)" if dry_run else "", downloaded, skipped, len(remote_files),
              repo_id, pool_dir)
     return downloaded
+
+
+def _download_pool_files(hf, repo_id: str, token: str, pool_dir: Path,
+                         wanted: list[str], skipped: int) -> None:
+    """Fetch *wanted* into the flat *pool_dir*, several files at a time.
+
+    Concurrent rather than serial because a pool pull is latency-bound, not
+    bandwidth-bound: each file costs a full auth + CDN-redirect round trip
+    before its first byte, and a 2,446-file pool spends about half its wall
+    clock waiting for one of those with the link otherwise idle. Still one
+    ``hf_hub_download`` per file, so ``--years`` stays a partial download and
+    every file is independently resumable and locally cached.
+    """
+    done = 0
+    counted = threading.Lock()
+
+    def fetch(remote_file: str) -> None:
+        got = Path(hf.hf_hub_download(repo_id=repo_id, filename=remote_file,
+                                      repo_type=_REPO_TYPE, token=token,
+                                      local_dir=str(pool_dir)))
+        # local_dir reproduces the remote's year folder; the pool itself is flat,
+        # because the pool row builder globs one directory.
+        local = pool_dir / remote_file.rsplit("/", 1)[-1]
+        if got.resolve() != local.resolve():
+            shutil.move(str(got), str(local))
+        nonlocal done
+        with counted:
+            done += 1
+            if done % 50 == 0:
+                log.info("Pool pull: %d/%d downloaded, %d already present",
+                         done, len(wanted), skipped)
+
+    workers = min(FLORA_HF_PULL_WORKERS, len(wanted))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(fetch, f) for f in wanted]
+        try:
+            for future in as_completed(futures):
+                future.result()
+        except Exception as exc:  # noqa: BLE001 — boundary: turn 401/403 into instructions
+            # A worker's failure must reach the operator as the same actionable
+            # error a serial pull raised; swallowed here it would read as a short
+            # but successful pull.
+            for pending in futures:
+                pending.cancel()
+            raise RuntimeError(_auth_hint(hf, repo_id, exc)) from exc
+
+    # Once, after every worker is done: racing threads must not each try to
+    # remove the same year folder.
+    for shard in {pool_dir / _year_of(f) for f in wanted}:
+        if shard.is_dir() and not any(shard.iterdir()):
+            shard.rmdir()
 
 
 def main() -> None:

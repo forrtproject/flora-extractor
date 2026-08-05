@@ -147,7 +147,10 @@ The pool lives in one **private** Hugging Face dataset repo. Set `HF_TOKEN` and
 `FLORA_POOL_REPO` in `.env`. Uploads go up in batched commits
 (`FLORA_HF_COMMIT_BATCH`, default 100 files per commit) — one commit per file
 would push the repo past the few-thousand-commit mark where HF says repo UX
-degrades.
+degrades. A pull fetches `FLORA_HF_PULL_WORKERS` files at a time (default 8):
+each file waits on an auth and CDN round trip before its first byte, so a
+one-at-a-time pull spends about half its wall clock idle and takes hours over a
+link that can do the whole pool in minutes.
 
 **Collaborator workflow — one command:**
 
