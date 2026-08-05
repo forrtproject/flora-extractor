@@ -38,7 +38,7 @@ def test_call_openai_retries_then_succeeds(monkeypatch):
     fake_client = MagicMock()
     fake_client.chat.completions.create.side_effect = create
     with patch("openai.OpenAI", return_value=fake_client):
-        result, err = llm.call_openai("prompt")
+        result, err = llm.call_openai("prompt", model="m")
 
     assert result == {"outcome": "success"}
     assert calls["n"] == 3
@@ -47,7 +47,7 @@ def test_call_openai_retries_then_succeeds(monkeypatch):
     down = MagicMock()
     down.chat.completions.create.side_effect = RuntimeError("service down")
     with patch("openai.OpenAI", return_value=down):
-        result, err = llm.call_openai("prompt")
+        result, err = llm.call_openai("prompt", model="m")
 
     assert result is None
     assert "service down" in err
@@ -503,7 +503,7 @@ def test_openai_flex_is_sent_with_the_long_timeout(monkeypatch):
     fake_client = MagicMock()
     fake_client.chat.completions.create.side_effect = create
     with patch("openai.OpenAI", return_value=fake_client):
-        assert llm.call_openai("prompt")[0] == {"ok": True}
+        assert llm.call_openai("prompt", model="m")[0] == {"ok": True}
 
     assert calls[0]["service_tier"] == "flex"
     assert calls[0]["timeout"] == 900   # flex calls queue — not the client default
@@ -542,7 +542,7 @@ def test_openai_flex_capacity_refusal_falls_back_within_the_attempt(monkeypatch)
     fake_client = MagicMock()
     fake_client.chat.completions.create.side_effect = _flex_then_standard(calls, exc)
     with patch("openai.OpenAI", return_value=fake_client):
-        assert llm.call_openai("prompt")[0] == {"ok": True}
+        assert llm.call_openai("prompt", model="m")[0] == {"ok": True}
 
     # Two requests, one attempt: a refused tier must not eat a retry from the
     # api_error budget, and the standard call carries no flex timeout.
@@ -559,7 +559,7 @@ def test_openai_flex_unsupported_param_falls_back_within_the_attempt(monkeypatch
     fake_client = MagicMock()
     fake_client.chat.completions.create.side_effect = _flex_then_standard(calls, exc)
     with patch("openai.OpenAI", return_value=fake_client):
-        assert llm.call_openai("prompt")[0] == {"ok": True}
+        assert llm.call_openai("prompt", model="m")[0] == {"ok": True}
 
     assert len(calls) == 2
     assert "service_tier" not in calls[1]
@@ -584,7 +584,7 @@ def test_openai_non_tier_errors_do_not_trigger_the_standard_fallback(monkeypatch
     fake_client = MagicMock()
     fake_client.chat.completions.create.side_effect = create
     with patch("openai.OpenAI", return_value=fake_client):
-        result, err = llm.call_openai("prompt")
+        result, err = llm.call_openai("prompt", model="m")
 
     assert result is None and "exception" in err
     assert len(calls) == 3                              # the ordinary retry loop
@@ -611,7 +611,7 @@ def test_openai_flex_timeout_is_not_a_refusal(monkeypatch):
     fake_client = MagicMock()
     fake_client.chat.completions.create.side_effect = create
     with patch("openai.OpenAI", return_value=fake_client):
-        assert llm.call_openai("prompt")[0] == {"ok": True}
+        assert llm.call_openai("prompt", model="m")[0] == {"ok": True}
 
     assert len(calls) == 2
     assert "service_tier" in calls[0]        # attempt 1, flex — timed out
@@ -644,10 +644,10 @@ def test_openai_flex_fallback_records_one_call_of_usage(monkeypatch):
     fake_client = MagicMock()
     fake_client.chat.completions.create.side_effect = create
     with patch("openai.OpenAI", return_value=fake_client):
-        assert llm.call_openai("prompt")[0] == {"ok": True}
+        assert llm.call_openai("prompt", model="m")[0] == {"ok": True}
 
     assert len(calls) == 2
-    assert recorded == [("openai", llm.OPENAI_MODEL, 100, 20)]
+    assert recorded == [("openai", "m", 100, 20)]
     assert len(checks) == 1
 
 
@@ -667,7 +667,7 @@ def test_openai_standard_fallback_failure_enters_the_retry_loop(monkeypatch):
     fake_client = MagicMock()
     fake_client.chat.completions.create.side_effect = create
     with patch("openai.OpenAI", return_value=fake_client):
-        result, err = llm.call_openai("prompt")
+        result, err = llm.call_openai("prompt", model="m")
 
     assert result is None and "transient 503" in err
     assert len(calls) == 4          # flex + standard, then two standard retries
@@ -685,7 +685,7 @@ def test_openai_flex_off_by_default(monkeypatch):
     fake_client = MagicMock()
     fake_client.chat.completions.create.side_effect = create
     with patch("openai.OpenAI", return_value=fake_client):
-        llm.call_openai("prompt")
+        llm.call_openai("prompt", model="m")
 
     assert all("service_tier" not in c for c in calls)
 
@@ -725,13 +725,13 @@ def test_thinking_level_is_sent_only_on_the_heavy_model(monkeypatch):
 
 def test_thinking_level_changes_the_heavy_model_cache_key(monkeypatch):
     _thinking_env(monkeypatch, level="")
-    default_key   = llm.ladder_fingerprint("gemini-3-flash-preview")
-    light_default = llm.ladder_fingerprint("gemini-3.5-flash-lite")
+    default_key   = llm.cache_model_id("gemini-3-flash-preview")
+    light_default = llm.cache_model_id("gemini-3.5-flash-lite")
 
     monkeypatch.setattr(llm, "GEMINI_THINKING_LEVEL", "minimal")
-    assert llm.ladder_fingerprint("gemini-3-flash-preview") != default_key
+    assert llm.cache_model_id("gemini-3-flash-preview") != default_key
     # Only the heavy model's answers were produced under the level.
-    assert llm.ladder_fingerprint("gemini-3.5-flash-lite") == light_default
+    assert llm.cache_model_id("gemini-3.5-flash-lite") == light_default
 
 
 # ── Cache keys (audit E3) ────────────────────────────────────────────────────
@@ -922,48 +922,27 @@ def test_a_provider_waits_only_on_its_own_last_call(clock):
     assert clock.slept == []
 
 
-# ── Provider ladder (audit C1) ───────────────────────────────────────────────
+# ── No fallback (audit C1) ───────────────────────────────────────────────────
 
-@pytest.mark.parametrize("openai_answer,or_key,expected", [
-    # Gemini 429s, OpenAI answers → OpenAI is named, with the model it used.
-    (({"ok": True}, ""), "",      ({"ok": True}, "openai", "o")),
-    # Both fail → fall through to the OpenRouter last resort.
-    ((None, "500"),      "sk-or", ({"ok": True}, "openrouter", llm.OPENROUTER_HEAVY_MODEL)),
-    # Everything fails → provider "none", and every provider's error is reported.
-    ((None, "500"),      "",      (None, "none", "")),
-])
-def test_ladder_names_the_provider_that_answered(monkeypatch, openai_answer, or_key, expected):
-    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", or_key)
-    monkeypatch.setattr(llm, "call_gemini", lambda p, model=None: (None, "429"))
-    monkeypatch.setattr(llm, "call_openai", lambda p, model=None: openai_answer)
-    monkeypatch.setattr(llm, "call_openrouter", lambda p, model="": ({"ok": True}, ""))
-
-    result, provider, model, err = llm.call_llm_ladder("p", gemini_model="g",
-                                                       openai_model="o")
-    assert (result, provider, model) == expected
-    if result:
-        assert err == ""
-    else:
-        assert "429" in err and "500" in err
-
-
-def test_ladder_can_stop_before_openrouter(monkeypatch):
-    """The reference-target pick must not fall through to the cheap last resort:
-    a wrong original is worse than an unresolved one."""
+def test_a_gemini_outage_ends_the_target_call(monkeypatch, tmp_path):
+    """The target pick is GEMINI_HEAVY_MODEL's or nobody's. A ladder used to hand it
+    to OpenAI and then to a cheap OpenRouter model, so an outage produced a link that
+    looked exactly like a resolved one."""
     monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "sk-or")
+    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
     monkeypatch.setattr(llm, "call_gemini", lambda p, model=None: (None, "429"))
-    monkeypatch.setattr(llm, "call_openai", lambda p, model=None: (None, "500"))
-    monkeypatch.setattr(llm, "call_openrouter", lambda p, model="": ({"ok": True}, ""))
-    result, provider, _model, _err = llm.call_llm_ladder("p", openrouter=False)
-    assert (result, provider) == (None, "none")
+    others: list = []
+    monkeypatch.setattr(llm, "call_openai",
+                        lambda p, model=None, **kw: others.append("openai") or ({"ok": True}, ""))
+    monkeypatch.setattr(llm, "call_openrouter",
+                        lambda p, model="": others.append("openrouter") or ({"ok": True}, ""))
 
+    out = _ident()
 
-# ── Cache keys name every model the ladder can reach ─────────────────────────
-
-def test_ladder_fingerprint_moves_with_the_fallback_models(monkeypatch):
-    before = llm.ladder_fingerprint("gem-1")
-    monkeypatch.setattr(llm, "OPENAI_MODEL", "oai-next")
-    assert llm.ladder_fingerprint("gem-1") != before
+    assert others == []
+    assert (out["resolved"], out["resolution_method"]) == (False, "llm_failed")
+    assert out["llm_source"] == "none" and "429" in out["llm_error"]
+    assert not list(tmp_path.glob("*.json")), "a provider failure must not be cached"
 
 
 def _ident(**kw):
@@ -990,14 +969,13 @@ def _reftarget():
      lambda mp: _ident(),
      lambda mp: (mp.setattr(llm, "prompt_version", lambda name: "ffffffffffff"),
                  _ident())[1]),
-    # Gemini going down means OpenAI answers — so the key has to name it too.
-    ("the OpenAI fallback model",
+    # The one model that can answer is named by the key, at every rung.
+    ("the model",
      lambda mp: _ident(),
-     lambda mp: (mp.setattr(llm, "OPENAI_MODEL", "oai-next"), _ident())[1]),
-    # …at the reference-target stage as much as at the abstract stage.
-    ("the OpenAI fallback model, at the reference-target stage",
+     lambda mp: (mp.setattr(llm, "GEMINI_HEAVY_MODEL", "gem-next"), _ident())[1]),
+    ("the model, at the reference-target stage",
      lambda mp: _reftarget(),
-     lambda mp: (mp.setattr(llm, "OPENAI_MODEL", "oai-next"), _reftarget())[1]),
+     lambda mp: (mp.setattr(llm, "GEMINI_HEAVY_MODEL", "gem-next"), _reftarget())[1]),
 ])
 def test_changing_an_axis_of_the_key_re_asks(monkeypatch, tmp_path, axis, first, second):
     """A cache key must name everything the answer depends on: change any one of

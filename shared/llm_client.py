@@ -1,10 +1,15 @@
 """
-llm_client.py — the pipeline's LLM calls: provider ladder, target identification,
-and the two-model replication screen.
+llm_client.py — the pipeline's LLM calls: the three provider entry points, target
+identification, and the two-model replication screen.
 
-Provider ladder: Gemini → OpenAI → OpenRouter, in call_llm_ladder(). Each provider
-is rate-limited against its own reserved schedule, which holds under concurrent
-callers as well as sequential ones.
+One call, one model, no fallback. call_gemini(), call_openai() and call_openrouter()
+each take their model as a required argument and report failure by returning None
+with an error string; nothing re-asks another provider. A ladder used to run
+Gemini → OpenAI → OpenRouter here, and it made an outage invisible: the row still got
+an answer, from a model the caller never chose and the cache key had to over-name.
+Any fallback is now the caller's explicit decision, made where the answer is used.
+Each provider is rate-limited against its own reserved schedule, which holds under
+concurrent callers as well as sequential ones.
 
 Public API:
     identify_targets_with_llm(doi_r, study_r, abstract_r, candidates,
@@ -24,9 +29,9 @@ from .config import (
     GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT, GEMINI_PAID_KEY_SLOTS, GEMINI_RATE_SEC,
     GEMINI_THINKING_LEVEL,
     LLM_CACHE_DIR,
-    OPENAI_API_KEY, OPENAI_MODEL, OPENAI_RATE_SEC,
+    OPENAI_API_KEY, OPENAI_RATE_SEC,
     OPENAI_USE_FLEX, OPENAI_FLEX_TIMEOUT,
-    OPENROUTER_API_KEY, OPENROUTER_HEAVY_MODEL, OPENROUTER_RATE_SEC,
+    OPENROUTER_API_KEY, OPENROUTER_RATE_SEC,
     SCREEN_VOTER2_MODEL,
     log,
 )
@@ -192,7 +197,7 @@ def thinking_level(model: str) -> str:
     """The thinkingLevel to send for *model* — set only for the heavy model.
 
     The heavy model is where the thinking bill is, and the only Gemini model whose
-    answers are keyed by ladder_fingerprint(). The PDF and image calls do not consult
+    answers are keyed through cache_model_id(). The PDF and image calls do not consult
     this at all: they are cached by GROBID filenames that name the bare model string,
     so a level applied there would not be named by the key that stores the answer.
     """
@@ -378,7 +383,7 @@ def _openai_flex_refused(exc: Exception) -> bool:
                 and bool(_SERVICE_TIER_TEXT.search(str(err.get("message") or "")))))
 
 
-def call_openai(prompt: str, model: str = OPENAI_MODEL,
+def call_openai(prompt: str, model: str,
                 reasoning_effort: str = "") -> tuple[Optional[dict], str]:
     """
     Call OpenAI chat completion with response_format=json_object.
@@ -400,8 +405,8 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL,
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
     # #45: 3 attempts with exponential backoff (1s, 2s) per the api_error contract, so a
-    # transient outage does not immediately poison a row after a single failure. call_gemini
-    # already retries; this brings the OpenAI fallback to the same contract.
+    # transient outage does not immediately poison a row after a single failure. Retrying
+    # the same model is the only retry there is — after these three the call has failed.
     last_error = "no attempts made"
     extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
 
@@ -467,12 +472,13 @@ def call_openai(prompt: str, model: str = OPENAI_MODEL,
 
 # ── OpenRouter (OpenAI-compatible alternative LLMs) ──────────────────────────
 
-def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
+def call_openrouter(prompt: str, model: str) -> tuple[Optional[dict], str]:
     """
     Call any model available on OpenRouter via the OpenAI-compatible API.
 
-    model — OpenRouter model ID e.g. "qwen/qwen3-30b-a3b".
-            Defaults to OPENROUTER_HEAVY_MODEL from config.
+    model — OpenRouter model ID e.g. "qwen/qwen3-30b-a3b". Required: OpenRouter is
+            only ever reached by a caller that named a model living there, so there
+            is no house default to fall back on.
 
     Returns (result_dict_or_None, error_description).
     """
@@ -485,7 +491,7 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
         base_url="https://openrouter.ai/api/v1",
     )
 
-    use_model = model or OPENROUTER_HEAVY_MODEL
+    use_model = model
     try:
         _throttle("openrouter")
         response = client.chat.completions.create(
@@ -513,85 +519,7 @@ def call_openrouter(prompt: str, model: str = "") -> tuple[Optional[dict], str]:
         return None, f"exception: {e}"
 
 
-# ── Unified LLM router ───────────────────────────────────────────────────────
-
-def ladder_fingerprint(gemini_model: str = "", openai_model: str = "",
-                       openrouter: bool = True) -> str:
-    """Every model a call_llm_ladder with these arguments could be answered by.
-
-    Belongs in a cache key: the ladder falls through to OpenAI and OpenRouter, so
-    a key naming only the Gemini model would let one model's answer be replayed as
-    another's the next time Gemini is down. The Gemini model goes through
-    cache_model_id(), which is where an active thinking level enters the key — every
-    heavy-model cache key in the pipeline is built from this fingerprint.
-    """
-    from .config import GEMINI_LIGHT_MODEL as _LIGHT
-
-    models = [cache_model_id(gemini_model or _LIGHT), openai_model or OPENAI_MODEL]
-    if openrouter:
-        models.append(OPENROUTER_HEAVY_MODEL)
-    return "|".join(models)
-
-
-def call_llm_ladder(prompt: str, gemini_model: str = "", openai_model: str = "",
-                    prefer_openai: bool = False,
-                    openrouter: bool = True) -> tuple[Optional[dict], str, str, str]:
-    """
-    Route a prompt through the configured provider chain and return the first
-    successful result, naming the provider that produced it.
-
-    Default order : Gemini -> OpenAI -> OpenRouter (Qwen as last resort).
-    prefer_openai : flip to OpenAI -> Gemini -> OpenRouter.
-                    Use when Gemini is overloaded (503/429) and OpenAI is preferred.
-    openrouter    : False stops the ladder after OpenAI. For calls whose answer is
-                    only trustworthy from a strong model.
-
-    gemini_model — Gemini model to use (defaults to GEMINI_LIGHT_MODEL).
-    openai_model — OpenAI model to use (defaults to OPENAI_MODEL).
-
-    Returns (result_dict_or_None, provider, model_used, error_description).
-    provider is one of gemini | openai | openrouter, or "none" when every
-    provider failed; model_used is the exact model string that answered.
-    """
-    from .config import GEMINI_LIGHT_MODEL as _LIGHT
-
-    g_model = gemini_model or _LIGHT
-    o_model = openai_model or OPENAI_MODEL
-    errs: dict[str, str] = {}
-
-    order = (("openai", "gemini") if prefer_openai else ("gemini", "openai"))
-    for provider in order + ("openrouter",):
-        if provider == "openrouter" and (not openrouter or not OPENROUTER_API_KEY):
-            continue
-        if provider == "gemini":
-            result, errs["Gemini"] = call_gemini(prompt, model=g_model)
-            model = g_model
-        elif provider == "openai":
-            result, errs["OpenAI"] = call_openai(prompt, model=o_model)
-            model = o_model
-        else:
-            result, errs["OpenRouter"] = call_openrouter(prompt)
-            model = OPENROUTER_HEAVY_MODEL
-        if result:
-            return result, provider, model, ""
-
-    return None, "none", "", " | ".join(f"{k}: {v}" for k, v in errs.items())
-
-
-def call_llm(prompt: str, gemini_model: str = "", openai_model: str = "",
-             prefer_openai: bool = False) -> tuple[Optional[dict], str, str]:
-    """Provider ladder without the provider name — see call_llm_ladder.
-
-    Returns (result_dict_or_None, model_used, error_description).
-    model_used is the exact model string that answered, or "" if all providers failed.
-    """
-    result, _provider, model, err = call_llm_ladder(
-        prompt, gemini_model=gemini_model, openai_model=openai_model,
-        prefer_openai=prefer_openai)
-    return result, model, err
-
-
-# ── Main dispatcher ───────────────────────────────────────────────────────────
+# ── Target identification ────────────────────────────────────────────────────
 
 def _validate_targets(raw: list, key_map: dict[str, dict],
                       prompt: str) -> tuple[list[dict], list[str]]:
@@ -650,8 +578,7 @@ def identify_targets_with_llm(doi_r:          str,
                               intro:          str = "",
                               methods:        str = "",
                               cache_prefix:   str = "llm",
-                              abstract_only:  bool = False,
-                              openrouter:     bool = True) -> dict:
+                              abstract_only:  bool = False) -> dict:
     """Ask which previously published study or studies this paper re-tests.
 
     One function for all three LLM stages of the resolution ladder; what differs is
@@ -663,6 +590,10 @@ def identify_targets_with_llm(doi_r:          str,
     full-text stage share "llm" and are told apart by abstract_only, the reference
     screen uses "reftarget". Two stages rendering the same prompt for the same paper
     therefore still cache — and are answerable — separately.
+
+    GEMINI_HEAVY_MODEL answers all three rungs, and only it: a wrong original is
+    worse than an unresolved one, so a Gemini outage ends the row at llm_failed
+    rather than handing the pick to whatever else was reachable.
 
     Every parsed answer is cached, a decline included; provider failures are not.
     """
@@ -680,7 +611,7 @@ def identify_targets_with_llm(doi_r:          str,
                           for e in entries)
     key = content_key(cache_prefix, doi_r or study_r,
                       prompt_version("build_target_prompt"),
-                      ladder_fingerprint(GEMINI_HEAVY_MODEL, openrouter=openrouter),
+                      cache_model_id(GEMINI_HEAVY_MODEL),
                       abstract_only, identities, prompt)
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
@@ -702,8 +633,9 @@ def identify_targets_with_llm(doi_r:          str,
                 t["record"] = key_map.get(t["key"])
         return cached
 
-    result, llm_source, llm_model, llm_error = call_llm_ladder(
-        prompt, gemini_model=GEMINI_HEAVY_MODEL, openrouter=openrouter)
+    result, llm_error = call_gemini(prompt, model=GEMINI_HEAVY_MODEL)
+    llm_source = "gemini" if result else "none"
+    llm_model  = GEMINI_HEAVY_MODEL if result else ""
 
     base = {
         "resolved"          : False,
@@ -1258,11 +1190,9 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
         # The pick is cached separately from the classification: the two halves are
         # now decided at different points in the pipeline, and one cache holding
         # both would be written before the second half had run.
-        # No OpenRouter rung: a wrong original is worse than an unresolved one, so
-        # this pick stops at the two strong providers.
         pick = identify_targets_with_llm(doi_r, study_r, abstract_r,
                                          candidates or [], refs,
-                                         cache_prefix="reftarget", openrouter=False)
+                                         cache_prefix="reftarget")
         out.update({
             "llm_confidence":     pick["llm_confidence"],
             "target_description": pick["target_as_named"],

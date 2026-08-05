@@ -28,7 +28,8 @@ import pandas as pd
 
 from shared.config import (
     BASE_DIR, DATA_DIR, EXTRACT_WORKERS, GEMINI_API_KEYS,
-    OA_XML_CACHE_DIR, OPENAI_API_KEY, OPENROUTER_API_KEY, PARSE_CACHE_DIR,
+    OA_XML_CACHE_DIR, OPENAI_API_KEY, OPENROUTER_API_KEY, OUTCOME_MODEL,
+    PARSE_CACHE_DIR,
     PDF_CACHE_DIR, log,
 )
 from shared import token_counter
@@ -1284,7 +1285,7 @@ _SCREEN_KEYS = {
 
 
 def _check_screen_providers(no_llm: bool) -> None:
-    """Refuse to start when the front-door screen cannot get its second vote.
+    """Refuse to start when a stage of the run has no key to reach its model.
 
     The screen decides whether a paper is a replication at all by voting two
     providers against each other. With one provider configured every screened row
@@ -1292,14 +1293,19 @@ def _check_screen_providers(no_llm: bool) -> None:
     screen — the whole run would produce target_pending rows and discard nothing.
 
     Which key each voter needs comes from screen_voters(), the single place the pair
-    is configured — so a changed voter changes the required key with it.
+    is configured — so a changed voter changes the required key with it. OUTCOME_MODEL
+    is checked the same way and by the same "/" convention: no call falls back to a
+    provider the run can still reach, so a key it is missing costs it every outcome,
+    and finding that out at startup is cheaper than finding it out row by row.
     """
     if no_llm:
         return
-    missing = [env for _, _, env in screen_voters() if not _SCREEN_KEYS[env]()]
+    outcome_key = "OPENROUTER_API_KEY" if "/" in OUTCOME_MODEL else "OPENAI_API_KEY"
+    needed = {env for _, _, env in screen_voters()} | {outcome_key}
+    missing = sorted(env for env in needed if not _SCREEN_KEYS[env]())
     if missing:
         raise RuntimeError(
-            f"Stage 3 needs both reference-screen providers; missing: {', '.join(missing)}. "
+            f"Stage 3 needs a key for every model it calls; missing: {', '.join(missing)}. "
             "Set them in .env, or run with --no-llm to skip every LLM stage."
         )
 
