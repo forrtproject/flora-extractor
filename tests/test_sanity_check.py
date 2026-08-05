@@ -25,7 +25,9 @@ def test_each_problem_row_moves_to_its_bucket(tmp_path, monkeypatch):
         {"doi_r": "10.1/nar", "outcome": "not_a_replication", "openalex_id_r": "W2"},
         {"doi_r": "10.1/self", "doi_o": "10.1/self", "outcome": "success",
          "doi_o_verification": "verified", "openalex_id_r": "W3", "link_method": "llm_cited_candidates"},
-        {"doi_r": "10.1/mis", "doi_o": "", "outcome": "success",
+        # A mismatch is a doi_o that points at the wrong paper, so the row HAS one:
+        # without it the row is malformed and demoted to target_pending instead.
+        {"doi_r": "10.1/mis", "doi_o": "10.2/o5", "outcome": "success",
          "doi_o_verification": "mismatch", "openalex_id_r": "W4", "link_method": "llm_cited_candidates"},
         {"doi_r": "10.1/tp", "outcome": "cannot_be_determined",
          "link_method": "target_pending", "openalex_id_r": "W5"},

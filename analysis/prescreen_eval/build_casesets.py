@@ -49,7 +49,11 @@ def read_csv(path: Path, encoding: str = "utf-8-sig") -> list[dict]:
 
 def main() -> None:
     allrep = read_csv(ALL_REPLICATIONS_PATH)
-    nar = read_csv(DATA / "not_a_replication.csv")
+    # Live file plus the pre-engine archive: the papers discarded before the #146
+    # handoff are gone from the input, but their screen verdicts are still the
+    # negatives these case sets are built from — see negative_rows() in arm_evidence.
+    nar = (read_csv(DATA / "not_a_replication.csv")
+           + read_csv(DATA / "legacy_pre_engine" / "not_a_replication.csv"))
 
     def doi(row: dict, col: str = "doi_r") -> str:
         v = (row.get(col) or "").strip()

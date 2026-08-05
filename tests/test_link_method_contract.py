@@ -30,19 +30,17 @@ if "supabase" not in sys.modules:
 
 from extract.csv_to_db import _RESOLVED_METHODS  # noqa: E402
 
-# The two unresolved methods sanity_check deliberately leaves in extracted.csv: they
-# carry no link and no quarantine bucket, and a re-run is what fixes them.
-_KEPT_UNRESOLVED = {"no_original_found", "api_error"}
-
-# Unresolved methods sanity_check moves to a set-aside CSV.
+# Unresolved methods sanity_check moves to a set-aside CSV — all of them. extracted.csv
+# is validation-ready rows and nothing else, so no unresolved method survives the pass.
 _QUARANTINED = {"screen_disagreement", "llm_title_search", "target_pending",
-                "not_a_replication", "prescreen_discard"}
+                "not_a_replication", "prescreen_discard", "no_original_found",
+                "api_error"}
 
 
 def test_every_link_method_is_classified_exactly_once():
-    """The three buckets must partition the enum — no value unaccounted for, none
+    """The two buckets must partition the enum — no value unaccounted for, none
     claimed twice."""
-    buckets = [RESOLVED_LINK_METHODS, _QUARANTINED, _KEPT_UNRESOLVED]
+    buckets = [RESOLVED_LINK_METHODS, _QUARANTINED]
     union = set().union(*buckets)
 
     assert union == LINK_METHOD_VALUES - {"author_year_match_legacy"}, (
@@ -56,7 +54,7 @@ def test_csv_to_db_imports_exactly_the_resolved_methods():
     unresolved method — an imported row is presented to validators as settled."""
     assert RESOLVED_LINK_METHODS <= _RESOLVED_METHODS
     assert _RESOLVED_METHODS - RESOLVED_LINK_METHODS == {"author_year_match_legacy"}
-    assert not _RESOLVED_METHODS & (_QUARANTINED | _KEPT_UNRESOLVED)
+    assert not _RESOLVED_METHODS & _QUARANTINED
 
 
 @pytest.mark.parametrize("method", sorted(LINK_METHOD_VALUES))
@@ -74,8 +72,8 @@ def test_outcome_gate_agrees_with_the_resolved_set(method):
 
 def test_sanity_check_routes_every_unresolved_method_as_its_bucket_says(tmp_path,
                                                                        monkeypatch):
-    """One row per link method through the real quarantine pass: resolved and
-    kept-unresolved rows survive, quarantined ones leave extracted.csv."""
+    """One row per link method through the real quarantine pass: only resolved
+    rows survive — extracted.csv is the validation-ready set."""
     monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
     ex = tmp_path / "extracted.csv"
 
@@ -98,7 +96,7 @@ def test_sanity_check_routes_every_unresolved_method_as_its_bucket_says(tmp_path
     sc.run_sanity_check(ex, move=True, deep=False)
 
     survivors = set(pd.read_csv(ex, dtype=str, keep_default_na=False)["link_method"])
-    expected = RESOLVED_LINK_METHODS | _KEPT_UNRESOLVED | {"author_year_match_legacy"}
+    expected = RESOLVED_LINK_METHODS | {"author_year_match_legacy"}
 
     assert survivors == expected, (
         f"unexpectedly quarantined: {expected - survivors}; "
