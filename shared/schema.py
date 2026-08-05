@@ -9,6 +9,7 @@ Usage:
 """
 
 import re
+from pathlib import Path
 
 # ── Stage 1 output: candidates.csv ───────────────────────────────────────────
 CANDIDATES_COLS = [
@@ -296,6 +297,31 @@ SETTLED_SET_ASIDE_FILES = tuple(sorted(
 # them to the handoff (see run_extract's --rescreen help).
 SCREEN_SET_ASIDE_FILES = ("not_a_replication.csv", "screen_disagreement.csv",
                           "prescreen_discard.csv")
+
+
+def set_aside_dir(csv_path) -> "Path":
+    """The directory holding the set-aside CSVs that belong to *csv_path*.
+
+    Set-asides are part of the state of ONE extraction output, not of the data
+    directory: a resume treats every key in a settled set-aside file as settled, so a
+    row quarantined out of the test sandbox used to settle that paper for the
+    PRODUCTION run, which then skipped a paper it never processed. Production keeps
+    the historical layout (the files sit beside extracted.csv in data/); any other
+    input gets its own `<stem>-set-aside/` directory, so `--extracted-test` writes and
+    reads data/extracted-test-set-aside/.
+    """
+    p = Path(csv_path)
+    if p.name == "extracted.csv":
+        return p.parent
+    return p.parent / f"{p.stem}-set-aside"
+
+
+# Link methods whose rows are never doi_o-verified: they carry no target to verify
+# (target_pending), no answer at all (api_error), or a verdict the pipeline has
+# deliberately stopped spending on (prescreen_discard). run_extract._verify_row and
+# extract/audit_dois.py both read this, so an audit cannot re-verify — and re-stamp —
+# a row the pipeline leaves alone.
+VERIFICATION_SKIP_LINK_METHODS = {"target_pending", "api_error", "prescreen_discard"}
 
 DOI_VERIFICATION_VALUES = {
     "verified", "corrected", "mismatch", "no_doi",

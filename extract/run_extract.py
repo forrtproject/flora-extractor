@@ -62,9 +62,11 @@ from shared.schema import (
     RESOLVED_LINK_METHODS,
     SCREEN_SET_ASIDE_FILES as _SCREEN_SET_ASIDE_FILES,
     SETTLED_SET_ASIDE_FILES as _SETTLED_SET_ASIDE_FILES,
+    VERIFICATION_SKIP_LINK_METHODS,
     YEAR_COLS,
     assert_no_float_years,
     make_pair_id,
+    set_aside_dir,
     year_str,
 )
 from shared.utils import (bare_work_id, cache_key, citation_fragment,
@@ -1071,7 +1073,9 @@ def _load_extracted_rows(out_path, rescreen: bool = False
     """
     # An empty list of rows: the paper is settled, so it is skipped, but its row
     # stays in the set-aside CSV rather than being written back to extracted.csv.
-    set_aside_keys = _screen_set_aside_keys(Path(out_path).parent, rescreen=rescreen)
+    # The set-asides of THIS output file: the test sandbox has its own directory, so a
+    # test run neither reads nor writes production's settled keys.
+    set_aside_keys = _screen_set_aside_keys(set_aside_dir(out_path), rescreen=rescreen)
     if not out_path.exists():
         return {k: [] for k in set_aside_keys}, {}
     df = pd.read_csv(out_path, dtype=str, encoding="utf-8-sig").fillna("")
@@ -1255,7 +1259,7 @@ def _verify_row(row: dict) -> dict:
     link_confidence on mismatch, and appends the verification note to
     link_evidence.
     """
-    if row.get("link_method") in {"target_pending", "api_error", "prescreen_discard"}:
+    if row.get("link_method") in VERIFICATION_SKIP_LINK_METHODS:
         row["doi_o_verification"] = "skipped"
         return row
 

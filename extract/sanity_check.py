@@ -10,7 +10,12 @@ completion AND on Ctrl-C, via the __main__ finally block), and standalone:
     python -m extract.sanity_check --report-only         # move nothing, just report
 
 Rows that do not belong in the resolved set are moved OUT to a dedicated set-aside
-CSV (the same files the dashboard's "set-aside" tab reads), one bucket per problem:
+CSV (the same files the dashboard's "set-aside" tab reads), one bucket per problem.
+The set-asides belong to the CSV being checked (`set_aside_dir()` in shared/schema.py):
+extracted.csv's sit in data/ as they always have, and any other input — the
+--extracted-test sandbox — gets data/<stem>-set-aside/. A resume treats every key in a
+settled set-aside file as settled, so a shared directory let a test-run quarantine
+settle a paper the production run then skipped without ever processing it. Buckets:
 
     screen_disagreement→ screen_disagreement.csv   the two Q1 classifiers disagreed
     non_article        → not_a_replication.csv     doi_r is a figshare data record
@@ -71,7 +76,7 @@ import requests
 from shared.config import DATA_DIR, RESEARCHER_EMAIL
 from shared.schema import (EXTRACTED_COLS, RESOLVED_LINK_METHODS,
                            SET_ASIDE_DESTINATIONS, SETTLED_SET_ASIDE_FILES,
-                           YEAR_COLS, year_str)
+                           YEAR_COLS, set_aside_dir, year_str)
 from shared.doi_verify import fetch_doi_metadata
 from shared.row_key import primary_key
 from shared.utils import bare_work_id, clean_doi, csv_lock, non_article_doi, non_article_type
@@ -108,25 +113,35 @@ def _dedup_key(r) -> str:
 
 def _quarantine(df: pd.DataFrame, mask: pd.Series, dest: Path) -> int:
     """Append df[mask] to dest (schema-normalised, deduped), return count moved.
-    Does not modify df — caller drops the moved rows."""
+    Does not modify df — caller drops the moved rows.
+
+    The append is a read-modify-write, so it runs under the destination's own
+    `csv_lock` — two runs (or a run and a hand-invoked `python -m extract.sanity_check`)
+    quarantining into the same file would otherwise each write back what it read and
+    lose the other's rows. One lock, held over one file, never nested inside another:
+    the input CSV's lock is taken and released separately (see run_sanity_check), and
+    filelock's flock-based locks are not reentrant across two handles in one process.
+    """
     move = df[mask].copy()
     if move.empty:
         return 0
-    existing = _norm(pd.read_csv(dest, dtype=str, keep_default_na=False)) \
-        if dest.exists() else pd.DataFrame(columns=EXTRACTED_COLS)
-    for frame in (existing, move):
-        blank = frame["oa_work_id_r"].str.strip() == ""
-        frame.loc[blank, "oa_work_id_r"] = frame.loc[blank, "openalex_id_r"].map(bare_work_id)
-    combined = pd.concat([existing, _norm(move)], ignore_index=True)
-    combined["_k"] = combined.apply(_dedup_key, axis=1)
-    # Rows that share "no identifier" are not the same paper, so only keyed rows dedup.
-    dup = (combined["_k"] != "") & combined["_k"].duplicated(keep="last")
-    combined = combined[~dup].drop(columns="_k")
-    combined.to_csv(dest, index=False, encoding="utf-8-sig")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with csv_lock(dest):
+        existing = _norm(pd.read_csv(dest, dtype=str, keep_default_na=False)) \
+            if dest.exists() else pd.DataFrame(columns=EXTRACTED_COLS)
+        for frame in (existing, move):
+            blank = frame["oa_work_id_r"].str.strip() == ""
+            frame.loc[blank, "oa_work_id_r"] = frame.loc[blank, "openalex_id_r"].map(bare_work_id)
+        combined = pd.concat([existing, _norm(move)], ignore_index=True)
+        combined["_k"] = combined.apply(_dedup_key, axis=1)
+        # Rows that share "no identifier" are not the same paper, so only keyed rows dedup.
+        dup = (combined["_k"] != "") & combined["_k"].duplicated(keep="last")
+        combined = combined[~dup].drop(columns="_k")
+        combined.to_csv(dest, index=False, encoding="utf-8-sig")
     return len(move)
 
 
-def _purge_stale_screen_keys(refiled: dict[str, set]) -> int:
+def _purge_stale_screen_keys(refiled: dict[str, set], out_dir: Path) -> int:
     """Drop papers from a settled set-aside file once this pass filed them elsewhere.
 
     A resume treats any key in these files as settled (`_load_extracted_rows` in
@@ -143,24 +158,28 @@ def _purge_stale_screen_keys(refiled: dict[str, set]) -> int:
     is inferred from a row's verdict.
 
     refiled — destination filename → the dedup keys quarantined there this pass.
+    out_dir — the set-aside directory of the CSV being checked.
     """
     purged = 0
     for fname in SETTLED_SET_ASIDE_FILES:
-        path = DATA_DIR / fname
+        path = out_dir / fname
         if not path.exists():
             continue
         elsewhere = {k for dest, keys in refiled.items() if dest != fname
                      for k in keys if k}
         if not elsewhere:
             continue
-        frame = _norm(pd.read_csv(path, dtype=str, keep_default_na=False))
-        if frame.empty:
-            continue
-        stale = frame.apply(_dedup_key, axis=1).isin(elsewhere)
-        if not stale.any():
-            continue
-        purged += int(stale.sum())
-        frame[~stale].to_csv(path, index=False, encoding="utf-8-sig")
+        # Same read-modify-write, same lock as _quarantine — and the same file, so a
+        # concurrent quarantine into it must not interleave with this rewrite.
+        with csv_lock(path):
+            frame = _norm(pd.read_csv(path, dtype=str, keep_default_na=False))
+            if frame.empty:
+                continue
+            stale = frame.apply(_dedup_key, axis=1).isin(elsewhere)
+            if not stale.any():
+                continue
+            purged += int(stale.sum())
+            frame[~stale].to_csv(path, index=False, encoding="utf-8-sig")
     return purged
 
 
@@ -195,6 +214,9 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
     if not path.exists():
         print(f"[sanity] {path} not found — nothing to check.")
         return {}
+    # Set-asides belong to the CSV being checked, not to DATA_DIR: a test-sandbox
+    # quarantine must not settle a paper for the production resume.
+    out_dir = set_aside_dir(path)
 
     df = _norm(pd.read_csv(path, dtype=str, keep_default_na=False))
     n_before = len(df)
@@ -271,7 +293,7 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
     refiled: dict[str, set] = {}
     for name, fname, mask in rules:
         mask = mask & ~claimed
-        moved[name] = _quarantine(df, mask, DATA_DIR / fname) if move else int(mask.sum())
+        moved[name] = _quarantine(df, mask, out_dir / fname) if move else int(mask.sum())
         if mask.any():
             refiled.setdefault(fname, set()).update(df[mask].apply(_dedup_key, axis=1))
         claimed |= mask
@@ -287,7 +309,7 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
             if _doi_r_non_study_type(df.at[i, "doi_r"]):
                 by_type.at[i] = True
             time.sleep(0.2)
-        moved["non_article_type"] = _quarantine(df, by_type, DATA_DIR / "not_a_replication.csv") \
+        moved["non_article_type"] = _quarantine(df, by_type, out_dir / "not_a_replication.csv") \
             if move else int(by_type.sum())
         claimed |= by_type
 
@@ -299,7 +321,7 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
             if not _doi_is_registered(df.at[i, "doi_o"]):
                 fab.at[i] = True
             time.sleep(0.2)
-        moved["fabricated_doi_o"] = _quarantine(df, fab, DATA_DIR / "fabricated_original_doi.csv") \
+        moved["fabricated_doi_o"] = _quarantine(df, fab, out_dir / "fabricated_original_doi.csv") \
             if move else int(fab.sum())
         claimed |= fab
 
@@ -309,7 +331,7 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
             df.to_csv(path, index=False, encoding="utf-8-sig")
 
     if move:
-        moved["screen_set_aside_purged"] = _purge_stale_screen_keys(refiled)
+        moved["screen_set_aside_purged"] = _purge_stale_screen_keys(refiled, out_dir)
 
     # Report-only signals (never moved).
     yo = pd.to_numeric(df["year_o"], errors="coerce")

@@ -22,6 +22,7 @@ from flask import Blueprint, jsonify, render_template, request, send_file
 from shared.config import DATA_DIR
 from shared import supabase_client as supa
 from shared.dashboard_cache import compute_stage_stats, load_stats, pool_totals
+from shared.schema import SET_ASIDE_DESTINATIONS
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
@@ -172,20 +173,21 @@ def api_csv_stats():
 
 # ── Set-aside CSVs ────────────────────────────────────────────────────────────
 # Rows the pipeline deliberately kept OUT of extracted.csv, each in its own file.
-# Adding a new set here is all that is needed — the dashboard builds its tab,
-# stats, and detail table generically from this registry.
-SET_FILES: dict[str, dict] = {
-    "not_a_replication": {
+# WHICH files exist is not restated here: the set-aside tabs are built from
+# shared.schema.SET_ASIDE_DESTINATIONS, the one place a destination is named, so a
+# destination sanity_check writes cannot be missing a tab and a tab cannot point at a
+# file nothing writes. This map holds only the display copy, keyed by filename; a
+# destination with no entry still gets a tab, under a title derived from its filename.
+_SET_ASIDE_COPY: dict[str, dict] = {
+    "not_a_replication.csv": {
         "title": "Not a Replication",
-        "file": "not_a_replication.csv",
         "why": "The full-text outcome pass answered record_type_check=neither — the text does not "
                "describe a real attempt to replicate or reproduce the named original. These are "
                "Stage 2 false positives that survived the phrase gate.",
         "action": "Spot-check for classifier over-rejection; genuine misses should be promoted back.",
     },
-    "prescreen_discard": {
+    "prescreen_discard.csv": {
         "title": "Pre-screen Discards",
-        "file": "prescreen_discard.csv",
         "why": "The optional cheap pre-screen (two very small models, both answering that the "
                "paper is clearly out of scope) ended these rows before the validated front-door "
                "screen ever voted. It is a weaker instrument than that screen and its discards "
@@ -193,43 +195,74 @@ SET_FILES: dict[str, dict] = {
         "action": "Sample these regularly while the cheap tier is running — nothing else in the "
                   "pipeline ever looks at them again. --rescreen reopens them.",
     },
-    "unresolved_doi_mismatch": {
+    "provisional_title_search.csv": {
+        "title": "Provisional Title Search",
+        "why": "The original was matched against the whole literature by title search "
+               "(link_method = llm_title_search) rather than picked from a candidate list. At ~50% "
+               "measured precision the DOI is usually a real paper — just not this paper's target — "
+               "so the link is provisional and never imported.",
+        "action": "Confirm or reject each link by hand; confirmed ones can be promoted back.",
+    },
+    "api_error.csv": {
+        "title": "API Error",
+        "why": "The row carries no verdict at all: a provider or registry call failed after its "
+               "retries. Transient, not settled — a resume reopens these rows and retries them.",
+        "action": "Nothing, unless they persist: then check provider status and quotas.",
+    },
+    "no_original_found.csv": {
+        "title": "No Original Found",
+        "why": "The LLM ran with full context and concluded no identifiable original study exists — "
+               "usually a Stage 2 false positive or a self-replication. Settled: a resume will not "
+               "pay to reproduce the verdict.",
+        "action": "Sample for genuine originals the model failed to name.",
+    },
+    "screen_disagreement.csv": {
+        "title": "Screen Disagreement",
+        "why": "Historical: the two front-door voters split, back when a split ended the row. The "
+               "gate now proceeds on a split, so nothing new lands here — the rows on disk are "
+               "still settled, and --rescreen reopens them.",
+        "action": "Reopen with --rescreen if the voter pair or prompt has changed.",
+    },
+    "unresolved_doi_mismatch.csv": {
         "title": "Unresolved DOI Mismatch",
-        "file": "unresolved_doi_mismatch.csv",
         "why": "doi_o pointed at a paper whose title/year did not match the resolved original, and "
                "re-resolution from title+author found no confident replacement. A wrong DOI is worse "
                "than a flagged one, so these are held back rather than guessed.",
         "action": "Resolve the original by hand, or confirm no original exists.",
     },
-    "cannot_be_determined": {
-        "title": "Cannot Be Determined",
-        "file": "cannot_be_determined.csv",
-        "why": "The original was linked but the text did not support any outcome verdict — usually a "
-               "missing abstract, a paywalled full text, or a genuinely ambiguous result statement.",
-        "action": "Recover the full text, then re-run the outcome step.",
-    },
-    "fabricated_original_doi": {
+    "fabricated_original_doi.csv": {
         "title": "Fabricated Original DOI",
-        "file": "fabricated_original_doi.csv",
         "why": "doi_o looked like a registered DOI (plausible publisher prefix) but resolves "
                "nowhere — doi.org 404, absent from CrossRef and OpenAlex. Almost always an LLM "
                "hallucination or AI-generated upload citing a non-existent original.",
         "action": "Discard, or re-resolve the true original by hand if the replication is genuine.",
     },
-    "unresolved_self_links": {
+    "unresolved_self_links.csv": {
         "title": "Unresolved Self-Links",
-        "file": "unresolved_self_links.csv",
         "why": "doi_o resolved to the replication paper itself. Replication titles often echo the "
                "original's, so title search can return the replication — these could not be "
                "disentangled automatically.",
         "action": "Identify the true original manually.",
     },
-    "target_pending": {
+    "target_pending.csv": {
         "title": "Target Pending",
-        "file": "target_pending.csv",
         "why": "The paper is a genuine replication but no candidate original was retrievable at "
                "extraction time — link_method = target_pending.",
         "action": "Retry once the reference data improves.",
+    },
+}
+
+# Other CSVs that get a tab of the same shape but are NOT set-aside destinations —
+# nothing in sanity_check writes them, so they are named here and nowhere else.
+_OTHER_SETS: dict[str, dict] = {
+    "cannot_be_determined": {
+        "title": "Cannot Be Determined",
+        "file": "cannot_be_determined.csv",
+        "why": "The original was linked but the text did not support any outcome verdict — usually a "
+               "missing abstract, a paywalled full text, or a genuinely ambiguous result statement. "
+               "These rows STAY in extracted.csv; this file is a view of them, refreshed by "
+               "tools/recalibrate_outcomes.py, not a set-aside the pipeline files rows into.",
+        "action": "Recover the full text, then re-run the outcome step.",
     },
     "reproductions": {
         "title": "Reproductions (legacy set)",
@@ -254,6 +287,28 @@ SET_FILES: dict[str, dict] = {
         "action": "Apply with `python -m extract.audit_dois --apply`.",
     },
 }
+
+
+def _set_aside_tabs() -> dict[str, dict]:
+    """One tab per set-aside destination, in the order shared/schema.py declares them."""
+    tabs: dict[str, dict] = {}
+    for fname in SET_ASIDE_DESTINATIONS.values():   # several buckets share a file
+        key = fname[:-4] if fname.endswith(".csv") else fname
+        if key in tabs:
+            continue
+        copy = _SET_ASIDE_COPY.get(fname, {
+            "title": key.replace("_", " ").title(),
+            "why": "A set-aside destination sanity_check writes; see extract/sanity_check.py "
+                   "for the rule that files a row here.",
+            "action": "Review by hand.",
+        })
+        tabs[key] = {"file": fname, **copy}
+    return tabs
+
+
+# Rows the pipeline deliberately kept OUT of extracted.csv, plus the other per-file
+# views. The dashboard builds its tab, stats and detail table generically from this.
+SET_FILES: dict[str, dict] = {**_set_aside_tabs(), **_OTHER_SETS}
 
 _SET_PAGE_SIZE = 50
 

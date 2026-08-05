@@ -513,7 +513,11 @@ walked again. Two destinations are excluded and redone by every run, no flag nee
 transient provider failure must never be checkpointed as a definitive miss).
 `--rescreen` reopens the three abstract-only files —
 `data/not_a_replication.csv`, `data/screen_disagreement.csv`,
-`data/prescreen_discard.csv` — and nothing else. Their verdicts are also pinned by
+`data/prescreen_discard.csv` — and nothing else. The set-asides belong to the output
+CSV they were quarantined out of (`set_aside_dir()` in `shared/schema.py`):
+`extracted.csv`'s sit in `data/`, and the `--extracted-test` sandbox writes and reads
+`data/extracted-test-set-aside/`, so a test-run discard cannot settle a paper for the
+production resume. Their verdicts are also pinned by
 the screen cache, but that cache is keyed on the screening prompt's version, both
 voter models and the abstract itself — so changing a voter or the prompt makes
 Stage 2's re-screen actually re-vote, with nothing to bump by hand.
@@ -586,7 +590,7 @@ Also runnable standalone:
 # Move problem rows to the set-aside CSVs + report integrity flags
 python -m extract.sanity_check
 
-# Check the test sandbox instead
+# Check the test sandbox instead — its set-asides go to data/extracted-test-set-aside/
 python -m extract.sanity_check --input data/extracted-test.csv
 
 # Report only — move nothing

@@ -245,3 +245,54 @@ def test_two_papers_sharing_no_identifier_are_not_merged(tmp_path, monkeypatch):
     moved = pd.read_csv(tmp_path / "not_a_replication.csv", dtype=str,
                         keep_default_na=False)
     assert len(moved) == 2
+
+
+def test_test_sandbox_set_asides_never_touch_production(tmp_path, monkeypatch):
+    """A quarantine out of extracted-test.csv must not settle a paper for production.
+
+    Resume treats every key in a settled set-aside file as settled, so a shared
+    directory let the test sandbox mark a paper done for the production run, which
+    then skipped a paper it had never processed.
+    """
+    import extract.run_extract as rex
+
+    monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
+    prod, test = tmp_path / "extracted.csv", tmp_path / "extracted-test.csv"
+    _write(prod, [{"doi_r": "10.1/prod", "doi_o": "10.2/o", "outcome": "success",
+                   "doi_o_verification": "verified", "openalex_id_r": "W1",
+                   "link_method": "llm_cited_candidates"}])
+    _write(test, [{"doi_r": "10.1/sandbox", "openalex_id_r": "W2",
+                   "outcome": "not_a_replication", "link_method": "not_a_replication"}])
+
+    sc.run_sanity_check(test, move=True, deep=False)
+
+    aside = tmp_path / "extracted-test-set-aside"
+    assert set(pd.read_csv(aside / "not_a_replication.csv", dtype=str,
+                           keep_default_na=False)["doi_r"]) == {"10.1/sandbox"}
+    assert not (tmp_path / "not_a_replication.csv").exists()
+    # Each run reads its OWN settled keys.
+    assert rex._screen_set_aside_keys(rex.set_aside_dir(test)) == {"10.1/sandbox"}
+    assert rex._screen_set_aside_keys(rex.set_aside_dir(prod)) == set()
+
+
+def test_set_aside_writes_are_locked(tmp_path, monkeypatch):
+    """Every set-aside read-modify-write takes that file's csv_lock — two runs
+    quarantining into the same file would otherwise each write back what it read."""
+    monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
+    locked: list[str] = []
+    real = sc.csv_lock
+    monkeypatch.setattr(sc, "csv_lock",
+                        lambda path, *a, **k: (locked.append(str(path)), real(path, *a, **k))[1])
+
+    ex = tmp_path / "extracted.csv"
+    # Two passes: the second also exercises the purge, which rewrites a file in place.
+    _write(ex, [{"doi_r": "10.1/nar", "openalex_id_r": "W1",
+                 "outcome": "not_a_replication", "link_method": "not_a_replication"}])
+    sc.run_sanity_check(ex, move=True, deep=False)
+    _write(ex, [{"doi_r": "10.1/nar", "openalex_id_r": "W1",
+                 "link_method": "target_pending"}])
+    sc.run_sanity_check(ex, move=True, deep=False)
+
+    assert str(tmp_path / "not_a_replication.csv") in locked   # _quarantine
+    assert str(tmp_path / "target_pending.csv") in locked      # _quarantine
+    assert locked.count(str(tmp_path / "not_a_replication.csv")) >= 2  # + purge rewrite

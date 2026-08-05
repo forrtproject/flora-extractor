@@ -274,6 +274,23 @@ def test_csv_stats_endpoint_reports_pool_absence(tmp_path, monkeypatch):
 
 # ── Set-aside CSVs ───────────────────────────────────────────────────────────
 
+def test_set_aside_tabs_come_from_the_shared_destination_map():
+    """The dashboard's tabs are built from shared/schema.py's SET_ASIDE_DESTINATIONS,
+    not from a hand-kept copy — the copy had drifted, listing a file sanity_check never
+    writes and omitting four live destinations."""
+    import validate.routes.dashboard as dash
+    from shared.schema import SET_ASIDE_DESTINATIONS
+
+    tabbed = {spec["file"] for spec in dash.SET_FILES.values()}
+    assert set(SET_ASIDE_DESTINATIONS.values()) <= tabbed
+    # Everything else with a tab is declared as a non-set-aside view, once.
+    extra = tabbed - set(SET_ASIDE_DESTINATIONS.values())
+    assert extra == {spec["file"] for spec in dash._OTHER_SETS.values()}
+    # Every tab is renderable: the template reads all four fields.
+    for key, spec in dash.SET_FILES.items():
+        assert {"title", "file", "why", "action"} <= set(spec), key
+
+
 def test_set_reader_drops_phantom_unnamed_columns(tmp_path, monkeypatch):
     """Hand-maintained CSVs carry trailing commas; pandas turns them into empty
     'Unnamed: N' columns that must not be reported as real fields."""

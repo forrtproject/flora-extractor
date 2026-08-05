@@ -31,14 +31,18 @@ import pandas as pd
 from extract.run_extract import _build_ref_o
 from shared.config import DATA_DIR, log
 from shared.doi_verify import keeps_no_doi, verify_and_correct
-from shared.schema import make_pair_id
+from shared.schema import VERIFICATION_SKIP_LINK_METHODS, make_pair_id
 from shared.utils import clean_doi
 
 _MAIN_PATH   = DATA_DIR / "extracted.csv"
 _TEST_PATH   = DATA_DIR / "extracted-test.csv"
 _REPORT_PATH = DATA_DIR / "doi_audit_report.csv"
 
-_SKIP_LINK_METHODS = {"target_pending", "api_error"}
+# The same set run_extract._verify_row skips, from shared/schema.py: the audit must
+# leave alone exactly the rows the pipeline leaves alone, or it re-verifies (and
+# overwrites the `skipped` verification of) a prescreen_discard the pipeline stopped
+# spending on.
+_SKIP_LINK_METHODS = VERIFICATION_SKIP_LINK_METHODS
 
 
 def audit_file(csv_path: Path,

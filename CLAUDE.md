@@ -51,6 +51,10 @@ extracted-test.csv (skipping DOIs already resolved in extracted.csv). Every Stag
 run RESUMES by default — resolved rows are carried forward and only `target_pending`
 is re-run; `--fresh` discards the output CSV and re-extracts (and re-pays for)
 everything. `python -m extract.promote_test --all|--doi …|--dry-run` promotes rows to production.
+Set-asides belong to the output CSV they came out of (`set_aside_dir()` in
+`shared/schema.py`): production's sit in `data/`, the sandbox's in
+`data/extracted-test-set-aside/` — a test-run quarantine must not settle a paper for
+the production resume, which treats every key in a settled set-aside file as done.
 
 ## Module Map
 
