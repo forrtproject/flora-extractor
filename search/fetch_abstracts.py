@@ -49,17 +49,19 @@ Rows whose DOI prefix registers datasets rather than articles (_DATASET_PREFIXES
 should be dropped from a worklist entirely — they have no abstract to find, so
 every phase would spend calls confirming that forever.
 
-Results are cached per identifier in cache/abstracts/ — the durable, crash-safe
-store, paired with the checkpoint below. The two are shared across callers on
-purpose: a DOI one run already asked Europe PMC about is answered for free next
-time, and a miss recorded once is a miss nobody re-buys.
+Results go to `shared/abstract_store.py` — one SQLite row per identifier
+(oa:<id>, epmc:10.x/y, doi:10.x/y, s2:10.x/y, scopus:10.x/y, osf:<id>). Each phase
+owns its own namespace, so adding one never invalidates another's progress, and
+the store is shared across callers on purpose: a DOI one run already asked Europe
+PMC about is answered for free next time, and a miss recorded once is a miss
+nobody re-buys.
 
-Checkpoint (cache/fetch_abstracts_done.txt): one identifier per line (oa:<id>,
-epmc:10.x/y, doi:10.x/y, s2:10.x/y, scopus:10.x/y). Each phase owns its own
-namespace, so adding one never invalidates another's progress. On restart,
-already-tried identifiers are skipped — even those that returned no abstract, so
-we don't re-hit the API for known misses. A TRANSIENT failure is never
-checkpointed: only a definitive answer (text, or a confirmed absence) is.
+**The row IS the checkpoint.** It exists exactly when a phase got a definitive
+answer, so "already tried" and "what came back" can no longer disagree — they were
+two files that had to be kept in step, and the third file, a sidecar index of which
+identifiers resolved, existed only because asking that of ~500k cache files took
+about two hours. A TRANSIENT failure is recorded by nobody: only a definitive
+answer (text, or a confirmed absence) becomes a row.
 """
 
 from __future__ import annotations
@@ -72,27 +74,18 @@ from typing import Optional
 
 import requests
 
+from shared import abstract_store
 from shared.config import (
-    CACHE_DIR, ELSEVIER_INSTTOKEN, EPMC_BATCH_SIZE, EPMC_RATE_SEC, OA_BATCH_SIZE,
+    ELSEVIER_INSTTOKEN, EPMC_BATCH_SIZE, EPMC_RATE_SEC, OA_BATCH_SIZE,
     OSF_TOKEN, RESEARCHER_EMAIL, S2_BATCH_RATE_SEC, S2_BATCH_SIZE, log,
 )
 from shared.openalex_keys import headers as oa_headers, is_budget_refusal, rotate_key
-from shared.utils import clean_doi, cache_key, reconstruct_abstract
+from shared.utils import clean_doi, reconstruct_abstract
 
 # ---------------------------------------------------------------------------
 # Paths and constants
 # ---------------------------------------------------------------------------
 
-ABSTRACT_CACHE_DIR = CACHE_DIR / "abstracts"
-CHECKPOINT_PATH    = CACHE_DIR / "fetch_abstracts_done.txt"
-# Sidecar index of identifiers that resolved to a real abstract (mirrors the
-# candidates_index.txt / filtered_index.txt pattern). Building a phase's target list
-# means checking every row in the worklist (500k+) against results from earlier
-# phases; once abstracts/ passed ~500k files, doing that via a handful of per-row
-# file stats/reads took ~2 hours — NTFS lookup cost in one
-# huge flat directory, not disk speed. This index lets that check happen in memory.
-FOUND_INDEX_PATH   = CACHE_DIR / "fetch_abstracts_found.txt"
-ABSTRACT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # DOI prefixes belonging to data repositories, not journals. Their records are
 # datasets, so there is no abstract anywhere to recover — 10.7910 (Harvard
@@ -120,74 +113,38 @@ _SESSION.headers.update({"User-Agent": f"FLoRA-Extractor/1.0 (mailto:{RESEARCHER
 # Abstract cache helpers
 # ---------------------------------------------------------------------------
 
-def _cache_path(ident: str) -> Path:
-    return ABSTRACT_CACHE_DIR / f"{cache_key(ident)}.json"
-
-
 def _read_abstract_cache(ident: str) -> Optional[str]:
-    p = _cache_path(ident)
-    if p.exists():
-        try:
-            return json.loads(p.read_text(encoding="utf-8")).get("abstract")
-        except Exception:
-            return None
-    return None
+    """The cached answer for *ident*: text, `__none__` for a recorded miss, or
+    None when no phase has tried it yet.
+
+    The three-way answer is the phase runners' contract and predates the store;
+    `abstract_store.lookup()` returns it as `(tried, abstract)` and this keeps the
+    old shape so the runners' logic is unchanged.
+    """
+    tried, abstract = abstract_store.lookup(ident)
+    if not tried:
+        return None
+    return abstract if abstract else "__none__"
 
 
 def _write_abstract_cache(ident: str, abstract: Optional[str]) -> None:
-    _cache_path(ident).write_text(
-        json.dumps({"ident": ident, "abstract": abstract}),
-        encoding="utf-8",
-    )
-    if abstract and abstract != "__none__":
-        _append_found_index(ident)
-
-
-def _append_found_index(ident: str) -> None:
-    with open(FOUND_INDEX_PATH, "a", encoding="utf-8") as f:
-        f.write(ident + "\n")
-
-
-def _build_found_index() -> set[str]:
-    """One-time migration: scan every cached-abstract file once and record which
-    identifiers hold a real (non-`__none__`) abstract, writing FOUND_INDEX_PATH as
-    we go. Every later run loads that small file instead of repeating this scan.
-    """
-    found: set[str] = set()
-    if not ABSTRACT_CACHE_DIR.exists():
-        return found
-    n = 0
-    with open(FOUND_INDEX_PATH, "w", encoding="utf-8") as f:
-        for p in ABSTRACT_CACHE_DIR.glob("*.json"):
-            n += 1
-            try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            abstract = data.get("abstract")
-            if abstract and abstract != "__none__":
-                ident = data.get("ident", "")
-                if ident:
-                    found.add(ident)
-                    f.write(ident + "\n")
-            if n % 50000 == 0:
-                log.info("  Building found-index: %d cache files scanned, %d hits.", n, len(found))
-    log.info("Found-index built: %d hits from %d cache files.", len(found), n)
-    return found
+    """Record a DEFINITIVE answer — text, or a miss. This is also the checkpoint:
+    the row's existence is what "already tried" means now."""
+    abstract_store.record(ident, None if abstract == "__none__" else abstract)
 
 
 def _load_found_index() -> set[str]:
-    if FOUND_INDEX_PATH.exists():
-        return {l.strip() for l in FOUND_INDEX_PATH.read_text(encoding="utf-8").splitlines() if l.strip()}
-    return _build_found_index()
+    """Identifiers that resolved to real text.
+
+    One indexed query. This used to be a 92 KB sidecar file that existed only
+    because answering the same question from ~500k cache files took about two
+    hours, and that file could drift from the cache it described.
+    """
+    return abstract_store.found_idents()
 
 
 def _already_resolved(oa_id: str, doi_r: str, found_index: set[str]) -> bool:
-    """True when some earlier phase already recovered an abstract for this row.
-
-    Backed by the found-index sidecar rather than per-row cache-file reads (see
-    FOUND_INDEX_PATH): the same key order the phases write under, checked in memory.
-    """
+    """True when some earlier phase already recovered an abstract for this row."""
     doi = clean_doi(str(doi_r or ""))
     if oa_id and f"oa:{oa_id}" in found_index:
         return True
@@ -196,18 +153,20 @@ def _already_resolved(oa_id: str, doi_r: str, found_index: set[str]) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Checkpoint helpers
+# Checkpoint — the store IS the checkpoint
 # ---------------------------------------------------------------------------
 
 def _load_checkpoint() -> set[str]:
-    if not CHECKPOINT_PATH.exists():
-        return set()
-    return {l.strip() for l in CHECKPOINT_PATH.read_text(encoding="utf-8").splitlines() if l.strip()}
+    """Every identifier already answered. A row exists exactly when a phase got a
+    definitive answer, so the checkpoint can no longer disagree with the cache."""
+    return abstract_store.tried_idents()
 
 
-def _append_checkpoint(ident: str) -> None:
-    with open(CHECKPOINT_PATH, "a", encoding="utf-8") as f:
-        f.write(ident + "\n")
+def _checkpoint_batch(entries: list[tuple[str, Optional[str]]]) -> None:
+    """Record a whole batch's definitive answers in one transaction."""
+    abstract_store.record_many(
+        [(ident, None if abstract == "__none__" else abstract)
+         for ident, abstract in entries])
 
 
 # ---------------------------------------------------------------------------
@@ -683,13 +642,19 @@ def _run_batch_phase(label: str, namespace: str, ids: list[str], batch_size: int
             else:
                 consecutive_transient = 0
                 for ident, abstract in fetched.items():
-                    _write_abstract_cache(f"{namespace}:{ident}", abstract or "__none__")
                     results[ident] = abstract
 
+        # One transaction for the batch's definitive answers. Every id the request
+        # covered is recorded, not only the ones the response mentioned: an id
+        # absent from a SUCCESSFUL response is the source saying it has nothing,
+        # which is exactly the miss nobody should re-buy. Ids left unanswered by a
+        # FAILED batch are recorded by nobody, so a later run retries them.
+        _checkpoint_batch([(f"{namespace}:{ident}", results.get(ident))
+                           for ident in batch
+                           if not (batch_transient and ident in uncached)])
         for ident in batch:
             if batch_transient and ident in uncached:
                 continue
-            _append_checkpoint(f"{namespace}:{ident}")
             if results.get(ident):
                 found += 1
                 found_index.add(f"{namespace}:{ident}")
@@ -736,10 +701,11 @@ def _run_item_phase(label: str, namespace: str, dois: list[str], rate_sec: float
                                 label, consecutive_transient)
                     break
                 continue
+            # The write IS the checkpoint now: the row's existence is what "already
+            # tried" means, so a miss and its checkpoint cannot drift apart.
             _write_abstract_cache(f"{namespace}:{doi}", abstract or "__none__")
 
         consecutive_transient = 0
-        _append_checkpoint(f"{namespace}:{doi}")
         if abstract:
             found += 1
             found_index.add(f"{namespace}:{doi}")

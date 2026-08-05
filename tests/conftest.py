@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import shared.llm_client as _llm_client
+from shared import abstract_store as _abstract_store
 from shared import rate_limit as _rate_limit
 from shared import token_usage as _token_usage
 from validate.app import create_app
@@ -66,6 +67,22 @@ def _token_usage_state_in_tmp(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(
         _token_usage, "USAGE_STATE_PATH",
         tmp_path_factory.mktemp("token_usage") / "token_usage.json")
+
+
+@pytest.fixture(autouse=True)
+def _abstract_store_in_tmp(tmp_path_factory, monkeypatch):
+    """Point the abstract store at a throwaway database.
+
+    It is one shared SQLite file on this machine, and it is now also the
+    checkpoint: a test that wrote into the real one would mark identifiers as
+    already-answered and quietly cost a later run the abstracts it skipped.
+    """
+    monkeypatch.setattr(
+        _abstract_store, "ABSTRACT_DB_PATH",
+        tmp_path_factory.mktemp("abstracts") / "abstracts.sqlite")
+    _abstract_store.close()
+    yield
+    _abstract_store.close()
 
 
 @pytest.fixture(autouse=True)

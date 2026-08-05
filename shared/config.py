@@ -42,6 +42,11 @@ PARSE_CACHE_DIR      = CACHE_DIR / "parse"           # per-method parse results
 MARKITDOWN_CACHE_DIR = CACHE_DIR / "markdown"        # raw .md files from MarkItDown
 DOI_VERIFY_CACHE_DIR = CACHE_DIR / "doi_verify"      # CrossRef/OpenAlex DOI verification
 SNAPSHOT_CACHE_DIR   = CACHE_DIR / "snapshot"        # OpenAlex bulk-parquet manifest + scan ledger
+# The abstract cache (shared/abstract_store.py). One SQLite file rather than a
+# directory: at ~478k identifiers of ~90 bytes each, file-per-key spent 1.8 GB of
+# blocks on 42 MB of text and turned every whole-cache operation into half a
+# million syscalls. It also absorbs the two sidecar files that layout needed.
+ABSTRACT_DB_PATH     = CACHE_DIR / "abstracts.sqlite"
 ENGINE_CACHE_DIR     = CACHE_DIR / "engine"          # filter-engine routing releases + DuckDB store
 # The standard home of the text overlay (project-written text for pool rows the
 # snapshot shipped without an abstract). The engine's commands read it here by

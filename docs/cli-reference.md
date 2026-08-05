@@ -209,12 +209,17 @@ python -m shared.cache_sync --push --dry-run
 ```
 
 Parts: `abstracts`, `llm`, `openalex`, `openalex_xml`, `parse`, `grobid`,
-`doi_verify`, `pdfs` — 495k files, ~500 MB on disk, **220 MB** packed (175 MB of
-which is the PDFs, already-compressed streams that packing cannot shrink). Each
-part is split into `.tar.gz` shards by the hex prefix of `cache_key(filename)`,
-because `cache/abstracts` alone is 478k files of ~90 bytes and HF asks for fewer
-than 10k entries per folder. Shard membership is fixed, and a re-push transfers
-only the shards whose contents changed.
+`doi_verify`, `pdfs`. The file parts are split into `.tar.gz` shards by the hex
+prefix of `cache_key(filename)` — shard membership is fixed, so a re-push
+transfers only the shards whose contents changed.
+
+`abstracts` is the exception: it is one SQLite file
+(`shared/abstract_store.py`), pushed whole and **merged** on pull rather than
+replacing the local database. Merging is what keeps a puller's own abstracts, lets
+an identifier already answered locally keep its local answer, and lets the
+unproven-miss rule drop individual rows. The cost is granularity — a push moves the
+whole store rather than one shard — and that is the one axis on which it is worse
+than the directory it replaced.
 
 `cache/engine/responses` is the one cache not shared here — `filter/engine/tiers.py`
 already pushes those blobs as each tier run decides a work.

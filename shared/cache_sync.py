@@ -50,13 +50,16 @@ import datetime
 import gzip
 import io
 import json
+import sqlite3
 import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
 from typing import Iterable, Optional
 
+from shared import abstract_store
 from shared.config import (
+    ABSTRACT_DB_PATH,
     CACHE_DIR,
     DOI_VERIFY_CACHE_DIR,
     ELSEVIER_API_KEY,
@@ -92,10 +95,6 @@ _MANIFEST = "cache/cache_manifest.json"
 # re-extract everything, which is how a locally deleted cache is refilled.
 _PULL_STATE = CACHE_DIR / ".cache_sync_pulled.json"
 
-ABSTRACT_CACHE_DIR = CACHE_DIR / "abstracts"
-CHECKPOINT_PATH = CACHE_DIR / "fetch_abstracts_done.txt"
-
-
 class Part:
     """One cache directory and how it is sharded on the remote.
 
@@ -105,19 +104,22 @@ class Part:
     changing it moves every file to a different shard and re-uploads the part.
     """
 
-    def __init__(self, name: str, directory: Path, pattern: str, hex_chars: int):
+    def __init__(self, name: str, directory: Path, pattern: str, hex_chars: int,
+                 sqlite: bool = False):
         self.name = name
         self.directory = directory
         self.pattern = pattern
         self.hex_chars = hex_chars
+        # The abstracts are one SQLite file, not a directory of entries. It stays a
+        # Part so `--parts abstracts` and the manifest name it like everything
+        # else; what differs is that it is pushed whole and pulled by MERGING rows.
+        self.sqlite = sqlite
 
     def shard_of(self, filename: str) -> str:
         return cache_key(filename)[:self.hex_chars] if self.hex_chars else "all"
 
 
 PARTS: dict[str, Part] = {p.name: p for p in [
-    # 478k files, ~42 MB of actual content — the block overhead is not transferred.
-    Part("abstracts", ABSTRACT_CACHE_DIR, "*.json", 2),
     Part("llm", LLM_CACHE_DIR, "*.json", 1),
     Part("openalex", OA_CACHE_DIR, "*.json", 1),
     Part("openalex_xml", OA_XML_CACHE_DIR, "*", 0),
@@ -130,6 +132,17 @@ PARTS: dict[str, Part] = {p.name: p for p in [
     # nothing, and a single shard would re-upload all of it to share one new PDF.
     Part("pdfs", PDF_CACHE_DIR, "*", 1),
 ]}
+
+# The abstracts are not a directory any more (`shared/abstract_store.py`), so they
+# are not a shard-packed Part: the whole SQLite file goes up gzipped, and a pull
+# MERGES its rows into the local store rather than replacing the file. Merging is
+# what keeps a puller's own abstracts — and lets the unproven-miss rule drop
+# individual rows, which replacing a file could not do.
+ABSTRACTS_PART = "abstracts"
+_ABSTRACTS_REMOTE = "cache/abstracts/abstracts.sqlite.gz"
+
+PARTS[ABSTRACTS_PART] = Part(ABSTRACTS_PART, ABSTRACT_DB_PATH.parent, "", 0,
+                             sqlite=True)
 
 # Abstract-source namespaces (the `<ns>:<id>` prefix fetch_abstracts checkpoints
 # under) that need a credential, and the setting that grants it. A namespace absent
@@ -181,7 +194,7 @@ def _git_commit() -> str:
 def _shards_of(part: Part) -> dict[str, list[Path]]:
     """``{shard: [file, …]}`` for everything currently in *part*'s directory."""
     shards: dict[str, list[Path]] = {}
-    if not part.directory.exists():
+    if part.sqlite or not part.directory.exists():
         return shards
     for path in part.directory.glob(part.pattern):
         if path.is_file() and not path.name.endswith(".tmp"):
@@ -217,39 +230,15 @@ def pack_shard(files: Iterable[Path]) -> bytes:
 
 
 def abstract_source_evidence() -> dict[str, dict[str, int]]:
-    """``{namespace: {"hits": n, "misses": n}}`` over the abstract cache.
+    """``{namespace: {"hits": n, "misses": n}}`` — what each source actually recovered.
 
     What a pull needs to know is not whether the producing machine had an Elsevier
     key configured — entitlement is IP-bound, so a configured key can still be
     refused — but whether it ever actually got an abstract out of that source.
-    Zero hits and many misses is the signature of a machine that could not read it.
+    Zero hits alongside real misses is the signature of a machine that could not
+    read it. One grouped query now; it used to be ~478k file reads.
     """
-    evidence: dict[str, dict[str, int]] = {}
-    if not ABSTRACT_CACHE_DIR.exists():
-        return evidence
-    for path in ABSTRACT_CACHE_DIR.glob("*.json"):
-        namespace, abstract = _abstract_entry(path.read_bytes())
-        if namespace is None:
-            continue
-        counts = evidence.setdefault(namespace, {"hits": 0, "misses": 0})
-        counts["misses" if abstract in (None, _MISS) else "hits"] += 1
-    return evidence
-
-
-def _abstract_entry(payload: bytes) -> tuple[Optional[str], Optional[str]]:
-    """``(namespace, abstract)`` from one abstract cache file's bytes.
-
-    Returns ``(None, None)`` for anything unreadable — an entry we cannot classify
-    is one we neither count as evidence nor filter on.
-    """
-    try:
-        record = json.loads(payload.decode("utf-8"))
-        ident = str(record.get("ident") or "")
-    except Exception:  # noqa: BLE001 — a corrupt cache file is not a sync failure
-        return None, None
-    if ":" not in ident:
-        return None, None
-    return ident.split(":", 1)[0], record.get("abstract")
+    return abstract_store.source_evidence()
 
 
 def _unreliable_namespaces(manifest: Optional[dict]) -> set[str]:
@@ -261,10 +250,9 @@ def _unreliable_namespaces(manifest: Optional[dict]) -> set[str]:
     a recovered abstract regardless of who had the key, which is the whole point
     of sharing.
 
-    The misses-must-exist half is not redundant. Without it, a push that carried
-    no abstracts at all (`--parts llm`) reports zero hits everywhere, every gated
-    namespace reads as unreliable, and `_filter_checkpoint` would delete the
-    PULLER's own checkpoint lines over a source the pusher never touched.
+    The misses-must-exist half is not redundant: without it, a push that carried
+    no abstracts at all (`--parts llm`) reports zero hits everywhere and every
+    gated namespace would read as unreliable.
     """
     if not manifest:
         return set()
@@ -340,6 +328,8 @@ def push_cache(parts: list[Part], repo: Optional[str] = None,
     uploads: list[tuple[str, bytes]] = []
     hashes: dict[str, dict[str, str]] = {}
     for part in parts:
+        if part.sqlite:
+            continue
         shards = _shards_of(part)
         if not shards:
             log.info("Cache push: %s is empty locally — nothing to send", part.name)
@@ -356,6 +346,13 @@ def push_cache(parts: list[Part], repo: Optional[str] = None,
         log.info("Cache push: %s — %d file(s) in %d shard(s), %d to upload",
                  part.name, files, len(shards), changed)
 
+    abstracts_sent = False
+    if any(p.name == ABSTRACTS_PART for p in parts):
+        abstracts_sent = push_abstracts(api, hf, repo_id, known, dry_run)
+        digest = abstracts_digest()
+        if digest:
+            hashes[ABSTRACTS_PART] = {"db": digest}
+
     if not dry_run:
         if uploads:
             upload_batched(api, hf, repo_id, list(uploads), "Cache push",
@@ -367,9 +364,10 @@ def push_cache(parts: list[Part], repo: Optional[str] = None,
                                     indent=1).encode("utf-8"))],
                        "Cache manifest", FLORA_HF_COMMIT_BATCH)
 
-    log.info("Cache push%s: %d shard(s) uploaded to %s",
-             " (dry run)" if dry_run else "", len(uploads), repo_id)
-    return len(uploads)
+    log.info("Cache push%s: %d shard(s)%s uploaded to %s",
+             " (dry run)" if dry_run else "", len(uploads),
+             " + the abstract store" if abstracts_sent else "", repo_id)
+    return len(uploads) + (1 if abstracts_sent else 0)
 
 
 def _load_pull_state() -> dict[str, str]:
@@ -419,7 +417,12 @@ def pull_cache(parts: list[Part], repo: Optional[str] = None, dry_run: bool = Fa
 
     state = _load_pull_state()
     unpacked = 0
+    if any(p.name == ABSTRACTS_PART for p in parts):
+        if pull_abstracts(hf, repo_id, token, unreliable, dry_run) or dry_run:
+            unpacked += 1
     for part in parts:
+        if part.sqlite:
+            continue
         for shard, digest in sorted((manifest.get("parts") or {}).get(part.name, {}).items()):
             remote = _remote_shard(part, shard)
             if not force and state.get(remote) == digest:
@@ -439,11 +442,6 @@ def pull_cache(parts: list[Part], repo: Optional[str] = None, dry_run: bool = Fa
 
     if not dry_run:
         _save_pull_state(state)
-        # Only when the abstracts themselves were pulled: the checkpoint belongs to
-        # `search/fetch_abstracts.py`, and a pull of the LLM cache has no business
-        # rewriting it.
-        if unreliable and any(p.name == "abstracts" for p in parts):
-            _filter_checkpoint(unreliable)
 
     log.info("Cache pull%s: %d shard(s) from %s", " (dry run)" if dry_run else "",
              unpacked, repo_id)
@@ -492,31 +490,72 @@ def _unpack(part: Part, blob: bytes, unreliable: set[str]) -> None:
             handle = tar.extractfile(member)
             if handle is None:
                 continue
-            payload = handle.read()
-            if part.name == "abstracts" and unreliable:
-                namespace, abstract = _abstract_entry(payload)
-                if namespace in unreliable and abstract in (None, _MISS):
-                    continue
-            target.write_bytes(payload)
+            target.write_bytes(handle.read())
 
 
-def _filter_checkpoint(unreliable: set[str]) -> None:
-    """Drop this machine's checkpoint lines for namespaces whose misses we rejected.
+def push_abstracts(api, hf, repo_id: str, known: dict, dry_run: bool) -> bool:
+    """Upload the abstract store, gzipped. True when bytes went (or would go).
 
-    Skipping an unproven miss achieves nothing on its own: `_phase_targets` in
-    `search/fetch_abstracts.py` also skips any identifier in the checkpoint, so a
-    line left behind would keep the DOI out of the worklist and the abstract would
-    never be fetched. The two have to move together.
+    One file, not shards: the store is a single SQLite database, so there is
+    nothing to shard on. The cost of that is granularity — a push moves the whole
+    ~20 MB rather than one 110 KB shard — and it is the one axis on which this
+    layout is worse than the directory it replaced.
     """
-    if not CHECKPOINT_PATH.exists():
-        return
-    lines = CHECKPOINT_PATH.read_text(encoding="utf-8").splitlines()
-    kept = [ln for ln in lines if ln.split(":", 1)[0] not in unreliable]
-    if len(kept) == len(lines):
-        return
-    CHECKPOINT_PATH.write_text("\n".join(kept) + "\n", encoding="utf-8")
-    log.info("Reopened %d checkpointed identifier(s) in %s so this machine fetches "
-             "them itself", len(lines) - len(kept), ", ".join(sorted(unreliable)))
+    if not ABSTRACT_DB_PATH.exists():
+        log.info("Cache push: no abstract store at %s — nothing to send", ABSTRACT_DB_PATH)
+        return False
+    # Recent rows live in the write-ahead log until this folds them back in, and
+    # the upload reads the FILE — without it a push ships a store missing exactly
+    # the abstracts the run just recovered.
+    abstract_store.checkpoint_wal()
+    blob = gzip.compress(ABSTRACT_DB_PATH.read_bytes(), 6)
+    digest = cache_key(blob.hex())
+    rows, hits = abstract_store.count()
+    if known.get(ABSTRACTS_PART, {}).get("db") == digest:
+        log.info("Cache push: abstracts unchanged (%d rows, %d hits)", rows, hits)
+        return False
+    log.info("Cache push: abstracts — %d row(s), %d hit(s), %.1f MB packed",
+             rows, hits, len(blob) / 1e6)
+    if not dry_run:
+        upload_batched(api, hf, repo_id, [(_ABSTRACTS_REMOTE, blob)], "Abstract store",
+                       FLORA_HF_COMMIT_BATCH)
+    return True
+
+
+def abstracts_digest() -> Optional[str]:
+    """The hash of the local store as it would be uploaded, or None if absent."""
+    if not ABSTRACT_DB_PATH.exists():
+        return None
+    abstract_store.checkpoint_wal()
+    return cache_key(gzip.compress(ABSTRACT_DB_PATH.read_bytes(), 6).hex())
+
+
+def pull_abstracts(hf, repo_id: str, token: str, unreliable: set[str],
+                   dry_run: bool) -> int:
+    """Merge the remote abstract store into the local one. Returns rows written.
+
+    Rows are MERGED, never file-replaced: a puller's own abstracts survive, an
+    identifier already answered locally keeps its local answer, and an unproven
+    miss can be dropped row by row — none of which replacing the file allows.
+    """
+    blob = _download_shard(hf, repo_id, token, _ABSTRACTS_REMOTE)
+    if blob is None or dry_run:
+        return 0
+    with tempfile.TemporaryDirectory() as tmp:
+        remote_db = Path(tmp) / "remote.sqlite"
+        remote_db.write_bytes(gzip.decompress(blob))
+        connection = sqlite3.connect(remote_db)
+        try:
+            rows = [(ident, abstract) for ident, abstract in
+                    connection.execute("SELECT ident, abstract FROM abstracts")
+                    if not (abstract is None
+                            and ident.split(":", 1)[0] in unreliable)]
+        finally:
+            connection.close()
+    written = abstract_store.import_rows(rows)
+    log.info("Cache pull: abstracts — %d row(s) offered, %d new (the rest were "
+             "already answered locally)", len(rows), written)
+    return written
 
 
 def main() -> None:
@@ -526,9 +565,10 @@ def main() -> None:
             "a collaborator does not re-buy the LLM verdicts or re-crawl 500k "
             "abstracts. Entries are content-keyed, so a pulled answer is the answer "
             "this checkout would have computed, and a differing checkout misses."),
-        epilog=(f"Parts: {', '.join(sorted(PARTS))}. Repo id: --repo, else "
-                "FLORA_POOL_REPO from .env. Token: HF_TOKEN (the repo is private). "
-                "cache/pdfs is deliberately not shared."))
+        epilog=(f"Parts: {', '.join(sorted(PARTS))} — all directories of "
+                "content-keyed files except `abstracts`, which is one SQLite store "
+                "merged row-by-row on pull. Repo id: --repo, else FLORA_POOL_REPO "
+                "from .env. Token: HF_TOKEN (the repo is private)."))
     direction = parser.add_mutually_exclusive_group(required=True)
     direction.add_argument("--push", action="store_true",
                            help="Upload this machine's caches.")
