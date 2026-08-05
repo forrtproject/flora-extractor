@@ -179,7 +179,18 @@ SCREENING_MODEL_2 = "gpt-5.4-mini"
 # Linking (identify_targets_with_llm) — WHICH original does this paper re-test? One
 # model for all three rungs: the abstract, the reference list and the full text ask
 # the same question of different evidence.
-LINKING_MODEL = "gemini-3-flash-preview"
+#
+# Moved off gemini-3-flash-preview, which it inherited from the ladder rather than
+# from any measurement. The task is long-context retrieval — pick the right entries
+# out of ~80 keyed reference lines without confusing them — and that is the one axis
+# where the two models separate: gpt-5.4-mini wins MRCR v2 (8-needle), while Gemini 3
+# Flash's wins (GPQA, HLE, MMMU-Pro) are science-QA and multimodal, neither of which
+# this call does. Gemini is 1.5x cheaper and holds 1M tokens against 400K, but the
+# prompt is capped near 5k tokens (TARGET_ABSTRACT_CHARS and friends in prompts.py),
+# so neither advantage bites. Linking has never been scored against data/flora.csv —
+# it is the next thing to measure, and this choice is a benchmark inference until
+# then.
+LINKING_MODEL = "gpt-5.4-mini"
 
 # Outcome coding (extract/code_outcome.py) — WHAT was the outcome? Both the abstract
 # pass and the full-text escalation. The ladder this replaced tried OpenAI first here
@@ -193,16 +204,22 @@ OUTCOME_MODEL = "gpt-5.4-mini"
 # name this id, so changing it re-parses rather than mis-reads.
 PDF_PARSE_MODEL = "gemini-3-flash-preview"
 
-# Thinking level for the linking model (gemini-3-flash-preview accepts "minimal" or
-# "high"). Empty — the default — sends nothing and keeps the model's own default,
-# which is what every cached answer on disk was produced under. The redesign wants
-# this flipped to "minimal": thinking tokens are billed as output and dominate the
-# linking bill, but the flip must follow a quality spot-check on linking and outcome
-# coding, not precede it. It applies to LINKING_MODEL calls alone, and a non-empty
-# value is folded into every cache key naming that model (cache_model_id() in
-# shared/llm_client.py), so the two settings never share an answer.
-# Empty is the current decision, pending that spot-check; flipping it is a commit.
-LINKING_THINKING_LEVEL = ""
+# How hard the linking model is asked to think. One constant, not one per provider,
+# so it survives LINKING_MODEL being repointed: llm_client sends it as Gemini's
+# `thinkingLevel` or as OpenAI's/OpenRouter's `reasoning_effort`, whichever the id
+# routes to. Both vocabularies accept "minimal"/"low", "medium" and "high".
+#
+# Set explicitly rather than left to the provider default, because reasoning tokens
+# are billed as OUTPUT and are the whole cost risk of a reasoning model answering a
+# call whose visible answer is a small JSON. "medium" is the middle rung: linking is
+# a judgement call over a long list, so the screen's "low" is too little, and the
+# ladder's Gemini leg was effectively spending at the model's own default with no one
+# naming it.
+#
+# It applies to LINKING_MODEL calls alone, and a non-empty value is folded into every
+# cache key naming that model (cache_model_id() in shared/llm_client.py), so two
+# settings never share an answer.
+LINKING_EFFORT = "medium"
 
 # OpenRouter (OpenAI-compatible API at openrouter.ai). Nothing routes here by
 # default: it is reached only by a model id that names it — the pre-screen's two

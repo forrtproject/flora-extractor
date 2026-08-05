@@ -27,7 +27,7 @@ import requests
 from .config import (
     GEMINI_API_KEYS, PDF_PARSE_MODEL, SCREENING_MODEL_1, LINKING_MODEL,
     GEMINI_USE_FLEX, GEMINI_FLEX_TIMEOUT, GEMINI_PAID_KEY_SLOTS, GEMINI_RATE_SEC,
-    LINKING_THINKING_LEVEL,
+    LINKING_EFFORT,
     LLM_CACHE_DIR,
     OPENAI_API_KEY, OPENAI_RATE_SEC,
     OPENAI_USE_FLEX, OPENAI_FLEX_TIMEOUT,
@@ -186,32 +186,37 @@ def _gemini_post(url: str, payload: dict, key_idx: int, base_timeout: int):
 
 
 # ── Gemini thinking level ─────────────────────────────────────────────────────
-# thinkingLevel is a spend lever on the heavy model — thinking tokens are billed as
-# output — but unlike flex it changes the answer, so it cannot be switched on
+# How hard a model is asked to think is a spend lever — reasoning tokens are billed
+# as output — but unlike flex it changes the answer, so it cannot be switched on
 # silently over a cache full of answers produced without it. Two functions keep the
-# request and the cache key in step: thinking_level() decides what is sent, and
-# cache_model_id() is the ONLY way a Gemini model string enters a cache key. Fold it
-# in one place and no call site can forget it.
+# request and the cache key in step: effort_for() decides what is sent, and
+# cache_model_id() is the ONLY way a model string enters a cache key. Fold it in one
+# place and no call site can forget it.
+#
+# The setting is one constant per call site, not one per provider, so it survives a
+# model being repointed: each provider is sent the same intent under its own name —
+# Gemini's `thinkingLevel`, OpenAI's and OpenRouter's `reasoning_effort`. Only the
+# linking call has one today; the screen passes its own "low" at the call site.
 
-def thinking_level(model: str) -> str:
-    """The thinkingLevel to send for *model* — set only for the heavy model.
+def effort_for(model: str) -> str:
+    """The reasoning effort to send for *model* — set only where a constant names one.
 
-    The heavy model is where the thinking bill is, and the only Gemini model whose
-    answers are keyed through cache_model_id(). The PDF and image calls do not consult
-    this at all: they are cached by GROBID filenames that name the bare model string,
-    so a level applied there would not be named by the key that stores the answer.
+    Linking is where the thinking bill is, and the only model whose answers are keyed
+    through cache_model_id(). The PDF and image calls do not consult this at all: they
+    are cached by GROBID filenames that name the bare model string, so an effort
+    applied there would not be named by the key that stores the answer.
     """
-    return LINKING_THINKING_LEVEL if (LINKING_THINKING_LEVEL and model == LINKING_MODEL) else ""
+    return LINKING_EFFORT if (LINKING_EFFORT and model == LINKING_MODEL) else ""
 
 
 def cache_model_id(model: str) -> str:
-    """The model string as a cache key names it — with any active thinking level.
+    """The model string as a cache key names it — with any active reasoning effort.
 
-    An answer produced at thinking_level=minimal is a different answer from one
-    produced at the model's default, so the two must not share a cache entry.
+    An answer produced at effort=minimal is a different answer from one produced at
+    the model's default, so the two must not share a cache entry.
     """
-    level = thinking_level(model)
-    return f"{model}@thinking={level}" if level else model
+    effort = effort_for(model)
+    return f"{model}@effort={effort}" if effort else model
 
 
 # ── Gemini (primary) ──────────────────────────────────────────────────────────
@@ -247,7 +252,7 @@ def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL) -> tuple[Optional[dic
         },
     }
 
-    level = thinking_level(model)
+    level = effort_for(model)
     if level:
         # thinkingLevel (gemini-3): "minimal" buys back most of the output bill on
         # the heavy model. Safe alongside responseMimeType, unlike thinkingBudget:0.
@@ -472,13 +477,17 @@ def call_openai(prompt: str, model: str,
 
 # ── OpenRouter (OpenAI-compatible alternative LLMs) ──────────────────────────
 
-def call_openrouter(prompt: str, model: str) -> tuple[Optional[dict], str]:
+def call_openrouter(prompt: str, model: str,
+                    reasoning_effort: str = "") -> tuple[Optional[dict], str]:
     """
     Call any model available on OpenRouter via the OpenAI-compatible API.
 
     model — OpenRouter model ID e.g. "qwen/qwen3-30b-a3b". Required: OpenRouter is
             only ever reached by a caller that named a model living there, so there
             is no house default to fall back on.
+    reasoning_effort — passed through only when set, as on OpenAI direct. A model
+            that does not reason ignores it; sending nothing keeps the old behaviour
+            for the pre-screen's two voters.
 
     Returns (result_dict_or_None, error_description).
     """
@@ -492,6 +501,7 @@ def call_openrouter(prompt: str, model: str) -> tuple[Optional[dict], str]:
     )
 
     use_model = model
+    extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
     try:
         _throttle("openrouter")
         response = client.chat.completions.create(
@@ -502,6 +512,7 @@ def call_openrouter(prompt: str, model: str) -> tuple[Optional[dict], str]:
             ],
             response_format={"type": "json_object"},
             max_tokens=JSON_MAX_OUTPUT_TOKENS,
+            **extra,
         )
         if response.choices[0].finish_reason == "length":
             log.warning("OpenRouter response hit the %d-token cap and was cut off — "
@@ -548,20 +559,23 @@ def call_model(prompt: str, model: str, *,
                reasoning_effort: str = "") -> tuple[Optional[dict], str, str]:
     """One JSON call to *model*, on whichever provider serves it.
 
-    reasoning_effort is passed through where the provider accepts it (OpenAI) and
-    ignored elsewhere, so a call site can ask for a cheap short answer without
-    knowing who will serve it.
+    How hard the model thinks comes from one of two places, and the caller's wins:
+    an explicit reasoning_effort (the screen's "low"), or effort_for(model), which is
+    the constant that names an effort for this call site. Whichever it is reaches the
+    provider under its own name — Gemini's thinkingLevel is set inside call_gemini,
+    which reads the same effort_for(), so a Gemini id and an OpenAI id under the same
+    constant are asked to think alike.
 
     Returns (result_dict_or_None, provider, error_description).
     """
     provider = provider_for(model)
+    effort = reasoning_effort or effort_for(model)
     if provider == "gemini":
         result, err = call_gemini(prompt, model=model)
     elif provider == "openrouter":
-        result, err = call_openrouter(prompt, model=model)
+        result, err = call_openrouter(prompt, model=model, reasoning_effort=effort)
     else:
-        result, err = call_openai(prompt, model=model,
-                                  reasoning_effort=reasoning_effort)
+        result, err = call_openai(prompt, model=model, reasoning_effort=effort)
     return result, provider, err
 
 

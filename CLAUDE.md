@@ -248,8 +248,10 @@ key = content_key("outcome", doi_r, prompt_version("build_outcome_prompt"),
 ```
 
 A model reaches a key only through `cache_model_id()`, which appends any active
-`LINKING_THINKING_LEVEL` — a thinking level changes the answer, so the two settings
-never share a cache entry.
+reasoning effort (`LINKING_EFFORT`) — how hard a model thinks changes its answer, so
+the two settings never share a cache entry. That constant is one per call site rather
+than one per provider, and `llm_client` sends it under whichever name the id routes
+to: Gemini's `thinkingLevel`, OpenAI's and OpenRouter's `reasoning_effort`.
 
 `prompt_version(name)` hashes the prompt text plus every spliced fragment — editing a
 prompt invalidates exactly its caches, nothing to register. Cache non-answers too (a
@@ -366,7 +368,7 @@ FLORA_CACHE_DIR=                # move cache/ to an SSD; FLORA_POOL_DIR does the
 ```
 
 Constants are **not env vars anywhere** — see code-style rule 8. Every model id,
-`LINKING_THINKING_LEVEL` and `CURATED_SOURCES` are in `shared/config.py` — one place
+`LINKING_EFFORT` and `CURATED_SOURCES` are in `shared/config.py` — one place
 that answers "what graded this row"; `PRESCREEN_MIN_ABSTRACT_CHARS` in
 `shared/prescreen.py`;
 `OUTCOME_FULLTEXT_ESCALATION` in `extract/code_outcome.py`; the dry run's price list in
