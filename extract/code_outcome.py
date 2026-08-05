@@ -43,7 +43,7 @@ from shared.config import LLM_CACHE_DIR, OUTCOME_MODEL, log
 OUTCOME_FULLTEXT_ESCALATION = True
 from shared import token_counter
 from shared.cache import content_key, read_cache, write_cache
-from shared.llm_client import cache_model_id, call_openai
+from shared.llm_client import cache_model_id, call_model
 from shared.prompts import (
     build_outcome_prompt, build_repro_outcome_prompt, prompt_version,
 )
@@ -233,7 +233,7 @@ def _keyword_scan(text: str, source: str) -> Optional[dict]:
 def _call_outcome_llm(prompt: str, doi_r: str) -> tuple[Optional[dict], str]:
     """Call OUTCOME_MODEL with up to 3 retries and exponential backoff.
 
-    call_openai reports provider failure by returning None rather than by raising, so
+    call_model reports provider failure by returning None rather than by raising, so
     the backoff is applied on the None path; keeping it in the except arm alone
     meant three outer retries — nine provider attempts — fired back to back with no
     delay at all, which is exactly how a rate-limited provider stays rate-limited.
@@ -245,7 +245,7 @@ def _call_outcome_llm(prompt: str, doi_r: str) -> tuple[Optional[dict], str]:
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            result, err = call_openai(prompt, model=OUTCOME_MODEL)
+            result, _provider, err = call_model(prompt, OUTCOME_MODEL)
             if result:
                 return result, OUTCOME_MODEL
         except TokenBudgetExhausted:

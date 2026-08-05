@@ -13,7 +13,7 @@ from extract.code_outcome import extract_outcome
 class TestNoLlmExtractOutcome:
     def test_no_llm_skips_llm_and_returns_cannot_be_determined_when_no_keyword(self):
         """With no_llm=True and no keyword match, returns cannot_be_determined without calling LLM."""
-        with patch("extract.code_outcome.call_openai") as mock_llm:
+        with patch("extract.code_outcome.call_model") as mock_llm:
             result = extract_outcome(
                 "10.1234/test",
                 abstract_r="We conducted a study across multiple labs.",

@@ -112,8 +112,8 @@ rows get it is a Stage 2 routing decision — the rule book sends a row to the
 and budget-gated. It is described here because its verdicts land in Stage 3's CSV.
 There is no global on/off, deliberately: a flag would apply the cheap gate to rows the
 rule book routed to the expensive tier. Two very small models
-(`PRESCREEN_VOTER1_MODEL`, `PRESCREEN_VOTER2_MODEL`, both OpenRouter by default) are
-asked one question with one field of answer; voter 2 is asked only when voter 1 said
+(`PRESCREEN_MODEL_1`, `PRESCREEN_MODEL_2` in `shared/config.py`, both OpenRouter
+ids by default) are asked one question with one field of answer; voter 2 is asked only when voter 1 said
 "no", because once the row can no longer be discarded a second opinion changes nothing.
 The tier may only DISCARD, and only on two explicit noes — one keep, an unrecognised
 label, an unreadable reply or a provider failure all pass the row through to the screen
@@ -126,9 +126,9 @@ writes `link_method = prescreen_discard`, is quarantined by `sanity_check` to it
 `data/prescreen_discard.csv`, and is reopened by `--rescreen`.
 Evidence: `analysis/prescreen_eval/REPORT.md`.
 
-**Front-door screen** (`classify_replication()`): two voters — Gemini
-(`GEMINI_LIGHT_MODEL`) and `SCREEN_VOTER2_MODEL` (default `gpt-5.4-mini`; an id with
-`/` routes to OpenRouter, otherwise OpenAI direct) — each answer the validated v3.2
+**Front-door screen** (`classify_replication()`): two voters — `SCREENING_MODEL_1`
+(default `gemini-3.5-flash-lite`) and `SCREENING_MODEL_2` (default `gpt-5.4-mini`);
+each id routes to its own provider through `provider_for()` — each answer the validated v3.2
 schema: `classification` ∈ {replication, reproduction, both, none, unclear}, boolean
 `confident`, `categories` (11-value enum), `evidence_quote`, `reasoning`. Prompt:
 `_CLASSIFY_PROMPT` in `shared/prompts.py`, now at v3.3 — v3.2 plus the
@@ -241,12 +241,12 @@ for an LLM call: the prompt version, the model, and the inputs sent:
 
 ```python
 key = content_key("outcome", doi_r, prompt_version("build_outcome_prompt"),
-                  GEMINI_MODEL, prompt)
+                  cache_model_id(OUTCOME_MODEL), prompt)
 ```
 
-A Gemini model reaches a key only through `cache_model_id()` (via
-`ladder_fingerprint()`), which appends any active `GEMINI_THINKING_LEVEL` — a
-thinking level changes the answer, so the two settings never share a cache entry.
+A model reaches a key only through `cache_model_id()`, which appends any active
+`LINKING_THINKING_LEVEL` — a thinking level changes the answer, so the two settings
+never share a cache entry.
 
 `prompt_version(name)` hashes the prompt text plus every spliced fragment — editing a
 prompt invalidates exactly its caches, nothing to register. Cache non-answers too (a
@@ -259,15 +259,25 @@ Log with DOI, retry 3× with backoff (1s/2s/4s), then set the field to `api_erro
 continue — never crash the pipeline. A transient failure must never be checkpointed as
 a definitive miss.
 
-**One model per call site, and no fallback.** `call_gemini()`, `call_openai()` and
-`call_openrouter()` each take their model as a required argument; the constant naming
-it (`GEMINI_HEAVY_MODEL` for linking, `OUTCOME_MODEL` for outcome coding, the screen's
-and pre-screen's voter pairs) is the only model that can answer that call. Retries are
-against the same model; when they are exhausted the row records the failure. A
-provider ladder used to run Gemini → OpenAI → OpenRouter, which made an outage
-invisible — the row got an answer from a model no evaluation covered, and the cache
-key had to over-name every model that might have produced it. Any fallback is now an
-explicit decision at the call site.
+**One model per call site, and no fallback.** Every model the pipeline calls is a
+constant in `shared/config.py`, named for the QUESTION it answers rather than the
+vendor serving it: `PRESCREEN_MODEL_1`/`_2`, `SCREENING_MODEL_1`/`_2`, `LINKING_MODEL`,
+`OUTCOME_MODEL`, `PDF_PARSE_MODEL`. That constant is the only model that can answer
+its call. Retries are against the same model; when they are exhausted the row records
+the failure. A provider ladder used to run Gemini → OpenAI → OpenRouter, which made an
+outage invisible — the row got an answer from a model no evaluation covered, and the
+cache key had to over-name every model that might have produced it. Any fallback is
+now an explicit decision at the call site.
+
+**The provider follows the model id**, through `provider_for()` in `llm_client`: a
+"/" means OpenRouter, a leading `gemini` means Google, anything else OpenAI direct.
+`call_model(prompt, model)` dispatches on it — a dispatcher, not a ladder: it picks
+the ONE provider that can serve the named model, and when that provider fails the
+call fails. Nothing may hardcode "this call site goes to Gemini", or swapping a
+constant across vendors becomes a 404 from the wrong API. The one exception is
+`PDF_PARSE_MODEL`: the document calls build a Gemini request body with no
+OpenAI-compatible equivalent, and `llm_client` refuses to import if that constant
+routes elsewhere.
 
 **Never let a swallowed error become an empty result.** A rate-limit 429 caught and
 turned into `return []` is indistinguishable downstream from a genuine "no
@@ -305,9 +315,11 @@ report, a commit message or a decision is read off the artifact.
 8. Two kinds of configurable value. A **constant** — model ids, thresholds, prices,
    closed vocabularies — is a plain Python value with no `os.getenv`: it decides what
    the pipeline concludes, so it is changed by a commit, not by a machine. It lives
-   with the code it governs (the pre-screen's voters in `shared/prescreen.py`, the dry
-   run's prices in `filter/engine/tiers.py`); only constants with several consumers
-   stay in `shared/config.py`. A **tunable** — rate limit, batch size, timeout, path —
+   with the code it governs (the dry run's prices in `filter/engine/tiers.py`); only
+   constants with several consumers stay in `shared/config.py`. **Model ids are the
+   exception and all live in `shared/config.py`**, named for the question each
+   answers — the set of models is the one thing a reader needs whole to know what
+   graded a row, and scattering it across the modules that call them hid that. A **tunable** — rate limit, batch size, timeout, path —
    is `os.getenv` with a default and always lives in `shared/config.py`, which is the
    whole `.env` surface in one file. If an override could make two collaborators grade
    the same row differently, it is a constant. LLM rate
@@ -335,7 +347,7 @@ and its rationale belong together in one committed place. Key variables:
 RESEARCHER_EMAIL=...            # required: OpenAlex/CrossRef politeness headers
 GEMINI_API_KEY=...              # required
 OPENAI_API_KEY=...              # required for Stage 3 (default screen voter 2)
-OPENROUTER_API_KEY=...          # only if SCREEN_VOTER2_MODEL contains "/"
+OPENROUTER_API_KEY=...          # only if SCREENING_MODEL_2 contains "/"
 OPENAI_DAILY_TOKEN_BUDGET=8000000   # 0 disables the cap
 GEMINI_USE_FLEX=true            # 50% discount on paid keys; flex uses GEMINI_FLEX_TIMEOUT
 OPENAI_USE_FLEX=true            # same trade on OpenAI; refused flex falls back to standard
@@ -344,9 +356,10 @@ EXTRACT_WORKERS=4               # Stage 3 rows in flight at once; 1 = no pool
 FLORA_CACHE_DIR=                # move cache/ to an SSD; FLORA_POOL_DIR does the same
 ```
 
-Constants are **not env vars anywhere** — see code-style rule 8. Model ids,
-`GEMINI_THINKING_LEVEL` and `CURATED_SOURCES` are in `shared/config.py`; the
-pre-screen's voters and threshold in `shared/prescreen.py`;
+Constants are **not env vars anywhere** — see code-style rule 8. Every model id,
+`LINKING_THINKING_LEVEL` and `CURATED_SOURCES` are in `shared/config.py` — one place
+that answers "what graded this row"; `PRESCREEN_MIN_ABSTRACT_CHARS` in
+`shared/prescreen.py`;
 `OUTCOME_FULLTEXT_ESCALATION` in `extract/code_outcome.py`; the dry run's price list in
 `filter/engine/tiers.py`; `SNAPSHOT_POOL_COMPRESSION` in `search/snapshot_scan.py`.
 

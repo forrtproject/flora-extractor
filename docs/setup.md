@@ -21,13 +21,13 @@ Edit `.env` and fill in at minimum:
 ```bash
 RESEARCHER_EMAIL=you@example.com   # for OpenAlex / Crossref politeness headers
 GEMINI_API_KEY=...                 # from https://aistudio.google.com
-OPENAI_API_KEY=...                 # Stage 3's second screen voter (default SCREEN_VOTER2_MODEL)
+OPENAI_API_KEY=...                 # Stage 3's second screen voter (default SCREENING_MODEL_2)
 ```
 
 **Only Stage 3 enforces anything.** `_check_screen_providers()` in
 `extract/run_extract.py` refuses to start unless *both* front-door screen voters have
 their key (that is `GEMINI_API_KEY` plus whichever of `OPENAI_API_KEY` /
-`OPENROUTER_API_KEY` the configured `SCREEN_VOTER2_MODEL` needs) — `--no-llm`
+`OPENROUTER_API_KEY` the configured `SCREENING_MODEL_2` needs) — `--no-llm`
 skips the check. Nothing else validates: an unset variable simply takes the default in
 `shared/config.py`, so a missing `RESEARCHER_EMAIL` silently falls back to
 `research@example.com`. Check `.env` against `.env.example` rather than relying on an
@@ -142,8 +142,8 @@ See `.env.example` for the full list with descriptions. Key variables:
 | `RESEARCHER_EMAIL` | Yes | Politeness header for APIs |
 | `GEMINI_API_KEY` | Yes | Primary LLM |
 | `GEMINI_API_KEY_2..N` | No | Key rotation for higher quota |
-| `OPENAI_API_KEY` | Stage 3 | Second voter of the front-door screen with the default `SCREEN_VOTER2_MODEL`; also `OUTCOME_MODEL`, which codes every outcome |
-| `OPENROUTER_API_KEY` | No | Only reached by a model id that names it: the pre-screen's two voters, and `SCREEN_VOTER2_MODEL` when it contains a `/` |
+| `OPENAI_API_KEY` | Stage 3 | Second voter of the front-door screen with the default `SCREENING_MODEL_2`; also `OUTCOME_MODEL`, which codes every outcome |
+| `OPENROUTER_API_KEY` | No | Only reached by a model id that names it: the pre-screen's two voters, and `SCREENING_MODEL_2` when it contains a `/` |
 | `SUPABASE_URL` | No | Validation monitoring tab |
 | `SUPABASE_SERVICE_KEY` | No | Validation monitoring tab |
 | `GROBID_URL` | No | PDF reference extraction. **Code default is the public server `https://kermitt2-grobid.hf.space`**; `.env.example` sets `http://localhost:8070`. See the GROBID section above |
@@ -151,10 +151,13 @@ See `.env.example` for the full list with descriptions. Key variables:
 | `OPENAI_USE_FLEX` / `OPENAI_FLEX_TIMEOUT` | No | Same trade on OpenAI; a request flex will not serve falls back to standard tier |
 
 Model ids are **constants, not env vars** (`shared/config.py`, code-style rule 8):
-`GEMINI_MODEL`, `GEMINI_LIGHT_MODEL`, `GEMINI_HEAVY_MODEL`, `OUTCOME_MODEL`,
-`SCREEN_VOTER2_MODEL`, `GEMINI_THINKING_LEVEL`, and the pre-screen's pair in
-`shared/prescreen.py`. Each names one call site and answers it alone — a call that
-fails is reported as a failure, never retried against another model.
+`PRESCREEN_MODEL_1`/`_2`, `SCREENING_MODEL_1`/`_2`, `LINKING_MODEL`,
+`OUTCOME_MODEL`, `PDF_PARSE_MODEL`, `LINKING_THINKING_LEVEL`. Each is named for the
+QUESTION it answers rather than the vendor that serves it, and answers its call site
+alone — a call that fails is reported as a failure, never retried against another
+model. The provider follows the model id through `provider_for()`, so swapping one
+across vendors is a one-line change; `PDF_PARSE_MODEL` is the exception, because the
+document calls build a Gemini request body that has no OpenAI-compatible equivalent.
 
 ## Cache
 
