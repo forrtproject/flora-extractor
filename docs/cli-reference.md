@@ -462,7 +462,7 @@ replication that FLoRA already has. The skip list is the union of two sources:
 | Source | Rows skipped |
 | ------ | ------------ |
 | `data/FLoRA entry sheet - replication list.csv` | rows whose `validation_status` is `validated - unchanged`, `validated - changed`, `validated - chosen`, or `validated - discarded` |
-| `data/flora.csv` | **every** row (`doi_r` and `doi_r_alt`) — the published database, so all of it is already in FLoRA |
+| `data/flora.csv` | **every** row (`doi_r` and `alt_identifier_r`) — the published database, so all of it is already in FLoRA |
 
 Statuses still in flight (`help needed`, `on hold`, `awaiting validation`, blank) are
 **not** skipped — those genuinely need the pipeline. Pass `--no-skip-flora-validated`

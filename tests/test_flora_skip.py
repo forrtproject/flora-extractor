@@ -52,9 +52,9 @@ def test_unvalidated_statuses_not_skipped(tmp_path):
 def test_flora_csv_skipped_wholesale(tmp_path):
     """flora.csv has no validation_status — everything in it is already in FLoRA."""
     flora = _flora(tmp_path, [
-        {"doi_r": "10.2/a", "doi_r_alt": ""},
-        {"doi_r": "10.2/b", "doi_r_alt": "10.2/b-alt"},
-        {"doi_r": "",       "doi_r_alt": ""},
+        {"doi_r": "10.2/a", "alt_identifier_r": ""},
+        {"doi_r": "10.2/b", "alt_identifier_r": "10.2/b-alt"},
+        {"doi_r": "",       "alt_identifier_r": ""},
     ])
     assert load_flora_skip_dois(None, flora) == {"10.2/a", "10.2/b", "10.2/b-alt"}
 
@@ -64,7 +64,7 @@ def test_both_sources_are_unioned(tmp_path):
         {"doi_r": "10.1/chosen", "validation_status": "validated - chosen"},
         {"doi_r": "10.1/blank",  "validation_status": ""},
     ])
-    flora = _flora(tmp_path, [{"doi_r": "10.2/a", "doi_r_alt": ""}])
+    flora = _flora(tmp_path, [{"doi_r": "10.2/a", "alt_identifier_r": ""}])
     assert load_flora_skip_dois(sheet, flora) == {"10.1/chosen", "10.2/a"}
 
 
@@ -81,10 +81,10 @@ def test_an_osf_record_named_only_by_url_is_still_skipped(tmp_path):
     paper in `doi_r` and the individual replication's OSF page in `url_r`, so a
     DOI-keyed skip list re-extracts every one of them."""
     flora = _flora(tmp_path, [
-        {"doi_r": "10.1126/science.aac4716", "doi_r_alt": "",
+        {"doi_r": "10.1126/science.aac4716", "alt_identifier_r": "",
          "url_r": "https://osf.io/su6bm"},
-        {"doi_r": "", "doi_r_alt": "", "url_r": "http://osf.io/XSE7Q/"},
-        {"doi_r": "", "doi_r_alt": "", "url_r": "https://example.com/paper"},
+        {"doi_r": "", "alt_identifier_r": "", "url_r": "http://osf.io/XSE7Q/"},
+        {"doi_r": "", "alt_identifier_r": "", "url_r": "https://example.com/paper"},
     ])
     got = load_flora_skip_dois(None, flora)
     assert "10.17605/osf.io/su6bm" in got

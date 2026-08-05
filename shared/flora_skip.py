@@ -127,7 +127,10 @@ def load_flora_skip_dois(sheet_path=None, flora_path=None) -> set:
         FLORA_VALIDATED_STATUSES; every other status is still being worked on.
       * flora.csv — the published FLoRA database. It has no validation_status
         column because every row in it is by definition already in FLoRA, so
-        doi_r and doi_r_alt are skipped unconditionally.
+        doi_r and alt_identifier_r are skipped unconditionally. (fred-data
+        renamed that column from `doi_r_alt` after 2026-07; only the current
+        spelling is read, so a stale local copy contributes its primary DOIs
+        and nothing else rather than failing loudly.)
 
     Both sources also contribute the OSF records they name by URL, as the DOI
     those URLs resolve to (`_osf_doi_keys()`) — FLoRA identifies an OSF record
@@ -163,7 +166,7 @@ def load_flora_skip_dois(sheet_path=None, flora_path=None) -> set:
             try:
                 df = pd.read_csv(p, dtype=str, encoding="utf-8-sig").fillna("")
                 found = set()
-                for col in ("doi_r", "doi_r_alt"):
+                for col in ("doi_r", "alt_identifier_r"):
                     if col in df.columns:
                         found |= {clean_doi(d) for d in df[col] if str(d).strip()}
                 found |= _osf_doi_keys(df)

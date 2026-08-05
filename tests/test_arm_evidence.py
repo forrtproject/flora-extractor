@@ -58,7 +58,7 @@ def env(tmp_path) -> dict:
                    pool / "part-0002.parquet")
 
     flora = tmp_path / "flora.csv"
-    flora.write_text("doi_r,doi_r_alt\n10.1/a,\n10.1/c,\n10.1/d,\n10.1/zz,\n",
+    flora.write_text("doi_r,alt_identifier_r\n10.1/a,\n10.1/c,\n10.1/d,\n10.1/zz,\n",
                      encoding="utf-8")
 
     negatives = tmp_path / "not_a_replication.csv"

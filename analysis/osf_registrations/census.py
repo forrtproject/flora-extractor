@@ -38,7 +38,8 @@ def main(overlay_dir: Path, worklist_path: Path) -> int:
     # flora.csv), and `_osf_doi_keys()` is the one place that mapping lives.
     flora = pd.read_csv(BASE_DIR / "data" / "flora.csv", low_memory=False)
     flora_dois = {clean_doi(str(d))
-                  for column in ("doi_r", "doi_r_alt", "doi_o", "doi_o_alt")
+                  for column in ("doi_r", "alt_identifier_r", "doi_o",
+                                 "alt_identifier_o")
                   for d in flora[column].dropna()}
     flora_dois |= _osf_doi_keys(flora)
 
