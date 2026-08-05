@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FLoRA Extractor — Handover &amp; Next Steps (2026-08-04)</title>
+<title>FLoRA Extractor — Handover &amp; Next Steps (updated 2026-08-05)</title>
 <style>
   :root { --ink:#1a1a1a; --muted:#585858; --accent:#0b5d4f; --rule:#d8d4cc; --bg:#faf9f6; --card:#ffffff; --warn:#8a4b08; }
   * { box-sizing:border-box; }
@@ -35,10 +35,10 @@
 <main>
 
 <h1>FLoRA Extractor — Handover &amp; Next Steps</h1>
-<p class="sub">State as of 2026-08-04, covering the work since ~2026-07-25. Written for the returning maintainer: conceptual changes and pending decisions up front, PR history for the details.</p>
+<p class="sub">Updated 2026-08-05 after the first end-to-end run and the reviewer comments on the 2026-08-04 draft. Covers the work since ~2026-07-25: conceptual changes, the data architecture, and what comes next — PR history holds the details.</p>
 
 <h2>1. The one-paragraph summary</h2>
-<p>The pipeline was inverted. Ten days ago it searched APIs by keyword, filtered candidates down with a second keyword pass plus an LLM filter, and extracted from whatever survived. Today it scans the <em>entire</em> OpenAlex snapshot once (510M works → a 5.1M-row survivor pool), routes that pool with a declarative, measured rule engine whose principle is <strong>"rules route and discard; only LLMs admit"</strong>, and runs a redesigned Stage 3 built around a validated two-voter screen, a single merged target prompt, one row per original paper, and separate outcome vocabularies for replications and reproductions. Every prompt and rule now carries an explicit evidence status — measured, structurally justified, or shadow pending measurement. <strong>Nothing has been spent on screening the pool yet</strong> — the first paid run is waiting on your go-ahead, after a fresh routing (§6, decision 1; the superseded pre-#162 sizing came to ~$152 all-in).</p>
+<p>The pipeline was inverted, and it has now run end to end. Ten days ago it searched APIs by keyword, filtered candidates down with a second keyword pass plus an LLM filter, and extracted from whatever survived. Today it scans the <em>entire</em> OpenAlex snapshot once (510M works → a 5.1M-row survivor pool), routes that pool with a declarative, measured rule engine whose principle is <strong>"rules route and discard; only LLMs admit"</strong>, and runs a redesigned Stage 3 built around a validated two-voter screen, a single merged target prompt, one row per original paper, and separate outcome vocabularies for replications and reproductions. Every rule now carries an explicit evidence status — measured, structurally justified, or shadow pending measurement — which will allow us to shrink the pending pile incrementally. On 2026-08-04/05 the whole loop ran for real: route → screen (every admitted work now carries a verdict) → handoff → Stage 3 over 1,837 works, ≈$5.30 actual LLM spend. The loop works; the job from here is growing the rule book tranche by tranche (§6).</p>
 
 <h2>2. The pipeline today</h2>
 <pre><code>Stage 1: search/        → SEARCHES only              → survivor pool (parquet, ~5.1M rows)
@@ -49,118 +49,142 @@ Stage 4: validate/      → read-only dashboard        → (no CSV output)
 python -m search.run_search --scan                             # Stage 1 (snapshot scan)
 python -m filter.engine route                                  # Stage 2: routing release
 python -m filter.engine screen --tier screen_expensive --run   # Stage 2: claimed LLM tier
-python -m filter.engine handoff --out data/filtered.csv        # Stage 2 → Stage 3
-python -m extract.run_extract                                  # Stage 3
+python -m filter.engine handoff --out data/filtered.csv        # Stage 2 → Stage 3 (screened-only by default)
+python -m extract.run_extract                                  # Stage 3 (resumes by default; --fresh restarts)
 python -m extract.csv_to_db                                    # push to Supabase validation
 </code></pre>
-<p>Key artifacts and where they live:</p>
+<p class="small">All commands assume the repo's virtualenv is active (<code>source .venv/bin/activate</code>, or call <code>.venv/bin/python</code> directly) — macOS ships no bare <code>python</code>, so a fresh shell without the venv will report "command not found". Setup: <code>docs/setup.md</code>.</p>
+
+<h2>3. Data architecture — where everything lives, and how it is shared</h2>
+<p>There are <strong>four sharing channels</strong>, each carrying a different kind of thing. Everything else is local and disposable.</p>
 <table>
-<tr><th>Artifact</th><th>What it is</th></tr>
-<tr><td><code>cache/snapshot_pool/</code> (parquet)</td><td>Stage 1's corpus — everything the search gate admitted from the snapshot. Shared between machines via a private HF dataset (<code>search.pool_sync --push/--pull</code>). <code>data/candidates.csv</code> is retired.</td></tr>
-<tr><td><code>filter/spec/*.json</code></td><td>The Stage 2 rule book: declarative specs routed by precedence into piles (<code>discard</code> / <code>screen_expensive</code> / <code>screen_cheap</code> / <code>needs_human</code> / <code>pending</code>). Policy: <code>filter/spec/CONVENTIONS.md</code>; design: <code>docs/filter-engine.md</code>.</td></tr>
-<tr><td>DuckDB store + Supabase Postgres</td><td>The engine's state: routing releases in DuckDB; claims, permanent verdicts and audit in Postgres (<code>db/migrations/</code> — SQL you run; to my knowledge it has not yet been executed against a live instance, but <strong>check the live schema before applying</strong> rather than trusting this note).</td></tr>
-<tr><td><code>data/filtered.csv</code> → <code>data/extracted.csv</code></td><td>The filenames and the schema authority (<code>shared/schema.py</code>) are unchanged, but the schema itself grew: reproduction-axis outcome fields, full-text provenance (<code>pdf_source</code>/<code>parse_method</code>), per-outcome model attribution, revised screen fields, and <code>study_r</code> now meaning "which study of the replication" (§3).</td></tr>
+<tr><th>Channel</th><th>Carries</th><th>Access</th></tr>
+<tr><td><strong>HuggingFace</strong> (private dataset repo)</td><td>The survivor pool (parquet) and the raw LLM response blobs</td><td><code>FLORA_POOL_REPO</code> + <code>HF_TOKEN</code> in <code>.env</code>; <code>python -m search.pool_sync --push/--pull</code></td></tr>
+<tr><td><strong>Supabase Postgres</strong></td><td>The one <em>mutable shared authority</em>: routing-release registry, claims, permanent verdicts, human labels, audit log, validation lineage — plus the validation tables Stage 3 exports into</td><td><code>SUPABASE_URL</code> + <code>SUPABASE_SERVICE_KEY</code></td></tr>
+<tr><td><strong>Cloudflare R2</strong> (via DVC)</td><td>Two legacy multi-GB zips (<code>data/candidates.zip.dvc</code>, <code>data/filtered.zip.dvc</code>) — pre-engine history, not part of the live loop</td><td><code>.dvc/config</code>; credentials in untracked <code>.dvc/config.local</code></td></tr>
+<tr><td><strong>git</strong> (<code>data/</code> is tracked)</td><td>Small pipeline artifacts: <code>extracted.csv</code>, every set-aside CSV, <code>flora.csv</code> (gold), <code>validated_skip.csv</code>, <code>filtered.csv.manifest.json</code>, <code>data/dashboard/stats.json</code></td><td>the repo</td></tr>
 </table>
 
-<h2>3. What changed conceptually, stage by stage</h2>
+<h3>Store by store</h3>
+<table>
+<tr><th>Store</th><th>Where / format</th><th>What and how shared</th></tr>
+<tr><td><strong>Survivor pool</strong></td><td><code>cache/snapshot_pool/</code> (7.1 GB, 2,232 zstd parquet files; <code>FLORA_POOL_DIR</code> can move it to another disk)</td><td>Stage 1's corpus, one file per snapshot partition. Pushed/pulled through the private HF repo; year-sharded remotely, flat locally. The remote <code>pool_manifest.json</code> records the search-gate fingerprint and the scan ledger's counts.</td></tr>
+<tr><td><strong>Text overlay</strong></td><td><code>cache/engine/overlay/</code> (parquet chunks + a hash-named manifest)</td><td>Abstract text the pool did not ship, layered over pool rows at routing time: six backfill sources, OSF first — for OSF registrations the overlay's first line is <code>OSF registration template: …</code>, which the two OSF specs match on. Since #165 the overlay loads automatically on every engine command (each prints <code>overlay: &lt;dir&gt; (hash …)</code>) and overlay text now <em>replaces</em> pool text (the snapshot ships boilerplate for some records). Local-only: the bytes never leave the machine; only the overlay's hash travels, inside the release id, so two machines with different overlay text can never silently share a release.</td></tr>
+<tr><td><strong>Engine store</strong></td><td><code>cache/engine/engine.duckdb</code> (1.2 GB) + <code>cache/engine/releases/*.json</code></td><td>Routing releases: which pile every work landed in, per release. Derived and disposable — routing is a pure function of (pool, specs, aliases, overlay, engine version), and the release id is the sha256 of exactly those six inputs. Deleting the file costs a rebuild and nothing else. Not shared; the release <em>id</em> is registered in Postgres, and a claim naming an unregistered release is rejected, so a stale client must re-route before it can spend.</td></tr>
+<tr><td><strong>Postgres (engine)</strong></td><td>Supabase; schema in <code>db/migrations/</code> — <strong>live and exercised</strong> (the first claimed screen ran through it on 2026-08-04/05)</td><td>Eight tables: releases, claims, claim items, verdicts, human labels, alias exceptions, holdout registry, audit. Verdicts and labels are permanent evidence — append-only triggers, no DELETE ever; a changed mind is a <em>supersession</em>, never an edit. A claim is what permits spend: one active claim per work per tier, taken atomically by an RPC, so two collaborators cannot double-screen the same rows.</td></tr>
+<tr><td><strong>Response blobs</strong></td><td><code>cache/engine/responses/&lt;sha256&gt;.json</code> → HF <code>responses/</code></td><td>The raw bytes behind every verdict. Written to disk before the verdict row; each verdict carries a <code>response_state</code>, and <code>python -m filter.engine reconcile</code> sweeps any blob no commit has been shown to have accepted up to HF (all 3,545 blobs from the first run are pushed, 0 pending). Postgres holds the verdicts, HF holds the bytes.</td></tr>
+<tr><td><strong>API caches</strong></td><td><code>cache/</code> (~12 GB total, fully gitignored; <code>FLORA_CACHE_DIR</code> moves it)</td><td>One directory per source: <code>abstracts</code> (1.8 GB), <code>llm</code>, <code>pdfs</code>, <code>openalex</code>, <code>grobid</code>, <code>parse</code>, <code>doi_verify</code>, … All content-addressed: the key names everything the answer depends on, so a shared cache can never serve a stale answer as a current one — which is why #136 proposes syncing exactly the paid ones (<code>llm</code> + <code>pdfs</code> + <code>parse</code> + <code>grobid</code>, ~166 MB) between machines and deliberately excludes the cheap-to-refetch 473k-file <code>abstracts</code>. Not yet built: today caches are machine-local, so a second machine re-spends.</td></tr>
+<tr><td><strong>Stage 3 handoff</strong></td><td><code>data/filtered.csv</code> (untracked, derived) + <code>data/filtered.csv.manifest.json</code> (tracked)</td><td>The CSV itself is regenerated by <code>handoff</code> and too large to track; the manifest binds it by sha256 to the routing release it came from and records what was handed over (rows, piles, <code>screened_only</code>, rows dropped by tier verdict). The manifest is the one artifact linking a Stage 3 run to a Stage 2 release.</td></tr>
+<tr><td><strong>Validation tables</strong></td><td>Supabase: <code>unvalidated</code>, <code>record_metadata</code>, <code>validation_queue</code>, <code>validated</code></td><td><code>extract/csv_to_db.py</code> pushes resolved rows; the validation app lives in the separate <code>flora-validation</code> repo. Provenance is linked, not copied: <code>record_metadata.work_id</code> + <code>release_id</code> join back to the engine's routing. The final artifact is the <code>validated</code> table; this repo only reads it.</td></tr>
+</table>
+
+<div class="callout warn">
+<p><strong>Known gap — a pulled pool is not verified.</strong> <code>pool_sync --pull</code> skips files whose byte size already matches and compares nothing else: the manifest's row counts are recorded on push but never checked on pull, there is no checksum step, and a pulled pool has no scan ledger — which also silently degrades the release id's pool-provenance input to a constant. Until a <code>--verify</code> exists, the practical check after a pull is: file count and total rows against the HF <code>pool_manifest.json</code> (<code>ledger_files</code> / <code>ledger_kept</code>), and the gate fingerprint match that <code>--pull</code> already warns about.</p>
+</div>
+
+<h2>4. What changed conceptually, stage by stage</h2>
 
 <h3>Stage 1 — from API keyword search to a snapshot scan (PRs #129/#142, #159)</h3>
 <ul>
-<li><strong>The whole snapshot is scanned, once.</strong> The 2026-08-03 production scan processed all 510,372,821 snapshot records on a throwaway EC2 instance and wrote a survivor pool of 5,146,160 rows (2,232 parquet files), verified on HF. Recall questions now separate cleanly into three layers: snapshot coverage (exhaustive), the search gate's vocabulary (deliberately broad, but still a choice), and what OpenAlex itself indexes — grey-literature reproduction reports remain a known blind spot (#150).</li>
-<li><strong>Stage 1 only searches.</strong> Its exclusion patterns and second-pass keyword filtering were deleted (#159), leaving one intentionally broad search gate — a token/stem + concept vocabulary (<code>filter/phrase_detection.py</code>) — and every survivor enters the pool. Anything smarter is Stage 2's job, where it is measured and reversible. The old API discovery sources were retired to <code>wip/api-harvest-sources</code> (#158).</li>
+<li><strong>The whole snapshot is scanned, once.</strong> The 2026-08-03 production scan processed all 510,372,821 snapshot records on a throwaway EC2 instance and wrote a survivor pool of 5,146,160 rows, verified on HF. Recall questions now separate into three layers: snapshot coverage (exhaustive), the search gate's vocabulary (deliberately broad, but still a choice), and what OpenAlex itself indexes — grey-literature reproduction reports remain a known blind spot (#150).</li>
+<li><strong>Stage 1 only searches.</strong> Its exclusion patterns and second-pass keyword filtering were deleted (#159), leaving one intentionally broad search gate (<code>filter/phrase_detection.py</code>), and every survivor enters the pool. Anything smarter is Stage 2's job, where it is measured and reversible. The old API discovery sources were retired to <code>wip/api-harvest-sources</code>; the non-OpenAlex sources need to be brought back in (#158).</li>
 </ul>
 
-<h3>Stage 2 — from rule_filter + LLM filter to the filter engine (#146 → PR #152; #161, #162)</h3>
+<h3>Stage 2 — from rule_filter + LLM filter to the filter engine (#146 → #152; #161, #162, #165)</h3>
 <ul>
-<li><strong>The old Stage 2 is deleted</strong> (<code>rule_filter.py</code>, <code>run_filter.py</code>, the LLM filter). Its replacement is <code>filter/engine/</code>: JSON specs with precedence bands, deterministic routing releases, and <em>claimed, budget-gated</em> LLM screening tiers — a claim in Postgres is what permits spend, so two collaborators cannot double-screen or double-pay for the same rows.</li>
-<li><strong>The rule book was inverted to a whitelist</strong> (design + all measurements: <code>redesign/rulebook_v2.html</code>). Nothing is screened unless a positive admission rule asks for it; the default pile is <code>pending</code>, not <code>discard</code>. As of #162 the live set is deliberately narrow: the structural discards (non-paper DOIs/titles, non-report/study types, deposits) plus two live admissions — <code>replication-claim-cited-title</code> (the strongest rung of the four-spec claim ladder, → expensive tier) and <code>osf-registration-completed</code>. Everything else runs <span class="tag shadow">shadow</span> — counted, never acting — until measured: the other three claim-ladder rungs, <code>reproduction-signal</code>, the broad <code>replication-signal</code>/<code>replication-probe</code>, and the <code>osf-registration-protocol</code> discard (its template vocabulary is not yet fully enumerated). The spec files themselves (<code>"shadow": true</code>) are the authority on this, not any document.</li>
-<li><strong>Promotion is evidence-gated.</strong> A statistical rule goes live on a "rule of three" sample sizing (n ≥ 3V/L for discard volume V and tolerable loss L); structural rules need an argument, not a sample. <code>data/flora.csv</code> (1,553 measurable DOIs) is the gold standard for recall checks. The per-release, per-rule recall monitor is <em>designed</em> (<code>analysis/gold/README.md</code>) <strong>but not yet built</strong> — today the check is a hand count against <code>flora.csv</code>, and building the monitor is a next step (§7). The old 7.5k "gold corpus" was deleted deliberately: 62% of it was the previous pipeline's own LLM verdicts, so recall against it was circular.</li>
-<li><strong>The cheap pre-screen moved here.</strong> The discard-only two-tiny-voter tier (<code>shared/prescreen.py</code>) is no longer a Stage 3 flag; which rows get it is a routing decision (the <code>screen_cheap</code> pile), and it can only discard on two explicit noes (#161, #135).</li>
+<li><strong>The old Stage 2 is deleted</strong> (<code>rule_filter.py</code>, <code>run_filter.py</code>, the LLM filter). Its replacement is <code>filter/engine/</code>: JSON specs with precedence bands, deterministic routing releases, and <em>claimed, budget-gated</em> LLM screening tiers backed by the live Postgres claim tables.</li>
+<li><strong>The rule book is a whitelist.</strong> Nothing is screened unless a positive admission rule asks for it; nothing is discarded unless a specific rule rules it out. The default pile is <code>pending</code>, not <code>discard</code>. Currently live: the structural discards (non-paper DOIs/titles, non-report/study types, deposits, and — promoted 2026-08-05 after the maintainer re-adjudicated the one blocking case as a mock write-up — <code>osf-registration-protocol</code>) and three admissions to the expensive tier: <code>replication-claim-cited-title</code>, <code>replication-claim-title-strong</code>, <code>osf-registration-completed</code>. In <span class="tag shadow">shadow</span> (counted, never acting): the weaker claim-ladder rungs (<code>-text</code>, <code>-residual</code>, <code>-title-broad</code>), <code>reproduction-signal</code>, <code>replication-signal</code>, <code>replication-probe</code>. The spec files (<code>"shadow"</code> in <code>filter/spec/*.json</code>) are the authority; this list is a snapshot.</li>
+<li><strong>Promotion is evidence-gated.</strong> Additional rules should only be added based on evidence — especially when they discard entries. This can be logical (e.g. ineligible <code>article_type</code>) or empirical (manual or LLM-supported screening of a sufficient sample). <code>data/flora.csv</code> (1,553 measurable DOIs) is the gold standard for recall checks, though it is not sufficient yet, given that reproductions are missing — that is a reason for getting the TRN reproductions in asap. The per-release recall monitor is specified in <code>analysis/gold/README.md</code> — join the flora keys against a routing release, no LLM and no sampling, and report per rule how many known-good papers it discarded plus how many no rule reached — but <strong>not yet implemented</strong>; today that check is a hand count.</li>
+<li><strong>A cheap pre-screen can be used for low-precision rules.</strong> The discard-only two-tiny-voter tier (<code>shared/prescreen.py</code>) can only discard on two explicit noes (#161, #135). At the moment, we should focus on high-precision rules that make "expensive" screening worthwhile, but will likely have to return to this for larger batches; it needs to be validated on a more diverse pool once we add imprecise rules (estimated true-positive rate below ~75%).</li>
 </ul>
 
-<p><strong>First routing of the full pool</strong> (release <code>ec9497102a7e</code>, 2026-08-04). <strong>Treat these as pre-#162 sizing, not a run quote:</strong> this release predates the spec changes that put most of the claim ladder and <code>reproduction-signal</code> into shadow, so a fresh <code>route</code> + dry run will produce a substantially smaller (and cheaper) actionable population.</p>
-<table>
-<tr><th>Pile</th><th class="num" style="text-align:right">Rows</th><th>Note</th></tr>
-<tr><td>discard</td><td class="num">520,203</td><td>structural rules only</td></tr>
-<tr><td>screen_expensive</td><td class="num">89,113</td><td>replication-claim family; dry-run ≈ <strong>$143.82</strong></td></tr>
-<tr><td>screen_cheap</td><td class="num">124,732</td><td>reproduction-signal; dry-run ≤ <strong>$8.29</strong></td></tr>
-<tr><td>pending</td><td class="num">4,412,112</td><td>85.7% of the pool — 4,404,385 <code>no_filter_matched</code> (no rule spoke; needs rules) + 7,727 <code>no_text</code> (a rule matched but there is no abstract to screen; needs text backfill). See §5.</td></tr>
-</table>
-<p class="small">Shadow sizing that settled the rollout order: <code>replication-signal</code> alone matches 1.09M rows (21% of the pool, 12× the claim ladder). Turning it on live would hand a million rows to a discard-only cheap tier — cheap in dollars (~$70), expensive in recall risk. It stays shadow until measured.</p>
-
-<h3>Stage 3 — redesigned front door, linking, and outcome coding (PRs #116–#127)</h3>
+<h3>Stage 3 — redesigned front door, linking, and outcome coding (PRs #116–#127, #166)</h3>
 <ul>
-<li><strong>The screen is validated and defined once.</strong> Two voters (Gemini light + <code>gpt-5.4-mini</code>) answer the v3.3 schema; the gate (<code>screen_gate()</code>, "G-softqual") was chosen on labelled evaluation data (320 positives, 70 hard negatives): ~85–89% hard-negative discard across runs, with 0–1 missed positives — a spread the eval attributes to run-to-run model variance, and measured in-sample (<code>analysis/screening_eval/report_v33.md</code>). The old <code>screen_disagreement</code> terminal state is gone — confident splits proceed. v3.3 folded the six FLoRA FAQ coding rules and the partial-overlap rule into the prompt.</li>
-<li><strong>One target prompt, one namespace, one row per original.</strong> The abstract, reference-list and full-text rungs of the resolution ladder now share a single prompt (<code>build_target_prompt()</code>); candidates and references live in one deduplicated <code>@smith2009</code> key namespace so a re-fetched list can never renumber a cached pick. The parallel "multi pipeline" is deleted: a per-target adapter writes <strong>one row per original paper</strong>, collapsing multiple studies of one original into <code>study_o</code>, and <code>study_r</code> now records which study of the <em>replication</em> re-tests each original. A deterministic early rule withholds its pick when the paper's own text can't rule out a second target, so cheap rungs no longer truncate multi-target papers.</li>
-<li><strong>Reproductions get their own vocabulary.</strong> Outcome coding split into two prompts: replications keep the FLoRA outcome ladder; reproductions are coded on two independent axes — computation (reproducible / issues / technical failure / not checked) and robustness (robust / challenges / not checked) — each with its own quote and escape hatch. <code>record_type_check</code> lets the full-text pass re-route a mis-typed row to the other vocabulary once.</li>
-<li><strong>Weak evidence is contained, not laundered.</strong> <code>llm_title_search</code> (~50% precision, and 10× OpenAlex cost) is provisional: bottom of the ladder, never outcome-coded, never imported, set aside for human confirmation. Full-text provenance (<code>pdf_source</code>, <code>parse_method</code>) is on every row, and there is no landing-page-HTML substitute for a document any more.</li>
+<li><strong>The screen is validated and defined once.</strong> Two voters (Gemini light + <code>gpt-5.4-mini</code>) each answer the revised prompt, which includes the coding rules from the FLoRA FAQ; the gate (<code>screen_gate()</code>) was chosen on labelled evaluation data (<code>analysis/screening_eval/report_v33.md</code>). Confident splits proceed; the old <code>screen_disagreement</code> terminal state is gone.</li>
+<li><strong>One target prompt, one namespace, one row per original.</strong> The abstract, reference-list and full-text rungs of the resolution ladder share a single prompt; candidates and references live in one deduplicated <code>@smith2009</code> key namespace so a re-fetched list can never renumber a cached pick. The parallel "multi pipeline" is deleted: a per-target adapter writes one row per original paper, and <code>study_r</code> records which study of the <em>replication</em> re-tests each original.</li>
+<li><strong>Reproductions get their own vocabulary.</strong> Replications keep the previous outcome values (with minor clarifications); reproductions are coded on two independent axes — computation and robustness — each with its own quote and escape hatch.</li>
+<li><strong>Weak evidence is contained.</strong> <code>llm_title_search</code> (~50% precision, 10× OpenAlex cost) is provisional: never outcome-coded, never imported, set aside for human confirmation; an additional LLM pass to validate the candidates might be worth implementing. Full-text provenance (<code>pdf_source</code>, <code>parse_method</code>) is on every row.</li>
+<li><strong>Run operations (new in #166):</strong> Stage 3 processes rows concurrently (<code>EXTRACT_WORKERS</code>, default 4, ~4× wall-clock), resumes by default (<code>--fresh</code> restarts loudly), and skips both papers already in FLoRA and the 1,770 legacy already-validated records (<code>data/validated_skip.csv</code>) before spending anything.</li>
 </ul>
 
 <h3>Cross-cutting discipline</h3>
 <ul>
-<li><strong>Prompts and caches:</strong> every prompt lives in <code>shared/prompts.py</code>; <code>prompt_version()</code> hashes the text plus every spliced fragment, and cache keys name everything the answer depends on (prompt version, model, thinking level, inputs) — editing a prompt invalidates exactly its caches. The caching rule: a <em>definitive</em> answer is cached even when negative (a decline, a "no candidates"); an unreadable reply, an incomplete multi-voter screen, or a provider failure is retried and never cached — a 503 must never be checkpointed as a miss.</li>
-<li><strong>Spend control:</strong> per-day/provider/model token accounting, a hard OpenAI daily budget (clean stop, not a crash), OpenAI/Gemini flex tiers, a Gemini thinking-level knob, and an explicit OpenAlex cost model (title search = 10× a filter query; content download = 100×) that shaped the ladder's ordering.</li>
-<li><strong>Settings split (#161):</strong> a <em>constant</em> (model ids, thresholds, vocabularies — anything that decides what the pipeline concludes) is a plain Python value changed by commit; a <em>tunable</em> (rate limits, paths, timeouts) is env-read in <code>shared/config.py</code>. If an override could make two collaborators grade the same row differently, it is a constant.</li>
-<li><strong>Tests:</strong> trimmed to contracts (#119, with further trims alongside the engine work): one test per seam, a no-network guard, suite runtime cut from minutes to seconds. Exact counts move; the principle — delete a test when its code path dies — is the durable part.</li>
+<li><strong>Prompts and caches:</strong> every prompt lives in <code>shared/prompts.py</code>; <code>prompt_version()</code> hashes the text plus every spliced fragment, and cache keys name everything the answer depends on. The caching rule: a definitive answer is cached even when negative; an unreadable reply, an incomplete multi-voter screen, or a provider failure is retried and never cached. <em>Open design question:</em> this granularity means any prompt edit, however cosmetic, discards all verdicts made under it — we need a way to keep verdicts across minor wording changes, e.g. warn on a changed prompt and ask whether to invalidate or retain (§6).</li>
+<li><strong>Spend control:</strong> per-day/provider/model token accounting; a hard OpenAI daily budget that matches our free tokens there (clean stop, not a crash); OpenAI/Gemini flex tiers and a Gemini thinking-level knob; and an explicit OpenAlex cost model (title search = 10× a filter query, content download = 100×) that shaped the ladder's ordering.</li>
+<li><strong>Settings split (#161):</strong> a <em>constant</em> (anything that decides what the pipeline concludes) is a plain Python value changed by commit; a <em>tunable</em> (rate limits, paths, timeouts) is env-read in <code>shared/config.py</code>. If an override could make two collaborators grade the same row differently, it is a constant.</li>
+<li><strong>Tests:</strong> trimmed to contracts: one test per seam, a no-network guard, suite runtime cut from minutes to seconds; a test is deleted when its code path dies.</li>
 </ul>
 
-<h2>4. What is live vs. what is not yet trusted</h2>
+<h2>5. The first end-to-end run (2026-08-04/05)</h2>
+<p>The loop ran for real, authorized at ≤$15: route under the committed bundle → claimed two-voter screen → screened-only handoff (1,837 works after 33 tier discards) → Stage 3 over the whole corpus. Actual LLM spend for the Stage 3 pass was ≈$5.30 with flex (≈$10.59 at list price). Counts read off the files:</p>
 <table>
-<tr><th>Thing</th><th>Status</th></tr>
-<tr><td>Structural discards + <code>replication-claim-cited-title</code> + <code>osf-registration-completed</code></td><td><span class="tag">live</span> routing only; no LLM spend yet</td></tr>
-<tr><td>Claim-ladder rungs 2–4, <code>reproduction-signal</code>, <code>replication-signal</code> (1.09M matches), <code>replication-probe</code>, <code>osf-registration-protocol</code></td><td><span class="tag shadow">shadow</span> — counted, not acting, pending measurement (spec files are the authority)</td></tr>
-<tr><td><code>screen_cheap</code> pre-screen tier</td><td>validation mode until re-validated on the pool's distribution (its eval was on a different population)</td></tr>
-<tr><td>Gold recall monitor</td><td>designed (<code>analysis/gold/README.md</code>), <strong>not built</strong> — currently a hand count against <code>data/flora.csv</code></td></tr>
-<tr><td><code>filter/spec/holdout.json</code></td><td><strong>not constructed</strong> — <code>diagnose</code> reports it; should be frozen before more rules are authored</td></tr>
-<tr><td><code>db/migrations/</code> SQL</td><td>parsed by tests; believed never executed against live Supabase — <strong>verify live state before applying</strong></td></tr>
-<tr><td><code>shared/</code> heuristics (<code>find_all_candidates()</code> thresholds)</td><td>still the unvalidated OpenAlexLLM port — unchanged caveat from before</td></tr>
-<tr><td><code>data/provisional_title_search.csv</code></td><td>provisional links awaiting human confirmation</td></tr>
+<tr><th>Artifact</th><th class="num" style="text-align:right">Before</th><th class="num" style="text-align:right">After</th></tr>
+<tr><td><code>extracted.csv</code> (resolved rows)</td><td class="num">1,664</td><td class="num">1,813</td></tr>
+<tr><td><code>target_pending.csv</code></td><td class="num">2</td><td class="num">1,047</td></tr>
+<tr><td><code>not_a_replication.csv</code></td><td class="num">207</td><td class="num">577</td></tr>
+<tr><td><code>provisional_title_search.csv</code></td><td class="num">50</td><td class="num">90</td></tr>
 </table>
+<p>Two operational lessons. First, the ~1,000 new <code>target_pending</code> rows are deposit-type records (OSF, Zenodo, SAGE) that carry no reference metadata in OpenAlex, so the ladder has nothing to resolve against — whether to loosen the title-search gate for them is an open policy question (§6). Second, on <strong>pricing</strong>: the engine's dry-run quotes are list-price upper bounds — they model prompt length but not flex discounts or OpenAI prompt caching — and the measured run came in at roughly half list. Plan future tranches from measured per-row cost (well under 1¢/row for screening, ~$0.003/row for this Stage 3 corpus), not from dry-run totals.</p>
+<p class="small">Current routing state (release <code>6aad75c0c5a0</code>, 2026-08-05): discard 557,606 · pending 4,583,904 · screen_expensive 4,650 — and every admitted work already carries a verdict, because verdicts follow the <em>work</em> across releases: re-routing never re-buys a screen.</p>
 
-<h2>5. The number to keep in view: 4.4M pending</h2>
-<div class="callout warn">
-<p>85.7% of the pool matched no rule at all (<code>pending/no_filter_matched</code>). Under the whitelist that is by design — but an unsampled pending pile is a silent discard pile. The standing obligation from the rule-book proposal: <strong>sample the pending pile every release</strong>. Two distinct checks, neither yet operational: (a) gold overlap — count which <code>flora.csv</code> papers sit in pending (cheap once the recall monitor is built, but it can only see papers we already know about); (b) a stratified read of a random pending sample — the rule book calls for stratifying by work type and oversampling <code>software</code>/<code>component</code>/<code>database</code>/<code>supplementary-materials</code> — which is the only way to find relevant papers <em>absent</em> from the gold set. If pending sampling lapses, the whitelist's honesty claim lapses with it.</p>
-</div>
-
-<h2>6. Decisions waiting on you</h2>
-<ol class="decisions">
-<li><strong>Go-ahead for the first paid screening run.</strong> Prerequisites, in order: apply the <code>db/migrations/</code> SQL (after checking live schema state) and exercise the claim machinery against real Supabase — the no-double-spend guarantee is untested until claim isolation and response reconciliation have run live; re-run <code>route</code> and the dry-run estimate under the current specs (the only full-pool sizing, ≈$143.82 + ≤$8.29, is from the superseded pre-#162 release and overstates today's live admissions); then a tiny claimed run before the full one. <code>screen --run</code> is the only thing that claims and spends.</li>
-<li><strong>Rule book open decisions D2–D7</strong> (listed with evidence in <code>redesign/rulebook_v2.html</code>; D1 — keeping figshare out of the deposit discard — is implemented): corrections/author responses in scope? "aim to replicate" (planned-only)? <code>component</code>/<code>database</code> arms? backfill budget? CS reimplementation vocabulary? D7: reproduction stems still inside <code>replication-signal</code>'s first arm (harmless while shadow; #155 is intended to settle it). Note the mix: D1 already changed the specs; the rest are proposal-only until you decide.</li>
-<li><strong>Issue #144 (staged waves over the corpus):</strong> GWAS locus-replication scope, and the ~$6–12 pilot screen over the three 1,000-row arm samples.</li>
-<li><strong>Concurrency &amp; sizing defaults</strong> flagged in #146: one active claim per work per tier, tiers independent; free-tier Postgres holds campaign-sized claims, a whole-pool claim would force an upgrade.</li>
-</ol>
-
-<h2>7. Next steps (roughly in order)</h2>
+<h2>6. The path through the backlog</h2>
+<p>4.58M pool rows are <code>pending</code> — matched by no rule. That is the whitelist working as designed: pending is not a verdict, it is the backlog. The path through it is incremental and now proven end to end:</p>
 <ol>
-<li><strong>Settle the working tree.</strong> Run <code>git status</code> and take stock rather than trusting any list here. Conceptually, the in-flight (uncommitted) work refines the response-blob archival path: <code>filter.engine reconcile</code> sweeps raw LLM response blobs to HF so Postgres holds only what validation needs (#153) — the command is documented in the committed docs, and the working-tree edits to <code>filter/engine/</code> and its tests extend it. Also uncommitted: <code>redesign/rulebook_v2.html</code>, set-aside CSV updates, an untracked <code>data/examples/</code>, and this document.</li>
-<li><strong>Verify the routing locally</strong> (<code>filter.engine verify</code> checks regex/PyArrow backend parity — no database needed), and separately <strong>apply the migrations</strong> against live Supabase before any claimed <code>screen --run</code> (see §6, decision 1).</li>
-<li><strong>Freeze the holdout</strong> (<code>filter/spec/holdout.json</code>) before authoring any further rules.</li>
-<li><strong>Build the gold recall monitor</strong> (<code>analysis/gold/README.md</code>) and a repeatable, stratified pending-pile audit — the two safeguards §5 depends on, both currently manual or non-existent.</li>
-<li><strong>Route → screen → handoff → Stage 3</strong> over the admitted piles once decision 1 is taken; sample the pending pile alongside.</li>
-<li><strong>Finish the OSF template enumeration</strong> so <code>osf-registration-protocol</code> can be promoted from shadow (its spec requires a full backfill/enumeration first).</li>
-<li><strong>#155:</strong> develop the reproduction routing rule on its own evidence (also resolves D7).</li>
-<li><strong>#150:</strong> curated harvester for OSF/I4R/HAL/EconStor reproduction reports — the pool's known blind spot for grey-literature reproductions; <code>Work.source</code> is plumbed but inert until this lands. A start exists on <code>wip/external-lists-curated-harvest</code>.</li>
-<li><strong>Backlog with context already attached:</strong> #153 (archive reject verdicts to HF), #151 (stratify recall claims by gold provenance), #157 (deposit→parent linkage — measure the loss first), #149 (no-evidence rows must not reach the screen), #136 (shareable Stage 3 resume state), #140 (float years), #115 (token-usage dashboard).</li>
+<li><strong>Author the next admission rule</strong> (the candidate list, with regexes and every rejected idea, is <code>filter/spec/rule_ideas.md</code>), ship it in shadow, and size it against the pool for free.</li>
+<li><strong>Validate it</strong> — logically for structural rules, empirically for statistical ones (manual or LLM-supported reading of a sufficient sample of what it matches and what it would discard), using <code>flora.csv</code> and other benchmark sources (e.g. TRN) for recall.</li>
+<li><strong>Promote, route, screen, extract</strong> — the §5 loop, per tranche, with measured costs.</li>
+<li><strong>Keep the honesty checks running:</strong> known-good papers in pending (the gold monitor, once built) and stratified reads of random pending samples — the only way to find relevant papers <em>absent</em> from the gold set. The rule book calls for stratifying by work type and oversampling <code>software</code>/<code>component</code>/<code>database</code>/<code>supplementary-materials</code>.</li>
+</ol>
+<p class="small">A note on the shadow sizing that set this order: <code>replication-signal</code> alone matches ~1.09M rows (21% of the pool). The broad rules are held shadow not because screening them is expensive in dollars but because a discard-only cheap tier over a million rows is a recall risk that has to be measured first. Pending also contains a small distinct slice — <code>pending/no_text</code>: a rule matched but there is no abstract to screen — whose remedy is text backfill, not new rules.</p>
+
+<h2>7. Decisions and open questions</h2>
+<ol class="decisions">
+<li><strong>Title-search policy for deposit-type records.</strong> ~1,000 <code>target_pending</code> rows from the first run are deposits with no reference metadata; the only automated path to their originals is the provisional title search (~50% precision, 10× OpenAlex cost). Loosen the gate for this class, add an LLM validation pass over its candidates, or route them to human review?</li>
+<li><strong>Push the run's results to validation?</strong> <code>csv_to_db</code> has not been run on the new resolved rows — deliberately left as your call.</li>
+<li><strong>RPP registrations scope.</strong> The OSF Open-Ended keep arm admits 336 rows that are almost entirely Reproducibility Project: Psychology registrations; for an individual RPP study that registration may be the only record that exists. FLoRA scope call, recorded not answered.</li>
+<li><strong>Verdict retention across minor prompt edits.</strong> Today any prompt change invalidates all its cached verdicts by design. We need a mechanism to keep verdicts on minor changes — plausibly: warn on a version change and ask whether to invalidate or retain.</li>
+<li><strong>Claims lifecycle defaults.</strong> Now exercised live, but two implementer defaults still await your review: there is no lease/TTL, so a dead run leaves an <code>active</code> claim a human must mark failed; and the <code>measurement</code> tier neither takes nor respects the per-work lock.</li>
+<li><strong>Git workflow:</strong> decide whether to use <code>dev</code> plus branch-protected <code>main</code> — would seem worth it, but currently <code>dev</code> is very stale.</li>
+<li><strong>Issue #144 (staged waves)</strong> needs a review pass: it remains the framing document for scaling through the corpus, but it was written before the engine loop existed and its pilot questions are partially overtaken by the first live run.</li>
 </ol>
 
-<h2>8. Operational notes</h2>
+<h2>8. Next steps (roughly in order)</h2>
+<ol>
+<li><strong>Run the loop — this is the key thing now.</strong> Rules → route → screen → handoff → extract, tranche by tranche through the pending backlog (§6). Everything through PR #167 is merged; the tree is clean.</li>
+<li><strong>Build the two honesty checks:</strong> the gold recall monitor (<code>analysis/gold/README.md</code> is the spec; implementation belongs in <code>filter.engine diagnose</code>) and a repeatable stratified pending-pile audit.</li>
+<li><strong>Get the TRN reproductions in</strong> — both as benchmark coverage for reproduction recall and as the evidence base for the reproduction routing rule (#155).</li>
+<li><strong>Bring the non-OpenAlex discovery sources back</strong> (#158), and the curated harvester for OSF/I4R/HAL/EconStor reproduction reports (#150 — likely not all are needed).</li>
+<li><strong>Close the pool-verification gap</strong> (§3): a <code>pool_sync --verify</code> that checks pulled files and row counts against the manifest.</li>
+<li><strong>Construct the holdout when discard pressure grows.</strong> <code>filter/spec/holdout.json</code> does not exist yet; the Postgres registry for it does. It is a frozen, labelled evaluation set for measuring rules without re-using their derivation data. Admission rules don't need it — a false admission just costs a screen — so it binds when we start promoting broader <em>discard</em> rules; construction (size, gold/random mix, refresh policy) is #146 open decision 2.</li>
+</ol>
+
+<h3>Optional: Issues worth knowing about</h3>
 <ul>
-<li><strong>Pool access:</strong> a fresh checkout has no pool; <code>python -m search.pool_sync --pull</code> fetches it from the private HF dataset (<code>FLORA_POOL_REPO</code> in <code>.env.defaults</code>; needs an HF token in <code>.env</code>). Verify row counts against the dashboard before routing.</li>
-<li><strong>Command prerequisites:</strong> the commands in this document assume the project virtualenv is active (<code>docs/setup.md</code>); a bare shell has no <code>python</code>.</li>
-<li><strong>Credential cleanup owed</strong> from the 2026-08-03 scan (collaborator-reported state — worth confirming, not re-verifiable from the repo): revoke the scan's HF write token and delete the temporary AWS root access keys used for the scan account; the scan instance is believed terminated.</li>
-<li><strong>Git:</strong> everything through PR #162 is on <code>main</code>; <code>dev</code> remains stale — PRs target <code>main</code>. <code>data/</code> is tracked (check <code>git status</code> before committing there).</li>
+<li><strong>#157</strong> deposit → parent linkage for discarded artifacts — now concrete: the run's ~1,000 deposit-type pending targets are exactly this population; measure the loss first.</li>
+<li><strong>#136</strong> shareable Stage 3 resume state — a Supabase <code>processed</code> table plus syncing the content-addressed paid caches (~166 MB); the natural next infrastructure step now that two people run the pipeline.</li>
+<li><strong>#153</strong> archive rejected verdicts to HF — half done: response blobs already reconcile to HF; moving reject verdict <em>rows</em> out of Postgres remains.</li>
+<li><strong>#149</strong> no-evidence rows must not reach the screen — largely satisfied by the whitelist (<code>pending/no_text</code>); verify and close.</li>
+<li><strong>#151</strong> stratify gold recall by provenance — written against the old gold corpus, which was since deleted; probably closable.</li>
+<li><strong>#115</strong> token-usage dashboard — in progress as PR #132. <strong>#140</strong> float years — mechanical, still open.</li>
 </ul>
 
-<h2>9. Where to read more</h2>
+<h2>9. Operational notes</h2>
 <ul>
-<li><code>CLAUDE.md</code> — the authoritative current-state description (kept current throughout).</li>
-<li><code>docs/filter-engine.md</code> + <code>filter/spec/CONVENTIONS.md</code> — engine design and rule-book policy.</li>
-<li><code>redesign/rulebook_v2.html</code> — the whitelist design with every measurement; <code>redesign/current_state_v4.html</code> — the annotated state review your 26 comments were resolved against.</li>
-<li><code>analysis/screening_eval/report_v33.md</code>, <code>analysis/prescreen_eval/REPORT.md</code>, <code>analysis/gold/README.md</code> — the evidence behind the screen, the cheap tier, and the recall monitor.</li>
-<li>Issues #146 and #144 — the two long-form design discussions (engine architecture; staged waves over the corpus).</li>
+<li><strong>Pool access:</strong> a fresh checkout has no pool; <code>python -m search.pool_sync --pull</code> fetches it (concurrently, since #167) from the private HF repo. Remember the §3 caveat: pulls are resumable but unverified — check file count and totals against the remote <code>pool_manifest.json</code>.</li>
+<li><strong>Scan cleanup:</strong> the EC2 instance is confirmed gone (the scan account has no instances left, checked 2026-08-05). Still owed: revoke the scan's HF write token and delete the temporary AWS root access keys.</li>
+<li><strong>CLAUDE.md</strong> is the agent-instruction file; it has been absorbing current-state description beyond that role and should be trimmed back to instructions, with state living in the docs.</li>
 </ul>
 
-<p class="small">Prepared 2026-08-04 as a handover document; reviewed for completeness and accuracy against the repo, PR history, and an independent codex review.</p>
+<h2>10. Where to read more</h2>
+<ul>
+<li><code>docs/filter-engine.md</code> + <code>filter/spec/CONVENTIONS.md</code> — engine design and rule-book policy (precedence bands, measurement levels, promotion gates).</li>
+<li><code>filter/spec/rule_ideas.md</code> — the living archive of candidate rules and rejected ideas, with regexes.</li>
+<li><code>docs/supabase-schema.md</code> + <code>db/migrations/</code> — the shared-state schema and its rationale.</li>
+<li><code>analysis/gold/README.md</code> — the recall-monitor spec (live); <code>analysis/screening_eval/</code>, <code>analysis/prescreen_eval/</code>, <code>analysis/osf_registrations/</code> — evidence archives behind decisions already shipped.</li>
+<li>Issues #146 and #144 — the two long-form design discussions.</li>
+</ul>
+
+<p class="small">Prepared 2026-08-04, revised 2026-08-05 against the maintainer's 47 review comments and the merged state through PR #167.</p>
 
 </main>
 <script>
