@@ -7,8 +7,9 @@ for on top of it. The caches are what a collaborator CANNOT rederive:
 * `cache/llm` is money. Re-running it costs the provider bill again and, because
   the models are not deterministic, returns DIFFERENT verdicts — so a collaborator
   who re-buys them does not reproduce our grading, they produce their own.
-* `cache/abstracts` is six rate-limited sources over ~500k identifiers, one of
-  which (Scopus) needs an Elsevier entitlement not everyone has.
+* the abstract store (`shared/abstract_store.py`) is six rate-limited sources over
+  ~500k identifiers, one of which (Scopus) needs an Elsevier entitlement not
+  everyone has.
 * `parse` / `grobid` / `openalex_xml` are the full-text extractions, and
   `openalex` / `doi_verify` are free per call but slow in bulk.
 
@@ -24,11 +25,13 @@ wasted download, never a silent disagreement.
     python -m shared.cache_sync --pull --parts llm,abstracts
 
 Remote layout: `cache/<part>/<shard>.tar.gz`, plus `cache/cache_manifest.json`.
-Shards exist because of FILE COUNT, not size — the whole shareable set is ~150 MB
-raw and under 60 MB packed, but `cache/abstracts` alone is 478k files of ~90 bytes,
-and Hugging Face asks for fewer than 10k entries per folder. Each shard holds the
-entries whose `cache_key(filename)` starts with its hex prefix, so a file's shard
-never moves and a re-push transfers only the shards that actually changed.
+Shards exist because of FILE COUNT, not size: Hugging Face asks for fewer than 10k
+entries per folder, and a part is a whole directory of content-keyed files. Each
+shard holds the entries whose `cache_key(filename)` starts with its hex prefix, so
+a file's shard never moves and a re-push transfers only the shards that changed.
+
+The abstracts are the exception — one SQLite file, pushed whole and merged on pull
+(`push_abstracts` / `pull_abstracts`).
 
 `cache/pdfs` IS shared, on the maintainer's decision: the repo is private, the
 collaborators are named, and the acquisition waterfall is slow and lossy enough

@@ -10,7 +10,7 @@ from the routing table instead of `candidates.csv`, and the results land in an
 overlay chunk instead of being merged back into a CSV.
 
 Sharing the cache is deliberate. A DOI Stage 1 already asked Europe PMC about is
-answered from `cache/abstracts/` here for free, and a miss recorded here is a
+answered from the abstract store here for free, and a miss recorded here is a
 miss Stage 1 will not re-buy.
 
 The OSF source (registrant 10.17605, first in the order) is the one that is not

@@ -378,7 +378,7 @@ which text a run read is in its output rather than in its shell history.
 
 **The backfill reuses Stage 1's fetchers.** `search/fetch_abstracts.py` owns the
 sources, their measured order (OSF → OpenAlex → Europe PMC → S2 → CrossRef →
-Scopus), their batch shapes, their per-identifier cache under `cache/abstracts/` and their
+Scopus), their batch shapes, their per-identifier rows in the abstract store and their
 per-source checkpoint namespaces; `backfill.py` imports its phase runners rather
 than restating any of it. Only the two ends are new: the worklist comes from the
 routing table, and results land in an overlay chunk instead of a CSV merge. The

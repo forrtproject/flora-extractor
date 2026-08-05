@@ -197,7 +197,7 @@ retired with it; the pool is the artifact to share.
 The pool is what nobody should have to re-scan; the caches are what nobody should
 have to re-buy. `cache/llm` is the provider bill, and because the models are not
 deterministic, re-running it does not reproduce our grading — it produces the
-collaborator's own. `cache/abstracts` is six rate-limited sources over ~500k
+collaborator's own. The abstract store is six rate-limited sources over ~500k
 identifiers. Both go to the same private dataset repo as the pool, under a
 `cache/` prefix (`pool_sync` only ever lists `*.parquet`, so the two never collide).
 
@@ -233,10 +233,10 @@ of reading someone else's answer as its own.
 definitively has no abstract for this DOI", and not re-buying a known miss is most
 of the value. But a miss from a machine that lacked an entitlement is not that
 fact, so the manifest records how many abstracts each source **actually
-recovered**, and a pull drops a miss — plus its `fetch_abstracts_done.txt`
-checkpoint line, or the DOI would never re-enter the worklist — when the pushing
-machine got zero hits from a gated source (`scopus`, `s2`, `osf`) that this
-machine is configured for. Hits always import.
+recovered**, and a pull drops a miss when the pushing machine got zero hits from a
+gated source (`scopus`, `s2`, `osf`) that this machine is configured for. Because
+the row IS the checkpoint, not importing it is all it takes for this machine to
+fetch the DOI itself. Hits always import.
 
 **Output:** `cache/` (and `cache/.cache_sync_pulled.json`, which records the
 shards already unpacked; `--force` re-extracts them)
