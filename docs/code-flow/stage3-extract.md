@@ -10,7 +10,12 @@ For each row of `filtered.csv` that Stage 2 accepted, Stage 3 answers two questi
 2. What was the result (`outcome`, `outcome_phrase`)?
 
 Rows are appended to `data/extracted.csv` one at a time, so the monitoring app can be
-opened while a run is still going. Every row passes DOI verification and
+opened while a run is still going. `EXTRACT_WORKERS` (default 4) rows are in flight at
+once — a row is minutes of provider and download latency and rows are independent — so
+papers finish out of order; a paper's own rows are still written together, under one
+write lock, and the per-service reservation queue in `shared/rate_limit.py` is what
+bounds the request rate. `EXTRACT_WORKERS=1` runs the loop straight through with no
+pool. Every row passes DOI verification and
 `oa_work_id_*` stamping on the way out, and `extract/sanity_check.py` runs at the end
 of every invocation — on normal completion and on Ctrl-C.
 
@@ -27,8 +32,10 @@ run_extract.py
     │
     ├── load filtered.csv, apply --year / --source / --doi-r / --predicted-outcome filters
     ├── skip DOIs already in FLoRA (entry sheet + flora.csv) unless --no-skip-flora-validated
+    ├── skip works already in the validation tables (data/validated_skip.csv) unless --no-skip-validated
     ├── skip false_positive rows (Stage 2 already rejected them)
-    ├── --resume: write every already-resolved row out first, re-run only target_pending
+    ├── resume (the default): write every already-resolved row out first, re-run only
+    │   target_pending; --fresh discards the output CSV and re-extracts everything
     ├── --extracted-test: write to extracted-test.csv, skip DOIs resolved in extracted.csv
     │
     └── for each remaining row:
@@ -66,7 +73,8 @@ adapter wrote more than one row, `single_original` otherwise).
 A row that the front door ends never pays for the ladder, PDF acquisition or outcome
 coding. `--rescreen` reopens exactly the rows a previous run set
 aside on the screen's own verdict, wherever a previous run's rows are being read
-(`--resume`, or the production CSV that `--extracted-test` skips against), so a changed
+(the output CSV a resuming run reloads, or the production CSV that `--extracted-test`
+skips against), so a changed
 voter pair or prompt decides them again. Every other resolved row is carried forward
 untouched, and a multi-original paper is reopened as a unit.
 

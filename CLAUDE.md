@@ -35,9 +35,11 @@ pushes resolved rows into three Supabase tables (`unvalidated`, `record_metadata
 `validation_queue`; validator slots `human_1`/`human_2`/`llm`). The final artifact is
 the Supabase `validated` table — there is no `data/validated.csv`.
 
-**Test sandbox:** `python -m extract.run_extract --extracted-test [--resume]` writes to
-extracted-test.csv (skipping DOIs already resolved in extracted.csv);
-`python -m extract.promote_test --all|--doi …|--dry-run` promotes rows to production.
+**Test sandbox:** `python -m extract.run_extract --extracted-test` writes to
+extracted-test.csv (skipping DOIs already resolved in extracted.csv). Every Stage 3
+run RESUMES by default — resolved rows are carried forward and only `target_pending`
+is re-run; `--fresh` discards the output CSV and re-extracts (and re-pays for)
+everything. `python -m extract.promote_test --all|--doi …|--dry-run` promotes rows to production.
 
 ## Module Map
 
@@ -52,6 +54,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 | `shared/llm_client.py`      | Gemini/OpenAI/OpenRouter calls, JSON parsing; `classify_replication()` (front-door screen), `screen_gate()`, `screen_voters()`, `identify_targets_with_llm()` (the one target call behind the abstract, reference-list and full-text rungs), `screen_references_with_llm()` (reference-list target pick) |
 | `shared/target_keys.py`     | `assign_target_keys()` — one deduplicated `@smith2009` namespace over a paper's candidates and references, plus the key → record map |
 | `shared/token_usage.py`     | Per-day/provider/model token recording (`cache/token_usage.json`) + the OpenAI daily budget check |
+| `shared/rate_limit.py`      | `throttle(service, interval)` — one reservation queue per remote service, so N worker threads share one rate rather than each sleeping its own |
 | `shared/prompts.py`         | Every LLM prompt + `prompt_version()` (hash of the prompt text and every spliced fragment) |
 | `shared/prescreen.py`       | The cheap discard-only tier: `hard_signal()`, `prescreen_bypass()`, `prescreen()`. Run by Stage 2 over the `screen_cheap` pile |
 | `shared/cache.py`           | Cache helpers; `content_key()` builds the content-complete LLM cache key |
@@ -67,7 +70,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 | `shared/schema.py`          | CSV column definitions — the contract between stages |
 | `shared/supabase_client.py` | Read client for the Supabase validation tables |
 | `shared/dashboard_cache.py` | Parquet mirror + `data/dashboard/stats.json` so Stage 4 reads fast; each runner calls `refresh(stage)` |
-| `shared/flora_skip.py`      | The already-in-FLoRA skip list (entry sheet + `flora.csv`), shared by `run_extract` and `csv_to_db` |
+| `shared/flora_skip.py`      | Two skip lists: already-in-FLoRA (entry sheet + `flora.csv`), shared by `run_extract` and `csv_to_db`; and already-in-the-validation-tables (`data/validated_skip.csv`, work id or DOI), read by Stage 3 alone. The second is the frozen legacy `record_metadata` set, materialised once by `analysis/build_validated_skip.py` so a run needs no Supabase |
 | `shared/token_counter.py`   | In-process per-stage token attribution; `set_stage()` before a call block |
 
 | Stage | Files |
@@ -327,6 +330,7 @@ OPENAI_DAILY_TOKEN_BUDGET=8000000   # 0 disables the cap
 GEMINI_USE_FLEX=true            # 50% discount on paid keys; flex uses GEMINI_FLEX_TIMEOUT
 OPENAI_USE_FLEX=true            # same trade on OpenAI; refused flex falls back to standard
 GEMINI_PAID_KEY_SLOTS=1         # which key SLOTS are billing-enabled, not key values
+EXTRACT_WORKERS=4               # Stage 3 rows in flight at once; 1 = no pool
 FLORA_CACHE_DIR=                # move cache/ to an SSD; FLORA_POOL_DIR does the same
 ```
 

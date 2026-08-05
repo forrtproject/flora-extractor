@@ -1,72 +1,14 @@
 ﻿doi_r,status,old_doi_o,proposed_doi_o,title_o,evidence
-10.17605/osf.io/x5b6d,no_metadata,10.1037/0278-7393.34.1.116,10.1037/0278-7393.34.1.116,"The Stroop effect and the relative proficiency of color naming and word reading: A test of the Cohen, Dunbar, and McClelland (1990) model",DOI 10.1037/0278-7393.34.1.116 is not registered and no replacement was found
-10.17605/osf.io/d2epg,mismatch,10.1111/j.1467-9280.2009.02409.x,10.1111/j.1467-9280.2009.02409.x,Hot under the collar in a lukewarm room: Emotional effects of exposure to hot-related words,"DOI mismatch: 10.1111/j.1467-9280.2009.02409.x points to ""Evidence of Differential Meta-Accuracy"" (2009), not ""Hot under the collar in a lukewarm room: Emotional effects of exposure to hot-related words"""
-10.1080/23743603.2017.1378071,mismatch,10.1111/j.1467-9280.2009.02355.x,10.1111/j.1467-9280.2009.02355.x,Automatic effects of exposure to heat-related words on aggression: Test of the general aggression model,"DOI mismatch: 10.1111/j.1467-9280.2009.02355.x points to ""Serotonin Augmentation Reduces Response to Attack in Aggressive Individuals"" (2009), not ""Automatic effects of exposure to heat-related words on aggression: Test of the general aggression model"""
-10.31234/osf.io/kmx75,mismatch,10.1177/1745691614551642,10.1177/1745691614551642,Safeguarding Testable Hypotheses Through Sequential Analysis,"DOI mismatch: 10.1177/1745691614551642 points to ""Beyond Power Calculations"" (2014), not ""Safeguarding Testable Hypotheses Through Sequential Analysis"""
-10.5465/ambpp.2020.236,mismatch,10.1037/0021-9010.93.4.758,10.1037/0021-9010.93.4.758,The White Standard: Implicit Leadership Theories and Race,"DOI mismatch: 10.1037/0021-9010.93.4.758 points to ""The White standard: Racial bias in leader categorization."" (2008), not ""The White Standard: Implicit Leadership Theories and Race"""
-10.1167/19.10.156,mismatch,10.1111/j.1467-9280.2009.02449.x,10.1111/j.1467-9280.2009.02449.x,Are stereotypes used to compensate for poor memory or do they actually bias memory?,"DOI mismatch: 10.1111/j.1467-9280.2009.02449.x points to ""Accuracy and Biases in Newlyweds' Perceptions of Each Other"" (2009), not ""Are stereotypes used to compensate for poor memory or do they actually bias memory?"""
-10.17605/osf.io/q8twv,mismatch,10.1037/a0025253,10.1037/a0025253,Sweet taste can lead to prosocial behavior,"DOI mismatch: 10.1037/a0025253 points to ""Sweet taste preferences and experiences predict prosocial inferences, personalities, and behaviors."" (2012), not ""Sweet taste can lead to prosocial behavior"""
 10.34917/4332616,no_doi,,,"Implementing Change: Patterns, Principles, and Potholes",Original has no registered DOI (https://openalex.org/W1480961302)
 10.1016/j.intell.2004.12.001,no_doi,,,Factorial studies of intelligence,Original has no registered DOI (https://openalex.org/W1590545576)
 10.1037//0022-006x.55.1.115,not_found,,,Learning foundations of behavior therapy,No DOI found for resolved title/author
 10.1145/2168556.2168644,no_doi,,,Visual Marketing: From Attention to Action,Original has no registered DOI (https://openalex.org/W1739905300)
-10.18632/aging.101294,mismatch,10.1053/j.gastro.2009.04.046,10.1053/j.gastro.2009.04.046,Genome-wide association study identifies a susceptibility locus for Hirschsprung's disease at 10q11.21,"DOI mismatch: 10.1053/j.gastro.2009.04.046 points to ""Inflammation and Intestinal Metaplasia of the Distal Esophagus Are Associated With Alterations in the Microbiome"" (2009), not ""Genome-wide association study identifies a susceptibility locus for Hirschsprung's disease at 10q11.21"""
-10.1145/3041008.3041009,mismatch,10.1145/1835804.1835817,10.1145/1835804.1835817,Beyond Heuristics: Learning to Classify Vulnerabilities and Predict Exploits,"DOI mismatch: 10.1145/1835804.1835817 points to ""Optimizing debt collections using constrained reinforcement learning"" (2010), not ""Beyond Heuristics: Learning to Classify Vulnerabilities and Predict Exploits"""
 10.58379/lzzz5040,no_doi,,,THE CAMBRIDGE APPROACH TO SPEAKING ASSESSMENT,Original has no registered DOI (https://openalex.org/W2271631149)
-10.3389/fpsyg.2015.01365,mismatch,10.1111/j.1467-9280.2007.01983.x,10.1111/j.1467-9280.2007.01983.x,God is watching you: Priming God concepts increases prosocial behavior in an anonymous economic game,"DOI mismatch: 10.1111/j.1467-9280.2007.01983.x points to ""God Is Watching You"" (2007), not ""God is watching you: Priming God concepts increases prosocial behavior in an anonymous economic game"""
-10.1113/jp281472,no_metadata,10.1113/jp281515,10.1113/jp281515,"Publications, replication and statistics: a new editorial policy for The Journal of Physiology",DOI 10.1113/jp281515 is not registered and no replacement was found
-10.13135/2384-8677/3380,mismatch,10.1080/17439760.2015.1025420,10.1080/17439760.2015.1025420,The relationship between self-reported exposure to nature and well-being in middle-aged adults,"DOI mismatch: 10.1080/17439760.2015.1025420 points to ""Happiness begets children? Evidence for a bi-directional link between well-being and number of children"" (2016), not ""The relationship between self-reported exposure to nature and well-being in middle-aged adults"""
-10.17605/osf.io/rp768,mismatch,10.1002/job.540,10.1002/job.540,Emotional and behavioral responses to workplace injustice: The mediating role of emotion,"DOI mismatch: 10.1002/job.540 points to ""Conflict management between and within teams for trusting relationships and performance in China"" (2009), not ""Emotional and behavioral responses to workplace injustice: The mediating role of emotion"""
-10.1117/12.2583654,mismatch,10.1117/12.2514784,10.1117/12.2514784,High-volume manufacturing of wire-grid polarizers using substrate conformal imprint lithography (SCIL),"DOI mismatch: 10.1117/12.2514784 points to ""Compact modeling of negative tone development resist with photo decomposable quencher"" (2019), not ""High-volume manufacturing of wire-grid polarizers using substrate conformal imprint lithography (SCIL)"""
-10.31234/osf.io/m6ghr,mismatch,10.1177/0956797611420166,10.1177/0956797611420166,"Sick body, vigilant mind: The biological immune system activates the behavioral immune system","DOI mismatch: 10.1177/0956797611420166 points to ""Sick Body, Vigilant Mind"" (2011), not ""Sick body, vigilant mind: The biological immune system activates the behavioral immune system"""
-10.17605/osf.io/xba78,mismatch,10.1037/xge0000411,10.1037/xge0000411,Lessons from the wild: The interplay of exploration and exploitation in category learning,"DOI mismatch: 10.1037/xge0000411 points to ""Gaze-based signatures of mind wandering during real-world scene processing."" (2018), not ""Lessons from the wild: The interplay of exploration and exploitation in category learning"""
-10.17605/osf.io/7khjv,mismatch,10.1093/jcr/ucx057,10.1093/jcr/ucx057,The Role of Self-Concept Clarity in Consumer Preferences for Bimodal Distributions,"DOI mismatch: 10.1093/jcr/ucx057 points to ""It’s Too Pretty to Use! When and How Enhanced Product Aesthetics Discourage Usage and Lower Consumption Enjoyment"" (2017), not ""The Role of Self-Concept Clarity in Consumer Preferences for Bimodal Distributions"""
-10.31234/osf.io/6kmjv,mismatch,10.1177/0956797612457390,10.1177/0956797612457390,Moving the hands retards the mind: Specificity of sensorimotor influence on working memory for action words,"DOI mismatch: 10.1177/0956797612457390 points to ""Fictitious Inhibitory Differences"" (2013), not ""Moving the hands retards the mind: Specificity of sensorimotor influence on working memory for action words"""
-10.5117/tvt2017.1.jans,no_metadata,10.5117/tvt2015.1.graa,10.5117/tvt2015.1.graa,De rol van de protagonist in narratieve overtuiging: De invloed van sympathie op transportatie en attitudes,DOI 10.5117/tvt2015.1.graa is not registered and no replacement was found
-10.1101/189522,no_metadata,10.1523/jneurosci.1915-12.2012,10.1523/jneurosci.1915-12.2012,Leveraging Frequency-Specific EEG Responses to Track Episodic Memory Reactivation,DOI 10.1523/jneurosci.1915-12.2012 is not registered and no replacement was found
-10.5281/zenodo.18530249,no_metadata,10.1186/s40545-021-00312-x,10.1186/s40545-021-00312-x,The East African Policy Framework: A Critical Analysis of Medicine Policy,DOI 10.1186/s40545-021-00312-x is not registered and no replacement was found
-10.5281/zenodo.18530250,no_metadata,10.1186/s40545-021-00312-x,10.1186/s40545-021-00312-x,The East African Policy Framework: A Critical Analysis of Medicine Policy,DOI 10.1186/s40545-021-00312-x is not registered and no replacement was found
-10.5281/zenodo.18965684,mismatch,10.4314/wsa.v35i5.49192,10.4314/wsa.v35i5.49192,A quasi-experimental design for risk reduction diagnostics in South African water treatment systems,"DOI mismatch: 10.4314/wsa.v35i5.49192 points to ""Comparison of GRACE with in situ hydrological measurement data shows storage depletion in Hai River basin, Northern China"" (2009), not ""A quasi-experimental design for risk reduction diagnostics in South African water treatment systems"""
-10.5281/zenodo.18965683,mismatch,10.4314/wsa.v35i5.49183,10.4314/wsa.v35i5.49183,A quasi-experimental design for risk reduction diagnostics in water treatment systems,"DOI mismatch: 10.4314/wsa.v35i5.49183 points to ""Evaluation of modifications to a physicochemical method for determination of readily biodegradable COD"" (2009), not ""A quasi-experimental design for risk reduction diagnostics in water treatment systems"""
-10.5281/zenodo.18970256,no_metadata,10.1016/j.engappai.2021.104245,10.1016/j.engappai.2021.104245,A difference-in-differences model for industrial machinery fleet reliability,DOI 10.1016/j.engappai.2021.104245 is not registered and no replacement was found
-10.3389/fpsyg.2019.01601,mismatch,10.3389/fpsyg.2016.00346,10.3389/fpsyg.2016.00346,Does Really One in Ten Believe Capital Punishment Exists in a Contemporary European Community Country? Television Consumption and Misperceptions of the Austrian Justice System,"DOI mismatch: 10.3389/fpsyg.2016.00346 points to ""Attachment Representations and Early Interactions in Drug Addicted Mothers: A Case Study of Four Women with Distinct Adult Attachment Interview Classifications"" (2016), not ""Does Really One in Ten Believe Capital Punishment Exists in a Contemporary European Community Country? Television Consumption and Misperceptions of the Austrian Justice System"""
-10.31234/osf.io/2h59n,no_metadata,10.1177/0146167213491962,10.1177/0146167213491962,The norm of loyalty and the whistle-blower's dilemma,DOI 10.1177/0146167213491962 is not registered and no replacement was found
-10.1016/j.physbeh.2021.113324,mismatch,10.1016/j.psyneuen.2015.01.008,10.1016/j.psyneuen.2015.01.008,Inflammation-induced social cognitive impairment: A role for interleukin-6,"DOI mismatch: 10.1016/j.psyneuen.2015.01.008 points to ""A shift toward T helper 2 responses and an increase in modulators of innate immunity in depressed patients treated with escitalopram"" (2015), not ""Inflammation-induced social cognitive impairment: A role for interleukin-6"""
-10.1177/0018720818823570,mismatch,10.1177/001872089303500309,10.1177/001872089303500309,Control-Display Relationships of the Four-Burner Stove: A Comparison of 14 Control-Display Layouts,"DOI mismatch: 10.1177/001872089303500309 points to ""Curvilinear Approach to an Intersection and Visual Detection of a Collision"" (1993), not ""Control-Display Relationships of the Four-Burner Stove: A Comparison of 14 Control-Display Layouts"""
-10.1037/ppm0000325,mismatch,10.1016/j.jad.2020.01.078,10.1016/j.jad.2020.01.078,A network analysis of Facebook use and well-being in relation to key psychological variables,"DOI mismatch: 10.1016/j.jad.2020.01.078 points to ""Associations between cognitive and affective job insecurity and incident purchase of psychotropic drugs: A prospective cohort study of Swedish employees"" (2020), not ""A network analysis of Facebook use and well-being in relation to key psychological variables"""
-10.1101/2021.11.12.467812,no_metadata,10.1073/pnas.1016206108,10.1073/pnas.1016206108,Cortical representation of syntactic structures and effects of word meanings,DOI 10.1073/pnas.1016206108 is not registered and no replacement was found
-10.31235/osf.io/hujgs,mismatch,10.1037/a0030518,10.1037/a0030518,Coming out as a fan: Fan identity disclosure and well-being,"DOI mismatch: 10.1037/a0030518 points to ""Optimal weighting of costs and probabilities in a risky motor decision-making task requires experience."" (2013), not ""Coming out as a fan: Fan identity disclosure and well-being"""
-10.1016/j.neuroscience.2021.06.032,mismatch,10.1111/psyp.12844,10.1111/psyp.12844,Socially induced emotions influence cognitive control: Evidence from event-related potentials,"DOI mismatch: 10.1111/psyp.12844 points to ""Time will tell: A longitudinal investigation of brain‐behavior relationships during reading development"" (2017), not ""Socially induced emotions influence cognitive control: Evidence from event-related potentials"""
-10.31234/osf.io/84sf7,mismatch,10.1371/journal.pone.0249235,10.1371/journal.pone.0249235,The masculine generic in Dutch: An eye-tracking study,"DOI mismatch: 10.1371/journal.pone.0249235 points to ""Physiological and subjective comfort evaluation under different airflow directions in a cooling environment"" (2021), not ""The masculine generic in Dutch: An eye-tracking study"""
-10.1080/09658211.2016.1265130,no_metadata,10.1016/b978-0-12-327640-7.50007-3,10.1016/b978-0-12-327640-7.50007-3,Memory for people,DOI 10.1016/b978-0-12-327640-7.50007-3 is not registered and no replacement was found
-10.1111/rmir.12197,mismatch,10.1086/467357,10.1086/467357,Moral Hazard in Insurance: Evidence from Insurance Fraud,"DOI mismatch: 10.1086/467357 points to ""Is the ""Dominant Firm"" Dominant? An Empirical Analysis of AT&amp;T's Market Power"" (1996), not ""Moral Hazard in Insurance: Evidence from Insurance Fraud"""
-10.17705/1atrr.00068,mismatch,10.1016/j.im.2015.06.009,10.1016/j.im.2015.06.009,Factors affecting compliance with emergency instructions during campus emergencies: An empirical study,"DOI mismatch: 10.1016/j.im.2015.06.009 points to ""Assessing ERP post-implementation success at the individual level: Revisiting the role of service quality"" (2015), not ""Factors affecting compliance with emergency instructions during campus emergencies: An empirical study"""
-10.1371/journal.pone.0209368,mismatch,10.3758/bf03196127,10.3758/bf03196127,Conceptual span: A new measure of semantic short-term memory,"DOI mismatch: 10.3758/bf03196127 points to ""Subjective measures of awareness and implicit cognition"" (2003), not ""Conceptual span: A new measure of semantic short-term memory"""
-10.1016/j.prdoa.2021.100117,mismatch,10.1002/mds.21680,10.1002/mds.21680,Symptom dimensions of anxiety in Parkinson's disease,"DOI mismatch: 10.1002/mds.21680 points to ""Management of motor complications in advanced Parkinson's disease"" (2007), not ""Symptom dimensions of anxiety in Parkinson's disease"""
-10.1111/psyp.13419,mismatch,10.1002/ajhb.21164,10.1002/ajhb.21164,Season of birth and heart rate variability in adulthood,"DOI mismatch: 10.1002/ajhb.21164 points to ""Gender differences in oral health in South Asia: Metadata imply multifactorial biological and cultural causes"" (2011), not ""Season of birth and heart rate variability in adulthood"""
-10.1109/compsac.2013.82,mismatch,10.1145/2001420.2001436,10.1145/2001420.2001436,Random Test Case Generation and Manual Unit Testing: An Empirical Evaluation,"DOI mismatch: 10.1145/2001420.2001436 points to ""Testing concurrent programs on relaxed memory models"" (2011), not ""Random Test Case Generation and Manual Unit Testing: An Empirical Evaluation"""
-10.1007/s40881-021-00103-x,mismatch,10.1016/j.euroecorev.2019.103316,10.1016/j.euroecorev.2019.103316,The effect of language on patience: An experimental test of the linguistic-savings hypothesis,"DOI mismatch: 10.1016/j.euroecorev.2019.103316 points to ""Preferences-dependent learning in the centipede game: The persistence of mistrust"" (2019), not ""The effect of language on patience: An experimental test of the linguistic-savings hypothesis"""
-10.1111/psyp.13707,mismatch,10.1016/j.biopsycho.2015.07.014,10.1016/j.biopsycho.2015.07.014,Blunted cardiac reactivity to acute psychological stress predicts low behavioral but not self-reported perseverance,"DOI mismatch: 10.1016/j.biopsycho.2015.07.014 points to ""Paying attention to my voice or yours: An ERP study with words"" (2015), not ""Blunted cardiac reactivity to acute psychological stress predicts low behavioral but not self-reported perseverance"""
-10.1186/s13148-019-0636-y,mismatch,10.1038/ng.3037,10.1038/ng.3037,"Methylomic profiling of 1,000+ human brains reveals DNA methylation signatures of Alzheimer's disease","DOI mismatch: 10.1038/ng.3037 points to ""Exome sequencing identifies highly recurrent MED12 somatic mutations in breast fibroadenoma"" (2014), not ""Methylomic profiling of 1,000+ human brains reveals DNA methylation signatures of Alzheimer's disease"""
-10.1152/jn.00286.2019,mismatch,10.1016/j.neuroimage.2015.03.073,10.1016/j.neuroimage.2015.03.073,Sustained force control is associated with distinct patterns of motor and sensory tract integrity in autism spectrum disorder,"DOI mismatch: 10.1016/j.neuroimage.2015.03.073 points to ""Mean-field thalamocortical modeling of longitudinal EEG acquired during intensive meditation training"" (2015), not ""Sustained force control is associated with distinct patterns of motor and sensory tract integrity in autism spectrum disorder"""
-10.1097/wnr.0b013e328344f45c,mismatch,10.1016/j.biopsycho.2010.07.016,10.1016/j.biopsycho.2010.07.016,The feeling of movement: EEG evidence for mirror neuron system activity during the Rorschach test,"DOI mismatch: 10.1016/j.biopsycho.2010.07.016 points to ""Genetic effects on anger control and their interaction with alcohol intoxication: A self-report study"" (2010), not ""The feeling of movement: EEG evidence for mirror neuron system activity during the Rorschach test"""
-10.1016/j.jecp.2015.11.007,mismatch,10.1111/j.1467-7687.2009.00881.x,10.1111/j.1467-7687.2009.00881.x,Online use of theory of mind during adolescence,"DOI mismatch: 10.1111/j.1467-7687.2009.00881.x points to ""Intuitions about gravity and solidity in great apes: the tubes task"" (2010), not ""Online use of theory of mind during adolescence"""
-10.1097/fpc.0b013e32834e1641,no_metadata,10.1097/01.tp.0000037136.04778.99,10.1097/01.tp.0000037136.04778.99,Tacrolimus pharmacogenetics: CYP3A5 and MDR1 polymorphisms and tacrolimus whole-blood concentrations,DOI 10.1097/01.tp.0000037136.04778.99 is not registered and no replacement was found
-10.1017/s1366728916000651,no_metadata,10.1080/20445911.2015.1051536,10.1080/20445911.2015.1051536,"The cognate facilitation effect: Now you see it, now you don't",DOI 10.1080/20445911.2015.1051536 is not registered and no replacement was found
-10.1097/won.0b013e3182435579,no_metadata,10.1097/won.0b013e318214fd44,10.1097/won.0b013e318214fd44,The prophylactic use of a self-adherent soft silicone border foam dressing to prevent pressure ulcers in the intensive care unit: a retrospective analysis,DOI 10.1097/won.0b013e318214fd44 is not registered and no replacement was found
-10.1152/jn.00558.2020,mismatch,10.1038/srep22099,10.1038/srep22099,Age-related differences in sensory attenuation are driven by impaired proprioception and not by changes in forward modeling,"DOI mismatch: 10.1038/srep22099 points to ""Molecular orbital analysis of the hydrogen bonded water dimer"" (2016), not ""Age-related differences in sensory attenuation are driven by impaired proprioception and not by changes in forward modeling"""
-10.1109/tse.2018.2863303,mismatch,10.1109/icse.2012.6227203,10.1109/icse.2012.6227203,Measuring and modeling programming language features,"DOI mismatch: 10.1109/icse.2012.6227203 points to ""Overcoming the challenges in cost estimation for distributed software projects"" (2012), not ""Measuring and modeling programming language features"""
-10.1503/jpn.120060,no_metadata,10.1176/appi.ajp.2009.0903034,10.1176/appi.ajp.2009.0903034,Automatic amygdala response to facial expression in major depression: evidence for mood-congruent processing,DOI 10.1176/appi.ajp.2009.0903034 is not registered and no replacement was found
-10.1111/acps.12778,no_metadata,10.1001/archpsyc.1993.01820180051006,10.1001/archpsyc.1993.01820180051006,Do genes influence exposure to trauma? A twin study of Viet Nam veterans,DOI 10.1001/archpsyc.1993.01820180051006 is not registered and no replacement was found
-10.1016/j.respol.2021.104399,mismatch,10.1073/pnas.1510159112,10.1073/pnas.1510159112,Gender curbs scientific careers of female researchers due to bias in peer review of grant applications,"DOI mismatch: 10.1073/pnas.1510159112 points to ""Gender contributes to personal research funding success in The Netherlands"" (2015), not ""Gender curbs scientific careers of female researchers due to bias in peer review of grant applications"""
-10.1371/journal.pone.0176856,mismatch,10.1007/978-1-4020-6112-7,10.1007/978-1-4020-6112-7,Working through Barriers: Host country institutions and immigrant labour market integration in Western Europe,"DOI mismatch: 10.1007/978-1-4020-6112-7 points to ""Algae and Cyanobacteria in Extreme Environments"" (2007), not ""Working through Barriers: Host country institutions and immigrant labour market integration in Western Europe"""
-10.1038/s41598-018-33202-7,mismatch,10.1073/pnas.0809667106,10.1073/pnas.0809667106,Neural signature of hierarchic auditory predictions,"DOI mismatch: 10.1073/pnas.0809667106 points to ""Neural signature of the conscious processing of auditory regularities"" (2009), not ""Neural signature of hierarchic auditory predictions"""
-10.1002/da.22586,mismatch,10.1016/j.biopsych.2012.03.020,10.1016/j.biopsych.2012.03.020,Reward functioning in anorexia nervosa: A study of temporal discounting,"DOI mismatch: 10.1016/j.biopsych.2012.03.020 points to ""Posttraumatic Stress Disorder Across Two Generations: Concordance and Mechanisms in a Population-Based Sample"" (2012), not ""Reward functioning in anorexia nervosa: A study of temporal discounting"""
 10.1108/ccm-11-2013-0180,no_doi,,,Measuring the relationship between organizational transparency and employee trust.,Original has no registered DOI (https://openalex.org/W1480984811)
 10.1111/cogs.12849,no_doi,,,Adventures in long-distance moving: The acquisition of complex Wh-questions,Original has no registered DOI (https://openalex.org/W1579125600)
 10.31234/osf.io/4qnfk,no_doi,,,When Left is 'Right': Motor Fluency Shapes Abstract Concepts,Original has no registered DOI (https://openalex.org/W3121751474)
 10.1080/13504860903075621,no_doi,,,Hedging Complex Barrier Options,Original has no registered DOI (https://openalex.org/W2164608233)
-10.1017/s0958344023000034,not_found,,,"The Effects of Student Engagement, Student Satisfaction, and Perceived Learning in Online Learning Environments",No DOI found for resolved title/author
+10.1017/s0958344023000034,no_doi,,,"The Effects of Student Engagement, Student Satisfaction, and Perceived Learning in Online Learning Environments",Original has no registered DOI (https://openalex.org/W2500726635)
 10.1109/thms.2018.2806200,no_doi,,,Visual Sampling Processes,Original has no registered DOI (https://openalex.org/W1592291786)
 10.31234/osf.io/m9qnc,no_doi,,,Manual for the Depression Anxiety Stress Scales. 2,Original has no registered DOI (https://openalex.org/W2955473053)
 10.1111/j.1469-8986.1992.tb02035.x,no_doi,,,Chronometric explorations of mind,Original has no registered DOI (https://openalex.org/W1708089250)
@@ -74,11 +16,11 @@
 10.31219/osf.io/axn6z,no_doi,,,Trigger Warnings and Resilience in College Students: A Preregistered Replication,Original has no registered DOI (https://openalex.org/W2891448371)
 10.5406/bulcouresmusedu.193.0045,no_doi,,,The Nature of Expertise: Narrative Description of 19 Common Elements Observed in the Lessons of Three Renowned Artist-Teachers,Original has no registered DOI (https://openalex.org/W2300220425)
 10.7282/t3mp51q9,no_doi,,,Teachers Attending to Students' Reasoning: Using Videos as Tools,Original has no registered DOI (https://openalex.org/W2182939530)
-10.1016/j.jml.2022.104357,not_found,,,Can Quirks of Grammar Affect the Way You Think? Grammatical Gender and Object Concepts,No DOI found for resolved title/author
+10.1016/j.jml.2022.104357,no_doi,,,Can Quirks of Grammar Affect the Way You Think? Grammatical Gender and Object Concepts,Original has no registered DOI (https://openalex.org/W2612544707)
 10.1111/hypa.12480,no_doi,,,Consequences of Conservatism: Black Male Undergraduates and the Politics of Historically Black Colleges and Universities.,Original has no registered DOI (https://openalex.org/W2113598733)
 10.21511/im.13(2).2017.03,not_found,,,"R for Data Science: Import, Tidy, Transform, Visualize, and Model Data",No DOI found for resolved title/author
-10.31219/osf.io/ah8ct,not_found,,,Can Quirks of Grammar Affect the Way You Think? Grammatical Gender and Object Concepts,No DOI found for resolved title/author
-10.1177/03616843221123745,not_found,,,May the Best Woman Win? Education and Bias Against Women in American Politics,No DOI found for resolved title/author
+10.31219/osf.io/ah8ct,no_doi,,,Can Quirks of Grammar Affect the Way You Think? Grammatical Gender and Object Concepts,Original has no registered DOI (https://openalex.org/W2612544707)
+10.1177/03616843221123745,no_doi,,,May the Best Woman Win? Education and Bias Against Women in American Politics,Original has no registered DOI (https://openalex.org/W2971819583)
 10.1037/0022-0663.83.4.444,no_doi,,,A LINGUISTIC STUDY OF CUES AND MISCUES IN READING.,Original has no registered DOI (https://openalex.org/W1516486469)
 10.15288/jsa.1992.53.335,no_doi,,,"Drinking behavior, personality factors and high-risk driving",Original has no registered DOI (https://openalex.org/W2582911044)
 10.2307/1422981,no_doi,,,Memory-scanning: mental processes revealed by reaction-time experiments.,Original has no registered DOI (https://openalex.org/W1529340823)
@@ -87,11 +29,70 @@
 10.1002/(sici)1520-6807(199905)36:3<219::aid-pits5>3.0.co;2-0,no_doi,,,Death Attitude Profile—Revised: A multidimensional measure of attitudes toward death.,Original has no registered DOI (https://openalex.org/W2974625540)
 10.1080/08934219909367706,no_doi,,,A model of the limbic system and basal ganglia: Applications to anxiety and schizophrenia.,Original has no registered DOI (https://openalex.org/W2995139328)
 10.1111/j.1559-1816.2005.tb02168.x,no_doi,,,Judgments of Responsibility: A Foundation for a Theory of Social Conduct,Original has no registered DOI (https://openalex.org/W1813376734)
-10.1177/1354068800006002007,not_found,,,Policy and Party Competition,No DOI found for resolved title/author
-10.1108/s1085-4622(2000)0000002013,not_found,,,Student Team Learning - Replication and Extension,No DOI found for resolved title/author
-10.15760/etd.5326,not_found,,,Perception of Lexical Connotation: Professed Attitude and Socio-Cultural Distance in Second Language Learning.,No DOI found for resolved title/author
-10.18061/1811/28854,not_found,,,Structural judgements in the perception of computer-generated music,No DOI found for resolved title/author
-10.1177/1932202x1002100305,not_found,,,Perceived instrumentality and academics: The link to task valuing.,No DOI found for resolved title/author
-10.5281/zenodo.18965956,not_found,,,The impact of the 2008/09 tax exemption on the adoption of industrial machinery in Uganda,No DOI found for resolved title/author
-10.5281/zenodo.18965955,not_found,,,The impact of the investment code on foreign direct investment in Uganda,No DOI found for resolved title/author
-10.1017/jog.2016.121,not_found,,,"Surge-related evolution of ice dynamics on Austfonna ice cap, Svalbard",No DOI found for resolved title/author
+10.1177/1354068800006002007,no_doi,,,Policy and Party Competition,Original has no registered DOI (https://openalex.org/W1539633078)
+10.1108/s1085-4622(2000)0000002013,no_doi,,,Student Team Learning - Replication and Extension,Original has no registered DOI (https://openalex.org/W2256215983)
+10.15760/etd.5326,no_doi,,,Perception of Lexical Connotation: Professed Attitude and Socio-Cultural Distance in Second Language Learning.,Original has no registered DOI (https://openalex.org/W563945160)
+10.18061/1811/28854,no_doi,,,Structural judgements in the perception of computer-generated music,Original has no registered DOI (https://openalex.org/W2972214737)
+10.1177/1932202x1002100305,no_doi,,,Perceived instrumentality and academics: The link to task valuing.,Original has no registered DOI (https://openalex.org/W1603893421)
+,skipped,,,,
+10.1037/edu0000965.supp,skipped,,,,
+10.24072/pci.rr.100497,skipped,,,,
+10.25384/sage.13238146.v1,skipped,,,,
+10.25384/sage.13238143.v1,skipped,,,,
+10.25384/sage.7884710.v1,skipped,,,,
+10.25384/sage.12967386.v1,skipped,,,,
+10.25384/sage.11807913.v1,skipped,,,,
+10.48550/arxiv.2201.10598,skipped,,,,
+10.25384/sage.12212564.v1,skipped,,,,
+10.25384/sage.13238125.v1,skipped,,,,
+10.25384/sage.8005820.v1,skipped,,,,
+10.22004/ag.econ.321202,skipped,,,,
+10.25384/sage.13718321.v1,skipped,,,,
+10.25384/sage.11932206.v1,skipped,,,,
+,skipped,,,,
+10.25384/sage.12478025.v1,skipped,,,,
+10.25384/sage.8185856.v1,skipped,,,,
+10.25384/sage.8185853.v1,skipped,,,,
+10.3389/fpubh.2020.579559,skipped,,,,
+10.18718/81781.10,not_found,,,"“Media Inﬂuences on Social Outcomes: The Impact of MTV’s 16 and Pregnant on Teen Childbearing.” American Economic Review 105(12), 3597– 3632",No DOI found for resolved title/author
+,not_found,,,Report of an jnternship c:gndyctp1 lithe MemQrial Unjvmj'Y CWORmA' centre; jnsl!ldjog a resemb Drpicct' A study of the rdatjQDsbjp bctwml initial client and SOUD¥!lpr pm:eptjPO,No DOI found for resolved title/author
+10.5072/prism/9538,not_found,,,Wagering and Problem Wagering in Louisiana,No DOI found for resolved title/author
+10.11575/prism/9542,not_found,,,Gambling and Problem Gambling in North Dakota,No DOI found for resolved title/author
+10.11575/prism/9551,not_found,,,Gambling and Problem Gambling in Washington State,No DOI found for resolved title/author
+10.18718/81781.52,skipped,,,,
+10.18718/81781.54,skipped,,,,
+10.32388/7j7y2o,skipped,,,,
+10.1037/xge0001503.supp,skipped,,,,
+10.32388/c79678,skipped,,,,
+10.21428/cb6ab371.ea00ca58,skipped,,,,
+10.24072/pci.rr.100314.rev12,skipped,,,,
+10.21428/cb6ab371.ad75733e,skipped,,,,
+10.31234/osf.io/qctkp,not_found,,,Knowing is half the battle: Teaching stereotype threat as a means of improving women's math performance,No DOI found for resolved title/author
+10.31234/osf.io/mj594,skipped,,,,
+10.1177/00986283211015981,no_doi,,,Using Role-Play to Enhance Critical Thinking about Ethics in Psychology,Original has no registered DOI (https://openalex.org/W2756940065)
+10.31234/osf.io/c2dba,skipped,,,,
+10.31234/osf.io/rfvp2,skipped,,,,
+10.31219/osf.io/nhwme_v1,not_found,,,The bounds of adult language acquisition: Blocking and learned attention,No DOI found for resolved title/author
+10.1017/s0007123422000631,skipped,,,,
+10.31234/osf.io/7vsau,skipped,,,,
+10.31234/osf.io/349pk,not_found,,,A bad taste in the mouth: Gustatory disgust inﬂuences moral judgment,No DOI found for resolved title/author
+10.1101/2020.07.02.20145367,skipped,,,,
+10.31234/osf.io/a7nyt,skipped,,,,
+10.31234/osf.io/qctkp_v2,not_found,,,Knowing is half the battle: Teaching stereotype threat as a means of improving women's math performance,No DOI found for resolved title/author
+10.1525/collabra.37460,skipped,,,,
+10.31234/osf.io/62r3u,not_found,,,The Rhythm of Perception: Entrainment to Acoustic Rhythms Induces Subsequent Perceptual Oscillation,No DOI found for resolved title/author
+10.31234/osf.io/8cqpk,not_found,,,"References Job V, Dweck CS, Walton GM",No DOI found for resolved title/author
+10.31234/osf.io/62r3u_v1,not_found,,,The Rhythm of Perception: Entrainment to Acoustic Rhythms Induces Subsequent Perceptual Oscillation,No DOI found for resolved title/author
+10.32388/faxrux,not_found,,,Analyst Perceptions of Corporate Social Responsibility,No DOI found for resolved title/author
+10.1080/02699931.2018.1526778,skipped,,,,
+10.1080/09658211.2023.2226567,skipped,,,,
+10.32388/29qnew,skipped,,,,
+10.32388/s8kgl2,skipped,,,,
+10.32388/hqrzzi,skipped,,,,
+10.1017/s0272263124000263,skipped,,,,
+10.1017/s0272263125101034,skipped,,,,
+10.24072/pci.rr.101842.d1,skipped,,,,
+10.24072/pci.rr.101145.rev12,skipped,,,,
+10.18718/81781.47,skipped,,,,
+10.33423/jmdc.v14i2.2835,skipped,,,,
+10.1177/2167696818810268,skipped,,,,

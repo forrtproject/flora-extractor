@@ -18,6 +18,8 @@ Public API:
     clear_content_keys(cache_dir, prefix, doi, suffix=".json") → list[str]
 """
 import json
+import os
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -36,12 +38,31 @@ def read_cache(cache_dir: Path, key: str, suffix: str = ".json") -> Optional[dic
         return None
 
 
+def write_json(path: Path, data: object, indent: "int | None" = None) -> None:
+    """Write *data* to *path* as JSON, through a temp file and os.replace.
+
+    What a reader can see at the path is therefore either the previous file or the
+    whole new one, never half of each. Two writers of one cache file are not a
+    conflict of answers — the key names its content — but they are a conflict of
+    bytes: Stage 3 runs its rows in a thread pool, two rows can want the same
+    original's metadata at the same moment, and two plain `open("w")` writes
+    interleave into a file whose next read raises or misses. A miss re-pays for the
+    call the cache existed to avoid; the raise ends a row as api_error.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=indent)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def write_cache(cache_dir: Path, key: str, data: dict, suffix: str = ".json") -> None:
     """Write *data* to cache as JSON. Creates parent directories if needed."""
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    path = cache_dir / f"{key}{suffix}"
-    with path.open("w", encoding="utf-8") as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
+    write_json(cache_dir / f"{key}{suffix}", data, indent=2)
 
 
 def content_key(prefix: str, doi: str, *parts: object) -> str:

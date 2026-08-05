@@ -20,10 +20,12 @@ from .config import (
     OA_CACHE_DIR, OPENALEX_RATE_SEC, CROSSREF_RATE_SEC,
     RESEARCHER_EMAIL, log,
 )
-from .cache import content_key, read_cache, write_cache
+from .cache import content_key, read_cache, write_cache, write_json
 from .openalex_keys import (
-    headers as oa_headers, is_budget_refusal, quota_message, rotate_key,
+    current_index, headers as oa_headers, is_budget_refusal, quota_message,
+    rotate_key,
 )
+from .rate_limit import throttle
 from .utils import bare_work_id, clean_doi, cache_key
 
 # ── Unicode ranges (chr() avoids \u in compiled regexes for Python < 3.12) ────
@@ -208,8 +210,6 @@ def extract_author_year_patterns(text: str,
 
 # ── OpenAlex API ──────────────────────────────────────────────────────────────
 
-_oa_last_call = 0.0
-
 
 class OpenAlexQuotaExhausted(RuntimeError):
     """OpenAlex refused the request for lack of budget, not for lack of data.
@@ -230,18 +230,18 @@ def _oa_get(url: str, params: dict | None = None) -> Optional[dict]:
     Raises OpenAlexQuotaExhausted when the 429 is a budget refusal — see that
     class. Transient 429s are still retried on the schedule below.
     """
-    global _oa_last_call
-    wait = OPENALEX_RATE_SEC - (time.time() - _oa_last_call)
-    if wait > 0:
-        time.sleep(wait)
-    _oa_last_call = time.time()
-
     _RETRY_DELAYS = [5, 15, 30]  # seconds to wait after 1st, 2nd, 3rd 429
     attempt = 0
     # Not a for-loop over attempts: rotating to a fresh key is not a retry of a
     # throttled request, so it must not consume the backoff budget — otherwise a
     # run with more keys than retry slots would give up with keys still unused.
     while attempt <= len(_RETRY_DELAYS):
+        # Once per attempt, including the retries: the throttle is a reservation in
+        # one shared queue (shared/rate_limit.py), so concurrent callers space
+        # themselves at OPENALEX_RATE_SEC between them rather than each sleeping
+        # its own interval and firing together.
+        throttle("openalex", OPENALEX_RATE_SEC)
+        key_idx = current_index()
         try:
             r = requests.get(url, headers=oa_headers(), params=params or {},
                              timeout=30)
@@ -249,7 +249,7 @@ def _oa_get(url: str, params: dict | None = None) -> Optional[dict]:
                 if is_budget_refusal(r):
                     # Try the next key before giving up; only when every key is
                     # drained does this become a hard stop.
-                    if rotate_key():
+                    if rotate_key(key_idx):
                         continue
                     raise OpenAlexQuotaExhausted(quota_message(r))
                 if attempt >= len(_RETRY_DELAYS):
@@ -260,7 +260,6 @@ def _oa_get(url: str, params: dict | None = None) -> Optional[dict]:
                 log.warning("OpenAlex 429 — waiting %ds before retry %d/%d",
                             delay, attempt + 1, len(_RETRY_DELAYS))
                 time.sleep(delay)
-                _oa_last_call = time.time()
                 attempt += 1
                 continue
             r.raise_for_status()
@@ -325,8 +324,7 @@ def fetch_referenced_works_metadata(openalex_id: str,
 
     if use_cache:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
-        with cache_file.open("w", encoding="utf-8") as fh:
-            json.dump(results, fh, ensure_ascii=False, indent=2)
+        write_json(cache_file, results, indent=2)
 
     return results
 
@@ -359,7 +357,7 @@ def fetch_opencitations_references(doi_r: str) -> list[dict]:
             return json.load(fh)
 
     try:
-        time.sleep(CROSSREF_RATE_SEC)
+        throttle("crossref", CROSSREF_RATE_SEC)
         r = requests.get(_OPENCITATIONS_URL.format(doi=doi_r),
                          headers={"User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})"},
                          timeout=45)
@@ -392,8 +390,7 @@ def fetch_opencitations_references(doi_r: str) -> list[dict]:
     log.info("[%s] OpenCitations: %d cited DOIs → %d with metadata",
              doi_r, len(dois), len(results))
     cache_file.parent.mkdir(parents=True, exist_ok=True)
-    with cache_file.open("w", encoding="utf-8") as fh:
-        json.dump(results, fh, ensure_ascii=False, indent=2)
+    write_json(cache_file, results, indent=2)
     return results
 
 
@@ -527,8 +524,7 @@ def find_all_candidates(doi_r: str,
                         })
 
     cache_file.parent.mkdir(parents=True, exist_ok=True)
-    with cache_file.open("w", encoding="utf-8") as fh:
-        json.dump(candidates, fh, ensure_ascii=False, indent=2)
+    write_json(cache_file, candidates, indent=2)
 
     return candidates
 
@@ -592,7 +588,7 @@ def _fetch_crossref_full_meta(doi: str) -> Optional[dict]:
             headers={"User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})"},
             timeout=20,
         )
-        time.sleep(CROSSREF_RATE_SEC)
+        throttle("crossref", CROSSREF_RATE_SEC)
         if r.status_code == 404:
             return None
         r.raise_for_status()
@@ -663,7 +659,7 @@ def _fetch_doi_org_full_meta(doi: str) -> Optional[dict]:
         try:
             r = requests.get(f"https://doi.org/{doi}", headers=headers,
                              timeout=20, allow_redirects=True)
-            time.sleep(CROSSREF_RATE_SEC)
+            throttle("crossref", CROSSREF_RATE_SEC)
             if r.status_code == 404:
                 return None
             if 400 <= r.status_code < 500 and r.status_code != 429:
@@ -773,7 +769,7 @@ def _search_crossref_by_title_live(title: str, year: str = "") -> Optional[dict]
             headers={"User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})"},
             timeout=20,
         )
-        time.sleep(CROSSREF_RATE_SEC)
+        throttle("crossref", CROSSREF_RATE_SEC)
         r.raise_for_status()
         items = r.json().get("message", {}).get("items") or []
     except Exception as exc:
@@ -919,8 +915,7 @@ def _fetch_openalex_work(doi: str) -> Optional[dict]:
 
     work = (data.get("results") or [None])[0]
     cache_file.parent.mkdir(parents=True, exist_ok=True)
-    with cache_file.open("w", encoding="utf-8") as fh:
-        json.dump({"work": work}, fh, ensure_ascii=False, indent=2)
+    write_json(cache_file, {"work": work}, indent=2)
     return work
 
 
@@ -977,8 +972,7 @@ def fetch_openalex_full_metadata(doi: str) -> Optional[dict]:
         return None
 
     cache_file.parent.mkdir(parents=True, exist_ok=True)
-    with cache_file.open("w", encoding="utf-8") as fh:
-        json.dump(result, fh, ensure_ascii=False, indent=2)
+    write_json(cache_file, result, indent=2)
 
     return result
 
@@ -1035,8 +1029,7 @@ def resolve_doi_from_url(url: str) -> str:
 
     def _save(doi: str) -> str:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
-        with cache_file.open("w", encoding="utf-8") as fh:
-            json.dump({"url": url, "doi": doi}, fh)
+        write_json(cache_file, {"url": url, "doi": doi})
         return doi
 
     # 1. doi.org URL → extract DOI directly

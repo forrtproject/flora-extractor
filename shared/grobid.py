@@ -20,7 +20,6 @@ Public API:
 import base64
 import hashlib
 import re
-import time
 from pathlib import Path
 from typing import Optional
 
@@ -32,6 +31,8 @@ from .config import GEMINI_MODEL, GROBID_CACHE_DIR, GROBID_SERVER, log
 # anger; a local Docker GROBID does not need it, but paying 3s on a local server is
 # cheaper than getting the shared one to refuse everyone.
 GROBID_RATE_SEC = 3.0
+from .cache import write_json
+from .rate_limit import throttle
 from .prompts import PDF_IMAGE_REFERENCES_PROMPT, PDF_REFERENCES_PROMPT, prompt_version
 from .utils import clean_citation_title, usable_title
 
@@ -269,8 +270,7 @@ def parse_pdf_sections(pdf_path: Path) -> dict:
 
     # Cache it
     try:
-        with cache_file.open("w", encoding="utf-8") as fh:
-            json.dump(sections, fh, ensure_ascii=False, indent=2)
+        write_json(cache_file, sections, indent=2)
     except Exception as e:
         log.debug("Could not cache sections for %s: %s", pdf_path.name, e)
 
@@ -354,8 +354,7 @@ def _extract_refs_via_pdf_direct(doi_r: str, pdf_path: Path) -> list[dict]:
 
     if refs:
         try:
-            with cache_file.open("w", encoding="utf-8") as fh:
-                json.dump(refs, fh, ensure_ascii=False, indent=2)
+            write_json(cache_file, refs, indent=2)
         except Exception:
             pass
 
@@ -443,8 +442,7 @@ def _extract_refs_via_pdf_images(doi_r: str, pdf_path: Path) -> list[dict]:
 
     if refs:
         try:
-            with cache_file.open("w", encoding="utf-8") as fh:
-                json.dump(refs, fh, ensure_ascii=False, indent=2)
+            write_json(cache_file, refs, indent=2)
         except Exception:
             pass
 
@@ -525,7 +523,6 @@ def run_grobid(doi_r: str, pdf_path: Optional[Path],
 # ── Legacy GROBID wrappers (kept for import compatibility) ────────────────────
 
 TEI_NS = {"tei": "http://www.tei-c.org/ns/1.0"}
-_grobid_last = 0.0
 
 
 def process_pdf_with_grobid(pdf_path: Path,
@@ -535,8 +532,6 @@ def process_pdf_with_grobid(pdf_path: Path,
     Kept for compatibility; prefer parse_pdf_sections() for local extraction.
     Returns TEI-XML string or None.
     """
-    global _grobid_last
-
     if not pdf_path or not Path(pdf_path).exists():
         return None
 
@@ -545,10 +540,7 @@ def process_pdf_with_grobid(pdf_path: Path,
     if xml_cache.exists() and xml_cache.stat().st_size > 0:
         return xml_cache.read_text(encoding="utf-8")
 
-    wait = GROBID_RATE_SEC - (time.time() - _grobid_last)
-    if wait > 0:
-        time.sleep(wait)
-    _grobid_last = time.time()
+    throttle("grobid", GROBID_RATE_SEC)
 
     endpoint = f"{server}/api/processFulltextDocument"
     try:

@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import shared.llm_client as llm
+from shared import rate_limit
 
 
 def _resp(content: str):
@@ -900,7 +901,7 @@ def clock(monkeypatch):
     monkeypatch.setattr(llm.time, "sleep", c.sleep)
     monkeypatch.setattr(llm, "_PROVIDER_RATE_SEC",
                         {"gemini": 1.0, "openai": 0.5, "openrouter": 0.5})
-    llm._next_call_at.clear()
+    rate_limit._next_call_at.clear()
     return c
 
 

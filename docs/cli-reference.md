@@ -332,17 +332,17 @@ python -m extract.run_extract
 # Write to test sandbox instead of production
 python -m extract.run_extract --extracted-test
 
-# Resume from last processed row
-python -m extract.run_extract --resume
+# Start over: discard extracted.csv and re-extract (and re-pay for) every row
+python -m extract.run_extract --fresh
 
-# Resume, and also re-decide rows a previous run set aside on the classification screen
-python -m extract.run_extract --resume --rescreen
+# Also re-decide rows a previous run set aside on the classification screen
+python -m extract.run_extract --rescreen
 
 # Skip LLM calls (rule-based only)
 python -m extract.run_extract --no-llm
 
 # Combine flags
-python -m extract.run_extract --extracted-test --resume --no-llm
+python -m extract.run_extract --extracted-test --no-llm
 
 # Limit to N rows
 python -m extract.run_extract --limit 50
@@ -373,15 +373,15 @@ still processes N fresh rows — and reads far more than N. Use it to bound *spe
 never to bound how much of the input is touched, and never to reason about which
 rows a run saw.
 
-**`--extracted-test` without `--resume` truncates `data/extracted-test.csv`.** The
-first row written opens the file with mode `w`, and only `--resume` pre-loads the
-existing rows before that happens. A test run started without `--resume` therefore
-discards the previous test run's output rather than adding to it. `--extracted-test
---resume` is the combination that accumulates.
+**`--fresh` truncates the output CSV.** The first row written opens the file with
+mode `w`, and an ordinary run pre-loads the existing rows before that happens, so the
+file is rewritten from what it already held. `--fresh` skips that pre-load, so the
+previous run's output is discarded rather than added to — in the test sandbox as
+well as in production.
 
 ### Re-screening set-aside rows
 
-`--resume` carries every already-resolved row forward untouched, including the rows
+An ordinary run carries every already-resolved row forward untouched, including the rows
 the classification screen decided on its own (`link_method`/`outcome` of
 `not_a_replication`, plus the historical `screen_disagreement`). That is right for a resumed run and
 wrong after the screen changes: an old voter pair's verdicts would survive
@@ -427,6 +427,28 @@ never drift apart.
 
 A missing or unreadable source logs a warning and contributes nothing, so one bad file
 cannot silently disable the whole skip list.
+
+### Skipping works already in the validation tables
+
+`--skip-validated` is **on by default** and answers a different question: not "is this
+already published in FLoRA" but "has someone already validated it". Supabase
+`record_metadata` holds ~1,770 records seeded from the prior FLoRA pipeline, and those
+works must never be extracted again.
+
+That set is frozen — everything validated from here on flows through this pipeline and
+is held out by `extracted.csv`'s own resume keys — so it is a static, committed file
+rather than a query. `analysis/build_validated_skip.py` materialises it once:
+
+```bash
+python -m analysis.build_validated_skip            # dry run: prints the counts
+python -m analysis.build_validated_skip --apply    # writes data/validated_skip.csv
+```
+
+Stage 3 then reads `data/validated_skip.csv` (`shared/flora_skip.load_validated_skip()`)
+and skips a row whose OpenAlex work id **or** cleaned `doi_r` is in it — two
+identifiers because a legacy record may carry only one of them, and so may a pool row.
+A missing file logs a warning and skips nothing. The run summary counts these
+separately from the FLoRA skips; pass `--no-skip-validated` to extract them anyway.
 
 ### Promoting test results
 

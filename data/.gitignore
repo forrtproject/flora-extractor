@@ -3,3 +3,7 @@
 # Unzipped working copies (temp; regenerate from the DVC-tracked zips)
 /candidates.csv
 /filtered.csv
+
+# The examples/ demo's output directory (examples/README.md: OUT_DIR). It exists so
+# a demo run cannot overwrite a real data/candidates.csv, and nothing reads it back.
+/examples/

@@ -77,6 +77,24 @@ def test_repeated_calls_accumulate_per_model_and_day():
     assert tu.usage("2026-08-02") == {"openai": {"gpt-5.4-mini": {"in": 100, "out": 100}}}
 
 
+def test_concurrent_calls_do_not_lose_each_other_s_tokens():
+    """Every LLM call records, and Stage 3 and the filter engine's tiers both make
+    those calls from a thread pool. The record is a read-modify-write of one file, so
+    without a lock the threads replay each other's starting state and spend vanishes."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def hammer() -> None:
+        for _ in range(25):
+            tu.record("openai", "gpt-5.4-mini", 10, 1, day="2026-08-01")
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for future in [pool.submit(hammer) for _ in range(8)]:
+            future.result()
+
+    assert tu.usage("2026-08-01") == {
+        "openai": {"gpt-5.4-mini": {"in": 8 * 25 * 10, "out": 8 * 25}}}
+
+
 def test_a_provider_that_reports_nothing_is_not_guessed_at():
     tu.record("openrouter", "some/model", 0, 0, day="2026-08-01")
 

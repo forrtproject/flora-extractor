@@ -35,16 +35,23 @@ from .config import (
     RESEARCHER_EMAIL, SERPAPI_KEY, SERPAPI_KEYS, log,
 )
 
-# Seconds between Unpaywall calls. Their API is free and keyless and asks only for a
-# mailto; this is politeness, not a quota, and it is nobody's business but this
-# module's — Unpaywall is reached from here and nowhere else.
-UNPAYWALL_RATE_SEC = 0.5
-from .openalex_keys import headers as oa_headers, is_budget_refusal, rotate_key
+from .openalex_keys import (current_index, headers as oa_headers,
+                            is_budget_refusal, rotate_key)
+from .cache import write_json
+from .rate_limit import throttle
 from .utils import clean_doi, cache_key
 
-# ── Shared rate-limit state ───────────────────────────────────────────────────
-_unpaywall_last = 0.0
-_ss_last        = 0.0
+# Seconds between calls to each source the waterfall asks. These APIs are free and
+# keyless and ask only for a mailto; the intervals are politeness, not quotas, and
+# they are nobody's business but this module's — these endpoints are reached from
+# here and nowhere else. Each interval is taken from the one reservation queue in
+# shared/rate_limit.py, because the waterfall runs on Stage 3's worker threads and
+# a per-call sleep spaces nothing once there is more than one caller.
+UNPAYWALL_RATE_SEC        = 0.5
+_SEMANTICSCHOLAR_RATE_SEC = 1.0     # documented limit: 100 requests / 5 minutes
+_CORE_RATE_SEC            = 0.6
+_EUROPEPMC_RATE_SEC       = 0.3
+_OPENALEX_RATE_SEC        = 0.1
 
 # The key is optional: without it you get the polite pool (mailto= parameter);
 # with it you get higher rate limits and access to content.openalex.org bulk
@@ -57,7 +64,6 @@ def _oa_request_headers() -> dict:
 
 def _fetch_unpaywall_data(doi: str) -> Optional[dict]:
     """Fetch raw Unpaywall JSON for *doi* (cached)."""
-    global _unpaywall_last
     doi = clean_doi(doi)
     if not doi:
         return None
@@ -67,10 +73,7 @@ def _fetch_unpaywall_data(doi: str) -> Optional[dict]:
         with cf.open(encoding="utf-8") as fh:
             return json.load(fh)
 
-    wait = UNPAYWALL_RATE_SEC - (time.time() - _unpaywall_last)
-    if wait > 0:
-        time.sleep(wait)
-    _unpaywall_last = time.time()
+    throttle("unpaywall", UNPAYWALL_RATE_SEC)
 
     try:
         r = requests.get(
@@ -85,8 +88,7 @@ def _fetch_unpaywall_data(doi: str) -> Optional[dict]:
         log.debug("Unpaywall error for %s: %s", doi, e)
         return None
 
-    with cf.open("w", encoding="utf-8") as fh:
-        json.dump(data, fh, ensure_ascii=False)
+    write_json(cf, data)
     return data
 
 
@@ -131,7 +133,6 @@ def get_semanticscholar_pdf_url(doi: str) -> Optional[str]:
     Query Semantic Scholar Graph API for an open-access PDF URL.
     No API key required. Rate limit: 100 req/5 min → sleep 1 s between calls.
     """
-    global _ss_last
     doi = clean_doi(doi)
     if not doi:
         return None
@@ -141,10 +142,7 @@ def get_semanticscholar_pdf_url(doi: str) -> Optional[str]:
         with cf.open(encoding="utf-8") as fh:
             data = json.load(fh)
     else:
-        wait = 1.0 - (time.time() - _ss_last)
-        if wait > 0:
-            time.sleep(wait)
-        _ss_last = time.time()
+        throttle("semanticscholar", _SEMANTICSCHOLAR_RATE_SEC)
 
         try:
             r = requests.get(
@@ -160,8 +158,7 @@ def get_semanticscholar_pdf_url(doi: str) -> Optional[str]:
             log.debug("SemanticScholar error for %s: %s", doi, e)
             return None
 
-        with cf.open("w", encoding="utf-8") as fh:
-            json.dump(data, fh, ensure_ascii=False)
+        write_json(cf, data)
 
     return (data.get("openAccessPdf") or {}).get("url")
 
@@ -179,7 +176,7 @@ def get_core_pdf_url(doi: str) -> Optional[str]:
         with cf.open(encoding="utf-8") as fh:
             data = json.load(fh)
     else:
-        time.sleep(0.6)
+        throttle("core", _CORE_RATE_SEC)
         try:
             r = requests.get(
                 "https://api.core.ac.uk/v3/works",
@@ -194,8 +191,7 @@ def get_core_pdf_url(doi: str) -> Optional[str]:
             log.debug("CORE error for %s: %s", doi, e)
             return None
 
-        with cf.open("w", encoding="utf-8") as fh:
-            json.dump(data, fh, ensure_ascii=False)
+        write_json(cf, data)
 
     for item in (data.get("results") or []):
         url = item.get("downloadUrl") or item.get("fullTextUrl")
@@ -217,7 +213,7 @@ def get_europepmc_pdf_url(doi: str) -> Optional[str]:
         with cf.open(encoding="utf-8") as fh:
             data = json.load(fh)
     else:
-        time.sleep(0.3)
+        throttle("europepmc", _EUROPEPMC_RATE_SEC)
         try:
             r = requests.get(
                 "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
@@ -232,8 +228,7 @@ def get_europepmc_pdf_url(doi: str) -> Optional[str]:
             log.debug("EuropePMC error for %s: %s", doi, e)
             return None
 
-        with cf.open("w", encoding="utf-8") as fh:
-            json.dump(data, fh, ensure_ascii=False)
+        write_json(cf, data)
 
     for item in ((data.get("resultList") or {}).get("result") or []):
         pmc_id = item.get("pmcid", "")
@@ -300,7 +295,7 @@ def get_openalex_oa_url(doi: str) -> Optional[str]:
         with cf.open(encoding="utf-8") as fh:
             data = json.load(fh)
     else:
-        time.sleep(0.1)
+        throttle("openalex", _OPENALEX_RATE_SEC)
         try:
             r = requests.get(
                 f"https://api.openalex.org/works/doi:{doi}",
@@ -314,8 +309,7 @@ def get_openalex_oa_url(doi: str) -> Optional[str]:
         except Exception as e:
             log.debug("OpenAlex OA URL error for %s: %s", doi, e)
             return None
-        with cf.open("w", encoding="utf-8") as fh:
-            json.dump(data, fh, ensure_ascii=False)
+        write_json(cf, data)
 
     oa = data.get("open_access") or {}
     return oa.get("oa_url") or None
@@ -376,6 +370,7 @@ def _oa_xml_get(url: str, params: "dict | None" = None,
     # Rotating to a fresh key is not a retry of a throttled request, so it must not
     # consume the backoff budget (same reasoning as _oa_get in openalex_client).
     while attempt <= len(_OA_XML_RETRY_DELAYS):
+        key_idx = current_index()
         try:
             r = requests.get(url, headers=_oa_request_headers(),
                              params=params or {}, timeout=timeout)
@@ -385,7 +380,7 @@ def _oa_xml_get(url: str, params: "dict | None" = None,
         if r.status_code == 200:
             return r
         if r.status_code == 429 and is_budget_refusal(r):
-            if rotate_key():
+            if rotate_key(key_idx):
                 continue
             log.warning("OpenAlex budget exhausted on every key — skipping the "
                         "GROBID-XML tier for %s", url)
@@ -453,7 +448,7 @@ def get_openalex_fulltext(openalex_id: str) -> "dict | None":
         return None
 
     # Step 1 — check has_content flag
-    time.sleep(0.1)
+    throttle("openalex", _OPENALEX_RATE_SEC)
     r = _oa_xml_get(
         f"https://api.openalex.org/works/{oa_id}",
         params={"select": "has_content,content_urls", "mailto": RESEARCHER_EMAIL},
@@ -612,8 +607,7 @@ def get_serpapi_pdf_url(doi: str, title: str = "") -> Optional[str]:
 
         if results is None:
             return None
-        with cf.open("w", encoding="utf-8") as fh:
-            json.dump(results, fh, ensure_ascii=False)
+        write_json(cf, results)
 
     for organic in results.get("organic_results", []):
         for res in organic.get("resources", []):
