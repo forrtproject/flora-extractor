@@ -147,6 +147,38 @@ The recall gate passing is not a substitute. `flora.csv` is what FLoRA has alrea
 found; the Kerner replication is precisely the kind of record that is *not* in it yet,
 which is the reason to be collecting these at all.
 
+## The RPP reports have no DOI, and that is the blocker
+
+Checked 2026-08-05 because the maintainer asked for the OSF report DOIs to be added to
+FLoRA (`alt_identifier_r` in the COS source sheet, which `prepare_flora.qmd` renames to
+`doi_r_alt`). They do not exist:
+
+| | n |
+| --- | --: |
+| FLoRA RPP `url_r` report nodes | 91 |
+| **with a DOI of their own** | **0** |
+| with at least one OSF *registration*, which does have a DOI | 83 |
+| … exactly one registration | 46 |
+| … two to four | 37 |
+| with no registration at all | 8 |
+
+`/v2/nodes/<guid>/identifiers/` is empty for all 91, and `10.17605/OSF.IO/SU6BM` and
+`…/XSE7Q` both 404 at DataCite. OSF mints a DOI automatically for a registration or a
+preprint, not for a project page — so a constructed `10.17605/OSF.IO/<node-guid>` would
+look like a DOI and resolve nowhere.
+
+What does exist is the registration DOI, reachable from the report node through
+`/v2/nodes/<guid>/registrations/`. Ten of ten sampled resolve at DataCite. The full
+mapping is `rpp_report_to_registration.csv` (built by `rpp_report_identifiers.py`), and
+it is one-to-many for 37 nodes — `append_alt_identifier()` in fred-data takes a
+comma-separated list, so that shape fits the column natively.
+
+It is not the same object, and the difference has to survive into whatever is written: a
+registration is the pre-registered snapshot (125 of the 129 are `Open-Ended
+Registration`, the "Registered prior to RPP publication" form), the node is where the
+report lives. Naming the registration in `alt_identifier_r` is true; putting it in
+`url_r`, replacing the link to the report, is not.
+
 ## Candidate narrowings, none measured
 
 1. **Stand down on a results-reporting construction in the record's own text** —
