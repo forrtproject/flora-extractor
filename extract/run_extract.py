@@ -2043,7 +2043,7 @@ def run_extract(no_llm: bool = False,
     print(f"  Rows output:              {len(output_rows)}")
     print(f"  Flora-validated skipped:  {flora_skip_count}")
     if skip_flora_validated:
-        print(f"    (from flora_entry_sheet.csv + flora.csv)")
+        print(f"    (from 'FLoRA entry sheet - replication list.csv' + flora.csv)")
     print(f"  Validation-table skipped: {validated_skip_count}")
     if skip_validated:
         print(f"    (from data/{VALIDATED_SKIP_NAME} — the validation tables)")
