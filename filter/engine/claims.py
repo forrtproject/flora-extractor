@@ -281,9 +281,14 @@ class ClaimsClient:
         can hold hundreds of claims and `id=in.(…)` would put them all in a URL.
         A superseded row is excluded because it is evidence of what was believed,
         not of what is believed.
+
+        `confidence` is selected because the expensive tier's gate reads it: the
+        soft-discard branch of `screen_gate()` turns on whether a voter stood
+        behind its answer, so a replay without this column would silently under-
+        discard rather than fail (`filter/engine/tiers.py:_votes_from_rows`).
         """
         rows = self._get_paged("engine_verdicts", {
-            "select": "id,claim_id,work_id,tier,model,verdict,response_state",
+            "select": "id,claim_id,work_id,tier,model,verdict,confidence,response_state",
             "tier": f"eq.{tier}",
             "superseded_by": "is.null",
         }, order="work_id.asc,id.asc")
@@ -291,6 +296,19 @@ class ClaimsClient:
             return rows
         wanted = set(claim_ids)
         return [r for r in rows if r.get("claim_id") in wanted]
+
+    def pending_responses(self) -> list[dict]:
+        """Every verdict row whose blob no commit has been shown to have accepted.
+
+        Across all tiers, and INCLUDING superseded rows: `response_state` is a fact
+        about bytes, not about what is currently believed, and a superseded
+        verdict's raw response is exactly the evidence the archive exists to keep.
+        What sweeps these is `filter/engine/tiers.py:reconcile_responses`.
+        """
+        return self._get_paged("engine_verdicts", {
+            "select": "id,claim_id,work_id,tier,response_hash,response_state",
+            "response_state": f"eq.{PENDING_UPLOAD}",
+        }, order="id.asc")
 
     def mark_uploaded(self, response_hashes: Iterable[str]) -> int:
         """Flip `response_pending_upload` → `uploaded` for these blobs. Returns the count.

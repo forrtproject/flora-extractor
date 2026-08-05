@@ -4,6 +4,7 @@
   "match": {
     "doi_prefix": [
       "10.11587",
+      "10.25384",
       "10.15139",
       "10.18170",
       "10.18710",
@@ -20,6 +21,12 @@
   "precedence": 958,
   "shadow": false,
   "measured": [
+    {
+      "level": "trusted",
+      "date": "2026-08-05",
+      "owner": "flora-extractor",
+      "rationale": "10.25384 added (maintainer decision, 2026-08-05): the prefix is SAGE's figshare portal (sage.figshare.com), which mints DOIs only for supplementary material and article-mirror collections of SAGE journal articles — the article of record always carries its own 10.1177 DOI. All 168 rows on this prefix in release 8c363ade were read: every one is a supplement or a collection mirroring a published article. Unlike figshare proper (10.6084, dropped under D1 because individuals self-deposit manuscripts there), the SAGE portal has no self-deposit path."
+    },
     {
       "level": "trusted",
       "date": "2026-08-04",

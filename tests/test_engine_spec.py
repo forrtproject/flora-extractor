@@ -25,12 +25,14 @@ EXPECTED = {
     # id: (pile, precedence, vocabulary, shadow)
     "not-a-paper-doi": ("discard", 960, None, False),
     "deposit-registrant": ("discard", 958, None, False),
+    "figshare-attachment": ("discard", 956, None, False),
     "not-a-paper-title": ("discard", 955, None, False),
     "not-a-report-type": ("discard", 940, None, False),
     "osf-registration-completed": ("screen_expensive", 936, None, False),
-    "osf-registration-protocol": ("discard", 935, None, True),
+    "osf-registration-protocol": ("discard", 935, None, False),
     "replication-claim-cited-title": ("screen_expensive", 760, None, False),
-    "replication-claim-title": ("screen_expensive", 750, None, True),
+    "replication-claim-title-strong": ("screen_expensive", 750, None, False),
+    "replication-claim-title-broad": ("screen_expensive", 740, None, True),
     "replication-claim-text": ("screen_expensive", 730, None, True),
     "replication-claim-residual": ("screen_expensive", 710, None, True),
     "not-a-study-type": ("discard", 500, None, False),
@@ -42,7 +44,8 @@ EXPECTED = {
 # The replication-claim family, narrowest first: the same twelve arms asked for
 # with decreasing strength. Every tier routes to the same pile, so precedence
 # inside the family decides attribution rather than destination.
-_CLAIM_TIERS = ("replication-claim-cited-title", "replication-claim-title",
+_CLAIM_TIERS = ("replication-claim-cited-title", "replication-claim-title-strong",
+                "replication-claim-title-broad",
                 "replication-claim-text", "replication-claim-residual")
 _ADMISSION = _CLAIM_TIERS
 _ABOVE_ADMISSION = ("not-a-paper-doi", "deposit-registrant", "not-a-paper-title",
@@ -99,11 +102,14 @@ def test_the_expensive_screen_has_exactly_two_routes():
     assert expensive == ["osf-registration-completed", *_CLAIM_TIERS]
 
 
-def test_exactly_one_tier_of_the_claim_family_is_live():
-    """The tiers are switched on one at a time; the live one is the narrowest."""
+def test_the_live_claim_tiers_are_the_narrowest_prefix_of_the_family():
+    """Tiers are promoted narrowest-first, so the live set must be a contiguous
+    prefix of the family — a live broad tier over a shadow narrow one would mean
+    rows are bought at the weaker evidence bar while the stronger one idles."""
     live = [s.id for s in load_specs(SPEC_DIR)
             if s.id in _CLAIM_TIERS and not s.shadow]
-    assert live == ["replication-claim-cited-title"]
+    assert live == list(_CLAIM_TIERS[:len(live)])
+    assert live == ["replication-claim-cited-title", "replication-claim-title-strong"]
 
 
 def test_a_duplicate_id_across_two_files_is_rejected(tmp_path):

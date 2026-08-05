@@ -1,0 +1,47 @@
+{
+  "id": "figshare-attachment",
+  "description": "Figshare proper (10.6084) cannot be a prefix discard: D1 dropped it from `deposit-registrant` because individuals self-deposit real manuscripts there, and a read of the 79 rows on the prefix in release 8c363ade confirms both halves — most are attachments of a published paper (\"Supplementary material from …\", \"Additional file 2: of …\", \"R codes (main analyses) …\", \"Methods Video for …\", raw-data bundles, and files whose title IS a filename), but a genuine tail of registered reports and self-deposited replication manuscripts remains. So the discard is scoped by what the record says it is: the prefix AND a title that announces an attachment rather than a study. The patterns are deliberately front-anchored or filename-shaped so that a paper ABOUT supplementary analyses is not caught; a figshare record whose title reads as a study title falls through to the admission band and buys its screening like any other row — 14 of the 79 do, which is the point, not a leak. The parent paper of a discarded attachment is expected in the corpus under its own DOI (same residual-loss posture as `deposit-registrant`, tracked by #157). Sits with the definitional discards, below `deposit-registrant` (958): that rule's claim is about who mints the DOI, this one's is about what the record's own title declares.",
+  "match": {
+    "all_of": [
+      {
+        "doi_prefix": [
+          "10.6084"
+        ]
+      },
+      {
+        "any_of": [
+          {
+            "title_regex": "(?i)^supplement"
+          },
+          {
+            "title_regex": "(?i)^additional file \\d"
+          },
+          {
+            "title_regex": "(?i)^methods? video"
+          },
+          {
+            "title_regex": "(?i)^r (codes?|studio script)\\b"
+          },
+          {
+            "title_regex": "(?i)raw data \\(csv files\\) from"
+          },
+          {
+            "title_regex": "(?i)\\.(docx|pdf|xlsx|csv|sav|rmd)\\b.{0,15} from "
+          }
+        ]
+      }
+    ]
+  },
+  "pile": "discard",
+  "vocabulary": null,
+  "precedence": 956,
+  "shadow": false,
+  "measured": [
+    {
+      "level": "trusted",
+      "date": "2026-08-05",
+      "owner": "flora-extractor",
+      "rationale": "Maintainer decision 2026-08-05, wording confirmed against the full population on the prefix in release 8c363ade: 79 rows, 55 matched by these patterns (all unambiguous attachments on read), 14 kept — every kept title reads as a study or is at worst an ambiguous attachment the screen rejects for two cents. The claim is structural (the title's own words), so `trusted`; the residual risk is an attachment titled like a paper, which the screen — not this rule — then judges."
+    }
+  ]
+}

@@ -424,11 +424,12 @@ _GATE_CASES = [
     ("A direct replication of Smith (2010)",
      "We report a direct replication of the anchoring effect.",
      True, "screen_expensive"),
-    # the same claim without a cited work in the title, and the same claim in the
-    # abstract only: both are claimed by shadow tiers of the family
-    # (replication-claim-title, replication-claim-text) and so read `pending`
+    # the same claim without a cited work in the title: the qualifier arm is
+    # live since replication-claim-title-strong's promotion (2026-08-05)
     ("A direct replication of the anchoring effect",
-     "We report a direct replication of Smith (2010).", True, "pending"),
+     "We report a direct replication of Smith (2010).", True, "screen_expensive"),
+    # the same claim in the abstract only is still a shadow tier's
+    # (replication-claim-text) and so reads `pending`
     ("We replicate prior findings",
      "We replicate prior findings in a new population, naming no target.",
      True, "pending"),

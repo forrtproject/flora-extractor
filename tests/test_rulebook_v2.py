@@ -47,7 +47,8 @@ def _row(title: str, abstract: str, work: int = 1, doi: str = None,
     }
 
 
-CLAIM_TIERS = ("replication-claim-cited-title", "replication-claim-title",
+CLAIM_TIERS = ("replication-claim-cited-title", "replication-claim-title-strong",
+               "replication-claim-title-broad",
                "replication-claim-text", "replication-claim-residual")
 
 
@@ -135,12 +136,12 @@ _CITED_TITLE = "A direct replication of Smith et al. (2009)"
 
 @pytest.mark.parametrize("tier,title,abstract,claimed", [
     # the arm is in the abstract only: neither title tier reaches it
-    ("replication-claim-title", "Anchoring in context",
+    ("replication-claim-title-strong", "Anchoring in context",
      "We report a direct replication of Smith (2009).", False),
     ("replication-claim-cited-title", "Anchoring in context",
      "We report a direct replication of Smith (2009).", False),
     # the arm is in the title, and only the cited-title tier asks for the year too
-    ("replication-claim-title", _CLAIM_TITLE, "No target is named.", True),
+    ("replication-claim-title-strong", _CLAIM_TITLE, "No target is named.", True),
     ("replication-claim-cited-title", _CLAIM_TITLE, "No target is named.", False),
     ("replication-claim-cited-title", _CITED_TITLE, "No target is named.", True),
     # the strong/residual split: a residual arm is claimed by its own tier only
