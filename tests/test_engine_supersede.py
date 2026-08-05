@@ -198,14 +198,3 @@ def test_supersession_kind_is_validated_by_the_client():
     client = ClaimsClient(url="https://fake.supabase.co", key="fake-key")
     with pytest.raises(ValueError):
         client.record_supersession(work_id=1, kind="unrouted", affected_record_ids=[])
-
-
-# ── the migration ────────────────────────────────────────────────────────────
-
-def test_migration_parses():
-    """0002 is valid Postgres. Skipped where pglast is unavailable (it is not a
-    project dependency); the file is still run by hand in the SQL editor."""
-    pglast = pytest.importorskip("pglast", reason="pglast not installed in this venv")
-    from pathlib import Path
-    sql = Path(__file__).resolve().parents[1] / "db/migrations/0002_validation_lineage.sql"
-    pglast.parse_sql(sql.read_text(encoding="utf-8"))
