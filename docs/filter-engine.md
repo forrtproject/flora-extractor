@@ -53,7 +53,7 @@ only, so an exported row's `pending_reason` is always empty.
 | `store.py` | Local DuckDB acceleration cache (gitignored, disposable): `open_store(path)`, `build_routing(store, pool_dir, specs, release_id)` (streams pool parquet through `route_batch`, persists `routing` and `evaluations(work_id, spec_id, spec_hash, matched)` incl. shadow specs), `pile_counts(store, release_id)`, `sample_pile(con, release_id, pile, n=20, seed=17)`. `routing` is keyed `PRIMARY KEY (release_id, work_id)` and inserts `ON CONFLICT DO NOTHING`: a pool holding both a merged id and its canonical id holds two rows for ONE work, and first-writer-wins is what keeps that one routed work and one exported row. A build is one transaction — the delete and every insert commit together — so an interrupted run leaves the release absent or as its previous complete build, never half-replaced. Deleting the DB loses nothing: everything rebuilds from pool + specs. |
 | `diagnostics.py` | `diagnose(pool_dir, spec_dir, spec_id, *, baseline_dir=None, sample_n=20, seed=17) -> dict` — routes the pool twice, with and without the spec (the baseline bundle defaults to the same directory minus the spec). The §3 rule-diagnostics function: rows moved per (source pile → destination pile); overlap/agreement matrix vs every other rule (exclusive hits vs covered); a readable random sample (n≈20, seeded) of moved rows; holdout effect (reads `filter/spec/holdout.json`; reports `"holdout": "not_constructed"` until decision #146-2 lands); for discard specs, whether a `measured` entry exists (else the spec must be shadow). Renders JSON + a human-readable text block. |
 | `export.py` | `export_pile(con, pool_dir, pile, out_csv, release_id, from_year=None, to_year=None, conventions=None, specs=None, aliases=None, spec_dir=SPEC_DIR, expect_bundle_hash=None, expect_alias_release=None, overlay_dir=None, expect_overlay_hash=UNCHECKED, created_at="")` — writes the Stage 3 contract: `FILTERED_COLS` + `ENGINE_EXPORT_COLS` (see below), `utf-8-sig`, `filter_status`/`filter_method`/`filter_evidence`/`filter_confidence` derived via the conventions mapping. Also `export_manifest(...)`: a JSON naming release id, pile, row count, and content hash next to the CSV (immutable once written). |
-| `cli.py` / `__main__.py` | `python -m filter.engine specs\|verify\|route\|diagnose\|export\|screen\|handoff\|worklist\|status`. The subcommand list is `cli.py`'s `add_parser` calls; `--help` is authoritative, `docs/cli-reference.md` is the prose. |
+| `cli.py` / `__main__.py` | `python -m filter.engine specs\|verify\|route\|diagnose\|export\|screen\|reconcile\|handoff\|worklist\|status`. The subcommand list is `cli.py`'s `add_parser` calls; `--help` is authoritative, `docs/cli-reference.md` is the prose. |
 
 `ENGINE_VERSION` lives in `filter/engine/__init__.py` and is bumped whenever routing
 behavior changes without a spec change.
@@ -333,15 +333,18 @@ recovered abstract text, layered over the pool at read time.
 
 | Module | Contract |
 | --- | --- |
-| `pool_reader.py` | `iter_pool_batches(pool_dir, overlay_dir=None, batch_size=50_000, aliases=None)` — the engine's single input path: pool batches with overlay text coalesced over empty `abstract_text` cells. `overlay_manifest_hash(overlay_dir) -> str \| None` (defined in `overlay.py`, re-exported here so the input path is one import). The overlay is loaded once as a `work_id -> text` dict and applied per batch; with no overlay the stream is `iter_batches()` untouched. |
+| `pool_reader.py` | `iter_pool_batches(pool_dir, overlay_dir=None, batch_size=50_000, aliases=None)` — the engine's single input path: pool batches with overlay text written over the pool's `abstract_text`, empty or not. `overlay_manifest_hash(overlay_dir) -> str \| None` (defined in `overlay.py`, re-exported here so the input path is one import). The overlay is loaded once as a `work_id -> text` dict and applied per batch; with no overlay the stream is `iter_batches()` untouched. |
 | `overlay.py` | `worklist(con, release_id, pool_dir, out_path, aliases=None) -> int` (the `pending_reason='no_text'` rows joined to the pool for doi/title/year); `write_chunk()`, `load_overlay()`, `overlay_work_ids()`; `validate(overlay_dir) -> list[str]`; `freeze(overlay_dir, pool_manifest_hash=None) -> dict`; `overlay_manifest_hash()`, `read_manifest()`. |
-| `backfill.py` | `python -m filter.engine.backfill --worklist F --overlay-dir D [--run] [--limit N] [--source S] [--freeze]` — the six abstract sources over a worklist (OSF registrations first), results appended as an overlay chunk. |
+| `backfill.py` | `python -m filter.engine.backfill --worklist F [--overlay-dir D] [--run] [--limit N] [--source S] [--freeze]` — the six abstract sources over a worklist (OSF registrations first), results appended as an overlay chunk. `--overlay-dir` defaults to `OVERLAY_DIR`, the same directory the engine's commands read. |
 
-**Overlays fill, never replace.** The pool's own `abstract_text` is what the
-snapshot shipped and is primary evidence; the overlay applies only where the
-pool cell is empty or null. A coalesce in the other direction would let a
-backfill source quietly rewrite the corpus the scan and every measured rule were
-calibrated on.
+**An overlay row wins, present pool text or not.** Every overlay row was written
+deliberately by a backfill this project ran, against a worklist this project
+built, so it is not a stray source quietly rewriting the corpus — and the rows
+that need REPLACING rather than filling are exactly the ones a fill-only overlay
+would leave in front of the voters: the boilerplate `abstract_text` the snapshot
+ships for some records ("International audience", a bare keyword list) is a
+non-empty cell carrying no evidence. The overlay hash names the text either way,
+so a release is still bound to the bytes its rules were routed against.
 
 **The release is the files plus a frozen manifest.** Chunks are append-only
 `overlay-<seq>.parquet` (`work_id int64, abstract_text string, source string,
@@ -356,11 +359,22 @@ interrupted, and `validate()` refuses it.
 
 **Text revision invalidates routing.** `overlay_hash` is the release-id slot M1
 reserved. Text arriving for a `no_text` row changes that row's pile, so it must
-change the release id — `route --overlay DIR` folds the frozen hash into
-`routing_release(...)`, and `export --overlay DIR` refuses when the directory's
-hash is not the one the release was routed under, exactly as it refuses a moved
-bundle. An overlay directory holding chunks but no frozen manifest raises rather
-than routing: a release must not be bound to bytes nobody named.
+change the release id — `route` folds the frozen hash into `routing_release(...)`,
+and `export` refuses when the directory's hash is not the one the release was
+routed under, exactly as it refuses a moved bundle; `handoff` and `screen` refuse
+the same way. An overlay directory holding chunks but no frozen manifest raises
+rather than routing: a release must not be bound to bytes nobody named.
+
+**The overlay loads itself.** `route`, `export`, `screen` and `handoff` read
+`OVERLAY_DIR` (`shared/config.py`, `FLORA_OVERLAY_DIR`; default
+`<cache>/engine/overlay`) whenever that directory holds overlay chunks. An absent
+flag means "use the overlay if there is one", because a rule that matches only
+overlay text — the `osf-registration-*` pair reads the registration template on
+the overlay's first line — fires on nothing without it, and a live rule matching
+nothing is invisible in every count the run prints. `--overlay DIR` uses another
+directory; `--no-overlay` asks for the bare pool out loud. Each of the four
+commands prints one line, `overlay: <dir> (hash <12>)` or `overlay: none`, so
+which text a run read is in its output rather than in its shell history.
 
 **The backfill reuses Stage 1's fetchers.** `search/fetch_abstracts.py` owns the
 sources, their measured order (OSF → OpenAlex → Europe PMC → S2 → CrossRef →
@@ -431,8 +445,8 @@ handoff in `filter/engine/handoff.py`, two CLI subcommands.
 
 | Module | Contract |
 | --- | --- |
-| `tiers.py` | `pile_works(con, release_id, pile, pool_dir, …) -> list[Work]` (routing joined to overlay-aware pool text); `estimate(works, tier)` / `render_estimate(est)` (the §6 dry run); `run_screen_cheap(...)` / `run_screen_expensive(con, client, release_id, work_ids=None, *, mode, batch_label, limit, run)`; `tier_decisions(client, release_id, tier, mode="live")` and `decided_work_ids(client, tier)` (the checkpoint). |
-| `handoff.py` | `write_handoff(con, pool_dir, out_csv, release_id, *, drop, record_types, …)` — both screen piles in `ENGINE_EXPORTED_COLS` order, `screen_expensive` first; `decisions(client, release_id) -> (drop, record_types)` from the live verdict rows. |
+| `tiers.py` | `pile_works(con, release_id, pile, pool_dir, …) -> list[Work]` (routing joined to overlay-aware pool text); `estimate(works, tier)` / `render_estimate(est)` (the §6 dry run); `run_screen_cheap(...)` / `run_screen_expensive(con, client, release_id, work_ids=None, *, mode, batch_label, limit, run)`; `tier_decisions(client, release_id, tier, mode="live")` — `release_id=None` reads every release, because a verdict follows the work — and `decided_work_ids(client, tier)` (the checkpoint). |
+| `handoff.py` | `write_handoff(con, pool_dir, out_csv, release_id, *, drop, record_types, decided, …)` — both screen piles in `ENGINE_EXPORTED_COLS` order, `screen_expensive` first; `decided` is a set of work ids for the screened-only export and `None` for as-routed; `decisions(client) -> (drop, record_types, decided)` from the live verdict rows of every release (the release scopes the piles, not the evidence). |
 
 ### The two tiers
 
@@ -488,9 +502,19 @@ so a live discard takes effect at the handoff, where the rows leave the engine.
 
 `python -m filter.engine handoff --out data/filtered.csv` writes the file Stage 3
 reads: both screen piles, `screen_expensive` first, in `ENGINE_EXPORTED_COLS`
-order, minus works a live run discarded, with a live `screen_expensive` record
-type written into `filter_status` (`filter_method = screen`). Without Supabase it
-says so and hands off the piles as routed. It reuses `export_pile()`'s row logic
+order, with a live `screen_expensive` record type written into `filter_status`
+(`filter_method = screen`).
+
+A row travels on a verdict, not on a routing decision. Rules route and only LLMs
+admit, so the default export is screened-only: a work a live run discarded is
+left out as `dropped_by_tier_verdict`, and a work no live run settled — never
+screened, or short of the second vote a gate needs — is left out as
+`skipped_unscreened`. The two counts plus `rows` account for every work in the
+piles. `--as-routed` exports the piles as routed with whatever verdicts exist,
+and is the only mode available without Supabase; asked for screened-only with no
+claims client the command refuses rather than writing an empty file.
+
+It reuses `export_pile()`'s row logic
 via `iter_export_rows()` and keeps its release-binding refusal — but its manifest
 is rewritable, because the handoff is a materialized view Stage 3 re-reads, not an
 immutable artifact. `export` remains the command for an immutable copy.

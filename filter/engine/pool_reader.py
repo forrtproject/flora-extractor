@@ -54,25 +54,20 @@ def _apply_overlay(batch: pa.RecordBatch, overlay: dict[int, str],
     index = batch.schema.get_field_index(_ABSTRACT)
     if index < 0:
         return batch
-    column = batch.column(index)
-    # Only empty cells can be filled, so only they are worth a dict lookup.
-    empty = pc.or_(pc.is_null(column),
-                   pc.equal(pc.utf8_trim_whitespace(pc.fill_null(column, "")), ""))
-    empty_rows = empty.to_pylist()
-    if not any(empty_rows):
-        return batch
-
+    # An overlay row WINS over pool text, empty or not: every overlay row was
+    # written deliberately by a backfill this project ran, and the rows that
+    # need replacing rather than filling are exactly the boilerplate abstracts
+    # ("International audience", keyword lists) a fill-only overlay would leave
+    # in front of the voters. The overlay hash names the text either way.
     ids = batch.column("id").to_pylist()
-    texts = column.to_pylist()
-    filled = 0
-    for position, is_empty in enumerate(empty_rows):
-        if not is_empty:
-            continue
-        text = overlay.get(resolve(work_id(ids[position]), aliases))
-        if text:
+    texts = batch.column(index).to_pylist()
+    replaced = 0
+    for position, ident in enumerate(ids):
+        text = overlay.get(resolve(work_id(ident), aliases))
+        if text and text != texts[position]:
             texts[position] = text
-            filled += 1
-    if not filled:
+            replaced += 1
+    if not replaced:
         return batch
     return batch.set_column(index, batch.schema.field(index),
                             pa.array(texts, type=pa.string()))

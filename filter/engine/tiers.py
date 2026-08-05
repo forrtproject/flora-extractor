@@ -318,6 +318,11 @@ class _ResponseUploader:
         self._lock = threading.Lock()
         self.uploaded = 0
         self.not_uploaded = 0
+        # Blobs a commit ACCEPTED, which is not the same number as `uploaded`: a
+        # commit whose `mark_uploaded` then failed leaves bytes on Hugging Face and
+        # a row that still says pending, and a reconciliation report that reported
+        # only one of the two numbers would hide exactly that state.
+        self.committed = 0
 
     def add(self, response_hash: str, path: Path) -> None:
         with self._lock:
@@ -355,6 +360,7 @@ class _ResponseUploader:
                         "their verdicts stay %s", len(batch), exc, PENDING_UPLOAD)
             self.not_uploaded += len(batch)
             return
+        self.committed += len(batch)
         try:
             self._client.mark_uploaded([h for h, _ in batch])
         except Exception as exc:  # noqa: BLE001 — network boundary
@@ -365,6 +371,89 @@ class _ResponseUploader:
             self.not_uploaded += len(batch)
             return
         self.uploaded += len(batch)
+
+
+def _hf_upload_blockers() -> list[str]:
+    """Why this process would not push, in the operator's words. Empty when it would."""
+    reasons = []
+    if not ENGINE_TIER_HF_UPLOAD:
+        reasons.append("ENGINE_TIER_HF_UPLOAD is off")
+    if not FLORA_POOL_REPO:
+        reasons.append("FLORA_POOL_REPO is unset")
+    if not os.getenv("HF_TOKEN"):
+        reasons.append("HF_TOKEN is unset")
+    return reasons
+
+
+def reconcile_responses(client: ClaimsClient, *, run: bool = False,
+                        batch_size: Optional[int] = None) -> dict:
+    """Push the blobs an earlier run left `response_pending_upload`, and say so.
+
+    `_ResponseUploader` reconciles what its OWN run wrote; a run that pushed
+    nothing — the flag off, no token, a commit that 429'd — leaves rows pending
+    forever, and §4's "reconciled later" has to be somebody's job. This is it,
+    and it is a separate pass rather than a step of the next tier run because the
+    rows it repairs may belong to a tier nobody is about to run again.
+
+    Same `_ResponseUploader` as a live run, so there is one commit path and one
+    definition of what `uploaded` means: only a commit that was accepted AND a
+    `mark_uploaded` that succeeded flips a row.
+
+    A pending row whose blob is gone from `cache/engine/responses/` is a real
+    state, not a crash: the disk cache is expendable and the row is honest about
+    the bytes never having been pushed. It is counted and named, and nothing
+    marks it.
+    """
+    rows = client.pending_responses()
+    hashes = [h for h in dict.fromkeys(r.get("response_hash") or "" for r in rows) if h]
+    on_disk: list[tuple[str, Path]] = []
+    missing: list[str] = []
+    for response_hash in hashes:
+        path = RESPONSES_DIR / f"{response_hash}.json"
+        (on_disk.append((response_hash, path)) if path.is_file()
+         else missing.append(response_hash))
+
+    report = {"pending_rows": len(rows), "pending_blobs": len(hashes),
+              "on_disk": len(on_disk), "missing": len(missing),
+              "missing_hashes": sorted(missing)[:20], "dry_run": not run,
+              "committed": 0, "marked": 0, "not_uploaded": 0}
+    if not run:
+        return report
+
+    uploader = _ResponseUploader(client, batch_size=batch_size)
+    for response_hash, path in on_disk:
+        uploader.add(response_hash, path)
+    uploader.flush()
+    report["committed"] = uploader.committed
+    report["marked"] = uploader.uploaded
+    report["not_uploaded"] = uploader.not_uploaded
+    return report
+
+
+def render_reconcile(report: dict) -> str:
+    lines = [
+        "DRY RUN — nothing committed, nothing marked." if report["dry_run"]
+        else "response-blob reconciliation",
+        f"  blob directory  {RESPONSES_DIR}",
+        f"  verdict rows still {PENDING_UPLOAD:<22} {report['pending_rows']:>7,}",
+        f"  {'distinct blobs they name':<41} {report['pending_blobs']:>7,}",
+        f"  {'blobs present on disk':<41} {report['on_disk']:>7,}",
+        f"  {'blobs MISSING from disk':<41} {report['missing']:>7,}",
+    ]
+    if report["missing_hashes"]:
+        lines.append("    " + ", ".join(h[:12] for h in report["missing_hashes"])
+                     + (" …" if report["missing"] > len(report["missing_hashes"]) else ""))
+        lines.append("    Their rows stay pending: the bytes were never pushed and "
+                     "are no longer on this disk.")
+    if report["dry_run"]:
+        lines.append(f"  Would commit {report['on_disk']:,} blob(s) to "
+                     f"{FLORA_POOL_REPO or '(no repo)'} in batches of "
+                     f"{FLORA_HF_COMMIT_BATCH}. Re-run with --run.")
+    else:
+        lines += [f"  {'committed to Hugging Face':<41} {report['committed']:>7,}",
+                  f"  {'verdict rows marked uploaded':<41} {report['marked']:>7,}",
+                  f"  {'left pending':<41} {report['not_uploaded']:>7,}"]
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -516,7 +605,7 @@ def decided_work_ids(client: ClaimsClient, tier: str) -> set[int]:
     return {int(row["work_id"]) for row in client.verdicts(tier)}
 
 
-def tier_decisions(client: ClaimsClient, release_id: str, tier: str,
+def tier_decisions(client: ClaimsClient, release_id: Optional[str], tier: str,
                    mode: str = "live") -> dict[int, dict]:
     """What *tier*'s *mode* runs decided, per work: `{"outcome", "record_type"}`.
 
@@ -526,9 +615,18 @@ def tier_decisions(client: ClaimsClient, release_id: str, tier: str,
     functions Stage 3 uses — a stored gate outcome could disagree with the votes
     it was supposed to summarise, and this way it cannot.
 
+    *release_id* `None` means EVERY release. A verdict follows the WORK, not the
+    release: claims are release-scoped, but the thing they pin is a work id, and
+    the tier's own checkpoint (`decided_work_ids()`) is tier-scoped for the same
+    reason — a re-route mints a new release id without unasking a single voter.
+    Restricting to one release is therefore an audit question ("what did this
+    release's runs decide?"), not the question a consumer of the evidence asks.
+
     A run's MODE lives on its claim (`meta.mode`), so a validation run's verdicts
     are recorded, readable, and invisible here — which is exactly what
-    "verdicts recorded, no pile effect" has to mean downstream.
+    "verdicts recorded, no pile effect" has to mean downstream. Superseded
+    verdict rows never arrive: `ClaimsClient.verdicts()` filters
+    `superseded_by is null`, so a corrected vote is counted once.
     """
     claims = [c for c in client.claims(release_id=release_id, tier=tier)
               if (c.get("meta") or {}).get("mode") == mode]
@@ -549,23 +647,36 @@ def _cheap_decision(votes: list[dict]) -> dict:
     return {"outcome": DISCARD if discard else PROCEED, "record_type": ""}
 
 
-def _expensive_decision(votes: list[dict]) -> dict:
-    """The gate and the record type, rebuilt from the stored votes.
+def _votes_from_rows(rows: list[dict]) -> list[dict]:
+    """Stored verdict rows as the vote dicts `shared/llm_client.py` reads.
 
-    Votes are re-sorted into CALL order by their model, because
+    The ONE translation between the two shapes, so nothing downstream invents a
+    second: the row's `verdict` column is the vote's `classification`, and its
+    `confidence` column is `"confident"`/`"unconfident"` where the vote wants a
+    boolean. Getting the confidence wrong is not a cosmetic mismatch — the gate's
+    soft-discard branch only fires when a voter declined to stand behind a
+    qualifying answer, so votes rebuilt without it can only ever proceed.
+
+    Rows are re-sorted into CALL order by their model, because
     `_screen_record_type()` breaks a replication/reproduction split by taking the
     first qualifying voter and the database returns rows in id order, which is
-    not the order they were asked in.
+    not the order they were asked in. A row with no verdict, or the `no_answer`
+    placeholder a failed call writes, is not a vote and is dropped.
     """
+    order = [m for _, m, _ in screen_voters()]
+    ordered = sorted(rows, key=lambda r: (order.index(r["model"])
+                                          if r.get("model") in order else len(order)))
+    return [{"classification": str(r.get("verdict", "")),
+             "confident": r.get("confidence") == "confident",
+             "categories": []}
+            for r in ordered if r.get("verdict") not in ("", "no_answer")]
+
+
+def _expensive_decision(votes: list[dict]) -> dict:
+    """The gate and the record type, rebuilt from the stored votes."""
     from shared.llm_client import _screen_record_type
 
-    order = [m for _, m, _ in screen_voters()]
-    ordered = sorted(votes, key=lambda v: (order.index(v["model"])
-                                           if v.get("model") in order else len(order)))
-    rebuilt = [{"classification": str(v.get("verdict", "")),
-                "confident": v.get("confidence") == "confident",
-                "categories": []}
-               for v in ordered if v.get("verdict") not in ("", "no_answer")]
+    rebuilt = _votes_from_rows(votes)
     if len(rebuilt) < 2:
         return {"outcome": "incomplete", "record_type": ""}
     return {"outcome": screen_gate(rebuilt) or "incomplete",

@@ -204,7 +204,8 @@ pool parquet directly, and its design contract is
 **Stage 2 is where every precision decision lives.** Stage 1 searches and admits
 generously; the spec bundle is the one rule set that decides what a paper is.
 
-**Input:** the survivor pool (`cache/snapshot_pool`), plus an optional text overlay  
+**Input:** the survivor pool (`cache/snapshot_pool`), plus the text overlay in
+`cache/engine/overlay` when it holds any  
 **Output:** `data/filtered.csv`, written by `handoff`
 
 The usual order is `route` → `screen` → `handoff`.
@@ -244,6 +245,9 @@ python -m filter.engine worklist --out data/no_text_worklist.csv --pool cache/sn
 # Write the file Stage 3 reads
 python -m filter.engine handoff --out data/filtered.csv --from-year 2011
 
+# Push response blobs an earlier run left pending (dry run without --run)
+python -m filter.engine reconcile
+
 # Releases on disk and the pile counts each of them routed
 python -m filter.engine status
 ```
@@ -256,9 +260,19 @@ python -m filter.engine status
 | `diagnose` | Routes the pool with and without `--spec` and reports rows moved per (pile without → pile with), overlap against every other rule (exclusive hits vs already-covered), a seeded readable sample, the holdout state and the spec's `measured` evidence. |
 | `export` | Writes one pile as `FILTERED_COLS` + `ENGINE_EXPORT_COLS`, `utf-8-sig`, plus `<out>.manifest.json` (release, pile, rows, sha256). `--pile pending` is refused, an existing manifest is never overwritten, and an export is refused outright when the spec bundle or alias file has changed since the release was routed — re-run `route` rather than looking for an override flag. `--pile needs_human` additionally prints the size of the queue it just wrote. |
 | `screen` | Runs one LLM tier (`--tier screen_cheap\|screen_expensive`) over that pile. **Dry run by default**: it prints the row count, the token-length distribution of the abstracts it would send and `N rows → tier X ≈ $Y`, and claims, fetches and spends nothing. `--run` claims the batch through the Supabase claims RPC *before* the first voter is asked, records one permanent verdict row per vote, and completes the claim; a claim conflict refuses without spending anything, and an exhausted token budget fails the claim and stops with the verdicts already written intact. |
+| `reconcile` | Sweeps verdict rows an EARLIER run left `response_pending_upload` — the flag off, no token, a commit that 429'd — matches them to the blobs in `cache/engine/responses/` by response hash, commits those in `FLORA_HF_COMMIT_BATCH`-sized commits and marks only what a commit accepted. **Dry run by default**; `--run` acts. A pending row whose blob has been deleted is reported, not fatal. Refuses outright when Hugging Face is unconfigured (`ENGINE_TIER_HF_UPLOAD` off, no `FLORA_POOL_REPO`, no `HF_TOKEN`) rather than sweeping nothing. |
 | `worklist` | Exports the release's `pending/no_text` rows (joined back to the pool for doi/title/year) as the worklist `filter.engine.backfill` reads. |
-| `handoff` | Writes the two screen piles — `screen_expensive` first, then `screen_cheap` — as the file Stage 3 reads, in `ENGINE_EXPORTED_COLS` order, minus the works a **live** tier run discarded, with a live `screen_expensive` record type written into `filter_status`. Unlike `export`, its manifest is rewritable: the handoff is a materialized view Stage 3 re-reads, not an immutable artifact. |
+| `handoff` | Writes the two screen piles — `screen_expensive` first, then `screen_cheap` — as the file Stage 3 reads, in `ENGINE_EXPORTED_COLS` order, with a live `screen_expensive` record type written into `filter_status`. **Only rows a live tier run reached a verdict on travel**: a discarded work is left out and counted as `dropped_by_tier_verdict`, a work no live run decided (never screened, or still short of a second vote) is left out and counted as `skipped_unscreened`. `--as-routed` exports the piles as routed instead, applying whatever verdicts exist. Unlike `export`, its manifest is rewritable: the handoff is a materialized view Stage 3 re-reads, not an immutable artifact. |
 | `status` | Every release found beside the store, with its creation time and pile counts. |
+
+**The text overlay loads itself.** `route`, `export`, `screen` and `handoff` read
+the overlay in `FLORA_OVERLAY_DIR` (default `cache/engine/overlay`) whenever that
+directory holds overlay chunks — no flag needed, because an overlay-only rule
+(the `osf-registration-*` pair) silently matches nothing without it. `--overlay
+DIR` points at another overlay, `--no-overlay` runs against the bare pool, and
+each command prints one line — `overlay: <dir> (hash <12>)` or `overlay: none` —
+saying which text it read. The overlay folds into the release id, so `export`,
+`handoff` and `screen` refuse a release routed under a different overlay.
 
 `--spec-dir` (before the subcommand) points at a different bundle; `--store`
 defaults to `cache/engine/engine.duckdb` and is **disposable** — deleting it costs
@@ -279,10 +293,15 @@ small enough to read. `--run` needs `SUPABASE_URL` and `SUPABASE_SERVICE_KEY`
 because the claim is what stops two runs spending on the same works; a dry run
 needs neither.
 
-**`handoff` without Supabase.** With no claims client configured there are no tier
-verdicts to read, so the command says so and hands off the piles exactly as
-routed. It refuses, like `export`, when the spec bundle, alias file or overlay has
-moved since the release was routed.
+**`handoff` exports what was screened.** Routing says a row deserves an LLM's
+attention; only the LLM says it reaches Stage 3. So a row the rules put in a
+screen pile but no live tier run ever decided is held back, and the manifest
+accounts for it separately from a discard (`skipped_unscreened` vs
+`dropped_by_tier_verdict`). `--as-routed` is the older behaviour, and the only
+one available without Supabase: with no claims client there are no verdicts, so
+screened-only would write an empty file and the command refuses instead of doing
+that quietly. It refuses too, like `export`, when the spec bundle, alias file or
+overlay has moved since the release was routed.
 
 ### Engine modules with their own entry points
 
@@ -291,7 +310,7 @@ Each has `--help`; the one-liners are their own `description=`:
 
 ```bash
 # Fill a text overlay for the routing worklist's no_text rows (#146 M3). Dry-run by default.
-python -m filter.engine.backfill --worklist W --overlay-dir D [--run] [--freeze]
+python -m filter.engine.backfill --worklist W [--overlay-dir D] [--run] [--freeze]
 
 # Reconcile a routing change against the validation tables (#146 M5).
 # Writes lineage records only — never a validation row. Dry-run by default.

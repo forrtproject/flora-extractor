@@ -12,6 +12,7 @@ Every network call — LLM, Supabase, Hugging Face — is mocked. Nothing here t
 to anything.
 """
 
+import argparse
 import json
 import threading
 from pathlib import Path
@@ -457,28 +458,34 @@ def test_an_exhausted_budget_fails_the_claim_and_keeps_what_was_decided(con, poo
 # ---------------------------------------------------------------------------
 
 
-def _handoff(con, pool, tmp_path, client=None, name="filtered.csv"):
-    drop, record_types = ((set(), {}) if client is None
-                          else handoff_mod.decisions(client, RELEASE))
+def _handoff(con, pool, tmp_path, client=None, name="filtered.csv",
+             screened_only=False):
+    drop, record_types, decided = ((set(), {}, set()) if client is None
+                                   else handoff_mod.decisions(client))
     spec_dir = engine_bundle.write_bundle(tmp_path / "bundle")
     out = tmp_path / name
     manifest = handoff_mod.write_handoff(con, pool, out, RELEASE, drop=drop,
                                          record_types=record_types,
+                                         decided=decided if screened_only else None,
                                          specs=engine_bundle.specs(),
                                          spec_dir=spec_dir, created_at="2026-08-04")
     return out, manifest
 
 
-def _decided_client(ran_tier: str, mode: str, verdicts: list[dict]) -> MagicMock:
-    """A client that reports one finished run of *ran_tier* in *mode*.
+def _decided_client(ran_tier: str, mode: str, verdicts: list[dict],
+                    release: str = RELEASE) -> MagicMock:
+    """A client that reports one finished run of *ran_tier* in *mode* under *release*.
 
     Asked about any other tier it answers with nothing, which is what a real
-    deployment that has only run one of them looks like.
+    deployment that has only run one of them looks like. `release_id` is filtered
+    the way PostgREST filters it — omitted means every release — so a caller that
+    scopes to the wrong release really does see nothing here.
     """
     client = MagicMock()
     client.claims.side_effect = lambda release_id=None, tier=None, status=None: (
-        [{"id": "claim-1", "tier": ran_tier, "meta": {"mode": mode}}]
-        if tier in (None, ran_tier) else [])
+        [{"id": "claim-1", "release_id": release, "tier": ran_tier,
+          "meta": {"mode": mode}}]
+        if tier in (None, ran_tier) and release_id in (None, release) else [])
     client.verdicts.side_effect = lambda t, claim_ids=None: (
         verdicts if t == ran_tier else [])
     return client
@@ -520,6 +527,106 @@ def test_live_mode_drops_the_discarded_rows_from_the_handoff(con, pool, tmp_path
     ids = [r["openalex_id_r"] for r in _read(out)]
     assert "https://openalex.org/W21" not in ids
     assert "https://openalex.org/W22" in ids
+
+
+def test_a_verdict_from_an_earlier_release_still_decides_the_handoff(
+        con, pool, tmp_path):
+    """A verdict follows the WORK: a re-route mints a new release id without
+    unasking a voter, and the tier's checkpoint would skip these works anyway."""
+    earlier = _decided_client("screen_cheap", "live",
+                              [{"work_id": 21, "verdict": "no", "model": "m1"},
+                               {"work_id": 21, "verdict": "no", "model": "m2"},
+                               {"work_id": 22, "verdict": "no", "model": "m1"},
+                               {"work_id": 22, "verdict": "yes", "model": "m2"}],
+                              release="rel-before-the-reroute")
+    # Scoped to this release the run is invisible — that is the bug being fixed.
+    assert tiers.tier_decisions(earlier, RELEASE, "screen_cheap") == {}
+
+    out, manifest = _handoff(con, pool, tmp_path, earlier, screened_only=True)
+
+    assert manifest["dropped_by_tier_verdict"] == 1
+    assert [r["openalex_id_r"] for r in _read(out)] == ["https://openalex.org/W22"]
+
+
+def test_a_validation_claim_from_another_release_still_contributes_nothing(
+        con, pool, tmp_path):
+    """Reading across releases widens WHICH runs are seen, not which modes."""
+    validating = _decided_client("screen_cheap", "validation",
+                                 [{"work_id": 21, "verdict": "no", "model": "m1"},
+                                  {"work_id": 21, "verdict": "no", "model": "m2"}],
+                                 release="rel-before-the-reroute")
+    assert handoff_mod.decisions(validating) == (set(), {}, set())
+
+    out, manifest = _handoff(con, pool, tmp_path, validating)
+    assert manifest["dropped_by_tier_verdict"] == 0
+    assert manifest["rows"] == 4
+
+
+def _cheap_ran_on_21() -> MagicMock:
+    """One live cheap run that judged W21 and never reached W22 or the expensive pile."""
+    return _decided_client("screen_cheap", "live",
+                           [{"work_id": 21, "verdict": "no", "model": "m1"},
+                            {"work_id": 21, "verdict": "yes", "model": "m2"}])
+
+
+def test_an_unscreened_row_does_not_travel_and_is_counted(con, pool, tmp_path):
+    """The default: routing says "ask an LLM", and only the LLM's answer admits."""
+    out, manifest = _handoff(con, pool, tmp_path, _cheap_ran_on_21(),
+                             screened_only=True)
+
+    assert manifest["screened_only"] is True
+    assert manifest["rows"] == 1
+    assert manifest["skipped_unscreened"] == 3
+    assert manifest["dropped_by_tier_verdict"] == 0
+    # rows + the two absences account for every work the piles hold.
+    assert manifest["rows"] + manifest["skipped_unscreened"] \
+        + manifest["dropped_by_tier_verdict"] == 4
+    assert [r["openalex_id_r"] for r in _read(out)] == ["https://openalex.org/W21"]
+
+
+def test_as_routed_still_exports_the_unscreened_rows(con, pool, tmp_path):
+    out, manifest = _handoff(con, pool, tmp_path, _cheap_ran_on_21())
+
+    assert manifest["screened_only"] is False
+    assert manifest["rows"] == 4
+    assert manifest["skipped_unscreened"] == 0
+    assert "https://openalex.org/W22" in [r["openalex_id_r"] for r in _read(out)]
+
+
+def test_a_single_vote_is_not_a_verdict(con, pool, tmp_path):
+    """The expensive gate needs two votes; one leaves the work unsettled, and an
+    unsettled work is unscreened, not a proceed."""
+    half = _decided_client("screen_expensive", "live", [
+        {"work_id": 11, "verdict": "replication", "model": _voter_models()[0],
+         "confidence": "confident"},
+    ])
+    drop, record_types, decided = handoff_mod.decisions(half)
+
+    assert decided == set()
+    assert drop == set()
+    assert record_types == {}
+
+
+def test_screened_only_without_supabase_refuses(monkeypatch, tmp_path, capsys):
+    """No claims client means no verdicts, so screened-only would write an empty
+    file. The command says why instead."""
+    from filter.engine import cli
+    from filter.engine.claims import ClaimsNotConfigured
+
+    monkeypatch.setattr("filter.engine.claims.ClaimsClient",
+                        MagicMock(side_effect=ClaimsNotConfigured("SUPABASE_URL unset")))
+    monkeypatch.setattr(cli, "open_store", MagicMock())
+    monkeypatch.setattr(cli, "_resolve_release", lambda con, release: RELEASE)
+    monkeypatch.setattr(cli, "read_release", lambda release_id, cache_dir=None: {})
+    args = argparse.Namespace(store=tmp_path / "engine.duckdb", release=None,
+                              as_routed=False, out=str(tmp_path / "filtered.csv"),
+                              pool=tmp_path, spec_dir=tmp_path, overlay=None,
+                              no_overlay=True,
+                              from_year=None, to_year=None)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.cmd_handoff(args)
+    assert "--as-routed" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------
@@ -590,3 +697,128 @@ def test_export_pile_still_writes_one_pile(con, pool, tmp_path):
     assert manifest["rows"] == len(rows) == 2
     assert {r["openalex_id_r"] for r in rows} == {
         "https://openalex.org/W21", "https://openalex.org/W22"}
+
+
+# ---------------------------------------------------------------------------
+# Replaying the gate from the stored rows
+# ---------------------------------------------------------------------------
+
+
+def test_the_gate_replayed_from_stored_rows_matches_the_live_votes():
+    """`tier_decisions()` recomputes the gate so a stored outcome cannot disagree
+    with the votes — which only holds if the rows carry everything the gate reads.
+    The soft-discard branch reads `confidence`, so a replay that dropped it would
+    proceed where the live run discarded, silently and only on this shape."""
+    from shared.llm_client import screen_gate
+
+    voter1, voter2 = _voter_models()
+    # One confident "none" against an unconfident qualifying answer: the branch
+    # that exists ONLY because a voter declined to stand behind its answer.
+    live_votes = [{"classification": "none", "confident": True, "categories": []},
+                  {"classification": "replication", "confident": False,
+                   "categories": []}]
+    assert screen_gate(live_votes) == "discard"
+
+    stored = [{"work_id": 11, "model": voter1, "verdict": "none",
+               "confidence": "confident"},
+              {"work_id": 11, "model": voter2, "verdict": "replication",
+               "confidence": "unconfident"}]
+    client = _decided_client("screen_expensive", "live", stored)
+    assert tiers.tier_decisions(client, RELEASE, "screen_expensive") == {
+        11: {"outcome": "discard", "record_type": "replication"}}
+
+    # The same votes, both stood behind, are a real split and proceed. Without the
+    # confidence column both cases would read as unconfident and both would
+    # discard, so this is the pair that pins the column down.
+    stood_behind = [dict(row, confidence="confident") for row in stored]
+    assert tiers._expensive_decision(stood_behind)["outcome"] == "proceed"
+    assert screen_gate([dict(v, confident=True) for v in live_votes]) == "proceed"
+
+
+def test_the_stored_verdict_read_carries_the_confidence_column():
+    """The replay is only as good as the SELECT feeding it."""
+    from filter.engine.claims import ClaimsClient
+
+    client = ClaimsClient(url="https://example.supabase.co", key="k")
+    with patch.object(ClaimsClient, "_get_paged", return_value=[]) as paged:
+        client.verdicts("screen_expensive")
+    assert "confidence" in paged.call_args[0][1]["select"].split(",")
+
+
+# ---------------------------------------------------------------------------
+# Reconciling blobs an earlier run left pending
+# ---------------------------------------------------------------------------
+
+
+def _pending_client(rows: list[dict]) -> MagicMock:
+    client = MagicMock()
+    client.pending_responses.return_value = rows
+    return client
+
+
+def _blob(tmp_path: Path, name: str) -> str:
+    (tmp_path / f"{name}.json").write_text("{}", encoding="utf-8")
+    return name
+
+
+def test_reconcile_uploads_the_pending_blobs_and_marks_only_those(tmp_path):
+    on_disk = [_blob(tmp_path, "a" * 64), _blob(tmp_path, "b" * 64)]
+    client = _pending_client([
+        {"id": "v1", "work_id": 11, "tier": "screen_expensive",
+         "response_hash": on_disk[0], "response_state": PENDING_UPLOAD},
+        # Two rows may name one blob; it is committed once.
+        {"id": "v2", "work_id": 12, "tier": "screen_expensive",
+         "response_hash": on_disk[0], "response_state": PENDING_UPLOAD},
+        {"id": "v3", "work_id": 13, "tier": "screen_cheap",
+         "response_hash": on_disk[1], "response_state": PENDING_UPLOAD},
+    ])
+    commits: list = []
+    with patch.object(tiers, "RESPONSES_DIR", tmp_path), \
+         patch.object(tiers, "_hf_upload_target", return_value="org/repo"), \
+         patch("huggingface_hub.HfApi") as api, \
+         patch("huggingface_hub.CommitOperationAdd", lambda **kw: kw):
+        api.return_value.create_commit.side_effect = lambda **kw: commits.append(kw)
+        report = tiers.reconcile_responses(client, run=True)
+
+    assert report["pending_rows"] == 3
+    assert (report["pending_blobs"], report["on_disk"], report["missing"]) == (2, 2, 0)
+    assert report["committed"] == report["marked"] == 2
+    assert len(commits) == 1
+    assert sorted(client.mark_uploaded.call_args[0][0]) == sorted(on_disk)
+
+
+def test_reconcile_reports_a_pending_row_whose_blob_is_gone(tmp_path):
+    """The disk cache is expendable; the row is honest. Counted, not fatal."""
+    present = _blob(tmp_path, "c" * 64)
+    client = _pending_client([
+        {"id": "v1", "work_id": 11, "tier": "screen_expensive",
+         "response_hash": present, "response_state": PENDING_UPLOAD},
+        {"id": "v2", "work_id": 12, "tier": "screen_expensive",
+         "response_hash": "d" * 64, "response_state": PENDING_UPLOAD},
+    ])
+    with patch.object(tiers, "RESPONSES_DIR", tmp_path), \
+         patch.object(tiers, "_hf_upload_target", return_value="org/repo"), \
+         patch("huggingface_hub.HfApi"), \
+         patch("huggingface_hub.CommitOperationAdd", lambda **kw: kw):
+        report = tiers.reconcile_responses(client, run=True)
+
+    assert (report["on_disk"], report["missing"]) == (1, 1)
+    assert report["missing_hashes"] == ["d" * 64]
+    assert client.mark_uploaded.call_args[0][0] == [present]
+    assert "MISSING" in tiers.render_reconcile(report)
+
+
+def test_reconcile_dry_run_commits_nothing_and_marks_nothing(tmp_path):
+    client = _pending_client([
+        {"id": "v1", "work_id": 11, "tier": "screen_expensive",
+         "response_hash": _blob(tmp_path, "e" * 64),
+         "response_state": PENDING_UPLOAD}])
+    with patch.object(tiers, "RESPONSES_DIR", tmp_path), \
+         patch("huggingface_hub.HfApi") as api:
+        report = tiers.reconcile_responses(client, run=False)
+
+    assert report["dry_run"] and report["on_disk"] == 1
+    assert report["committed"] == report["marked"] == 0
+    api.assert_not_called()
+    client.mark_uploaded.assert_not_called()
+    assert "DRY RUN" in tiers.render_reconcile(report)

@@ -43,6 +43,13 @@ MARKITDOWN_CACHE_DIR = CACHE_DIR / "markdown"        # raw .md files from MarkIt
 DOI_VERIFY_CACHE_DIR = CACHE_DIR / "doi_verify"      # CrossRef/OpenAlex DOI verification
 SNAPSHOT_CACHE_DIR   = CACHE_DIR / "snapshot"        # OpenAlex bulk-parquet manifest + scan ledger
 ENGINE_CACHE_DIR     = CACHE_DIR / "engine"          # filter-engine routing releases + DuckDB store
+# The standard home of the text overlay (project-written text for pool rows the
+# snapshot shipped without an abstract). The engine's commands read it here by
+# default, so an overlay-dependent rule cannot silently match nothing because a
+# flag was forgotten; it is NOT created up front, because "the directory holds
+# overlay chunks" is the signal that there is an overlay to read at all.
+OVERLAY_DIR          = Path(os.getenv("FLORA_OVERLAY_DIR")
+                            or (ENGINE_CACHE_DIR / "overlay"))
 
 for _d in [DATA_DIR, PDF_CACHE_DIR, GROBID_CACHE_DIR, LLM_CACHE_DIR,
            OA_CACHE_DIR, OA_XML_CACHE_DIR, PARSE_CACHE_DIR, MARKITDOWN_CACHE_DIR,

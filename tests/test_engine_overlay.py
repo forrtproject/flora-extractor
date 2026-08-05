@@ -8,6 +8,7 @@ The bundle is the synthetic one (`tests/engine_bundle.py`): the downgrade is a
 property of `route_batch()`, not of any shipped rule.
 """
 
+import argparse
 import json
 from pathlib import Path
 
@@ -15,7 +16,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from filter.engine import backfill, overlay
+from filter.engine import backfill, cli, overlay
+from filter.engine.export import StaleBundleError, check_release_binding
 from filter.engine.overlay import OverlayError, freeze, validate, worklist
 from filter.engine.pool_reader import iter_pool_batches, overlay_manifest_hash
 from filter.engine.release import routing_release
@@ -87,11 +89,14 @@ def _overlay_row(work_id: int, text: str, source="epmc") -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_an_overlay_fills_empty_pool_text_and_never_replaces_present_text(pool, tmp_path):
-    """The pool's own abstract is primary evidence; the overlay only fills holes."""
+def test_an_overlay_row_wins_over_pool_text_present_or_absent(pool, tmp_path):
+    """Every overlay row was written deliberately by a backfill this project ran,
+    so it replaces the pool's text — the rows that need REPLACING rather than
+    filling are the boilerplate abstracts ("International audience", keyword
+    lists) a fill-only overlay would leave in front of the voters."""
     overlay_dir = _overlay(tmp_path / "ov", [
         _overlay_row(1, "Recovered abstract for the first work."),
-        _overlay_row(2, "SHOULD NOT WIN"),
+        _overlay_row(2, "Backfilled text replacing the pool's boilerplate."),
     ])
     freeze(overlay_dir)
 
@@ -100,7 +105,8 @@ def test_an_overlay_fills_empty_pool_text_and_never_replaces_present_text(pool, 
         [b for batch in batches for b in batch.column("id").to_pylist()],
         [t for batch in batches for t in batch.column("abstract_text").to_pylist()]))
     assert texts["https://openalex.org/W1"] == "Recovered abstract for the first work."
-    assert texts["https://openalex.org/W2"] == _REPLICATION
+    assert texts["https://openalex.org/W2"] == ("Backfilled text replacing the "
+                                                "pool's boilerplate.")
 
     # And with no overlay the stream is the pool untouched.
     plain = list(iter_pool_batches(pool))
@@ -272,3 +278,78 @@ def test_a_run_writes_an_overlay_chunk_and_a_rerun_resumes_without_refetching(
     assert calls["epmc"] == 1
     assert again["rows"] == 0 and again["chunk"] == ""
     assert validate(overlay_dir) == []
+
+
+# ---------------------------------------------------------------------------
+# The standard overlay location: safe by default
+# ---------------------------------------------------------------------------
+
+
+def test_the_default_overlay_is_the_standard_dir_only_when_it_holds_chunks(
+        tmp_path, monkeypatch):
+    """No flag means "read the overlay if there is one" — never a silent bare run,
+    which is how an overlay-only rule comes to match nothing."""
+    populated = _overlay(tmp_path / "standard", [_overlay_row(1, "text")])
+    monkeypatch.setattr(cli, "OVERLAY_DIR", populated)
+    assert cli._overlay(argparse.Namespace(overlay=None, no_overlay=False)) == populated
+
+    # An explicit bare run, and an explicit other directory, both win.
+    assert cli._overlay(argparse.Namespace(overlay=None, no_overlay=True)) is None
+    other = _overlay(tmp_path / "other", [_overlay_row(2, "text")])
+    assert cli._overlay(argparse.Namespace(overlay=other, no_overlay=False)) == other
+
+    # An empty standard dir and a missing one are both "no overlay", not errors.
+    (tmp_path / "empty").mkdir()
+    for path in (tmp_path / "empty", tmp_path / "never-created"):
+        monkeypatch.setattr(cli, "OVERLAY_DIR", path)
+        assert cli._overlay(argparse.Namespace(overlay=None, no_overlay=False)) is None
+
+
+def test_route_reads_the_standard_overlay_and_says_which_one_it_read(
+        pool, specs, tmp_path, monkeypatch, capsys):
+    """The production failure this exists for: routing with no --overlay left the
+    overlay-only rules matching nothing, and printed nothing about it."""
+    overlay_dir = _overlay(tmp_path / "standard", [_overlay_row(1, _REPLICATION)])
+    manifest = freeze(overlay_dir)
+    monkeypatch.setattr(cli, "OVERLAY_DIR", overlay_dir)
+    monkeypatch.setattr(cli, "load_specs", lambda spec_dir: specs)
+    monkeypatch.setattr(cli, "load_aliases", lambda path: {})
+    monkeypatch.setattr(cli, "bundle_hash", lambda spec_dir: "bundle-x")
+    monkeypatch.setattr(cli, "alias_release", lambda path: "alias-x")
+    store = tmp_path / "engine.duckdb"
+    args = argparse.Namespace(spec_dir=tmp_path, pool=pool, store=store,
+                              pool_manifest_hash="pool-x", overlay=None,
+                              no_overlay=False)
+
+    assert cli.cmd_route(args) == 0
+    out = capsys.readouterr().out
+    assert f"overlay: {overlay_dir} (hash {manifest['overlay_hash'][:12]})" in out
+
+    con = open_store(store, read_only=True)
+    pile, reason = con.execute(
+        "SELECT pile, pending_reason FROM routing WHERE work_id=1").fetchone()
+    con.close()
+    assert pile in {"screen_expensive", "screen_cheap"} and reason == ""
+
+    # --no-overlay is the same command run bare: the row is back to no_text, and
+    # the line says so rather than leaving the reader to guess.
+    args.no_overlay = True
+    args.store = store2 = tmp_path / "bare.duckdb"
+    assert cli.cmd_route(args) == 0
+    assert "overlay: none" in capsys.readouterr().out
+    con = open_store(store2, read_only=True)
+    assert con.execute(
+        "SELECT pile, pending_reason FROM routing WHERE work_id=1").fetchone() \
+        == ("pending", "no_text")
+    con.close()
+
+
+def test_a_release_routed_under_an_overlay_refuses_a_handoff_without_it(tmp_path):
+    """The binding every reading command passes through: the overlay decides what
+    the rules read, so a release cannot be handed off under different text."""
+    overlay_dir = _overlay(tmp_path / "ov", [_overlay_row(1, _REPLICATION)])
+    routed_hash = freeze(overlay_dir)["overlay_hash"]
+
+    check_release_binding(tmp_path, "rel-a", None, None, overlay_dir, routed_hash)
+    with pytest.raises(StaleBundleError, match="overlay_hash"):
+        check_release_binding(tmp_path, "rel-a", None, None, None, routed_hash)

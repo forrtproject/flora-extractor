@@ -26,7 +26,7 @@ per-source quota estimates BEFORE fetching — Scopus alone is a ~10k/week ceili
 against a worklist that can hold a million rows. `--run` is the only thing that
 spends anything.
 
-    python -m filter.engine.backfill --worklist wl.parquet --overlay-dir data/overlay
+    python -m filter.engine.backfill --worklist wl.parquet          # standard overlay dir
     python -m filter.engine.backfill --worklist wl.parquet --overlay-dir D --run --limit 500
 """
 
@@ -48,8 +48,8 @@ from search.fetch_abstracts import (
 )
 from shared.config import (
     CROSSREF_RATE_SEC, ELSEVIER_API_KEY, EPMC_BATCH_SIZE, EPMC_RATE_SEC,
-    OA_BATCH_SIZE, OPENALEX_RATE_SEC, OSF_RATE_SEC, S2_API_KEY, S2_BATCH_RATE_SEC,
-    S2_BATCH_SIZE, SCOPUS_DEFAULT_LIMIT, SCOPUS_RATE_SEC, log,
+    OA_BATCH_SIZE, OPENALEX_RATE_SEC, OSF_RATE_SEC, OVERLAY_DIR, S2_API_KEY,
+    S2_BATCH_RATE_SEC, S2_BATCH_SIZE, SCOPUS_DEFAULT_LIMIT, SCOPUS_RATE_SEC, log,
 )
 from shared.utils import clean_doi
 
@@ -311,8 +311,11 @@ def build_parser() -> argparse.ArgumentParser:
                      "(issue #146 M3). Dry-run by default."))
     parser.add_argument("--worklist", type=Path, required=True,
                         help="Worklist parquet from `filter.engine.overlay.worklist()`.")
-    parser.add_argument("--overlay-dir", type=Path, required=True,
-                        help="Overlay release directory; chunks are appended here.")
+    parser.add_argument("--overlay-dir", type=Path, default=OVERLAY_DIR,
+                        help="Overlay release directory; chunks are appended here. "
+                             f"Default {OVERLAY_DIR} — the directory the engine's "
+                             "commands read by default, so a backfill and a route "
+                             "agree without either being told where to look.")
     parser.add_argument("--run", action="store_true",
                         help="Actually fetch. Without it this only estimates.")
     parser.add_argument("--dry-run", action="store_true",

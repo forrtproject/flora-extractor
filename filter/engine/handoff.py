@@ -20,8 +20,22 @@ discarded is left out of the file; a work a live `screen_expensive` run typed
 carries that type as its `filter_status`, and one it discarded is left out too,
 because that is the same validated gate Stage 3 would apply to it a second time.
 Verdicts from a `validation`-mode run change nothing, which is what that mode
-means. Without Supabase configured there is nothing to read, and the piles hand
-off exactly as routed — said out loud rather than assumed.
+means. The verdicts are read across releases: the release scopes the piles, not
+the evidence, and a work decided before a re-route is still a decided work.
+
+**A row travels on a verdict, not on a routing decision.** The default is
+screened-only: a work the rules routed into a screen pile but no live tier run
+ever decided is NOT exported. Routing says "this deserves an LLM's attention";
+only the LLM says "this reaches Stage 3", and an unscreened row silently
+crossing the handoff would spend Stage 3's budget on a decision the engine never
+made. `--as-routed` restores the older behaviour — export the piles as routed,
+applying whatever verdicts exist — and it is the only mode in which the piles
+hand off without Supabase, because with no claims client there are no verdicts
+and screened-only would legitimately export nothing.
+
+Absence is accounted for either way: the manifest's `dropped_by_tier_verdict`
+and `skipped_unscreened` are different facts about the same missing row, and
+together with `rows` they cover every work the piles contain.
 
 **The handoff file is not an immutable export.** `export_pile()` writes a
 manifest that may never be overwritten, because an export is an artifact someone
@@ -50,6 +64,7 @@ HANDOFF_PILES = ("screen_expensive", "screen_cheap")
 def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
                   drop: Optional[set[int]] = None,
                   record_types: Optional[dict[int, str]] = None,
+                  decided: Optional[set[int]] = None,
                   conventions: Optional[dict] = None,
                   specs: Optional[list[FilterSpec]] = None,
                   aliases: Optional[dict[int, int]] = None,
@@ -64,10 +79,17 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
 
     *drop* is the set of work ids a live tier run discarded; *record_types* maps a
     work id to the paper type a live `screen_expensive` run settled on, which
-    becomes its `filter_status`. Both are read from the verdict rows by
-    `decisions()` — they are passed in so this function stays a pure mapping from
-    (store, pool, decisions) to a file, and so a caller with no Supabase can call
-    it with neither.
+    becomes its `filter_status`. *decided* is every work id a live tier run
+    reached a verdict on, discards included. All three are read from the verdict
+    rows by `decisions()` — they are passed in so this function stays a pure
+    mapping from (store, pool, decisions) to a file.
+
+    *decided* also chooses the export's contract, because a set and its absence
+    say different things. A set (empty included) means SCREENED-ONLY: a pile row
+    outside it was never judged, so it is left out and counted as
+    `skipped_unscreened`. `None` means AS-ROUTED: every pile row travels except
+    the ones a verdict discarded — which is the only thing a caller with no
+    Supabase can ask for.
     """
     check_release_binding(spec_dir, release_id, expect_bundle_hash,
                           expect_alias_release, overlay_dir, expect_overlay_hash)
@@ -77,6 +99,7 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
 
     by_pile: dict[str, list[dict]] = {pile: [] for pile in HANDOFF_PILES}
     dropped = 0
+    unscreened = 0
     retyped = 0
     for pile, work, row in iter_export_rows(
             con, pool_dir, list(HANDOFF_PILES), release_id,
@@ -85,6 +108,9 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
             overlay_dir=overlay_dir):
         if work in drop:
             dropped += 1
+            continue
+        if decided is not None and work not in decided:
+            unscreened += 1
             continue
         record_type = record_types.get(work)
         if record_type:
@@ -101,6 +127,8 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
         "rows": len(rows),
         "rows_per_pile": {pile: len(by_pile[pile]) for pile in HANDOFF_PILES},
         "dropped_by_tier_verdict": dropped,
+        "skipped_unscreened": unscreened,
+        "screened_only": decided is not None,
         "typed_by_tier_verdict": retyped,
         "csv": Path(out_csv).name,
         "sha256": hashlib.sha256(Path(out_csv).read_bytes()).hexdigest(),
@@ -112,25 +140,44 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
     return manifest
 
 
-def decisions(client, release_id: str) -> tuple[set[int], dict[int, str]]:
-    """`(work ids to drop, work id → record type)` from every LIVE tier run.
+def decisions(client) -> tuple[set[int], dict[int, str], set[int]]:
+    """`(drop, work id → record type, decided)` from every LIVE tier run.
 
     Reads the permanent verdict rows, not a run report. A `validation`-mode run
     contributes nothing here — its claim says `mode: validation` and this asks
     only for `live` — which is how "verdicts recorded, no pile effect" survives
     all the way to the file Stage 3 reads.
+
+    Across every release, deliberately: a verdict follows the WORK, and the
+    release scopes the piles, not the evidence. A re-route mints a new release id
+    from the same pool and the same voters' answers, and a handoff that asked only
+    about the new id would find nothing decided — while the tier runner, whose
+    checkpoint is tier-scoped, would skip those works as already screened. The
+    file would then be silently short of every row the engine had actually paid to
+    decide.
+
+    *decided* is only the works the tier actually SETTLED: a work whose votes are
+    still short of a gate decision reads `incomplete` and belongs with the
+    unscreened, not with the proceeds — a half-screened row is exactly the row the
+    screened-only handoff exists to hold back.
     """
-    from filter.engine.tiers import DISCARD, TIER_CHEAP, TIER_EXPENSIVE, tier_decisions
+    from filter.engine.tiers import (DISCARD, PROCEED, TIER_CHEAP, TIER_EXPENSIVE,
+                                     tier_decisions)
 
     drop: set[int] = set()
     record_types: dict[int, str] = {}
+    decided: set[int] = set()
     for tier in (TIER_CHEAP, TIER_EXPENSIVE):
-        for work, decision in tier_decisions(client, release_id, tier).items():
+        # None: every release — see the docstring above.
+        for work, decision in tier_decisions(client, None, tier).items():
+            if decision["outcome"] not in (DISCARD, PROCEED):
+                continue
+            decided.add(work)
             if decision["outcome"] == DISCARD:
                 drop.add(work)
             elif tier == TIER_EXPENSIVE and decision.get("record_type"):
                 record_types[work] = decision["record_type"]
-    return drop, record_types
+    return drop, record_types, decided
 
 
 def _write_csv(out_csv: Path, rows: list[dict]) -> None:
