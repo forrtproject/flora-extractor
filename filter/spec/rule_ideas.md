@@ -633,15 +633,32 @@ one. The per-template FLoRA intersection below is what would reopen that arm —
 positive on a post-data-collection form, not the name's resemblance to the one that
 admits.
 
-**Before promoting the discard out of shadow:** the numbers above rest on 34
-registrations and 4 FLoRA papers, and the rule is written as a negation — *every OSF
-template that is neither post-completion nor open-ended is a pre-data-collection
-form* — which is true of the eight templates the sample showed and unverified beyond
-them. Fetching the template for all 3,016 no-abstract rows is free and under an hour,
-and the backfill run that makes the rule fire at all is the run that does it: it gives
-the exact FLoRA intersection per template rather than a sample, which is what the
-promotion recipe asks for. Zero known FLoRA papers on a discarded template promotes
-it; one stops it, and that paper names the template that has to move to the keep arm.
+**The promotion was attempted on 2026-08-04 and REFUSED.** Full run and artifacts:
+`analysis/osf_registrations/REPORT.md`. All 3,016 rows were fetched — 1,674 are
+registrations, thirteen templates appeared, and the negation held: every template
+outside the keep arms is a pre-data-collection form. The recall gate passed exactly
+rather than by sample, 0 known FLoRA papers among the 1,308 discards. What stopped it
+was the read: six Sonnet reviewers over 300 of those discards found one record that
+reports a completed replication — `10.17605/osf.io/pr8a4`, "Replication with
+Registration: Examining Kerner's 'What We Talk About When We Talk About FDI'", whose
+text says *"In Table 1 I replicate models 1-3 from Kerner… and present these results
+in Models 4-6 in Table 2."* One real study in 300 of 1,308 is ~4.4 papers lost to one
+rule, and CONVENTIONS.md's step 4 is explicit about what that means. The rule stays
+shadow; the report holds three candidate narrowings, none measured.
+
+**Two numbers above are wrong and are corrected by that census.** The no-abstract
+population holds **8** known FLoRA papers, not 10 — four are Post-Completion
+registrations and are admitted, four are OSF projects with no registration record at
+all and are reached by neither rule. And **no post-data-collection template exists
+anywhere in the 1,674 registrations**, so the keep arm dropped above cost nothing;
+that is now a count rather than a ruling awaiting one.
+
+One thing the census found that nobody was looking for: the Open-Ended arm's
+`replicat*` marker fires on the OpenAlex **title** in 99% of the 336 rows it admits,
+and what it reaches is almost entirely Reproducibility Project: Psychology
+registrations whose whole text is "Registered prior to RPP publication". Whether an
+individual RPP study's registration is a FLoRA record in its own right — it may be the
+only trace that study has — is an open scope question, not a rule question.
 
 ---
 
