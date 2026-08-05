@@ -4,9 +4,10 @@ Tests for shared/openalex_client.py — candidate-matching logic.
 All OpenAlex HTTP calls are mocked; no network access required.
 Run: python -m pytest tests/test_openalex_client.py -v
 """
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 import shared.openalex_client as oa
 from shared.cache import content_key, write_cache
@@ -379,3 +380,70 @@ class TestWorkLookupIsSharedBetweenFetchers:
             assert oa.fetch_openalex_by_doi("10.9/orig") is None
             assert oa.fetch_openalex_by_doi("10.9/orig") is None
         assert get.call_count == 2
+
+
+class TestOpenCitationsNoAnswerIsNotAnEmptyList:
+    """A COCI outage, or a failed OpenAlex batch part-way through resolving the
+    cited DOIs, must come back as None rather than as a paper with no
+    references — and must never be cached as one."""
+
+    @staticmethod
+    def _coci(cited: list[str]):
+        resp = MagicMock()
+        resp.json.return_value = [{"cited": d} for d in cited]
+        return resp
+
+    @pytest.mark.parametrize("coci_fails", [True, False])
+    def test_no_answer_returns_none_and_is_not_cached(self, tmp_path, coci_fails):
+        get_kwargs = ({"side_effect": requests.exceptions.Timeout("boom")}
+                      if coci_fails else {"return_value": self._coci(["10.1/a"])})
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client.throttle"), \
+             patch("shared.openalex_client.requests.get", **get_kwargs), \
+             patch("shared.openalex_client._oa_get", return_value=None):
+            assert oa.fetch_opencitations_references("10.9/rep") is None
+        assert list(tmp_path.glob("ocrefs_*.json")) == []
+
+    def test_no_open_references_is_an_answer_and_is_cached(self, tmp_path):
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client.throttle"), \
+             patch("shared.openalex_client.requests.get",
+                   return_value=self._coci([])) as get:
+            assert oa.fetch_opencitations_references("10.9/rep") == []
+            assert oa.fetch_opencitations_references("10.9/rep") == []
+        assert get.call_count == 1
+
+
+class TestReferenceFetchNoAnswerIsNotAnEmptyList:
+    """The same seam on the primary path: a work lookup or a metadata batch that
+    never answered is None, not a work that cites nothing, and is not cached.
+    find_all_candidates passes that distinction on rather than caching an empty
+    candidate list under a content key that will never change."""
+
+    _WORK = {"referenced_works": [f"https://openalex.org/W{i}" for i in range(60)]}
+
+    @pytest.mark.parametrize("responses", [
+        [None],                       # the work lookup never answered
+        [_WORK, {"results": []}, None],   # the second metadata batch never answered
+    ])
+    def test_no_answer_returns_none_and_is_not_cached(self, tmp_path, responses):
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._oa_get", side_effect=responses):
+            assert oa.fetch_referenced_works_metadata("W999") is None
+        assert list(tmp_path.glob("refs_*.json")) == []
+
+    def test_a_work_that_cites_nothing_is_an_answer_and_is_cached(self, tmp_path):
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client._oa_get",
+                   return_value={"referenced_works": []}) as get:
+            assert oa.fetch_referenced_works_metadata("W999") == []
+            assert oa.fetch_referenced_works_metadata("W999") == []
+        assert get.call_count == 1
+
+    def test_find_all_candidates_passes_the_no_answer_on(self, tmp_path):
+        with patch("shared.openalex_client.OA_CACHE_DIR", tmp_path), \
+             patch("shared.openalex_client.fetch_referenced_works_metadata",
+                   return_value=None):
+            assert find_all_candidates("10.9/rep", "W999", "",
+                                       "We replicated Smith (2010).", 2020, "") is None
+        assert list(tmp_path.glob("*.json")) == []

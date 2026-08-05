@@ -3,9 +3,9 @@ openalex.py — OpenAlex API helpers + author-year citation pattern extraction.
 
 Public API:
     extract_author_year_patterns(text, max_year) → list[dict]
-    fetch_referenced_works_metadata(openalex_id, cache) → list[dict]
+    fetch_referenced_works_metadata(openalex_id, cache) → list[dict] | None
     find_all_candidates(doi_r, openalex_id_r, study_r, abstract_r,
-                        year_r, pattern_str) → list[dict]
+                        year_r, pattern_str) → list[dict] | None
     fetch_openalex_by_doi(doi) → Optional[dict]
 """
 import json
@@ -277,9 +277,15 @@ def _oa_get(url: str, params: dict | None = None) -> Optional[dict]:
 
 
 def fetch_referenced_works_metadata(openalex_id: str,
-                                    use_cache: bool = True) -> list[dict]:
+                                    use_cache: bool = True) -> list[dict] | None:
     """
     Return full metadata for every work referenced by *openalex_id*.
+
+    None is no answer — the work lookup or one of the batch requests failed — and
+    is never cached; [] is OpenAlex saying this work lists no references. A failed
+    batch takes the whole list down with it rather than returning a short one:
+    references missing from a list nobody can tell is short is how a resolver
+    reports "the target is not cited here" about a paper that cites it.
 
     Cached as JSON in OA_CACHE_DIR / refs_<bare_id>.json.
     Each item has: id, doi, title, publication_year, authorships.
@@ -296,17 +302,15 @@ def fetch_referenced_works_metadata(openalex_id: str,
         f"https://api.openalex.org/works/{bare}",
         {"mailto": RESEARCHER_EMAIL},
     )
-    if not work:
-        return []
-
-    ref_ids = work.get("referenced_works", [])
-    if not ref_ids:
-        return []
+    if work is None:
+        log.warning("[%s] reference fetch: the work lookup never answered", bare)
+        return None
 
     # Step 2: batch-fetch metadata (up to 50 IDs per request)
     results: list[dict] = []
     batch_size = 50
-    bare_refs  = [re.sub(r"https?://openalex\.org/", "", rid) for rid in ref_ids]
+    bare_refs  = [re.sub(r"https?://openalex\.org/", "", rid)
+                  for rid in work.get("referenced_works", [])]
 
     for i in range(0, len(bare_refs), batch_size):
         batch = bare_refs[i : i + batch_size]
@@ -319,8 +323,12 @@ def fetch_referenced_works_metadata(openalex_id: str,
                 "mailto"  : RESEARCHER_EMAIL,
             },
         )
-        if data and "results" in data:
-            results.extend(data["results"])
+        if data is None:
+            log.warning("[%s] reference fetch: batch %d of %d never answered "
+                        "— discarding the partial list",
+                        bare, i // batch_size + 1, -(-len(bare_refs) // batch_size))
+            return None
+        results.extend(data.get("results", []))
 
     if use_cache:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
@@ -341,12 +349,19 @@ def fetch_referenced_works_metadata(openalex_id: str,
 # COCI returns bare cited DOIs with no titles, so the DOIs are resolved back
 # through OpenAlex in batches of 50 (1 credit per batch) to reach the same shape
 # fetch_referenced_works_metadata() returns.
+#
+# None and [] are different answers here and the caller must keep them apart: []
+# is OpenCitations saying this paper has no open references, None is nobody
+# saying anything (COCI unreachable, or an OpenAlex resolution batch failed).
+# Collapsing the second into the first would let a provider outage be recorded as
+# "screened against the full reference list" — and, worse, cached as one. Only a
+# complete answer is written to the cache.
 
 _OPENCITATIONS_URL = "https://opencitations.net/index/api/v1/references/{doi}"
 
 
-def fetch_opencitations_references(doi_r: str) -> list[dict]:
-    """Return referenced-work metadata for *doi_r* via OpenCitations. See above."""
+def fetch_opencitations_references(doi_r: str) -> list[dict] | None:
+    """Referenced-work metadata for *doi_r* via OpenCitations; None = no answer."""
     doi_r = clean_doi(doi_r)
     if not doi_r:
         return []
@@ -364,12 +379,10 @@ def fetch_opencitations_references(doi_r: str) -> list[dict]:
         r.raise_for_status()
         cited = [c.get("cited", "").strip() for c in r.json()]
     except Exception as exc:
-        log.debug("OpenCitations lookup failed for %s: %s", doi_r, exc)
-        return []
+        log.warning("OpenCitations lookup failed for %s: %s", doi_r, exc)
+        return None
 
     dois = [clean_doi(c) for c in cited if c]
-    if not dois:
-        return []
 
     results: list[dict] = []
     batch_size = 50
@@ -384,8 +397,14 @@ def fetch_opencitations_references(doi_r: str) -> list[dict]:
                 "mailto"  : RESEARCHER_EMAIL,
             },
         )
-        if data and "results" in data:
-            results.extend(data["results"])
+        # A failed batch makes the list short, not empty, which is the hardest
+        # kind of wrong to notice downstream — give up on the whole list instead.
+        if data is None:
+            log.warning("[%s] OpenCitations: OpenAlex resolution failed for batch "
+                        "%d of %d — discarding the partial list",
+                        doi_r, i // batch_size + 1, -(-len(dois) // batch_size))
+            return None
+        results.extend(data.get("results", []))
 
     log.info("[%s] OpenCitations: %d cited DOIs → %d with metadata",
              doi_r, len(dois), len(results))
@@ -449,10 +468,11 @@ def find_all_candidates(doi_r: str,
                          study_r: str,
                          abstract_r: str,
                          year_r: int,
-                         pattern_str: str = "") -> list[dict]:
+                         pattern_str: str = "") -> list[dict] | None:
     """
     Re-fetch all referenced works for *openalex_id_r* and return EVERY work
-    that matches any extracted author-year pattern.
+    that matches any extracted author-year pattern. None if the reference list
+    could not be fetched at all — no candidates was not the answer given.
 
     Cached in OA_CACHE_DIR on every argument the result depends on, not on doi_r
     alone: the three call sites pass different titles and abstracts for the same
@@ -486,6 +506,12 @@ def find_all_candidates(doi_r: str,
         return []
 
     refs = fetch_referenced_works_metadata(openalex_id_r)
+    # None is OpenAlex never answering. Returning [] here would tell the caller
+    # this paper cites nothing that matches its own citations — and the empty
+    # candidate list would be cached under a content key that will never change,
+    # pinning the outage on the row forever.
+    if refs is None:
+        return None
     if not refs:
         return []
 

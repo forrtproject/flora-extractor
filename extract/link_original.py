@@ -779,7 +779,15 @@ def run_for_doi(doi_r:              str,
     candidates = find_all_candidates(
         doi_r, oa_id_r, study_r, abstract_r, year_r, pattern_r
     )
-    log.info("[%s] %d candidate(s) from OpenAlex re-query", doi_r, len(candidates))
+    # None is the reference list never arriving, which is not the same row as one
+    # whose references hold no match: the rungs below run on no candidates either
+    # way, but only one of them has been told the paper cites nothing relevant.
+    if candidates is None:
+        log.warning("[%s] OpenAlex never answered with a reference list — "
+                    "continuing with no candidates", doi_r)
+        candidates = []
+    else:
+        log.info("[%s] %d candidate(s) from OpenAlex re-query", doi_r, len(candidates))
 
     # Every exit from here on assembles the same output from the same base data;
     # only the resolution (and, past the PDF stage, the pdf/grobid/sections blocks)
@@ -923,9 +931,17 @@ def run_for_doi(doi_r:              str,
     if not no_llm and (abstract_r or study_r):
         # No references is not a reason to skip: with them the call both screens and
         # resolves, without them it still answers "is this a replication at all".
-        refs = fetch_referenced_works_metadata(oa_id_r) if oa_id_r else []
+        # None from either source is that source failing to answer, not a paper
+        # with no references. The screen still runs on nothing — it can say "not a
+        # replication" from the abstract alone — but the row must not read
+        # afterwards as one whose reference list was searched and came up short.
+        oa_refs: list[dict] | None = fetch_referenced_works_metadata(oa_id_r) if oa_id_r else []
+        oc_refs: list[dict] | None = []
+        refs = list(oa_refs or [])
         if not refs:
-            refs = fetch_opencitations_references(doi_r)
+            oc_refs = fetch_opencitations_references(doi_r)
+            refs = list(oc_refs or [])
+        refs_unavailable = not refs and (oa_refs is None or oc_refs is None)
         token_counter.set_stage("extract_refscreen")
         screen = screen_references_with_llm(doi_r, study_r, abstract_r, refs,
                                             classification=classification,
@@ -933,6 +949,15 @@ def run_for_doi(doi_r:              str,
         # The evidence of this rung IS the reference list, so it has to reach
         # _build_output; the screen dict carries the verdict, not the input.
         ref_sections = {"references": refs}
+        if refs_unavailable:
+            failed = ", ".join(name for name, got in
+                               (("OpenAlex", oa_refs), ("OpenCitations", oc_refs))
+                               if got is None)
+            note = f"reference list unavailable ({failed} lookup failed)"
+            log.warning("[%s] %s — screened without one", doi_r, note)
+            screen["llm_evidence"] = "; ".join(filter(None, [
+                note, screen.get("llm_evidence", ""),
+            ]))
         _keep(screen)
 
         # A screen that did not get both votes is an API failure, not a verdict, and
