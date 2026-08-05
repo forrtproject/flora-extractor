@@ -508,22 +508,31 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
 
 
 def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
-               link_method: str = "api_error", classify_model: str = "",
-               screen: "dict | None" = None) -> dict:
+               link_method: str, classify_model: str = "",
+               screen: "dict | None" = None, error: str = "") -> dict:
     """A row with no link. It still carries whatever the front door already decided:
     a paper the screen classified and categorised does not stop being categorised
     because the ladder found no original, and a reviewer reading the pending row
-    needs the same evidence as one reading a resolved one."""
+    needs the same evidence as one reading a resolved one.
+
+    *error* states what stopped the row, and is what makes an api_error readable
+    after the run's log is gone: it lands in link_evidence, where a reader looks,
+    and in outcome_reasoning through _outcome_without_coding's api_error branch.
+
+    link_method has no default. It used to default to api_error, which is how the
+    catch-all in _process_row came to write a row that said only that something
+    failed — the silence was by omission, so every caller now states its intent.
+    """
     doi_r_clean = clean_doi(str(filter_row.get("doi_r", "")))
-    outcome = "api_error" if link_method == "api_error" else "pending"
     row = _base_row(filter_row, match_type, match_conf, classify_model,
-                    {"outcome": outcome}, screen)
+                    _outcome_without_coding(link_method, {"llm_error": error}) or {},
+                    screen)
     row.update({
         "pair_id": make_pair_id(doi_r_clean, ""),
         "doi_o": "", "title_o": "", "year_o": "", "authors_o": "", "ref_o": "",
         "bibtex_ref_o": "",
-        "link_method": link_method, "link_evidence": "", "link_confidence": "low",
-        "link_llm_model": "",
+        "link_method": link_method, "link_evidence": error,
+        "link_confidence": "low", "link_llm_model": "",
     })
     if screen is None:
         # Nobody classified this row, and the replication default _record_type falls
@@ -1750,8 +1759,15 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
         # api_error would bury the reason the rest of the run stops too.
         raise
     except Exception as e:
-        log.error("[%s] extraction failed: %s", doi_r, e)
-        return [_empty_row(row, "single_original", "low")]
+        # log.exception, not log.error: the message alone does not say which call
+        # raised, and the traceback is the only thing that does.
+        log.exception("[%s] extraction failed: %s", doi_r, e)
+        # The screen already ran and was paid for — the row keeps the type and the
+        # categories it bought, and the exception is written onto the row rather
+        # than only into a log that will not outlive the run.
+        return [_empty_row(row, "single_original", "low",
+                           link_method="api_error", screen=screen,
+                           error=f"extraction failed: {type(e).__name__}: {e}")]
 
 
 def run_extract(no_llm: bool = False,

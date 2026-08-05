@@ -836,7 +836,10 @@ class TestRunExtract:
 
     def test_api_error_passthrough(self):
         """When extraction throws an exception, link_method and outcome must be
-        'api_error' and the row must still appear in the output."""
+        'api_error' and the row must still appear in the output — carrying what
+        broke it and the screen verdict that was already paid for (#178). The
+        2026-08-05 run wrote 17 of these rows with every such column blank, and
+        once the log rotated there was no way to find out what had failed."""
         csv = (
             "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
             "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
@@ -872,8 +875,16 @@ class TestRunExtract:
         (tmp.parent / "extracted.csv").unlink(missing_ok=True)
 
         assert len(result) == 1, "Row must not be dropped on extraction failure"
-        assert result.iloc[0]["link_method"] == "api_error"
-        assert result.iloc[0]["outcome"] == "api_error"
+        written = result.iloc[0]
+        assert written["link_method"] == "api_error"
+        assert written["outcome"] == "api_error"
+        # What broke it, in the two columns a reader looks at.
+        for col in ("link_evidence", "outcome_reasoning"):
+            assert "API timeout" in written[col], col
+            assert "Exception" in written[col], col
+        # The screen ran before the ladder raised; its verdict is not discarded.
+        assert written["type"] == "replication"
+        assert written["screen_categories"] == "clearly_declared|context_transfer"
 
     def test_get_outcome_receives_original_study_info(self):
         """_get_outcome must pass resolved_title_o/author_o/year_o to extract_outcome."""
@@ -1693,14 +1704,15 @@ class TestLinkMethodEnumCoverage:
         import inspect
         # _map_method is the single funnel from internal resolution_method labels to
         # the persisted value, so its outputs plus the defaults of the row builders
-        # are the complete emitted set.
+        # are the complete emitted set. _empty_row has no default: every caller names
+        # its method, and the ones they name are already _METHOD_MAP values.
         methods = set(run_extract._METHOD_MAP.values())
         methods |= {run_extract._map_method(m)
                     for m in ("llm_brand_new_source", "some_unmapped_method",
                               "llm_no_target", "")}
-        for fn in (run_extract._merge_multi_row, run_extract._empty_row):
-            default = inspect.signature(fn).parameters["link_method"].default
-            methods.add(default)
+        default = inspect.signature(
+            run_extract._merge_multi_row).parameters["link_method"].default
+        methods.add(default)
         return methods
 
     def test_every_emitted_method_is_in_the_enum(self):
