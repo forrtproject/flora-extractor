@@ -23,9 +23,13 @@ them.
 
 | verdict (the shipped specs, run by the engine's own evaluator) | rows | known FLoRA |
 | --- | --: | --: |
-| admit — `osf-registration-completed` | 366 | **4** |
+| admit — `osf-registration-completed` | 366 | **53** |
 | discard — `osf-registration-protocol` | 1,308 | **0** |
-| untouched — no registration text | 1,342 | 4 |
+| untouched — no registration text | 1,342 | 11 |
+
+(Counted against the `flora.csv` regenerated 2026-08-05. A merge briefly left this
+table on the first, DOI-only count while the paragraph below carried the second —
+both are now the third. See "the denominator moved three times".)
 
 Thirteen templates appeared. Every one outside the keep arms is a pre-data-collection
 form, which is the claim the shadow existed to test:
@@ -49,10 +53,16 @@ form, which is the claim the shadow existed to test:
 Three things follow directly.
 
 **The recall gate passes, exactly rather than by sample.** Zero known FLoRA papers are
-discarded, over the whole population. The population holds **16** known FLoRA papers —
-not the 10 the earlier 60-row estimate implied, and not the 8 a DOI-only match finds
-(see "FLoRA names OSF records by URL" below). Five are admitted; eleven are 404s with no
-registration record and are untouched by either rule.
+discarded, over the whole population.
+
+**The denominator moved three times, and only the numerator matters.** The population
+holds 8 known FLoRA papers by a DOI-only match, **16** once OSF records FLoRA names by
+URL are counted (below), and **64** against the `flora.csv` regenerated on 2026-08-05 —
+the first release carrying the OSF registration DOIs added to the COS source sheet the
+same day, so 49 of the Open-Ended admits are now recognised as records FLoRA already
+holds. 53 are admitted, 11 are 404s untouched by either rule, and **the discard column
+is 0 in all three counts**. A recall gate whose denominator grows fourfold while its
+numerator stays at zero is the only version of this check worth trusting.
 
 **No post-data-collection template exists here at all.** The keep arm was drafted to
 cover them and the arm was dropped on the maintainer's ruling (2026-08-04) that
@@ -60,7 +70,9 @@ registering after collection still registers a design. The census settles it: th
 never anything to lose.
 
 **The Open-Ended arm is admitting the Reproducibility Project: Psychology, which FLoRA
-already covers.** 336 of the 393 Open-Ended rows are RPP registrations — "Replication of Janiszewski & Uy (2008, PS,
+already covers — and since 2026-08-05 that is provable rather than inferred: 49 of these
+336 rows carry a DOI now present in `flora.csv`, so Stage 3's skip list drops them with
+nothing further built.** 336 of the 393 Open-Ended rows are RPP registrations — "Replication of Janiszewski & Uy (2008, PS,
 Study 4b)", whose entire text is "Registered prior to RPP publication". The `replicat*`
 marker fires on the OpenAlex **title** in 99% of them, not on the responses form. The
 arm works, but not by the route its spec described, and that wording is corrected.
@@ -93,6 +105,9 @@ carries, so the two spellings meet by construction — `_osf_doi_keys()` in
 `shared/flora_skip.py` is now the one place that mapping lives, and both the skip list
 and this census read it. The effect here: 16 known FLoRA rows in the population rather
 than 8. **The discard count is 0 under either matching**, so nothing below changes.
+(fred-data then renamed that column `doi_r_alt` → `alt_identifier_r` after 2026-07-16,
+which silently hid every alternate identifier again until `shared/flora_skip.py` was
+moved to the current spelling.)
 
 The RPP rows are what exposed it. All 92 carry the aggregate Science paper in `doi_r`
 and `title_r`, and the individual replication's OSF page only in `url_r` — 91 distinct
