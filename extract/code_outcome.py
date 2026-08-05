@@ -22,7 +22,8 @@ A reproduction is coded on two independent axes (computation and robustness), ea
 with its own quote and quote source; the shared `outcome` column carries the two
 verdicts joined, so one column reads the same way for both record types.
 
-Exhausting every provider yields outcome = "api_error", never a verdict.
+OUTCOME_MODEL codes every row, on both passes. A call it cannot answer yields
+outcome = "api_error", never a verdict and never another model's verdict.
 
 Public API:
     extract_outcome(doi_r, abstract_r, fulltext, title_r) → dict
@@ -32,7 +33,7 @@ import re
 import time
 from typing import Optional
 
-from shared.config import GEMINI_HEAVY_MODEL, LLM_CACHE_DIR, log
+from shared.config import LLM_CACHE_DIR, OUTCOME_MODEL, log
 
 # When the abstract-based outcome call returns cannot_be_determined (or there is no
 # abstract) and parsed fulltext is available, escalate to a second, fulltext-based
@@ -42,7 +43,7 @@ from shared.config import GEMINI_HEAVY_MODEL, LLM_CACHE_DIR, log
 OUTCOME_FULLTEXT_ESCALATION = True
 from shared import token_counter
 from shared.cache import content_key, read_cache, write_cache
-from shared.llm_client import call_llm, ladder_fingerprint
+from shared.llm_client import cache_model_id, call_openai
 from shared.prompts import (
     build_outcome_prompt, build_repro_outcome_prompt, prompt_version,
 )
@@ -230,20 +231,23 @@ def _keyword_scan(text: str, source: str) -> Optional[dict]:
 
 
 def _call_outcome_llm(prompt: str, doi_r: str) -> tuple[Optional[dict], str]:
-    """Call the outcome LLM with up to 3 retries and exponential backoff.
+    """Call OUTCOME_MODEL with up to 3 retries and exponential backoff.
 
-    call_llm reports provider failure by returning None rather than by raising, so
+    call_openai reports provider failure by returning None rather than by raising, so
     the backoff is applied on the None path; keeping it in the except arm alone
     meant three outer retries — nine provider attempts — fired back to back with no
     delay at all, which is exactly how a rate-limited provider stays rate-limited.
+
+    One model codes every outcome. When it is down these retries are the whole of the
+    recovery: the row ends at outcome=api_error and a later run codes it, rather than
+    entering the corpus graded by a model no evaluation covered.
     """
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            result, model_used, err = call_llm(prompt, gemini_model=GEMINI_HEAVY_MODEL,
-                                                prefer_openai=True)
+            result, err = call_openai(prompt, model=OUTCOME_MODEL)
             if result:
-                return result, model_used
+                return result, OUTCOME_MODEL
         except TokenBudgetExhausted:
             raise   # retrying a call the budget refuses only delays the stop
         except Exception as e:
@@ -405,7 +409,7 @@ def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
     # that did not exist before, and a key component that is always present would move
     # every single-original key and orphan the outcome cache — the most expensive
     # entries the pipeline holds, because they may carry a full-text escalation.
-    key = content_key("outcome", doi_r, ladder_fingerprint(GEMINI_HEAVY_MODEL),
+    key = content_key("outcome", doi_r, cache_model_id(OUTCOME_MODEL),
                       version, record_type,
                       title_r, abstract_snip,
                       original_authors, original_year, original_title, text_snip,
@@ -417,7 +421,7 @@ def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
 
     token_counter.set_stage("extract_outcome")
 
-    # Exhausting every provider is an api_error, not a verdict: cannot_be_determined
+    # A failed call is an api_error, not a verdict: cannot_be_determined
     # is a judgement the model made about the paper, and recording one for the other
     # made a quota outage indistinguishable from a genuinely unclassifiable abstract.
     # Not cached — a re-run must be able to code the row.

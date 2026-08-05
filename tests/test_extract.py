@@ -155,7 +155,7 @@ class TestExtractOutcome:
         mock = {"outcome": "failure", "outcome_phrase": "no effect", "is_genuine_attempt": True,
                 "confidence": "high", "out_quote_source": "abstract"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")) as mock_llm, \
+             patch("extract.code_outcome.call_openai", return_value=(mock, "")) as mock_llm, \
              patch("extract.code_outcome.time.sleep"):
             result = extract_outcome(
                 "10.1234/test",
@@ -176,8 +176,8 @@ class TestExtractOutcome:
                             "out_quote_source": "fulltext"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
-             patch("extract.code_outcome.call_llm",
-                   side_effect=[(abstract_cbd, "m", ""), (fulltext_neither, "m", "")]), \
+             patch("extract.code_outcome.call_openai",
+                   side_effect=[(abstract_cbd, ""), (fulltext_neither, "")]), \
              patch("extract.code_outcome.time.sleep"):
             result = extract_outcome(
                 "10.1234/veto",
@@ -191,7 +191,7 @@ class TestExtractOutcome:
         """The keyword fast-path, whole: with the LLM off a replication abstract is
         coded from the keyword scan alone — no call, no reasoning, and the row names
         the rule rather than a model that never answered."""
-        with patch("extract.code_outcome.call_llm") as mock_llm:
+        with patch("extract.code_outcome.call_openai") as mock_llm:
             result = extract_outcome(
                 "10.1234/test",
                 abstract_r="we found no evidence of the original effect",
@@ -209,7 +209,7 @@ class TestExtractOutcome:
         """No keyword match should fall through to LLM."""
         mock_llm_result = {"outcome": "mixed", "outcome_phrase": "partial support",
                            "confidence": "medium", "out_quote_source": "abstract"}
-        with patch("extract.code_outcome.call_llm", return_value=(mock_llm_result, "gemini-model", "")), \
+        with patch("extract.code_outcome.call_openai", return_value=(mock_llm_result, "")), \
              patch("extract.code_outcome.time.sleep"):
             result = extract_outcome(
                 "10.1234/test2",
@@ -237,7 +237,7 @@ class TestExtractOutcome:
         """Exhausting every provider is an api_error, not a cannot_be_determined verdict."""
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.time.sleep"), \
-             patch("extract.code_outcome.call_llm", return_value=(None, "", "quota | error")):
+             patch("extract.code_outcome.call_openai", return_value=(None, "quota | error")):
             result = extract_outcome("10.1234/fail", abstract_r="ambiguous text")
         assert result["outcome"] == "api_error"
         assert result["outcome_confidence"] == "low"
@@ -249,10 +249,10 @@ class TestExtractOutcome:
         mock_result = {"outcome": "success", "outcome_phrase": "replicated",
                        "confidence": "high", "out_quote_source": "abstract"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.call_llm", return_value=(mock_result, "gemini-model", "")), \
+             patch("extract.code_outcome.call_openai", return_value=(mock_result, "")), \
              patch("extract.code_outcome.time.sleep"):
             r1 = extract_outcome("10.1234/cache", abstract_r="ambiguous text")
-            with patch("extract.code_outcome.call_llm") as mock2:
+            with patch("extract.code_outcome.call_openai") as mock2:
                 r2 = extract_outcome("10.1234/cache", abstract_r="ambiguous text")
                 mock2.assert_not_called()
         assert r1["outcome"] == r2["outcome"] == "success"
@@ -262,7 +262,7 @@ class TestExtractOutcome:
         mock_result = {"outcome": "uncertain", "outcome_phrase": "",
                        "confidence": "low", "out_quote_source": ""}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.call_llm", return_value=(mock_result, "gemini-model", "")), \
+             patch("extract.code_outcome.call_openai", return_value=(mock_result, "")), \
              patch("extract.code_outcome.time.sleep"):
             result = extract_outcome("10.1234/bad", abstract_r="ambiguous text")
         assert result["outcome"] == "cannot_be_determined"
@@ -281,7 +281,7 @@ class TestLLMOutcomePrompt:
                           "confidence": "high", "out_quote_source": "abstract",
                           "outcome_reasoning": "All effects replicated."}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.call_llm", return_value=(llm_return, "gemini-model", "")) as mock_llm, \
+             patch("extract.code_outcome.call_openai", return_value=(llm_return, "")) as mock_llm, \
              patch("extract.code_outcome.time.sleep"):
             result = extract_outcome(
                 "10.1234/test", abstract_r=abstract_r, title_r="A Study",
@@ -294,10 +294,10 @@ class TestLLMOutcomePrompt:
         """#61 abstract-first: the FIRST call must be abstract-only. Fulltext is held
         in reserve for escalation, so it must not appear in the abstract prompt."""
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.call_llm", return_value=(
+             patch("extract.code_outcome.call_openai", return_value=(
                  {"outcome": "success", "outcome_phrase": "x", "outcome_confidence": "high",
                   "out_quote_source": "abstract", "outcome_reasoning": ""},
-                 "gemini-model", "")) as mock_llm, \
+                 "")) as mock_llm, \
              patch("extract.code_outcome.time.sleep"):
             extract_outcome("10.1234/ft", abstract_r="ambiguous text", fulltext="UNIQUE_FULLTEXT_MARKER")
         first_prompt = mock_llm.call_args_list[0][0][0]
@@ -311,7 +311,7 @@ class TestLLMOutcomePrompt:
         assert result["outcome_reasoning"] == "All effects replicated."
 
     def test_outcome_reasoning_empty_on_llm_failure(self):
-        with patch("extract.code_outcome.call_llm", return_value=(None, "", "")):
+        with patch("extract.code_outcome.call_openai", return_value=(None, "")):
             result = extract_outcome("10.1234/fail2", abstract_r="ambiguous")
         assert result.get("outcome_reasoning", "") == ""
 
@@ -371,8 +371,8 @@ class TestFulltextEscalation:
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
              patch("extract.code_outcome.time.sleep"), \
-             patch("extract.code_outcome.call_llm",
-                   side_effect=[(first, "m", ""), (self._FT_FAIL, "m", "")]) as mock_llm:
+             patch("extract.code_outcome.call_openai",
+                   side_effect=[(first, ""), (self._FT_FAIL, "")]) as mock_llm:
             result = extract_outcome(
                 "10.1234/esc", abstract_r=abstract,
                 fulltext="RESULTS: the effect did not replicate.", title_r="A Study",
@@ -391,8 +391,8 @@ class TestFulltextEscalation:
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", flag), \
              patch("extract.code_outcome.time.sleep"), \
-             patch("extract.code_outcome.call_llm",
-                   side_effect=[(self._ABS_CBD, "m", ""), (self._FT_FAIL, "m", "")]) as mock_llm:
+             patch("extract.code_outcome.call_openai",
+                   side_effect=[(self._ABS_CBD, ""), (self._FT_FAIL, "")]) as mock_llm:
             result = extract_outcome(
                 "10.1234/noesc", abstract_r="ambiguous abstract",
                 fulltext=fulltext, title_r="A Study",
@@ -434,7 +434,7 @@ class TestOutcomePromptContent:
         ret = {"outcome": "success", "outcome_phrase": "x", "confidence": "high",
                "out_quote_source": "abstract", "outcome_reasoning": ""}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.call_llm", return_value=(ret, "m", "")) as mock_llm, \
+             patch("extract.code_outcome.call_openai", return_value=(ret, "")) as mock_llm, \
              patch("extract.code_outcome.time.sleep"):
             extract_outcome("10.1234/pr", abstract_r="ambiguous abstract", title_r="T", **kw)
         return mock_llm.call_args_list[0][0][0]
@@ -444,7 +444,7 @@ class TestOutcomePromptContent:
         ret = {"outcome": "success", "outcome_phrase": "x", "confidence": "high",
                "out_quote_source": "abstract", "outcome_reasoning": ""}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.call_llm", return_value=(ret, "m", "")) as mock_llm, \
+             patch("extract.code_outcome.call_openai", return_value=(ret, "")) as mock_llm, \
              patch("extract.code_outcome.time.sleep"):
             extract_outcome("10.1234/trunc", abstract_r=long_abstract, title_r="T")
         prompt = mock_llm.call_args_list[0][0][0]
@@ -513,7 +513,7 @@ class TestOutcomeCacheKey:
 
     def _run(self, tmp_path, **kwargs):
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.call_llm", return_value=(self._RET, "m", "")) as mock, \
+             patch("extract.code_outcome.call_openai", return_value=(self._RET, "")) as mock, \
              patch("extract.code_outcome.time.sleep"):
             extract_outcome(kwargs.pop("doi", "10.1234/key"), **kwargs)
         return mock
@@ -553,11 +553,11 @@ class TestOutcomeCacheKey:
         full-text escalation — so a single-original key must be byte-identical to the
         one written before the flag existed."""
         from shared.cache import content_key
-        from shared.llm_client import ladder_fingerprint
-        from shared.config import GEMINI_HEAVY_MODEL
+        from shared.llm_client import cache_model_id
+        from shared.config import OUTCOME_MODEL
         from shared.prompts import prompt_version
 
-        parts = (ladder_fingerprint(GEMINI_HEAVY_MODEL),
+        parts = (cache_model_id(OUTCOME_MODEL),
                  prompt_version("build_outcome_prompt"), "replication",
                  "T", "a", "", "", "", "")
         pre_pr = content_key("outcome", "10.1234/key", *parts)
@@ -1106,7 +1106,7 @@ class TestReproductionOutcome:
                 "out_quote_robust_source": "abstract",
                 "confident": True, "outcome_reasoning": "r"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")), \
+             patch("extract.code_outcome.call_openai", return_value=(mock, "")), \
              patch("extract.code_outcome.time.sleep"):
             res = extract_outcome("10.1/repro", abstract_r="we re-ran their code",
                                   record_type="reproduction")
@@ -1126,7 +1126,7 @@ class TestReproductionOutcome:
                 "confident": False, "outcome_reasoning": "r"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", False), \
-             patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")), \
+             patch("extract.code_outcome.call_openai", return_value=(mock, "")), \
              patch("extract.code_outcome.time.sleep"):
             res = extract_outcome("10.1/half", abstract_r="a re-analysis",
                                   record_type="reproduction")
@@ -1141,7 +1141,7 @@ class TestReproductionOutcome:
                 "out_quote_source": "abstract", "outcome_reasoning": "r"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", False), \
-             patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")), \
+             patch("extract.code_outcome.call_openai", return_value=(mock, "")), \
              patch("extract.code_outcome.time.sleep"):
             res = extract_outcome("10.1/repro2", abstract_r="re-analysis",
                                   record_type="reproduction")
@@ -1157,7 +1157,7 @@ class TestReproductionOutcome:
                 "outcome_robustness_quote": "", "out_quote_robust_source": "",
                 "confident": True, "outcome_reasoning": "r"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.call_llm", return_value=(mock, "m", "")) as mock_llm, \
+             patch("extract.code_outcome.call_openai", return_value=(mock, "")) as mock_llm, \
              patch("extract.code_outcome.time.sleep"):
             res = extract_outcome("10.1/repro3",
                                   abstract_r="We failed to replicate the reported numbers.",
@@ -1193,8 +1193,8 @@ class TestReproductionEscalation:
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
              patch("extract.code_outcome.time.sleep"), \
-             patch("extract.code_outcome.call_llm",
-                   side_effect=[(r, "m", "") for r in responses]) as mock_llm:
+             patch("extract.code_outcome.call_openai",
+                   side_effect=[(r, "") for r in responses]) as mock_llm:
             result = extract_outcome("10.1/axis", abstract_r="a re-analysis",
                                      fulltext="METHODS: we re-ran the archive.",
                                      title_r="A Reproduction",
@@ -1241,8 +1241,8 @@ class TestRecordTypeCheckRecode:
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
              patch("extract.code_outcome.time.sleep"), \
-             patch("extract.code_outcome.call_llm",
-                   side_effect=[(r, "m", "") for r in responses]) as mock_llm:
+             patch("extract.code_outcome.call_openai",
+                   side_effect=[(r, "") for r in responses]) as mock_llm:
             result = extract_outcome("10.1/type", abstract_r="ambiguous",
                                      fulltext="METHODS: we re-analysed their data.",
                                      title_r="A Study", record_type=record_type)
@@ -1306,7 +1306,7 @@ class TestOutcomeResponseRepair:
     def _run(self, tmp_path, response):
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", False), \
-             patch("extract.code_outcome.call_llm", return_value=(response, "m", "")), \
+             patch("extract.code_outcome.call_openai", return_value=(response, "")), \
              patch("extract.code_outcome.time.sleep"):
             return extract_outcome("10.1/repair", abstract_r="an abstract",
                                    title_r="T")

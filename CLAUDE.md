@@ -51,7 +51,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 | ---- | ------- |
 | `shared/openalex_client.py` | OpenAlex API wrapper + `find_all_candidates()` (Stage 3 logic) |
 | `shared/openalex_keys.py`   | OpenAlex key rotation, shared by all stages |
-| `shared/llm_client.py`      | Gemini/OpenAI/OpenRouter calls, JSON parsing; `classify_replication()` (front-door screen), `screen_gate()`, `screen_voters()`, `identify_targets_with_llm()` (the one target call behind the abstract, reference-list and full-text rungs), `screen_references_with_llm()` (reference-list target pick) |
+| `shared/llm_client.py`      | Gemini/OpenAI/OpenRouter calls — one model per call site, named explicitly, with no fallback to another provider — JSON parsing; `classify_replication()` (front-door screen), `screen_gate()`, `screen_voters()`, `identify_targets_with_llm()` (the one target call behind the abstract, reference-list and full-text rungs), `screen_references_with_llm()` (reference-list target pick) |
 | `shared/target_keys.py`     | `assign_target_keys()` — one deduplicated `@smith2009` namespace over a paper's candidates and references, plus the key → record map |
 | `shared/token_usage.py`     | Per-day/provider/model token recording (`cache/token_usage.json`) + the OpenAI daily budget check |
 | `shared/rate_limit.py`      | `throttle(service, interval)` — one reservation queue per remote service, so N worker threads share one rate rather than each sleeping its own |
@@ -267,6 +267,16 @@ misses. See `shared/cache_sync.py` and [`docs/cli-reference.md`](docs/cli-refere
 Log with DOI, retry 3× with backoff (1s/2s/4s), then set the field to `api_error` and
 continue — never crash the pipeline. A transient failure must never be checkpointed as
 a definitive miss.
+
+**One model per call site, and no fallback.** `call_gemini()`, `call_openai()` and
+`call_openrouter()` each take their model as a required argument; the constant naming
+it (`GEMINI_HEAVY_MODEL` for linking, `OUTCOME_MODEL` for outcome coding, the screen's
+and pre-screen's voter pairs) is the only model that can answer that call. Retries are
+against the same model; when they are exhausted the row records the failure. A
+provider ladder used to run Gemini → OpenAI → OpenRouter, which made an outage
+invisible — the row got an answer from a model no evaluation covered, and the cache
+key had to over-name every model that might have produced it. Any fallback is now an
+explicit decision at the call site.
 
 **Never let a swallowed error become an empty result.** A rate-limit 429 caught and
 turned into `return []` is indistinguishable downstream from a genuine "no

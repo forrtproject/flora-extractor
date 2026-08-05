@@ -132,15 +132,26 @@ OSF_TOKEN = os.getenv("OSF_TOKEN", "").strip()
 # per-machine override would let two collaborators produce differently-graded rows
 # into one shared corpus with nothing in the repo recording it. Changing a model is a
 # commit — reviewable, and dated by git.
-OPENAI_MODEL = "gpt-5-mini"
+#
+# One model answers each call. There is no provider ladder: a call that fails is
+# reported as a failure, never re-asked of a different model, because a row silently
+# graded by the second-choice provider is not comparable to its neighbours and the
+# outage that caused it leaves no trace. Every constant below therefore names exactly
+# one place in the pipeline, and every provider call names its model explicitly.
 GEMINI_MODEL = "gemini-3-flash-preview"
 
-# Per-task model selection — light for code_outcome and the screen's Gemini voter,
-# heavy for the full identify_targets_with_llm linking step.
-# Default light to gemini-3.5-flash-lite (cheap, high rate limits); it is also one of
-# the two independent voters in the Stage 4.5 replication classifier.
+# Per-task model selection — light for the screen's Gemini voter, heavy for the
+# identify_targets_with_llm linking step (all three of its rungs).
+# Light is gemini-3.5-flash-lite (cheap, high rate limits); it is also one of the two
+# independent voters in the front-door replication screen.
 GEMINI_LIGHT_MODEL = "gemini-3.5-flash-lite"
 GEMINI_HEAVY_MODEL = GEMINI_MODEL
+
+# Outcome coding (extract/code_outcome.py), both the abstract and full-text passes.
+# The ladder this replaced tried OpenAI first and fell through to GEMINI_HEAVY_MODEL,
+# so OpenAI is what actually coded the rows on disk; naming gpt-5.4-mini keeps that
+# and moves it off the older gpt-5-mini the ladder defaulted to.
+OUTCOME_MODEL = "gpt-5.4-mini"
 
 # Thinking level for the heavy model (gemini-3-flash-preview accepts "minimal" or
 # "high"). Empty — the default — sends nothing and keeps the model's own default,
@@ -154,9 +165,10 @@ GEMINI_HEAVY_MODEL = GEMINI_MODEL
 # Empty is the current decision, pending that spot-check; flipping it is a commit.
 GEMINI_THINKING_LEVEL = ""
 
-# OpenRouter (OpenAI-compatible API at openrouter.ai) — optional alternative LLMs
+# OpenRouter (OpenAI-compatible API at openrouter.ai). Nothing routes here by
+# default: it is reached only by a model id that names it — the pre-screen's two
+# voters in shared/prescreen.py, and SCREEN_VOTER2_MODEL when it carries a "/".
 OPENROUTER_API_KEY    = os.getenv("OPENROUTER_API_KEY",    "")
-OPENROUTER_HEAVY_MODEL = "qwen/qwen3.5-35b-a3b"
 # Second voter of the front-door replication screen. On the v3.2 gate sweep this
 # model paired with Gemini Flash-Lite discards 89% of adjudicated hard negatives
 # with zero settled misses; Ministral via OpenRouter reached 73% on the same gate.

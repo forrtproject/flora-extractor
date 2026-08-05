@@ -119,7 +119,7 @@ def test_an_openai_call_past_the_cap_raises_before_it_spends(monkeypatch):
 
     with patch("openai.OpenAI", return_value=client):
         with pytest.raises(tu.TokenBudgetExhausted, match="OPENAI_DAILY_TOKEN_BUDGET"):
-            llm.call_openai("prompt")
+            llm.call_openai("prompt", model="m")
 
     client.chat.completions.create.assert_not_called()
 

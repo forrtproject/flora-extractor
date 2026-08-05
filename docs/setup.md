@@ -142,17 +142,19 @@ See `.env.example` for the full list with descriptions. Key variables:
 | `RESEARCHER_EMAIL` | Yes | Politeness header for APIs |
 | `GEMINI_API_KEY` | Yes | Primary LLM |
 | `GEMINI_API_KEY_2..N` | No | Key rotation for higher quota |
-| `OPENAI_API_KEY` | Stage 3 | Second voter of the front-door screen with the default `SCREEN_VOTER2_MODEL`; also the middle rung of the linking ladder |
-| `OPENROUTER_API_KEY` | No | Last rung of the linking ladder; required for Stage 3 only if `SCREEN_VOTER2_MODEL` contains a `/` |
-| `SCREEN_VOTER2_MODEL` | No | Screen voter 2 (default `gpt-5.4-mini`; an id containing `/` is routed to OpenRouter) |
+| `OPENAI_API_KEY` | Stage 3 | Second voter of the front-door screen with the default `SCREEN_VOTER2_MODEL`; also `OUTCOME_MODEL`, which codes every outcome |
+| `OPENROUTER_API_KEY` | No | Only reached by a model id that names it: the pre-screen's two voters, and `SCREEN_VOTER2_MODEL` when it contains a `/` |
 | `SUPABASE_URL` | No | Validation monitoring tab |
 | `SUPABASE_SERVICE_KEY` | No | Validation monitoring tab |
 | `GROBID_URL` | No | PDF reference extraction. **Code default is the public server `https://kermitt2-grobid.hf.space`**; `.env.example` sets `http://localhost:8070`. See the GROBID section above |
-| `GEMINI_MODEL` | No | Override Gemini model name |
-| `GEMINI_HEAVY_MODEL` | No | Override for DOI resolution (defaults to GEMINI_MODEL) |
-| `GEMINI_THINKING_LEVEL` | No | `minimal`/`high` on the heavy model; unset keeps the model default. Changes answers — it is part of the cache key |
 | `GEMINI_USE_FLEX` / `GEMINI_FLEX_TIMEOUT` | No | 50% cheaper Gemini calls on paid keys, at the price of queueing |
 | `OPENAI_USE_FLEX` / `OPENAI_FLEX_TIMEOUT` | No | Same trade on OpenAI; a request flex will not serve falls back to standard tier |
+
+Model ids are **constants, not env vars** (`shared/config.py`, code-style rule 8):
+`GEMINI_MODEL`, `GEMINI_LIGHT_MODEL`, `GEMINI_HEAVY_MODEL`, `OUTCOME_MODEL`,
+`SCREEN_VOTER2_MODEL`, `GEMINI_THINKING_LEVEL`, and the pre-screen's pair in
+`shared/prescreen.py`. Each names one call site and answers it alone — a call that
+fails is reported as a failure, never retried against another model.
 
 ## Cache
 
