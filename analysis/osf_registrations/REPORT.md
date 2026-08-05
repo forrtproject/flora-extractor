@@ -84,7 +84,7 @@ production bug rather than a fact about this census. Over `flora.csv`:
 | how FLoRA identifies an OSF record | rows |
 | --- | --: |
 | an `osf.io/<guid>` URL in `url_r` / `url_o` / `oa_url_*` | **366** |
-| an OSF DOI (`10.17605/…`) in `doi_r` / `doi_r_alt` | 51 |
+| an OSF DOI (`10.17605/…`) in `doi_r` / `alt_identifier_r` | 51 |
 | both | 9 |
 
 So ~357 OSF records FLoRA already holds are invisible to any DOI-keyed matcher. Every

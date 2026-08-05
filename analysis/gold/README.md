@@ -33,15 +33,15 @@ Measured from the local file on 2026-08-04:
 | --- | --- |
 | rows (replication–original pairs) | 2,180 |
 | distinct `doi_r` (replication DOIs) | 1,520 |
-| distinct `doi_r` ∪ `doi_r_alt` | 1,553 |
+| distinct `doi_r` ∪ `alt_identifier_r` | 1,954 |
 | rows with a non-blank `doi_r` | 1,977 (203 rows are identified by title only) |
 | distinct `doi_o` (original DOIs) | 2,016 |
 | rows by `type` | replication 2,171 · reproduction 9 |
 | rows by `source` | replications 1,366 · COS 717 · SCORE 88 · reproductions 9 |
 
-**Identifying columns.** The replication is `doi_r` (primary), `doi_r_alt` (an alternate
+**Identifying columns.** The replication is `doi_r` (primary), `alt_identifier_r` (an alternate
 DOI for the same work, e.g. preprint vs version of record) and `title_r`. The original
-is `doi_o`, with `doi_o_alt` and `title_o`. All DOIs must pass `clean_doi()`
+is `doi_o`, with `alt_identifier_o` and `title_o`. All DOIs must pass `clean_doi()`
 (`shared/utils.py`) before comparison — the file mixes bare and URL-form DOIs.
 `title_r` is the fallback identifier for the 203 rows with no `doi_r`; match it fuzzily
 and only as a secondary pass, never as the primary join.
@@ -74,7 +74,7 @@ admission.
 ### Measurement
 
 1. **Build the known-good key set.** From `data/flora.csv`, take `clean_doi(doi_r)` and
-   `clean_doi(doi_r_alt)` over all rows → 1,553 keys covering 1,977 of 2,180 rows.
+   `clean_doi(alt_identifier_r)` over all rows → 1,954 keys covering 2,301 of 2,504 rows.
    Deduplicate: the unit of the monitor is the *paper*, not the pair.
 2. **Join against the routed pool** for the release under test, on the pool's DOI key
    (`shared/row_key.py` `primary_key()` ordering: doi first). Report the join rate;

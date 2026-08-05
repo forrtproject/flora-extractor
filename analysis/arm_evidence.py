@@ -334,7 +334,7 @@ def flora_replication_dois(path: Path) -> set[str]:
     dois: set[str] = set()
     with open(path, encoding="utf-8-sig", newline="") as handle:
         for row in csv.DictReader(handle):
-            for column in ("doi_r", "doi_r_alt"):
+            for column in ("doi_r", "alt_identifier_r"):
                 doi = clean_doi(row.get(column) or "")
                 if doi and doi.upper() != "NA":
                     dois.add(doi)
