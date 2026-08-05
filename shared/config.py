@@ -202,6 +202,14 @@ ENGINE_TIER_WORKERS = int(os.getenv("ENGINE_TIER_WORKERS", "8"))
 ENGINE_TIER_HF_UPLOAD = os.getenv("ENGINE_TIER_HF_UPLOAD", "true").lower() not in (
     "0", "false", "no")
 
+# ── Stage 3 row loop (extract/run_extract.py) ─────────────────────────────────
+# How many filtered.csv rows Stage 3 has in flight at once. A row is ~1.5 minutes of
+# provider and download latency and rows are independent, so a sequential loop spends
+# the run waiting. What bounds the request rate is the per-service reservation queue
+# in shared/rate_limit.py — not this number — so raising it buys overlap, never a
+# faster provider. 1 is a genuinely sequential run: no pool is created at all.
+EXTRACT_WORKERS = int(os.getenv("EXTRACT_WORKERS", "4"))
+
 # ── External servers ──────────────────────────────────────────────────────────
 GROBID_SERVER = os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space")
 

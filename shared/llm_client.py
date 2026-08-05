@@ -13,7 +13,6 @@ Public API:
 import base64
 import json
 import re
-import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -33,6 +32,7 @@ from .config import (
 )
 from . import token_counter, token_usage
 from .cache import content_key, read_cache, write_cache
+from .rate_limit import throttle
 from .prompts import (
     JSON_SYSTEM_MESSAGE,
     build_classify_prompt, build_target_prompt,
@@ -90,35 +90,21 @@ def _gemini_usage(body: dict) -> tuple[int, int]:
 # every call site used to — made the delay unconditional even when the next call
 # went to a different provider, or was served from cache, or never came.
 #
-# Callers may be THREADS (the filter engine's tier runners run works in a pool), so
-# the limiter reserves a slot under a lock instead of reading a last-call timestamp
-# and sleeping on it. Read-then-sleep is not a rate limit under concurrency: N
-# threads all read the same timestamp, all sleep the same remainder and then all
-# fire at once, which divides the configured interval by N — exactly the burst the
-# provider's limit exists to prevent. Reserving `_next_call_at[provider]` and
-# sleeping until the reserved instant makes N concurrent callers queue at the
-# configured spacing, whatever N is. The sleep is deliberately OUTSIDE the lock: it
-# is the wait that must serialise, not the arithmetic, and holding the lock through
-# it would block calls to other providers too.
+# Callers may be THREADS (the filter engine's tier runners and Stage 3's row loop
+# both run a pool), so the wait is taken from the shared reservation queue in
+# shared/rate_limit.py rather than from a last-call timestamp this module reads and
+# sleeps on — see that module for why the difference matters.
 
 _PROVIDER_RATE_SEC = {
     "gemini":     GEMINI_RATE_SEC,
     "openai":     OPENAI_RATE_SEC,
     "openrouter": OPENROUTER_RATE_SEC,
 }
-_rate_lock = threading.Lock()
-_next_call_at: dict[str, float] = {}
 
 
 def _throttle(provider: str) -> None:
     """Wait until this provider's next free slot, and reserve the one after it."""
-    interval = _PROVIDER_RATE_SEC.get(provider, 1.0)
-    with _rate_lock:
-        slot = max(time.monotonic(), _next_call_at.get(provider, 0.0))
-        _next_call_at[provider] = slot + interval
-    remaining = slot - time.monotonic()
-    if remaining > 0:
-        time.sleep(remaining)
+    throttle(provider, _PROVIDER_RATE_SEC.get(provider, 1.0))
 
 
 # ── JSON parsing (handles markdown-fenced output) ─────────────────────────────

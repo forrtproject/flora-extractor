@@ -25,12 +25,19 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from datetime import date
 
 from .config import CACHE_DIR, OPENAI_DAILY_TOKEN_BUDGET, log
 from .utils import csv_lock
 
 USAGE_STATE_PATH = CACHE_DIR / "token_usage.json"
+
+# The record is written by every LLM call, and both the filter engine's tier runners
+# and Stage 3's row loop make those calls from a thread pool. The file lock below
+# keeps two PROCESSES from replaying each other's starting state; it says nothing
+# about two threads of one process, which is what this guards.
+_record_lock = threading.Lock()
 
 
 class TokenBudgetExhausted(RuntimeError):
@@ -74,7 +81,7 @@ def record(provider: str, model: str,
     USAGE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     # The read-modify-write must be atomic across processes, or two concurrent runs
     # each replay the other's starting state and spend disappears from the record.
-    with csv_lock(USAGE_STATE_PATH):
+    with _record_lock, csv_lock(USAGE_STATE_PATH):
         state  = _read_all()
         bucket = state.setdefault(day, {}).setdefault(provider, {}).setdefault(
             model or "unknown", {"in": 0, "out": 0})

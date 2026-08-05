@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import shared.llm_client as _llm_client
+from shared import rate_limit as _rate_limit
 from shared import token_usage as _token_usage
 from validate.app import create_app
 
@@ -78,7 +79,7 @@ def _no_provider_throttle(monkeypatch):
     monkeypatch.setattr(
         _llm_client, "_PROVIDER_RATE_SEC",
         {p: 0.0 for p in _llm_client._PROVIDER_RATE_SEC})
-    _llm_client._next_call_at.clear()
+    _rate_limit._next_call_at.clear()
 
 
 @pytest.fixture()

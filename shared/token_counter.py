@@ -18,28 +18,36 @@ Usage:
     token_counter.print_summary()
 """
 from __future__ import annotations
+import threading
 from collections import defaultdict
 
-_stage: str = "unknown"
+# The stage is per THREAD: Stage 3 and the filter engine's tiers both run their rows
+# in a pool, where each worker sets the stage of the call it is about to make. A
+# module-wide value would be whatever the last thread to speak had set, so every
+# bucket would hold some other row's tokens. A thread that never set one records
+# "unknown" rather than inheriting the main thread's.
+_local = threading.local()
+_lock = threading.Lock()
 # { stage -> { provider -> token_count } }
 _counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
 
 def set_stage(name: str) -> None:
-    """Set the current stage so subsequent record() calls are attributed to it."""
-    global _stage
-    _stage = name
+    """Set this thread's stage so its subsequent record() calls are attributed to it."""
+    _local.stage = name
 
 
 def record(provider: str, n_tokens: int) -> None:
     """Add n_tokens to the current stage's provider bucket."""
     if n_tokens > 0:
-        _counts[_stage][provider] += n_tokens
+        with _lock:
+            _counts[getattr(_local, "stage", "unknown")][provider] += n_tokens
 
 
 def get_summary() -> dict[str, dict[str, int]]:
     """Return a copy of the full usage breakdown."""
-    return {stage: dict(providers) for stage, providers in _counts.items()}
+    with _lock:
+        return {stage: dict(providers) for stage, providers in _counts.items()}
 
 
 def print_summary() -> None:

@@ -26,7 +26,7 @@ from typing import Optional
 import pandas as pd
 import requests
 
-from shared.cache import clear_content_keys
+from shared.cache import clear_content_keys, write_json
 from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_CACHE_DIR, RESEARCHER_EMAIL, log
 from shared.disambiguation import is_umbrella_paper, jaccard_similarity
 from shared import token_counter
@@ -524,8 +524,7 @@ def _write_parse_cache(doi_r: str, parse_results: dict) -> None:
             return
     try:
         out_file.parent.mkdir(parents=True, exist_ok=True)
-        with out_file.open("w", encoding="utf-8") as fh:
-            json.dump(parse_results, fh, ensure_ascii=False, indent=2)
+        write_json(out_file, parse_results, indent=2)
     except Exception as exc:
         log.debug("[%s] _write_parse_cache failed: %s", doi_r, exc)
 
