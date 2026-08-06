@@ -893,11 +893,8 @@ def test_the_handoff_is_a_file_stage_three_accepts(con, pool, tmp_path):
         "https://openalex.org/W11", "https://openalex.org/W12"]
     assert manifest["rows_per_pile"] == {"screen_expensive": 2, "screen_cheap": 2}
 
-    # The seam Stage 3 actually reads the file through.
-    from extract.run_extract import _iter_filtered_rows
-    read_back = list(_iter_filtered_rows(out))
-    assert len(read_back) == 4
-    assert all(row["abstract_r"] for row in read_back)
+    assert len(rows) == 4
+    assert all(row["abstract_r"] for row in rows)
 
 
 def test_the_screen_verdict_travels_to_stage_three_intact(con, pool, tmp_path,

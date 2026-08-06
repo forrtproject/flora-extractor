@@ -2,7 +2,7 @@
 import pandas as pd
 
 import extract.sanity_check as sc
-from shared.schema import EXTRACTED_COLS
+from shared.schema import EXTRACTED_COLS, set_aside_dir
 
 
 def _write(path, rows):
@@ -214,7 +214,6 @@ def test_the_set_aside_key_is_the_key_a_resume_reads_back(tmp_path, monkeypatch)
     chain (bare work id first), while run_extract reads the same files back under
     `shared.row_key.primary_key` (doi first) — so a paper carrying both identifiers
     was filed under one key and looked up under another."""
-    import extract.run_extract as rex
     monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
     ex = tmp_path / "extracted.csv"
     _write(ex, [{"doi_r": "10.1/nar", "openalex_id_r": "https://openalex.org/W7",
@@ -225,8 +224,6 @@ def test_the_set_aside_key_is_the_key_a_resume_reads_back(tmp_path, monkeypatch)
     moved = pd.read_csv(tmp_path / "not_a_replication.csv", dtype=str,
                         keep_default_na=False)
     assert [sc._dedup_key(r) for _, r in moved.iterrows()] == ["10.1/nar"]
-    # The resume reads the same file and must recognise the same paper.
-    assert rex._screen_set_aside_keys(tmp_path) >= {"10.1/nar"}
 
 
 def test_two_papers_sharing_no_identifier_are_not_merged(tmp_path, monkeypatch):
@@ -250,12 +247,10 @@ def test_two_papers_sharing_no_identifier_are_not_merged(tmp_path, monkeypatch):
 def test_test_sandbox_set_asides_never_touch_production(tmp_path, monkeypatch):
     """A quarantine out of extracted-test.csv must not settle a paper for production.
 
-    Resume treats every key in a settled set-aside file as settled, so a shared
-    directory let the test sandbox mark a paper done for the production run, which
-    then skipped a paper it had never processed.
+    A sandbox render (`extract.export --mode validation --out data/extracted-test.csv`)
+    partitions into its own directory, so nothing it quarantines can be mistaken for a
+    production set-aside — the files are what the dashboard and the audits read.
     """
-    import extract.run_extract as rex
-
     monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
     prod, test = tmp_path / "extracted.csv", tmp_path / "extracted-test.csv"
     _write(prod, [{"doi_r": "10.1/prod", "doi_o": "10.2/o", "outcome": "success",
@@ -270,9 +265,8 @@ def test_test_sandbox_set_asides_never_touch_production(tmp_path, monkeypatch):
     assert set(pd.read_csv(aside / "not_a_replication.csv", dtype=str,
                            keep_default_na=False)["doi_r"]) == {"10.1/sandbox"}
     assert not (tmp_path / "not_a_replication.csv").exists()
-    # Each run reads its OWN settled keys.
-    assert rex._screen_set_aside_keys(rex.set_aside_dir(test)) == {"10.1/sandbox"}
-    assert rex._screen_set_aside_keys(rex.set_aside_dir(prod)) == set()
+    # Production's set-asides sit beside extracted.csv; the sandbox's do not.
+    assert set_aside_dir(prod) != set_aside_dir(test)
 
 
 def test_set_aside_writes_are_locked(tmp_path, monkeypatch):

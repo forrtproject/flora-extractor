@@ -269,9 +269,8 @@ def test_purging_leaves_untouched_set_aside_rows_alone(tmp_path, monkeypatch):
     assert set(kept["doi_r"]) == {"10.6084/m9.figshare.1"}
 
 
-def test_rescreen_can_reopen_a_prescreen_discard():
-    """Turning the flag off does not reopen discards — a resume treats a set-aside row
-    as settled. --rescreen is the only way back, so the value must be in its set."""
-    from extract.run_extract import SCREEN_SET_ASIDE_FILES, SCREEN_SET_ASIDE_METHODS
-    assert "prescreen_discard" in SCREEN_SET_ASIDE_METHODS
+def test_a_prescreen_discard_is_one_of_the_screen_verdict_set_asides():
+    """Historical rows carry `prescreen_discard`, and the file they are parked in is
+    one of the screen's own verdicts — the set a new screening generation reopens."""
+    from shared.schema import SCREEN_SET_ASIDE_FILES
     assert "prescreen_discard.csv" in SCREEN_SET_ASIDE_FILES

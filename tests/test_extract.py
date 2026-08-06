@@ -24,6 +24,7 @@ from shared.schema import (
     make_pair_id,
 )
 from shared.cache import content_key, read_cache
+from shared.utils import clean_doi
 import extract.code_outcome as code_outcome
 import extract.link_original as link_original
 import extract.run_extract as run_extract
@@ -622,102 +623,75 @@ def _vote(provider, classification, confident=True, categories=()):
             "confident": confident, "categories": list(categories), "reasoning": "r"}
 
 
-class TestRunExtract:
-    @pytest.fixture(autouse=True)
-    def _screen_providers_configured(self, monkeypatch):
-        """run_extract refuses to start unless both Q1 screen providers are configured.
-        These tests mock every LLM call, so satisfy the check rather than bypass it."""
-        monkeypatch.setattr(run_extract, "GEMINI_API_KEYS", ["test-key"])
-        monkeypatch.setattr(run_extract, "OPENROUTER_API_KEY", "test-key")
+def _run_pipeline(csv_text: str, *, screen_row=SCREEN_PROCEED, screen=None,
+                  link=None, outcome=None, **process_kwargs):
+    """`_process_row` + `_finalise_row` over every row of *csv_text*, as a DataFrame.
 
-    def _run(self, filtered_csv: str, link=None, screen=None,
-             screen_row=SCREEN_PROCEED, **run_kwargs):
-        """Helper: write a temp CSV, run extract with mocked APIs, return extracted.csv.
+    The per-row pipeline is what `extract/run_extract.py` still is, so a Stage 3
+    behaviour test drives it directly. There is no run loop to drive any more: the
+    tier claims and stores the verdicts (tests/test_extract_tier.py) and the export
+    renders the CSV (tests/test_extract_export.py).
 
-        *screen_row* is the Stage 2 verdict written onto every input row, which is
-        where Stage 3 reads its screen from; `None` writes the columns blank, i.e.
-        a row nothing has screened.
+    *screen_row* is the Stage 2 verdict written into the row's SCREEN_COLS, which is
+    where the front door reads it from; `None` writes them blank. *screen* overrides
+    what `_screen_from_row` rebuilds from those columns, which is the only way to
+    reach an INCOMPLETE screen — one that reached no verdict has nothing for a
+    handoff to carry.
 
-        run_extract returns nothing — the output CSV is the run's only result — so the
-        assertions read the file it wrote.
+    Returns `(rows_df, run_for_doi_mock, extract_outcome_mock)`.
+    """
+    import io as _io
+    from contextlib import ExitStack
 
-        Each call runs in its own mkdtemp directory: DATA_DIR pointed at the shared
-        system temp dir once made concurrent pytest runs on one machine race each
-        other's filtered.csv/extracted.csv.
-        """
-        workdir = Path(tempfile.mkdtemp())
-        try:
-            with patch("extract.run_extract.classify_replication",
-                       return_value=screen or _YES_SCREEN), \
-                 patch("extract.run_extract.run_for_doi", return_value=link or _MOCK_LINK), \
-                 patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
-                 patch("extract.run_extract.verify_and_correct",
-                       side_effect=lambda doi, *a, **k: {"doi_o": doi,
-                                                         "doi_o_verification": "skipped",
-                                                         "evidence_note": ""}), \
-                 patch("extract.run_extract._oa_by_doi", return_value=None), \
-                 patch("extract.run_extract.DATA_DIR", workdir), \
-                 patch("extract.run_extract.BASE_DIR", workdir):
-                (workdir / "filtered.csv").write_text(
-                    with_screen(filtered_csv, screen_row), encoding="utf-8-sig")
-                from extract.run_extract import run_extract
-                run_extract(**run_kwargs)
-                result = _read_extracted(workdir / "extracted.csv")
-        finally:
-            shutil.rmtree(workdir, ignore_errors=True)
-        return result
+    frame = pd.read_csv(_io.StringIO(with_screen(csv_text, screen_row)), dtype=str,
+                        keep_default_na=False)
+    m_link = (MagicMock(side_effect=link) if isinstance(link, BaseException)
+              else MagicMock(return_value=_MOCK_LINK if link is None else link))
+    m_out = MagicMock(return_value=_MOCK_OUTCOME if outcome is None else outcome)
+    written: list[dict] = []
+    with ExitStack() as stack:
+        enter = stack.enter_context
+        enter(patch.object(run_extract, "run_for_doi", m_link))
+        enter(patch.object(run_extract, "extract_outcome", m_out))
+        enter(patch.object(run_extract, "verify_and_correct",
+                           side_effect=lambda doi, *a, **k: {
+                               "doi_o": doi, "doi_o_verification": "skipped",
+                               "evidence_note": ""}))
+        enter(patch.object(run_extract, "_oa_by_doi", return_value=None))
+        if screen is not None:
+            enter(patch.object(run_extract, "_screen_from_row", return_value=screen))
+        kwargs = {"no_llm": False, "no_pdf": False, "no_reproductions": False,
+                  "resolved_only": False, "recalibrate_outcomes": False}
+        kwargs.update(process_kwargs)
+        for _, row in frame.iterrows():
+            doi_r = clean_doi(str(row.get("doi_r", "")))
+            for result_row in run_extract._process_row(row, doi_r, **kwargs):
+                written.append(run_extract._finalise_row(result_row))
+    df = pd.DataFrame(written, columns=list(EXTRACTED_COLS)) if written \
+        else pd.DataFrame(columns=list(EXTRACTED_COLS))
+    return df.fillna("").astype(str), m_link, m_out
+
+
+class TestTheRowPipeline:
+    """What `_process_row` writes for one input row, end to end.
+
+    These were run-loop tests; the loop is the extract tier's now, so they drive the
+    pipeline directly. What they still pin is the same: the row's shape, the
+    per-target expansion, the type fallback, and what an exception below the front
+    door leaves on the row.
+    """
+
+    _ONE_ROW = (
+        "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
+        "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
+        "10.1000/test,Test Paper,Abstract text,2020,Smith,J. Psych,,W999,openalex,"
+        "replication,rule_based,direct replication,high\n"
+    )
 
     def test_output_has_all_schema_columns(self):
-        csv = (
-            "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
-            "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
-            "10.1000/test,Test Paper,Abstract text,2020,Smith,J. Psych,,W999,openalex,"
-            "replication,rule_based,direct replication,high\n"
-        )
-        result = self._run(csv)
+        result, _, _ = _run_pipeline(self._ONE_ROW)
         missing = [c for c in EXTRACTED_COLS if c not in result.columns]
         assert not missing, f"Missing: {missing}"
-
-    def test_false_positives_are_skipped(self):
-        """False positives must appear in output without running the ladder."""
-        csv = (
-            "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
-            "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
-            "10.1000/fp,False Pos,Abstract,2020,Smith,J. Psych,,W1,openalex,"
-            "false_positive,rule_based,not a replication,high\n"
-            "10.1000/rep,Real Rep,Abstract,2020,Jones,J. Psych,,W2,openalex,"
-            "replication,rule_based,direct replication,high\n"
-        )
-        mock_ladder = MagicMock(return_value=_MOCK_LINK)
-        workdir = Path(tempfile.mkdtemp())
-        try:
-            with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
-                 patch("extract.run_extract.run_for_doi", mock_ladder), \
-                 patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
-                 patch("extract.run_extract.verify_and_correct",
-                       side_effect=lambda doi, *a, **k: {"doi_o": doi,
-                                                         "doi_o_verification": "skipped",
-                                                         "evidence_note": ""}), \
-                 patch("extract.run_extract._oa_by_doi", return_value=None), \
-                 patch("extract.run_extract.DATA_DIR", workdir), \
-                 patch("extract.run_extract.BASE_DIR", workdir):
-                (workdir / "filtered.csv").write_text(with_screen(csv),
-                                                      encoding="utf-8-sig")
-                from extract.run_extract import run_extract
-                run_extract()
-                result = _read_extracted(workdir / "extracted.csv")
-        finally:
-            shutil.rmtree(workdir, ignore_errors=True)
-
-        # false_positive rows are skipped, not written (run_extract.py:1021-1023;
-        # they are known non-replications and must not enter extracted.csv / Stage 4).
-        assert len(result) == 1
-        doi_set = set(result["doi_r"])
-        assert "10.1000/fp" not in doi_set
-        assert "10.1000/rep" in doi_set
-        # the ladder ran only for the replication row, not the false positive
-        assert mock_ladder.call_count == 1
-        assert "fp" not in mock_ladder.call_args[0][0]
 
     def test_two_targets_expand_to_two_rows(self):
         csv = (
@@ -726,7 +700,7 @@ class TestRunExtract:
             "10.1000/multi,Multi-target,Abstract,2020,Smith,J. Psych,,W1,openalex,"
             "replication,rule_based,direct replication,high\n"
         )
-        result = self._run(csv, link=_MOCK_MULTI_LINK)
+        result, _, _ = _run_pipeline(csv, link=_MOCK_MULTI_LINK)
         assert len(result) == 2
         assert list(result["doi_o"]) == ["10.1000/a", "10.1000/b"]
         assert list(result["original_rank"].astype(int)) == [1, 2]
@@ -745,92 +719,25 @@ class TestRunExtract:
     def test_type_column_falls_back_to_filter_status_without_an_llm(self):
         """--no-llm calls no voter, and these rows carry no Stage 2 verdict either,
         so Stage 2's filter_status is all there is."""
-        result = self._run(self._TYPE_CSV, no_llm=True, screen_row=None)
+        result, _, _ = _run_pipeline(self._TYPE_CSV, screen_row=None, no_llm=True)
         types = dict(zip(result["doi_r"], result["type"]))
         assert types["10.1000/rep"] == "replication"
         assert types["10.1000/repro"] == "reproduction"
         assert set(result["screen_categories"]) == {""}
 
-    def test_rows_are_streamed_in_chunks_abstract_bearing_ones_first(self, monkeypatch):
-        """filtered.csv is read in chunks, so the abstract-first ordering and the
-        --limit count must hold across chunk boundaries, not just within one."""
-        monkeypatch.setattr(run_extract, "_CHUNK_ROWS", 2)
-        header = ("doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
-                  "openalex_id_r,source,filter_status,filter_method,filter_evidence,"
-                  "filter_confidence\n")
-        rows = "".join(
-            f"10.1000/r{i},Paper {i},{'Abstract' if i % 2 else ''},2020,Smith,"
-            f"J. Psych,,W{i},openalex,replication,rule_based,direct replication,high\n"
-            for i in range(6))
-        result = self._run(header + rows, limit=4)
-        # Four rows processed, and the three with an abstract came first.
-        assert list(result["doi_r"]) == ["10.1000/r1", "10.1000/r3", "10.1000/r5",
-                                         "10.1000/r0"]
-
-    def test_the_ladder_is_not_run_for_false_positives(self):
-        """Routing test: false_positive must bypass the resolution ladder entirely."""
-        csv = (
-            "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
-            "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
-            "10.1000/fp,FP,Abstract,2020,Smith,J. Psych,,W1,openalex,"
-            "false_positive,rule_based,meta-discussion,high\n"
-        )
-        mock_ladder = MagicMock(return_value=_MOCK_LINK)
-        workdir = Path(tempfile.mkdtemp())
-        try:
-            with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
-                 patch("extract.run_extract.run_for_doi", mock_ladder), \
-                 patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
-                 patch("extract.run_extract.verify_and_correct",
-                       side_effect=lambda doi, *a, **k: {"doi_o": doi,
-                                                         "doi_o_verification": "skipped",
-                                                         "evidence_note": ""}), \
-                 patch("extract.run_extract._oa_by_doi", return_value=None), \
-                 patch("extract.run_extract.DATA_DIR", workdir), \
-                 patch("extract.run_extract.BASE_DIR", workdir):
-                (workdir / "filtered.csv").write_text(with_screen(csv),
-                                                      encoding="utf-8-sig")
-                from extract.run_extract import run_extract
-                run_extract()
-        finally:
-            shutil.rmtree(workdir, ignore_errors=True)
-
-        mock_ladder.assert_not_called()
-
-
     def test_api_error_passthrough(self):
-        """When extraction throws an exception, link_method and outcome must be
-        'api_error' and the row must still appear in the output — carrying what
-        broke it and the screen verdict that was already paid for (#178). The
-        2026-08-05 run wrote 17 of these rows with every such column blank, and
-        once the log rotated there was no way to find out what had failed."""
+        """When extraction throws, link_method and outcome must be 'api_error' and the
+        row must still be written — carrying what broke it and the screen verdict that
+        was already paid for (#178). The 2026-08-05 run wrote 17 of these rows with
+        every such column blank, and once the log rotated there was no way to find out
+        what had failed."""
         csv = (
             "doi_r,title_r,abstract_r,year_r,authors_r,journal_r,url_r,"
             "openalex_id_r,source,filter_status,filter_method,filter_evidence,filter_confidence\n"
             "10.1000/fail,Fail Paper,Abstract,2020,Smith,J. Psych,,W1,openalex,"
             "replication,rule_based,direct replication,high\n"
         )
-        result = self._run(csv)  # run_for_doi is mocked to return _MOCK_LINK by default
-        # Now run again but force run_for_doi to raise
-        workdir = Path(tempfile.mkdtemp())
-        try:
-            with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
-                 patch("extract.run_extract.run_for_doi", side_effect=Exception("API timeout")), \
-                 patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
-                 patch("extract.run_extract.verify_and_correct",
-                       side_effect=lambda doi, *a, **k: {"doi_o": doi,
-                                                         "doi_o_verification": "skipped",
-                                                         "evidence_note": ""}), \
-                 patch("extract.run_extract._oa_by_doi", return_value=None), \
-                 patch("extract.run_extract.DATA_DIR", workdir), \
-                 patch("extract.run_extract.BASE_DIR", workdir):
-                (workdir / "filtered.csv").write_text(with_screen(csv),
-                                                      encoding="utf-8-sig")
-                from extract.run_extract import run_extract
-                run_extract()
-                result = _read_extracted(workdir / "extracted.csv")
-        finally:
-            shutil.rmtree(workdir, ignore_errors=True)
+        result, _, _ = _run_pipeline(csv, link=Exception("API timeout"))
 
         assert len(result) == 1, "Row must not be dropped on extraction failure"
         written = result.iloc[0]
@@ -852,21 +759,8 @@ class TestRunExtract:
             "10.1000/rep,Rep Paper,Abstract,2020,Jones,J. Psych,,W2,openalex,"
             "replication,rule_based,direct replication,high\n"
         )
-        workdir = Path(tempfile.mkdtemp())
-        try:
-            with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
-                 patch("extract.run_extract.run_for_doi", return_value=_MOCK_LINK), \
-                 patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME) as mock_eo, \
-                 patch("extract.run_extract.DATA_DIR", workdir), \
-                 patch("extract.run_extract.BASE_DIR", workdir):
-                (workdir / "filtered.csv").write_text(with_screen(csv),
-                                                      encoding="utf-8-sig")
-                from extract.run_extract import run_extract
-                run_extract()
-        finally:
-            shutil.rmtree(workdir, ignore_errors=True)
-
-        call_kwargs = mock_eo.call_args[1]
+        _, _, m_out = _run_pipeline(csv)
+        call_kwargs = m_out.call_args[1]
         assert call_kwargs.get("original_title") == "The Original Study"
         assert call_kwargs.get("original_authors") == "Smith"
         assert call_kwargs.get("original_year") == "1935"

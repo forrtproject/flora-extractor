@@ -9,9 +9,14 @@ the same generic spine the screens use. Nothing about the extraction itself move
 `judge` calls `run_extract._process_row`, the one per-row pipeline there has ever
 been.
 
-`python -m extract.run_extract` is untouched and still works; this is a second
-front door onto the same machine, and the CSV stops being the authority only at a
-later phase.
+This is the ONLY front door. The CSV runner that used to sit beside it is gone
+(parked on `wip/csv-runner`), so `data/extracted.csv` has one writer —
+`python -m extract.export`, rendering the verdict rows this tier stores — and one
+checkpoint, the verdict row itself. A run resumes by rebuilding its worklist: a work
+whose latest current-generation result row settles it is not offered again, and
+`target_pending`/`api_error` do not settle. `--redo` re-extracts named works and
+supersedes their previous result row; editing a prompt or a model mints a new
+generation, which reopens every work at once.
 
 **Two kinds of verdict row, told apart by the `verdict` column.**
 
@@ -247,7 +252,7 @@ def _judge(work: Work) -> tuple[str, list[dict]]:
 
     token_counter.set_stage("extract_tier")
     row = pd.Series(work.row)
-    # The same pre-step the CSV runner does: a pool row admitted on its OpenAlex
+    # A pool row admitted on its OpenAlex
     # id may carry a repository URL instead of a DOI, and everything below keys
     # on the DOI. The resolved value lands in the row, so the payload's input
     # snapshot records what the ladder actually ran with.
@@ -255,8 +260,7 @@ def _judge(work: Work) -> tuple[str, list[dict]]:
     observed: dict = {}
     rows = rx._process_row(row, doi_r, no_llm=False, no_pdf=False,
                            no_reproductions=False, resolved_only=False,
-                           recalibrate_outcomes=False, screen_here=False,
-                           observed=observed)
+                           recalibrate_outcomes=False, observed=observed)
     final = [rx._finalise_row(r) for r in rows]
 
     payload = result_payload(row.to_dict(), doi_r, final, observed)
