@@ -757,8 +757,16 @@ appended to a CSV on one machine. M6 runs the same ladder as a tier.
 Nothing about the extraction moves. `extract/tier.py` registers a `TierSpec` whose
 `judge` calls `run_extract._process_row` — the one per-row pipeline there has ever
 been — and runs it through the same `run_tier()` spine the two screen tiers use.
-`python -m extract.run_extract` still works, unchanged; the CSV stops being the
-authority at a later phase.
+
+**Status: shipped, and the authority is flipped.** `python -m extract.tier --run` is
+the only front door, and `python -m extract.export` is the only writer of
+`data/extracted.csv`. The CSV runner is deleted from `main` — its orchestration half
+is parked on `wip/csv-runner`, and `extract/run_extract.py` remains as the per-row
+pipeline library. `extract/promote_test.py` is gone with the `--extracted-test`
+sandbox it promoted from; the sandbox is `--mode validation` plus a render.
+`extract/sanity_check.py` reports rather than moves, and the two retroactive tools
+(`audit_dois`, `backfill_authors`) write corrected, superseding verdicts through
+`supersede_targets()` instead of editing the CSV.
 
 | Module | Contract |
 | --- | --- |
@@ -881,8 +889,8 @@ of runs made under an older ladder — and the numbers to replace it with are th
 shares in `cache/engine/runs/extract-*.json` once this tier has run.
 
 `EXTRACT_RESOLVED_SHARE` is the one judgement rather than a measurement: it cannot be
-read off `extracted.csv`, because `sanity_check` moves every unresolved row out of
-that file. It comes from the ratio of that file to the ten set-aside CSVs beside it
+read off `extracted.csv`, because every unresolved row is partitioned out of that
+file. It comes from the ratio of that file to the ten set-aside CSVs beside it
 (285 against 1,176).
 
 OpenAlex is reported in **credits**, on its own line, never converted to dollars:
@@ -909,12 +917,17 @@ awaiting re-extraction, not rows to discard.
 that must not reach the live file, and `claim.meta.mode` is where that is written
 down — the same place the screens keep it.
 
-**Quarantine happens on the way out.** `sanity_check` partitions `extracted.csv`
-after the fact; the export applies the same partition as it writes, through the same
-`classify_row()` extracted from that module. One definition of where a row belongs,
-so a row lands in the same set-aside CSV whichever hand wrote it — and the set-asides
-go to `set_aside_dir(out_csv)`, so a render to a sandbox path cannot settle a paper
-for the production resume.
+**Quarantine happens on the way out.** The export applies the partition as it
+writes, through `classify_row()` in `sanity_check` — which is now the only thing that
+module does with it, since the pass reports and moves nothing. One definition of where
+a row belongs, and one writer. The set-asides go to `set_aside_dir(out_csv)`, so a
+render to a sandbox path partitions into that sandbox's own directory.
+
+**One writer, one whole file.** Each render writes `data/extracted.csv` complete,
+sorted by `(work_id, original_rank)`, through a temp file and one rename. Nothing
+appends. The file currently tracked in git is the old pipeline's 285 rows in append
+order, so the first live export will replace it whole, in one large diff — expected,
+and visible in advance through `--check`.
 
 `--check` rebuilds in memory, diffs against the file on disk by whole-row content,
 prints the counts and exits non-zero on any difference. It writes nothing.
