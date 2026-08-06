@@ -41,7 +41,6 @@ ALIASES_FILENAME = "aliases.json"
 # that forwards the parameter must forward THIS object: a second sentinel would
 # be "unchecked" to its own module and a mismatch to this one.
 UNCHECKED: object = object()
-_UNCHECKED = UNCHECKED
 
 
 def load_conventions(path: Optional[Path] = None) -> dict:
@@ -58,7 +57,7 @@ def export_pile(con, pool_dir: Path, pile: str, out_csv: Path, release_id: str,
                 expect_bundle_hash: Optional[str] = None,
                 expect_alias_release: Optional[str] = None,
                 overlay_dir: Optional[Path] = None,
-                expect_overlay_hash: object = _UNCHECKED,
+                expect_overlay_hash: object = UNCHECKED,
                 created_at: str = "") -> dict:
     """Write *pile* of *release_id* to *out_csv* and its manifest beside it.
 
@@ -161,9 +160,9 @@ def check_release_binding(spec_dir: Path, release_id: str,
                           expect_bundle_hash: Optional[str],
                           expect_alias_release: Optional[str],
                           overlay_dir: Optional[Path] = None,
-                          expect_overlay_hash: object = _UNCHECKED) -> None:
+                          expect_overlay_hash: object = UNCHECKED) -> None:
     mismatches = []
-    if expect_overlay_hash is not _UNCHECKED:
+    if expect_overlay_hash is not UNCHECKED:
         # None is a real expectation here (routed with no overlay), so the
         # unchecked case needs its own sentinel rather than reusing None.
         actual = overlay_manifest_hash(overlay_dir) if overlay_dir else None
