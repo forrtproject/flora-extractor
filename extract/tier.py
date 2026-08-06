@@ -90,9 +90,10 @@ from filter.engine.store import (DEFAULT_STORE_PATH, StoreUnavailable, open_stor
 from filter.engine.tiers import TierSpec, Work, register_tier, run_tier
 from filter.engine.workids import load_aliases
 from shared import token_counter
+from filter.engine.overlay import chunk_paths
 from shared.config import (DATA_DIR, EXTRACT_WORKERS, LINKING_EFFORT,
                            LINKING_MODEL, OUTCOME_EFFORT, OUTCOME_MODEL,
-                           PDF_PARSE_MODEL, SNAPSHOT_POOL_DIR, log)
+                           OVERLAY_DIR, PDF_PARSE_MODEL, SNAPSHOT_POOL_DIR, log)
 from shared.flora_skip import (VALIDATED_SKIP_NAME,
                                default_flora_skip_dois as _flora_skip_dois,
                                load_validated_skip as _load_validated_skip,
@@ -943,6 +944,21 @@ def _ids(value: Optional[str]) -> Optional[list[int]]:
     return [int(part.strip()) for part in value.split(",") if part.strip()]
 
 
+def _overlay_dir(args) -> Optional[Path]:
+    """`--overlay` > the standard dir when it holds chunks > none.
+
+    Same rule as the engine CLI's `_overlay()`: an absent flag means "use the
+    overlay if there is one", never "run bare" — a release routed with an overlay
+    refuses to bind against a bare read, which is exactly the mismatch the check
+    exists to catch. `--no-overlay` asks for a bare-pool run out loud.
+    """
+    if args.no_overlay:
+        return None
+    if args.overlay:
+        return args.overlay
+    return OVERLAY_DIR if chunk_paths(OVERLAY_DIR) else None
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m extract.tier",
@@ -964,6 +980,11 @@ def main(argv: Optional[list[str]] = None) -> int:
                              "checkpoint, and supersede each work's previous result row.")
     parser.add_argument("--release", default=None,
                         help="Routing release (default: the store's only one).")
+    parser.add_argument("--overlay", type=Path, default=None,
+                        help="Overlay chunk dir (default: the standard dir when "
+                             "it holds chunks).")
+    parser.add_argument("--no-overlay", action="store_true",
+                        help="Read the bare pool even when an overlay exists.")
     parser.add_argument("--store", type=Path, default=DEFAULT_STORE_PATH)
     parser.add_argument("--pool", type=Path, default=SNAPSHOT_POOL_DIR)
     parser.add_argument("--spec-dir", type=Path, default=SPEC_DIR)
@@ -1006,6 +1027,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             con, client, release_id, mode=args.mode, batch_label=args.batch_label,
             limit=args.limit, only=_ids(args.only), redo=_ids(args.redo),
             pool_dir=args.pool, spec_dir=args.spec_dir,
+            overlay_dir=_overlay_dir(args),
             aliases=load_aliases(args.spec_dir / ALIASES_FILENAME),
             record=record, run=args.run, cache_dir=args.store.parent,
             batch_size=args.batch_size)
