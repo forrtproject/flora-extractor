@@ -999,8 +999,9 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
 
     def _result() -> dict:
         if retry_path is not None:
-            if dl["success"]:
-                # A document arrived; nothing about this DOI needs holding back.
+            # An XML with content is a document too: if its cache is later lost,
+            # the download tiers must be probeable again, not held for two weeks.
+            if dl["success"] or pdf_src == "openalex_xml":
                 try:
                     retry_path.unlink(missing_ok=True)
                 except Exception as e:

@@ -563,6 +563,16 @@ class TestGateInTheLadder:
         assert row["resolution_method"] != "title_pattern_match"
         assert row["n_targets"] == 1
 
+    def test_a_withheld_pick_is_not_restored_when_the_one_target_is_unmatchable(self):
+        """An enumerator named ONE target the key map could not match to a record.
+        We cannot show it is the held work, so restoring would overrule the call on
+        no evidence — the pick is dropped, not written at rule confidence."""
+        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS,
+                        llm_answer=_answer(targets=[_gate_target(
+                            "", "Some stated original", match_certain=False,
+                            record=None)]))
+        assert row["resolution_method"] != "title_pattern_match"
+
     def test_a_withheld_pick_is_not_restored_when_two_targets_were_found(self):
         row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS,
                         llm_answer=_answer(

@@ -884,13 +884,16 @@ def run_for_doi(doi_r:              str,
         It stands when nothing enumerated at all, and when the one thing that did named
         at most one original and that original is the same work. It does NOT stand
         against two targets, nor against one target that names a different work — those
-        are the answers the gate was waiting for.
+        are the answers the gate was waiting for. A single target that cannot be
+        compared (no mapped record, or a record the identity check cannot match) counts
+        as a contradiction too: an enumerator spoke and named something we cannot show
+        is the held work, so restoring would overrule it on no evidence.
         """
         if not seen:
             return True
-        certain = _certain_targets(seen)
-        return (len(seen.get("targets") or []) <= 1
-                and (not certain or _agrees_with_held(certain[0], held)))
+        targets = seen.get("targets") or []
+        return (len(targets) <= 1
+                and all(_agrees_with_held(t, held) for t in targets))
 
     def _exit(resolution: dict, pdf: dict = {}, grobid: dict = {},
               sections: dict = {}) -> dict:

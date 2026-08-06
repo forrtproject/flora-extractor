@@ -233,3 +233,23 @@ def test_openalex_xml_with_content_skips_the_download_tiers():
     for name in ("get_arxiv_pdf_url", "get_all_unpaywall_pdf_urls",
                  "get_semanticscholar_pdf_url", "get_serpapi_pdf_url"):
         started[name].assert_not_called()
+
+
+def test_an_xml_success_clears_the_retry_record_too():
+    """An XML with content is a document: if its cache is later lost, the download
+    tiers must be probeable immediately, not held for the rest of the window."""
+    doi = "10.1016/j.example.2020.01.008"
+    _write_retry_log(doi, {"core": _ago(1), "playwright": _ago(1)})
+    xml = {"source": "openalex_xml", "xml_url": "u",
+           "sections": {"abstract": "We replicated it.", "intro": "", "methods": "",
+                        "references": [{"title": "r"}]}}
+    patchers = _mock_all_tiers()
+    started = {name: p.start() for name, p in patchers.items()}
+    started["get_openalex_fulltext"].return_value = xml
+    try:
+        out = ps.acquire_pdf(doi, "A Title", openalex_id="W1")
+    finally:
+        for p in patchers.values():
+            p.stop()
+    assert out["pdf_source"] == "openalex_xml"
+    assert _retry_log(doi) == {}

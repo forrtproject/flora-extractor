@@ -65,7 +65,7 @@
 <code>fix/html-comments-round2</code> (base survey: three code-only agents at <code>0bc554e</code>, barred from reading
 CLAUDE.md, <code>docs/</code> or any earlier state page; this revision folds in one round of maintainer comments,
 five investigation reports and the fixes they produced). Every count was read off the artifact or produced by a
-command, never estimated. Test suite: <strong class="num">1327 passed, 6 skipped, 2 xfailed</strong>.</p>
+command, never estimated. Test suite: <strong class="num">1329 passed, 6 skipped, 2 xfailed</strong>.</p>
 
 <div class="box warn">
 <p style="margin-top:0"><strong>Operationally, the pipeline cannot be run end-to-end right now.</strong> Two blocks,
@@ -487,7 +487,7 @@ worker threads share one rate; one CrossRef path in <code>doi_verify</code> stil
 reserving before it.</p>
 
 <h3>Tests</h3>
-<p>1,327 pass in about 14 seconds. Five autouse fixtures make the isolation real rather than conventional: sockets
+<p>1,329 pass in about 14 seconds. Five autouse fixtures make the isolation real rather than conventional: sockets
 raise, backoff sleeps are nulled, and the token store and abstract store are redirected to temp directories. Live tests
 sit behind <code>TEST_LIVE_API</code>. There is no pytest config file, no CI job that runs the suite, and
 <code>TEST_LIVE_API</code> is a global switch rather than a per-directory one — so setting it would lift the socket
