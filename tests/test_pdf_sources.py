@@ -204,6 +204,132 @@ def test_an_unreadable_record_probes_everything():
     mocks["get_core_pdf_url"].assert_called_once()
 
 
+# ── The per-URL record of a dead URL ──────────────────────────────────────────
+
+class _Resp:
+    def __init__(self, status: int, body: bytes = b""):
+        self.status_code = status
+        self._body = body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def iter_content(self, chunk_size=0):
+        yield self._body
+
+
+def _url_record(url: str) -> dict:
+    path = ps._url_failure_path(url)
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+@pytest.mark.parametrize("status", [404, 410])
+def test_a_url_that_answered_gone_is_not_re_fetched(status):
+    """download_pdf cached only successes, so a permanently dead URL was re-fetched
+    once per tier retry window."""
+    url = f"https://example.org/dead-{status}.pdf"
+    with patch.object(ps.requests, "get", return_value=_Resp(status)) as get:
+        first = ps.download_pdf(url, doi=f"10.1/gone{status}")
+    assert first["reason"] == f"http_{status}"
+    assert list(_url_record(url)) == [f"http_{status}"]
+
+    with patch.object(ps.requests, "get") as get2:
+        second = ps.download_pdf(url, doi=f"10.1/gone{status}")
+    assert second["reason"] == "url_gone"
+    get2.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", [
+    _Resp(503), _Resp(429), _Resp(403),
+])
+def test_a_transient_or_refused_response_is_not_recorded(failure):
+    """A server that failed to answer, or refused to serve a document that exists, is
+    not evidence of absence — recording it would checkpoint it as a definitive miss."""
+    url = f"https://example.org/soft-{failure.status_code}.pdf"
+    with patch.object(ps.requests, "get", return_value=failure):
+        ps.download_pdf(url, doi="10.1/soft")
+    assert _url_record(url) == {}
+
+    with patch.object(ps.requests, "get", return_value=failure) as get2:
+        ps.download_pdf(url, doi="10.1/soft")
+    get2.assert_called_once()
+
+
+def test_a_connection_error_is_not_recorded():
+    url = "https://example.org/timeout.pdf"
+    with patch.object(ps.requests, "get", side_effect=OSError("timed out")):
+        out = ps.download_pdf(url, doi="10.1/timeout")
+    assert out["success"] is False
+    assert _url_record(url) == {}
+
+
+def test_a_dead_url_is_re_fetched_once_the_window_lapses():
+    """The record is a retry delay on the same window as the per-tier one."""
+    url = "https://example.org/lapsed.pdf"
+    ps._write_retry_log(ps._url_failure_path(url),
+                        {"http_404": _ago(ps.PDF_RETRY_AFTER_DAYS + 1)})
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, b"%PDF-1.4" + b"x" * 10_000)) as get:
+        out = ps.download_pdf(url, doi="10.1/lapsed")
+    get.assert_called_once()
+    assert out["success"] is True
+    assert _url_record(url) == {}          # the URL serves a document after all
+
+
+# ── The PDF already on disk ───────────────────────────────────────────────────
+
+def _save_pdf(doi: str) -> None:
+    ps.pdf_cache_path(ps.clean_doi(doi)).write_bytes(b"%PDF-1.4" + b"x" * 10_000)
+
+
+def test_a_pdf_already_on_disk_returns_before_any_tier_runs():
+    """The short-circuit used to happen inside the winning tier's download_pdf, so it
+    cost every URL lookup above that tier. The saved provenance is replayed."""
+    doi = "10.1016/j.example.2020.01.009"
+    _save_pdf(doi)
+    ps._write_provenance(ps.clean_doi(doi), "unpaywall_pdf", "https://x/y.pdf")
+
+    patchers = _mock_all_tiers()
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        with patch.object(ps, "download_pdf") as dl:
+            out = ps.acquire_pdf(doi, "A Title")
+    finally:
+        for p in patchers.values():
+            p.stop()
+
+    assert out["pdf_ok"] is True
+    assert out["pdf_source"] == "unpaywall_pdf"
+    assert out["pdf_url"] == "https://x/y.pdf"
+    assert out["pdf_url_tried"] == ["https://x/y.pdf"]
+    assert out["pdf_path"] == str(ps.pdf_cache_path(ps.clean_doi(doi)))
+    dl.assert_not_called()
+    for name in ("get_arxiv_pdf_url", "get_osf_pdf_url", "get_openalex_oa_url",
+                 "get_all_unpaywall_pdf_urls"):
+        started[name].assert_not_called()
+
+
+def test_a_saved_pdf_without_provenance_still_runs_the_waterfall():
+    """Nothing recorded the tier before this record existed; those PDFs keep the old
+    behaviour — the waterfall runs, its first cache hit writes the record."""
+    doi = "10.1016/j.example.2020.01.010"
+    _save_pdf(doi)
+    patchers = _mock_all_tiers(get_openalex_oa_url="https://x/z.pdf")
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        out = ps.acquire_pdf(doi, "A Title")
+    finally:
+        for p in patchers.values():
+            p.stop()
+
+    started["get_openalex_oa_url"].assert_called_once()
+    assert out["pdf_ok"] is True
+    assert out["pdf_source"] == "openalex_oa"
+    assert ps._read_provenance(ps.clean_doi(doi)) == {"source": "openalex_oa",
+                                                      "url": "https://x/z.pdf"}
+
+
 # ── Tier 0 short-circuit ──────────────────────────────────────────────────────
 
 def test_openalex_xml_with_content_skips_the_download_tiers():
