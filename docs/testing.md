@@ -137,5 +137,15 @@ None. `tests/test_analysis_overlap.py` and the `tests/test_apa_resolver.py` case
 that read the gitignored `data/` CSVs (`candidates.csv`, `filtered.csv`,
 `all_replications.csv`) went with the overlap analysis and the retired Stage 1
 corpus. Every test now builds the files it reads under `tmp_path`, so the suite runs
-on a fresh checkout with an empty `data/`. As of **2026-08-06** the suite is green:
-1,374 passed, 6 skipped, nothing failing or xfailing.
+on a fresh checkout with an empty `data/`. As of **2026-08-06** a clean run is 1,374
+passed, 6 skipped, nothing xfailing.
+
+## One flaky test
+
+`tests/test_extract.py::TestRunExtract::test_rows_are_streamed_in_chunks_abstract_bearing_ones_first`
+asserts an exact output row order (`r1, r3, r5, r0`) across chunk boundaries. It
+passes and fails nondeterministically on identical code — roughly half of runs on
+`main` — because Stage 3 writes rows in worker-completion order and the assertion
+reads that as a guarantee. A failure here is not a regression from whatever you just
+changed; re-run it before investigating. The fix is to assert the SET of DOIs plus
+the abstract-first partition, not the exact sequence.
