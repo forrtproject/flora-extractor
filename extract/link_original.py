@@ -1387,7 +1387,7 @@ def _build_output(doi_r:     str,
         # that never parsed anything, which is what the row's parse_method records.
         "parse_method"          : grobid.get("parse_method", ""),
         "n_grobid_refs"         : grobid.get("n_refs_parsed",  0),
-        # Stored at the sizes build_target_prompt sends, so a reviewer reads exactly
+        # Stored at the sizes the combined prompt sends, so a reviewer reads exactly
         # what the model read. The PDF abstract reaches the model only as the part the
         # OpenAlex abstract does not already carry, which is often nothing at all —
         # run_for_doi puts that tail in "abstract_sent". The reference list is sent
@@ -1396,6 +1396,13 @@ def _build_output(doi_r:     str,
         "grobid_abstract"       : sections.get("abstract_sent", "") or "",
         "grobid_intro"          : (sections.get("intro",    "")
                                    or "")[:TARGET_INTRO_CHARS],
+        # The closing sections, which is where the outcome is stated and therefore the
+        # block a reviewer checks a verdict against. Its provenance rides beside it:
+        # "discussion" is a real heading, "tail" is the end of the paper, and a quote
+        # means something different under each.
+        "grobid_discussion"     : (sections.get("discussion", "")
+                                   or "")[:TARGET_DISCUSSION_CHARS],
+        "discussion_provenance" : sections.get("discussion_provenance", "") or "",
         # run_for_doi never populates methods today (the parsers do not split it out),
         # so this slice is a contract for a section nothing currently supplies.
         "grobid_methods"        : (sections.get("methods",  "")
