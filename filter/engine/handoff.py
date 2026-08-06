@@ -103,9 +103,10 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
     *drop* is the set of work ids a live tier run discarded; *screen* maps a work
     id to what a live `screen_expensive` run decided about it — the gate outcome,
     the record type and the individual votes. *decided* is every work id the
-    EXPENSIVE tier settled. All three are read from the verdict rows by
-    `decisions()` — they are passed in so this function stays a pure mapping from
-    (store, pool, decisions) to a file.
+    EXPENSIVE tier settled, which is `set(screen)` for a caller reading from
+    `decisions()`; it is a parameter of its own because `None` is a mode rather
+    than an empty answer (below). They are passed in so this function stays a pure
+    mapping from (store, pool, decisions) to a file.
 
     *decided* also chooses the export's contract, because a set and its absence
     say different things. A set (empty included) means SCREENED-ONLY: a pile row
@@ -213,8 +214,8 @@ def _screen_columns(row: dict, decision: dict) -> dict:
     }
 
 
-def decisions(client) -> tuple[set[int], dict[int, dict], set[int]]:
-    """`(drop, work id → expensive-tier decision, decided)` from every LIVE run.
+def decisions(client) -> tuple[set[int], dict[int, dict]]:
+    """`(drop, work id → expensive-tier decision)` from every LIVE run.
 
     Reads the permanent verdict rows, not a run report. A `validation`-mode run
     contributes nothing here — its claim says `mode: validation` and this asks
@@ -235,14 +236,15 @@ def decisions(client) -> tuple[set[int], dict[int, dict], set[int]]:
     current screen has never judged. Those works read as unscreened here and are
     claimable again by the tier (`tiers._generation_current`).
 
-    *decided* is only the works the tier actually SETTLED: a work whose votes are
-    still short of a gate decision reads `incomplete` and belongs with the
-    unscreened, not with the proceeds — a half-screened row is exactly the row the
+    The mapping's KEYS are the works the tier actually SETTLED, which is what a
+    screened-only handoff needs: a work whose votes are still short of a gate
+    decision reads `incomplete`, gets no entry, and belongs with the unscreened
+    rather than with the proceeds — a half-screened row is exactly the row the
     screened-only handoff exists to hold back.
 
     **Only the EXPENSIVE tier admits.** A cheap-tier verdict is either a discard
     (which drops the row here) or a `proceed`, and that proceed means one thing
-    only: on to the expensive screen. Counting it as `decided` would let a row the
+    only: on to the expensive screen. Counting it as settled would let a row the
     validated pair has never seen — including a mere `prescreen_bypass`, which is
     the tier deciding not to ask — cross the screened-only handoff and reach Stage
     3, where nothing screens it any more. So the cheap tier contributes to *drop*
@@ -253,7 +255,6 @@ def decisions(client) -> tuple[set[int], dict[int, dict], set[int]]:
 
     drop: set[int] = set()
     screen: dict[int, dict] = {}
-    decided: set[int] = set()
     # None: every release — see the docstring above.
     expensive = tier_decisions(client, None, TIER_EXPENSIVE)
     for work, decision in expensive.items():
@@ -261,7 +262,6 @@ def decisions(client) -> tuple[set[int], dict[int, dict], set[int]]:
             continue
         if decision["outcome"] == DISCARD:
             drop.add(work)
-        decided.add(work)
         screen[work] = decision
     for work, decision in tier_decisions(client, None, TIER_CHEAP).items():
         # The cheap tier may not overrule the expensive one. `write_handoff` checks
@@ -272,7 +272,7 @@ def decisions(client) -> tuple[set[int], dict[int, dict], set[int]]:
         # already drops it, and an expensive proceed is the answer that governs.
         if decision["outcome"] == DISCARD and work not in expensive:
             drop.add(work)
-    return drop, screen, decided
+    return drop, screen
 
 
 def _publish(out_csv: Path, tmp_csv: Path, manifest: dict) -> None:

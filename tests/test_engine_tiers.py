@@ -627,13 +627,12 @@ def test_an_exhausted_budget_fails_the_claim_and_keeps_what_was_decided(con, poo
 
 def _handoff(con, pool, tmp_path, client=None, name="filtered.csv",
              screened_only=False):
-    drop, screen, decided = ((set(), {}, set()) if client is None
-                             else handoff_mod.decisions(client))
+    drop, screen = (set(), {}) if client is None else handoff_mod.decisions(client)
     spec_dir = engine_bundle.write_bundle(tmp_path / "bundle")
     out = tmp_path / name
     manifest = handoff_mod.write_handoff(con, pool, out, RELEASE, drop=drop,
                                          screen=screen,
-                                         decided=decided if screened_only else None,
+                                         decided=set(screen) if screened_only else None,
                                          specs=engine_bundle.specs(),
                                          spec_dir=spec_dir, created_at="2026-08-04")
     return out, manifest
@@ -736,7 +735,7 @@ def test_a_validation_claim_from_another_release_still_contributes_nothing(
                                  [{"work_id": 21, "verdict": "no", "model": "m1"},
                                   {"work_id": 21, "verdict": "no", "model": "m2"}],
                                  release="rel-before-the-reroute")
-    assert handoff_mod.decisions(validating) == (set(), {}, set())
+    assert handoff_mod.decisions(validating) == (set(), {})
 
     out, manifest = _handoff(con, pool, tmp_path, validating)
     assert manifest["dropped_by_tier_verdict"] == 0
@@ -786,8 +785,7 @@ def test_a_cheap_verdict_never_admits_a_row_to_stage_three(con, pool, tmp_path):
                               {"work_id": 21, "verdict": "yes", "model": "m2"},
                               {"work_id": 22, "verdict": tiers.PROCEED,
                                "model": "prescreen_bypass"}])
-    drop, screen, decided = handoff_mod.decisions(passed)
-    assert (drop, screen, decided) == (set(), {}, set())
+    assert handoff_mod.decisions(passed) == (set(), {})
 
     out, manifest = _handoff(con, pool, tmp_path, passed, screened_only=True)
     assert manifest["rows"] == 0
@@ -816,9 +814,8 @@ def test_a_single_vote_is_not_a_verdict(con, pool, tmp_path):
         {"work_id": 11, "verdict": "replication", "model": _voter_models()[0],
          "confidence": "confident"},
     ])
-    drop, screen, decided = handoff_mod.decisions(half)
+    drop, screen = handoff_mod.decisions(half)
 
-    assert decided == set()
     assert drop == set()
     assert screen == {}
 
@@ -1159,13 +1156,13 @@ def test_a_verdict_from_another_generation_neither_settles_nor_blocks(
 
     assert tiers.tier_decisions(stale, None, "screen_expensive") == {}
     assert tiers.decided_work_ids(stale, "screen_expensive") == set()
-    assert handoff_mod.decisions(stale) == (set(), {}, set())
+    assert handoff_mod.decisions(stale) == (set(), {})
 
     # The same rows under the current generation do all three.
     current = _decided_client("screen_expensive", "live", _expensive_votes())
     assert tiers.decided_work_ids(current, "screen_expensive") == {11}
-    drop, _, decided = handoff_mod.decisions(current)
-    assert drop == {11} and decided == {11}
+    drop, screen = handoff_mod.decisions(current)
+    assert drop == {11} and set(screen) == {11}
 
 
 def test_a_legacy_verdict_counts_when_its_models_are_todays(con, pool, tmp_path):
@@ -1184,7 +1181,7 @@ def test_a_legacy_verdict_counts_when_its_models_are_todays(con, pool, tmp_path)
                               "confidence": "confident"}],
                             generation=None)
     assert tiers.decided_work_ids(other, "screen_expensive") == set()
-    assert handoff_mod.decisions(other) == (set(), {}, set())
+    assert handoff_mod.decisions(other) == (set(), {})
 
 
 # ---------------------------------------------------------------------------
@@ -1260,7 +1257,7 @@ def test_one_voter_answering_twice_is_never_a_second_vote(con, pool):
     ])
     assert tiers.decided_work_ids(retried, "screen_expensive") == set()
     assert tiers.incomplete_work_ids(retried, "screen_expensive") == {11}
-    assert handoff_mod.decisions(retried) == (set(), {}, set())
+    assert handoff_mod.decisions(retried) == (set(), {})
 
     # The later answer is the one kept, and it stays in voter 1's call-order slot,
     # so the record type still breaks a split on the FIRST qualifying voter.
@@ -1398,10 +1395,10 @@ def test_a_cheap_discard_never_overrules_an_expensive_proceed(con, pool, tmp_pat
     }
     both.verdicts.side_effect = lambda t, claim_ids=None: verdicts.get(t, [])
 
-    drop, screen, decided = handoff_mod.decisions(both)
+    drop, screen = handoff_mod.decisions(both)
     # W21 has no expensive verdict, so the cheap discard still applies to it.
     assert drop == {21}
-    assert decided == {11}
+    assert set(screen) == {11}
 
     out, manifest = _handoff(con, pool, tmp_path, both, screened_only=True)
     assert [r["openalex_id_r"] for r in _read(out)] == ["https://openalex.org/W11"]

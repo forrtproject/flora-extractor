@@ -459,8 +459,9 @@ def cmd_handoff(args) -> int:
     screen: dict[int, dict] = {}
     decided: Optional[set[int]] = None
     try:
-        drop, screen, screened = decisions(ClaimsClient())
-        decided = None if args.as_routed else screened
+        drop, screen = decisions(ClaimsClient())
+        # The settled works ARE the screen map's keys; None is the as-routed mode.
+        decided = None if args.as_routed else set(screen)
     except ClaimsNotConfigured:
         # Without a claims client there are no verdicts, so screened-only would
         # export nothing — a silent empty Stage 3 input is worse than a refusal.
