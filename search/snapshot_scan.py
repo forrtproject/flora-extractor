@@ -35,7 +35,10 @@ and where both came from. It is what ``pool_fingerprint`` hashes into a Stage 2
 release id, so a pool shared between machines is named by its own gate rather than
 by whichever checkout reads it, and an interrupted transfer is visibly short
 instead of fingerprintable. Written by this scan and by ``pool_sync --pull``; an
-older pool is stamped in place with ``--stamp-pool``.
+older pool is stamped in place with ``--stamp-pool``. It is also read BEFORE a scan
+starts: scanning this checkout's gate into a pool the sidecar attributes to another
+one is refused (``--force-gate`` overrides, and then the pool records no gate at
+all), because the ledger check cannot see it — a pulled pool has no ledger.
 
 Pool columns (``_POOL_SCHEMA``): the identity/metadata needed to rebuild a
 candidate row without the snapshot — ``id``, ``doi``, ``title``,
@@ -841,7 +844,11 @@ def scan_snapshot(max_files: Optional[int] = None,
     locally instead of by a 13-21 hour rescan.
 
     A ledger written under a different search gate stops the run unless
-    *force_gate*: see the message below for why.
+    *force_gate*, and so does a POOL whose provenance sidecar names a different
+    gate: see the messages below for why. The two checks are independent because a
+    pulled pool has no ledger at all — ``load_ledger()`` manufactures a fresh one
+    carrying this checkout's gate, so the ledger check alone would wave through
+    exactly the case that matters.
 
     Returns the number of rows admitted.
     """
@@ -858,7 +865,8 @@ def scan_snapshot(max_files: Optional[int] = None,
 
     ledger = load_ledger()
     theirs = ledger_gate_fingerprint(ledger)
-    if theirs not in (None, search_gate_fingerprint()):
+    ledger_gate_mismatch = theirs not in (None, search_gate_fingerprint())
+    if ledger_gate_mismatch:
         # Refusing rather than warning: continuing appends this gate's survivors to a
         # pool whose other partitions were gated differently, and the rows the OTHER
         # gate rejected are in no pool at all. The result is complete under neither
@@ -877,6 +885,32 @@ def scan_snapshot(max_files: Optional[int] = None,
         log.warning("--force-gate: scanning under gate %s into a pool whose ledger names "
                     "%s. The pool will be complete under neither gate.",
                     search_gate_fingerprint()[:12], str(theirs)[:12])
+
+    # The pool's OWN account of the gate that admitted its rows, which is the only
+    # one a pulled pool has. Read before anything is written, so a refusal leaves
+    # the pool and the ledger exactly as it found them.
+    pool_provenance = read_pool_provenance(survivor_pool) if survivor_pool is not None \
+        else None
+    pool_gate = (pool_provenance or {}).get("search_gate_fingerprint") or None
+    pool_gate_mismatch = pool_gate is not None and pool_gate != search_gate_fingerprint()
+    if pool_gate_mismatch:
+        if not force_gate:
+            raise RuntimeError(
+                f"The pool at {survivor_pool} records a DIFFERENT search gate in its "
+                f"{POOL_PROVENANCE} (pool {str(pool_gate)[:12]}, this checkout "
+                f"{search_gate_fingerprint()[:12]}, source "
+                f"{(pool_provenance or {}).get('source') or '?'}). Its files hold the "
+                "survivors of THAT gate, and the rows it rejected were never stored, so "
+                "adding this gate's partitions would build a pool complete under neither "
+                "— and would re-attribute every file already there to a gate that never "
+                "admitted it. Scan into a fresh pool directory (--survivor-pool, or set "
+                "FLORA_POOL_DIR), or pass --force-gate to add this gate's partitions "
+                "knowing the mixture.")
+        log.warning("--force-gate: scanning under gate %s into a pool whose %s names %s. "
+                    "The pool will be complete under neither gate, and its recorded gate "
+                    "becomes UNKNOWN rather than either of the two.",
+                    search_gate_fingerprint()[:12], POOL_PROVENANCE, str(pool_gate)[:12])
+
     if files is None:
         ledger["snapshot_date"] = (manifest.get("meta") or {}).get("updated_date", "") \
             or ledger.get("snapshot_date", "")
@@ -980,12 +1014,36 @@ def scan_snapshot(max_files: Optional[int] = None,
 
     if survivor_pool is not None:
         # Stamped here because a scan is the one place that knows the gate its rows
-        # were admitted under authoritatively — it just applied it. The count is
-        # whatever this scan leaves complete; a later resumed scan raises it.
+        # were admitted under authoritatively — it just applied it. Three rules, so
+        # that scanning INTO an existing pool describes the pool rather than this run:
+        #
+        # * whatever the sidecar recorded stands, INCLUDING a recorded null. This run
+        #   matched it (or was forced), so re-deriving it from the local ledger could
+        #   only substitute one value for an equal one — or, for a pulled pool,
+        #   silently re-attribute every file to whatever gate this machine holds. A
+        #   pool whose gate is on record as unknown does not become known because
+        #   this checkout added a partition to it.
+        # * a knowingly mixed pool (--force-gate over a sidecar or a ledger naming
+        #   another gate) records no gate at all: no single fingerprint is true of its
+        #   rows any more, and naming either one would be a claim the pool cannot
+        #   support. `source` says "scan:mixed" so the operator can see why.
+        # * expected_files never falls. A pull records how many files COMPLETE the
+        #   pool; counting what is on disk after a scan that added a partition to a
+        #   half-pulled pool would erase that claim and make a partial pool
+        #   fingerprint as whole.
         if survivor_pool.exists():
+            on_disk = len(list(survivor_pool.glob("*.parquet")))
+            expected_before = (pool_provenance or {}).get("expected_files")
+            gate_to_record: Optional[str] = pool_gate if pool_provenance is not None else (
+                ledger_gate_fingerprint(ledger) or search_gate_fingerprint())
+            source = "scan"
+            if pool_gate_mismatch or ledger_gate_mismatch:
+                gate_to_record, source = None, "scan:mixed"
             write_pool_provenance(
-                survivor_pool, ledger_gate_fingerprint(ledger) or search_gate_fingerprint(),
-                len(list(survivor_pool.glob("*.parquet"))), "scan")
+                survivor_pool, gate_to_record,
+                max(on_disk, expected_before) if isinstance(expected_before, int)
+                else on_disk,
+                source)
         log.info("Snapshot survivor pool: %d rows, %.1f MB at %s (gate=%s)",
                  counters["pooled"], _pool_size_bytes(survivor_pool) / 1e6, survivor_pool,
                  search_gate_fingerprint()[:12])
@@ -1149,6 +1207,25 @@ def _print_status(status: dict) -> None:
     print(f"  this checkout                         {search_gate_fingerprint()[:12]}\n")
 
 
+# A fingerprint is a sha256 hex digest — `search_gate_fingerprint()`'s own shape.
+# Validating it is not pedantry: --gate is copied by hand out of another repo's
+# manifest, and a typo mints a plausible-looking release id that names a gate no
+# scan ever applied, which nothing downstream can tell from a real one.
+_GATE_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def _ledger_describes_pool(ledger: dict, files: list[Path]) -> list[str]:
+    """Pool files this ledger cannot account for, worst first.
+
+    A ledger names the partitions one machine consumed; ``_pool_file_name`` maps each
+    to the pool file it wrote. A pool file no ledger entry maps to was not written by
+    this ledger's scan, so that ledger's gate says nothing about it. The reverse is
+    not a mismatch: a partition with no survivor leaves no pool file at all.
+    """
+    accounted = {_pool_file_name(url) for url in (ledger.get("files") or {})}
+    return sorted(p.name for p in files if p.name not in accounted)
+
+
 def stamp_pool(pool_dir: Optional[Path] = None, gate: Optional[str] = None) -> dict:
     """Write the provenance sidecar for a pool that already exists on disk.
 
@@ -1157,11 +1234,24 @@ def stamp_pool(pool_dir: Optional[Path] = None, gate: Optional[str] = None) -> d
     from *gate* given explicitly (``"local"`` means "I confirm this checkout's gate
     admitted these rows"). With neither, this REFUSES: guessing the gate is the
     failure the sidecar exists to prevent, and a wrong stamp is worse than none.
+
+    The ledger is only consulted when it DESCRIBES this pool — every pool file
+    traceable to a partition it consumed. An AWS scan's ledger beside a pool pulled
+    from a colleague are both real, and reading the gate off the first to describe
+    the second is the same guess by another route.
     """
     pool_dir = SNAPSHOT_POOL_DIR if pool_dir is None else Path(pool_dir)
     files = sorted(pool_dir.glob("*.parquet")) if pool_dir.is_dir() else []
     if not files:
         raise RuntimeError(f"No pool parquet files under {pool_dir} — nothing to stamp.")
+
+    if gate and gate != "local" and not _GATE_RE.fullmatch(gate):
+        raise RuntimeError(
+            f"--gate {gate!r} is not a search-gate fingerprint: expected 64 hexadecimal "
+            "characters (the `stage_a_fingerprint` value in the source repo's "
+            "pool_manifest.json, or the `search_gate_fingerprint` of its ledger), or the "
+            "literal 'local' for this checkout's own gate "
+            f"({search_gate_fingerprint()[:12]}...). Nothing was stamped.")
 
     if gate == "local":
         value, source = search_gate_fingerprint(), "stamp:local"
@@ -1171,7 +1261,8 @@ def stamp_pool(pool_dir: Optional[Path] = None, gate: Optional[str] = None) -> d
         # `load_ledger()` MANUFACTURES a fresh ledger carrying this checkout's gate
         # when there is no file — reading that would be exactly the guess this
         # refuses. Only a ledger that exists is an account of a scan.
-        value = ledger_gate_fingerprint(load_ledger()) if _LEDGER_PATH.exists() else None
+        ledger = load_ledger() if _LEDGER_PATH.exists() else {}
+        value = ledger_gate_fingerprint(ledger) if ledger else None
         source = "stamp:ledger"
         if not value:
             raise RuntimeError(
@@ -1181,6 +1272,17 @@ def stamp_pool(pool_dir: Optional[Path] = None, gate: Optional[str] = None) -> d
                 "`stage_a_fingerprint` in the repo's pool_manifest.json "
                 "(--gate <fingerprint>); for a pool this checkout scanned itself, "
                 "--gate local.")
+        unaccounted = _ledger_describes_pool(ledger, files)
+        if unaccounted:
+            raise RuntimeError(
+                f"The scan ledger at {_LEDGER_PATH} does not describe the pool at "
+                f"{pool_dir}: {len(unaccounted)} of {len(files)} pool file(s) match no "
+                f"partition it consumed (e.g. {', '.join(unaccounted[:3])}). Its gate "
+                f"({str(value)[:12]}) is therefore an account of some OTHER pool — a "
+                "pulled pool beside a local scan's ledger is the usual way this happens. "
+                "Pass the gate that admitted THESE rows explicitly: --gate <fingerprint> "
+                "from the source repo's pool_manifest.json, or --gate local if this "
+                "checkout scanned them.")
 
     path = write_pool_provenance(pool_dir, value, len(files), source)
     log.info("Stamped %s: gate %s (%s), %d file(s) expected", path, str(value)[:12],
@@ -1206,12 +1308,15 @@ def main() -> None:
                         help=f"Write {POOL_PROVENANCE} for an existing pool (the gate its "
                              "rows were admitted under + the file count that completes "
                              "it), without re-scanning or re-pulling. Uses the local "
-                             "ledger's gate; refuses when there is none unless --gate says.")
+                             "ledger's gate, and only when that ledger accounts for this "
+                             "pool's files; refuses otherwise unless --gate says.")
     parser.add_argument("--gate", metavar="FINGERPRINT", default=None,
                         help="--stamp-pool only: the search-gate fingerprint the pool's "
-                             "rows were admitted under (for a pulled pool: "
-                             "stage_a_fingerprint from the repo's pool_manifest.json), or "
-                             "the literal 'local' to claim this checkout's gate.")
+                             "rows were admitted under — 64 hex characters, for a pulled "
+                             "pool the stage_a_fingerprint from the repo's "
+                             "pool_manifest.json — or the literal 'local' to claim this "
+                             "checkout's gate. Anything else is rejected rather than "
+                             "stamped.")
     args = parser.parse_args()
 
     if args.gate and not args.stamp_pool:

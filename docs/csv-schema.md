@@ -243,7 +243,7 @@ settled row (`--status api_error` targets just the failed ones).
 | `not_found` | DOI was blank and a completed search found no match anywhere |
 | `no_metadata` | DOI is registered but returned no usable metadata |
 | `api_error` | **Verification unavailable.** Either the metadata lookup for `doi_o` failed at both CrossRef and OpenAlex, or the search for a replacement could not be completed at one of them. `doi_o` is left exactly as it was — an unfinished check is never grounds for dropping a DOI — and a later run re-verifies the row |
-| `skipped` | Row is `target_pending` or `api_error`; nothing to verify |
+| `skipped` | `link_method` is one of `VERIFICATION_SKIP_LINK_METHODS` — `target_pending`, `api_error` or `prescreen_discard`; there is no settled link, so there is nothing to verify |
 
 ### `outcome` values
 

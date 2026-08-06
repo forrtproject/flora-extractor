@@ -295,6 +295,29 @@ def test_s2_batch_preserves_request_order_no_id_join_needed(monkeypatch):
                         lambda *a, **k: DummyResponse({}, status_code=500))
     assert fa._fetch_s2_batch(["10.1/a"], "KEY") is None
 
+
+def test_a_short_s2_batch_response_checkpoints_nothing(monkeypatch, caplog):
+    """The join is positional, so a response shorter than the request is not an answer
+    about the ids it left out — and zip() would drop them silently, checkpointing them
+    as definitive misses no later run would revisit. The whole batch is refused, the
+    same rule the EPMC phase applies to a truncated page."""
+    monkeypatch.setattr(fa._SESSION, "post",
+                        lambda *a, **k: DummyResponse([{"abstract": "Found"}]))
+
+    with caplog.at_level("WARNING"):
+        assert fa._fetch_s2_batch(["10.1/a", "10.1/b", "10.1/c"], "KEY") is None
+    assert "not checkpointed" in caplog.text
+
+    # Nor is a longer array, or a body that is not an array at all: in either case the
+    # positions no longer name the DOIs that were asked about.
+    monkeypatch.setattr(fa._SESSION, "post",
+                        lambda *a, **k: DummyResponse([{"abstract": "a"}, None, None]))
+    assert fa._fetch_s2_batch(["10.1/a", "10.1/b"], "KEY") is None
+    monkeypatch.setattr(fa._SESSION, "post",
+                        lambda *a, **k: DummyResponse({"error": "too many ids"}))
+    assert fa._fetch_s2_batch(["10.1/a"], "KEY") is None
+
+
 def _epmc_payload(*records):
     return {"hitCount": len(records), "resultList": {"result": list(records)}}
 

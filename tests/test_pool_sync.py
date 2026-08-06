@@ -399,6 +399,28 @@ def test_pull_records_the_remote_s_gate_and_file_count_beside_the_pool(tmp_path,
     assert list(pool.glob("*.parquet")) == [], "interrupted: short, and it says so"
 
 
+def test_an_unreadable_manifest_does_not_erase_the_gate_already_recorded(tmp_path,
+                                                                        monkeypatch,
+                                                                        caplog):
+    """An unreadable manifest is an absence of information about the gate, not a
+    finding that there is none. Writing null over the gate a scan (or an earlier
+    pull) established would destroy the pool's only account of what admitted its
+    rows, and nothing later could tell that it had been lost."""
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    ss.write_pool_provenance(pool, "a" * 64, 1, "stamp:manual")
+    _fake_hub(monkeypatch, {"2019/part-2019-01-01-part_0000.parquet": 6},
+              download_errors={ps._POOL_MANIFEST: _HubHTTPError("503 Service Unavailable")})
+
+    with caplog.at_level("WARNING"):
+        assert ps.pull_pool(pool, repo="me/pool") == 1
+
+    record = ss.read_pool_provenance(pool)
+    assert record["search_gate_fingerprint"] == "a" * 64
+    assert record["expected_files"] == 1 and record["source"] == "pull:me/pool"
+    assert "Keeping the search gate" in caplog.text
+
+
 def test_pull_dry_run_writes_no_sidecar(tmp_path, monkeypatch):
     """A dry run reports; it must not leave a claim about a pool it did not fetch."""
     pool = tmp_path / "pool"

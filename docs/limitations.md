@@ -116,7 +116,16 @@ changed.
 
 ---
 
-## (e) Stage 1 cursor checkpoints do not account for what was fetched (issue #68)
+## (e) Stage 1 cursor checkpoints do not account for what was fetched (issue #68) — **superseded**
+
+**Superseded 2026-08-03.** This entry describes the API-harvest Stage 1, whose
+sources are retired to `wip/api-harvest-sources` (PR #158) and whose corpus
+(`data/candidates.csv`) nothing downstream reads. The revisit obligation was
+discharged by a different route than the one below: the full OpenAlex snapshot was
+scanned once — all 510,372,821 records, no cursors and no per-phrase quota — into
+the survivor pool, so completeness for 2012–2021 no longer rests on what a cache of
+result pages can account for. The account below is kept as the record of why the
+old numbers cannot be reconstructed.
 
 `cache/openalex/` holds **45,866 cached result pages** but only **853 cursor
 checkpoints**. The checkpoints account for 1.31M fetched records; the page files

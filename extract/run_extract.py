@@ -17,9 +17,11 @@ Usage:
     python -m extract.run_extract
 """
 import csv
+import hashlib
 import json
 import re
 import threading
+from collections import Counter
 from concurrent.futures import (FIRST_COMPLETED, Future, ThreadPoolExecutor,
                                 wait)
 from pathlib import Path
@@ -50,12 +52,14 @@ from shared.pdf_parsing import (
     best_parse_result,
     outcome_text,
     parse_all as _parse_all,
+    parse_result_has_transient_failure,
     parse_result_is_empty,
     score_parse_result,
 )
 from shared.row_key import primary_key
 from shared.doi_verify import keeps_no_doi, verify_and_correct
 from shared.schema import (
+    ENGINE_EXPORT_COLS,
     EXTRACTED_COLS,
     LINK_METHOD_VALUES,
     OUTCOME_CATEGORIES,
@@ -625,6 +629,13 @@ def _read_parse_cache(doi_r: str) -> "dict | None":
 
     An all-empty cache counts as a miss: it is what a PDF-less run wrote, and reading
     it back would pin the paper to abstract-only coding forever (audit B4).
+
+    So does a cache carrying a transient failure (a method that never got an answer,
+    e.g. reference extraction while the provider was down). Such a file should no
+    longer be written at all, but the ones written before that was true are on disk,
+    and reading them back keeps the outage as this paper's permanent answer about its
+    own references. Treating them as a miss re-parses the document — which is what
+    heals them, since the re-parse is only cached once every method has answered.
     """
     cache_file = PARSE_CACHE_DIR / f"parse_{cache_key(doi_r)}.json"
     if not cache_file.exists():
@@ -634,7 +645,9 @@ def _read_parse_cache(doi_r: str) -> "dict | None":
             results = json.load(fh)
     except Exception:
         return None
-    return None if parse_result_is_empty(results) else results
+    if parse_result_is_empty(results) or parse_result_has_transient_failure(results):
+        return None
+    return results
 
 
 def _save_parse_cache(doi_r: str) -> None:
@@ -651,6 +664,14 @@ def _save_parse_cache(doi_r: str) -> None:
     results = _parse_all(doi_r, pdf_path, oa_xml=_cached_oa_xml(key))
     if parse_result_is_empty(results):
         log.debug("[%s] parse produced no text — not caching", doi_r)
+        return
+    if parse_result_has_transient_failure(results):
+        # One method never got an answer (the reference extractor while its provider
+        # was unreachable, say). The others' text is real, but the whole dict is what
+        # goes to disk and what comes back, so caching now would make an outage this
+        # paper's permanent answer about its references. Nothing is cached until every
+        # method has answered; the text costs a re-parse, which is local.
+        log.info("[%s] parse carries a transient failure — not caching", doi_r)
         return
     try:
         write_json(out_file, results, indent=2)
@@ -1047,6 +1068,21 @@ def _screen_set_aside_keys(data_dir, rescreen: bool = False) -> set[str]:
     return keys
 
 
+def _demote_stale_row(row: dict) -> dict:
+    """A resolved link_method with no doi_o, filed as what it actually is.
+
+    The same demotion sanity_check applies (`link_method` → target_pending, with the
+    reason on the row), so a row that reaches the resume before a sanity_check pass
+    ends up in the same state as one that reaches it after.
+    """
+    row = dict(row)
+    row["link_method"] = "target_pending"
+    prior = str(row.get("link_evidence", "") or "")
+    note = "demoted on resume: resolved link_method with no doi_o"
+    row["link_evidence"] = (f"{note}; {prior}" if prior else note)[:2000]
+    return row
+
+
 def _load_extracted_rows(out_path, rescreen: bool = False
                          ) -> tuple[dict[str, list[dict]], dict[str, list[dict]]]:
     """Partition extracted.csv rows by resolution status for a resuming run.
@@ -1055,21 +1091,33 @@ def _load_extracted_rows(out_path, rescreen: bool = False
     of extracted.csv; without them a resume redoes every paper that was settled
     anywhere other than extracted.csv — re-screening it and re-walking the ladder.
 
-    False_positive rows in the existing file are dropped — they should never have
-    been written to extracted.csv and will not be re-written on resume.
+    A stale row (a resolved link_method with no doi_o) is DEMOTED to target_pending
+    and carried, never dropped: see the comment at the demotion.
+
+    Two classes of row are deliberately purged rather than partitioned, and they are
+    the only rows a resume does not put back — everywhere else in this file that
+    claims a resume loses nothing means "nothing except these two":
+
+    * false_positive rows, which should never have been written to extracted.csv;
+    * rows carrying no identifier at all — no DOI, no OpenAlex id, no URL, no title.
+      They cannot be keyed, so they can be neither deduplicated nor resumed, and
+      audit_extracted blocks them from validation anyway.
 
     rescreen — treat the screen's own set-aside verdicts (not_a_replication,
         screen_disagreement, prescreen_discard) as unresolved, so a paper an older
         screening generation ended is eligible for whatever the current one said
         about it. Off by default: a resumed run should reproduce its predecessor's
-        decisions, not silently revisit them.
+        decisions, not silently revisit them. A reopened paper is returned as
+        `pending`, not withheld: reopening asks for it to be decided again, and if
+        this run never gets to it (it is no longer in filtered.csv) its rows are
+        written back as they stood.
 
     Returns:
         resolved — row_key → list of rows that are fully resolved (link_method != target_pending)
-        pending  — row_key → its rows, where at least one has link_method == target_pending.
-                   The rows come back too because a resume that never sees the key
-                   again (the paper left filtered.csv) has to write them back
-                   unchanged rather than let the rewritten file drop them.
+        pending  — row_key → its rows: at least one is target_pending, or the paper was
+                   demoted/reopened here. The rows come back too because a resume that
+                   never sees the key again (the paper left filtered.csv) has to write
+                   them back unchanged rather than let the rewritten file drop them.
     """
     # An empty list of rows: the paper is settled, so it is skipped, but its row
     # stays in the set-aside CSV rather than being written back to extracted.csv.
@@ -1081,42 +1129,56 @@ def _load_extracted_rows(out_path, rescreen: bool = False
     df = pd.read_csv(out_path, dtype=str, encoding="utf-8-sig").fillna("")
     # Drop false_positive rows that were incorrectly written in a prior run.
     df = df[df["filter_status"] != "false_positive"]
+    reopened: set[str] = set()
     if rescreen and not df.empty:
-        # Drop the paper, not just the row: the screen decides a whole paper, so a
+        # The paper, not the row: the screen decides a whole paper, so a
         # multi-original paper with one set-aside row is re-screened as a unit.
+        #
+        # Reopened, not removed. Dropping these rows from the frame made --rescreen a
+        # deletion path of its own: a paper the current handoff no longer carries was
+        # never re-processed, so nothing wrote its rows back and they left the file.
+        # Filing them under `pending` reopens the paper — it is not `resolved`, so the
+        # run redoes it — while the carry-back keeps its rows if the run never gets to
+        # it. Reopening defers; it does not delete.
         set_aside = (df["link_method"].isin(SCREEN_SET_ASIDE_METHODS)
                      | df["outcome"].isin(SCREEN_SET_ASIDE_METHODS))
         keys = df.apply(_extract_row_key, axis=1)
-        df = df[~keys.isin(set(keys[set_aside]))]
+        reopened = {k for k in keys[keys.isin(set(keys[set_aside]))] if k}
     resolved: dict[str, list[dict]] = {}
     pending: dict[str, list[dict]] = {}
     for row_key, group in df.groupby(df.apply(_extract_row_key, axis=1), sort=False):
         if not row_key:
             continue  # rows with no DOI, no OA ID, and no title — skip; can't dedup
+        if row_key in reopened:
+            pending[row_key] = group.to_dict("records")
+            continue
         rows = group.to_dict("records")
         # Stale artifact: LLM method written before the no_original_found fix — these
-        # have link_method=llm_fulltext/llm_cited_candidates but an empty doi_o. Drop
-        # them from the resume state so they are re-processed.
+        # have link_method=llm_fulltext/llm_cited_candidates but an empty doi_o. The
+        # row claims a target it cannot name, so it must not stand as resolved.
         #
-        # Dropping is only safe for a paper still in filtered.csv: a key marked pending
-        # is NOT written back, so one whose paper has left the input is deleted from
-        # extracted.csv outright. That is how 76 rows vanished on 2026-08-05, when the
-        # engine handoff shrank the input below the corpus this file was built from.
-        # sanity_check now demotes these to target_pending before they can reach here,
-        # so the filter is a backstop — and a loud one, because a silent deletion is
-        # what made the loss invisible in the first place.
+        # It is DEMOTED rather than dropped. Dropping it deleted it from the file: a
+        # key marked pending was not written back, so a paper that had meanwhile left
+        # filtered.csv lost the row outright — that is how 76 rows vanished on
+        # 2026-08-05, when the engine handoff shrank the input below the corpus this
+        # file was built from. Demotion is what sanity_check already does to these
+        # rows, and it costs a re-run of one paper rather than a row nobody can get
+        # back. It also makes the resume's guarantee absolute: every row the file held
+        # at the start is still in it at the end, whatever happens in between.
         stale = [r for r in rows
                  if r.get("link_method") in {"llm_fulltext", "llm_cited_candidates"}
                  and not r.get("doi_o", "").strip()]
-        rows = [r for r in rows if r not in stale]
         if stale:
             log.warning("[%s] %d row(s) with a resolved link_method but no doi_o "
-                        "dropped from the resume state — they are re-processed only "
-                        "if the paper is still in filtered.csv", row_key, len(stale))
-        if not rows:
-            # Every row was a stale artifact: the key is unresolved, and there is
-            # nothing worth carrying forward if the paper never comes back.
-            pending[row_key] = []
+                        "demoted to target_pending — the paper is re-processed, and "
+                        "the rows are carried forward if it has left filtered.csv",
+                        row_key, len(stale))
+            rows = [_demote_stale_row(r) if r in stale else r for r in rows]
+            # The paper, not the row: a key with one stale row and one good one is
+            # unresolved as a whole. Filing it under `resolved` would mark the paper
+            # done and never ask for it again — while `pending` both re-processes the
+            # paper and writes its rows back if it has left filtered.csv.
+            pending[row_key] = rows
             continue
         is_pending = any(r.get("link_method") == "target_pending" for r in rows)
         if is_pending:
@@ -1418,6 +1480,45 @@ def _carried_row_as_written(result_row: dict) -> dict:
     return result_row
 
 
+def _restore_carried_rows(out_path, carried: "list[dict]") -> int:
+    """Write back every carried row that is not on disk yet. Returns how many.
+
+    The recovery path of the resume prologue: the output has been truncated to its
+    header, so a carried row the loop did not get written is a row lost. It is decided
+    against what the FILE holds rather than against the loop's own counter, because an
+    interrupt can land between the append flushing and the counter incrementing — and
+    then the counter says the row is missing when it is already there. Writing it a
+    second time would be a duplicate row that every later resume preserves and
+    audit_extracted flags as a BLOCKER, so it is the file, not the counter, that is
+    asked.
+
+    Rows are matched by resume key, counted: a paper with three originals has three
+    rows under one key, and only the ones missing from the file are restored.
+    """
+    try:
+        with csv_lock(out_path):
+            on_disk = pd.read_csv(out_path, dtype=str, encoding="utf-8-sig").fillna("")
+        written_keys = Counter(on_disk.apply(_extract_row_key, axis=1)) \
+            if not on_disk.empty else Counter()
+    except Exception as exc:
+        # An unreadable output tells us nothing about what is in it; restoring every
+        # row risks duplicates, and restoring none risks losing them all. Duplicates
+        # are repairable, a deleted row whose paper has left filtered.csv is not.
+        log.warning("could not read %s while restoring carried rows (%s) — "
+                    "restoring all of them", out_path, exc)
+        written_keys = Counter()
+
+    restored = 0
+    for result_row in carried:
+        key = _extract_row_key(result_row)
+        if written_keys[key] > 0:
+            written_keys[key] -= 1
+            continue
+        _write_row(out_path, _carried_row_as_written(result_row))
+        restored += 1
+    return restored
+
+
 def _require_input_csv(filtered_path: Path) -> None:
     """Refuse to run without the input CSV, rather than falling back to the fixture.
 
@@ -1435,6 +1536,107 @@ def _require_input_csv(filtered_path: Path) -> None:
         "To run against the small fixture instead, name it explicitly: "
         "--filtered-csv misc/sample_filtered.csv"
     )
+
+
+def _file_sha256(path: Path) -> str:
+    """sha256 of a file's bytes, read in blocks so a large CSV is never held whole."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _verify_input_manifest(filtered_path: Path) -> None:
+    """Refuse an input CSV its own manifest does not describe.
+
+    Stage 2's handoff publishes the manifest BEFORE the CSV it describes
+    (`filter/engine/handoff.py:_publish`), so the one state a crash can leave is a
+    new manifest over the PREVIOUS handoff — a torn or superseded publish. That
+    ordering only buys anything if the reader looks, and this is the reader looking:
+    the CSV's bytes and its header must be the ones the manifest names, or the run
+    stops before it spends a provider bill on an input nobody can identify later.
+
+    Whether ABSENCE is a disagreement depends on the file, and the file says which it
+    is: a handoff writes the engine's provenance columns (`ENGINE_EXPORT_COLS` —
+    release_id, route_rule, the rest), and nothing else does. A header carrying them
+    claims to have come from a release, so it has to name which one: a missing
+    manifest there is a refusal, because that file is only ever produced by a handoff
+    and its manifest going missing means something went wrong — including the case
+    this whole check exists for, where deleting the manifest of a torn publish would
+    otherwise downgrade a detectable mismatch to a shrug.
+
+    A header without them is misc/sample_filtered.csv, a hand-made CSV, an `export`ed
+    pile or a fixture, and a missing manifest warns and proceeds — refusing those
+    would break real workflows to prevent nothing.
+
+    The discriminator is the CONTENT rather than the path (`data/filtered.csv`, or
+    whether --filtered-csv was passed) because provenance travels with the artifact:
+    a handoff published elsewhere with `--out` is still bound, a copy of one is still
+    bound, and naming the default path explicitly cannot buy leniency. It reads the
+    marker from `ENGINE_EXPORT_COLS` rather than from a literal, so a column renamed
+    in the schema cannot silently turn the requirement off.
+
+    An unreadable manifest IS a disagreement, and refuses: a file that cannot be parsed
+    says nothing about the CSV, and treating "I cannot read the description" as "there
+    is no description" is how a torn write passes for a hand-made input — the same
+    reasoning the scan ledger and the pool provenance sidecar follow on this branch.
+
+    The hash is over the whole CSV, which costs ~0.1 s per 300 MB warm (measured;
+    a cold read dominates it). filtered.csv is 2.6 MB today, so the check is free at
+    startup and stays affordable well past any size this input is heading for.
+    """
+    with open(filtered_path, encoding="utf-8-sig", newline="") as handle:
+        header = next(csv.reader(handle), [])
+    from_a_handoff = bool(set(header) & set(ENGINE_EXPORT_COLS))
+
+    manifest_path = Path(str(filtered_path) + ".manifest.json")
+    if not manifest_path.exists():
+        if from_a_handoff:
+            raise RuntimeError(
+                f"{filtered_path} carries the engine's provenance columns, so the "
+                f"engine wrote it — but {manifest_path.name} is not there, so nothing "
+                "says which release it names or whether it is complete.\n"
+                "Both producers publish the pair: `handoff` writes Stage 3's input, "
+                "`export` writes a single pile. A missing manifest means the publish "
+                "was interrupted, or the CSV was copied away from it by hand.\n"
+                "Re-publish it (whichever wrote it):\n"
+                f"  python -m filter.engine handoff --out {filtered_path}\n"
+                f"  python -m filter.engine export --pile PILE --out {filtered_path}"
+            )
+        log.warning("%s has no manifest (%s) — cannot verify this input came from a "
+                    "handoff; proceeding", filtered_path.name, manifest_path.name)
+        return
+
+    def _refuse(problem: str) -> None:
+        raise RuntimeError(
+            f"{filtered_path} does not match its manifest {manifest_path.name}: "
+            f"{problem}\n"
+            "That is a torn or superseded handoff — the manifest was published and "
+            "the CSV it describes was not (or was replaced since).\n"
+            "Re-publish the pair: python -m filter.engine handoff --out "
+            f"{filtered_path}"
+        )
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        expected_sha = str(manifest["sha256"])
+        expected_cols = list(manifest["columns"])
+    except Exception as exc:
+        _refuse(f"the manifest could not be read ({exc})")
+
+    actual_sha = _file_sha256(filtered_path)
+    if actual_sha != expected_sha:
+        _refuse(f"sha256 is {actual_sha[:16]}…, manifest says {expected_sha[:16]}… "
+                f"(manifest describes {manifest.get('rows', '?')} rows from release "
+                f"{str(manifest.get('release_id', '?'))[:12]}…)")
+
+    if header != expected_cols:
+        missing = [c for c in expected_cols if c not in header]
+        extra = [c for c in header if c not in expected_cols]
+        detail = (f"missing {missing}, unexpected {extra}" if (missing or extra)
+                  else "same columns in a different order")
+        _refuse(f"header does not match the manifest's columns — {detail}")
 
 
 def _require_screen_verdicts(filtered_path: Path, no_llm: bool,
@@ -1481,10 +1683,47 @@ def _write_header(out_path) -> None:
     stale file in place, looking like the fresh result.
     """
     with csv_lock(out_path):
-        pd.DataFrame(columns=list(EXTRACTED_COLS)).to_csv(
-            out_path, mode="w", index=False, encoding="utf-8-sig",
-            quoting=1, quotechar='"',
-        )
+        _write_header_unlocked(out_path)
+
+
+def _write_header_unlocked(out_path) -> None:
+    """The truncating write itself, for a caller that already holds the file's lock.
+
+    Exists because the resume has to READ the file and truncate it without another
+    writer getting in between (see _load_and_truncate), and filelock's locks are per
+    open-file-description: taking the same lock twice in one process would block for
+    good.
+    """
+    pd.DataFrame(columns=list(EXTRACTED_COLS)).to_csv(
+        out_path, mode="w", index=False, encoding="utf-8-sig",
+        quoting=1, quotechar='"',
+    )
+
+
+def _load_and_truncate(out_path, rescreen: bool = False
+                       ) -> tuple[dict[str, list[dict]], dict[str, list[dict]]]:
+    """Read the resume state and truncate the file to its header, under ONE lock.
+
+    Unlocked, the two steps are a race that deletes rows nobody can recover: a
+    concurrent run appends a row after this one has read the file, the truncation then
+    wipes it, and it is in neither `resolved` nor `pending`, so nothing writes it
+    back — _restore_carried_rows cannot restore a row it never saw.
+
+    The lock covers the read and the truncation and nothing else. It is deliberately
+    NOT held across the prologue's re-verification, which issues OpenAlex searches and
+    runs for minutes: run_extract takes this same lock for every row it appends, so
+    holding it that long would stall a concurrent run — the trade sanity_check and
+    audit_dois avoid by merging at the end rather than locking throughout. Here the
+    locked section is one CSV read, so it is measured in seconds and the merge is
+    unnecessary.
+
+    _load_extracted_rows takes no lock of its own (its other reads are of the
+    set-aside CSVs, which are different files), so nesting is safe.
+    """
+    with csv_lock(out_path):
+        resolved, pending = _load_extracted_rows(out_path, rescreen=rescreen)
+        _write_header_unlocked(out_path)
+    return resolved, pending
 
 
 def _write_row(out_path, result_row: dict) -> None:
@@ -2141,6 +2380,7 @@ def run_extract(no_llm: bool = False,
 
     filtered_path = Path(filtered_csv) if filtered_csv else DATA_DIR / "filtered.csv"
     _require_input_csv(filtered_path)
+    _verify_input_manifest(filtered_path)
     _require_screen_verdicts(filtered_path, no_llm, screen_here)
 
     flora_skip: set[str] = set()
@@ -2174,60 +2414,8 @@ def run_extract(no_llm: bool = False,
             len(resolved_main),
         )
 
-    # Resuming is the default: a run that re-decided rows it had already paid for
-    # would be the expensive accident, so it takes --fresh to ask for one.
     resolved_rows: dict[str, list[dict]] = {}
     pending_rows: dict[str, list[dict]] = {}
-    if fresh:
-        log.warning("--fresh: %s is overwritten now and every row re-extracted",
-                    out_path.name)
-        # Truncate before any row work, not at the first row written: a --fresh run
-        # that skips every row must still leave a fresh (empty) file behind.
-        _write_header(out_path)
-    else:
-        resolved_rows, pending_rows = _load_extracted_rows(out_path, rescreen=rescreen)
-        n_resolved_rows = sum(len(v) for v in resolved_rows.values())
-        log.info(
-            "resuming: %d DOIs already resolved (%d rows), %d pending re-processing",
-            len(resolved_rows), n_resolved_rows, len(pending_rows),
-        )
-        # Write the header and ALL resolved rows to the output file immediately,
-        # before processing any pending rows: resolved work is committed up front,
-        # not interleaved with slow PDF/LLM calls. The header goes down even when
-        # there are no resolved rows at all, so that nothing written later can be
-        # the write that truncates the file.
-        _write_header(out_path)
-        reverified = 0
-        carried = [row for rows in resolved_rows.values() for row in rows]
-        carried_written = 0
-        try:
-            for result_row in carried:
-                if _needs_verification(result_row):
-                    reverified += 1
-                # The output has already been truncated to its header, so every row
-                # not written here is a row LOST. Nothing about a carried row — an
-                # OpenAlex outage in the re-verification, a quota exhaustion, a legacy
-                # value no builder would produce — may cost the run rows it already
-                # had: it is written as it stood on disk instead.
-                try:
-                    result_row = _finalise_carried_row(result_row)
-                except Exception as exc:
-                    log.warning("carried row %s could not be finalised (%s) — writing "
-                                "it back unchanged", result_row.get("doi_r", ""), exc)
-                    result_row = _carried_row_as_written(result_row)
-                _write_row(out_path, result_row)
-                carried_written += 1
-                written += 1
-        except BaseException:
-            # Ctrl-C (or anything else) in the middle of the carry loop would leave the
-            # rest of the file's own rows on the floor. Put them back before unwinding.
-            for result_row in carried[carried_written:]:
-                _write_row(out_path, _carried_row_as_written(result_row))
-                written += 1
-            raise
-        log.info("resuming: wrote %d resolved rows to %s (safe to interrupt); "
-                 "%d re-verified (unsettled doi_o_verification), %d trusted as written",
-                 written, out_path.name, reverified, written - reverified)
 
     doi_r_targets = {clean_doi(d) for d in (doi_r_filter or [])}
     flora_skip_count = 0
@@ -2314,9 +2502,75 @@ def run_extract(no_llm: bool = False,
                 failures.append(exc)
 
     futures: set[Future] = set()
-    pool = (ThreadPoolExecutor(max_workers=workers, thread_name_prefix="extract")
-            if workers > 1 else None)
+    pool: "ThreadPoolExecutor | None" = None
+
+    # ONE try/finally over BOTH halves of the run — the resume prologue that puts the
+    # file's own rows back, and the processing loop. The prologue is slow (it
+    # re-verifies every unsettled doi_o_verification against OpenAlex, minutes on a
+    # long file), and it used to sit outside this block: an interrupt there unwound
+    # past the `finally` that writes the pending rows back, and since the file had
+    # already been truncated to its header, every target_pending row was deleted —
+    # unrecoverably for any paper that had meanwhile left filtered.csv. The guarantee
+    # this shape buys: an interrupt at ANY point leaves the output holding every row
+    # it held when the run started — bar the two classes _load_extracted_rows purges
+    # on purpose and names in its docstring (false_positive rows, and rows carrying no
+    # identifier at all).
     try:
+        # Resuming is the default: a run that re-decided rows it had already paid for
+        # would be the expensive accident, so it takes --fresh to ask for one.
+        if fresh:
+            log.warning("--fresh: %s is overwritten now and every row re-extracted",
+                        out_path.name)
+            # Truncate before any row work, not at the first row written: a --fresh run
+            # that skips every row must still leave a fresh (empty) file behind.
+            _write_header(out_path)
+        else:
+            # Read and truncate together, under one lock: an append landing between
+            # the two would be wiped by the truncation and known to nobody. The
+            # header goes down even when there are no resolved rows at all, so that
+            # nothing written later can be the write that truncates the file.
+            resolved_rows, pending_rows = _load_and_truncate(out_path, rescreen=rescreen)
+            n_resolved_rows = sum(len(v) for v in resolved_rows.values())
+            log.info(
+                "resuming: %d DOIs already resolved (%d rows), %d pending re-processing",
+                len(resolved_rows), n_resolved_rows, len(pending_rows),
+            )
+            # The resolved rows go back immediately, before any pending row is
+            # processed: work already paid for is committed up front, not interleaved
+            # with slow PDF/LLM calls.
+            reverified = 0
+            carried = [row for rows in resolved_rows.values() for row in rows]
+            try:
+                for result_row in carried:
+                    if _needs_verification(result_row):
+                        reverified += 1
+                    # The output has already been truncated to its header, so every row
+                    # not written here is a row LOST. Nothing about a carried row — an
+                    # OpenAlex outage in the re-verification, a quota exhaustion, a legacy
+                    # value no builder would produce — may cost the run rows it already
+                    # had: it is written as it stood on disk instead.
+                    try:
+                        result_row = _finalise_carried_row(result_row)
+                    except Exception as exc:
+                        log.warning("carried row %s could not be finalised (%s) — writing "
+                                    "it back unchanged", result_row.get("doi_r", ""), exc)
+                        result_row = _carried_row_as_written(result_row)
+                    _write_row(out_path, result_row)
+                    written += 1
+            except BaseException:
+                # Ctrl-C (or anything else) in the middle of the carry loop would leave
+                # the rest of the file's own rows on the floor. Put them back before
+                # unwinding — measured against what the file actually holds, not
+                # against a counter, so the row the interrupt landed inside is neither
+                # lost nor written twice.
+                written += _restore_carried_rows(out_path, carried)
+                raise
+            log.info("resuming: wrote %d resolved rows to %s (safe to interrupt); "
+                     "%d re-verified (unsettled doi_o_verification), %d trusted as written",
+                     written, out_path.name, reverified, written - reverified)
+
+        if workers > 1:
+            pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="extract")
         for row in _iter_filtered_rows(filtered_path, from_year, to_year,
                                        predicted_outcome, source, doi_r_filter):
             if stop.is_set():
@@ -2363,13 +2617,18 @@ def run_extract(no_llm: bool = False,
         # because it has left filtered.csv, or was skipped, or the run stopped before
         # reaching it — has to be written back or it is deleted. In the `finally` so
         # a Ctrl-C or a budget stop preserves it too.
+        #
+        # Through _carried_row_as_written, for the same reason the carry loop uses it:
+        # these rows come off disk rather than out of this run's builders, so a legacy
+        # "2018.0" year is normalised (never asserted on — an old value must not abort
+        # the write-back of a row the file already held).
         carried_back = 0
         with write_lock:
             for key, rows in pending_rows.items():
                 if key in handled_keys:
                     continue
                 for result_row in rows:
-                    _write_row(out_path, result_row)
+                    _write_row(out_path, _carried_row_as_written(result_row))
                     written += 1
                     carried_back += 1
         if carried_back:

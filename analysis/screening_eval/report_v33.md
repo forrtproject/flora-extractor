@@ -8,6 +8,13 @@ The primary gate is the shipped one, **G-softqual** (`screen_gate()` in `shared/
 
 These cases are derivation data (see `README.md`), so every number is in-sample.
 
+**Request shape.** Every run scored here was made while the OpenAI call still carried a
+generic JSON system message (`_LEGACY_JSON_SYSTEM_MESSAGE` in `shared/prompts.py`).
+Production no longer sends it: the message was dropped, and the user prompt scored here
+is unchanged. Its text still salts `prompt_version()`, so the cache keys did not move —
+which means classify entries written before the change were produced under the older
+request shape and are read back under the same key as answers computed without it.
+
 **Three runs, not two.** `v32` is the checked-in `voter_v32_*` result files. `v32r` is the *same* v3.2 prompt re-run against the same two models in the same session as `v33`. Neither model is deterministic, so `v32` vs `v32r` measures run-to-run variance and `v32r` vs `v33` is the comparison that isolates the clause.
 
 ## Headline — v32 vs v33, shipped voter pair

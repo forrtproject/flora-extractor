@@ -2,20 +2,20 @@
 token_counter.py — In-process token usage tracker for LLM calls.
 
 Call set_stage(name) before any LLM call block to attribute tokens to a stage.
-Stages used in this pipeline:
-  filter             — Stage 2 LLM classification
-  extract_classify   — Stage 3 match-type classification
-  extract_abstract   — Stage 3 abstract-level LLM linking
-  extract_fulltext   — Stage 3 fulltext LLM linking
-  extract_refscreen  — Stage 3's reference-list target pick, and the --screen-here
-                       front-door fallback (the screen itself is Stage 2's)
-  extract_outcome    — Stage 3 outcome extraction
-  engine_screen_cheap / engine_screen_expensive — Stage 2's two LLM tiers
+The stages this pipeline actually sets — every set_stage() call site, and nothing
+else, so a bucket that appears here is one a run can really report:
+  extract_abstract   — Stage 3 abstract-level LLM linking (link_original.py)
+  extract_refscreen  — Stage 3's reference-list target pick (link_original.py), and
+                       the --screen-here front-door fallback in run_extract.py (the
+                       screen itself is Stage 2's)
+  extract_fulltext   — Stage 3 fulltext LLM linking (link_original.py)
+  extract_outcome    — Stage 3 outcome extraction (code_outcome.py)
+  engine_screen_cheap / engine_screen_expensive — Stage 2's two LLM tiers (tiers.py)
 
 Usage:
     from shared import token_counter
 
-    token_counter.set_stage("filter")
+    token_counter.set_stage("extract_outcome")
     # ... make LLM calls ...
     token_counter.print_summary()
 """

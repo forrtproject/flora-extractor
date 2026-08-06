@@ -1,83 +1,15 @@
 # Analysis Scripts — Code Flow
 
-Located in `analysis/`. These are post-extraction diagnostic tools, not part of the main pipeline.
-All outputs are read-only — no modifications to `data/` files.
+Located in `analysis/`. These are post-extraction diagnostic tools, not part of the
+main pipeline. All outputs are read-only — no modifications to `data/` files.
 
----
-
-## Overlap / Recall Gap Analysis (`analysis/run_overlap_analysis.py`)
-
-Compares `data/all_replications.csv` (ground-truth reference set of known replications)
-against `data/candidates.csv` (Stage 1 output) to measure recall and find genuine gaps.
-
-```bash
-python -m analysis.run_overlap_analysis
-```
-
-```text
-run_overlap_analysis.py
-    │
-    ├── analyze_recall_gap()
-    │       _build_candidate_index_sets()
-    │           read candidates.csv in 50k-row chunks
-    │           build doi_set  (cleaned doi_r values)
-    │           build url_set  (url_r + openalex_id_r — both formats indexed)
-    │
-    │       load all_replications.csv
-    │
-    │       for each row in all_replications:
-    │           if doi_r in doi_set → matched, skip (not a gap)
-    │           if url_r in url_set → matched, skip (not a gap)
-    │           else → genuine gap:
-    │               has doi_r  → gaps_by_doi
-    │               has url_r  → gaps_by_url
-    │               neither   → gaps_by_doi
-    │
-    ├── analyze_filter_gap()        (placeholder — always returns empty)
-    ├── analyze_source_contribution() (placeholder)
-    └── analyze_filter_rules()      (placeholder)
-    │
-    └── write_gap_csv() + write_report_markdown()
-            → analysis/gap_analysis_doi_matched.csv
-            → analysis/gap_analysis_url_matched.csv
-            → analysis/gap_summary.md
-```
-
-### How to read the gap counts
-
-The gap count in `gap_summary.md` means papers in `all_replications.csv` that are
-**genuinely absent** from `candidates.csv`. Both DOI and OpenAlex work ID (`openalex_id_r`)
-are checked so papers found under either identifier are not double-counted as gaps.
-
-`all_replications.csv` contains a mix of `validation_status` values — only a subset
-are confirmed true replications:
-
-| `validation_status` | Meaning for gap analysis |
-| --- | --- |
-| `llm_confirmed` | Confirmed replications — genuine gaps worth investigating |
-| `false_positive` | Correctly absent; Stage 1 phrase search rightly excluded them |
-| `needs_review` | Unknown; may or may not be real gaps |
-| `already_in_flora` | Already in the database; absence from candidates is expected |
-
-The `gap_analysis_doi_matched.csv` file includes a `validation_status` column so you
-can filter to `llm_confirmed` rows when prioritising which gaps to close.
-
-### Why gaps exist — root causes (as of 2026-06-23)
-
-| Root cause | Gap count | Fix |
-| --- | --- | --- |
-| Papers with no replication keyword in title or abstract | ~266 confirmed | External list ingestion (Fix 1) |
-| Abstract-only replication language not covered by phrases | ~128 confirmed | 13 new phrases added (Fix 3) |
-| Papers classified by OpenAlex concept but not phrase-matched | remaining | Concept search added (Fix 2) |
-| URL format mismatch (old pipeline stored `openalex.org/W…` as `url_r`) | was ~2,847 false gaps | Fixed in `_build_candidate_index_sets` (Fix 4) |
-
-### What the URL index fix does (Fix 4)
-
-The old pipeline stored OpenAlex work IDs (`https://openalex.org/W…`) as `url_r`.
-The new pipeline stores open-access URLs or landing page URLs instead.
-`_build_candidate_index_sets()` now indexes **both** `url_r` and `openalex_id_r`
-from candidates.csv, so papers present under either URL form are correctly marked as
-found rather than reported as gaps.
+**The overlap / recall-gap analysis is gone.** `analysis/run_overlap_analysis.py`
+and `analysis/data_loader.py` compared `data/all_replications.csv` against
+`data/candidates.csv`, and both the script and that corpus are retired with the
+admission-gated Stage 1: Stage 1's corpus is the survivor pool now. The per-release
+recall monitor that replaces it — join the gold keys against a routing release, no
+LLM and no sampling, and report per rule how many known-good papers it discarded —
+is specified in `analysis/gold/README.md` and **not yet implemented**.
 
 ---
 
@@ -134,23 +66,13 @@ Used to fill in missing `doi_o` values when the main pipeline couldn't find the 
 
 ---
 
-## Data Loader (`analysis/data_loader.py`)
+## Other modules in `analysis/`
 
-Shared CSV loader used by all analysis scripts:
-
-```python
-from analysis.data_loader import load_candidates, load_filtered, load_all_replications
-
-df_cands    = load_candidates()        # data/candidates.csv
-df_filtered = load_filtered()          # data/filtered.csv
-df_allrep   = load_all_replications()  # data/all_replications.csv
-```
-
-All loaders normalise DOIs via `clean_doi()` and return DataFrames.
-
-> **Note:** `load_candidates()` loads the full CSV into memory. For large runs
-> (candidates.csv ≥ 1M rows) use chunked reading directly or call
-> `_build_candidate_index_sets()` from `analysis/analyses.py` instead.
+Each is a one-off with its own `--help`, not part of a documented flow:
+`arm_evidence.py`, `build_validated_skip.py` (materialises `data/validated_skip.csv`),
+`citation_gate_analysis.py`, `purge_offpile.py`, `repair_single_vote.py`,
+`rescan_impact_report.py`, `rule_report.py`. There is no shared `data_loader`
+module any more — each script reads the CSV it needs directly.
 
 ---
 
@@ -158,15 +80,12 @@ All loaders normalise DOIs via `clean_doi()` and return DataFrames.
 
 | File | Description |
 | --- | --- |
-| `analysis/gap_summary.md` | Human-readable recall gap report with counts and samples |
-| `analysis/gap_analysis_doi_matched.csv` | Gaps where the reference has a DOI |
-| `analysis/gap_analysis_url_matched.csv` | Gaps where the reference has a URL but no DOI |
 | `analysis/extraction_audit.md` | Link method and confidence breakdown for extracted.csv |
 | `analysis/rule_improvement_opportunities.csv` | Ranked filter/extract improvement suggestions |
-| `analysis/filter_misclassifications.csv` | Replications discovered but wrongly filtered out |
-| `analysis/source_contribution.csv` | Per-source recall contribution (placeholder) |
 | `analysis/apa_reference_fallback.csv` | Manual APA reference entries |
+| `analysis/rescan_*.csv` | Impact reports from the 2026-08 rescan |
 
-All CSV outputs and `gap_analysis_*.csv` are gitignored. The `.md` summary files
-(`gap_summary.md`, `extraction_audit.md`) are committed so the dashboard Analysis
-tab can read them without re-running the analysis.
+CSV outputs are gitignored; `extraction_audit.md` is committed so the dashboard's
+Analysis tab can read it without re-running the analysis. The `gap_summary.md` /
+`gap_analysis_*.csv` files belonged to the retired overlap analysis and are no
+longer produced.

@@ -846,12 +846,16 @@ def run_for_doi(doi_r:              str,
               sections: dict = {}) -> dict:
         """An exit with no accepted link — restoring a withheld pick if nothing enumerated.
 
-        --no-llm, --no-pdf, no document, no context and an incomplete screen all end the
-        row without any call that could have found a second target. Before the gate they
-        were unreachable for a rule-resolved paper, because the rule had already
-        returned. Dropping the pick here would turn a provider outage into a lost
-        resolution, which the error-handling rule forbids; whatever the exit had to
-        report travels with the restored row.
+        --no-llm, --no-pdf, no document and no context all end the row without any call
+        that could have found a second target. Before the gate they were unreachable for
+        a rule-resolved paper, because the rule had already returned. Dropping the pick
+        here would turn a configuration choice into a lost resolution, which the
+        error-handling rule forbids; whatever the exit had to report travels with the
+        restored row.
+
+        An incomplete screen is NOT one of these and does not come through here: there
+        the provider failure is what prevented the enumerating call, so the pick stays
+        withheld and a re-run settles it.
         """
         if held and _uncontradicted():
             log.info("[%s] gate: restoring the withheld %s pick — nothing that could "
@@ -977,7 +981,12 @@ def run_for_doi(doi_r:              str,
         if screen["resolution_method"] in {"llm_refscreen_partial", "llm_refscreen_failed"}:
             log.warning("[%s] Reference screen incomplete (%s): %s", doi_r,
                         screen["resolution_method"], screen.get("llm_error", ""))
-            return _exit(screen, {}, {}, ref_sections)
+            # Deliberately NOT through _exit(): the failure is what stopped the
+            # reference-list target pick from running, so nothing here has earned the
+            # right to settle a withheld pick. Restoring would read "we never asked" as
+            # "we asked and nothing contradicted it". The row goes out unresolved and a
+            # re-run does the enumeration once the provider answers.
+            return emit({**screen, **seen}, {}, {}, ref_sections)
 
         # The gate is screen_gate(), defined once in shared/llm_client.py. The full
         # screen dict is the resolution so the discarded row still carries the models

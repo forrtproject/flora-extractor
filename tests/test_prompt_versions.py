@@ -123,15 +123,66 @@ class TestChangeDetection:
         after = self._versions()
         assert all(after[n] != before[n] for n in PROMPT_NAMES)
 
-    def test_no_provider_call_sends_a_system_message(self):
+    def test_no_provider_call_sends_a_system_message(self, monkeypatch):
         """The one place the message could still cost tokens is a provider request
-        body. Dropping it is the point of the change; the hash keeps the caches."""
-        import inspect
+        body. Dropping it is the point of the change; the hash keeps the caches.
 
-        from shared import llm_client
+        Asserted on the bodies the three providers are actually handed — a grep of
+        the module source passes just as happily on a system message assembled from
+        single quotes, a constant or a dict built elsewhere."""
+        from unittest.mock import MagicMock, patch
 
-        source = inspect.getsource(llm_client)
-        assert '"role": "system"' not in source
+        from shared import llm_client as llm
+
+        monkeypatch.setattr(llm, "_throttle", lambda *a, **k: None)
+
+        # ── the two OpenAI-shaped providers ──
+        def _capture_openai() -> tuple[MagicMock, list]:
+            bodies: list = []
+            resp = MagicMock()
+            resp.usage = None
+            resp.choices = [MagicMock(finish_reason="stop",
+                                      message=MagicMock(content='{"ok": true}'))]
+            client = MagicMock()
+            client.chat.completions.create.side_effect = (
+                lambda **kw: (bodies.append(kw), resp)[1])
+            return client, bodies
+
+        monkeypatch.setattr(llm, "OPENAI_API_KEY", "sk-test")
+        monkeypatch.setattr(llm.token_usage, "check_openai_budget", lambda: None)
+        client, openai_bodies = _capture_openai()
+        with patch("openai.OpenAI", return_value=client):
+            assert llm.call_openai("p", model="gpt-x")[0] == {"ok": True}
+
+        monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "or-test")
+        client, router_bodies = _capture_openai()
+        with patch("openai.OpenAI", return_value=client):
+            assert llm.call_openrouter("p", model="vendor/m")[0] == {"ok": True}
+
+        for body in openai_bodies + router_bodies:
+            roles = [m["role"] for m in body["messages"]]
+            assert roles == ["user"], roles
+
+        # ── Gemini, whose system message would be a payload field, not a role ──
+        gemini_bodies: list = []
+
+        def _post(url, payload, key_idx, timeout):
+            gemini_bodies.append(payload)
+            r = MagicMock()
+            r.status_code = 200
+            r.json.return_value = {"candidates": [
+                {"content": {"parts": [{"text": '{"ok": true}'}]}}]}
+            return r
+
+        monkeypatch.setattr(llm, "GEMINI_API_KEYS", ["k"])
+        monkeypatch.setattr(llm, "_gemini_post", _post)
+        assert llm.call_gemini("p", model="gemini-x")[0] == {"ok": True}
+
+        assert gemini_bodies
+        for payload in gemini_bodies:
+            assert not {"systemInstruction", "system_instruction"} & set(payload)
+            assert [p["text"] for part in payload["contents"]
+                    for p in part["parts"]] == ["p"]
 
     def test_prompt_versions_joins_and_follows_each(self, monkeypatch):
         pair = ("build_outcome_prompt", "build_repro_outcome_prompt")

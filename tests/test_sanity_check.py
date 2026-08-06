@@ -296,3 +296,41 @@ def test_set_aside_writes_are_locked(tmp_path, monkeypatch):
     assert str(tmp_path / "not_a_replication.csv") in locked   # _quarantine
     assert str(tmp_path / "target_pending.csv") in locked      # _quarantine
     assert locked.count(str(tmp_path / "not_a_replication.csv")) >= 2  # + purge rewrite
+
+
+def test_a_row_appended_during_the_pass_survives_the_rewrite(tmp_path, monkeypatch):
+    """The pass reads the whole file, then works — minutes under --deep, a network
+    call per row — and finally writes the survivors back. Writing the frame it READ
+    deleted everything a concurrent run_extract had appended in between. The rewrite
+    applies this pass's drops to the file's current contents instead.
+
+    The append is staged inside the --deep lookup, which is exactly where the gap is.
+    """
+    monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(sc.time, "sleep", lambda *_: None)
+    ex = tmp_path / "extracted.csv"
+    _write(ex, [
+        {"doi_r": "10.1/keep", "doi_o": "10.2/o", "outcome": "success",
+         "doi_o_verification": "verified", "link_method": "llm_references"},
+        {"doi_r": "10.1/move", "doi_o": "", "outcome": "pending",
+         "link_method": "target_pending"},
+    ])
+
+    def _append_then_answer(doi):
+        # A concurrent Stage 3 run appending a row it just finished.
+        row = pd.DataFrame([{**{c: "" for c in EXTRACTED_COLS}, "doi_r": "10.1/new",
+                             "doi_o": "10.2/n", "outcome": "success",
+                             "doi_o_verification": "verified",
+                             "link_method": "llm_references"}])
+        row[EXTRACTED_COLS].to_csv(ex, mode="a", index=False, header=False,
+                                   encoding="utf-8")
+        return ""
+
+    monkeypatch.setattr(sc, "_doi_r_non_study_type", _append_then_answer)
+    sc.run_sanity_check(ex, move=True, deep=True)
+
+    out = pd.read_csv(ex, dtype=str, keep_default_na=False)
+    assert set(out["doi_r"]) == {"10.1/keep", "10.1/new"}, \
+        "the quarantined row leaves; the concurrently appended row stays"
+    tp = pd.read_csv(tmp_path / "target_pending.csv", dtype=str, keep_default_na=False)
+    assert set(tp["doi_r"]) == {"10.1/move"}

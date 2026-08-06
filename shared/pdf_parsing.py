@@ -497,6 +497,28 @@ def best_parse_result(results: "dict[str, dict]") -> "dict | None":
     return best_r if best_s >= 0 else None
 
 
+# Method errors that mean "no answer about this document", not "this document has no
+# such content": something prevented the method from answering — a provider outage, a
+# safety block, a request that never arrived — and the next attempt may well answer.
+# Any method reporting one, whatever produced it, taints the whole parse for caching
+# purposes: the other methods' text is fine, but freezing the dict to disk freezes the
+# non-answer with it, and every later run reads the outage back as a finding.
+TRANSIENT_PARSE_ERRORS = frozenset({"refs_unavailable"})
+
+
+def parse_result_has_transient_failure(results: "dict[str, dict] | None") -> bool:
+    """True when any method in a parse_all() output failed without an answer.
+
+    Keyed on the error VALUE rather than on which method produced it, so a new caller
+    (or a new failure mode of an existing one) is covered by reporting one of these
+    errors and nothing else has to know about it.
+    """
+    if not isinstance(results, dict):
+        return False
+    return any(str((r or {}).get("error", "") or "") in TRANSIENT_PARSE_ERRORS
+               for r in results.values() if isinstance(r, dict))
+
+
 def parse_result_is_empty(results: "dict[str, dict] | None") -> bool:
     """True when no method in a parse_all() output carries any usable text.
 

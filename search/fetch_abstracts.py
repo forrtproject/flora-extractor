@@ -481,7 +481,8 @@ def _fetch_s2_batch(dois: list[str], s2_key: str) -> Optional[dict[str, Optional
     Returns None on a whole-batch failure (retried 3x with backoff, honouring
     Retry-After on 429) so the caller does not checkpoint any id in the batch — one
     transient batch failure must not poison up to S2_BATCH_SIZE rows as permanent
-    misses. A successful batch's null entry for a given DOI is a definitive miss.
+    misses. A successful batch's null entry for a given DOI is a definitive miss — but
+    only when the array is as long as the request, which is checked below.
     """
     url = "https://api.semanticscholar.org/graph/v1/paper/batch"
     headers = {"x-api-key": s2_key} if s2_key else {}
@@ -498,9 +499,21 @@ def _fetch_s2_batch(dois: list[str], s2_key: str) -> Optional[dict[str, Optional
         log.warning("S2 batch error (batch not checkpointed): HTTP %d — %s",
                     resp.status_code, resp.text[:200])
         return None
+    entries = resp.json()
+    # The join is positional, so a response of the wrong length is not an answer about
+    # the ids it left out — and `zip` would silently drop them, checkpointing them as
+    # definitive misses for good. Refuse the whole batch, as the EPMC phase does with
+    # a truncated page.
+    if not isinstance(entries, list) or len(entries) != len(dois):
+        log.warning("S2 batch returned %s entr(ies) for %d DOI(s) (batch not "
+                    "checkpointed): the positional join would attribute answers to the "
+                    "wrong ids or record the rest as misses.",
+                    len(entries) if isinstance(entries, list) else type(entries).__name__,
+                    len(dois))
+        return None
     return {
         doi: ((entry or {}).get("abstract") or None)
-        for doi, entry in zip(dois, resp.json())
+        for doi, entry in zip(dois, entries)
     }
 
 

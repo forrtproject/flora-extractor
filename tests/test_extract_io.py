@@ -143,6 +143,101 @@ class TestResumeNeverLosesRowsOnDisk:
         df = pd.read_csv(out, dtype=str, encoding="utf-8-sig").fillna("")
         assert sorted(df["doi_r"]) == ["10.1/a", "10.1/b"]
 
+    _PENDING = {"doi_r": "10.1/p", "link_method": "target_pending"}
+
+    def _prepare(self, tmp_path, rows: list[dict]):
+        """extracted.csv of *rows*, an empty filtered.csv beside it."""
+        out = tmp_path / "extracted.csv"
+        pd.DataFrame([{**{c: "" for c in EXTRACTED_COLS}, **r} for r in rows]).to_csv(
+            out, index=False, encoding="utf-8-sig")
+        pd.DataFrame(columns=list(FILTERED_COLS) + SCREEN_COLS).to_csv(
+            tmp_path / "filtered.csv", index=False, encoding="utf-8-sig")
+        return out
+
+    def test_an_interrupt_in_the_prologue_keeps_the_pending_rows(self, tmp_path):
+        """The prologue re-verifies unsettled rows against OpenAlex, so it can run for
+        minutes — and it used to sit outside the try/finally that writes the pending
+        rows back. A Ctrl-C there left the file truncated to its header plus whatever
+        the carry loop had managed: every target_pending row deleted."""
+        out = self._prepare(tmp_path, [self._SETTLED, self._PENDING])
+        with patch.object(run_extract, "DATA_DIR", tmp_path), \
+             patch.object(run_extract, "_check_screen_providers"), \
+             patch.object(run_extract, "_finalise_carried_row",
+                          side_effect=KeyboardInterrupt):
+            with pytest.raises(KeyboardInterrupt):
+                run_extract.run_extract(out_path=out)
+        df = pd.read_csv(out, dtype=str, encoding="utf-8-sig").fillna("")
+        assert sorted(df["doi_r"]) == ["10.1/a", "10.1/p"]
+
+    def test_an_interrupt_inside_the_write_does_not_duplicate_the_row(self, tmp_path):
+        """The counter can lag the flush by one row. Restoring from the counter then
+        writes a row that is already on disk — a duplicate every later resume keeps."""
+        out = self._prepare(tmp_path, [self._SETTLED, {**self._SETTLED, "doi_r": "10.1/b"}])
+        real_write = run_extract._write_row
+        calls = []
+
+        def _write_then_interrupt(path, row):
+            real_write(path, row)
+            calls.append(row)
+            if len(calls) == 1:
+                raise KeyboardInterrupt   # flushed, but before the loop counted it
+
+        with patch.object(run_extract, "DATA_DIR", tmp_path), \
+             patch.object(run_extract, "_check_screen_providers"), \
+             patch.object(run_extract, "_oa_by_doi", return_value=None), \
+             patch.object(run_extract, "_write_row", side_effect=_write_then_interrupt):
+            with pytest.raises(KeyboardInterrupt):
+                run_extract.run_extract(out_path=out)
+        df = pd.read_csv(out, dtype=str, encoding="utf-8-sig").fillna("")
+        assert sorted(df["doi_r"]) == ["10.1/a", "10.1/b"]
+
+    def test_a_row_appended_between_the_read_and_the_truncation_is_not_lost(self, tmp_path):
+        """The read and the truncation are one locked operation. Unlocked, a row a
+        concurrent run appended in between was wiped by the truncation and appeared in
+        neither the resolved nor the pending set — nothing could put it back, because
+        nothing had seen it."""
+        import threading
+
+        out = self._prepare(tmp_path, [self._SETTLED])
+        appended = {**{c: "" for c in EXTRACTED_COLS}, "doi_r": "10.1/new",
+                    "doi_o": "10.9/n", "link_method": "llm_fulltext",
+                    "doi_o_verification": "verified"}
+        real_load = run_extract._load_extracted_rows
+        writers: list[threading.Thread] = []
+
+        def _load_then_let_a_writer_in(path, **kw):
+            state = real_load(path, **kw)
+            # A concurrent Stage 3 append, attempted at the worst possible moment:
+            # after this run has read the file and before it truncates it. It takes
+            # the same csv_lock, so it can only land once the truncation is done.
+            writer = threading.Thread(target=run_extract._write_row, args=(out, appended))
+            writer.start()
+            writers.append(writer)
+            writer.join(timeout=1.0)
+            return state
+
+        with patch.object(run_extract, "DATA_DIR", tmp_path), \
+             patch.object(run_extract, "_check_screen_providers"), \
+             patch.object(run_extract, "_oa_by_doi", return_value=None), \
+             patch.object(run_extract, "_load_extracted_rows",
+                          side_effect=_load_then_let_a_writer_in):
+            run_extract.run_extract(out_path=out)
+        for writer in writers:
+            writer.join(timeout=10)
+        df = pd.read_csv(out, dtype=str, encoding="utf-8-sig").fillna("")
+        assert sorted(df["doi_r"]) == ["10.1/a", "10.1/new"]
+
+    def test_a_pending_row_written_back_has_its_year_normalised(self, tmp_path):
+        """The write-back streams rows straight off disk, so a legacy "2018.0" went
+        back out as it came in."""
+        out = self._prepare(tmp_path, [{**self._PENDING, "year_r": "2018.0"}])
+        with patch.object(run_extract, "DATA_DIR", tmp_path), \
+             patch.object(run_extract, "_check_screen_providers"):
+            run_extract.run_extract(out_path=out)
+        df = pd.read_csv(out, dtype=str, encoding="utf-8-sig").fillna("")
+        assert list(df["doi_r"]) == ["10.1/p"]
+        assert df.iloc[0]["year_r"] == "2018"
+
 
 # ── _should_skip: what a resumed or test-mode run does not re-process ─────────
 

@@ -141,7 +141,7 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
         by_pile[pile].append(row)
 
     rows = [row for pile in HANDOFF_PILES for row in by_pile[pile]]
-    _write_csv(out_csv, rows)
+    tmp_csv = _write_csv_tmp(out_csv, rows)
     manifest = {
         "release_id": release_id,
         "piles": list(HANDOFF_PILES),
@@ -152,12 +152,11 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
         "screened_only": decided is not None,
         "typed_by_tier_verdict": retyped,
         "csv": Path(out_csv).name,
-        "sha256": hashlib.sha256(Path(out_csv).read_bytes()).hexdigest(),
+        "sha256": hashlib.sha256(tmp_csv.read_bytes()).hexdigest(),
         "created_at": created_at or _now(),
         "columns": ENGINE_EXPORTED_COLS,
     }
-    Path(str(out_csv) + ".manifest.json").write_text(
-        json.dumps(manifest, indent=1, sort_keys=True), encoding="utf-8")
+    _publish(out_csv, tmp_csv, manifest)
     return manifest
 
 
@@ -179,6 +178,11 @@ def _screen_columns(row: dict, decision: dict) -> dict:
     from shared.llm_client import cached_classification
 
     votes = decision.get("votes") or []
+    # One probe per exported row, which is the floor: every row is a different
+    # work, so there is nothing to share between them. The probe costs one stat on
+    # a hit — `read_cache_migrating()` tries the declared legacy keys only after the
+    # current key misses — so the three-key cost falls on unscreened-cache rows
+    # alone, and those are exactly the rows the two columns would be blank for.
     detail = cached_classification(str(row.get("doi_r") or ""),
                                    str(row.get("title_r") or ""),
                                    str(row.get("abstract_r") or "")) or {}
@@ -235,28 +239,36 @@ def decisions(client) -> tuple[set[int], dict[int, dict], set[int]]:
     drop: set[int] = set()
     screen: dict[int, dict] = {}
     decided: set[int] = set()
-    for tier in (TIER_CHEAP, TIER_EXPENSIVE):
-        # None: every release — see the docstring above.
-        for work, decision in tier_decisions(client, None, tier).items():
-            if decision["outcome"] not in (DISCARD, PROCEED):
-                continue
-            if decision["outcome"] == DISCARD:
-                drop.add(work)
-            if tier != TIER_EXPENSIVE:
-                continue
-            decided.add(work)
-            screen[work] = decision
+    # None: every release — see the docstring above.
+    expensive = tier_decisions(client, None, TIER_EXPENSIVE)
+    for work, decision in expensive.items():
+        if decision["outcome"] not in (DISCARD, PROCEED):
+            continue
+        if decision["outcome"] == DISCARD:
+            drop.add(work)
+        decided.add(work)
+        screen[work] = decision
+    for work, decision in tier_decisions(client, None, TIER_CHEAP).items():
+        # The cheap tier may not overrule the expensive one. `write_handoff` checks
+        # the drop set first, so a live cheap discard of a work the validated pair
+        # PASSED would drop it — the precedence inversion the design forbids, in the
+        # one direction where the cheaper, weaker model wins. Any expensive verdict
+        # at all takes the work out of the cheap tier's reach: an expensive discard
+        # already drops it, and an expensive proceed is the answer that governs.
+        if decision["outcome"] == DISCARD and work not in expensive:
+            drop.add(work)
     return drop, screen, decided
 
 
-def _write_csv(out_csv: Path, rows: list[dict]) -> None:
-    """Write the handoff through a sibling temp file and `os.replace()` it in.
+def _write_csv_tmp(out_csv: Path, rows: list[dict]) -> Path:
+    """Write the handoff to a sibling temp file and return it, unpublished.
 
     The handoff is rewritten in place over the file Stage 3 reads, so writing to
     it directly means an interruption — Ctrl-C, a full disk, a raised binding
     check — leaves a truncated `filtered.csv` and destroys the previous handoff,
-    which was a working input. The rename is atomic within a directory, so the
-    file is either the old handoff or the new one and never half of either.
+    which was a working input. Writing beside it and renaming is atomic within a
+    directory, so the file is either the old handoff or the new one and never half
+    of either. The rename is `_publish()`'s, because the manifest has to go with it.
     """
     out_csv = Path(out_csv)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -269,9 +281,45 @@ def _write_csv(out_csv: Path, rows: list[dict]) -> None:
             for row in rows:
                 writer.writerow({col: "" if row.get(col) is None else row.get(col)
                                  for col in ENGINE_EXPORTED_COLS})
-        os.replace(tmp, out_csv)
-    finally:
+    except BaseException:
         tmp.unlink(missing_ok=True)
+        raise
+    return tmp
+
+
+def _publish(out_csv: Path, tmp_csv: Path, manifest: dict) -> None:
+    """Make the new CSV and its manifest visible — the MANIFEST first.
+
+    Two files, two renames: no filesystem makes the pair atomic, so the question is
+    which intermediate state a crash may leave. The one state that must not exist
+    is a NEW `filtered.csv` that nothing describes, because Stage 3 reads that file
+    by name and does not today verify the manifest — an unbound CSV is not a reader
+    blocked, it is a run whose input has no release id, no row count and no hash
+    behind it.
+
+    So the manifest is published BEFORE the CSV it describes. The only window a
+    crash can leave is a new manifest over the PREVIOUS handoff: a reader that
+    checks sees the sha256 disagree and refuses, and a reader that does not check
+    consumes the previous complete handoff, which was a valid input. Publishing the
+    CSV first inverts exactly that — the new file, unbound — and removing the
+    manifest first (an earlier version of this function) makes the unbound state
+    explicit rather than avoiding it, which only helps a reader that looks.
+
+    Ordering is the half of the guarantee that lives here. The other half is
+    Stage 3 verifying the manifest against the CSV it is about to read; until it
+    does, the guarantee is "never a new unbound file", not "never an unbound file".
+    """
+    out_csv = Path(out_csv)
+    live_manifest = Path(str(out_csv) + ".manifest.json")
+    tmp_manifest = live_manifest.with_name(live_manifest.name + ".tmp")
+    try:
+        tmp_manifest.write_text(json.dumps(manifest, indent=1, sort_keys=True),
+                                encoding="utf-8")
+        os.replace(tmp_manifest, live_manifest)
+        os.replace(tmp_csv, out_csv)
+    finally:
+        tmp_csv.unlink(missing_ok=True)
+        tmp_manifest.unlink(missing_ok=True)
 
 
 def _now() -> str:

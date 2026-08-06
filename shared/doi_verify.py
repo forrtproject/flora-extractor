@@ -324,7 +324,8 @@ def resolve_doi_by_metadata(title: str, author: str, year,
     title_only_gap: last-resort tier for rows whose author/year were inherited
     from a wrong DOI. Accepts the best title match ignoring author/year, but
     only when it clearly dominates the runner-up (≥ TITLE_ONLY_JACCARD and
-    ≥ TITLE_ONLY_GAP × second-best).
+    ≥ TITLE_ONLY_GAP × second-best), and only when BOTH registries answered — a
+    dominance judgement is worth nothing over half a candidate list.
 
     Returns {"doi", "title", "year", "openalex_id", "source"} on a hit, None when
     both sources answered and neither had a match, and UNVERIFIABLE (a falsy dict)
@@ -422,12 +423,27 @@ def resolve_doi_by_metadata(title: str, author: str, year,
 
     # In title-only mode the strict pass is skipped: with author/year absent it
     # would degenerate to a 0.7 title match without the dominance requirement.
+    #
+    # _score_hit is an ABSOLUTE test — this hit's title, author and year each clear a
+    # threshold against the row's own metadata — so it says the same thing about the
+    # hit whether or not the other registry answered. A missing source can only cost
+    # it a match it never saw, which is the safe direction: the tail below then
+    # reports UNVERIFIABLE rather than "no replacement exists". It therefore runs on a
+    # partial hit list.
     if not title_only_gap:
         for h in hits:
             if _score_hit(h["title"], h["year"], h["surnames"], title, author, year):
                 return _accept(h)
 
-    if title_only_gap and hits:
+    # The title-only tier is RELATIVE: it accepts a hit for beating the runner-up, and
+    # that judgement is only valid over a complete candidate set. With one registry
+    # down, the near-duplicate that would have supplied `second` may simply be in the
+    # list that never arrived, so a hit a complete search would have rejected as
+    # ambiguous gets accepted — cached under a key that records nothing about which
+    # sources answered, and returned as `corrected`, overwriting the row's doi_o with
+    # the wrong original. An incomplete search does not get to make this call: it falls
+    # through to the UNVERIFIABLE tail below.
+    if title_only_gap and hits and cr_data is not None and oa_data is not None:
         scored = sorted(hits, key=lambda h: jaccard_similarity(h["title"], title),
                         reverse=True)
         best   = jaccard_similarity(scored[0]["title"], title)
@@ -435,11 +451,13 @@ def resolve_doi_by_metadata(title: str, author: str, year,
         if best >= TITLE_ONLY_JACCARD and best >= second * TITLE_ONLY_GAP:
             return _accept(scored[0])
 
-    # No hit — but "nothing matched" is only an answer if both sources gave one. A
-    # search that reached one registry and not the other has not established that the
-    # original is unfindable, and caching it would freeze the outage into the row.
+    # No accepted hit — but "nothing matched" is only an answer if both sources gave
+    # one. A search that reached one registry and not the other has not established
+    # that the original is unfindable, and caching it would freeze the outage into the
+    # row. Nor has it established that a title-only near-match is unambiguous, so this
+    # is where the withheld dominance accept lands too.
     if cr_data is None or oa_data is None:
-        log.warning("doi_verify: metadata search for %.60r found nothing, but %s did "
+        log.warning("doi_verify: metadata search for %.60r accepted nothing, and %s did "
                     "not answer — reporting it as unverifiable rather than absent",
                     title, "CrossRef" if cr_data is None else "OpenAlex")
         return UNVERIFIABLE

@@ -347,3 +347,18 @@ class TestReferenceExtractionOutageIsNotZeroReferences:
             result = parse_grobid("10.1/x", pdf)
         assert result["error"] == "refs_unavailable"
         assert result["references"] == []
+
+
+def test_a_transient_failure_is_recognised_by_its_error_not_its_method():
+    """What makes a parse uncacheable is the error VALUE, so any method reporting one
+    — a new caller, or a new failure mode of an existing one — is covered without
+    anything else knowing about it."""
+    from shared.pdf_parsing import parse_result_has_transient_failure as transient
+
+    ok = {"source": "pdfminer", "raw_text": "text", "references": [], "error": None}
+    settled = {"source": "grobid", "raw_text": "", "references": [], "error": "no_pdf"}
+    outage = {"source": "markitdown", "raw_text": "", "references": [],
+              "error": "refs_unavailable"}
+
+    assert not transient({"pdfminer": ok, "grobid": settled})
+    assert transient({"pdfminer": ok, "markitdown": outage})

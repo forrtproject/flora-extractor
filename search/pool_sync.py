@@ -58,6 +58,7 @@ from shared.hf import (
 from search.snapshot_scan import (
     ledger_hash,
     load_ledger,
+    read_pool_provenance,
     search_gate_fingerprint,
     write_pool_provenance,
 )
@@ -370,9 +371,19 @@ def pull_pool(pool_dir: Path, repo: Optional[str] = None,
         # into an existing pool does not shrink the claim.
         expected = {p.name for p in pool_dir.glob("*.parquet")}
         expected |= {f.rsplit("/", 1)[-1] for f in remote_files}
-        write_pool_provenance(
-            pool_dir, (remote_manifest or {}).get("stage_a_fingerprint") or None,
-            len(expected), f"pull:{repo_id}")
+        # An unreadable remote manifest is an absence of information about the gate,
+        # not evidence that there is none: writing `null` over a gate a scan or an
+        # earlier pull already established would erase the pool's only account of
+        # what admitted its rows, and no later run could tell it had been lost.
+        gate = (remote_manifest or {}).get("stage_a_fingerprint") or None
+        if gate is None:
+            gate = (read_pool_provenance(pool_dir) or {}).get(
+                "search_gate_fingerprint") or None
+            if gate is not None:
+                log.warning("Keeping the search gate already recorded beside %s (%s): the "
+                            "remote manifest did not supply one, and an unknown gate must "
+                            "not overwrite a known one.", pool_dir, str(gate)[:12])
+        write_pool_provenance(pool_dir, gate, len(expected), f"pull:{repo_id}")
     if not dry_run and wanted:
         _download_pool_files(hf, repo_id, token, pool_dir, wanted, skipped)
 

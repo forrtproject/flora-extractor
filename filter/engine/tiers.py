@@ -121,6 +121,17 @@ RUNS_DIR = ENGINE_CACHE_DIR / "runs"
 # besides discard.
 DISCARD = "discard"
 PROCEED = "proceed"
+# Not an outcome: the shape a work is in when its verdict rows do not add up to a
+# decision — a provider failure, or one voter of two. It is deliberately not a
+# terminal state. A work in it is neither decided (so the next ordinary
+# `screen --run` re-asks it) nor handed off (so Stage 3 never sees a half-screen).
+INCOMPLETE = "incomplete"
+
+# The model recorded on a vote nothing can attribute. Written rather than left
+# blank because a blank model is read as an attribution: `provider_for("")` names
+# a provider, and an empty `screen_votes` entry (`=replication/confident`) reads
+# as a vote from a model whose name was lost rather than one that never had one.
+UNKNOWN_MODEL = "unknown_model"
 
 
 # ── The screening generation ─────────────────────────────────────────────────
@@ -131,9 +142,9 @@ PROCEED = "proceed"
 # meta, so every verdict a claim covers inherits it with no schema change.
 _TIER_PROMPT = {TIER_CHEAP: "build_prescreen_prompt",
                 TIER_EXPENSIVE: "build_classify_prompt"}
-# Recorded models that name no voter: a cheap-tier bypass, and the empty model a
-# failed call's placeholder row can carry.
-_NON_MODEL_MARKERS = {"prescreen_bypass", ""}
+# Recorded models that name no voter: a cheap-tier bypass, the empty model a
+# legacy placeholder row can carry, and the explicit marker written in its place.
+_NON_MODEL_MARKERS = {"prescreen_bypass", "", UNKNOWN_MODEL}
 
 
 def _tier_models(tier: str) -> tuple[str, str]:
@@ -706,21 +717,74 @@ def _write_run_report(report: dict) -> Path:
     return path
 
 
-def decided_work_ids(client: ClaimsClient, tier: str) -> set[int]:
-    """Works this tier has decided in the CURRENT generation — the checkpoint.
+def _by_work(tier: str, rows: list[dict],
+             generations: dict) -> dict[int, list[dict]]:
+    """Verdict rows of the CURRENT generation, grouped by work id.
 
-    A verdict is what one model pair, asked one prompt, said; change either and it
-    stops answering the question this run asks, so the work becomes claimable
-    again. Rows are grouped by their claim because the generation is recorded on
-    the claim and one claim is one screening of that work.
+    Grouped by claim first because the generation is recorded on the claim and one
+    claim is one screening of that work; the surviving rows are then pooled per
+    work, because two claims can each hold half a screen of the same work and the
+    question every reader asks is what is known about the WORK.
+    """
+    by_claim: dict[tuple, list[dict]] = {}
+    for row in rows:
+        by_claim.setdefault((row.get("claim_id"), int(row["work_id"])), []).append(row)
+    by_work: dict[int, list[dict]] = {}
+    for (claim_id, work), claim_rows in by_claim.items():
+        if _generation_current(tier, generations.get(claim_id), claim_rows):
+            by_work.setdefault(work, []).extend(claim_rows)
+    return by_work
+
+
+def _tier_decision(tier: str, rows: list[dict]) -> dict:
+    """One work's verdict rows as that tier's decision — the one dispatch."""
+    return _cheap_decision(rows) if tier == TIER_CHEAP else _expensive_decision(rows)
+
+
+def checkpoint_decisions(client: ClaimsClient, tier: str) -> dict[int, dict]:
+    """Every work this tier holds current-generation verdict rows for, decided.
+
+    The checkpoint's raw material, read once and split two ways by the two
+    functions below: a work whose rows add up to a decision must not be re-bought,
+    and a work whose rows do not must not be treated as if they did.
     """
     generations = {c["id"]: (c.get("meta") or {}).get("generation")
                    for c in client.claims(tier=tier)}
-    by_claim: dict[tuple, list[dict]] = {}
-    for row in client.verdicts(tier):
-        by_claim.setdefault((row.get("claim_id"), int(row["work_id"])), []).append(row)
-    return {work for (claim_id, work), rows in by_claim.items()
-            if _generation_current(tier, generations.get(claim_id), rows)}
+    return {work: _tier_decision(tier, rows)
+            for work, rows in _by_work(tier, client.verdicts(tier), generations).items()}
+
+
+def decided_work_ids(client: ClaimsClient, tier: str) -> set[int]:
+    """Works this tier has SETTLED in the current generation — the checkpoint.
+
+    A verdict is what one model pair, asked one prompt, said; change either and it
+    stops answering the question this run asks, so the work becomes claimable
+    again.
+
+    Verdict rows that do not add up to a decision do not count. They are written
+    and they are permanent — a call was made and the evidence of it is not ours to
+    delete (`db/migrations/0001_engine_baseline.sql`: `engine_verdicts` is
+    append-only) — but a screen that got one vote of two, or none at all, is a
+    provider failure and never a definitive miss. Counting it here is what stranded
+    the work: skipped by the next run because it looked decided, held back by the
+    handoff because it was not. So the READ side ignores those rows, and the next
+    ordinary `screen --run` re-asks the work with no flag to remember. The re-ask
+    is cheap where it can be: `classify_replication()` caches, so the voter that
+    did answer is not re-bought.
+    """
+    return {work for work, decision in checkpoint_decisions(client, tier).items()
+            if decision["outcome"] != INCOMPLETE}
+
+
+def incomplete_work_ids(client: ClaimsClient, tier: str) -> set[int]:
+    """Works whose current-generation verdict rows are short of a decision.
+
+    The number that makes the self-healing visible: these are works a run paid for
+    and got no answer about, which the next run will ask again. A run that reports
+    a growing count is reporting a provider outage, not a routing decision.
+    """
+    return {work for work, decision in checkpoint_decisions(client, tier).items()
+            if decision["outcome"] == INCOMPLETE}
 
 
 def tier_decisions(client: ClaimsClient, release_id: Optional[str], tier: str,
@@ -756,24 +820,86 @@ def tier_decisions(client: ClaimsClient, release_id: Optional[str], tier: str,
     if not claims:
         return {}
     generations = {c["id"]: (c.get("meta") or {}).get("generation") for c in claims}
-    by_claim: dict[tuple, list[dict]] = {}
-    for row in client.verdicts(tier, list(generations)):
-        by_claim.setdefault((row.get("claim_id"), int(row["work_id"])), []).append(row)
-    by_work: dict[int, list[dict]] = {}
-    for (claim_id, wid), rows in by_claim.items():
-        if _generation_current(tier, generations.get(claim_id), rows):
-            by_work.setdefault(wid, []).extend(rows)
-    return {wid: (_cheap_decision(votes) if tier == TIER_CHEAP
-                  else _expensive_decision(votes))
-            for wid, votes in by_work.items()}
+    by_work = _by_work(tier, client.verdicts(tier, list(generations)), generations)
+    return {wid: _tier_decision(tier, rows) for wid, rows in by_work.items()}
 
 
-def _cheap_decision(votes: list[dict]) -> dict:
-    """Two explicit noes and nothing else is a discard. Every other shape proceeds."""
-    said = [str(v.get("verdict", "")) for v in votes]
-    discard = len(said) >= 2 and all(s == "no" for s in said)
-    return {"outcome": DISCARD if discard else PROCEED, "record_type": "",
-            "votes": []}
+def _recorded_at(row: dict) -> tuple:
+    """When a verdict row was written, as far as the row can say.
+
+    `created_at` is the only time fact the table carries — the primary key is a
+    uuid, so id order is not time order — and it is only present on rows read
+    through `ClaimsClient.verdicts()`. The id is the tiebreaker and the empty
+    tuple element the fallback, so rows from a fixture that carries neither keep
+    the order they were given in.
+    """
+    return (str(row.get("created_at") or ""), str(row.get("id") or ""))
+
+
+def _answer_rows(rows: list[dict]) -> list[dict]:
+    """One work's verdict rows as ANSWERS, at most one per voter.
+
+    Two things are dropped here, and both are the same mistake in different
+    clothes: counting a row that is not an answer, and counting one answer twice.
+
+    * A row with no verdict, or the `no_answer` placeholder a failed call writes,
+      is not an answer.
+    * A voter that answers TWICE is still one voter. Rows are pooled across claims
+      (`_by_work()`) so that a work whose screen did not complete is claimable
+      again — but a re-run re-asks every voter, and the one that already answered
+      answers again from cache. Without this, voter 1 answering on two attempts
+      while voter 2 keeps failing would look exactly like two voters agreeing, and
+      the work would settle on a gate decision no second voter ever contributed
+      to. The LATEST answer per voter wins (`_recorded_at`): an answer is superseded
+      by a later answer from the same model, never joined by it.
+
+    Unattributed rows — legacy rows whose `model` column is blank — cannot be
+    deduplicated by voter, because nothing on them says which voter they are. They
+    are kept only from ONE claim, the most recent that has any: within a claim two
+    such rows are the two voters of one screening, while across claims they would
+    be indistinguishable from one voter retried.
+    """
+    answers = [r for r in rows
+               if str(r.get("verdict") or "") not in ("", "no_answer")]
+    by_model: dict[str, dict] = {}
+    unattributed: dict[str, list[dict]] = {}
+    for row in sorted(answers, key=_recorded_at):
+        model = str(row.get("model") or "")
+        if model and model != UNKNOWN_MODEL:
+            by_model[model] = row
+        else:
+            unattributed.setdefault(str(row.get("claim_id") or ""), []).append(row)
+    latest_unattributed = max(unattributed.values(),
+                              key=lambda rs: _recorded_at(rs[-1]), default=[])
+    return list(by_model.values()) + latest_unattributed
+
+
+def _cheap_decision(rows: list[dict]) -> dict:
+    """The discard-only tier's rule, read back from its rows.
+
+    The tier asks voter 2 only when voter 1 said `no`, so the shapes are few and
+    what separates them is whether a MISSING answer could have changed the outcome:
+
+    | rows                        | decision   | why                                |
+    | --------------------------- | ---------- | ---------------------------------- |
+    | a keep (or a bypass)        | proceed    | the row can no longer be discarded, and voter 2 is never asked after a keep |
+    | `no` + a keep               | proceed    | both voters answered                |
+    | `no` + `no` (two voters)    | discard    | the two explicit noes the tier needs |
+    | `no` + `no_answer`          | INCOMPLETE | the missing answer is exactly the second `no` that would have discarded |
+    | `no` alone                  | INCOMPLETE | same, with the second call never made |
+    | `no_answer` only, or none   | INCOMPLETE | nothing was concluded at all         |
+    | `no` + `no` from ONE voter  | INCOMPLETE | a retry is one voter, not two (`_answer_rows`) |
+
+    The old rule read "two explicit noes and nothing else is a discard; every other
+    shape proceeds", which quietly filed the last four as a proceed — a swallowed
+    provider failure checkpointed as this tier's answer.
+    """
+    said = [str(row.get("verdict") or "") for row in _answer_rows(rows)]
+    if any(s != "no" for s in said):
+        return {"outcome": PROCEED, "record_type": "", "votes": []}
+    if len(said) >= 2:
+        return {"outcome": DISCARD, "record_type": "", "votes": []}
+    return {"outcome": INCOMPLETE, "record_type": "", "votes": []}
 
 
 def _votes_from_rows(rows: list[dict]) -> list[dict]:
@@ -786,23 +912,40 @@ def _votes_from_rows(rows: list[dict]) -> list[dict]:
     soft-discard branch only fires when a voter declined to stand behind a
     qualifying answer, so votes rebuilt without it can only ever proceed.
 
-    Rows are re-sorted into CALL order by their model, because
+    Which rows are answers at all, and which of several answers from one voter
+    counts, is `_answer_rows()`'s question — the deduplication has to happen
+    BEFORE the sort, or a retried voter 1 would occupy both call-order slots.
+
+    The surviving rows are then re-sorted into CALL order by their model, because
     `_screen_record_type()` breaks a replication/reproduction split by taking the
     first qualifying voter and the database returns rows in id order, which is
-    not the order they were asked in. A row with no verdict, or the `no_answer`
-    placeholder a failed call writes, is not a vote and is dropped.
+    not the order they were asked in. The sort is by voter identity, not by time,
+    so keeping a voter's LATEST answer does not move it out of its slot: voter 1
+    re-answered on the second attempt is still voter 1, and still breaks the split.
+    An unattributed row sorts last, behind both named voters.
+
+    **A vote with no recorded model is UNATTRIBUTED, not attributed to nothing.**
+    Legacy rows exist whose `model` column is blank, and blank is read as a value
+    everywhere downstream: it sorts as "not a voter" here, prints as
+    `=replication/confident` in `screen_votes`, and `provider_for("")` names a
+    provider for it. The classification and the confidence are real evidence, so
+    the vote is kept and the gate is unchanged — only the attribution is replaced
+    by `UNKNOWN_MODEL`, which no reader can mistake for a model id. Dropping the
+    vote instead would turn a legacy row into an incomplete screen and re-buy a
+    screen whose answer we hold.
     """
     order = [m for _, m, _, _ in screen_voters()]
-    ordered = sorted(rows, key=lambda r: (order.index(r["model"])
-                                          if r.get("model") in order else len(order)))
+    ordered = sorted(_answer_rows(rows),
+                     key=lambda r: (order.index(r["model"])
+                                    if r.get("model") in order else len(order)))
     return [{"classification": str(r.get("verdict", "")),
              "confident": r.get("confidence") == "confident",
              "categories": [],
              # Not read by the gate; carried because the handoff writes the vote
              # detail onto the row and a vote is only attributable with its model.
-             "model": str(r.get("model") or ""),
+             "model": str(r.get("model") or "") or UNKNOWN_MODEL,
              "quote": str(r.get("quote") or "")}
-            for r in ordered if r.get("verdict") not in ("", "no_answer")]
+            for r in ordered]
 
 
 def _expensive_decision(votes: list[dict]) -> dict:
@@ -817,8 +960,8 @@ def _expensive_decision(votes: list[dict]) -> dict:
 
     rebuilt = _votes_from_rows(votes)
     if len(rebuilt) < 2:
-        return {"outcome": "incomplete", "record_type": "", "votes": []}
-    return {"outcome": screen_gate(rebuilt) or "incomplete",
+        return {"outcome": INCOMPLETE, "record_type": "", "votes": []}
+    return {"outcome": screen_gate(rebuilt) or INCOMPLETE,
             "record_type": _screen_record_type(rebuilt),
             "votes": rebuilt}
 
@@ -938,15 +1081,25 @@ def _expensive_judge(work: Work) -> tuple[str, list[dict]]:
     votes_raw = screen.get("votes") or []
     outcome = screen.get("screen_verdict") or ""
     if not outcome:
-        # Fewer than two voters answered: an API failure, not a verdict. Recorded
-        # as such so the row is re-run rather than filed as a screen outcome.
-        outcome = "incomplete"
+        # Fewer than two voters answered: an API failure, not a verdict. The vote
+        # rows are still written — a call was made and `engine_verdicts` is
+        # append-only evidence — but they do not settle the work: `_expensive_decision`
+        # reads them back as INCOMPLETE, so `decided_work_ids()` leaves the work
+        # claimable and the next ordinary run asks again.
+        outcome = INCOMPLETE
     gate = screen_gate(votes_raw) if len(votes_raw) >= 2 else None
+
+    # `llm_model` is a "+"-joined pair, one part per vote — but a legacy or partial
+    # answer can carry fewer parts than it has votes, and a part that is blank is
+    # an attribution nobody made. Recorded as UNKNOWN_MODEL rather than "" so the
+    # verdict row says which of the two it is.
+    models = [part or UNKNOWN_MODEL
+              for part in str(screen.get("llm_model") or "").split("+")]
 
     votes: list[dict] = []
     for index, vote in enumerate(votes_raw):
         votes.append({
-            "model": (screen.get("llm_model", "").split("+") + ["", ""])[index],
+            "model": models[index] if index < len(models) else UNKNOWN_MODEL,
             "verdict": vote.get("classification", ""),
             "confidence": "confident" if vote.get("confident") else "unconfident",
             "quote": screen.get("llm_evidence", "") if index == 0 else "",
@@ -957,7 +1110,8 @@ def _expensive_judge(work: Work) -> tuple[str, list[dict]]:
                           "categories", "llm_model", "llm_source", "llm_reasoning")}},
         })
     if not votes:
-        votes = [{"model": screen.get("llm_model", ""), "verdict": "no_answer",
+        votes = [{"model": str(screen.get("llm_model") or "") or UNKNOWN_MODEL,
+                  "verdict": "no_answer",
                   "blob": {"tier": TIER_EXPENSIVE, "work_id": work.work_id,
                            "error": screen.get("llm_error", "")}}]
     return outcome, votes

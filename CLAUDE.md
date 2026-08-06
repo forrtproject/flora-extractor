@@ -74,7 +74,6 @@ never been independently validated. Discuss shared changes with all stage teams.
 | `shared/prescreen.py`       | What the cheap discard-only tier ASKS: `hard_signal()`, `prescreen_bypass()`, `prescreen_voters()`, `prescreen_vote()` (the public seam). The gate and the run loop are Stage 2's, in `filter/engine/tiers.py`; the tier is dormant (its specs are all shadow) |
 | `shared/cache.py`           | Cache helpers; `content_key()` builds the content-complete LLM cache key |
 | `shared/row_key.py`         | Row identity: `row_keys()` / `primary_key()` (doi → oa: → url: → title:) |
-| `shared/csv_index.py`       | Sidecar index load/save/append/build + shared CSV dedup (streaming writes) |
 | `shared/pdf_sources.py`     | Multi-tier PDF acquisition waterfall |
 | `shared/pdf_parsing.py`     | Six PDF parse methods; `parse_all()`, `best_parse_result()` scoring |
 | `shared/grobid.py`          | GROBID reference extraction |
@@ -358,11 +357,16 @@ must never cache the empty one.
 
 ## Large Files
 
-filtered.csv exceeds 1M rows; extracted reads it in 50k-row chunks with sidecar
-indexes in `cache/` (`shared/csv_index.py`; keys from `shared/row_key.py`:
-doi → `oa:` → `url:` → `title:`), one resume key per row. Missing indexes rebuild
-automatically; `--rebuild-index` forces it. First write of a CSV is `utf-8-sig`;
-appends are plain `utf-8` (no BOM mid-file).
+filtered.csv is written by Stage 2's handoff and has reached multiple GB, so Stage 3
+reads it in 50k-row chunks (`_CHUNK_ROWS` in `extract/run_extract.py`) and never holds
+more than one chunk in memory; the CLI row filters are per-row predicates applied
+chunk by chunk. Resume state is the other direction and is NOT chunked:
+`_load_extracted_rows()` reads the whole output CSV into a DataFrame in one go, plus
+the settled set-aside CSVs, and partitions the rows by `row_key()` (`shared/row_key.py`:
+doi → `oa:` → `url:` → `title:`). The sidecar index files and their `--rebuild-index`
+flag are gone — the output is small enough to read whole, and an index that could
+drift from the file it described was one more thing to keep true. First write of a CSV
+is `utf-8-sig`; appends are plain `utf-8` (no BOM mid-file).
 
 Stage 1's corpus is the survivor pool (parquet), not a CSV. `data/candidates.csv` —
 the admission-gated corpus of the old Stage 1 — is retired; `CANDIDATES_COLS`

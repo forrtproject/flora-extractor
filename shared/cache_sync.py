@@ -336,11 +336,15 @@ def _remote_only_entries(hf, repo_id: str, token: str, remote: str,
 
 def _refuse_shrinking_push(losses: dict[str, set[str]]) -> None:
     lost = sum(len(names) for names in losses.values())
-    sample = sorted(next(iter(losses.values())))[:3]
+    # Name the shard the sample was drawn FROM: the message used to sample one shard's
+    # entries and name a different (alphabetically first) shard, sending the reader to
+    # look for entries that are not there.
+    shard = sorted(losses)[0]
+    sample = sorted(losses[shard])[:3]
     raise RuntimeError(
         f"refusing to push: {lost} entr(y/ies) in {len(losses)} shard(s) are on "
         f"the remote and not on this machine, and a push replaces the shard whole "
-        f"— e.g. {', '.join(sample)} in {sorted(losses)[0]}. Nothing was uploaded. "
+        f"— e.g. {', '.join(sample)} in {shard}. Nothing was uploaded. "
         "Run `python -m shared.cache_sync --pull` first (it never overwrites a "
         "local entry) and push again, or pass --force to publish this machine's "
         "cache as the shared one and drop those entries.")
@@ -365,13 +369,23 @@ def push_cache(parts: list[Part], repo: Optional[str] = None,
     token = require_token(hf)
     api = hf.HfApi(token=token)
 
+    # read_remote_json separates the two: None is a manifest that is genuinely NOT
+    # THERE (the first push into an empty repo, which nothing can shrink), the raise is
+    # a manifest that could not be read, which says nothing about what the repo holds.
+    # The guards below turn on the second, so keep them apart.
+    manifest_unreadable = False
     try:
         remote_manifest = read_remote_json(hf, repo_id, _MANIFEST, token)
     except RemoteReadError as exc:
+        manifest_unreadable = True
         # A push only ever ADDS shards, so an unreadable manifest costs efficiency,
-        # not correctness: assume nothing is there and re-upload.
-        log.warning("%s Pushing every shard rather than assuming what is already there.",
-                    exc)
+        # not correctness: assume nothing is there and re-upload. It does disable the
+        # shard shrink guard, which would otherwise download the whole remote cache to
+        # rediscover what the manifest holds — say so rather than let it go quiet.
+        log.warning("%s Pushing every shard rather than assuming what is already "
+                    "there, and skipping the shard shrink check (it needs the "
+                    "manifest); run --pull first if this machine's cache may be a "
+                    "subset of the shared one.", exc)
         remote_manifest = None
     known = (remote_manifest or {}).get("parts") or {}
 
@@ -393,7 +407,13 @@ def push_cache(parts: list[Part], repo: Optional[str] = None,
             files += len(paths)
             if (known.get(part.name) or {}).get(shard) != digest:
                 remote = _remote_shard(part, shard)
-                if not force:
+                # Each check DOWNLOADS the remote shard to compare members, so it is
+                # only run when it can act: not under --force, not under --dry-run
+                # (which uploads nothing to shrink anything with), and not when the
+                # manifest was unreadable — `known` is then empty, every shard looks
+                # changed, and the check would fetch the entire remote cache to learn
+                # what the manifest would have said.
+                if not force and not dry_run and not manifest_unreadable:
                     missing = _remote_only_entries(hf, repo_id, token, remote,
                                                    {p.name for p in paths})
                     if missing:
@@ -411,13 +431,33 @@ def push_cache(parts: list[Part], repo: Optional[str] = None,
         # a machine that pulled a subset (or none) of it would replace the shared
         # store with its own. Rows, not membership — a merged store only grows,
         # so fewer rows than the last push already names the loss.
-        remote_rows = int((remote_manifest or {}).get("abstract_rows") or 0)
+        #
+        # The guard needs a row count it can trust, and its two failure modes are the
+        # ones that used to disable it silently: a manifest that could not be READ, and
+        # a manifest read fine but predating the field (every manifest already on the
+        # Hub). Both used to arrive as remote_rows = 0, which no local store is smaller
+        # than, so the machine holding 3k abstracts sailed past the check and replaced
+        # a 500k-row shared store. An unknown remote size is not evidence of a small
+        # one: both refuse, and --force is the override, as it is for the shard guard.
+        # A manifest that is genuinely ABSENT is a third thing — an empty repo, with no
+        # shared store to shrink — and it pushes.
         local_rows = abstract_store.count()[0]
-        if not force and local_rows < remote_rows:
+        if manifest_unreadable:
+            unknown = ("the remote manifest could not be read, so the shared store's "
+                       "size is unknown")
+        elif remote_manifest is not None and remote_manifest.get("abstract_rows") is None:
+            unknown = ("the remote manifest predates the abstract_rows field, so the "
+                       "shared store's size is unknown")
+        else:
+            unknown = ""
+        remote_rows = 0 if unknown else int((remote_manifest or {}).get("abstract_rows") or 0)
+        if not force and (unknown or local_rows < remote_rows):
+            why = unknown or f"the last push recorded {remote_rows:,}"
             raise RuntimeError(
-                f"refusing to push the abstract store: it holds {local_rows:,} row(s) "
-                f"and the last push recorded {remote_rows:,}, so this upload would "
-                "drop the difference. Nothing was uploaded. Run "
+                f"refusing to push the abstract store: this machine holds "
+                f"{local_rows:,} row(s) and {why}"
+                ", so this upload could drop rows the shared store has — it replaces "
+                "the remote file whole. Nothing was uploaded. Run "
                 "`python -m shared.cache_sync --pull --parts abstracts` first (it "
                 "merges rather than replacing) and push again, or pass --force.")
         abstracts_sent = push_abstracts(api, hf, repo_id, known, dry_run)

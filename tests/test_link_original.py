@@ -655,15 +655,18 @@ class TestGateRestoresWhenNothingEnumerates:
                         abstract_answer=_failed_answer())
         assert row["resolution_method"] == "title_pattern_match"
 
-    def test_an_incomplete_screen_restores_it_and_keeps_the_error(self):
-        """One surviving vote is a provider outage. Turning it into a lost
-        deterministic resolution is exactly what the error-handling rule forbids."""
+    def test_an_incomplete_screen_does_not_settle_the_pick(self):
+        """The failure is what stopped the reference-list target pick from running, so
+        nothing has earned the right to settle a withheld pick — restoring it here would
+        read "we never asked" as "we asked and nothing contradicted it". Deferring costs
+        one re-run of a free rule; settling an unconfirmed pick during an outage is
+        permanent."""
         row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS,
                         abstract_answer=_failed_answer(),
                         screen=_screen_result(
                             resolution_method="llm_refscreen_partial",
                             llm_error="classifier failed: openai"))
-        assert row["resolution_method"] == "title_pattern_match"
+        assert row["resolution_method"] == "llm_refscreen_partial"
         assert row["llm_error"] == "classifier failed: openai"
 
     def test_a_screen_discard_still_wins_over_the_pick(self):

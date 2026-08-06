@@ -294,10 +294,13 @@ def _pdf_fingerprint(pdf_path: Path) -> str:
 
 
 class ReferenceExtractionUnavailable(RuntimeError):
-    """The reference extractor never answered.
+    """The reference extractor never answered — no response, or one carrying no text.
 
     Distinct from "this document has no reference list", which is a finding. A
-    provider outage is not, and the two arrived as the same empty list: run_grobid
+    provider outage is not, and neither is a safety block: Gemini refusing to
+    generate says nothing about the document, so `_gemini_block_reason` in
+    llm_client reports it as an error and it arrives here. The two arrived as the
+    same empty list before that: run_grobid
     reported `success` with zero references, run_extract cached the whole parse
     result to disk, and from then on the paper was one that cites nothing — on
     every later run, without another request ever being made.

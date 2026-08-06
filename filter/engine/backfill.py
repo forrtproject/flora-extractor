@@ -62,7 +62,7 @@ from pathlib import Path
 from typing import Optional
 
 from filter.engine.overlay import (
-    freeze, overlay_work_ids, read_worklist, write_chunk,
+    freeze, iter_worklist, overlay_work_ids, write_chunk,
 )
 from search.fetch_abstracts import (
     OSF_REGISTRANT, _DATASET_PREFIXES, _already_resolved, _fetch_crossref_abstract,
@@ -106,23 +106,37 @@ TARGETED_SOURCES = ("osf", "s2", "crossref", "scopus")
 RUN_ORDER = BULK_SOURCES + TARGETED_SOURCES
 PHASES = ("all", "bulk", "targeted")
 
+# Actionable worklist rows held in memory at once. The bulk pathway is pointed at
+# the whole pool's missing text — millions of rows — and both the worklist and the
+# abstracts recovered from it used to be materialised whole, which is gigabytes of
+# RSS for a run whose per-row work is independent. One slice is fetched and written
+# to its own overlay chunk before the next is read, so the run's memory is a
+# property of this constant and not of the worklist's size. 100k rows is a few
+# hundred MB of recovered text at worst and still amortises every batched source's
+# request size (the largest, OpenAlex, is a 50-DOI batch).
+BATCH_ROWS = 100_000
+
 
 # ---------------------------------------------------------------------------
 # Worklist
 # ---------------------------------------------------------------------------
 
 
-def _rows(worklist_path: Path, limit: Optional[int] = None) -> tuple[list[dict], int]:
-    """Worklist rows in the shape fetch_abstracts' phase runners consume.
+def _row_batches(worklist_path: Path, limit: Optional[int] = None,
+                 batch_size: int = BATCH_ROWS):
+    """The worklist in slices of at most *batch_size* actionable rows.
 
-    `{"work_id", "oa", "doi_r"}` — `oa`/`doi_r` are exactly the keys
-    `_phase_targets()` reads. Dataset-prefix DOIs are dropped: no source has an
-    abstract for a Dataverse deposit, so every phase would spend calls
-    rediscovering that forever. Returns (rows, n_dataset_dropped).
+    Yields `(rows, n_dataset_dropped)` per slice, streaming the parquet rather
+    than materialising it. The slice is the unit the whole run works in — fetched,
+    then written to its own overlay chunk — so a pool-wide `--phase bulk` costs
+    one slice of memory instead of the worklist plus every recovered abstract in
+    it. Nothing about the ANSWER depends on the slicing: each row's sources, its
+    checkpoint and its cache entry are per-identifier.
     """
     rows: list[dict] = []
     dropped = 0
-    for record in read_worklist(worklist_path):
+    taken = 0
+    for record in iter_worklist(worklist_path):
         doi = clean_doi(str(record.get("doi") or ""))
         if doi and doi.split("/")[0] in _DATASET_PREFIXES:
             dropped += 1
@@ -132,8 +146,33 @@ def _rows(worklist_path: Path, limit: Optional[int] = None) -> tuple[list[dict],
             "oa": f"https://openalex.org/W{int(record['work_id'])}",
             "doi_r": doi,
         })
-        if limit and len(rows) >= limit:
+        taken += 1
+        if len(rows) >= batch_size:
+            yield rows, dropped
+            rows, dropped = [], 0
+        if limit and taken >= limit:
             break
+    if rows or dropped:
+        yield rows, dropped
+
+
+def _rows(worklist_path: Path, limit: Optional[int] = None) -> tuple[list[dict], int]:
+    """The whole worklist in the shape fetch_abstracts' phase runners consume.
+
+    `{"work_id", "oa", "doi_r"}` — `oa`/`doi_r` are exactly the keys
+    `_phase_targets()` reads. Dataset-prefix DOIs are dropped: no source has an
+    abstract for a Dataverse deposit, so every phase would spend calls
+    rediscovering that forever. Returns (rows, n_dataset_dropped).
+
+    Materialising, and therefore only for a worklist a caller already knows is
+    small — a test, or an interactive look. The run and the estimate both go
+    through `_row_batches()`.
+    """
+    rows: list[dict] = []
+    dropped = 0
+    for batch, batch_dropped in _row_batches(worklist_path, limit):
+        rows.extend(batch)
+        dropped += batch_dropped
     return rows, dropped
 
 
@@ -161,6 +200,32 @@ def estimate(rows: list[dict], sources=RUN_ORDER) -> list[dict]:
                               targets=len(_targets(source, rows, done, found))))
         estimates[-1]["requests"] = _requests(estimates[-1])
     return estimates
+
+
+def estimate_worklist(worklist_path: Path, sources=RUN_ORDER,
+                      limit: Optional[int] = None) -> tuple[list[dict], int, int]:
+    """`estimate()` over a worklist too big to hold: `(estimates, rows, dropped)`.
+
+    Targets are counted slice by slice and summed; the request counts and the quota
+    caps are computed once at the end, over the totals, so the numbers are the ones
+    a whole-worklist estimate would have printed.
+    """
+    done = _load_checkpoint()
+    found = _load_found_index()
+    totals = {source: 0 for source in sources}
+    rows = dropped = 0
+    for batch, batch_dropped in _row_batches(worklist_path, limit):
+        rows += len(batch)
+        dropped += batch_dropped
+        for source in sources:
+            totals[source] += len(_targets(source, batch, done, found))
+    estimates = []
+    for source in sources:
+        estimates.append(dict(_source_shape(source), source=source,
+                              phase="bulk" if source in BULK_SOURCES else "targeted",
+                              targets=totals[source]))
+        estimates[-1]["requests"] = _requests(estimates[-1])
+    return estimates, rows, dropped
 
 
 def _targets(source: str, rows: list[dict], done: set[str],
@@ -275,8 +340,9 @@ def _resolved(row: dict) -> Optional[tuple[str, str]]:
 
 def run(worklist_path: Path, overlay_dir: Path, sources=RUN_ORDER,
         phase: str = "all", limit: Optional[int] = None,
-        scopus_limit: int = SCOPUS_DEFAULT_LIMIT) -> dict:
-    """Fetch text for the worklist and append it to *overlay_dir* as one chunk.
+        scopus_limit: int = SCOPUS_DEFAULT_LIMIT,
+        batch_size: int = BATCH_ROWS) -> dict:
+    """Fetch text for the worklist and append it to *overlay_dir* in chunks.
 
     Runs the bulk pathway over every worklist row, then the targeted pathway over
     only the rows still without text — the whole point of the split, since a
@@ -289,43 +355,81 @@ def run(worklist_path: Path, overlay_dir: Path, sources=RUN_ORDER,
     checkpoint already holds, and the chunk write skips work ids the overlay
     already covers — so an interrupted run re-fetches nothing and cannot write a
     work into a second chunk (which `validate()` would refuse).
+
+    Run in slices of *batch_size* actionable rows, each fetched and then written to
+    its own overlay chunk, so a pool-wide worklist costs one slice of memory rather
+    than the whole file (`BATCH_ROWS`). The slicing is also a second resumption
+    point: a run killed halfway has already written the chunks for the slices it
+    finished.
     """
     if phase not in PHASES:
         raise ValueError(f"unknown phase {phase!r}; expected one of {PHASES}")
-    rows, dropped = _rows(worklist_path, limit)
     done = _load_checkpoint()
     found = _load_found_index()
-    log.info("Backfill: %d worklist row(s)%s.", len(rows),
-             f", {dropped} dataset DOI(s) dropped" if dropped else "")
 
-    if phase in ("all", "bulk"):
-        for source in (s for s in BULK_SOURCES if s in sources):
-            _run_source(source, rows, done, found, scopus_limit)
+    # Read once: the ids already in a chunk, grown as this run writes, so a work
+    # cannot land in two chunks whether the repeat comes from an earlier run or
+    # from an earlier slice of this one.
+    already = overlay_work_ids(overlay_dir)
+    total = dropped_total = 0
+    chunks: list[str] = []
+    by_source: dict[str, int] = {}
+    scopus_left = scopus_limit
 
-    if phase in ("all", "targeted"):
-        # The narrowing that makes this pathway "targeted": everything the bulk
-        # pathway (or any earlier run, through the shared store) already answered
-        # with text drops out before a gated source is asked about it.
-        remaining = [r for r in rows if not _already_resolved(r["oa"], r["doi_r"], found)]
-        log.info("Backfill targeted pathway: %d of %d row(s) still without text.",
-                 len(remaining), len(rows))
-        for source in (s for s in TARGETED_SOURCES if s in sources):
-            # OSF is asked about the full worklist: its template line is not an
-            # abstract another source can have supplied instead (_osf_targets).
-            _run_source(source, rows if source == "osf" else remaining,
-                        done, found, scopus_limit)
+    for rows, dropped in _row_batches(worklist_path, limit, batch_size):
+        dropped_total += dropped
+        log.info("Backfill: %d worklist row(s)%s.", len(rows),
+                 f", {dropped} dataset DOI(s) dropped" if dropped else "")
 
-    return _write_overlay(rows, overlay_dir)
+        if phase in ("all", "bulk"):
+            for source in (s for s in BULK_SOURCES if s in sources):
+                _run_source(source, rows, done, found, scopus_left)
+
+        if phase in ("all", "targeted"):
+            # The narrowing that makes this pathway "targeted": everything the bulk
+            # pathway (or any earlier run, through the shared store) already
+            # answered with text drops out before a gated source is asked about it.
+            remaining = [r for r in rows
+                         if not _already_resolved(r["oa"], r["doi_r"], found)]
+            log.info("Backfill targeted pathway: %d of %d row(s) still without text.",
+                     len(remaining), len(rows))
+            for source in (s for s in TARGETED_SOURCES if s in sources):
+                if source == "scopus" and scopus_limit and scopus_left <= 0:
+                    continue
+                # OSF is asked about the full worklist: its template line is not an
+                # abstract another source can have supplied instead (_osf_targets).
+                spent = _run_source(source, rows if source == "osf" else remaining,
+                                    done, found, scopus_left)
+                if source == "scopus" and scopus_limit:
+                    # The quota is weekly and belongs to the RUN, not to a slice:
+                    # capping per slice would multiply the ceiling by the number of
+                    # slices and blow through it silently.
+                    scopus_left = max(0, scopus_left - spent)
+
+        written = _write_overlay(rows, overlay_dir, already)
+        total += written["rows"]
+        if written["chunk"]:
+            chunks.append(written["chunk"])
+        for source, count in written["by_source"].items():
+            by_source[source] = by_source.get(source, 0) + count
+
+    return {"rows": total, "chunk": chunks[-1] if chunks else "",
+            "chunks": chunks, "dropped": dropped_total,
+            "by_source": dict(sorted(by_source.items()))}
 
 
 def _run_source(source: str, rows: list[dict], done: set[str], found: set[str],
-                scopus_limit: int) -> None:
-    """Run one source's phase over *rows*, recording what it finds in *found*."""
+                scopus_limit: int) -> int:
+    """Run one source's phase over *rows*, recording what it finds in *found*.
+
+    Returns how many identifiers it was actually spent on, which only the Scopus
+    caller reads: its quota is the run's, and a run is now several slices.
+    """
     namespace = NAMESPACES[source]
     shape = _source_shape(source)
     if shape["skipped"]:
         log.info("%s: skipped (%s).", source, shape["skipped"])
-        return
+        return 0
     label = f"backfill — {source}"
     targets = _targets(source, rows, done, found)
     if source == "openalex":
@@ -348,6 +452,7 @@ def _run_source(source: str, rows: list[dict], done: set[str], found: set[str],
             targets = targets[:scopus_limit]
         _run_item_phase(label, namespace, targets, SCOPUS_RATE_SEC,
                         _scopus_fetcher(), found, progress_every=500)
+    return len(targets)
 
 
 def _scopus_fetcher():
@@ -358,19 +463,24 @@ def _scopus_fetcher():
     return fetch
 
 
-def _write_overlay(rows: list[dict], overlay_dir: Path) -> dict:
-    already = overlay_work_ids(overlay_dir)
+def _write_overlay(rows: list[dict], overlay_dir: Path,
+                   already: set[int]) -> dict:
+    """Write one slice's recovered text as a chunk; *already* is read AND grown.
+
+    The caller owns the set because a run is several slices now: a work written by
+    slice one must not be written again by slice two, which re-reading the
+    directory would catch but only after the chunk had been written.
+    """
     fetched_at = datetime.now(timezone.utc).isoformat()
     chunk: list[dict] = []
     by_source: dict[str, int] = {}
-    seen: set[int] = set()
     for row in rows:
-        if row["work_id"] in already or row["work_id"] in seen:
+        if row["work_id"] in already:
             continue
         hit = _resolved(row)
         if hit is None:
             continue
-        seen.add(row["work_id"])
+        already.add(row["work_id"])
         chunk.append({"work_id": row["work_id"], "abstract_text": hit[0],
                       "source": hit[1], "fetched_at": fetched_at})
         by_source[hit[1]] = by_source.get(hit[1], 0) + 1
@@ -414,6 +524,12 @@ def build_parser() -> argparse.ArgumentParser:
                              f"the gated ones ({', '.join(TARGETED_SOURCES)}) over "
                              "the rows bulk left without text. Default all: both, "
                              "over the one worklist given.")
+    parser.add_argument("--batch-size", type=int, default=BATCH_ROWS, metavar="N",
+                        help="Worklist rows held in memory at once; each batch is "
+                             "fetched and written to its own overlay chunk. Default "
+                             f"{BATCH_ROWS:,} — a pool-wide worklist streams, so the "
+                             "run's memory is this number of rows and their recovered "
+                             "text, not the worklist's size.")
     parser.add_argument("--scopus-limit", type=int, default=SCOPUS_DEFAULT_LIMIT,
                         metavar="N", help="Max Scopus calls this run (weekly quota "
                                           f"~10k; default {SCOPUS_DEFAULT_LIMIT}).")
@@ -431,14 +547,18 @@ def main(argv: Optional[list[str]] = None) -> int:
                                   else TARGETED_SOURCES)))
 
     if not args.run:
-        rows, dropped = _rows(args.worklist, args.limit)
-        print(render_estimate(estimate(rows, sources), len(rows), dropped))
+        estimates, rows, dropped = estimate_worklist(args.worklist, sources,
+                                                     args.limit)
+        print(render_estimate(estimates, rows, dropped))
         return 0
 
     result = run(args.worklist, args.overlay_dir, sources=sources, phase=args.phase,
-                 limit=args.limit, scopus_limit=args.scopus_limit)
+                 limit=args.limit, scopus_limit=args.scopus_limit,
+                 batch_size=args.batch_size)
+    chunks = result.get("chunks") or []
     print(f"{result['rows']:,} overlay row(s) written"
-          + (f" -> {result['chunk']}" if result["chunk"] else ""))
+          + (f" -> {chunks[0]}" if len(chunks) == 1
+             else f" -> {len(chunks)} chunk(s)" if chunks else ""))
     for source, count in result["by_source"].items():
         print(f"  {source:<10} {count:,}")
     if args.freeze:

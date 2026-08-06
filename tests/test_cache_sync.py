@@ -239,3 +239,72 @@ def test_parse_parts_names_the_known_parts():
     assert [p.name for p in cs.parse_parts("llm,abstracts")] == ["llm", "abstracts"]
     with pytest.raises(ValueError, match="doi_verify"):
         cs.parse_parts("nonsense")
+
+
+# ---------------------------------------------------------------------------
+# The abstract store is pushed WHOLE, so its guard needs a remote size it trusts
+# ---------------------------------------------------------------------------
+
+def _rows(n: int) -> None:
+    for i in range(n):
+        abstract_store.record(f"epmc:10.1/{i}", "body")
+
+
+@pytest.mark.parametrize("manifest,why", [
+    ({"parts": {}}, "predates the abstract_rows field"),
+    ({"parts": {}, "abstract_rows": 500}, "recorded 500"),
+], ids=["field-missing", "remote-is-bigger"])
+def test_push_refuses_the_abstract_store_when_it_could_shrink_the_shared_one(
+        _isolated_cache, monkeypatch, manifest, why):
+    """A remote size of "unknown" is not a remote size of zero. Every manifest
+    already on the Hub predates abstract_rows, and reading its absence as 0 let a
+    machine holding 3k abstracts replace a 500k-row shared store."""
+    _rows(3)
+    store = {cs._MANIFEST: json.dumps(manifest).encode()}
+
+    calls = _fake_hub(monkeypatch, {}, store=dict(store))
+    with pytest.raises(RuntimeError, match=why):
+        cs.push_cache([cs.PARTS[cs.ABSTRACTS_PART]])
+    assert not calls.get("commits")              # nothing went up
+
+    forced = _fake_hub(monkeypatch, {}, store=dict(store))
+    assert cs.push_cache([cs.PARTS[cs.ABSTRACTS_PART]], force=True) == 1
+
+
+def test_push_refuses_the_abstract_store_when_the_manifest_cannot_be_read(
+        _isolated_cache, monkeypatch):
+    """A 503 says nothing about how big the shared store is, and the push replaces
+    it whole. Distinct from the manifest being genuinely ABSENT, below."""
+    _rows(3)
+    calls = _fake_hub(monkeypatch, {},
+                      download_errors={cs._MANIFEST: _HubHTTPError("503 Service Unavailable")})
+    with pytest.raises(RuntimeError, match="could not be read"):
+        cs.push_cache([cs.PARTS[cs.ABSTRACTS_PART]])
+    assert not calls.get("commits")
+
+
+def test_a_first_push_into_an_empty_repo_still_sends_the_abstracts(
+        _isolated_cache, monkeypatch):
+    """No manifest at all is an empty repo — there is no shared store to shrink."""
+    _rows(3)
+    _fake_hub(monkeypatch, {})
+    assert cs.push_cache([cs.PARTS[cs.ABSTRACTS_PART]]) == 1
+
+
+def test_the_shard_shrink_check_downloads_nothing_it_cannot_act_on(
+        _isolated_cache, monkeypatch):
+    """It fetches every changed shard's tar to compare members. Under --dry-run
+    nothing is uploaded, so there is nothing to refuse; with the manifest unreadable
+    every shard looks changed and the check would pull the whole remote cache."""
+    _llm_entry(_isolated_cache, "a.json", "A")
+
+    dry = _fake_hub(monkeypatch, {}, store={
+        cs._MANIFEST: json.dumps({"parts": {"llm": {"0": "stale"}}}).encode()})
+    cs.push_cache([cs.PARTS["llm"]], dry_run=True)
+    assert cs._MANIFEST in dry.get("downloaded", [])
+    assert [f for f in dry.get("downloaded", []) if f.endswith(".tar.gz")] == []
+
+    blind = _fake_hub(monkeypatch, {},
+                      download_errors={cs._MANIFEST: _HubHTTPError("503 Service Unavailable")})
+    cs.push_cache([cs.PARTS["llm"]])
+    assert [f for f in blind.get("downloaded", []) if f.endswith(".tar.gz")] == []

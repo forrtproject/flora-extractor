@@ -15,7 +15,15 @@ The set-asides belong to the CSV being checked (`set_aside_dir()` in shared/sche
 extracted.csv's sit in data/ as they always have, and any other input — the
 --extracted-test sandbox — gets data/<stem>-set-aside/. A resume treats every key in a
 settled set-aside file as settled, so a shared directory let a test-run quarantine
-settle a paper the production run then skipped without ever processing it. Buckets:
+settle a paper the production run then skipped without ever processing it.
+
+That split is forward-only, so the production set-asides were checked for keys left
+behind by the shared-directory era (2026-08-06): of the 76 keys extracted-test.csv has
+ever held across its git history, exactly one — 10.31234/osf.io/2h59n, in
+fabricated_original_doi.csv — also sits in a production set-aside, and its row is the
+PRODUCTION extracted.csv row (identical bibtex_ref_o/bibtex_ref_r, which the test file's
+copy of that paper never had). Nothing was quarantined out of a test run into a
+production file, so there is nothing to reconcile. Buckets:
 
     screen_disagreement→ screen_disagreement.csv   the two Q1 classifiers disagreed
     non_article        → not_a_replication.csv     doi_r is a figshare data record
@@ -68,12 +76,13 @@ from __future__ import annotations
 
 import argparse
 import time
+from collections import Counter
 from pathlib import Path
 
 import pandas as pd
 import requests
 
-from shared.config import DATA_DIR, RESEARCHER_EMAIL
+from shared.config import DATA_DIR, RESEARCHER_EMAIL, log
 from shared.schema import (EXTRACTED_COLS, RESOLVED_LINK_METHODS,
                            SET_ASIDE_DESTINATIONS, SETTLED_SET_ASIDE_FILES,
                            YEAR_COLS, set_aside_dir, year_str)
@@ -139,6 +148,58 @@ def _quarantine(df: pd.DataFrame, mask: pd.Series, dest: Path) -> int:
         combined = combined[~dup].drop(columns="_k")
         combined.to_csv(dest, index=False, encoding="utf-8-sig")
     return len(move)
+
+
+def _fingerprints(df: pd.DataFrame) -> list[str]:
+    """One string per row identifying it by its whole content, in schema order.
+
+    Row identity for the merge below has to be the CONTENT, not the resume key: a
+    paper legitimately has several rows, and the pass quarantines particular ones.
+    Both sides of the comparison come through `_norm`, so the years and the missing
+    columns match on either side of a rewrite.
+    """
+    frame = _norm(df.copy())
+    return ["\x1f".join(str(v) for v in rec) for rec in frame[EXTRACTED_COLS].values]
+
+
+def _rewrite_without(path: Path, removed: pd.DataFrame) -> int:
+    """Re-read the CSV under its lock and drop the rows this pass moved out.
+
+    Read-modify-write with a long gap in the middle: the quarantine rules run over a
+    frame read minutes ago (hours, under --deep, which makes a network call per row),
+    and a concurrent run_extract appends to the same file the whole time. Writing that
+    stale frame back deleted every one of those appends.
+
+    Holding the lock across the whole pass would stop the deletions and stall the run
+    instead — run_extract takes this lock for every row it writes, so a --deep check
+    would block Stage 3 for as long as it runs. So the lock is taken only here, at the
+    end, and the pass's decision is applied to the file's CURRENT contents: drop the
+    rows it decided to move, keep everything else, including whatever arrived while it
+    was thinking.
+
+    Rows are matched by full content and by count, so N identical rows on disk lose
+    exactly the N this pass claimed. A row that has since been REWRITTEN in place no
+    longer matches and is kept — the right way round: it is a row somebody has touched
+    since, and it will be re-examined by the next pass.
+    """
+    wanted = Counter(_fingerprints(removed))
+    with csv_lock(path):
+        current = _norm(pd.read_csv(path, dtype=str, keep_default_na=False))
+        keep = []
+        for fp in _fingerprints(current):
+            if wanted[fp]:
+                wanted[fp] -= 1
+                keep.append(False)
+            else:
+                keep.append(True)
+        current[pd.Series(keep, index=current.index)].to_csv(
+            path, index=False, encoding="utf-8-sig")
+    dropped = sum(1 for k in keep if not k)
+    missing = sum(wanted.values())
+    if missing:
+        log.warning("sanity_check: %d quarantined row(s) were no longer in %s at "
+                    "rewrite time — left alone", missing, path.name)
+    return dropped
 
 
 def _purge_stale_screen_keys(refiled: dict[str, set], out_dir: Path) -> int:
@@ -219,6 +280,10 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
     out_dir = set_aside_dir(path)
 
     df = _norm(pd.read_csv(path, dtype=str, keep_default_na=False))
+    # What the file said when this pass read it. The rewrite at the end drops exactly
+    # these rows from whatever the file holds THEN, so a row appended in between
+    # survives — see _rewrite_without.
+    as_read = df.copy()
     n_before = len(df)
     doi_o = df["doi_o"].map(clean_doi)
     doi_r = df["doi_r"].map(clean_doi)
@@ -327,8 +392,7 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
 
     if move and claimed.any():
         df = df[~claimed]
-        with csv_lock(path):
-            df.to_csv(path, index=False, encoding="utf-8-sig")
+        _rewrite_without(path, as_read[claimed])
 
     if move:
         moved["screen_set_aside_purged"] = _purge_stale_screen_keys(refiled, out_dir)

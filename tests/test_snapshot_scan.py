@@ -699,6 +699,13 @@ _POOL_RECORDS = [
             abstract=_inverted("We measured wings")),
 ]
 
+# A well-formed fingerprint belonging to somebody else's checkout (sha256-shaped, as
+# `search_gate_fingerprint()` is), and the partition URL whose pool file is
+# `part-2019-01-01-a.parquet`.
+_THEIR_GATE = "b" * 64
+_PARTITION_OF_A = ("https://openalex.s3.amazonaws.com/data/parquet/works/"
+                   "updated_date=2019-01-01/a.parquet")
+
 
 def test_pool_stores_every_stage_a_survivor_with_why_it_survived(snap_env):
     """The pool is what makes a Stage B change cheap, so it must hold every Stage A
@@ -905,13 +912,15 @@ def test_stamping_refuses_to_guess_the_gate(snap_env, monkeypatch):
     assert ss.read_pool_provenance(pool) is None
 
     # Explicitly given — the value from the remote pool_manifest.json.
-    ss.stamp_pool(pool, gate="theirs-abc")
+    ss.stamp_pool(pool, gate=_THEIR_GATE)
     assert ss.read_pool_provenance(pool) == {
-        "search_gate_fingerprint": "theirs-abc", "expected_files": 1,
+        "search_gate_fingerprint": _THEIR_GATE, "expected_files": 1,
         "source": "stamp:manual", "recorded_at": ss.read_pool_provenance(pool)["recorded_at"]}
 
-    # A ledger that names a gate is authority enough on a machine that scanned.
-    ss.save_ledger({"snapshot_date": "", ss._GATE_KEY: "ledger-gate", "files": {}})
+    # A ledger that names a gate — and that accounts for this pool's files — is
+    # authority enough on a machine that scanned.
+    ss.save_ledger({"snapshot_date": "", ss._GATE_KEY: "ledger-gate",
+                    "files": {_PARTITION_OF_A: {"status": "done"}}})
     ss.stamp_pool(pool)
     assert ss.read_pool_provenance(pool)["search_gate_fingerprint"] == "ledger-gate"
 
@@ -919,6 +928,99 @@ def test_stamping_refuses_to_guess_the_gate(snap_env, monkeypatch):
     (snap_env.tmp / "bare").mkdir()
     with pytest.raises(RuntimeError, match="nothing to stamp"):
         ss.stamp_pool(snap_env.tmp / "bare")
+
+
+def test_stamping_refuses_a_ledger_that_describes_another_pool(snap_env):
+    """A local scan's ledger and a PULLED pool are both real and have nothing to do
+    with each other. Reading the gate off the first to describe the second is the
+    same guess as inventing one, so the pool files must trace back to partitions the
+    ledger consumed — and when they do not, --gate is required."""
+    pool = _pool_with(snap_env.tmp / "pool", {"part-2019-01-01-a.parquet": _POOL_RECORDS})
+    ss.save_ledger({"snapshot_date": "", ss._GATE_KEY: "the-aws-scans-gate", "files": {
+        "https://openalex.s3.amazonaws.com/data/parquet/works/"
+        "updated_date=2024-07-07/part_0000.parquet": {"status": "done"}}})
+
+    with pytest.raises(RuntimeError) as exc:
+        ss.stamp_pool(pool)
+    assert "does not describe the pool" in str(exc.value)
+    assert "part-2019-01-01-a.parquet" in str(exc.value), "say which file is unaccounted"
+    assert ss.read_pool_provenance(pool) is None, "a refused stamp writes nothing"
+
+    # The way through is naming the gate that admitted THESE rows.
+    ss.stamp_pool(pool, gate=_THEIR_GATE)
+    assert ss.read_pool_provenance(pool)["search_gate_fingerprint"] == _THEIR_GATE
+
+
+def test_stamping_rejects_a_gate_that_is_not_a_fingerprint(snap_env):
+    """--gate is copied by hand out of another repo's manifest. A typo would mint a
+    plausible-looking release id naming a gate no scan ever applied, indistinguishable
+    downstream from a real one — so the shape is checked before anything is written."""
+    pool = _pool_with(snap_env.tmp / "pool", {"part-2019-01-01-a.parquet": _POOL_RECORDS})
+
+    for bad in ("theirs-abc", _THEIR_GATE[:-1], _THEIR_GATE + "0", _THEIR_GATE.upper()):
+        with pytest.raises(RuntimeError, match="not a search-gate fingerprint"):
+            ss.stamp_pool(pool, gate=bad)
+    assert ss.read_pool_provenance(pool) is None
+
+    # 64 hex characters, or the literal 'local', are the two things it accepts.
+    ss.stamp_pool(pool, gate="local")
+    assert ss.read_pool_provenance(pool)["search_gate_fingerprint"] == \
+        ss.search_gate_fingerprint()
+
+
+# ---------------------------------------------------------------------------
+# Scanning INTO an existing pool (a pulled one has no ledger to check)
+# ---------------------------------------------------------------------------
+
+
+def test_a_pool_stamped_with_another_gate_refuses_the_scan(snap_env):
+    """The ledger check cannot see this: a pulled pool has no ledger, so
+    `load_ledger()` hands the scan a fresh one carrying THIS checkout's gate and
+    nothing objects. The pool's own sidecar is the only account of what admitted its
+    rows, so the same refusal is applied to it — and --force-gate is the way through."""
+    pool = _pool_with(snap_env.tmp / "pool", {"part-2019-01-01-a.parquet": _POOL_RECORDS})
+    ss.write_pool_provenance(pool, _THEIR_GATE, 1, "pull:them/pool")
+    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
+
+    with pytest.raises(RuntimeError) as exc:
+        ss.scan_snapshot(files=[parquet], survivor_pool=pool)
+    assert "DIFFERENT search gate" in str(exc.value) and "--force-gate" in str(exc.value)
+    assert ss.read_pool_provenance(pool)["search_gate_fingerprint"] == _THEIR_GATE, \
+        "a refused scan must not re-attribute the pool it refused to touch"
+    assert len(list(pool.glob("*.parquet"))) == 1, "and must write no pool file"
+    assert not snap_env.ledger.exists(), "nor a ledger"
+
+    # Forced: the scan runs, and the pool is now complete under NEITHER gate — so it
+    # records no gate at all rather than claiming either of them.
+    assert ss.scan_snapshot(files=[parquet], survivor_pool=pool, force_gate=True) == 4
+    record = ss.read_pool_provenance(pool)
+    assert record["search_gate_fingerprint"] is None and record["source"] == "scan:mixed"
+
+
+def test_a_scan_into_a_pulled_pool_keeps_its_gate_and_its_file_count(snap_env):
+    """Adding partitions under the SAME gate is legitimate, and must leave the pool
+    described as it was: the gate stays the one recorded (this checkout's value is
+    equal, not authoritative), and expected_files never falls — counting what is on
+    disk would erase a half-finished pull's own evidence that it is short."""
+    pool = _pool_with(snap_env.tmp / "pool", {"part-2019-01-01-a.parquet": _POOL_RECORDS})
+    ss.write_pool_provenance(pool, ss.search_gate_fingerprint(), 3, "pull:them/pool")
+    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
+
+    assert ss.scan_snapshot(files=[parquet], survivor_pool=pool) == 4
+
+    record = ss.read_pool_provenance(pool)
+    assert record["search_gate_fingerprint"] == ss.search_gate_fingerprint()
+    assert record["source"] == "scan"
+    assert len(list(pool.glob("*.parquet"))) == 2
+    assert record["expected_files"] == 3, "two of three files is still a partial pool"
+    assert ss.pool_fingerprint(pool) is None, "which routing must still be able to see"
+
+    # Once the pool outgrows the old claim, the count follows what is there.
+    second = _write_parquet(snap_env.tmp / "part_0001.parquet", _POOL_RECORDS)
+    third = _write_parquet(snap_env.tmp / "part_0002.parquet", _POOL_RECORDS)
+    ss.scan_snapshot(files=[second, third], survivor_pool=pool)
+    assert ss.read_pool_provenance(pool)["expected_files"] == 4
+    assert ss.pool_fingerprint(pool)
 
 
 # ---------------------------------------------------------------------------

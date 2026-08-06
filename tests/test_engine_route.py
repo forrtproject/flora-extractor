@@ -233,6 +233,28 @@ def test_every_shipped_spec_claims_at_least_one_corpus_row(specs):
     assert unexercised == []
 
 
+def test_a_year_that_arrives_as_a_string_is_read_as_a_year(specs):
+    """#27: the pool's parquet gives `publication_year` as an int64, but this entry
+    point is fed hand-built dicts — an analysis script, a CSV read — where the same
+    year is `"2018"`. The strict schema turned that into an ArrowInvalid from inside
+    pyarrow; it is coerced instead, and a value that is no year at all is null."""
+    from filter.engine.backends import rows_to_batch
+
+    batch = rows_to_batch([_row(title="t", abstract="a", year="2018"),
+                           _row(title="t", abstract="a", year=2019.0),
+                           _row(title="t", abstract="a", year="n/a"),
+                           _row(title="t", abstract="a", year=None)])
+    assert batch.column("publication_year").to_pylist() == [2018, 2019, None, None]
+
+    spec = FilterSpec.from_dict({
+        "id": "year-example", "description": "a year filter over string years",
+        "match": {"fields": {"publication_year": [2018]}},
+        "pile": "screen_cheap", "precedence": 250})
+    assert eval_spec_rows(spec, [_row(title="t", abstract="a", year="2018"),
+                                 _row(title="t", abstract="a", year="2020")]) \
+        == [True, False]
+
+
 def test_the_backend_ignores_the_loader_only_pyre_regex():
     """The evaluator reads the decomposition, never the loader-only `pyre_regex` —
     which RE2 could not run anyway. No shipped rule carries the key, so the spec
@@ -389,13 +411,36 @@ def test_the_release_names_the_pool_it_routed_and_says_so_when_it_cannot(tmp_pat
                    pool / "part-2019-01-01-a.parquet")
 
     assert cli._pool_manifest_hash(None, pool) == pool_fingerprint(pool)
-    assert cli._pool_manifest_hash(None, tmp_path / "missing") == cli.UNMANIFESTED
+    assert cli._pool_manifest_hash(None, tmp_path / "missing").startswith(
+        cli.UNMANIFESTED)
     assert cli._pool_manifest_hash("given-by-hand", pool) == "given-by-hand"
 
     # A pool short of the file count its provenance sidecar says completes it is an
     # interrupted transfer, not a pool: it must not be named by a release id.
     write_pool_provenance(pool, "some-gate", 4, "pull:me/pool")
-    assert cli._pool_manifest_hash(None, pool) == cli.UNMANIFESTED
+    assert cli._pool_manifest_hash(None, pool).startswith(cli.UNMANIFESTED)
+
+
+def test_two_unfingerprintable_pools_do_not_share_one_release_id(tmp_path):
+    """The collision this closes: every half-pulled pool used to route under the one
+    literal `unmanifested`, so two different pools minted the same release id and
+    shared each other's claims and verdicts. The discriminator separates them, and
+    still reads as "provenance unknown" rather than as a fingerprint."""
+    one, two = tmp_path / "one", tmp_path / "two"
+    for pool, rows in ((one, [1, 2]), (two, [1, 2, 3, 4, 5, 6, 7, 8])):
+        pool.mkdir()
+        pq.write_table(pa.table({"work_id": pa.array(rows, pa.int64())}),
+                       pool / "part-2019-01-01-a.parquet")
+        # Both are interrupted transfers, so neither can be fingerprinted.
+        write_pool_provenance(pool, "some-gate", 4, "pull:me/pool")
+
+    first, second = (cli._pool_manifest_hash(None, one),
+                     cli._pool_manifest_hash(None, two))
+    assert first != second
+    assert first.startswith(cli.UNMANIFESTED + ":")
+    assert cli._pool_manifest_hash(None, one) == first          # stable
+    assert routing_release(**dict(_INPUTS, pool_manifest_hash=first)) \
+        != routing_release(**dict(_INPUTS, pool_manifest_hash=second))
 
 
 def test_route_refuses_to_store_a_release_whose_pool_moved_under_it(tmp_path,

@@ -4,6 +4,7 @@ Tests for Stage 3 (extract).
 Unit tests mock all external API calls.
 Run:  python -m pytest tests/test_extract.py -v
 """
+import csv
 import json
 import tempfile
 from pathlib import Path
@@ -13,9 +14,12 @@ import pandas as pd
 import pytest
 
 from shared.schema import (
+    ENGINE_EXPORT_COLS,
     EXTRACTED_COLS,
+    FILTERED_COLS,
     LINK_METHOD_VALUES,
     RESOLVED_LINK_METHODS,
+    SCREEN_COLS,
     make_pair_id,
 )
 from shared.cache import content_key, read_cache
@@ -1890,7 +1894,28 @@ class TestRescreenReopensSetAsides:
         resolved, pending = run_extract._load_extracted_rows(
             self._csv(tmp_path, self._ROWS), rescreen=True)
         assert set(resolved) == {"10.1/keep"}
-        assert pending == {}   # reopened rows are re-processed, not carried as pending
+        # Reopened, not removed: not resolved, so the run redoes them — and carried,
+        # so a paper this handoff no longer holds keeps its rows.
+        assert set(pending) == {"10.1/nar", "10.1/dis"}
+
+    def test_a_reopened_paper_the_run_never_sees_keeps_its_rows(self, tmp_path):
+        """--rescreen asks for a verdict to be revisited, not for a row to be
+        deleted. A paper the current handoff no longer carries is never re-processed,
+        so without the carry-back its row simply left extracted.csv."""
+        out = self._csv(tmp_path, self._ROWS)
+        pd.DataFrame(columns=list(FILTERED_COLS) + SCREEN_COLS).to_csv(
+            tmp_path / "filtered.csv", index=False, encoding="utf-8-sig")
+        with patch.object(run_extract, "DATA_DIR", tmp_path), \
+             patch.object(run_extract, "_check_screen_providers"), \
+             patch.object(run_extract, "_oa_by_doi", return_value=None), \
+             patch.object(run_extract, "verify_and_correct",
+                          side_effect=lambda doi, *a, **k: {
+                              "doi_o": doi, "doi_o_verification": "verified",
+                              "evidence_note": ""}):
+            run_extract.run_extract(out_path=out, rescreen=True)
+        df = pd.read_csv(out, dtype=str, encoding="utf-8-sig").fillna("")
+        assert sorted(df["doi_r"]) == ["10.1/dis", "10.1/keep", "10.1/nar"]
+        assert set(df[df["doi_r"] == "10.1/nar"]["link_method"]) == {"not_a_replication"}
 
     def test_rescreen_reopens_the_whole_multi_original_paper(self, tmp_path):
         rows = [
@@ -1902,6 +1927,62 @@ class TestRescreenReopensSetAsides:
         resolved, _ = run_extract._load_extracted_rows(self._csv(tmp_path, rows),
                                                       rescreen=True)
         assert resolved == {}
+
+
+class TestAStaleRowDoesNotSettleItsPaper:
+    """A stale row (a resolved link_method with no doi_o) is dropped from the resume
+    state so the paper is done again. Filing the REST of the paper under `resolved`
+    marked it done instead: the stale row was deleted and never reprocessed unless a
+    sanity_check pass happened to demote it first."""
+
+    _csv = staticmethod(TestRescreenReopensSetAsides._csv)
+
+    _ROWS = [
+        {"doi_r": "10.1/multi", "filter_status": "replication", "original_rank": "1",
+         "link_method": "llm_fulltext", "doi_o": "", "outcome": "success"},
+        {"doi_r": "10.1/multi", "filter_status": "replication", "original_rank": "2",
+         "link_method": "llm_references", "doi_o": "10.9/o", "outcome": "success"},
+    ]
+
+    def test_the_paper_is_pending_not_resolved(self, tmp_path):
+        resolved, pending = run_extract._load_extracted_rows(self._csv(tmp_path, self._ROWS))
+        assert resolved == {}
+        assert set(pending) == {"10.1/multi"}
+
+    def test_every_row_is_carried_and_the_stale_one_is_demoted(self, tmp_path):
+        """`pending` rows are written back when the paper has left filtered.csv, so
+        both rows come along — the stale one demoted to what it actually is, which is
+        the state sanity_check would have put it in."""
+        _, pending = run_extract._load_extracted_rows(self._csv(tmp_path, self._ROWS))
+        rows = pending["10.1/multi"]
+        assert [r["doi_o"] for r in rows] == ["", "10.9/o"]
+        assert [r["link_method"] for r in rows] == ["target_pending", "llm_references"]
+        assert "no doi_o" in rows[0]["link_evidence"]
+
+    def test_an_all_stale_paper_keeps_its_rows(self, tmp_path):
+        """The rows of a paper whose every row is stale used to become `pending: []`:
+        after the truncation nothing wrote them back, so an interrupt — or the paper
+        having left filtered.csv — deleted them from extracted.csv for good."""
+        rows = [{"doi_r": "10.1/allstale", "filter_status": "replication",
+                 "original_rank": "1", "link_method": "llm_fulltext", "doi_o": "",
+                 "outcome": "success"}]
+        _, pending = run_extract._load_extracted_rows(self._csv(tmp_path, rows))
+        assert [r["link_method"] for r in pending["10.1/allstale"]] == ["target_pending"]
+
+    def test_an_all_stale_paper_survives_a_resume_that_never_sees_it(self, tmp_path):
+        """End to end: the paper is not in filtered.csv, so nothing re-processes it —
+        the run must still hand its row back."""
+        out = self._csv(tmp_path, [
+            {"doi_r": "10.1/allstale", "filter_status": "replication",
+             "link_method": "llm_fulltext", "doi_o": "", "outcome": "success"}])
+        pd.DataFrame(columns=list(FILTERED_COLS) + SCREEN_COLS).to_csv(
+            tmp_path / "filtered.csv", index=False, encoding="utf-8-sig")
+        with patch.object(run_extract, "DATA_DIR", tmp_path), \
+             patch.object(run_extract, "_check_screen_providers"):
+            run_extract.run_extract(out_path=out)
+        df = pd.read_csv(out, dtype=str, encoding="utf-8-sig").fillna("")
+        assert list(df["doi_r"]) == ["10.1/allstale"]
+        assert list(df["link_method"]) == ["target_pending"]
 
 
 class TestResumeReadsTheScreenSetAsides:
@@ -2479,6 +2560,33 @@ class TestEmptyParseCache:
         with patch.object(run_extract, "_parse_all", return_value=_EMPTY_PARSE):
             run_extract._save_parse_cache("10.1/x")
         assert list(tmp_path.glob("parse_*.json")) == []
+
+
+# The other half of the same failure class: a method that never got an ANSWER (the
+# reference extractor while its provider was down) inside a parse whose other methods
+# have text. The dict is cached whole, so the outage became this paper's permanent
+# answer about its own references — "grobid: error" on every later run.
+_OUTAGE_PARSE = {**_FULL_PARSE,
+                 "grobid": {"source": "grobid", "abstract": "", "intro": "",
+                            "methods": "", "raw_text": "", "references": [],
+                            "error": "refs_unavailable"}}
+
+
+class TestTransientParseFailureIsNotFrozen:
+    _cache = TestEmptyParseCache._cache
+
+    def test_a_parse_with_a_transient_failure_is_not_written(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(run_extract, "PARSE_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "PDF_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(run_extract, "OA_XML_CACHE_DIR", tmp_path)
+        with patch.object(run_extract, "_parse_all", return_value=_OUTAGE_PARSE):
+            run_extract._save_parse_cache("10.1/x")
+        assert list(tmp_path.glob("parse_*.json")) == []
+
+    def test_one_already_on_disk_reads_as_a_miss(self, tmp_path, monkeypatch):
+        """The caches written before that was true heal by being re-parsed."""
+        self._cache(tmp_path, monkeypatch, _OUTAGE_PARSE)
+        assert run_extract._read_parse_cache("10.1/x") is None
 
 
 class TestParseCacheOnlyAfterTheDocument:
@@ -3163,6 +3271,108 @@ def test_no_live_reference_to_the_deleted_builders():
             {"rank": 1, "doi": "10.1/o", "title": "O", "confidence": "medium"},
             {}, "single_original", "high", 1)
     assert row["link_confidence"] == "low"
+
+
+# ── The input file's binding to the handoff that published it ────────────────
+
+class TestInputManifestBinding:
+    """Stage 2's handoff publishes the manifest BEFORE the CSV, so the one state a
+    crash can leave is a new manifest over the previous handoff. That ordering is
+    only worth anything if Stage 3 looks — this is Stage 3 looking."""
+
+    @staticmethod
+    def _csv(tmp_path: Path, handoff: bool = True, name: str = "filtered.csv") -> Path:
+        """A CSV as a handoff writes it (with the engine's provenance columns) or as
+        a fixture / hand-made file does (without them)."""
+        cols = list(FILTERED_COLS) + (list(ENGINE_EXPORT_COLS) if handoff else []) \
+            + list(SCREEN_COLS)
+        path = tmp_path / name
+        pd.DataFrame([{c: "" for c in cols}], columns=cols).to_csv(
+            path, index=False, encoding="utf-8-sig")
+        return path
+
+    @staticmethod
+    def _manifest(csv_path: Path, **over) -> Path:
+        import hashlib
+        manifest = {"release_id": "r" * 64, "rows": 1,
+                    "sha256": hashlib.sha256(csv_path.read_bytes()).hexdigest(),
+                    "columns": next(csv.reader(
+                        open(csv_path, encoding="utf-8-sig", newline="")))}
+        manifest.update(over)
+        path = Path(str(csv_path) + ".manifest.json")
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        return path
+
+    def test_a_matching_manifest_passes(self, tmp_path):
+        csv_path = self._csv(tmp_path)
+        self._manifest(csv_path)
+        run_extract._verify_input_manifest(csv_path)   # no raise
+
+    def test_a_manifest_that_describes_other_bytes_refuses(self, tmp_path):
+        """The torn/superseded publish: the manifest went down, the CSV did not."""
+        csv_path = self._csv(tmp_path)
+        self._manifest(csv_path, sha256="0" * 64)
+        with pytest.raises(RuntimeError, match="sha256"):
+            run_extract._verify_input_manifest(csv_path)
+
+    def test_a_manifest_naming_other_columns_refuses(self, tmp_path):
+        csv_path = self._csv(tmp_path)
+        self._manifest(csv_path, columns=["doi_r", "title_r"])
+        with pytest.raises(RuntimeError, match="header does not match"):
+            run_extract._verify_input_manifest(csv_path)
+
+    def test_an_absent_manifest_on_a_hand_made_csv_warns_and_proceeds(self, tmp_path,
+                                                                      caplog):
+        """--filtered-csv is legitimately pointed at hand-made CSVs and fixtures, and
+        refusing those would break real workflows to prevent nothing. Such a file
+        carries none of the engine's provenance columns, which is how it is known."""
+        csv_path = self._csv(tmp_path, handoff=False, name="hand_made.csv")
+        with caplog.at_level("WARNING"):
+            run_extract._verify_input_manifest(csv_path)   # no raise
+        assert "no manifest" in caplog.text
+
+    def test_an_absent_manifest_on_a_handoff_csv_refuses(self, tmp_path):
+        """The bypass this closes: deleting the manifest of a torn publish would
+        otherwise turn a detectable mismatch into a shrug. A file carrying the
+        engine's provenance columns came from a release and has to name which."""
+        csv_path = self._csv(tmp_path)
+        with pytest.raises(RuntimeError, match="provenance columns"):
+            run_extract._verify_input_manifest(csv_path)
+
+    def test_the_requirement_follows_the_artifact_not_the_path(self, tmp_path):
+        """A handoff published elsewhere with --out, or a copy of one, is still bound
+        — and naming the default path explicitly cannot buy leniency."""
+        elsewhere = self._csv(tmp_path, name="somewhere_else.csv")
+        with pytest.raises(RuntimeError, match="provenance columns"):
+            run_extract._verify_input_manifest(elsewhere)
+
+    def test_an_unreadable_manifest_refuses(self, tmp_path):
+        """Not the same as an absent one: a file that cannot be parsed says nothing
+        about the CSV, and reading it as "no description" is how a torn write passes
+        for a hand-made input."""
+        csv_path = self._csv(tmp_path)
+        Path(str(csv_path) + ".manifest.json").write_text("{not json",
+                                                          encoding="utf-8")
+        with pytest.raises(RuntimeError, match="could not be read"):
+            run_extract._verify_input_manifest(csv_path)
+
+    def test_a_manifest_missing_its_fields_refuses(self, tmp_path):
+        csv_path = self._csv(tmp_path)
+        Path(str(csv_path) + ".manifest.json").write_text(
+            json.dumps({"release_id": "r" * 64}), encoding="utf-8")
+        with pytest.raises(RuntimeError, match="could not be read"):
+            run_extract._verify_input_manifest(csv_path)
+
+    def test_the_run_refuses_before_it_spends_anything(self, tmp_path):
+        """At startup, beside the other input refusals — not after the first row."""
+        csv_path = self._csv(tmp_path)
+        self._manifest(csv_path, sha256="0" * 64)
+        with patch.object(run_extract, "DATA_DIR", tmp_path), \
+             patch.object(run_extract, "_check_screen_providers"), \
+             patch.object(run_extract, "_process_row") as processed:
+            with pytest.raises(RuntimeError, match="handoff"):
+                run_extract.run_extract()
+        processed.assert_not_called()
 
 
 # ── The output file's state at the start of a run ────────────────────────────

@@ -383,8 +383,16 @@ resolved set are moved out to set-aside CSVs, **first match wins**, in this orde
 | `target_pending` | `target_pending.csv` | `link_method == target_pending` |
 | `prescreen_discard` | `prescreen_discard.csv` | `link_method == prescreen_discard` — the cheap pre-screen's own discards, kept out of `not_a_replication.csv` |
 | `not_a_replication` | `not_a_replication.csv` | `outcome == not_a_replication` |
+| `api_error` | `api_error.csv` | `link_method == api_error` — a transient provider failure; the next run retries it |
+| `no_original_found` | `no_original_found.csv` | `link_method == no_original_found` — a settled LLM verdict a re-run would only pay to reproduce |
 | `self_link` | `unresolved_self_links.csv` | `doi_o == doi_r` |
 | `doi_mismatch` | `unresolved_doi_mismatch.csv` | `doi_o_verification == mismatch` |
+
+**The set-asides belong to the output CSV they came out of** (`set_aside_dir()` in
+`shared/schema.py`): `extracted.csv`'s sit directly in `data/`, and the
+`--extracted-test` sandbox writes and reads `data/extracted-test-set-aside/`. That
+separation is what stops a test-run quarantine settling a paper for the production
+resume, which treats every key in a settled set-aside file as done.
 
 Two further buckets run after that list, on their own: `non_article_type`
 (→ `not_a_replication.csv`, when the registry types `doi_r` as a non-study object) and

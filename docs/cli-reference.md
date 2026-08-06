@@ -6,26 +6,33 @@ All commands are run from the project root with `python -m <module>`.
 
 ## Stage 1 — Search
 
+Stage 1 does the OpenAlex snapshot scan and nothing else. The API-harvest sources
+(phrase search, concept search, Semantic Scholar, the discovery engine) are retired
+to `wip/api-harvest-sources`: they wrote `data/candidates.csv`, which nothing
+downstream reads. Stage 2 reads the SURVIVOR POOL, so the pool is what a scan
+produces, and `run_search` is a thin operator front-end over
+`search/snapshot_scan.py`.
+
+`--scan` is **required**. A bare `python -m search.run_search` exits 2 with usage
+rather than start a 725 GB, 13–21 hour read, and the whole parser is four flags:
+
 ```bash
-# Run full search across all sources (appends new results to candidates.csv)
-python -m search.run_search
+# Full corpus scan into the default pool (cache/snapshot_pool, or FLORA_POOL_DIR).
+# Resumable: partitions the ledger already marks done are skipped.
+python -m search.run_search --scan
 
-# Limit to specific year range
-python -m search.run_search --from-year 2020 --to-year 2024
+# Write the pool somewhere else. This is Stage 2's input — a scan that writes no
+# pool produces nothing.
+python -m search.run_search --scan --survivor-pool /mnt/big/pool
 
-# Auto-advance: process one (source, phrase/concept, year) job per call; repeat until exit 2
-python -m search.run_search --auto-advance --from-year 2011 --to-year 2026 --max-per-phrase 200
+# Stop after N snapshot partitions this run
+python -m search.run_search --scan --snapshot-max-files 20
 
-# Harvest cached API pages into candidates.csv without making new API calls
-# (run this first after any crash or cursor deletion to recover orphaned pages)
-python -m search.run_search --harvest-only
-
-# Rebuild candidates index (if CSV was modified outside the pipeline)
-python -m search.run_search --rebuild-index
-
-# Reset all cursors to start fetching from page 1 again
-python -m search.run_search --reset-cursors
+# Scan on even though the ledger was written under a DIFFERENT search gate
+python -m search.run_search --scan --force-gate
 ```
+
+Progress is a separate, read-only command (below), safe against a scan in flight.
 
 ### Backfilling missing abstracts
 
@@ -72,59 +79,6 @@ Dataset DOIs (`10.7910` Harvard Dataverse, `10.5281` Zenodo) are excluded from
 every phase — they register data, not articles, so no abstract exists to find.
 They are still counted in the "rows missing abstract" total, and reported
 separately.
-
-### Filtering by source
-
-The `--source` flag restricts which discovery tracks run. It can be repeated.
-
-The accepted values are `_ALL_SOURCES` in `search/run_search.py`:
-
-| Source value | What it searches |
-| --- | --- |
-| `openalex` | The keyword phrases in `SEARCH_PHRASES` (`search/openalex_search.py`) via `title_and_abstract.search` |
-| `openalex_concept` | OpenAlex concept tags (`C12590798` Replication, `C9893847` Reproducibility) |
-| `semantic_scholar` | The same `SEARCH_PHRASES` list, which `search/semantic_scholar_search.py` imports, via S2 bulk search |
-| `openalex_snapshot` | The bulk-parquet snapshot scan (opt-in; see below) |
-| `engine` | Internal engine source (requires `FLORA_USE_ENGINE=1`) |
-
-Default is every source **except** `openalex_snapshot`. `bob_reed` and `i4r` are
-`source` *column* values, not `--source` values: their scrapers live in
-`search/external_lists.py` and are not wired into `run_search` (issue #46).
-
-```bash
-# Phrase-based sources — need the auto-advance loop
-do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2026 --max-per-phrase 10000 --source openalex } until ($LASTEXITCODE -eq 2)
-do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2026 --max-per-phrase 10000 --source semantic_scholar } until ($LASTEXITCODE -eq 2)
-
-# Concept-based source — single run or auto-advance loop (large result sets)
-python -m search.run_search --source openalex_concept --from-year 2011 --to-year 2026
-do { python -m search.run_search --auto-advance --source openalex_concept --from-year 2011 --to-year 2026 --max-per-phrase 10000 } until ($LASTEXITCODE -eq 2)
-```
-
-### Concept ID management
-
-Concept IDs are defined in `CONCEPT_IDS` inside `search/openalex_search.py`. To look up IDs:
-
-```bash
-# Print OpenAlex concepts matching a query (live API call, then exit)
-python -m search.run_search --list-concepts "replication"
-python -m search.run_search --list-concepts "reproducibility"
-```
-
-Current verified IDs (as of 2026-06-23):
-
-- `C12590798` — Replication (statistics) — ~263k works
-- `C9893847` — Reproducibility — ~121k works
-
-### Harvesting the cache separately
-
-The harvest step scans all cached JSON pages and can be slow on large caches. Run it
-on its own after a crash, or when an `--auto-advance` loop stopped on resource
-exhaustion before merging what it had fetched:
-
-```bash
-python -m search.run_search --harvest-only
-```
 
 ### The OpenAlex snapshot scan and its survivor pool
 
@@ -391,10 +345,20 @@ count. (Size and row count do not determine file *contents*; hashing 7.6 GB per
 route is not worth the case of a parquet rewritten to exactly the same size and
 row count, and this is already stronger than the `content_length`-only ledger
 hash it replaced.) A pool it cannot fingerprint — no parquet there, an unreadable
-directory, or fewer files than the sidecar says complete it — routes under the
-literal `unmanifested`, an honest "unknown" rather than a claim about which pool
+directory, or fewer files than the sidecar says complete it — routes under
+`unmanifested:<12 hex>`, an honest "unknown" rather than a claim about which pool
 this was; since routing reads the pool, that value is an anomaly worth
-investigating, not a routine fallback.
+investigating, not a routine fallback. The suffix is a hash of the parquet names
+and sizes and exists only so two different unfingerprintable pools do not mint the
+same release id and share each other's claims and verdicts — it is not provenance,
+which is why the `unmanifested` prefix stays visible.
+
+**`--release` and `--sample`.** `export`, `screen`, `handoff` and `worklist` each
+take `--release <id>`: the release to read. Omitted, the store's release is used
+when it holds exactly one and the command refuses when it holds several, so a
+store with a re-route in it never picks one silently. `diagnose --sample N`
+(default 20) is how many seeded example rows the report prints for the rule under
+diagnosis.
 
 **`screen` modes.** `screen_cheap` runs in `validation` mode by default: its votes
 are recorded and its would-be discards are reported against the piles the rules
@@ -703,11 +667,12 @@ The app is read-only — it displays pipeline stats and pulls validation data fr
 
 ## Analysis
 
-```bash
-# Overlap / recall gap analysis — compares all_replications.csv against candidates.csv
-# Reports genuine gaps (papers in the reference set not found by Stage 1)
-python -m analysis.run_overlap_analysis
+The overlap / recall-gap analysis (`analysis.run_overlap_analysis`) is gone with the
+corpus it read: it compared `all_replications.csv` against `data/candidates.csv`, and
+Stage 1's corpus is the survivor pool now. The per-release recall monitor that
+replaces it is specified in `analysis/gold/README.md` and not yet implemented.
 
+```bash
 # Rule analysis — audit filter rules and extraction link methods
 # (writes analysis/rule_improvement_opportunities.csv)
 python -m analysis.rule_analysis
@@ -720,11 +685,11 @@ python -m analysis.apa_resolver
 
 Key output files:
 
-- `analysis/gap_summary.md` — human-readable recall gap report
-- `analysis/gap_analysis_doi_matched.csv` — gaps where the reference has a DOI
-- `analysis/gap_analysis_url_matched.csv` — gaps where the reference has a URL but no DOI
 - `analysis/rule_improvement_opportunities.csv` — ranked filter/extract improvement suggestions
 - `analysis/extraction_audit.md` — link method and confidence breakdown
+
+The `gap_summary.md` / `gap_analysis_*.csv` outputs belonged to the retired overlap
+analysis and are no longer produced.
 
 ---
 

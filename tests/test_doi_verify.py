@@ -744,6 +744,73 @@ class TestOutageIsNotAnAnswer:
             assert dv.resolve_doi_by_metadata(self.TITLE, self.AUTHOR, self.YEAR) is None
         assert len(list(tmp_path.glob("*.json"))) == 1
 
+    def test_a_dominance_accept_needs_a_complete_candidate_list(self, tmp_path):
+        """The title-only tier accepts a hit for BEATING the runner-up, so it is only
+        entitled to speak over the hits both registries returned. The near-duplicate
+        that makes the pick ambiguous can be sitting in the list that never arrived —
+        and this accept is written straight into doi_o, pair_id and ref_o."""
+        from shared import doi_verify as dv
+
+        ambiguous = [
+            {"DOI": "10.1000/a", "title": ["Stress reactivity predicts perseverance in adults"],
+             "author": [{"family": "Smith"}], "issued": {"date-parts": [[2019]]}},
+            {"DOI": "10.1000/b", "title": ["Stress reactivity predicts perseverance in students"],
+             "author": [{"family": "Jones"}], "issued": {"date-parts": [[2018]]}},
+        ]
+        title = "Stress reactivity predicts perseverance"
+
+        # CrossRef down; OpenAlex answers with only ONE of the two near-duplicates, so
+        # over the half-list it dominates a runner-up that does not exist.
+        def half_list(url, **kw):
+            if "crossref.org" in url:
+                raise RuntimeError("CrossRef is down")
+            return _resp(200, {"results": [
+                {"id": "https://openalex.org/W1", "doi": "https://doi.org/10.1000/a",
+                 "title": ambiguous[0]["title"][0], "publication_year": 2019,
+                 "authorships": [{"author": {"display_name": "A Smith"}}]}]})
+
+        with patch.object(dv, "DOI_VERIFY_CACHE_DIR", tmp_path), \
+             patch.object(dv.time, "sleep", lambda *_: None), \
+             _patch_get(side_effect=half_list):
+            hit = dv.resolve_doi_by_metadata(title, "", None, title_only_gap=True)
+
+        assert hit is dv.UNVERIFIABLE               # not a correction, not an absence
+        assert list(tmp_path.glob("*.json")) == []  # and nothing was frozen into the cache
+
+        # With both registries answering, the same one-sided list IS a dominant hit.
+        def whole_list(url, **kw):
+            if "crossref.org" in url:
+                return _resp(200, {"message": {"items": [ambiguous[0]]}})
+            return _resp(200, {"results": []})
+
+        with patch.object(dv, "DOI_VERIFY_CACHE_DIR", tmp_path), \
+             patch.object(dv.time, "sleep", lambda *_: None), \
+             _patch_get(side_effect=whole_list):
+            hit = dv.resolve_doi_by_metadata(title, "", None, title_only_gap=True)
+
+        assert hit and hit["doi"] == "10.1000/a"
+
+    def test_an_absolute_match_still_runs_on_a_partial_list(self, tmp_path):
+        """_score_hit tests one hit against the row's own title, author and year, so a
+        missing registry can only cost it a match it never saw — the safe direction.
+        Only the RELATIVE tier needs both sources."""
+        from shared import doi_verify as dv
+
+        def crossref_down(url, **kw):
+            if "crossref.org" in url:
+                raise RuntimeError("CrossRef is down")
+            return _resp(200, {"results": [
+                {"id": "https://openalex.org/W1", "doi": "https://doi.org/10.1000/a",
+                 "title": self.TITLE, "publication_year": self.YEAR,
+                 "authorships": [{"author": {"display_name": "Sebastian Schindler"}}]}]})
+
+        with patch.object(dv, "DOI_VERIFY_CACHE_DIR", tmp_path), \
+             patch.object(dv.time, "sleep", lambda *_: None), \
+             _patch_get(side_effect=crossref_down):
+            hit = dv.resolve_doi_by_metadata(self.TITLE, self.AUTHOR, self.YEAR)
+
+        assert hit and hit["doi"] == "10.1000/a"
+
     def test_unverifiable_search_keeps_the_doi_instead_of_mismatch(self):
         from shared import doi_verify as dv
         registered_elsewhere = {"registered": True, "title": "A different paper",

@@ -211,9 +211,28 @@ def rows_to_batch(rows: list[dict]) -> pa.RecordBatch:
     Keys the schema does not name are dropped rather than inferred: a spec cannot
     read them, and inferring types from a handful of rows is how a column of all
     NULLs arrives as `pa.null()` and breaks a kernel that a pool batch feeds fine.
+
+    `publication_year` is COERCED rather than trusted. The pool's parquet gives it
+    as an int64, but this entry point is fed hand-built dicts by analysis scripts
+    and a CSV read, where the same year arrives as `"2018"` — and the strict schema
+    turned that into an `ArrowInvalid` deep inside pyarrow rather than into a year.
+    A value that is not a whole number at all becomes null, which is what the match
+    blocks already read an absent year as.
     """
     columns = {name: [row.get(name) for row in rows] for name in _ROW_SCHEMA.names}
+    columns["publication_year"] = [_year(v) for v in columns["publication_year"]]
     return pa.RecordBatch.from_pydict(columns, schema=_ROW_SCHEMA)
+
+
+def _year(value: object) -> Optional[int]:
+    """*value* as a year, or None — `"2018"`, `2018.0` and `""` all have an answer."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value) if isinstance(value, (int, float)) \
+            else int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def eval_spec_rows(spec: FilterSpec, rows: list[dict]) -> list[bool]:

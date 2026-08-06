@@ -10,9 +10,12 @@ rows were admitted under (read from the pool's provenance sidecar, never from th
 checkout), plus every parquet's name, size and row count
 (`search.snapshot_scan.pool_fingerprint`). A pool that cannot be fingerprinted at
 all — none there, unreadable, or fewer files than its sidecar says complete it —
-routes under `pool_manifest_hash = "unmanifested"` rather than failing: the
-release id then honestly says the pool's provenance was unknown, which is a
-different claim from naming a pool and must not be silently substituted for it.
+routes under `pool_manifest_hash = "unmanifested:<discriminator>"` rather than
+failing: the release id then honestly says the pool's provenance was unknown,
+which is a different claim from naming a pool and must not be silently
+substituted for it. The discriminator is a hash of the parquet names and sizes,
+so two different unfingerprintable pools mint two different release ids instead
+of sharing one release's claims and verdicts.
 The fingerprint is taken again after the routing pass, because the reader re-reads
 the directory and a release id must name the pool that was actually consumed.
 
@@ -54,6 +57,57 @@ def schema_version() -> str:
         ",".join(ENGINE_EXPORTED_COLS).encode("utf-8")).hexdigest()[:12]
 
 
+def _unmanifested(pool_dir: Optional[Path]) -> str:
+    """`unmanifested:<12 hex>` — an unfingerprintable pool, told apart from others.
+
+    A release id is the identity claims and verdicts hang off, so two different
+    pools must not mint the same one. The literal `unmanifested` did exactly that:
+    every half-pulled or sidecar-less pool on earth shared one release-id input, so
+    two of them routed into one release and shared each other's claims and
+    verdicts. The discriminator is the cheapest fact that still separates them —
+    each parquet's name and size, which needs no footer read and is available
+    precisely when the real fingerprint is not (a missing sidecar, a partial
+    transfer). It is deliberately NOT a fingerprint: no row counts, no gate, no
+    file contents, and it keeps the `unmanifested` prefix so nothing reads it as
+    provenance. A pool the discriminator cannot be taken over either — an unreadable
+    directory — falls back to the bare literal, which is the one case where two
+    pools may still collide and the one where nothing at all is known about either.
+    """
+    try:
+        files = sorted(Path(pool_dir).glob("*.parquet")) if pool_dir else []
+        parts = "|".join(f"{p.name}:{p.stat().st_size}" for p in files)
+    except OSError:
+        return UNMANIFESTED
+    digest = hashlib.sha256(parts.encode("utf-8")).hexdigest()[:12]
+    return f"{UNMANIFESTED}:{digest}"
+
+
+def _unmanifested(pool_dir: Optional[Path]) -> str:
+    """`unmanifested:<12 hex>` — an unfingerprintable pool, told apart from others.
+
+    A release id is the identity claims and verdicts hang off, so two different
+    pools must not mint the same one. The bare literal `unmanifested` did exactly
+    that: every half-pulled or sidecar-less pool on earth shared one release-id
+    input, so two of them routed into one release and shared each other's claims
+    and verdicts. The discriminator is the cheapest fact that still separates
+    them — each parquet's name and size, which needs no footer read and is
+    available precisely when the real fingerprint is not (a missing sidecar, a
+    partial transfer). It is deliberately NOT a fingerprint: no row counts, no
+    gate, no file contents, and it keeps the `unmanifested` prefix so nothing
+    reads it as provenance. A pool the discriminator itself cannot be taken over —
+    an unreadable directory — falls back to the bare literal, which is the one
+    case where two pools can still collide and the one where nothing whatever is
+    known about either.
+    """
+    try:
+        files = sorted(Path(pool_dir).glob("*.parquet")) if pool_dir else []
+        parts = "|".join(f"{p.name}:{p.stat().st_size}" for p in files)
+    except OSError:
+        return UNMANIFESTED
+    digest = hashlib.sha256(parts.encode("utf-8")).hexdigest()[:12]
+    return f"{UNMANIFESTED}:{digest}"
+
+
 def _pool_manifest_hash(given: Optional[str], pool_dir: Optional[Path] = None) -> str:
     """The pool's identity for the release id: a hash of the pool directory itself.
 
@@ -62,17 +116,19 @@ def _pool_manifest_hash(given: Optional[str], pool_dir: Optional[Path] = None) -
     found a partial one (fewer files than its provenance sidecar says complete it),
     or could not read it. It is never returned for a pool that was read whole: an
     unreadable pool raises inside `pool_fingerprint`, and an absent or partial one
-    returns None; neither can come back as a real-looking hash.
+    returns None; neither can come back as a real-looking hash. What such a pool
+    gets instead is `unmanifested:<discriminator>` — see `_unmanifested()`.
     """
     if given:
         return given
     try:
         from search.snapshot_scan import pool_fingerprint
-        return pool_fingerprint(pool_dir) or UNMANIFESTED
+        return pool_fingerprint(pool_dir) or _unmanifested(pool_dir)
     except Exception as exc:  # noqa: BLE001 — boundary: a pool we cannot read is unnamed
+        provenance = _unmanifested(pool_dir)
         print(f"  WARNING: the pool at {pool_dir} could not be fingerprinted ({exc}); "
-              f"this release records its provenance as '{UNMANIFESTED}'.")
-        return UNMANIFESTED
+              f"this release records its provenance as '{provenance}'.")
+        return provenance
 
 
 def _release_inputs(spec_dir: Path, pool_manifest_hash: str,
@@ -194,7 +250,7 @@ def cmd_route(args) -> int:
     provenance = inputs["pool_manifest_hash"]
     print(f"  pool {args.pool} — {counters['files']} file(s), "
           f"{counters['pool_rows']:,} pool row(s) -> {counters['rows']:,} work(s), "
-          f"provenance {provenance if provenance == UNMANIFESTED else provenance[:12]}")
+          f"provenance {provenance if provenance.startswith(UNMANIFESTED) else provenance[:12]}")
     _print_overlay(overlay_dir, indent="  ")
     for pile, count in sorted(pile_counts(con, release_id).items()):
         print(f"  {pile:<18} {count:,}")
@@ -324,6 +380,7 @@ def cmd_screen(args) -> int:
               f"{responses.get('response_pending_upload', 0):,} still on disk only")
     for outcome, count in sorted(report["outcomes"].items()):
         print(f"  {outcome:<12} {count:,}")
+    _print_incomplete(client, args.tier, indent="  ")
     if report.get("revalidation"):
         print(f"  re-validation — {report['revalidation']['discards']:,} discard(s) "
               "this tier would have made, by the pile the rules chose:")
@@ -332,6 +389,28 @@ def cmd_screen(args) -> int:
         print("  Nothing was discarded: validation mode. Re-run with --live once "
               "these numbers have been adjudicated.")
     return 0
+
+
+def _print_incomplete(client, tier: str, indent: str = "") -> None:
+    """How many works this tier has verdict rows for but no decision from.
+
+    The one number that makes a provider outage visible instead of silent. These
+    works are not decided (the next `screen --run` asks them again) and not handed
+    off (a half-screen never reaches Stage 3), so without this line the only trace
+    of a five-minute outage is a run count that does not add up.
+    """
+    if client is None:
+        return
+    from filter.engine.tiers import incomplete_work_ids
+
+    try:
+        pending = incomplete_work_ids(client, tier)
+    except Exception as exc:  # noqa: BLE001 — network boundary; a count is not the run
+        print(f"{indent}incomplete screens: unknown ({exc})")
+        return
+    if pending:
+        print(f"{indent}incomplete screens {len(pending):,}  (verdict rows short of a "
+              "decision — a failed call, not a verdict; the next --run asks again)")
 
 
 def cmd_reconcile(args) -> int:
@@ -447,6 +526,19 @@ def cmd_status(args) -> int:
         for pile, count in sorted(pile_counts(con, release_id).items()):
             print(f"  {pile:<18} {count:,}")
     con.close()
+
+    # Tier-scoped, so it is reported once rather than per release: a verdict
+    # follows the work, not the release it was routed under.
+    from filter.engine.claims import ClaimsClient, ClaimsNotConfigured
+    from filter.engine.tiers import TIER_CHEAP, TIER_EXPENSIVE
+
+    try:
+        client = ClaimsClient()
+    except ClaimsNotConfigured:
+        return 0
+    print("")
+    for tier in (TIER_EXPENSIVE, TIER_CHEAP):
+        _print_incomplete(client, tier, indent=f"{tier}: ")
     return 0
 
 

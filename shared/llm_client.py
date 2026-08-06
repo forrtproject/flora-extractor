@@ -88,6 +88,30 @@ def _gemini_usage(body: dict) -> tuple[int, int]:
     return n_in, max(n_out, 0)
 
 
+def _gemini_block_reason(body: dict) -> str:
+    """Why this HTTP 200 carried no answer text — "" when it carried one.
+
+    A 200 with nothing to read is never the model DECLINING to find anything: a
+    decline arrives as parseable JSON whose list is empty, which is a fact about the
+    document. The empty shapes are a prompt blocked before generation (no
+    `candidates` at all, `promptFeedback.blockReason` saying why) and a candidate
+    blocked or truncated on the way out (`finishReason` SAFETY / RECITATION /
+    MAX_TOKENS … with no text part). Neither establishes anything about the
+    document, so both must reach the caller as an ERROR: the document callers cache
+    what they are told, and a safety block recorded as "this paper has no reference
+    list" is permanent and wrong.
+    """
+    candidates = body.get("candidates") or []
+    if not candidates:
+        reason = (body.get("promptFeedback") or {}).get("blockReason") or "unknown"
+        return f"blocked before generation (blockReason={reason})"
+    parts = ((candidates[0].get("content") or {}).get("parts") or [])
+    if parts and isinstance(parts[0], dict) and parts[0].get("text"):
+        return ""
+    return ("no response text "
+            f"(finishReason={candidates[0].get('finishReason') or 'unknown'})")
+
+
 # ── Per-provider rate limiting ────────────────────────────────────────────────
 # Each provider is throttled against its OWN schedule, immediately before the
 # request goes out. Charging the wait to the caller after a successful call — as
@@ -872,10 +896,10 @@ def call_gemini_with_images(prompt: str,
     image_b64_list: [{"mime_type": "image/png", "data": "<base64>"}]
 
     Returns (result_dict_or_None, error_description) — the same contract as every
-    other call in this module. (None, "") means the model answered and had nothing
-    to give; (None, "<error>") means it never answered. The two used to be one
-    None, so the caller could not tell an outage from a document with no reference
-    list, and recorded the outage as the second.
+    other call in this module. An answer is a parsed JSON object, whose list may be
+    empty: THAT is the model having nothing to give, and it is a fact about the
+    document. Everything else is an error string, including a safety block
+    (`_gemini_block_reason`), which says nothing about the document at all.
 
     Requires PyMuPDF (fitz) for rendering — callers must catch ImportError.
     """
@@ -910,10 +934,9 @@ def call_gemini_with_images(prompt: str,
                 continue
             body = r.json()
             _record_tokens("gemini", model, *_gemini_usage(body))
-            if not body.get("candidates"):
-                # The model was asked and declined (a safety block, most often).
-                # That is an answer: no error string, and the caller may record it.
-                return None, ""
+            blocked = _gemini_block_reason(body)
+            if blocked:
+                return None, blocked
             text = body["candidates"][0]["content"]["parts"][0]["text"]
             result = _parse_llm_json(text)
             return result, ("" if result else "response was not valid JSON")
@@ -938,8 +961,9 @@ def call_gemini_with_pdf(prompt: str,
     scanned PDFs it applies lower-resolution OCR.  Max supported: 50 MB / 1 000 pages.
 
     Returns (result_dict_or_None, error_description), as call_gemini_with_images
-    does and for the same reason: "the model gave nothing" and "the model was never
-    reached" are different answers to the question the caller is asking.
+    does and for the same reason: "the model read the document and listed nothing"
+    and "no answer came back" are different answers to the question the caller is
+    asking, and only the first may be recorded against the document.
     """
     if not GEMINI_API_KEYS:
         return None, "no API keys configured"
@@ -984,8 +1008,9 @@ def call_gemini_with_pdf(prompt: str,
                     break
                 body = r.json()
                 _record_tokens("gemini", model, *_gemini_usage(body))
-                if not body.get("candidates"):
-                    return None, ""
+                blocked = _gemini_block_reason(body)
+                if blocked:
+                    return None, blocked
                 text = body["candidates"][0]["content"]["parts"][0]["text"]
                 result = _parse_llm_json(text)
                 return result, ("" if result else "response was not valid JSON")
@@ -1192,18 +1217,26 @@ def _screen_categories(votes: list[dict]) -> list[str]:
     return [c for c in SCREEN_CATEGORIES if c in seen]
 
 
-# Declared cache equivalences for the classify key (issue #171). Each entry is one
-# LEGACY value of the key's voter component that a maintainer has reviewed and judged
-# to name the same computation as today's — registering one is a commit with the
-# reasoning attached, exactly as a model constant is. Everything else about the key is
-# unchanged, so an equivalence stops matching by itself the moment the prompt or a
-# voter model moves: the legacy key is rebuilt from the CURRENT prompt version and
-# prompt text, and only the voter component is substituted.
+# Declared cache equivalences for the classify key (issue #171). The declaration is a
+# statement about ONE pair of voters: the equivalence holds only while the screen is
+# still asking exactly the models and efforts whose answers are on disk. The equivalent
+# pair is therefore named explicitly, and the legacy keys are offered only when the
+# voter id this call built equals it. A wildcard here would be much worse than no
+# equivalence at all: swapping a voter or an effort to RE-SCREEN the corpus would serve
+# every legacy entry straight back from the old pair, re-filed under the new pair's key
+# with a cache_migrated note naming voters that never saw the row — a rescreen that
+# completes instantly, costs nothing and changes no verdict.
 #
-# Both declared entries name the same computation as today's: the Gemini voter at the
-# API default — no thinkingLevel in the request, which for gemini-3.5-flash-lite is
-# "minimal" — and the GPT voter at an explicit "low", which is exactly what
-# SCREENING_EFFORT_1 / SCREENING_EFFORT_2 now send. Only the LABEL differed.
+# Everything else about the key is unchanged, so an equivalence also stops matching by
+# itself the moment the prompt moves: the legacy key is rebuilt from the CURRENT prompt
+# version and prompt text, and only the voter component is substituted.
+_CLASSIFY_EQUIVALENT_VOTER_ID = ("gemini-3.5-flash-lite@effort=minimal"
+                                 "+gpt-5.4-mini@effort=low")
+
+# Both declared entries name the same computation as _CLASSIFY_EQUIVALENT_VOTER_ID: the
+# Gemini voter at the API default — no thinkingLevel in the request, which for
+# gemini-3.5-flash-lite is "minimal" — and the GPT voter at an explicit "low", which is
+# exactly what SCREENING_EFFORT_1 / SCREENING_EFFORT_2 send. Only the LABEL differed.
 #
 #   "gemini-3.5-flash-lite+gpt-5.4-mini"  — the unlabelled pair, before the key named
 #   an effort at all. This is what the entries on disk are under (4,767 of the 4,817
@@ -1232,8 +1265,11 @@ def _classify_keys(doi_r: str, study_r: str, abstract_r: str) -> tuple[str, list
     voter_id = "+".join(cache_model_id(model, effort)
                         for _, model, _, effort in voters)
     key = content_key("classify", doi_r or study_r, pv, voter_id, cls_prompt)
-    legacy = [content_key("classify", doi_r or study_r, pv, part, cls_prompt)
-              for part in _CLASSIFY_LEGACY_KEY_PARTS]
+    # The equivalence was declared for one pair of voters; a run screening any other
+    # pair is asking a question those cached answers do not answer, and must pay for it.
+    legacy = ([content_key("classify", doi_r or study_r, pv, part, cls_prompt)
+               for part in _CLASSIFY_LEGACY_KEY_PARTS]
+              if voter_id == _CLASSIFY_EQUIVALENT_VOTER_ID else [])
     return key, legacy, {"prompt_version": pv, "voters": voter_id}
 
 
