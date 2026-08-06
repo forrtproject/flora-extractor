@@ -180,18 +180,15 @@ class TestExtractOutcome:
         assert result["outcome"] == "failure"
 
     def test_keyword_hit_vetoed_as_not_a_replication(self, tmp_path):
-        """#70: a 'failed to replicate' abstract whose full text shows the paper checks
-        no named original becomes not_a_replication instead of a coded failure. The veto
-        is the FULL-TEXT pass's record_type_check — the abstract pass never carries it."""
-        abstract_cbd = {"outcome": "cannot_be_determined", "outcome_phrase": "",
-                        "confident": False, "out_quote_source": ""}
-        fulltext_neither = {"outcome": "failure", "outcome_phrase": "background prose",
-                            "record_type_check": "neither", "confident": True,
-                            "out_quote_source": "fulltext"}
+        """#70: a 'failed to replicate' abstract whose text shows the paper checks no
+        named original becomes not_a_replication instead of a coded failure. The veto is
+        record_type_check, which is asked only when the model was given the text."""
+        neither = {"outcome": "failure", "outcome_phrase": "background prose",
+                   "record_type_check": "neither", "confident": True,
+                   "out_quote_source": "discussion"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
              patch("extract.code_outcome.call_model",
-                   side_effect=[(abstract_cbd, "openai", ""), (fulltext_neither, "openai", "")]), \
+                   return_value=(neither, "openai", "")), \
              patch("extract.code_outcome.time.sleep"):
             result = extract_outcome(
                 "10.1234/veto",
@@ -199,6 +196,20 @@ class TestExtractOutcome:
                 fulltext="This paper is about something else entirely.",
                 title_r="Not actually a replication",
             )
+        assert result["outcome"] == "not_a_replication"
+
+    def test_a_text_that_re_tests_nothing_is_vetoed_too(self, tmp_path):
+        """target_check == no_original is the same veto reached from the other side:
+        the paper checks no earlier published finding at all."""
+        no_original = {"outcome": "success", "outcome_phrase": "q", "confident": True,
+                       "out_quote_source": "discussion", "target_check": "no_original"}
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.call_model",
+                   return_value=(no_original, "openai", "")), \
+             patch("extract.code_outcome.time.sleep"):
+            result = extract_outcome("10.1234/none", abstract_r="an abstract",
+                                     fulltext="We report a new experiment.",
+                                     title_r="A Study")
         assert result["outcome"] == "not_a_replication"
 
     def test_keyword_hit_skips_llm_in_no_llm_mode(self):
@@ -304,20 +315,43 @@ class TestLLMOutcomePrompt:
             )
         return result, mock_llm
 
-    def test_fulltext_not_in_abstract_prompt(self, tmp_path):
-        """#61 abstract-first: the FIRST call must be abstract-only. Fulltext is held
-        in reserve for escalation, so it must not appear in the abstract prompt."""
+    def test_every_passage_reaches_the_one_call(self, tmp_path):
+        """One call, over everything the row has: there is no abstract-first pass to
+        hold the body back for. Each passage is named, so a quote is attributable."""
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
              patch("extract.code_outcome.call_model", return_value=(
                  {"outcome": "success", "outcome_phrase": "x", "outcome_confidence": "high",
                   "out_quote_source": "abstract", "outcome_reasoning": ""},
                  "openai", "")) as mock_llm, \
              patch("extract.code_outcome.time.sleep"):
-            extract_outcome("10.1234/ft", abstract_r="ambiguous text", fulltext="UNIQUE_FULLTEXT_MARKER")
-        first_prompt = mock_llm.call_args_list[0][0][0]
-        assert "UNIQUE_FULLTEXT_MARKER" not in first_prompt
-        # A decisive abstract answer means no escalation call at all.
+            extract_outcome("10.1234/ft", abstract_r="ambiguous text",
+                            fulltext="UNIQUE_DISCUSSION_MARKER",
+                            intro_text="UNIQUE_INTRO_MARKER",
+                            fulltext_provenance="discussion")
         assert mock_llm.call_count == 1
+        prompt = mock_llm.call_args_list[0][0][0]
+        assert "UNIQUE_DISCUSSION_MARKER" in prompt
+        assert "UNIQUE_INTRO_MARKER" in prompt
+        assert "INTRODUCTION:" in prompt
+        assert "DISCUSSION / CONCLUSION" in prompt
+
+    def test_the_link_is_evidence_to_check_not_an_assertion(self, tmp_path):
+        """No LLM chose this link — a deterministic rule did. The rule's own evidence
+        goes with it, and the model is asked to check it (target_check)."""
+        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
+             patch("extract.code_outcome.call_model", return_value=(
+                 {"outcome": "success", "outcome_phrase": "x", "confident": True,
+                  "out_quote_source": "abstract", "outcome_reasoning": ""},
+                 "openai", "")) as mock_llm, \
+             patch("extract.code_outcome.time.sleep"):
+            extract_outcome("10.1234/chk", abstract_r="a", title_r="T",
+                            original_title="The Original", original_authors="Smith",
+                            original_year="2009", fulltext="closing text",
+                            original_evidence="citation context score 4.5")
+        prompt = mock_llm.call_args[0][0]
+        assert "citation context score 4.5" in prompt
+        assert "Check that link against the text" in prompt
+        assert '"target_check"' in prompt
 
     def test_outcome_reasoning_returned_from_llm(self, tmp_path):
         result, _ = self._run_llm(tmp_path)
@@ -329,10 +363,10 @@ class TestLLMOutcomePrompt:
             result = extract_outcome("10.1234/fail2", abstract_r="ambiguous")
         assert result.get("outcome_reasoning", "") == ""
 
-    def test_abstract_pass_never_reads_a_record_type_check(self, tmp_path):
-        """The abstract pass sees exactly the evidence two validated screen voters
-        already saw, so it is not asked to re-decide what the paper is — and a stray
-        answer must not end the row."""
+    def test_a_call_with_no_text_never_reads_a_record_type_check(self, tmp_path):
+        """With only the abstract, the model sees exactly the evidence two validated
+        screen voters already saw, so it is not asked to re-decide what the paper is —
+        and a stray answer must not end the row."""
         llm_return = {
             "outcome": "failure",
             "outcome_phrase": "We did not find support for the original effect.",
@@ -363,84 +397,6 @@ class TestKeywordScanNoFulltext:
             no_llm=True,
         )
         assert result["outcome"] == "cannot_be_determined"
-
-
-class TestFulltextEscalation:
-    _ABS_CBD = {"outcome": "cannot_be_determined", "outcome_phrase": "",
-                "outcome_confidence": "low", "out_quote_source": "abstract",
-                "outcome_reasoning": "abstract too thin"}
-    _FT_FAIL = {"outcome": "failure", "outcome_phrase": "The effect did not replicate.",
-                "outcome_confidence": "high", "out_quote_source": "fulltext",
-                "outcome_reasoning": "results section is explicit"}
-
-    # No abstract → escalate even though the abstract call did not return cbd.
-    _ABS_THIN = {"outcome": "success", "outcome_phrase": "", "outcome_confidence": "low",
-                 "out_quote_source": "title", "outcome_reasoning": ""}
-
-    @pytest.mark.parametrize("abstract,first", [
-        ("ambiguous abstract", _ABS_CBD),   # the abstract could not settle it
-        ("",                   _ABS_THIN),  # there was no abstract to settle it with
-    ])
-    def test_escalation_fires(self, tmp_path, abstract, first):
-        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
-             patch("extract.code_outcome.time.sleep"), \
-             patch("extract.code_outcome.call_model",
-                   side_effect=[(first, "openai", ""), (self._FT_FAIL, "openai", "")]) as mock_llm:
-            result = extract_outcome(
-                "10.1234/esc", abstract_r=abstract,
-                fulltext="RESULTS: the effect did not replicate.", title_r="A Study",
-            )
-        assert mock_llm.call_count == 2
-        # Second (escalation) prompt must contain the parsed fulltext.
-        assert "did not replicate" in mock_llm.call_args_list[1][0][0]
-        assert result["outcome"] == "failure"
-        assert result["out_quote_source"] == "fulltext"
-
-    @pytest.mark.parametrize("flag,fulltext", [
-        (False, "RESULTS: the effect did not replicate."),   # escalation switched off
-        (True,  ""),                                         # nothing to escalate to
-    ])
-    def test_no_escalation(self, tmp_path, flag, fulltext):
-        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", flag), \
-             patch("extract.code_outcome.time.sleep"), \
-             patch("extract.code_outcome.call_model",
-                   side_effect=[(self._ABS_CBD, "openai", ""), (self._FT_FAIL, "openai", "")]) as mock_llm:
-            result = extract_outcome(
-                "10.1234/noesc", abstract_r="ambiguous abstract",
-                fulltext=fulltext, title_r="A Study",
-            )
-        assert mock_llm.call_count == 1
-        assert result["outcome"] == "cannot_be_determined"
-
-    def test_failed_escalation_is_not_cached(self, tmp_path):
-        """Caching the abstract's cannot_be_determined after the fulltext call died
-        would retire the escalation permanently."""
-        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
-             patch("extract.code_outcome.time.sleep"), \
-             patch("extract.code_outcome._call_outcome_llm",
-                   side_effect=[(self._ABS_CBD, "m"), (None, "")]) as mock_llm:
-            result = extract_outcome(
-                "10.1234/escfail", abstract_r="ambiguous abstract",
-                fulltext="RESULTS: the effect did not replicate.", title_r="A Study",
-            )
-        assert mock_llm.call_count == 2
-        assert result["outcome"] == "cannot_be_determined"
-        assert list(tmp_path.glob("outcome_*.json")) == []
-
-        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
-             patch("extract.code_outcome.time.sleep"), \
-             patch("extract.code_outcome._call_outcome_llm",
-                   side_effect=[(self._ABS_CBD, "m"), (self._FT_FAIL, "m")]) as retry:
-            result = extract_outcome(
-                "10.1234/escfail", abstract_r="ambiguous abstract",
-                fulltext="RESULTS: the effect did not replicate.", title_r="A Study",
-            )
-        assert retry.call_count == 2
-        assert result["outcome"] == "failure"
 
 
 class TestOutcomePromptContent:
@@ -509,12 +465,15 @@ class TestOutcomePromptPlaceholderInjection:
                  "abstract": "A {fulltext_block} {title_r}",
                  "authors": "{title_r} et al",
                  "year": "{field_count}",
-                 "orig_title": "O {evidence_line} {record_type_check_field}",
-                 "text": "F {abstract_r} {original_block}"}
+                 "orig_title": "O {evidence_line} {check_fields}",
+                 "text": "F {abstract_r} {original_block}",
+                 "intro": "I {outcome_rules} {axis_rules}",
+                 "evidence": "E {intro_block} {check_meanings}"}
         for build in (build_outcome_prompt, build_repro_outcome_prompt):
             prompt = build(marks["title"], marks["abstract"], marks["authors"],
                            marks["year"], marks["orig_title"], text_snip=marks["text"],
-                           multi_original=True)
+                           intro_snip=marks["intro"],
+                           original_evidence=marks["evidence"])
             for value in marks.values():
                 assert value in prompt, (build.__name__, value)
 
@@ -561,46 +520,23 @@ class TestOutcomeCacheKey:
         mock = self._run(tmp_path, abstract_r="a", title_r="T", record_type="reproduction")
         assert mock.call_count == 1
 
-    def test_the_multi_original_flag_misses(self, tmp_path):
-        """The flag adds a sentence to the prompt telling the model the paper's other
-        originals are coded on their own rows. Leaving it out of the key let a
-        per-target row read back a single-original row's answer for the same pair."""
-        self._run(tmp_path, abstract_r="a", title_r="T")
-        mock = self._run(tmp_path, abstract_r="a", title_r="T", multi_original=True)
-        assert mock.call_count == 1
-        assert len(list(tmp_path.glob("outcome_*.json"))) == 2
-
-    def test_the_flag_is_appended_only_when_set(self, tmp_path):
-        """A key component that is always present moves EVERY key. The outcome cache
-        is the most expensive one the pipeline holds — its entries may carry a
-        full-text escalation — so a single-original key must be byte-identical to the
-        one written before the flag existed."""
-        from shared.cache import content_key
-        from shared.llm_client import cache_model_id
-        from shared.config import OUTCOME_EFFORT, OUTCOME_MODEL
-        from shared.prompts import prompt_version
-
-        # The historical model component, byte for byte: the pre-refactor key derived
-        # "medium" from the model id AND the call sent it, so this whole namespace is
-        # still the answers this configuration produces.
-        assert cache_model_id(OUTCOME_MODEL, OUTCOME_EFFORT) == "gpt-5.4-mini@effort=medium"
-
-        parts = (cache_model_id(OUTCOME_MODEL, OUTCOME_EFFORT),
-                 prompt_version("build_outcome_prompt"), "replication",
-                 "T", "a", "", "", "", "")
-        pre_pr = content_key("outcome", "10.1234/key", *parts)
-        with_flag = content_key("outcome", "10.1234/key", *parts, "multi_original")
-
-        self._run(tmp_path, abstract_r="a", title_r="T")
-        assert [f.stem for f in tmp_path.glob("outcome_*.json")] == [pre_pr]
-        assert with_flag != pre_pr
-
     def test_changed_fulltext_misses(self, tmp_path):
-        """The escalation reads the fulltext, so a re-parsed PDF must not replay the
-        verdict reached without it."""
+        """The call reads the closing sections, so a re-parsed PDF must not replay the
+        verdict reached without them."""
         self._run(tmp_path, abstract_r="a", title_r="T", fulltext="old text")
         mock = self._run(tmp_path, abstract_r="a", title_r="T", fulltext="new text")
         assert mock.call_count == 1
+
+    def test_the_new_inputs_are_all_in_the_key(self, tmp_path):
+        """Each of them changes the prompt, so none may replay another's answer."""
+        for field, value in (("intro_text", "an introduction"),
+                             ("original_evidence", "matched on a citation"),
+                             ("fulltext_provenance", "tail")):
+            base = dict(abstract_r="a", title_r="T", fulltext="closing text",
+                        doi=f"10.1234/{field}")
+            self._run(tmp_path, **base)
+            mock = self._run(tmp_path, **base, **{field: value})
+            assert mock.call_count == 1, field
 
     def test_prompt_version_in_key(self, tmp_path, monkeypatch):
         from shared import prompts
@@ -1179,7 +1115,6 @@ class TestReproductionOutcome:
                 "outcome_robustness": "cannot_be_determined",
                 "confident": False, "outcome_reasoning": "r"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", False), \
              patch("extract.code_outcome.call_model", return_value=(mock, "openai", "")), \
              patch("extract.code_outcome.time.sleep"):
             res = extract_outcome("10.1/half", abstract_r="a re-analysis",
@@ -1194,7 +1129,6 @@ class TestReproductionOutcome:
         mock = {"outcome": "success", "outcome_phrase": "q", "confident": True,
                 "out_quote_source": "abstract", "outcome_reasoning": "r"}
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", False), \
              patch("extract.code_outcome.call_model", return_value=(mock, "openai", "")), \
              patch("extract.code_outcome.time.sleep"):
             res = extract_outcome("10.1/repro2", abstract_r="re-analysis",
@@ -1224,66 +1158,14 @@ class TestReproductionOutcome:
 
 # ── Per-axis escalation, record_type_check and response repair ──────────────
 
-class TestReproductionEscalation:
-    """A reproduction has two axes, and either one unresolved is a reason to read the
-    full text — but the escalation re-codes BOTH, so no row ever carries one axis from
-    the abstract beside the other from the full text."""
-
-    _ABS_HALF = {"outcome_computation": "computationally reproducible",
-                 "outcome_computational_quote": "All numbers matched.",
-                 "out_quote_computational_source": "abstract",
-                 "outcome_robustness": "cannot_be_determined",
-                 "outcome_robustness_quote": "", "out_quote_robust_source": "",
-                 "confident": False, "outcome_reasoning": "robustness unclear"}
-    _FT_BOTH = {"outcome_computation": "technical failure",
-                "outcome_computational_quote": "The deposited archive would not run.",
-                "out_quote_computational_source": "fulltext",
-                "outcome_robustness": "robustness challenges",
-                "outcome_robustness_quote": "Two specifications reversed the sign.",
-                "out_quote_robust_source": "fulltext",
-                "confident": True, "outcome_reasoning": "both settled from the methods"}
-
-    def _run(self, tmp_path, responses, **kw):
-        with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
-             patch("extract.code_outcome.time.sleep"), \
-             patch("extract.code_outcome.call_model",
-                   side_effect=[(r, "openai", "") for r in responses]) as mock_llm:
-            result = extract_outcome("10.1/axis", abstract_r="a re-analysis",
-                                     fulltext="METHODS: we re-ran the archive.",
-                                     title_r="A Reproduction",
-                                     record_type="reproduction", **kw)
-        return result, mock_llm
-
-    def test_one_unsettled_axis_escalates(self, tmp_path):
-        result, mock_llm = self._run(tmp_path, [self._ABS_HALF, self._FT_BOTH])
-        assert mock_llm.call_count == 2
-
-    def test_escalation_replaces_both_axes(self, tmp_path):
-        result, _ = self._run(tmp_path, [self._ABS_HALF, self._FT_BOTH])
-        assert result["outcome_computation"] == "technical failure"
-        assert result["outcome_robustness"] == "robustness challenges"
-        assert result["outcome"] == "technical failure, robustness challenges"
-
-    def test_both_axes_settled_does_not_escalate(self, tmp_path):
-        settled = dict(self._ABS_HALF, outcome_robustness="robust",
-                       outcome_robustness_quote="It held across specifications.",
-                       out_quote_robust_source="abstract")
-        result, mock_llm = self._run(tmp_path, [settled])
-        assert mock_llm.call_count == 1
-        assert result["outcome"] == "computationally reproducible, robust"
-
-
 class TestRecordTypeCheckRecode:
-    """The full-text pass is the first call in the pipeline to see the methods, and
-    the screen that set `type` could not. A row coded in the wrong vocabulary is
-    re-coded once — one hop, never a loop."""
+    """This call is the first in the pipeline to see the methods, and the screen that
+    set `type` could not. A row coded in the wrong vocabulary is re-coded once — one
+    hop, never a loop."""
 
-    _ABS_CBD = {"outcome": "cannot_be_determined", "outcome_phrase": "",
-                "confident": False, "out_quote_source": ""}
     _FT_SAYS_REPRO = {"outcome": "failure", "outcome_phrase": "It did not hold.",
                       "record_type_check": "reproduction", "confident": True,
-                      "out_quote_source": "fulltext", "outcome_reasoning": "r"}
+                      "out_quote_source": "discussion", "outcome_reasoning": "r"}
     _REPRO_VERDICT = {"outcome_computation": "computational issues",
                       "outcome_computational_quote": "The coefficient differed.",
                       "out_quote_computational_source": "abstract",
@@ -1293,7 +1175,6 @@ class TestRecordTypeCheckRecode:
 
     def _run(self, tmp_path, responses, record_type="replication"):
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", True), \
              patch("extract.code_outcome.time.sleep"), \
              patch("extract.code_outcome.call_model",
                    side_effect=[(r, "openai", "") for r in responses]) as mock_llm:
@@ -1304,23 +1185,19 @@ class TestRecordTypeCheckRecode:
 
     def test_other_vocabulary_recodes_once_and_reports_the_type(self, tmp_path):
         result, mock_llm = self._run(
-            tmp_path, [self._ABS_CBD, self._FT_SAYS_REPRO, self._REPRO_VERDICT])
-        # abstract, full text, then one reproduction-vocabulary call.
-        assert mock_llm.call_count == 3
+            tmp_path, [self._FT_SAYS_REPRO, self._REPRO_VERDICT])
+        assert mock_llm.call_count == 2
         assert result["outcome"] == "computational issues, not checked"
         assert result["record_type"] == "reproduction"
-        assert "reproduction study" in mock_llm.call_args_list[2][0][0]
+        assert "reproduction study" in mock_llm.call_args_list[1][0][0]
 
     def test_the_recode_is_not_itself_re_checked(self, tmp_path):
-        """The reproduction call's full-text pass saying "replication" must not send
-        the row back — one hop, no loop."""
-        repro_abs_cbd = {"outcome_computation": "cannot_be_determined",
-                         "outcome_robustness": "cannot_be_determined",
-                         "confident": False, "outcome_reasoning": "r"}
-        repro_ft = dict(self._REPRO_VERDICT, record_type_check="replication")
+        """The reproduction call saying "replication" must not send the row back —
+        one hop, no loop."""
+        repro_says_repl = dict(self._REPRO_VERDICT, record_type_check="replication")
         result, mock_llm = self._run(
-            tmp_path, [self._ABS_CBD, self._FT_SAYS_REPRO, repro_abs_cbd, repro_ft])
-        assert mock_llm.call_count == 4
+            tmp_path, [self._FT_SAYS_REPRO, repro_says_repl])
+        assert mock_llm.call_count == 2
         assert result["record_type"] == "reproduction"
 
     @pytest.mark.parametrize("check", ["replication", "unclear"])
@@ -1329,8 +1206,8 @@ class TestRecordTypeCheckRecode:
         """Only the other vocabulary triggers a recode: agreement and "unclear" both
         leave the row coded as it was, with no third call."""
         ft = dict(self._FT_SAYS_REPRO, record_type_check=check)
-        result, mock_llm = self._run(tmp_path, [self._ABS_CBD, ft])
-        assert mock_llm.call_count == 2
+        result, mock_llm = self._run(tmp_path, [ft])
+        assert mock_llm.call_count == 1
         assert result["outcome"] == "failure"
         assert "record_type" not in result
 
@@ -1338,11 +1215,11 @@ class TestRecordTypeCheckRecode:
         """The recode's own call failing yields api_error, which the outer call must not
         checkpoint under the replication key — a re-run has to try again."""
         first, _ = self._run(
-            tmp_path, [self._ABS_CBD, self._FT_SAYS_REPRO, None, None, None])
+            tmp_path, [self._FT_SAYS_REPRO, None, None, None])
         assert first["outcome"] == "api_error"
         second, mock_llm = self._run(
-            tmp_path, [self._ABS_CBD, self._FT_SAYS_REPRO, self._REPRO_VERDICT])
-        assert mock_llm.call_count == 3
+            tmp_path, [self._FT_SAYS_REPRO, self._REPRO_VERDICT])
+        assert mock_llm.call_count == 2
         assert second["outcome"] == "computational issues, not checked"
 
     def test_a_recoded_type_reaches_the_row(self):
@@ -1359,7 +1236,6 @@ class TestOutcomeResponseRepair:
 
     def _run(self, tmp_path, response):
         with patch("extract.code_outcome.LLM_CACHE_DIR", tmp_path), \
-             patch("extract.code_outcome.OUTCOME_FULLTEXT_ESCALATION", False), \
              patch("extract.code_outcome.call_model", return_value=(response, "openai", "")), \
              patch("extract.code_outcome.time.sleep"):
             return extract_outcome("10.1/repair", abstract_r="an abstract",
@@ -2545,12 +2421,12 @@ class TestEmptyParseCache:
     def test_all_empty_cache_reads_as_a_miss(self, tmp_path, monkeypatch):
         self._cache(tmp_path, monkeypatch, _EMPTY_PARSE)
         assert run_extract._read_parse_cache("10.1/x") is None
-        assert run_extract._best_fulltext_from_cache("10.1/x") == ("", "none")
+        assert run_extract._best_fulltext_from_cache("10.1/x") == ("", "none", "")
 
     def test_populated_cache_still_reads(self, tmp_path, monkeypatch):
         self._cache(tmp_path, monkeypatch, _FULL_PARSE)
         assert run_extract._read_parse_cache("10.1/x") is not None
-        assert run_extract._best_fulltext_from_cache("10.1/x") == ("body", "tail")
+        assert run_extract._best_fulltext_from_cache("10.1/x")[:2] == ("body", "tail")
 
     def test_empty_cache_is_reparsed_not_trusted(self, tmp_path, monkeypatch):
         """The whole bug: the empty file existed, so the re-parse never happened."""
@@ -2669,7 +2545,7 @@ class TestOutcomeReadsTheDiscussion:
             "markitdown": {"source": "markitdown", "abstract": "a", "intro": "i",
                            "references": [], "raw_text": self._PAPER, "error": None},
         })
-        text, provenance = run_extract._best_fulltext_from_cache("10.1/x")
+        text, provenance, _intro = run_extract._best_fulltext_from_cache("10.1/x")
         assert provenance == "discussion"
         assert "Our replication succeeded" in text
         assert "Earlier work failed to replicate" not in text
@@ -2686,22 +2562,25 @@ class TestOutcomeReadsTheDiscussion:
             "markitdown": {"source": "markitdown", "abstract": "a", "intro": "i",
                            "references": [], "raw_text": self._PAPER, "error": None},
         })
-        text, provenance = run_extract._best_fulltext_from_cache("10.1/x")
+        text, provenance, _intro = run_extract._best_fulltext_from_cache("10.1/x")
         assert provenance == "discussion"
         assert "Our replication succeeded" in text
 
     def test_the_model_is_told_which_section_it_is_reading(self, tmp_path, monkeypatch):
+        """The provenance is passed as such rather than glued onto the front of the
+        text, so the prompt renders the block header and the text stays quotable."""
         import pandas as pd
         self._cache(tmp_path, monkeypatch, {
-            "markitdown": {"source": "markitdown", "abstract": "a", "intro": "i",
+            "markitdown": {"source": "markitdown", "abstract": "a", "intro": "the intro",
                            "references": [], "raw_text": self._PAPER, "error": None},
         })
         captured = {}
 
         def fake_extract_outcome(doi_r, abstract_r, fulltext="", *a, **kw):
             captured["fulltext"] = fulltext
+            captured.update(kw)
             return {"outcome": "success", "outcome_phrase": "", "outcome_confidence": "high",
-                    "out_quote_source": "fulltext", "outcome_reasoning": ""}
+                    "out_quote_source": "discussion", "outcome_reasoning": ""}
 
         monkeypatch.setattr(run_extract, "extract_outcome", fake_extract_outcome)
         run_extract._get_outcome(
@@ -2709,7 +2588,8 @@ class TestOutcomeReadsTheDiscussion:
             pd.Series({"abstract_r": "", "title_r": "T", "filter_status": "replication"}),
             {},
         )
-        assert captured["fulltext"].startswith("[SOURCE: discussion / conclusion")
+        assert captured["fulltext_provenance"] == "discussion"
+        assert captured["intro_text"] == "the intro"
         assert "Our replication succeeded" in captured["fulltext"]
 
 
@@ -2898,7 +2778,6 @@ class TestPerTargetAdapter:
         assert coder.call_count == 2
         assert [c.kwargs["original_title"] for c in coder.call_args_list] == [
             "First original", "Second original"]
-        assert all(c.kwargs["multi_original"] is True for c in coder.call_args_list)
 
     def test_the_rows_carry_a_legal_outcome_block(self):
         """The retired path wrote out_quote_source="llm_multi" and a three-valued
@@ -2965,7 +2844,6 @@ class TestPerTargetAdapter:
         assert rows[0]["n_originals"] == 1
         assert rows[0]["original_match_type"] == "single_original"
         assert coder.call_count == 1
-        assert coder.call_args.kwargs["multi_original"] is False
 
     def test_study_r_reaches_the_row_per_target(self):
         targets = [_mock_target("@smith2009", "10.1/a", "First", "Smith", 2009,
@@ -3631,3 +3509,153 @@ class TestYearNormalisation:
         with patch.object(run_extract, "_verify_row", side_effect=lambda r: r), \
              patch.object(run_extract, "_fill_work_ids", side_effect=lambda r: r):
             assert run_extract._finalise_row(dict(row))["year_r"] == "2018"
+
+
+# ── The carried outcome reaches the row, and only where it may ──────────────
+# The call that named a target coded its outcome in the same reading, so the adapter
+# writes that block instead of paying for a second call about the same evidence.
+
+class TestCarriedOutcomeReachesTheRow:
+    _ROW = pd.Series({"doi_r": "10.1/rep", "title_r": "T", "abstract_r": "a",
+                      "filter_status": "replication"})
+
+    @staticmethod
+    def _link(targets, **over):
+        base = dict(_MOCK_LINK, resolved=False, resolution_method="llm_multi_target",
+                    resolved_doi_o="", resolved_title_o="",
+                    multi_target=len(targets) > 1, n_targets=len(targets),
+                    target_stage="llm_gemini", unidentified_count=0,
+                    targets=targets, llm_model="gemini-heavy")
+        base.update(over)
+        return base
+
+    def _run(self, link, **over):
+        with patch.object(run_extract, "run_for_doi", return_value=link), \
+             patch.object(run_extract, "_has_document", return_value=False), \
+             patch.object(run_extract, "extract_outcome",
+                          return_value=_MOCK_OUTCOME) as coder:
+            rows = run_extract._resolve_and_code(
+                "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
+                resolved_only=False, recalibrate_outcomes=False, **over)
+        return rows, coder
+
+    def test_a_targets_own_verdict_is_written_without_a_second_call(self):
+        target = _mock_target("@jones2000", "10.1000/a", "Study A", "Jones", 2000,
+                              outcome_block={"outcome": "mixed",
+                                             "outcome_phrase": "partly held",
+                                             "outcome_confidence": "high",
+                                             "out_quote_source": "discussion",
+                                             "outcome_reasoning": "r"})
+        rows, coder = self._run(self._link([target]))
+        assert coder.call_count == 0
+        assert rows[0]["outcome"] == "mixed"
+        assert rows[0]["out_quote_source"] == "discussion"
+
+    def test_a_deterministic_link_still_reaches_the_standalone_coder(self):
+        """No LLM chose that link, so nothing has read the paper and checked it — the
+        standalone call is what does."""
+        link = dict(_MOCK_LINK, resolved=True, resolution_method="citation_context_match",
+                    resolved_doi_o="10.1000/a", resolved_title_o="Study A",
+                    targets=[], n_targets=0, multi_target=False, outcome_block={})
+        rows, coder = self._run(link)
+        assert coder.call_count == 1
+        assert rows[0]["outcome"] == _MOCK_OUTCOME["outcome"]
+
+    def test_a_method_that_codes_no_outcome_outranks_the_carried_block(self):
+        """llm_title_search is ~50% precision and is set aside for human confirmation;
+        a carried verdict must not make such a row read as settled. The precedence is
+        _outcome_without_coding first, the carried block only where it returns None."""
+        link = dict(_MOCK_LINK, llm_model="m")
+        skip = run_extract._outcome_without_coding("llm_title_search", link)
+        assert skip is not None and skip["outcome"] == "cannot_be_determined"
+        assert run_extract._outcome_without_coding("llm_fulltext", link) is None
+
+    def test_a_guard_demotion_clears_the_carried_outcome(self):
+        """The guard demotes a self-link to target_pending. A verdict coded against the
+        original it just rejected must not survive onto the row."""
+        target = _mock_target("@self", "10.1/rep", "The paper itself", "Smith", 2020,
+                              outcome_block={"outcome": "success",
+                                             "outcome_phrase": "it held"})
+        rows, coder = self._run(self._link([target]))
+        assert rows[0]["link_method"] == "target_pending"
+        assert rows[0]["outcome"] == "pending"
+        assert rows[0]["outcome_phrase"] == ""
+        assert coder.call_count == 0
+
+
+class TestAxisAggregation:
+    """Two studies of ONE original, coded separately: the axes have to be reconciled
+    the way `outcome` is, or the row disagrees with itself."""
+
+    @staticmethod
+    def _member(computation, robustness, quote="q", source="discussion", **over):
+        member = {"outcome_computation": computation,
+                  "outcome_computational_quote": quote,
+                  "out_quote_computational_source": source,
+                  "outcome_robustness": robustness,
+                  "outcome_robustness_quote": quote,
+                  "out_quote_robust_source": source}
+        member.update(over)
+        return member
+
+    def test_conflicting_settled_values_become_the_conflict_value(self):
+        merged = run_extract._aggregate_axes([
+            self._member("computationally reproducible", "robust"),
+            self._member("technical failure", "robustness challenges"),
+        ])
+        assert merged["outcome_computation"] == "computational issues"
+        assert merged["outcome_robustness"] == "robustness challenges"
+
+    def test_one_settled_value_carries_the_axis_and_the_quotes_join_in_order(self):
+        merged = run_extract._aggregate_axes([
+            self._member("cannot_be_determined", "robust", quote="q1", source="abstract"),
+            self._member("technical failure", "robust", quote="q2", source="discussion"),
+        ])
+        assert merged["outcome_computation"] == "technical failure"
+        assert merged["outcome_robustness"] == "robust"
+        assert merged["outcome_computational_quote"] == "q1 | q2"
+        assert merged["out_quote_computational_source"] == "abstract | discussion"
+
+    def test_the_collapse_aggregates_the_axes_of_the_carried_blocks(self):
+        def entry(rank, computation):
+            return {"rank": rank, "doi": "10.1000/a", "title": "T",
+                    "first_author": "Smith", "year": 2010, "study_number": str(rank),
+                    "outcome": "cannot_be_determined", "confidence": "high",
+                    "outcome_block": self._member(computation, "robust")}
+
+        out = run_extract._collapse_same_paper_originals(
+            [entry(1, "computationally reproducible"), entry(2, "technical failure")])
+        assert len(out) == 1
+        block = out[0]["outcome_block"]
+        assert block["outcome_computation"] == "computational issues"
+        assert block["outcome_robustness"] == "robust"
+
+    def test_merging_duplicate_originals_aggregates_the_axes_too(self):
+        def row(computation):
+            return {"doi_o": "10.1000/a", "study_o": "1", "study_r": "",
+                    "outcome": "cannot_be_determined",
+                    **self._member(computation, "robust")}
+
+        merged = run_extract._merge_duplicate_originals(
+            [row("computationally reproducible"), row("technical failure")], "10.1/rep")
+        assert len(merged) == 1
+        assert merged[0]["outcome_computation"] == "computational issues"
+        assert merged[0]["outcome_robustness"] == "robust"
+
+
+class TestTargetCheckOnTheRow:
+    """The standalone coder's verdict on a link an earlier stage asserted."""
+
+    def test_a_different_original_lowers_the_confidence_and_says_so(self):
+        row = run_extract._apply_outcome(
+            {"link_confidence": "high", "link_evidence": "citation context"},
+            {"outcome": "success", "target_check": "other_original"})
+        assert row["link_confidence"] == "low"
+        assert "different original" in row["link_evidence"]
+
+    def test_agreement_changes_nothing(self):
+        row = run_extract._apply_outcome(
+            {"link_confidence": "high", "link_evidence": "citation context"},
+            {"outcome": "success", "target_check": "this_original"})
+        assert row["link_confidence"] == "high"
+        assert row["link_evidence"] == "citation context"

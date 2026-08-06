@@ -393,7 +393,7 @@ def test_the_target_pick_is_cached_separately(monkeypatch, tmp_path):
 
     assert first["resolved_doi_o"] == second["resolved_doi_o"] == "10.1/orig"
     assert n["calls"] == 1
-    assert list(tmp_path.glob("reftarget_*.json"))
+    assert list(tmp_path.glob("targetoutcome_*.json"))
     assert not list(tmp_path.glob("classify_*.json"))  # the verdict is not re-cached here
 
 
@@ -904,7 +904,7 @@ def test_target_key_follows_the_reference_list(monkeypatch, tmp_path):
     assert n["calls"] == 2
     assert a["resolved_doi_o"] == "10.1/orig"
     assert b["resolved_doi_o"] == "10.1/other"   # entry 1 of the new list
-    assert len(list(tmp_path.glob("reftarget_*.json"))) == 2
+    assert len(list(tmp_path.glob("targetoutcome_*.json"))) == 2
 
 
 def test_reference_pick_carries_the_study_numbers(monkeypatch, tmp_path):
@@ -979,13 +979,13 @@ def test_identification_declines_are_cached(monkeypatch, tmp_path):
     call repay its API cost on every re-run."""
     calls: list = []
     _identify(monkeypatch, tmp_path, _DECLINE, calls)
-    first = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
-    second = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+    first = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext")
+    second = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext")
 
     assert first["resolution_method"] == "llm_no_target"
     assert second["resolution_method"] == "llm_no_target"
     assert len(calls) == 1
-    assert len(list(tmp_path.glob("llm_*.json"))) == 1
+    assert len(list(tmp_path.glob("targetoutcome_*.json"))) == 1
 
 
 def test_identification_reports_the_target_study_numbers(monkeypatch, tmp_path):
@@ -995,7 +995,7 @@ def test_identification_reports_the_target_study_numbers(monkeypatch, tmp_path):
     answer = {"targets": [dict(_PICK["targets"][0], study_numbers="Study 1, Exp 2")],
               "unidentified_count": 0, "reasoning": "r"}
     _identify(monkeypatch, tmp_path, answer, calls)
-    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext")
     assert out["resolved_doi_o"] == "10.1/orig"
     assert out["resolved_study_o"] == "1, 2"
 
@@ -1006,9 +1006,9 @@ def test_identification_api_failure_is_not_cached(monkeypatch, tmp_path):
     monkeypatch.setattr(llm, "call_gemini", lambda *a, **k: (None, "boom"))
     monkeypatch.setattr(llm, "call_openai", lambda *a, **k: (None, "boom"))
     monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "")
-    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext")
     assert out["resolution_method"] == "llm_failed"
-    assert not list(tmp_path.glob("llm_*.json"))
+    assert not list(tmp_path.glob("targetoutcome_*.json"))
 
 
 # ── Per-provider rate limiting (audit E5) ────────────────────────────────────
@@ -1103,7 +1103,9 @@ def test_an_outage_at_its_provider_ends_the_target_call(monkeypatch, tmp_path):
 
 
 def _ident(**kw):
-    return llm.identify_targets_with_llm("10.1/x", "T", "A", kw.pop("cands", _CAND), [], **kw)
+    kw.setdefault("rung", "fulltext")
+    return llm.resolve_targets_and_outcomes("10.1/x", "T", "A",
+                                            kw.pop("cands", _CAND), [], **kw)
 
 
 def _reftarget():
@@ -1119,7 +1121,7 @@ def _reftarget():
     # The abstract-stage call and the full-text call are different questions about
     # the same DOI; the old DOI-only key collided them.
     ("the parsed sections",
-     lambda mp: _ident(abstract_only=True),
+     lambda mp: _ident(rung="abstract"),
      lambda mp: _ident(intro="The PDF has since been parsed.")),
     # The version is folded in on its own account, not only via the rendered text.
     ("the prompt version",
@@ -1173,7 +1175,7 @@ def _target(**over) -> dict:
 
 def test_a_certain_pick_resolves_with_the_mapped_records_doi(monkeypatch, tmp_path):
     _targets(monkeypatch, tmp_path, {"targets": [_target()], "reasoning": "r"})
-    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [], abstract_only=True)
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="abstract")
 
     assert out["resolved"] is True
     assert out["resolved_doi_o"] == "10.1/orig"
@@ -1189,7 +1191,7 @@ def test_an_uncertain_pick_does_not_resolve_but_names_its_target(monkeypatch, tm
              {"targets": [_target(key=None, match_certain=False,
                                   target_as_named="Ramirez (2014)")],
               "reasoning": "r"})
-    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext")
 
     assert out["resolved"] is False
     assert out["target_as_named"] == "Ramirez (2014)"
@@ -1199,7 +1201,7 @@ def test_an_uncertain_pick_does_not_resolve_but_names_its_target(monkeypatch, tm
 def test_an_invented_key_is_demoted_not_obeyed(monkeypatch, tmp_path):
     _targets(monkeypatch, tmp_path, {"targets": [_target(key="@nosuch1999")],
                                      "reasoning": "r"})
-    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext")
 
     assert out["resolved"] is False
     assert out["targets"][0]["key"] is None
@@ -1211,7 +1213,7 @@ def test_a_repeated_key_keeps_only_the_first_entry(monkeypatch, tmp_path):
     _targets(monkeypatch, tmp_path,
              {"targets": [_target(), _target(target_as_named="again")],
               "reasoning": "r"})
-    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext")
 
     assert len(out["targets"]) == 1
     assert out["multi_target"] is False
@@ -1223,7 +1225,7 @@ def test_two_targets_are_flagged_and_no_single_link_is_written(monkeypatch, tmp_
                       "all_authors": ["Jones"], "doi": "10.1/second", "openalex_id": "W2"}]
     _targets(monkeypatch, tmp_path,
              {"targets": [_target(), _target(key="@jones2011")], "reasoning": "r"})
-    out = llm.identify_targets_with_llm("10.1/x", "T", "A", cands, [])
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", cands, [], rung="fulltext")
 
     assert out["multi_target"] is True
     assert out["resolved"] is False
@@ -1237,7 +1239,7 @@ def test_a_shortfall_is_recorded_and_a_nonsense_count_becomes_zero(monkeypatch, 
     _targets(monkeypatch, tmp_path,
              {"targets": [_target()], "stated_count": 28, "stated_count_unit": "studies",
               "unidentified_count": 5, "reasoning": "r"})
-    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext")
 
     assert "stated_count=28 studies" in out["llm_evidence"]
     assert "unidentified=5" in out["llm_evidence"]
@@ -1245,24 +1247,23 @@ def test_a_shortfall_is_recorded_and_a_nonsense_count_becomes_zero(monkeypatch, 
 
     _targets(monkeypatch, tmp_path,
              {"targets": [], "unidentified_count": "several", "reasoning": "r"})
-    out = llm.identify_targets_with_llm("10.1/y", "T", "A", _CAND, [])
+    out = llm.resolve_targets_and_outcomes("10.1/y", "T", "A", _CAND, [], rung="fulltext")
 
     assert out["unidentified_count"] == 0
     assert "unidentified_count not a number" in out["llm_reasoning"]
 
 
-def test_the_two_stages_cache_separately(monkeypatch, tmp_path):
-    """Same DOI, same rendered prompt, two stages: the reference screen's answer must
+def test_the_three_rungs_cache_separately(monkeypatch, tmp_path):
+    """Same DOI, same rendered prompt, three rungs: the reference screen's answer must
     not be replayed as the abstract stage's, or vice versa."""
     calls: list = []
     _targets(monkeypatch, tmp_path, {"targets": [_target()], "reasoning": "r"}, calls)
-    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [], abstract_only=True)
-    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [], cache_prefix="reftarget")
-    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [], abstract_only=False)
+    llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="abstract")
+    llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="reftarget")
+    llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext")
 
     assert len(calls) == 3
-    assert len(list(tmp_path.glob("llm_*.json"))) == 2
-    assert len(list(tmp_path.glob("reftarget_*.json"))) == 1
+    assert len(list(tmp_path.glob("targetoutcome_*.json"))) == 3
 
 
 def test_the_key_follows_a_records_identity_not_just_its_rendered_line(monkeypatch, tmp_path):
@@ -1274,8 +1275,8 @@ def test_the_key_follows_a_records_identity_not_just_its_rendered_line(monkeypat
     _targets(monkeypatch, tmp_path, {"targets": [_target()], "reasoning": "r"}, calls)
     moved = [dict(_CAND[0], doi="10.1/corrected", openalex_id="W99")]
 
-    first  = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
-    second = llm.identify_targets_with_llm("10.1/x", "T", "A", moved, [])
+    first  = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext")
+    second = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", moved, [], rung="fulltext")
 
     assert calls[0] == calls[1]                      # the rendered prompt is identical
     assert len(calls) == 2                           # …and yet it was asked again
@@ -1289,7 +1290,7 @@ def test_a_targets_mapped_record_survives_on_the_output(monkeypatch, tmp_path):
     """A @key is only meaningful against the key_map of the call that offered it, and
     run_extract has neither the candidates nor the parsed references to rebuild one."""
     _targets(monkeypatch, tmp_path, {"targets": [_target()], "reasoning": "r"})
-    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext")
 
     assert out["targets"][0]["record"]["doi"] == "10.1/orig"
 
@@ -1300,15 +1301,15 @@ def test_a_cached_entry_written_without_a_record_is_repaired(monkeypatch, tmp_pa
     dropped as unmatched."""
     calls: list = []
     _targets(monkeypatch, tmp_path, {"targets": [_target()], "reasoning": "r"}, calls)
-    llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+    llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext")
 
-    entry = next(tmp_path.glob("llm_*.json"))
+    entry = next(tmp_path.glob("targetoutcome_*.json"))
     stored = json.loads(entry.read_text())
     for t in stored["targets"]:
         assert t.pop("record")
     entry.write_text(json.dumps(stored))
 
-    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext")
     assert len(calls) == 1                                   # served from cache
     assert out["targets"][0]["record"]["doi"] == "10.1/orig"
 
@@ -1321,10 +1322,10 @@ def test_target_stage_names_the_rung_that_produced_a_multi_target_answer(monkeyp
     _targets(monkeypatch, tmp_path,
              {"targets": [_target(), _target(key="@jones2011")], "reasoning": "r"})
 
-    ref = llm.identify_targets_with_llm("10.1/x", "T", "A", cands, [],
-                                        cache_prefix="reftarget")
-    abstract = llm.identify_targets_with_llm("10.1/x", "T", "A", cands, [],
-                                             abstract_only=True)
+    ref = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", cands, [],
+                                           rung="reftarget")
+    abstract = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", cands, [],
+                                                rung="abstract")
 
     assert ref["resolution_method"] == "llm_multi_target"
     assert ref["target_stage"] == "llm_references"
@@ -1341,7 +1342,7 @@ def test_the_replications_own_study_numbers_are_cleaned(monkeypatch, tmp_path):
     _targets(monkeypatch, tmp_path,
              {"targets": [_target(replication_study_numbers="Study 1, Experiment 2")],
               "reasoning": "r"})
-    out = llm.identify_targets_with_llm("10.1/x", "T", "A", _CAND, [])
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [], rung="fulltext")
 
     assert out["resolved_study_r"] == "1, 2"
 
@@ -1603,3 +1604,81 @@ def test_a_changed_voter_pair_does_not_read_the_old_pairs_verdict(monkeypatch, t
 
     monkeypatch.setattr(llm, "SCREENING_EFFORT_2", "medium")
     assert llm.cached_classification("10.1/r", "", "an abstract") is None
+
+
+# ── The outcome half of the combined answer ─────────────────────────────────
+# The target half is validated above; these pin what the SAME call now also returns.
+
+def test_every_target_carries_its_own_outcome(monkeypatch, tmp_path):
+    """Both judgments per target, separately: a target the model is sure of may carry
+    an outcome the evidence does not settle, and an unmatched target is coded too —
+    which entries become rows is decided downstream."""
+    _targets(monkeypatch, tmp_path, {"targets": [
+        _target(outcome="failure", outcome_phrase="it did not hold",
+                out_quote_source="discussion", outcome_confident=True),
+        _target(key=None, match_certain=False, target_as_named="Ramirez (2014)",
+                outcome="cannot_be_determined", outcome_confident=False),
+    ], "reasoning": "r"})
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [],
+                                           rung="fulltext", discussion="D")
+
+    assert [t["outcome_block"]["outcome"] for t in out["targets"]] == [
+        "failure", "cannot_be_determined"]
+    assert out["targets"][0]["outcome_block"]["out_quote_source"] == "discussion"
+    assert out["targets"][0]["outcome_block"]["outcome_confidence"] == "high"
+
+
+def test_an_out_of_vocabulary_outcome_becomes_cannot_be_determined(monkeypatch, tmp_path):
+    """A verdict the pipeline cannot act on is recorded as unsettled, never verbatim."""
+    _targets(monkeypatch, tmp_path,
+             {"targets": [_target(outcome="mostly worked out")], "reasoning": "r"})
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [],
+                                           rung="fulltext", discussion="D")
+    assert out["targets"][0]["outcome_block"]["outcome"] == "cannot_be_determined"
+
+
+def test_a_reproduction_answer_is_read_on_its_two_axes(monkeypatch, tmp_path):
+    """record_type selects the vocabulary. The combined outcome is derived here, never
+    asked for — and an axis value outside its vocabulary is unsettled."""
+    _targets(monkeypatch, tmp_path, {"targets": [_target(
+        outcome_computation="technical failure",
+        outcome_computational_quote="The archive would not run.",
+        out_quote_computational_source="discussion",
+        outcome_robustness="not a real value",
+        outcome_confident=True)], "reasoning": "r"})
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [],
+                                           record_type="reproduction",
+                                           rung="fulltext", discussion="D")
+    block = out["targets"][0]["outcome_block"]
+    assert block["outcome_computation"] == "technical failure"
+    assert block["outcome_robustness"] == "cannot_be_determined"
+    assert block["outcome"] == "cannot_be_determined"
+
+
+def test_record_type_check_is_read_only_when_the_closing_sections_were_sent(monkeypatch,
+                                                                           tmp_path):
+    """It is a judgment about the methods. A rung that read no body has not seen them,
+    so a stray answer must not veto the row."""
+    answer = {"targets": [_target(outcome="success", record_type_check="neither")],
+              "reasoning": "r"}
+    _targets(monkeypatch, tmp_path, answer)
+    without = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [],
+                                               rung="abstract")
+    _targets(monkeypatch, tmp_path, answer)
+    with_text = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [],
+                                                 rung="fulltext", discussion="D")
+
+    assert without["targets"][0]["outcome_block"]["outcome"] == "success"
+    assert with_text["targets"][0]["outcome_block"]["outcome"] == "not_a_replication"
+
+
+def test_the_accepted_link_carries_the_outcome_it_was_coded_with(monkeypatch, tmp_path):
+    """One reading, one call: the ladder reads the verdict off the answer that
+    accepted the link rather than paying for a second call about the same evidence."""
+    _targets(monkeypatch, tmp_path,
+             {"targets": [_target(outcome="mixed", outcome_confident=True)],
+              "reasoning": "r"})
+    out = llm.resolve_targets_and_outcomes("10.1/x", "T", "A", _CAND, [],
+                                           rung="fulltext", discussion="D")
+    assert out["resolved"] is True
+    assert out["outcome_block"]["outcome"] == "mixed"

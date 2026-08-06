@@ -9,7 +9,7 @@ uses it.
 import pytest
 
 from shared import prompts
-from shared.prompts import PROMPT_NAMES, prompt_version, prompt_versions
+from shared.prompts import PROMPT_NAMES, prompt_version
 
 
 @pytest.fixture(autouse=True)
@@ -49,11 +49,20 @@ class TestChangeDetection:
         return {n: prompt_version(n) for n in PROMPT_NAMES}
 
     @pytest.mark.parametrize("attr,suffix,expected", [
-        # A template edit reaches its own prompt and nothing else.
-        ("_TARGET_PROMPT", "\nEXTRA RULE", {"build_target_prompt"}),
-        # One prompt per outcome vocabulary, and the two are separate documents:
+        # The task text is shared by both combined builders and by neither standalone
+        # one: they ask about a link this call did not make.
+        ("_TARGET_TASK", "\nEXTRA RULE",
+         {"build_target_outcome_prompt", "build_repro_target_outcome_prompt"}),
+        # One template per outcome vocabulary, and the two are separate documents:
         # an edit to the replication body must not invalidate reproduction verdicts.
         ("_OUTCOME_TEMPLATE", "\n5. ...", {"build_outcome_prompt"}),
+        # The categories themselves ARE shared — by the standalone replication coder
+        # and the combined replication prompt, and by nothing in the other vocabulary.
+        ("_OUTCOME_RULES", "\n- and another",
+         {"build_outcome_prompt", "build_target_outcome_prompt"}),
+        # Editing the reproduction axes moves the two reproduction prompts only.
+        ("_REPRO_AXIS_RULES", "\n- axis note",
+         {"build_repro_outcome_prompt", "build_repro_target_outcome_prompt"}),
     ])
     def test_template_edit_reaches_its_own_prompt_only(self, monkeypatch, attr, suffix, expected):
         before = self._versions()
@@ -70,8 +79,9 @@ class TestChangeDetection:
         prompt_version.cache_clear()
         after = self._versions()
         changed = {n for n in PROMPT_NAMES if after[n] != before[n]}
-        assert "build_target_prompt" in changed, \
-            "build_target_prompt did not follow EVIDENCE_POLICY"
+        assert {"build_target_outcome_prompt",
+                "build_repro_target_outcome_prompt"} <= changed, \
+            "the combined prompts did not follow EVIDENCE_POLICY"
         # The two outcome prompts state their own evidence policy inline, so they do
         # not follow it either.
         assert "build_outcome_prompt" not in changed
@@ -81,16 +91,18 @@ class TestChangeDetection:
         assert "PDF_REFERENCES_PROMPT" not in changed
         assert "build_classify_prompt" not in changed
 
-    def test_pass_only_fragments_reach_both_vocabularies(self, monkeypatch):
-        """The PAPER TEXT block is spliced by both builders, so editing it moves both
-        — the fragment is shared even though the bodies are not."""
+    def test_the_provenance_labels_reach_every_prompt_that_renders_them(self, monkeypatch):
+        """The label telling the model where its closing text came from is prompt text,
+        and it lives in a dict — which the version hash has to reach all the same."""
         before = self._versions()
-        monkeypatch.setattr(prompts, "_PAPER_TEXT_BLOCK",
-                            prompts._PAPER_TEXT_BLOCK + "\n")
+        monkeypatch.setattr(prompts, "PROVENANCE_LABEL",
+                            {**prompts.PROVENANCE_LABEL, "tail": "somewhere else"})
         prompt_version.cache_clear()
         after = self._versions()
         changed = {n for n in PROMPT_NAMES if after[n] != before[n]}
-        assert changed == {"build_outcome_prompt", "build_repro_outcome_prompt"}
+        assert changed == {"build_outcome_prompt", "build_repro_outcome_prompt",
+                           "build_target_outcome_prompt",
+                           "build_repro_target_outcome_prompt"}
 
     def test_truncation_cap_edit_reaches_the_prompt_that_slices_with_it(self, monkeypatch):
         """A cap is not wording, but it decides how much of the paper the model reads,
@@ -100,7 +112,8 @@ class TestChangeDetection:
         prompt_version.cache_clear()
         after = self._versions()
         changed = {n for n in PROMPT_NAMES if after[n] != before[n]}
-        assert changed == {"build_target_prompt"}
+        assert changed == {"build_target_outcome_prompt",
+                           "build_repro_target_outcome_prompt"}
 
     def test_the_retired_system_message_is_frozen_into_every_version(self, monkeypatch):
         """The system message is sent to nobody now, but its text still salts every
@@ -184,11 +197,3 @@ class TestChangeDetection:
             assert [p["text"] for part in payload["contents"]
                     for p in part["parts"]] == ["p"]
 
-    def test_prompt_versions_joins_and_follows_each(self, monkeypatch):
-        pair = ("build_outcome_prompt", "build_repro_outcome_prompt")
-        before = prompt_versions(*pair)
-        assert before == "+".join(prompt_version(n) for n in pair)
-        monkeypatch.setattr(prompts, "_OUTCOME_TEMPLATE",
-                            prompts._OUTCOME_TEMPLATE + "x")
-        prompt_version.cache_clear()
-        assert prompt_versions(*pair) != before

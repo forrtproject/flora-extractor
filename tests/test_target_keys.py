@@ -1,12 +1,12 @@
 """Tests for the @key namespace (shared/target_keys.py) and the merged
-target-identification prompt (shared/prompts.build_target_prompt).
+target+outcome prompt (shared/prompts.build_target_outcome_prompt).
 
 The keys are the prompt's only way of naming a work, and the pipeline resolves the
 model's answer through the key_map from the same call — so a key that collides,
 survives deduplication twice, or cannot be looked up is a wrong original waiting to
 be written.
 """
-from shared.prompts import build_target_prompt
+from shared.prompts import build_target_outcome_prompt
 from shared.target_keys import assign_target_keys
 
 
@@ -82,14 +82,14 @@ class TestKeyAssignment:
 class TestPromptRendering:
     def test_pdf_abstract_contributes_only_its_tail(self):
         entries, _ = assign_target_keys([], [])
-        prompt = build_target_prompt(
+        prompt = build_target_outcome_prompt(
             "T", "The OpenAlex abstract.", entries,
             pdf_abstract="The  OpenAlex\nabstract. And a sentence it lacks.")
         assert prompt.count("The OpenAlex abstract.") == 1
         assert "And a sentence it lacks." in prompt
 
         # A PDF abstract that adds nothing is dropped entirely.
-        nothing_new = build_target_prompt("T", "The OpenAlex abstract.", [],
+        nothing_new = build_target_outcome_prompt("T", "The OpenAlex abstract.", [],
                                           pdf_abstract="The OpenAlex abstract.")
         assert "ABSTRACT CONTINUED" not in nothing_new
 
@@ -97,7 +97,7 @@ class TestPromptRendering:
         refs = [{"title": f"Reference {i}", "publication_year": 1900 + i,
                  "first_author": f"Author{i}"} for i in range(300)]
         entries, _ = assign_target_keys([], refs)
-        prompt = build_target_prompt("T", "A", entries)
+        prompt = build_target_outcome_prompt("T", "A", entries)
         assert all(e["key"] in prompt for e in entries)
 
 
