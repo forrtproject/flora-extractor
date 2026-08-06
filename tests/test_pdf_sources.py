@@ -204,6 +204,59 @@ def test_an_unreadable_record_probes_everything():
     mocks["get_core_pdf_url"].assert_called_once()
 
 
+# ── The PDF already on disk ───────────────────────────────────────────────────
+
+def _save_pdf(doi: str) -> None:
+    ps.pdf_cache_path(ps.clean_doi(doi)).write_bytes(b"%PDF-1.4" + b"x" * 10_000)
+
+
+def test_a_pdf_already_on_disk_returns_before_any_tier_runs():
+    """The short-circuit used to happen inside the winning tier's download_pdf, so it
+    cost every URL lookup above that tier. The saved provenance is replayed."""
+    doi = "10.1016/j.example.2020.01.009"
+    _save_pdf(doi)
+    ps._write_provenance(ps.clean_doi(doi), "unpaywall_pdf", "https://x/y.pdf")
+
+    patchers = _mock_all_tiers()
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        with patch.object(ps, "download_pdf") as dl:
+            out = ps.acquire_pdf(doi, "A Title")
+    finally:
+        for p in patchers.values():
+            p.stop()
+
+    assert out["pdf_ok"] is True
+    assert out["pdf_source"] == "unpaywall_pdf"
+    assert out["pdf_url"] == "https://x/y.pdf"
+    assert out["pdf_url_tried"] == ["https://x/y.pdf"]
+    assert out["pdf_path"] == str(ps.pdf_cache_path(ps.clean_doi(doi)))
+    dl.assert_not_called()
+    for name in ("get_arxiv_pdf_url", "get_osf_pdf_url", "get_openalex_oa_url",
+                 "get_all_unpaywall_pdf_urls"):
+        started[name].assert_not_called()
+
+
+def test_a_saved_pdf_without_provenance_still_runs_the_waterfall():
+    """Nothing recorded the tier before this record existed; those PDFs keep the old
+    behaviour — the waterfall runs, its first cache hit writes the record."""
+    doi = "10.1016/j.example.2020.01.010"
+    _save_pdf(doi)
+    patchers = _mock_all_tiers(get_openalex_oa_url="https://x/z.pdf")
+    started = {name: p.start() for name, p in patchers.items()}
+    try:
+        out = ps.acquire_pdf(doi, "A Title")
+    finally:
+        for p in patchers.values():
+            p.stop()
+
+    started["get_openalex_oa_url"].assert_called_once()
+    assert out["pdf_ok"] is True
+    assert out["pdf_source"] == "openalex_oa"
+    assert ps._read_provenance(ps.clean_doi(doi)) == {"source": "openalex_oa",
+                                                      "url": "https://x/z.pdf"}
+
+
 # ── Tier 0 short-circuit ──────────────────────────────────────────────────────
 
 def test_openalex_xml_with_content_skips_the_download_tiers():

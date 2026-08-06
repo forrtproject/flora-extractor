@@ -84,6 +84,10 @@ OA_XML_RETRY_AFTER_DAYS = 14
 # Playwright reasons that mean "this machine cannot run the tier", not "no PDF exists".
 _PLAYWRIGHT_SKIP_REASONS = {"playwright_not_installed", "no_doi"}
 
+# Smallest byte count that can be a real article PDF; the default of every tier that
+# writes one, and of the up-front "is it already on disk" check.
+_MIN_PDF_BYTES = 5_000
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -130,6 +134,59 @@ def _write_retry_log(path: Path, entries: dict) -> None:
         path.write_text(json.dumps(entries, ensure_ascii=False), encoding="utf-8")
     except Exception as e:
         log.debug("Retry log write failed (%s): %s", path, e)
+
+
+# ── The PDF already on disk ───────────────────────────────────────────────────
+# One naming rule for the saved file and for the tier that supplied it, shared by
+# download_pdf(), get_pdf_via_playwright() and acquire_pdf()'s up-front check.
+
+def pdf_cache_path(doi_or_url: str) -> Path:
+    """Where a PDF for *doi_or_url* is saved. The cache key of every tier."""
+    return PDF_CACHE_DIR / f"{cache_key(doi_or_url)}.pdf"
+
+
+def cached_pdf(doi_or_url: str, min_bytes: int = _MIN_PDF_BYTES) -> "Path | None":
+    """The already-downloaded PDF for *doi_or_url*, or None when there is none."""
+    if not doi_or_url:
+        return None
+    path = pdf_cache_path(doi_or_url)
+    try:
+        if path.exists() and path.stat().st_size >= min_bytes:
+            return path
+    except OSError as e:
+        log.debug("PDF cache stat failed (%s): %s", path, e)
+    return None
+
+
+def _provenance_path(doi: str) -> Path:
+    return PDF_CACHE_DIR / f"pdfsrc_{cache_key(doi)}.json"
+
+
+def _read_provenance(doi: str) -> dict:
+    """{"source": tier label, "url": the URL it came from} for a saved PDF, or {}."""
+    try:
+        path = _provenance_path(doi)
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {"source": str(data.get("source") or ""),
+                        "url": str(data.get("url") or "")}
+    except Exception as e:
+        log.debug("PDF provenance unreadable for %s: %s", doi, e)
+    return {}
+
+
+def _write_provenance(doi: str, source: str, url: str) -> None:
+    """Record which tier supplied the saved PDF, so a later run can report it."""
+    if not (doi and source):
+        return
+    path = _provenance_path(doi)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"source": source, "url": url},
+                                   ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        log.debug("PDF provenance write failed (%s): %s", path, e)
 
 
 # ── Unpaywall ─────────────────────────────────────────────────────────────────
@@ -761,10 +818,10 @@ def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000) -> dict:
         return {"success": False, "path": None, "source": "", "reason": "no_doi"}
 
     # Check cache first — if a PDF was already saved for this DOI, skip browser
-    key      = cache_key(doi)
-    pdf_path = PDF_CACHE_DIR / f"{key}.pdf"
-    if pdf_path.exists() and pdf_path.stat().st_size >= min_bytes:
-        return {"success": True, "path": pdf_path, "source": "cache", "reason": ""}
+    pdf_path = pdf_cache_path(doi)
+    have     = cached_pdf(doi, min_bytes)
+    if have is not None:
+        return {"success": True, "path": have, "source": "cache", "reason": ""}
 
     # On Windows, threads (including Jupyter worker threads) use SelectorEventLoop
     # by default, which cannot launch subprocesses.  Switch to ProactorEventLoop
@@ -906,7 +963,7 @@ def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000) -> dict:
 
 # ── Download helper ───────────────────────────────────────────────────────────
 
-def download_pdf(url: str, doi: str = "", min_bytes: int = 5_000) -> dict:
+def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES) -> dict:
     """
     Download a PDF and save to PDF_CACHE_DIR.
 
@@ -917,11 +974,10 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = 5_000) -> dict:
     if not url:
         return {"success": False, "path": None, "source": "", "reason": "no_url"}
 
-    key      = cache_key(doi or url)
-    pdf_path = PDF_CACHE_DIR / f"{key}.pdf"
-
-    if pdf_path.exists() and pdf_path.stat().st_size >= min_bytes:
-        return {"success": True, "path": pdf_path, "source": "cache", "reason": ""}
+    pdf_path = pdf_cache_path(doi or url)
+    have     = cached_pdf(doi or url, min_bytes)
+    if have is not None:
+        return {"success": True, "path": have, "source": "cache", "reason": ""}
 
     try:
         r = requests.get(
@@ -993,6 +1049,9 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
         dl = download_pdf(url, doi=doi_r)
         if dl["success"]:
             pdf_url, pdf_src = url, label
+            # Also written on a download_pdf cache hit, which is how a PDF saved
+            # before this record existed acquires one.
+            _write_provenance(doi_r, label, url)
             return True
         log.debug("  %s failed (%s): %s", label, dl.get("reason"), url)
         return False
@@ -1029,6 +1088,25 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
             pdf_src = "openalex_xml"
             return _result()
         oa_xml = None
+
+    # The PDF is already on disk — no tier can add anything to a file we have.
+    # This used to happen by accident, inside the download_pdf() cache hit of whichever
+    # tier first re-derived a URL for the DOI, so which tier "supplied" the document
+    # depended on the tier order and on every URL lookup above it. The tier that really
+    # supplied it is recorded next to the file, and replayed here. A PDF saved before
+    # that record existed has none and falls through to the waterfall as before — where
+    # the first cache hit writes the record for next time.
+    if doi_r and cached_pdf(doi_r) is not None:
+        prov = _read_provenance(doi_r)
+        if prov.get("source"):
+            dl      = {"success": True, "path": pdf_cache_path(doi_r),
+                       "source": "cache", "reason": ""}
+            pdf_url = prov["url"]
+            pdf_src = prov["source"]
+            if pdf_url:
+                all_tried.append(pdf_url)
+            log.debug("  [%s] PDF already on disk (source=%s)", doi_r, pdf_src)
+            return _result()
 
     # Tier 1 — arXiv direct (before any API calls; the URL is a DOI pattern, so a
     # non-arXiv DOI is not a tier failure — there was nothing to ask.)
@@ -1112,6 +1190,7 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
             pdf_src = "playwright"
             dl      = pw_result
             all_tried.append(pdf_url)
+            _write_provenance(doi_r, "playwright", pdf_url)
         elif pw_result.get("reason") not in _PLAYWRIGHT_SKIP_REASONS:
             _failed("playwright")
 
