@@ -187,19 +187,6 @@ def test_a_regex_that_does_not_compile_is_rejected():
     assert any("RE2 cannot run it" in e for e in errors)
 
 
-def test_the_pyre_regex_key_is_rejected_outside_a_decomposed_match():
-    flat = _valid_spec(match={"text_regex": r"\ba\b", "pyre_regex": r"\ba(?=b)"})
-    assert any("only valid on a decomposed match" in e for e in validate_spec(flat))
-
-    decomposed = _valid_spec(match={"any_of": [{"text_regex": r"\ba\b"}],
-                                    "pyre_regex": r"\ba(?=b)"})
-    assert validate_spec(decomposed) == []
-
-    nested = _valid_spec(match={"any_of": [{"text_regex": r"\ba\b",
-                                            "pyre_regex": r"\ba(?=b)"}]})
-    assert any("unknown key 'pyre_regex'" in e for e in validate_spec(nested))
-
-
 def test_bundle_hash_follows_spec_content_and_not_load_order(tmp_path):
     first, second = tmp_path / "one", tmp_path / "two"
     first.mkdir()

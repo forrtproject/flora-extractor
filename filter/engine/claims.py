@@ -152,18 +152,19 @@ class ClaimsClient:
         headers.update(extra or {})
         return headers
 
-    def _post(self, path: str, payload: Any, prefer: Optional[str] = None) -> Any:
+    def _post(self, path: str, payload: Any, prefer: Optional[str] = None,
+              tier: str = "") -> Any:
         extra = {"Prefer": prefer} if prefer else None
         resp = requests.post(f"{self.url}/rest/v1/{path}", headers=self._headers(extra),
                              json=payload, timeout=self.timeout)
-        return self._parse(resp, path)
+        return self._parse(resp, path, tier)
 
     def _patch(self, path: str, params: dict, payload: dict) -> Any:
         resp = requests.patch(f"{self.url}/rest/v1/{path}", headers=self._headers(),
                               params=params, json=payload, timeout=self.timeout)
         return self._parse(resp, path)
 
-    def _parse(self, resp, path: str) -> Any:
+    def _parse(self, resp, path: str, tier: str = "") -> Any:
         if resp.status_code >= 400:
             body = resp.text or ""
             if "unknown_release" in body:
@@ -173,9 +174,10 @@ class ClaimsClient:
                                              f"{body.strip()}")
             # The RPC raises unique_violation for a conflict, which PostgREST
             # returns as 409; the message prefix keeps it distinguishable from a
-            # plain duplicate-key error on some other table.
+            # plain duplicate-key error on some other table. The tier is the one
+            # the caller asked for, not one read back out of the error text.
             if resp.status_code == 409 or "claim_conflict" in body:
-                raise ClaimConflict(_tier_of(path, body), body.strip())
+                raise ClaimConflict(tier or "unknown", body.strip())
             raise ClaimsError(f"{path} → HTTP {resp.status_code}: {body.strip()}")
         if not resp.content:
             return None
@@ -259,7 +261,7 @@ class ClaimsClient:
             "p_items": payload_items,
             "p_meta": meta or {},
             "p_expires_at": _lease_end(),
-        })
+        }, tier=tier)
         return _scalar(result)
 
     def release_claim(self, claim_id: str, status: str) -> str:
@@ -516,14 +518,6 @@ def is_expired(claim: dict, now: Optional[datetime.datetime] = None) -> bool:
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=datetime.timezone.utc)
     return stamp <= (now or datetime.datetime.now(datetime.timezone.utc))
-
-
-def _tier_of(path: str, body: str) -> str:
-    """Best-effort tier name for a conflict message (the RPC names it in the error)."""
-    for tier in TIERS:
-        if tier in body:
-            return tier
-    return "unknown"
 
 
 def _scalar(result: Any) -> str:

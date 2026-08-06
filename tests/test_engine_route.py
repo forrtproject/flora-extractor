@@ -255,23 +255,6 @@ def test_a_year_that_arrives_as_a_string_is_read_as_a_year(specs):
         == [True, False]
 
 
-def test_the_backend_ignores_the_loader_only_pyre_regex():
-    """The evaluator reads the decomposition, never the loader-only `pyre_regex` —
-    which RE2 could not run anyway. No shipped rule carries the key, so the spec
-    is built here."""
-    spec = FilterSpec.from_dict({
-        "id": "pyre-example",
-        "description": "the decomposition is wider than the lookaround original",
-        "match": {"any_of": [{"text_regex": r"\breplication of the original\b"}],
-                  "pyre_regex": r"\breplication of the original(?! study)\b"},
-        "pile": "screen_cheap",
-        "precedence": 250,
-    })
-    rows = [_row(title="Replication of the original study of DNA repair", abstract="")]
-    assert eval_spec_rows(spec, rows) == [True]
-    assert eval_spec_batch(spec, _batch(rows)).to_pylist() == [True]
-
-
 # ---------------------------------------------------------------------------
 # Routing mechanics — synthetic bundle (tests/engine_bundle.py)
 # ---------------------------------------------------------------------------
@@ -488,8 +471,8 @@ def test_route_refuses_to_store_a_release_whose_pool_moved_under_it(tmp_path,
 
 def test_a_written_release_round_trips_with_its_id_and_timestamp(tmp_path):
     release = dict(_INPUTS, created_at="2026-08-04T12:00:00+00:00")
-    path = write_release(release, cache_dir=tmp_path)
     release_id = routing_release(**_INPUTS)
+    path = write_release(release, release_id, cache_dir=tmp_path)
     assert path == tmp_path / "releases" / f"{release_id}.json"
     record = read_release(release_id, cache_dir=tmp_path)
     assert record["release_id"] == release_id

@@ -242,10 +242,11 @@ def test_a_dry_run_fetches_nothing_and_prices_every_source(
     assert "2 worklist row(s) actionable" in out       # the dataset DOI is dropped
     assert "1 dataset-DOI row(s) dropped" in out
     assert "DRY RUN" in out
-    assert {e["source"] for e in backfill.estimate(backfill._rows(wl)[0])} \
-        == set(backfill.SOURCE_ORDER)
+    estimates, rows, dropped = backfill.estimate_worklist(wl)
+    assert (rows, dropped) == (2, 1)
+    assert {e["source"] for e in estimates} == set(backfill.SOURCE_ORDER)
     # Two DOIs, one Europe PMC batch; OpenAlex sees both ids in one batch too.
-    priced = {e["source"]: e for e in backfill.estimate(backfill._rows(wl)[0])}
+    priced = {e["source"]: e for e in estimates}
     assert priced["epmc"]["targets"] == 2 and priced["epmc"]["requests"] == 1
     assert priced["crossref"]["requests"] == 2
     assert not (wl.parent / "ov").exists()

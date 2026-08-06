@@ -18,7 +18,9 @@ from typing import Optional
 
 from shared.config import ENGINE_CACHE_DIR
 
-# The exact six inputs, in the order the contract names them.
+# The exact six inputs. The order here is the one the contract names them in and
+# is for a reader only: `_release_id()` sorts the keys before hashing, so
+# reordering this tuple cannot move a release id. Adding or removing a name can.
 RELEASE_INPUTS = ("pool_manifest_hash", "overlay_hash", "bundle_hash",
                   "engine_version", "alias_release", "schema_version")
 
@@ -47,11 +49,17 @@ def releases_dir(cache_dir: Optional[Path] = None) -> Path:
     return (cache_dir or ENGINE_CACHE_DIR) / "releases"
 
 
-def write_release(release: dict, cache_dir: Optional[Path] = None) -> Path:
-    """Persist *release* (the six inputs plus `created_at`) under its own id.
+def write_release(release: dict, release_id: str,
+                  cache_dir: Optional[Path] = None) -> Path:
+    """Persist *release* (the six inputs plus `created_at`) under *release_id*.
+
+    The id is passed in rather than re-derived here. Every caller already has
+    it — the routing was built and stored under it long before the record is
+    written — and deriving it a second time would be two computations that have
+    to agree about what a release is.
 
     `created_at` is passed in rather than read from the clock so the function is
-    a pure mapping from its argument to a file, and so a test can assert the
+    a pure mapping from its arguments to a file, and so a test can assert the
     bytes it writes.
     """
     missing = [k for k in RELEASE_INPUTS if k not in release]
@@ -59,7 +67,6 @@ def write_release(release: dict, cache_dir: Optional[Path] = None) -> Path:
         raise ValueError(f"release is missing inputs: {', '.join(missing)}")
     if not release.get("created_at"):
         raise ValueError("release needs a created_at timestamp (ISO 8601)")
-    release_id = _release_id(release)
     record = {k: release.get(k) for k in RELEASE_INPUTS}
     record["release_id"] = release_id
     record["created_at"] = release["created_at"]

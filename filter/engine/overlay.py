@@ -108,11 +108,14 @@ def read_worklist(path: Path) -> list[dict]:
 def iter_worklist(path: Path, batch_size: int = 50_000):
     """The worklist at *path* as plain dicts, one parquet batch at a time.
 
-    The same rows `read_worklist()` returns, without holding them all. A `no_text`
-    worklist is a few thousand rows — it is capped by what the rules claimed, and
-    the pool's millions of textless works are `no_filter_matched`, which nothing
-    puts on a worklist — but a hand-built wide one is not, and `to_pylist()` over
-    the whole file is the shape that made a bulk backfill a multi-GB process.
+    The same rows `read_worklist()` returns, without holding them all. A shipped
+    `no_text` worklist is a few thousand rows: `worklist()` above emits only the
+    routed rows the rules claimed and then downgraded for want of text. The wide
+    case is a hand-built worklist over every textless work in the pool, which is
+    ~347k rows, not millions — the pool is 5.1M works and most of them have an
+    abstract. `to_pylist()` over the whole file at that size is the shape that
+    made a bulk backfill a multi-GB process, which is what this iterator avoids;
+    `backfill.BATCH_ROWS` then caps what is held per slice at 100k.
     """
     for batch in pq.ParquetFile(path).iter_batches(batch_size=batch_size):
         yield from batch.to_pylist()
@@ -214,7 +217,16 @@ def validate(overlay_dir: Path) -> list[str]:
 
 
 def overlay_hash(overlay_dir: Path) -> str:
-    """sha256 over the sorted (name, content hash) pairs of the overlay chunks."""
+    """sha256 over the sorted (name, content hash) pairs of the overlay chunks.
+
+    This folds each chunk's hash as its 64-character HEX STRING, where
+    `spec.bundle_hash()` folds raw digest bytes. The two styles stay split on
+    purpose: the value here is persisted — it names every
+    `overlay_manifest-<hash12>.json` on disk, it is what `overlay_manifest.json`
+    points at, and it is one of the six routing-release inputs — so folding raw
+    bytes instead would silently re-identify every frozen overlay and every
+    release id derived from one. A stylistic tidy is not worth that.
+    """
     digest = hashlib.sha256()
     for path in chunk_paths(overlay_dir):
         digest.update(path.name.encode("utf-8"))

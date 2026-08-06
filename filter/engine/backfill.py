@@ -170,59 +170,25 @@ def _row_batches(worklist_path: Path, limit: Optional[int] = None,
         yield rows, dropped
 
 
-def _rows(worklist_path: Path, limit: Optional[int] = None) -> tuple[list[dict], int]:
-    """The whole worklist in the shape fetch_abstracts' phase runners consume.
-
-    `{"work_id", "oa", "doi_r"}` — `oa`/`doi_r` are exactly the keys
-    `_phase_targets()` reads. Dataset-prefix DOIs are dropped: no source has an
-    abstract for a Dataverse deposit, so every phase would spend calls
-    rediscovering that forever. Returns (rows, n_dataset_dropped).
-
-    Materialising, and therefore only for a worklist a caller already knows is
-    small — a test, or an interactive look. The run and the estimate both go
-    through `_row_batches()`.
-    """
-    rows: list[dict] = []
-    dropped = 0
-    for batch, batch_dropped in _row_batches(worklist_path, limit):
-        rows.extend(batch)
-        dropped += batch_dropped
-    return rows, dropped
-
-
 # ---------------------------------------------------------------------------
 # Estimates (the dry run)
 # ---------------------------------------------------------------------------
 
 
-def estimate(rows: list[dict], sources=RUN_ORDER) -> list[dict]:
-    """Per-source targets and request counts for *rows*, spending nothing.
-
-    Counted against the live checkpoint and found-index, so the estimate is what
-    a `--run` would actually do next, not what a fresh worklist would cost. The
-    targeted pathway's numbers are an UPPER BOUND: a real run narrows them to
-    whatever the bulk pathway leaves without text, which cannot be known without
-    spending the bulk pathway.
-    """
-    done = _load_checkpoint()
-    found = _load_found_index()
-    estimates: list[dict] = []
-    for source in sources:
-        estimates.append(dict(_source_shape(source),
-                              source=source,
-                              phase="bulk" if source in ALL_BULK_SOURCES else "targeted",
-                              targets=len(_targets(source, rows, done, found))))
-        estimates[-1]["requests"] = _requests(estimates[-1])
-    return estimates
-
-
 def estimate_worklist(worklist_path: Path, sources=RUN_ORDER,
                       limit: Optional[int] = None) -> tuple[list[dict], int, int]:
-    """`estimate()` over a worklist too big to hold: `(estimates, rows, dropped)`.
+    """Per-source targets and request counts for a worklist: `(estimates, rows, dropped)`.
 
-    Targets are counted slice by slice and summed; the request counts and the quota
-    caps are computed once at the end, over the totals, so the numbers are the ones
-    a whole-worklist estimate would have printed.
+    Spends nothing. Counted against the live checkpoint and found-index, so the
+    estimate is what a `--run` would actually do next, not what a fresh worklist
+    would cost. The targeted pathway's numbers are an UPPER BOUND: a real run
+    narrows them to whatever the bulk pathway leaves without text, which cannot
+    be known without spending the bulk pathway.
+
+    Targets are counted slice by slice and summed, so a worklist too big to hold
+    costs one slice of memory; the request counts and the quota caps are computed
+    once at the end, over the totals, so the numbers are the ones a
+    whole-worklist estimate would have printed.
     """
     done = _load_checkpoint()
     found = _load_found_index()
@@ -582,6 +548,13 @@ def select_sources(source: Optional[list[str]], phase: str,
 def main(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     sources = select_sources(args.source, args.phase, args.include_openalex)
+
+    # The bulk pathway used to be two sources. It is Europe PMC alone unless
+    # OpenAlex is asked for, and a script written against the old default would
+    # otherwise do half the pass without saying so.
+    if args.phase in ("all", "bulk") and "openalex" not in sources:
+        print("note: the bulk pathway is Europe PMC only — OpenAlex is opt-in "
+              "(--include-openalex, or --source openalex).")
 
     if not args.run:
         estimates, rows, dropped = estimate_worklist(args.worklist, sources,
