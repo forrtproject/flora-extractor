@@ -51,32 +51,14 @@ def test_every_set_aside_destination_is_settled_or_reopened():
 
     assert settled | reopened == files, f"unclassified set-aside file(s): {files - settled - reopened}"
     assert not settled & reopened, f"set-aside file in both lists: {settled & reopened}"
-    # --rescreen is the named flag that reopens the abstract-only verdicts; it can only
-    # reopen something resume counts as settled in the first place.
+    # The abstract-only screen verdicts are the subset a new screening generation
+    # reopens; they can only be reopened if they count as settled in the first place.
     assert set(SCREEN_SET_ASIDE_FILES) <= settled
 
 
-def test_resume_reads_every_settled_set_aside_file(tmp_path, monkeypatch):
-    """run_extract's resume skips a paper parked in any settled file, and re-runs one
-    parked in a reopened file — the behaviour the partition above only declares."""
-    from extract import run_extract as rex
-
-    for fname in set(SET_ASIDE_DESTINATIONS.values()):
-        row = {c: "" for c in EXTRACTED_COLS}
-        row["doi_r"] = f"10.1/{fname}"
-        pd.DataFrame([row]).to_csv(tmp_path / fname, index=False, encoding="utf-8-sig")
-
-    keys = rex._screen_set_aside_keys(tmp_path)
-    assert keys == {f"10.1/{f}" for f in SETTLED_SET_ASIDE_FILES}
-
-    rescreened = rex._screen_set_aside_keys(tmp_path, rescreen=True)
-    assert rescreened == {f"10.1/{f}" for f in SETTLED_SET_ASIDE_FILES
-                          if f not in SCREEN_SET_ASIDE_FILES}
-
-
 def test_sanity_check_writes_no_unclassified_destination(tmp_path, monkeypatch):
-    """The real quarantine pass may only create files the destination map names — a
-    rule pointing at a new file that schema.py has never heard of fails here."""
+    """The export may only write files the destination map names — a rule pointing at
+    a new file that schema.py has never heard of fails here."""
     monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
     ex = tmp_path / "extracted.csv"
 
@@ -92,12 +74,12 @@ def test_sanity_check_writes_no_unclassified_destination(tmp_path, monkeypatch):
             df[c] = ""
     df[EXTRACTED_COLS].to_csv(ex, index=False, encoding="utf-8-sig")
 
-    sc.run_sanity_check(ex, move=True, deep=False)
+    from extract.export import partition
+    _main, aside = partition(rows)
 
-    written = {p.name for p in tmp_path.glob("*.csv")} - {"extracted.csv"}
-    assert written <= set(SET_ASIDE_DESTINATIONS.values()), (
+    assert set(aside) <= set(SET_ASIDE_DESTINATIONS.values()), (
         f"set-aside file(s) unknown to shared/schema.py: "
-        f"{written - set(SET_ASIDE_DESTINATIONS.values())}")
+        f"{set(aside) - set(SET_ASIDE_DESTINATIONS.values())}")
 
 
 @pytest.mark.parametrize("method", sorted(LINK_METHOD_VALUES))
@@ -115,8 +97,8 @@ def test_outcome_gate_agrees_with_the_resolved_set(method):
 
 def test_sanity_check_routes_every_unresolved_method_as_its_bucket_says(tmp_path,
                                                                        monkeypatch):
-    """One row per link method through the real quarantine pass: only resolved
-    rows survive — extracted.csv is the validation-ready set."""
+    """One row per link method through the export's partition: only resolved rows
+    reach extracted.csv, which is the validation-ready set."""
     monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
     ex = tmp_path / "extracted.csv"
 
@@ -136,9 +118,9 @@ def test_sanity_check_routes_every_unresolved_method_as_its_bucket_says(tmp_path
             df[c] = ""
     df[EXTRACTED_COLS].to_csv(ex, index=False, encoding="utf-8-sig")
 
-    sc.run_sanity_check(ex, move=True, deep=False)
-
-    survivors = set(pd.read_csv(ex, dtype=str, keep_default_na=False)["link_method"])
+    from extract.export import partition
+    main, _aside = partition(rows)
+    survivors = {row["link_method"] for row in main}
     expected = RESOLVED_LINK_METHODS | {"author_year_match_legacy"}
 
     assert survivors == expected, (

@@ -16,7 +16,7 @@ uninformative / cannot_be_determined / not_a_replication).
 ```text
 Stage 1: search/        → SEARCHES only            → the survivor pool (parquet)
 Stage 2: filter/engine/ → routes the pool into piles → data/filtered.csv (handoff)
-Stage 3: extract/       → finds original + outcome   → data/extracted.csv
+Stage 3: extract/       → finds original + outcome   → verdicts → data/extracted.csv
 Stage 4: validate/      → read-only monitoring dashboard (no CSV output)
 ```
 
@@ -25,7 +25,8 @@ python -m search.run_search --scan  # Stage 1 → the survivor pool (--scan is r
 python -m filter.engine route       # Stage 2 → routing release in the DuckDB store
 python -m filter.engine screen --tier screen_expensive --run   # the claimed LLM tier
 python -m filter.engine handoff --out data/filtered.csv        # → Stage 3's input
-python -m extract.run_extract       # Stage 3 → data/extracted.csv (streamed row-by-row)
+python -m extract.tier --run        # Stage 3 → claimed extraction, verdicts in Postgres
+python -m extract.export            # the verdicts → data/extracted.csv
 python -m validate.app              # Stage 4 dashboard → http://localhost:5001
 ```
 
@@ -46,15 +47,28 @@ defect (three non-atomic PostgREST inserts per row, no retry, orphan rows the pa
 dedup never reconciles). It is parked on the `wip/csv-to-db` branch with a `WIP.md`
 explaining what would make it correct; do not revive it.
 
-**Test sandbox:** `python -m extract.run_extract --extracted-test` writes to
-extracted-test.csv (skipping DOIs already resolved in extracted.csv). Every Stage 3
-run RESUMES by default — resolved rows are carried forward and only `target_pending`
-is re-run; `--fresh` discards the output CSV and re-extracts (and re-pays for)
-everything. `python -m extract.promote_test --all|--doi …|--dry-run` promotes rows to production.
-Set-asides belong to the output CSV they came out of (`set_aside_dir()` in
-`shared/schema.py`): production's sit in `data/`, the sandbox's in
-`data/extracted-test-set-aside/` — a test-run quarantine must not settle a paper for
-the production resume, which treats every key in a settled set-aside file as done.
+**Stage 3 runs as a claimed engine tier, and the export is the only writer of
+`data/extracted.csv`.** `python -m extract.tier --run` claims works, runs the ladder
+and stores one permanent RESULT verdict per work whose payload rebuilds every
+`EXTRACTED_COLS` row offline; `python -m extract.export` renders those payloads into
+the CSV, whole, sorted and atomically. Resume is the verdict row, not the file: the
+worklist subtracts every work whose latest current-generation result SETTLES it, and
+`target_pending`/`api_error` do not settle. `--redo W1,W2` re-extracts named works and
+supersedes their previous result rows; editing a prompt or a model mints a new
+extract GENERATION, which reopens every work at once.
+
+The CSV runner (`python -m extract.run_extract`, with `--fresh`, `--rescreen`,
+`--extracted-test` and `--screen-here`) is retired — it prints a pointer and exits 2.
+It is parked on the `wip/csv-runner` branch with a `WIP.md` saying what a revival
+would have to satisfy; do not revive it as a second writer.
+
+**Test sandbox:** `python -m extract.tier --run --mode validation` records real
+verdicts the live export ignores (the mode lives in `claim.meta.mode`), and
+`python -m extract.export --mode validation --out data/extracted-test.csv` renders
+them. There is no promotion step: re-running the work live is the promotion, and it
+is near-free on cached calls. Set-asides belong to the CSV they came out of
+(`set_aside_dir()` in `shared/schema.py`): production's sit in `data/`, the sandbox's
+in `data/extracted-test-set-aside/`.
 
 ## Module Map
 
@@ -84,7 +98,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 | `shared/schema.py`          | CSV column definitions — the contract between stages |
 | `shared/supabase_client.py` | Read client for the Supabase validation tables |
 | `shared/dashboard_cache.py` | Parquet mirror + `data/dashboard/stats.json` so Stage 4 reads fast; each runner calls `refresh(stage)` |
-| `shared/flora_skip.py`      | Two skip lists: already-in-FLoRA (entry sheet + `flora.csv`), read by `run_extract`; and already-in-the-validation-tables (`data/validated_skip.csv`, work id or DOI), read by Stage 3 alone. The second is the frozen legacy `record_metadata` set, materialised once by `analysis/build_validated_skip.py` so a run needs no Supabase |
+| `shared/flora_skip.py`      | Two skip lists: already-in-FLoRA (entry sheet + `flora.csv`), read by the extract tier's worklist; and already-in-the-validation-tables (`data/validated_skip.csv`, work id or DOI), read by Stage 3 alone. The second is the frozen legacy `record_metadata` set, materialised once by `analysis/build_validated_skip.py` so a run needs no Supabase |
 | `shared/token_counter.py`   | In-process per-stage token attribution; `set_stage()` before a call block |
 | `shared/abstract_store.py`  | The abstract cache as one SQLite file (`cache/abstracts.sqlite`). One row per identifier: the text, or NULL for a definitive miss. **The row IS the checkpoint** — it absorbed `fetch_abstracts_done.txt` and the `fetch_abstracts_found.txt` sidecar, both of which existed only because file-per-key made whole-cache questions cost half a million syscalls, and either could drift from the cache it described. A transient failure is never recorded. Migration: `python -m shared.abstract_store --migrate` |
 | `shared/hf.py`              | The Hugging Face plumbing shared by `pool_sync`, `cache_sync` and the engine tiers: which exceptions establish ABSENCE as opposed to unreadability, which failures a different token would fix, batched commits. The caller imports `huggingface_hub` and passes it in |
@@ -96,7 +110,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 | `filter/` | `phrase_detection.py` — the token/stem vocabulary the **search gate** is built from. It is Stage 1's only keyword logic; Stage 2 does not call it. The old `rule_filter.py`/`run_filter.py` path is retired (#146) |
 | `filter/engine/` | The issue #146 filter engine, which IS Stage 2: declarative JSON specs in `filter/spec/` routed by precedence into piles (`discard` / `screen_expensive` / `screen_cheap` / `needs_human` / `pending`) over the survivor pool; claimed, budget-gated LLM tiers; `handoff` writes Stage 3's input. Rules route and discard; only LLMs admit. Design: [`docs/filter-engine.md`](docs/filter-engine.md); policy (precedence, pile→status mapping, measurement levels): `filter/spec/CONVENTIONS.md`. CLI: `python -m filter.engine specs\|route\|diagnose\|worklist\|screen\|export\|reconcile\|handoff\|release-claim\|status` |
 | `db/migrations/` | The engine's Postgres state authority (claims, permanent verdicts, audit, validation lineage) — SQL the maintainer runs in Supabase |
-| `extract/` | `run_extract.py` (orchestrator: chunked read, the screen verdict read off the row, per-target adapter), `link_original.py` (resolution ladder), `code_outcome.py` (outcome coding; reproductions use the computation/robustness axes), `sanity_check.py` (post-run quarantine to set-aside CSVs; runs on completion and Ctrl-C), `promote_test.py`, `audit_dois.py`, `audit_extracted.py` (read-only pre-validation audit), `backfill_authors.py` (retroactive `authors_o`/`ref_o` from OpenAlex), `clean_parse_cache.py` |
+| `extract/` | `tier.py` (**the entry point**: Stage 3 as a claimed, budget-gated engine tier — worklist, claim + lease heartbeat, the judge, the stored result payload, `--redo`, and `supersede_targets()` for retroactive corrections), `export.py` (**the only writer of `data/extracted.csv`**: renders the stored payloads, sorted, atomic, partitioned into the set-aside CSVs, with a generation fallback and `--check`), `run_extract.py` (the per-row pipeline as a LIBRARY — `_process_row` and everything under it; its CLI is retired and parked on `wip/csv-runner`), `link_original.py` (resolution ladder), `code_outcome.py` (outcome coding; reproductions use the computation/robustness axes), `sanity_check.py` (the integrity REPORT over the exported CSV, plus the two `--deep` network buckets; it moves nothing), `audit_dois.py`, `audit_extracted.py` (read-only pre-validation audit), `backfill_authors.py` (retroactive `authors_o`/`ref_o` from OpenAlex), `clean_parse_cache.py` |
 | `validate/` | Read-only Flask dashboard: `app.py` registers the `dashboard` and `check` blueprints only. The `batch` blueprint is parked on `wip/batch-blueprint` |
 | `misc/` | Reference examples and small sample CSVs — do not import |
 
@@ -130,11 +144,11 @@ Never change a column name without updating `schema.py` and notifying all teams.
 runs here any more: the rule book routes a row to the `screen_cheap` or
 `screen_expensive` pile and `filter/engine/tiers.py` runs the tier over it, claimed
 and budget-gated. They are described here because their verdicts decide Stage 3's
-rows. Stage 3 READS the expensive screen's answer off its input CSV (`SCREEN_COLS`)
-and never votes: an input with no `screen_verdict` column is refused at startup, a
-row whose value is blank is written `target_pending`, and `--screen-here` is the
-explicit fallback that screens such rows in Stage 3 (an `--as-routed` handoff, a
-hand-made CSV).
+rows. Stage 3 READS the expensive screen's answer off the row it is handed
+(`SCREEN_COLS`) and never votes — structurally: `classify_replication` is not imported
+into `extract/run_extract.py` at all. A row whose `screen_verdict` is blank is written
+`target_pending`, and the tier's worklist never offers one: it holds back every work
+a live, current-generation screen verdict has not admitted.
 
 **The cheap discard-only tier** (`shared/prescreen.py` asks; `_cheap_judge()` in
 `filter/engine/tiers.py` gates) is DORMANT — all three `screen_cheap` specs are
@@ -155,8 +169,7 @@ of rows reaching Stage 3 carry it, including every screen-confirmed negative. A 
 verdict never ADMITS: its `proceed` means "on to the expensive screen", so it settles
 nothing for the screened-only handoff, and a live discard simply drops the row there.
 `link_method = prescreen_discard` has no live writer for that reason; historical rows
-carry it, `sanity_check` still files them in `data/prescreen_discard.csv`, and
-`--rescreen` still reopens them. Evidence: `analysis/prescreen_eval/REPORT.md`.
+carry it and the export still partitions them into `data/prescreen_discard.csv`. Evidence: `analysis/prescreen_eval/REPORT.md`.
 
 **Front-door screen** (`classify_replication()`, run by `screen --tier
 screen_expensive`): two voters — `SCREENING_MODEL_1`
@@ -175,7 +188,7 @@ zero settled misses):
   qualifying-or-unclear at `confident: false` → `not_a_replication`.
 - **proceed** — everything else, including confident splits. There is no
   `screen_disagreement` terminal state any more (historical rows on disk are still
-  routed by the value in `schema.py`, `sanity_check.py` and `run_extract.py`).
+  routed by the value in `schema.py`, `sanity_check.py` and `extract/export.py`).
 - **no decision** — fewer than two votes: 1 vote → `target_pending` (re-run decides),
   0 votes → `api_error`. Incomplete screens are never cached.
 
@@ -185,8 +198,8 @@ the first qualifying voter; `both` → replication) becomes `type` and overwrite
 values are kept and `type` stays empty. `screen_categories` (union of both voters) is
 written on every screened row. Voter models are folded into the classify cache key, so
 changing a voter or the prompt invalidates exactly those verdicts — and mints a new
-SCREENING GENERATION, which is what makes those works claimable again and is the
-first half of what `--rescreen` needs (the second is re-running `handoff`).
+SCREENING GENERATION, which is what makes those works claimable again — and, once
+they are re-screened, what puts them back in the extract tier's worklist.
 
 The verdict reaches Stage 3 through the handoff, in `SCREEN_COLS`:
 `screen_verdict`, `screen_record_type`, `screen_categories`, `screen_votes`,
@@ -408,18 +421,19 @@ rows (its sibling `filtered.csv.manifest.json` names the exact count for the fil
 on disk) and `data/extracted.csv` a few hundred KB.
 
 The multi-GB `filtered.csv` this section was written for is the RETIRED pre-engine
-file — the DVC-tracked `filtered.zip` still holds it at 1.7 GB. Stage 3 still reads
-its input in 50k-row chunks (`_CHUNK_ROWS` in `extract/run_extract.py`) and never
-holds more than one chunk in memory, and the CLI row filters are still per-row
-predicates applied chunk by chunk. That costs nothing at the current size and is what
-lets the input grow again without a rewrite. Resume state is the other direction and
-is NOT chunked:
-`_load_extracted_rows()` reads the whole output CSV into a DataFrame in one go, plus
-the settled set-aside CSVs, and partitions the rows by `row_key()` (`shared/row_key.py`:
-doi → `oa:` → `url:` → `title:`). The sidecar index files and their `--rebuild-index`
-flag are gone — the output is small enough to read whole, and an index that could
-drift from the file it described was one more thing to keep true. First write of a CSV
-is `utf-8-sig`; appends are plain `utf-8` (no BOM mid-file).
+file — the DVC-tracked `filtered.zip` still holds it at 1.7 GB. Stage 3 never reads a
+CSV at all now: the tier builds its worklist in process, straight off the pool through
+`iter_export_rows` + `screen_columns` — the same two functions the handoff writes
+`data/filtered.csv` with — one batch of `EXTRACT_CLAIM_BATCH` works at a time, so
+nothing about the input's size reaches memory.
+
+Neither is resume a file any more. The checkpoint is the permanent verdict row, and
+the worklist is REBUILT between batches by subtracting the works whose latest
+current-generation result settles them. The whole read-and-truncate-and-carry-back
+dance the old output CSV needed — and the 76 rows it deleted on 2026-08-05 — went with
+it. `data/extracted.csv` is written whole, once, by `python -m extract.export`, through
+a temp file and one rename; nothing appends to it, so there is no BOM-mid-file
+question left.
 
 Stage 1's corpus is the survivor pool (parquet), not a CSV. `data/candidates.csv` —
 the admission-gated corpus of the old Stage 1 — is retired; `CANDIDATES_COLS`
@@ -511,14 +525,17 @@ gitignored — samples go in `misc/`.
 Every newly written row passes `_verify_row()`: the metadata `doi_o` actually points to
 is fetched (CrossRef → OpenAlex) and compared; mismatches are re-resolved from
 title+author (three tiers, strictest first — a wrong correction is worse than a flag),
-with `doi_r` always excluded as a correction target. **Verification happens once**: the
-three tiers issue up to three OpenAlex free-text searches per row at 10× a filter query,
-so a resume carries a row whose `doi_o_verification` is already settled forward as
-written (`SETTLED_VERIFICATIONS` in `run_extract.py`) and only re-verifies the unsettled
-values — `api_error` and blank. The cheap half of `_finalise_row` (work-id fill, control
-characters, the year assertion) still runs on every written row. Retroactive audit:
-`python -m extract.audit_dois [--apply|--doi …|--status api_error|--extracted-test]` —
-the only thing that re-verifies a settled row. Thresholds are constants in
+with `doi_r` always excluded as a correction target. **Verification happens once**: it
+runs INSIDE the tier's judge, before the result payload is written, and the answer is
+stored on the row. The three tiers issue up to three OpenAlex free-text searches per
+row at 10× a filter query, so an export that re-verified would pay that bill on every
+render — it renders what the verdict already holds. Retroactive audit:
+`python -m extract.audit_dois [--apply|--doi …|--status api_error|--mode validation]` —
+the only thing that re-verifies a settled row. It reads the exported CSV and, under
+`--apply`, writes a corrected result verdict that supersedes the old one
+(`supersede_targets()` in `extract/tier.py`); `python -m extract.export` then renders
+the correction. `extract/backfill_authors.py` takes the same route for
+`authors_o`/`ref_o`. Thresholds are constants in
 `shared/doi_verify.py`. The searches go through `_oa_get`, so they are throttled,
 key-rotated, counted (`search_query_count()`, printed at the end of a run) and a quota
 refusal raises `OpenAlexQuotaExhausted` instead of reading as "no match".

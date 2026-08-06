@@ -439,74 +439,8 @@ python -m filter.engine.sizing [--rows N] [--verdict-rate R] [--json]
 
 ## Stage 3 — Extract
 
-```bash
-# Run extraction (streams to extracted.csv)
-python -m extract.run_extract
-
-# Write to test sandbox instead of production
-python -m extract.run_extract --extracted-test
-
-# Start over: discard extracted.csv and re-extract (and re-pay for) every row
-python -m extract.run_extract --fresh
-
-# Reopen rows a previous run set aside on a screen verdict, for a new Stage 2 generation
-python -m extract.run_extract --rescreen
-
-# Screen rows here when the input carries no verdict (an --as-routed handoff)
-python -m extract.run_extract --screen-here
-
-# Skip LLM calls (rule-based only)
-python -m extract.run_extract --no-llm
-
-# Combine flags
-python -m extract.run_extract --extracted-test --no-llm
-
-# Limit to N rows
-python -m extract.run_extract --limit 50
-
-# Re-extract papers already in FLoRA (the skip is ON by default)
-python -m extract.run_extract --no-skip-flora-validated
-
-# Run against another input — the fixture, say. There is no silent fallback to it
-python -m extract.run_extract --filtered-csv misc/sample_filtered.csv
-```
-
-**Input:** `data/filtered.csv` (Stage 2's handoff writes it; a missing file is an
-error, not a reason to fall back to the fixture). It must carry the screen verdict
-Stage 2's `screen_expensive` tier produced — `screen_verdict` and the rest of
-`SCREEN_COLS` — because Stage 3 does not screen. A file with no `screen_verdict`
-column is refused at startup, naming the two commands that fix it; a row whose
-value is blank (an `--as-routed` handoff) is written `target_pending`. Two flags
-exempt the run from that refusal (`_require_screen_verdicts()` returns early for
-both): `--screen-here`, which asks for the screen to run here, and `--no-llm`,
-which screens nothing by design.  
-**Output:** `data/extracted.csv` (or `data/extracted-test.csv` with `--extracted-test`)
-
-The examples above are a selection, not the flag list. For the complete, current set
-run:
-
-```bash
-python -m extract.run_extract --help
-```
-
-(the `argparse` block at the bottom of `extract/run_extract.py` is its source). The
-sections below explain the flags whose behaviour is not obvious from one help line.
-
-The row filters and cost switches the examples above leave out, all real flags:
-`--from-year` / `--to-year`, `--source S`, `--doi-r D`, `--resolved-only` (drop rows
-the ladder did not resolve), `--no-pdf` (stop the ladder before PDF acquisition),
-`--outcome-only`, `--no-reproductions` / `--only-reproductions`,
-`--predicted-outcome`, `--recalibrate-outcomes`. Each row filter is a per-row
-predicate applied chunk by chunk, so like `--limit` it bounds spend, not how much
-of the input is read.
-
-### The extract tier — `extract.tier` and `extract.export`
-
-The same ladder, run as a claimed engine tier instead of as a CSV writer. Stage 3's
-judgments become permanent verdict rows in the state authority, and the CSV becomes
-something rendered from them rather than the place they live. `python -m
-extract.run_extract` is unchanged and still works; these two commands are a second
-front door onto the same machine. Design: [`filter-engine.md`](filter-engine.md),
+Stage 3 runs as a claimed engine tier. It has two commands: `extract.tier` decides
+and records, `extract.export` renders. Design: [`filter-engine.md`](filter-engine.md),
 "Milestone 6 — the extract tier".
 
 ```bash
@@ -519,7 +453,7 @@ python -m extract.tier --run
 # A first small batch, labelled so the claims name the campaign
 python -m extract.tier --run --limit 50 --batch-label wave-1
 
-# Record verdicts the live export ignores
+# The sandbox: real verdicts the live export ignores
 python -m extract.tier --run --mode validation
 
 # Specific works, and works the checkpoint would otherwise skip
@@ -529,12 +463,29 @@ python -m extract.tier --run --redo 2741809807
 # Render data/extracted.csv from the stored verdicts
 python -m extract.export
 
+# Render the sandbox's verdicts to their own CSV (set-asides go beside it)
+python -m extract.export --mode validation --out data/extracted-test.csv
+
 # Does the file on disk match the verdicts? Writes nothing; non-zero if it differs
 python -m extract.export --check
 
 # Drop works whose only result row is from a superseded generation
 python -m extract.export --current-generation-only
 ```
+
+**Input:** the routing release and the survivor pool, read in process — the tier
+builds each work's row with `iter_export_rows` + `screen_columns`, the same two
+functions `filter.engine handoff` writes `data/filtered.csv` with. There is no input
+CSV to keep in step, and no handoff file is needed for a tier run.  
+**Output:** permanent verdict rows in the state authority. `data/extracted.csv` is
+what `extract.export` renders from them.
+
+`python -m extract.run_extract` is retired: it prints a pointer and exits 2. The CSV
+runner it used to be — `--fresh`, `--rescreen`, `--extracted-test`, `--screen-here`,
+`--filtered-csv`, the chunked read and the appending writer — is parked on the
+`wip/csv-runner` branch, with a `WIP.md` recording what a revival would have to
+satisfy. `extract/run_extract.py` itself stays on `main` as the per-row pipeline
+library the tier's judge calls.
 
 **`extract.tier` needs the routing store and the pool**, because the worklist is
 built from the routing release and the pool text — `--store`, `--pool`,
@@ -548,6 +499,11 @@ minus works this tier has settled, minus works under another runner's unexpired
 extract claim, minus the FLoRA and validation-table skip lists. Nothing is claimed
 twice and nothing already extracted is re-bought.
 
+**Resume is the verdict row.** There is no output file to read back, no truncation,
+no carry-back: the worklist is rebuilt between batches, so a run that is killed
+resumes by asking the same question again. Interrupting it costs at most the batch
+in flight.
+
 **`target_pending` and `api_error` do not settle a work.** They are the two endings
 a re-run is meant to redo, so a work that ended in either is back in the next run's
 worklist with no flag to remember. Every other ending takes it out.
@@ -557,85 +513,57 @@ checkpoint and points the previous result row at the new one
 (`supersede_verdict`), so the old row stays as evidence of what was believed and
 stops being read.
 
+**A changed prompt or model reopens everything at once.** The extract GENERATION is
+the hash of the ladder version, the prompts and the models at their call-site efforts
+(`generation_inputs()` in `extract/tier.py`). Editing any of them means no work has a
+current-generation verdict, so the whole worklist is claimable again — the equivalent
+of the old `--rescreen`, without a flag and without a file to reopen.
+
 **The dry run prices by rung, and OpenAlex in credits.** What a row costs is almost
 entirely how far down the ladder it went, so the estimate is a weighted sum over
 rungs rather than a per-row constant. OpenAlex is reported as credits on its own
 line and never converted to dollars — it bills a daily credit budget that resets at
 midnight UTC.
 
+**`--limit N` counts works claimed, not works scanned.** The worklist subtracts skips
+and settled works before the limit applies, so `--limit 50` extracts 50 fresh works.
+Use it to bound spend.
+
 **`extract.export` is a pure render**: no network, no cache, no store, no pool. It
 partitions rows into the set-aside CSVs on the way out, through the same
-`classify_row()` `extract.sanity_check` uses, and the set-asides belong to the CSV
-being written (`--out data/extracted-test.csv` quarantines into
+`classify_row()` `extract.sanity_check` reports with, and the set-asides belong to the
+CSV being written (`--out data/extracted-test.csv` quarantines into
 `data/extracted-test-set-aside/`). A work whose only result row is from a superseded
 generation is carried forward and counted rather than dropped — dropping a paper
 because a prompt was edited would delete a real finding — and
 `--current-generation-only` is the strict view.
 
-### Two flags that do not mean what they look like
+**It is the only writer of `data/extracted.csv`.** Each render writes the whole file,
+sorted by `(work_id, original_rank)`, through a temp file and one rename. Nothing
+appends to it, `sanity_check` reports rather than moves, and the two retroactive tools
+correct the verdicts instead of the file. The first live export will therefore replace
+the tracked file whole, in one large diff — that is expected, and `--check` shows the
+difference before anything is written.
 
-**`--limit N` counts rows *processed*, not rows scanned.** The counter increments
-after `_should_skip()` has passed a row, so a run over a file whose first 10,000
-rows are all skipped (already resolved, already in FLoRA, wrong year, wrong source)
-still processes N fresh rows — and reads far more than N. Use it to bound *spend*,
-never to bound how much of the input is touched, and never to reason about which
-rows a run saw.
+### The sandbox
 
-**`--fresh` truncates the output CSV.** The first row written opens the file with
-mode `w`, and an ordinary run pre-loads the existing rows before that happens, so the
-file is rewritten from what it already held. `--fresh` skips that pre-load, so the
-previous run's output is discarded rather than added to — in the test sandbox as
-well as in production.
-
-### Reopening set-aside rows for a new screening generation
-
-An ordinary run carries every already-resolved row forward untouched, including the rows
-a screen decided on its own (`link_method`/`outcome` of
-`not_a_replication`, plus the historical `screen_disagreement`). That is right for a resumed run and
-wrong after the screen changes: an old voter pair's verdicts would survive
-indefinitely. `--rescreen` reopens exactly those rows — the whole paper, so a
-multi-original paper is reopened as a unit — and leaves every other resolved row
-carried forward. Historical cheap-tier discards (`prescreen_discard`) are reopened by
-the same flag, and this is the only way back: a resume treats a set-aside row as
-settled.
-
-**It reopens; it does not re-screen.** The screen is Stage 2's, so a reopened paper
-comes back only if the current SCREENING GENERATION admitted it. The full sequence
-after changing a voter model or the classify prompt is:
+`--mode validation` records real verdicts against a real claim; the mode lives in
+`claim.meta.mode`, so the live export ignores them and a validation verdict does not
+settle the live worklist.
 
 ```bash
-python -m filter.engine screen --tier screen_expensive --run   # new generation
-python -m filter.engine handoff --out data/filtered.csv
-python -m extract.run_extract --rescreen
+python -m extract.tier --run --mode validation --limit 20 --batch-label shakedown
+python -m extract.export --mode validation --out data/extracted-test.csv
 ```
 
-The generation is the hash of the voter pair and the prompt, recorded on each
-claim: changing either makes those works claimable again and stops the old verdicts
-steering the handoff, so step 1 really does re-vote and step 2 really does carry a
-different set of rows.
-
-Rows `sanity_check` has moved out of `extracted.csv` are no longer in that file, but a
-resume reads the set-aside CSVs and treats every key in them as settled
-(`SETTLED_SET_ASIDE_FILES` in `shared/schema.py`) — a provisional title-search link, a
-DOI mismatch or a `no_original_found` verdict already paid for a ladder pass and is not
-walked again. Two destinations are excluded and redone by every run, no flag needed:
-`data/target_pending.csv` (re-run decides, by construction) and `data/api_error.csv` (a
-transient provider failure must never be checkpointed as a definitive miss).
-`--rescreen` reopens the three abstract-only files —
-`data/not_a_replication.csv`, `data/screen_disagreement.csv`,
-`data/prescreen_discard.csv` — and nothing else. The set-asides belong to the output
-CSV they were quarantined out of (`set_aside_dir()` in `shared/schema.py`):
-`extracted.csv`'s sit in `data/`, and the `--extracted-test` sandbox writes and reads
-`data/extracted-test-set-aside/`, so a test-run discard cannot settle a paper for the
-production resume. Their verdicts are also pinned by
-the screen cache, but that cache is keyed on the screening prompt's version, both
-voter models and the abstract itself — so changing a voter or the prompt makes
-Stage 2's re-screen actually re-vote, with nothing to bump by hand.
+There is no promotion step. Re-running the same work live is the promotion, and it is
+near-free because every LLM answer is already cached under a content-complete key.
 
 ### Skipping papers already in FLoRA
 
-`--skip-flora-validated` is **on by default**: Stage 3 will not re-extract a
-replication that FLoRA already has. The skip list is the union of two sources:
+The extract tier's worklist subtracts every replication FLoRA already has; there is
+no flag, because extracting one is never right. The skip list is the union of two
+sources:
 
 | Source | Rows skipped |
 | ------ | ------------ |
@@ -643,10 +571,9 @@ replication that FLoRA already has. The skip list is the union of two sources:
 | `data/flora.csv` | **every** row (`doi_r` and `alt_identifier_r`) — the published database, so all of it is already in FLoRA |
 
 Statuses still in flight (`help needed`, `on hold`, `awaiting validation`, blank) are
-**not** skipped — those genuinely need the pipeline. Pass `--no-skip-flora-validated`
-to re-extract everything anyway.
+**not** skipped — those genuinely need the pipeline.
 
-The list lives in `shared/flora_skip.py` rather than inside `run_extract`, so the
+The list lives in `shared/flora_skip.py` rather than inside the tier, so the
 validation hand-off in the `flora-validation` repo can read the same contract and a
 paper FLoRA already has cannot reach validators.
 
@@ -655,14 +582,14 @@ cannot silently disable the whole skip list.
 
 ### Skipping works already in the validation tables
 
-`--skip-validated` is **on by default** and answers a different question: not "is this
-already published in FLoRA" but "has someone already validated it". Supabase
+The second skip list answers a different question: not "is this already published in
+FLoRA" but "has someone already validated it". Supabase
 `record_metadata` holds ~1,770 records seeded from the prior FLoRA pipeline, and those
 works must never be extracted again.
 
 That set is frozen — everything validated from here on flows through this pipeline and
-is held out by `extracted.csv`'s own resume keys — so it is a static, committed file
-rather than a query. `analysis/build_validated_skip.py` materialises it once:
+is held out by the tier's own checkpoint — so it is a static, committed file rather
+than a query. `analysis/build_validated_skip.py` materialises it once:
 
 ```bash
 python -m analysis.build_validated_skip            # dry run: prints the counts
@@ -672,51 +599,37 @@ python -m analysis.build_validated_skip --apply    # writes data/validated_skip.
 `--out` writes somewhere other than `data/validated_skip.csv`; `--dry-run` is the
 explicit spelling of the default.
 
-Stage 3 then reads `data/validated_skip.csv` (`shared/flora_skip.load_validated_skip()`)
-and skips a row whose OpenAlex work id **or** cleaned `doi_r` is in it — two
+The tier then reads `data/validated_skip.csv` (`shared/flora_skip.load_validated_skip()`)
+and holds back a work whose OpenAlex work id **or** cleaned `doi_r` is in it — two
 identifiers because a legacy record may carry only one of them, and so may a pool row.
-A missing file logs a warning and skips nothing. The run summary counts these
-separately from the FLoRA skips; pass `--no-skip-validated` to extract them anyway.
+A missing file logs a warning and skips nothing.
 
-### Promoting test results
+### The set-aside partition, and the sanity report
 
-```bash
-# Promote all test rows to production
-python -m extract.promote_test --all
-
-# Promote named DOIs (--doi is repeatable)
-python -m extract.promote_test --doi 10.1234/example --doi 10.1234/other
-
-# Preview without writing
-python -m extract.promote_test --all --dry-run
-
-# Force overwrite (skip conflict check)
-python -m extract.promote_test --all --force
-```
-
-### Post-extraction sanity check
-
-Runs automatically at the end of every `run_extract` (on completion and on Ctrl-C).
-Also runnable standalone:
+Rows that do not belong in `extracted.csv` are written to a set-aside CSV instead, by
+`extract.export`, as it writes them. `extract.sanity_check` applies the same rules to
+the exported file and REPORTS: after an export every bucket reads zero, and a non-zero
+count means the file and the verdicts have drifted apart.
 
 ```bash
-# Move problem rows to the set-aside CSVs + report integrity flags
+# Report over data/extracted.csv — writes nothing
 python -m extract.sanity_check
 
-# Check the test sandbox instead — its set-asides go to data/extracted-test-set-aside/
+# The sandbox render instead
 python -m extract.sanity_check --input data/extracted-test.csv
 
-# Report only — move nothing
-python -m extract.sanity_check --report-only
-
-# Also network-verify unregistered doi_o against doi.org and quarantine fabrications
+# Also network-verify unregistered doi_o against doi.org and flag fabrications
 python -m extract.sanity_check --deep
 ```
 
+The two `--deep` buckets are the reason the pass still exists: each needs a network
+lookup per row, so neither can be decided as a row is written, and both name rows that
+ARE in extracted.csv and should not be.
+
 Rows land in the **first** bucket they match, and the order is load-bearing — the
 `link_method` rules come first and the outcome rule last of the discard buckets,
-because where a row stands in the pipeline decides which file it belongs in. The
-list below is `rules` in `extract/sanity_check.py`, in order:
+because where a row stands in the pipeline decides which file it belongs in. The list
+below is `classify_row()` in `extract/sanity_check.py`, in order:
 
 | # | Condition | Destination |
 | - | --------- | ----------- |
@@ -765,25 +678,33 @@ python -m extract.audit_extracted --doi 10.1234/example  # repeatable
 ### Backfilling authors
 
 Fills `authors_o` / `ref_o` retroactively from OpenAlex on rows that resolved before
-those columns were written.
+those columns were written. Like the DOI audit below, it reads the exported CSV and
+CORRECTS THE VERDICTS it is rendered from; render the result afterwards.
 
 ```bash
 python -m extract.backfill_authors                   # dry run
 python -m extract.backfill_authors --apply
-python -m extract.backfill_authors --extracted-test
-python -m extract.backfill_authors --doi 10.1234/example   # repeatable
+python -m extract.export                             # render the correction
+python -m extract.backfill_authors --mode validation
+python -m extract.backfill_authors --doi 10.1234/example
 ```
 
 ### DOI verification audit
 
-Retroactively verify `doi_o` values in an existing CSV. Runs automatically during extraction; use this to audit rows that predate the feature.
+Retroactively verify `doi_o` values. It READS the exported CSV and, under `--apply`,
+WRITES the verdicts that CSV is rendered from: it claims the affected works, records a
+corrected result verdict per work and supersedes the previous one. Editing the file
+would be undone by the next render, so rendering is the third step and it is yours.
 
 ```bash
 # Dry run: print summary + write data/doi_audit_report.csv
 python -m extract.audit_dois
 
-# Write corrections into extracted.csv
+# Claim, correct, supersede
 python -m extract.audit_dois --apply
+
+# Render the corrected CSV
+python -m extract.export
 
 # Audit a single DOI
 python -m extract.audit_dois --doi 10.1234/example
@@ -791,16 +712,20 @@ python -m extract.audit_dois --doi 10.1234/example
 # Re-ask only the rows whose verification could not be completed last time
 python -m extract.audit_dois --status api_error --apply
 
-# Audit extracted-test.csv instead
-python -m extract.audit_dois --extracted-test
+# The sandbox render, and the validation-mode verdicts behind it
+python -m extract.audit_dois --mode validation
 ```
 
-A resumed `run_extract` re-verifies only rows whose `doi_o_verification` is `api_error`
-or blank; every settled value is carried forward untouched, because each re-verification
-costs up to three OpenAlex free-text searches (10× a filter query). This tool is
-therefore the only way to re-verify a settled row — after a threshold change in
+Verification runs once, inside the tier's judge, and its answer is stored on the row —
+each re-verification costs up to three OpenAlex free-text searches (10× a filter
+query), so an export that re-verified would pay that bill on every render. This tool is
+therefore the only way to re-verify a settled row: after a threshold change in
 `shared/doi_verify.py`, or as a spot check. `--status` is repeatable and accepts `''`
 for rows that were never verified.
+
+A correction is matched to its stored row by `pair_id`, and the work id comes off the
+verdict rows themselves — never from an OpenAlex lookup. A pair id the live payloads do
+not hold is reported, not guessed at.
 
 Each Stage 3 run prints its free-text OpenAlex search count next to the token summary.
 
@@ -881,7 +806,7 @@ python -m tools.dedup_preprint_versions --input data/extracted.csv            # 
 python -m tools.dedup_preprint_versions --input data/extracted.csv --apply
 
 # Backfill oa_work_id_r / oa_work_id_o on rows written before those columns existed.
-# New rows get them automatically from run_extract — this is only for old rows.
+# New rows get them from the tier's judge — this is only for old rows.
 python -m tools.backfill_oa_work_ids                                    # dry-run
 python -m tools.backfill_oa_work_ids --apply                            # write
 python -m tools.backfill_oa_work_ids --input data/extracted-test.csv --apply

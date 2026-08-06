@@ -143,16 +143,17 @@ and nothing depends on it.
 
 ## Extract-Test Tab (Stage 3 sandbox)
 
-Same layout as Extract tab but reads `extracted-test.csv`. Rows here have not been promoted to production.
+Same layout as the Extract tab but reads `extracted-test.csv`, which is what
+`python -m extract.export --mode validation --out data/extracted-test.csv` renders
+from a validation-mode run's verdicts.
 
-**There is no Promote button.** The dashboard is read-only — no route promotes a
-row, and the button the docs panel still mentions does not exist. Promotion is the
-CLI:
+**There is no Promote button, and no promotion step.** The dashboard is read-only,
+and a validation-mode verdict is promoted by re-running the work live — near-free,
+because every LLM answer it needs is already cached:
 
 ```bash
-python -m extract.promote_test --all           # promote everything
-python -m extract.promote_test --doi 10.xxx/y  # promote one row
-python -m extract.promote_test --all --dry-run # preview
+python -m extract.tier --run --only <work id>   # live is the default mode
+python -m extract.export
 ```
 
 ---

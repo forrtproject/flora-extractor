@@ -9,9 +9,14 @@ the same generic spine the screens use. Nothing about the extraction itself move
 `judge` calls `run_extract._process_row`, the one per-row pipeline there has ever
 been.
 
-`python -m extract.run_extract` is untouched and still works; this is a second
-front door onto the same machine, and the CSV stops being the authority only at a
-later phase.
+This is the ONLY front door. The CSV runner that used to sit beside it is gone
+(parked on `wip/csv-runner`), so `data/extracted.csv` has one writer —
+`python -m extract.export`, rendering the verdict rows this tier stores — and one
+checkpoint, the verdict row itself. A run resumes by rebuilding its worklist: a work
+whose latest current-generation result row settles it is not offered again, and
+`target_pending`/`api_error` do not settle. `--redo` re-extracts named works and
+supersedes their previous result row; editing a prompt or a model mints a new
+generation, which reopens every work at once.
 
 **Two kinds of verdict row, told apart by the `verdict` column.**
 
@@ -247,7 +252,7 @@ def _judge(work: Work) -> tuple[str, list[dict]]:
 
     token_counter.set_stage("extract_tier")
     row = pd.Series(work.row)
-    # The same pre-step the CSV runner does: a pool row admitted on its OpenAlex
+    # A pool row admitted on its OpenAlex
     # id may carry a repository URL instead of a DOI, and everything below keys
     # on the DOI. The resolved value lands in the row, so the payload's input
     # snapshot records what the ladder actually ran with.
@@ -255,8 +260,7 @@ def _judge(work: Work) -> tuple[str, list[dict]]:
     observed: dict = {}
     rows = rx._process_row(row, doi_r, no_llm=False, no_pdf=False,
                            no_reproductions=False, resolved_only=False,
-                           recalibrate_outcomes=False, screen_here=False,
-                           observed=observed)
+                           recalibrate_outcomes=False, observed=observed)
     final = [rx._finalise_row(r) for r in rows]
 
     payload = result_payload(row.to_dict(), doi_r, final, observed)
@@ -1071,3 +1075,109 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# ---------------------------------------------------------------------------
+# Retroactive corrections
+# ---------------------------------------------------------------------------
+
+
+def supersede_targets(client: ClaimsClient, patches: dict[str, dict], *,
+                      batch_label: str, mode: str = "live") -> dict:
+    """Correct stored rows by writing a NEW result verdict that supersedes the old one.
+
+    *patches* is `pair_id → {column: corrected value}`. The pair id is the row
+    identity every stored target carries, so a correction names the row it is about
+    rather than a position in a file.
+
+    This is how the two retroactive tools (`extract/audit_dois.py`,
+    `extract/backfill_authors.py`) write. They used to edit `data/extracted.csv` in
+    place, which stopped meaning anything the moment the export became that file's
+    only writer: the next render rebuilds every row from the stored payload, so an
+    edit to the file would simply disappear. The correction goes where the row comes
+    from.
+
+    The shape is the tier's own, for the tier's reasons: CLAIM before writing, so two
+    correction runs cannot both rewrite one work; one new result row per work,
+    carrying the previous row's verdict, generation and confidence, because a
+    corrected field is not a re-extraction and must not read as one; then
+    `supersede_verdict`, so the old row stays as evidence of what was believed and
+    stops being read.
+
+    The work id is read off the verdict rows themselves — never looked up in
+    OpenAlex. A stored payload is the only thing that knows which work a row came
+    from, and asking a registry would be a second, guessable answer.
+
+    Returns `{"works": n, "rows": n, "unmatched": [pair_id, …], "claim": id}`.
+    """
+    from extract.export import latest_results
+
+    results, _ = latest_results(client, mode=mode)
+    # pair_id → (work_id, target index). A work's targets are its payload's rows.
+    located: dict[str, tuple[int, int]] = {}
+    for work, result in results.items():
+        for index, target in enumerate((result.get("payload") or {}).get("targets") or []):
+            pair = str(target.get("pair_id") or "")
+            if pair:
+                located.setdefault(pair, (int(work), index))
+
+    by_work: dict[int, list[tuple[int, dict]]] = {}
+    unmatched: list[str] = []
+    for pair, changes in patches.items():
+        where = located.get(str(pair))
+        if where is None:
+            unmatched.append(str(pair))
+            continue
+        by_work.setdefault(where[0], []).append((where[1], changes))
+    if not by_work:
+        return {"works": 0, "rows": 0, "unmatched": unmatched, "claim": ""}
+
+    # The release the works were extracted under, read off the claim that holds each
+    # old result row: a correction belongs to the same release as the answer it
+    # corrects.
+    claim_release = {claim["id"]: claim["release_id"]
+                     for claim in client.claims(tier=TIER_EXTRACT)}
+    spanned = {claim_release.get(results[work].get("claim_id")) for work in by_work}
+    spanned.discard(None)
+    if len(spanned) != 1:
+        raise SystemExit(
+            f"the works to correct span {len(spanned)} release(s); correct them one "
+            "release at a time, so each claim names the release its rows came from.")
+    release_id = spanned.pop()
+
+    # An empty pile: `engine_claim_items.pile` records the ROUTING pile a work sat in
+    # at claim time, and a correction claims works for a reason routing knows nothing
+    # about. Inventing a pile name here would put a value in that column that no rule
+    # book ever produced.
+    claim_id = client.claim(release_id, TIER_EXTRACT,
+                            [(work, "") for work in sorted(by_work)],
+                            meta={"mode": mode, "batch_label": batch_label,
+                                  "kind": "correction",
+                                  "generation": extract_generation()},
+                            ttl_seconds=_ttl_seconds())
+    corrected_rows = 0
+    try:
+        for work, changes in sorted(by_work.items()):
+            old = results[work]
+            payload = json.loads(json.dumps(old.get("payload") or {}))
+            targets = payload.get("targets") or []
+            for index, patch in changes:
+                if index < len(targets):
+                    targets[index].update(patch)
+                    corrected_rows += 1
+            new_id = client.record_verdict(
+                claim_id=claim_id, work_id=int(work), tier=TIER_EXTRACT,
+                # Everything but the payload is the old row's: the ending, the
+                # generation and the confidence are unchanged by a field correction.
+                verdict=str(old.get("verdict") or ""),
+                model=str(old.get("model") or ""),
+                prompt_hash=str(old.get("prompt_hash") or ""),
+                confidence=str(old.get("confidence") or ""),
+                quote=str(old.get("quote") or ""),
+                cost={"correction": batch_label},
+                payload=payload)
+            client.supersede_verdict(str(old["id"]), new_id)
+    finally:
+        client.release_claim(claim_id, "complete")
+    return {"works": len(by_work), "rows": corrected_rows, "unmatched": unmatched,
+            "claim": claim_id}

@@ -1,23 +1,26 @@
 # Stage 3: Extract — Code Flow
 
-**Entry point:** `python -m extract.run_extract`
+**Entry points:** `python -m extract.tier --run` (decide and record), then
+`python -m extract.export` (render `data/extracted.csv`).
 
 ## What it does
 
-For each row of `filtered.csv` that Stage 2 accepted, Stage 3 answers two questions:
+For each work Stage 2's screen admitted, Stage 3 answers two questions:
 
 1. Which original study does this paper target (`doi_o`, `title_o`, `link_method`)?
 2. What was the result (`outcome`, `outcome_phrase`)?
 
-Rows are appended to `data/extracted.csv` one at a time, so the monitoring app can be
-opened while a run is still going. `EXTRACT_WORKERS` (default 4) rows are in flight at
-once — a row is minutes of provider and download latency and rows are independent — so
-papers finish out of order; a paper's own rows are still written together, under one
-write lock, and the per-service reservation queue in `shared/rate_limit.py` is what
-bounds the request rate. `EXTRACT_WORKERS=1` runs the loop straight through with no
-pool. Every row passes DOI verification and
-`oa_work_id_*` stamping on the way out, and `extract/sanity_check.py` runs at the end
-of every invocation — on normal completion and on Ctrl-C.
+The answer is stored as a permanent RESULT verdict row whose payload rebuilds that
+work's `EXTRACTED_COLS` rows offline, with no network, cache, store or pool
+(`extract/tier.py`). `EXTRACT_WORKERS` (default 4) works are in flight at once — a work
+is minutes of provider and download latency and works are independent — and the
+per-service reservation queue in `shared/rate_limit.py` bounds the request rate. Every
+row passes DOI verification and `oa_work_id_*` stamping inside the judge, once, so the
+answer is stored rather than recomputed per render.
+
+`python -m extract.export` then renders the stored payloads into `data/extracted.csv`,
+whole and sorted, partitioning set-aside rows on the way out. It is that file's only
+writer; `extract/sanity_check.py` reports on it and moves nothing.
 
 The whole stage is organised around spending the cheap calls first. The classification
 screen discards before anything is spent on a row — 89% of the adjudicated hard
@@ -30,22 +33,20 @@ confirmed original.
 ## Per-row flow
 
 ```
-run_extract.py
+extract/tier.py — extract_works(): the worklist
     │
-    ├── load filtered.csv, apply --from-year / --to-year / --source / --doi-r /
-    │       --predicted-outcome filters
-    ├── skip DOIs already in FLoRA (entry sheet + flora.csv) unless --no-skip-flora-validated
-    ├── skip works already in the validation tables (data/validated_skip.csv) unless --no-skip-validated
-    ├── skip false_positive rows (Stage 2 already rejected them)
-    ├── resume (the default): write every already-resolved row out first, re-run only
-    │   target_pending; --fresh discards the output CSV and re-extracts everything
-    ├── --extracted-test: write to extracted-test.csv, skip DOIs resolved in extracted.csv
+    ├── every work a live current-generation screen_expensive PROCEED verdict admits,
+    │       its row built in process by iter_export_rows + screen_columns
+    ├── minus works this tier has already SETTLED (target_pending and api_error do not settle)
+    ├── minus works under another runner's unexpired extract claim
+    ├── minus DOIs already in FLoRA (entry sheet + flora.csv)
+    ├── minus works already in the validation tables (data/validated_skip.csv)
     │
-    └── for each remaining row:
+    └── claim EXTRACT_CLAIM_BATCH works, then for each of them — _judge():
             │
             ├── FRONT DOOR — _screen_from_row(row): the verdict Stage 2 wrote
             │       into SCREEN_COLS, rebuilt as the classify_replication() dict.
-            │       No call is made here (see below for --screen-here)
+            │       No call is made here — classify_replication is not imported
             │       ├── screen_verdict "discard"           → not_a_replication, row done
             │       ├── screen_verdict blank               → target_pending, row done
             │       └── screen_verdict "proceed"           → continue, carrying the
@@ -73,13 +74,9 @@ it, and `original_match_type` records what came back (`multiple_original` when t
 adapter wrote more than one row, `single_original` otherwise).
 
 A row that the front door ends never pays for the ladder, PDF acquisition or outcome
-coding. `--rescreen` reopens exactly the rows a previous run set
-aside on a screen verdict, wherever a previous run's rows are being read
-(the output CSV a resuming run reloads, or the production CSV that `--extracted-test`
-skips against). It reopens rather than re-screens: the screen is Stage 2's, so the
-paper returns only if the current screening generation admitted it to the handoff.
-Every other resolved row is carried forward untouched, and a multi-original paper is
-reopened as a unit.
+coding — but it is still a RESULT verdict, so the work is settled and is not offered
+again. Reopening one takes `--redo`, or a new extract generation (a changed prompt,
+model or ladder version), which reopens every work at once.
 
 ## The cheap discard-only tier (`shared/prescreen.py` + `filter/engine/tiers.py`)
 
@@ -102,7 +99,7 @@ pre-screened at all: text stating the design outright (`hard_signal()`), rows fr
 A live discard drops the row at the handoff, so Stage 3 never sees it and writes
 nothing. `link_method = prescreen_discard` therefore has no live writer: rows on disk
 from when the tier ran inside Stage 3 still carry it, `sanity_check` still files them
-in `data/prescreen_discard.csv`, and `--rescreen` still reopens them. A cheap verdict
+in `data/prescreen_discard.csv`. A cheap verdict
 never ADMITS a row either — its `proceed` means "on to the expensive screen", so it
 leaves the work unscreened for the screened-only handoff. Evidence on the tier's
 precision: `analysis/prescreen_eval/REPORT.md` and
@@ -113,10 +110,10 @@ precision: `analysis/prescreen_eval/REPORT.md` and
 The call lives in Stage 2's `screen_expensive` tier. Stage 3 reads its answer off
 the input row (`SCREEN_COLS`: `screen_verdict`, `screen_record_type`,
 `screen_categories`, `screen_votes`, `screen_evidence`, `screen_reasoning`) and
-rebuilds this dict with `_screen_from_row()`. It runs the call itself only under
-`--screen-here`, for a row whose verdict is missing; without the flag such a row is
-written `target_pending`, and an input file with no `screen_verdict` column at all is
-refused at startup. What the two voters do, below, is unchanged — only where.
+rebuilds this dict with `_screen_from_row()`. It never runs the call: a row whose
+verdict is missing is written `target_pending`, and the tier's worklist does not offer
+a work no live current-generation verdict admitted. What the two voters do, below, is
+unchanged — only where.
 
 Two providers vote on the validated schema, at prompt version **v3.3** (v3.2 plus the
 partial-overlap rule; evaluated copy `analysis/screening_eval/prompt_v33.txt`, evidence
@@ -129,12 +126,10 @@ array of `categories` from an 11-value enum, `evidence_quote`, `reasoning`:
 | 1 | Gemini | `SCREENING_MODEL_1` |
 | 2 | OpenAI, or OpenRouter when the id contains `/` | `SCREENING_MODEL_2` (default `gpt-5.4-mini`) |
 
-Under `--screen-here`, `run_extract` refuses to start without the key each voter's
-model needs. Which keys those are follows the model ids through `provider_for()`,
-not a hardcoded pair: with today's defaults it is `GEMINI_API_KEY` for voter 1 and
-whichever of `OPENAI_API_KEY` / `OPENROUTER_API_KEY` voter 2 needs. Because with
-one provider every row returns a single vote, which is not a verdict. An ordinary
-run calls neither voter and needs neither key. Voter 2 sits
+Which key each voter needs follows its model id through `provider_for()`, not a
+hardcoded pair: with today's defaults it is `GEMINI_API_KEY` for voter 1 and whichever
+of `OPENAI_API_KEY` / `OPENROUTER_API_KEY` voter 2 needs. A Stage 3 run calls neither
+voter and needs neither key. Voter 2 sits
 outside the Google lineage on purpose: its errors overlap little with voter 1's.
 
 **The gate is `screen_gate()`** — G-softqual from the v3.2 sweep, defined once and
@@ -308,7 +303,7 @@ finally written.
 
 ## Outcome coding
 
-`_outcome_without_coding()` in `run_extract.py` is the single gate. A row whose
+`_outcome_without_coding()` in `extract/run_extract.py` is the single gate. A row whose
 `link_method` is not in `RESOLVED_LINK_METHODS` has no confirmed original to code an
 outcome against, so no outcome LLM runs:
 
@@ -394,7 +389,7 @@ wording, with nothing to bump by hand.
 
 | Cache | Contents |
 | ----- | -------- |
-| `cache/llm/classify_*.json` | front-door verdicts (complete screens only). Written by Stage 2's expensive tier; read here only under `--screen-here`, and read by the handoff through `cached_classification()` for the category union and the voters' reasoning |
+| `cache/llm/classify_*.json` | front-door verdicts (complete screens only). Written by Stage 2's expensive tier; never read in Stage 3, and read by the handoff through `cached_classification()` for the category union and the voters' reasoning |
 | `cache/llm/reftarget_*.json` | reference-list target picks |
 | `cache/llm/llm_*.json` | abstract-level and full-text identification |
 | `cache/llm/outcome_*.json` | outcome verdicts, including escalations |
@@ -428,10 +423,12 @@ PDF — so tiers 1–10 are skipped. Such a row has `pdf_source = openalex_xml`,
 `pdf_path` and `pdf_ok = false`, which is what it already had whenever the downloads
 failed.
 
-## Post-run quarantine (`extract/sanity_check.py`)
+## The set-aside partition (`extract/export.py` + `extract/sanity_check.py`)
 
-Runs at the end of every `run_extract` and standalone. Rows that do not belong in the
-resolved set are moved out to set-aside CSVs, **first match wins**, in this order:
+Rows that do not belong in the resolved set are written to a set-aside CSV instead of
+`extracted.csv` — by the EXPORT, as it writes them, through `classify_row()` in
+`sanity_check`. `python -m extract.sanity_check` applies the same rules to the exported
+file and reports; it moves nothing. **First match wins**, in this order:
 
 | Bucket | Destination | Rule |
 | ------ | ----------- | ---- |
@@ -446,16 +443,15 @@ resolved set are moved out to set-aside CSVs, **first match wins**, in this orde
 | `self_link` | `unresolved_self_links.csv` | `doi_o == doi_r` |
 | `doi_mismatch` | `unresolved_doi_mismatch.csv` | `doi_o_verification == mismatch` |
 
-**The set-asides belong to the output CSV they came out of** (`set_aside_dir()` in
-`shared/schema.py`): `extracted.csv`'s sit directly in `data/`, and the
-`--extracted-test` sandbox writes and reads `data/extracted-test-set-aside/`. That
-separation is what stops a test-run quarantine settling a paper for the production
-resume, which treats every key in a settled set-aside file as done.
+**The set-asides belong to the CSV they came out of** (`set_aside_dir()` in
+`shared/schema.py`): `extracted.csv`'s sit directly in `data/`, and a sandbox render
+(`--out data/extracted-test.csv`) partitions into `data/extracted-test-set-aside/`.
 
-Two further buckets run after that list, on their own: `non_article_type`
-(→ `not_a_replication.csv`, when the registry types `doi_r` as a non-study object) and
-`fabricated_doi_o` (→ `fabricated_original_doi.csv`, `doi_o` present but registered
-nowhere).
+Two further buckets exist only in the sanity REPORT, because each needs a network
+lookup per row and so cannot be decided as a row is written: `non_article_type` (the
+registry types `doi_r` as a non-study object) and `fabricated_doi_o` (`doi_o` present
+but registered nowhere). Both name rows that are in `extracted.csv` and should not be;
+`--deep` is what asks.
 
 Order is load-bearing, and the principle is that **`link_method` rules come before the
 `outcome` rule**: where a row sits in the pipeline is a fact about its identity, while
@@ -468,25 +464,31 @@ than the validated voter pair, and mixing its discards in would corrupt that fil
 
 `cannot_be_determined` rows stay in `extracted.csv` — a linked original with an
 undecidable outcome is still a real record. Chronology errors, duplicate `pair_id`s and
-blank `doi_r` are reported but never moved; the right fix depends on diagnosis.
+blank `doi_r` are reported and belong here; the right fix depends on diagnosis.
 
 ## Test sandbox
 
-With `--extracted-test`, output goes to `data/extracted-test.csv` and DOIs already
-resolved in `extracted.csv` are skipped, so a test run does not re-process production
-rows. `--doi-r` targets are always processed, sandbox or not.
+`--mode validation` records real verdicts against a real claim, and the mode lives in
+`claim.meta.mode`, so the live export ignores them and they do not settle the live
+worklist.
 
 ```bash
-python -m extract.promote_test --all           # promote all
-python -m extract.promote_test --doi 10.xxx/y  # promote one DOI
-python -m extract.promote_test --all --dry-run # preview
+python -m extract.tier --run --mode validation --limit 20
+python -m extract.export --mode validation --out data/extracted-test.csv
 ```
+
+There is no promotion step: re-running the work live is the promotion, and it is
+near-free on cached calls.
 
 ## Key functions
 
 | Function | File | Description |
 |----------|------|-------------|
-| `run_extract()` | `extract/run_extract.py` | Main orchestrator |
+| `run_extract_tier()` | `extract/tier.py` | The run loop: claim a batch, judge it, rebuild the worklist |
+| `_judge()` / `result_payload()` | `extract/tier.py` | One work through the pipeline, and the payload that stores its answer |
+| `render()` / `partition()` | `extract/export.py` | Stored payloads → `data/extracted.csv` + the set-asides |
+| `supersede_targets()` | `extract/tier.py` | The retroactive tools' write path: claim, correct, supersede |
+| `_process_row()` | `extract/run_extract.py` | Every row the pipeline writes for one input row |
 | `_front_door_row()` | `extract/run_extract.py` | Turns a screen verdict into a finished row, or `None` to continue |
 | `may_stop_at_a_rule()` | `extract/link_original.py` | Whether a deterministic rung may end the row |
 | `_resolve_and_code()` | `extract/run_extract.py` | Ladder → merge → guard → outcome for one row |
@@ -502,4 +504,5 @@ python -m extract.promote_test --all --dry-run # preview
 | `find_all_candidates()` | `shared/openalex_client.py` | Candidate search |
 | `parse_all()` / `best_parse_result()` | `shared/pdf_parsing.py` | Run all PDF parsers, score and pick |
 | `verify_and_correct()` | `shared/doi_verify.py` | `doi_o` verification |
-| `run_sanity_check()` | `extract/sanity_check.py` | Post-run quarantine |
+| `classify_row()` | `extract/sanity_check.py` | Which set-aside a row belongs in |
+| `run_sanity_check()` | `extract/sanity_check.py` | The integrity report over the exported CSV |

@@ -366,3 +366,88 @@ def test_the_set_asides_belong_to_the_csv_being_written(tmp_path):
     export_mod.write(report, out)
     assert (tmp_path / "extracted-test-set-aside" / "target_pending.csv").exists()
     assert not (tmp_path / "target_pending.csv").exists()
+
+
+# ---------------------------------------------------------------------------
+# Retroactive corrections: the write path the two audit tools share
+# ---------------------------------------------------------------------------
+
+
+def _correcting_client(verdicts: list[dict]) -> MagicMock:
+    client = _client(verdicts, claims=[
+        {"id": "c-live", "release_id": "rel-1", "meta": {"mode": "live"}}])
+    client.claim.return_value = "c-fix"
+    client.record_verdict.return_value = "v-new"
+    return client
+
+
+def test_a_correction_claims_writes_a_new_result_row_and_supersedes_the_old():
+    """The correction goes where the row is rendered FROM. The old row stays as
+    evidence of what was believed; the new one carries the same ending and
+    generation, because a corrected field is not a re-extraction."""
+    from extract.tier import supersede_targets
+
+    pair = _SINGLE["pair_id"]
+    client = _correcting_client([_verdict(11, row_id="v-old")])
+    report = supersede_targets(client, {pair: {"doi_o": "10.9/right"}},
+                               batch_label="audit-dois")
+
+    assert report == {"works": 1, "rows": 1, "unmatched": [], "claim": "c-fix"}
+    # Claimed before anything was written, in the release the old row belongs to.
+    assert client.claim.call_args[0][:2] == ("rel-1", TIER_EXTRACT)
+    assert client.claim.call_args[1]["meta"]["kind"] == "correction"
+    written = client.record_verdict.call_args[1]
+    assert written["verdict"] == RESOLVED, "the ending is the old row's"
+    assert written["prompt_hash"] == extract_generation()
+    assert written["payload"]["targets"][0]["doi_o"] == "10.9/right"
+    client.supersede_verdict.assert_called_once_with("v-old", "v-new")
+    client.release_claim.assert_called_once_with("c-fix", "complete")
+
+
+def test_a_correction_naming_no_stored_row_is_reported_not_guessed():
+    """A pair id the live payloads do not hold names a row this tool cannot correct.
+    Nothing is claimed and nothing is written."""
+    from extract.tier import supersede_targets
+
+    client = _correcting_client([_verdict(11, row_id="v-old")])
+    report = supersede_targets(client, {"deadbeef": {"doi_o": "10.9/x"}},
+                               batch_label="audit-dois")
+
+    assert report["unmatched"] == ["deadbeef"] and report["works"] == 0
+    client.claim.assert_not_called()
+    client.record_verdict.assert_not_called()
+
+
+def test_the_export_refreshes_the_dashboard_mirror_for_the_file_it_wrote(tmp_path,
+                                                                        monkeypatch):
+    """Stage 4 reads a parquet mirror, and every runner refreshes the stage it wrote.
+    That used to be the CSV runner's last act; the writer is this module now."""
+    import extract.export as mod
+
+    out = tmp_path / "extracted.csv"
+    monkeypatch.setattr("shared.dashboard_cache._STAGE_CSV",
+                        {"extracted": out, "extracted-test": tmp_path / "other.csv"})
+    called: list[str] = []
+    monkeypatch.setattr("shared.dashboard_cache.refresh",
+                        lambda stage: called.append(stage))
+
+    mod._refresh_dashboard(out)
+    assert called == ["extracted"]
+
+    # A render to a path the dashboard has never heard of is not a stage it displays.
+    mod._refresh_dashboard(tmp_path / "scratch.csv")
+    assert called == ["extracted"]
+
+
+def test_a_failing_dashboard_refresh_does_not_fail_the_export(tmp_path, monkeypatch):
+    """The rows are already published; a stale mirror is not worth losing that over."""
+    import extract.export as mod
+
+    out = tmp_path / "extracted.csv"
+    monkeypatch.setattr("shared.dashboard_cache._STAGE_CSV", {"extracted": out})
+
+    def _boom(stage):
+        raise RuntimeError("parquet engine missing")
+
+    monkeypatch.setattr("shared.dashboard_cache.refresh", _boom)
+    mod._refresh_dashboard(out)   # no raise

@@ -648,7 +648,9 @@ class TestAuditDois:
         from shared.schema import EXTRACTED_COLS
         rows = []
         base = {c: "" for c in EXTRACTED_COLS}
+        from shared.schema import make_pair_id
         rows.append({**base, "doi_r": "10.1111/psyp.13707",
+                     "pair_id": make_pair_id("10.1111/psyp.13707", ""),
                      "doi_o": "10.1016/j.biopsycho.2015.07.014",
                      "title_o": "Emotion word processing in the brain",
                      "authors_o": "Schindler", "year_o": "2019",
@@ -674,23 +676,30 @@ class TestAuditDois:
         report = pd.read_csv(tmp_path / "report.csv", dtype=str, encoding="utf-8-sig")
         assert "10.1111/psyp.13449" in report["proposed_doi_o"].tolist()
 
-    def test_apply_writes_corrections(self, tmp_path):
-        import pandas as pd
+    def test_apply_sends_the_correction_to_the_stored_verdict(self, tmp_path):
+        from unittest.mock import MagicMock
         from extract.audit_dois import audit_file
         from shared.schema import make_pair_id
         v = {"doi_o_verification": "corrected", "doi_o": "10.1111/psyp.13449",
              "evidence_note": "DOI corrected: ..."}
         path = self._csv(tmp_path)
+        before = path.read_bytes()
+        sent = MagicMock(return_value={"works": 1, "rows": 1, "unmatched": [],
+                                       "claim": "c-fix"})
         with patch("extract.audit_dois.verify_and_correct", return_value=v), \
-             patch("extract.audit_dois._build_ref_o", return_value=("ref", "Author", "@article{x}")):
+             patch("extract.audit_dois._build_ref_o", return_value=("ref", "Author", "@article{x}")), \
+             patch("extract.audit_dois.apply_corrections", sent):
             audit_file(path, apply=True, report_path=tmp_path / "report.csv")
-        df = pd.read_csv(path, dtype=str, encoding="utf-8-sig").fillna("")
-        row = df[df["doi_r"] == "10.1111/psyp.13707"].iloc[0]
-        assert row["doi_o"] == "10.1111/psyp.13449"
-        assert row["doi_o_verification"] == "corrected"
-        assert row["pair_id"] == make_pair_id("10.1111/psyp.13707", "10.1111/psyp.13449")
-        pend = df[df["doi_r"] == "10.2222/pending"].iloc[0]
-        assert pend["doi_o_verification"] == "skipped"
+        # The export is the CSV's only writer; the audit corrects what it renders from.
+        assert path.read_bytes() == before
+        patches = sent.call_args[0][0]
+        pair = make_pair_id("10.1111/psyp.13707", "")
+        assert patches[pair]["doi_o"] == "10.1111/psyp.13449"
+        assert patches[pair]["doi_o_verification"] == "corrected"
+        assert patches[pair]["pair_id"] == make_pair_id("10.1111/psyp.13707",
+                                                        "10.1111/psyp.13449")
+        # The target_pending row is skipped, so it contributes no correction.
+        assert len(patches) == 1
 
         # --doi narrows the run to one row: the other is never even verified.
         with patch("extract.audit_dois.verify_and_correct") as vc:

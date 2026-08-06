@@ -11,7 +11,7 @@ import pandas as pd
 
 from analysis.build_validated_skip import skip_rows
 from shared.flora_skip import load_validated_skip
-from extract import run_extract
+from extract.tier import _skipped
 
 
 def _skip_csv(tmp_path, rows):
@@ -22,10 +22,9 @@ def _skip_csv(tmp_path, rows):
 
 
 def _should_skip(row, doi_r_clean, validated_skip):
-    return run_extract._should_skip(
-        pd.Series(row), doi_r_clean, doi_r_clean, flora_skip=set(),
-        validated_skip=validated_skip, resolved_rows={}, resolved_main={},
-        doi_r_targets=set(), only_reproductions=False)
+    """The extract tier's worklist subtraction, as a boolean."""
+    validated_ids, validated_dois = validated_skip
+    return "validated" if _skipped(row, set(), validated_ids, validated_dois) else None
 
 
 class TestLoadValidatedSkip:

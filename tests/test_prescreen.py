@@ -138,12 +138,10 @@ def test_a_discard_is_quarantined_separately_from_the_validated_screen(tmp_path,
             df[c] = ""
     df[EXTRACTED_COLS].to_csv(ex, index=False, encoding="utf-8-sig")
 
-    moved = sc.run_sanity_check(ex, move=True, deep=False)["moved"]
+    moved = sc.run_sanity_check(ex, deep=False)["flagged"]
 
     assert moved["prescreen_discard"] == 1
     assert moved["not_a_replication"] == 1
-    pre = pd.read_csv(tmp_path / "prescreen_discard.csv", dtype=str, keep_default_na=False)
-    assert set(pre["doi_r"]) == {"10.1/pre"}
 
 
 def test_stage3_never_runs_the_cheap_tier(tmp_path, monkeypatch):
@@ -213,65 +211,8 @@ def test_a_bypassed_row_is_a_verdict_and_asks_no_model(tmp_path, monkeypatch):
     assert [v["model"] for v in votes] == ["prescreen_bypass"]
 
 
-def test_a_reopened_paper_is_purged_from_its_old_discard_file(tmp_path, monkeypatch):
-    """--rescreen reopens a discard; the paper comes back target_pending and is filed in
-    target_pending.csv. The old key must not stay in prescreen_discard.csv, or the next
-    ordinary resume reads it as settled and strands the paper permanently."""
-    monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
-
-    def write(path, rows):
-        df = pd.DataFrame(rows)
-        for c in EXTRACTED_COLS:
-            if c not in df.columns:
-                df[c] = ""
-        df[EXTRACTED_COLS].to_csv(path, index=False, encoding="utf-8-sig")
-
-    write(tmp_path / "prescreen_discard.csv",
-          [{"doi_r": "10.1/reopened", "openalex_id_r": "W9",
-            "link_method": "prescreen_discard", "outcome": "not_a_replication"}])
-    ex = tmp_path / "extracted.csv"
-    write(ex, [{"doi_r": "10.1/reopened", "openalex_id_r": "W9",
-                "link_method": "target_pending", "outcome": "pending"}])
-
-    sc.run_sanity_check(ex, move=True, deep=False)
-
-    left = pd.read_csv(tmp_path / "prescreen_discard.csv", dtype=str, keep_default_na=False)
-    assert left.empty, "the reopened paper is still recorded as a pre-screen discard"
-    pending = pd.read_csv(tmp_path / "target_pending.csv", dtype=str, keep_default_na=False)
-    assert set(pending["doi_r"]) == {"10.1/reopened"}
-
-
-def test_purging_leaves_untouched_set_aside_rows_alone(tmp_path, monkeypatch):
-    """not_a_replication.csv also holds the non_article buckets, whose rows carry any
-    link_method. Being in a file is not evidence of belonging there, so a paper this
-    pass did not re-file must survive whatever its verdict looks like."""
-    monkeypatch.setattr(sc, "DATA_DIR", tmp_path)
-
-    def write(path, rows):
-        df = pd.DataFrame(rows)
-        for c in EXTRACTED_COLS:
-            if c not in df.columns:
-                df[c] = ""
-        df[EXTRACTED_COLS].to_csv(path, index=False, encoding="utf-8-sig")
-
-    # a non_article row: filed under not_a_replication.csv but carrying a link method
-    # that has nothing to do with the screen
-    write(tmp_path / "not_a_replication.csv",
-          [{"doi_r": "10.6084/m9.figshare.1", "openalex_id_r": "W1",
-            "link_method": "llm_fulltext", "outcome": "success"}])
-    ex = tmp_path / "extracted.csv"
-    write(ex, [{"doi_r": "10.1/other", "openalex_id_r": "W2",
-                "link_method": "target_pending", "outcome": "pending"}])
-
-    sc.run_sanity_check(ex, move=True, deep=False)
-
-    kept = pd.read_csv(tmp_path / "not_a_replication.csv", dtype=str, keep_default_na=False)
-    assert set(kept["doi_r"]) == {"10.6084/m9.figshare.1"}
-
-
-def test_rescreen_can_reopen_a_prescreen_discard():
-    """Turning the flag off does not reopen discards — a resume treats a set-aside row
-    as settled. --rescreen is the only way back, so the value must be in its set."""
-    from extract.run_extract import SCREEN_SET_ASIDE_FILES, SCREEN_SET_ASIDE_METHODS
-    assert "prescreen_discard" in SCREEN_SET_ASIDE_METHODS
+def test_a_prescreen_discard_is_one_of_the_screen_verdict_set_asides():
+    """Historical rows carry `prescreen_discard`, and the file they are parked in is
+    one of the screen's own verdicts — the set a new screening generation reopens."""
+    from shared.schema import SCREEN_SET_ASIDE_FILES
     assert "prescreen_discard.csv" in SCREEN_SET_ASIDE_FILES

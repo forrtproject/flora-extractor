@@ -16,9 +16,10 @@ from filelock import FileLock
 def csv_lock(path, timeout: float = -1) -> FileLock:
     """Cross-process lock guarding a shared CSV against read-modify-write vs append races.
 
-    Both the streaming extractor (append) and promote_test (full read-rewrite) target
-    data/extracted.csv concurrently; without a shared lock the rewrite clobbers rows the
-    extractor appended between its read and write. timeout=-1 blocks until acquired.
+    `data/extracted.csv` has one writer now (`extract/export.py`, which renames a temp
+    file into place), so the race this was built for is gone from that path. It still
+    guards the CSVs the `tools/` backfills rewrite in place, where one read-modify-write
+    can still clobber another. timeout=-1 blocks until acquired.
     """
     return FileLock(f"{path}.lock", timeout=timeout)
 

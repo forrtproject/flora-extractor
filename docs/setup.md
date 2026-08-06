@@ -24,16 +24,13 @@ GEMINI_API_KEY=...                 # from https://aistudio.google.com
 OPENAI_API_KEY=...                 # Stage 3's second screen voter (default SCREENING_MODEL_2)
 ```
 
-**Only Stage 3 enforces anything.** `_check_screen_providers()` in
-`extract/run_extract.py` refuses to start without the key `OUTCOME_MODEL` needs
-(`OPENAI_API_KEY`, or `OPENROUTER_API_KEY` when the id contains a `/`), because no
-call falls back to another provider and a missing key costs the run every outcome.
-The two screen voters' keys are required only under `--screen-here`: the screen runs
-in Stage 2 now and Stage 3 reads its verdict off the row, so an ordinary run calls
-neither voter. Under the flag the pair is required in full — `GEMINI_API_KEY` plus
-whichever of `OPENAI_API_KEY` / `OPENROUTER_API_KEY` the configured
-`SCREENING_MODEL_2` needs — because one configured provider yields one vote, which
-is an incomplete screen. `--no-llm` skips the check entirely. Nothing else validates: an unset variable simply takes the default in
+**Nothing is validated up front any more.** The key each call needs follows its model
+id through `provider_for()`, and a call whose provider has no key fails that row —
+`api_error` — rather than the run. Stage 3 needs the key `OUTCOME_MODEL` and
+`LINKING_MODEL` require (`OPENAI_API_KEY`, or `OPENROUTER_API_KEY` when the id
+contains a `/`), because no call falls back to another provider. The two screen
+voters' keys belong to Stage 2, which is where the screen runs; Stage 3 reads its
+verdict off the row and calls neither voter. An unset variable simply takes the default in
 `shared/config.py`, so a missing `RESEARCHER_EMAIL` silently falls back to
 `research@example.com`. Check `.env` against `.env.example` rather than relying on an
 error — that file lists every variable the code reads, and marks the values that are
@@ -74,8 +71,9 @@ python -m filter.engine handoff --out data/filtered.csv
 # `screen` is a dry run without --run, and --run needs SUPABASE_URL /
 # SUPABASE_SERVICE_KEY: the claim is what stops two runs paying for the same works.
 
-# Stage 3 — extract original study + outcome
-python -m extract.run_extract
+# Stage 3 — extract original study + outcome, then render the CSV
+python -m extract.tier --run    # dry run without --run; --run needs the same keys
+python -m extract.export        # the verdicts → data/extracted.csv
 
 # Stage 4 — monitoring web app
 python -m validate.app        # → http://localhost:5001

@@ -28,7 +28,7 @@ Every pipeline runner calls `refresh(stage)` in a `try/finally` block so the cac
 | Runner | Stage refreshed |
 | ------ | --------------- |
 | `search/run_search.py` | `pool` (with `pool_dir=`, because `--survivor-pool` may have sent the scan elsewhere) |
-| `extract/run_extract.py` | `extracted` or `extracted-test` |
+| `extract/export.py` | `extracted` or `extracted-test`, whichever it just wrote |
 | `tools/recalibrate_outcomes.py`, `tools/backfill_bibtex.py` | whichever extracted stage they wrote |
 
 No runner refreshes `filtered`: Stage 2's `python -m filter.engine handoff`
