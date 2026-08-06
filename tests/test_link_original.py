@@ -36,19 +36,6 @@ class TestExtractCitContexts:
         assert (("antle",), 2010) in surnames_years
         assert (("jones", "smith"), 2015) in surnames_years
 
-    def test_journal_hint_extracted_from_parenthetical(self):
-        """A trailing journal name is a disambiguation hint, and its absence must
-        leave the field empty rather than absorbing the next token."""
-        with_hint = _extract_cit_contexts(
-            "This builds on prior work (Antle, 2010, American Journal of "
-            "Agricultural Economics).")
-        without = _extract_cit_contexts(
-            "We compare our results to the partial moments model (Antle, 2010).")
-
-        hit = next(r for r in with_hint if r["surnames"] == ["antle"])
-        assert "American Journal of Agricultural Economics" in hit["journal"]
-        assert next(r for r in without if r["surnames"] == ["antle"])["journal"] == ""
-
 
 # ── Stage 2.5 title-pattern resolver ─────────────────────────────────────────
 
@@ -405,7 +392,7 @@ class TestStoredEvidenceMatchesThePrompt:
         candidates = [{"doi": "10.5/c", "title": "Ref 0", "year": 2000,
                        "first_author": "A"}]
         out = link_original._build_output(
-            "10.1/rep", {}, {}, candidates, {}, {}, {}, {"references": refs})
+            "10.1/rep", {}, candidates, {}, {}, {}, {"references": refs})
         assert len(json.loads(out["grobid_refs_json"])) == 25
         assert out["n_references_sent"] == 39
 
@@ -445,6 +432,14 @@ class TestMayStopAtARule:
         assert link_original.may_stop_at_a_rule(
             "Replication of 2019 findings",
             "We re-tested the effect reported by Smith (2009).", 2020) is True
+
+    def test_a_year_earlier_in_the_text_does_not_shadow_a_later_count(self):
+        """Both hits come from the same pattern; checking only the first match read
+        the year, decided "no count", and let the rung stop on a multi-target paper."""
+        assert link_original.may_stop_at_a_rule(
+            "Replications of 2019 studies",
+            "We report replications of three studies, starting from Smith (2009).",
+            2020) is False
 
 
 def _answer(**over) -> dict:
@@ -597,33 +592,6 @@ class TestGateRestoresWhenNothingEnumerates:
     """The gate withholds a pick UNTIL something that can enumerate targets speaks.
     When nothing ever does, the pick stands — every one of these exits returned it
     before the gate existed, so dropping it is a lost resolution, not a caution."""
-
-    def test_a_content_free_openalex_xml_is_no_document(self):
-        """All 60 cached OpenAlex XML results were 174-byte shells — every section
-        empty, no references — and a shell is truthy, so the "no document" guard let
-        them through and the row was stamped llm_fulltext with nothing behind it. The
-        shell must end the row at the same exit an absent document does, restore
-        included: grobid_status stays not_attempted, so nothing was parsed or read."""
-        shell = {"source": "openalex_xml", "xml_url": "u",
-                 "sections": {"abstract": "", "intro": "", "methods": "",
-                              "references": []}}
-        # Two candidates and no author-year cue, so no rule fires and the ladder
-        # reaches Stage 5 with nothing resolved and nothing withheld.
-        ambiguous = _GATE_CANDS + [{"title": "Another unrelated paper", "year": 2011,
-                                    "first_author": "Jones", "all_authors": ["Jones"],
-                                    "doi": "10.9/other", "openalex_id": "W8"}]
-        plain = _run_gate("An unrelated title", "An unrelated abstract.", ambiguous,
-                          pdf_ok=False, abstract_answer=_failed_answer(), oa_xml=shell)
-        assert plain["resolution_method"] == "no_fulltext_available"
-
-        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS, pdf_ok=False,
-                        abstract_answer=_failed_answer(),
-                        oa_xml={"source": "openalex_xml", "xml_url": "u",
-                                "sections": {"abstract": "", "intro": "",
-                                             "methods": "", "references": []}})
-        assert row["resolution_method"] == "title_pattern_match"
-        assert row["grobid_status"] == "not_attempted"
-        assert row["pdf_source"] == "none"
 
     def test_openalex_body_text_reaches_the_llm_instead_of_no_context(self):
         """A parse with body text and nothing else must still be read.
@@ -847,34 +815,6 @@ def test_targets_found_at_the_reference_rung_survive_a_no_document_exit():
     assert row["target_stage"] == "llm_references"
     assert row["unidentified_count"] == 1
     assert row["resolved_study_r"] == "2"
-
-
-class TestJournalLookupCachesOnlyAnswers:
-    """The journal name is worth +3.0 in _resolve_rule_based's citation scoring —
-    the largest single term. Caching "" after an outage disabled that term for the
-    DOI permanently, on every later run."""
-
-    def test_no_response_is_not_cached(self, tmp_path):
-        with patch.object(link_original, "OA_CACHE_DIR", tmp_path), \
-             patch.object(link_original, "_oa_get", return_value=None) as get:
-            assert link_original._fetch_journal_cached("10.1/x") == ""
-        assert list(tmp_path.glob("journal_*.json")) == []
-        assert get.call_count == 1
-
-        # …and the next run asks again rather than reading the outage back.
-        with patch.object(link_original, "OA_CACHE_DIR", tmp_path), \
-             patch.object(link_original, "_oa_get",
-                          return_value={"results": [{"primary_location": {
-                              "source": {"display_name": "Nature"}}}]}):
-            assert link_original._fetch_journal_cached("10.1/x") == "Nature"
-        assert len(list(tmp_path.glob("journal_*.json"))) == 1
-
-    def test_a_work_openalex_does_not_index_is_a_real_empty_answer(self, tmp_path):
-        """OpenAlex answering "no results" IS the answer, so it is cached."""
-        with patch.object(link_original, "OA_CACHE_DIR", tmp_path), \
-             patch.object(link_original, "_oa_get", return_value={"results": []}):
-            assert link_original._fetch_journal_cached("10.1/x") == ""
-        assert len(list(tmp_path.glob("journal_*.json"))) == 1
 
 
 class TestLadderReadsTheParseCache:

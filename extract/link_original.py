@@ -2,14 +2,13 @@
 link_original.py — Single-DOI orchestration of Stage 3's resolution ladder.
 
 Public API:
-    run_for_doi(doi_r, flora_df=None, cands_df=None, force=False,
+    run_for_doi(doi_r, cands_df=None, force=False,
                 no_llm=False, no_pdf=False, classification=None) → dict
 
 The returned dict is flat and its keys are grouped by the stage that produced them
 (`_build_output` at the bottom of this file is the one place they are assembled).
 `extract/run_extract.py` is the only consumer:
   doi_r          — the replication's DOI, as passed in
-  flora_*        — the FLoRA entry sheet row for this DOI, when one was supplied
   (no prefix)    — pass-through of the input row (`_OA_PASSTHROUGH`)
   n_candidates / all_candidates_json — the OpenAlex re-query
   pdf_*          — PDF acquisition step
@@ -29,7 +28,7 @@ from typing import Optional
 import pandas as pd
 
 from shared.cache import clear_content_keys, write_json
-from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_CACHE_DIR, RESEARCHER_EMAIL, log
+from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_CACHE_DIR, log
 from shared.disambiguation import is_umbrella_paper, jaccard_similarity
 from shared import token_counter
 from shared.llm_client import (
@@ -41,38 +40,30 @@ from shared.pdf_parsing import (
     parse_result_is_empty,
     read_parse_cache,
 )
-from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_opencitations_references, fetch_referenced_works_metadata, _oa_get, _search_crossref_by_title, _search_openalex_by_title
+from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
 from shared.prompts import (
     TARGET_INTRO_CHARS, TARGET_METHODS_CHARS,
     _abstract_tail, rendered_reference_entries,
 )
 from shared.target_keys import assign_target_keys
-from shared.pdf_sources import acquire_pdf, openalex_xml_has_content
+from shared.pdf_sources import acquire_pdf
 from shared.utils import cache_key, clean_doi
 
 # ── Unified rule-based resolver (runs before any LLM call) ───────────────────
-# Combines citation-context scoring (journal-qualified) with same-author/year
-# title-Jaccard fallback into a single function so both paths share one code path.
+# Combines citation-context scoring with a same-author/year title-Jaccard fallback
+# into a single function so both paths share one code path.
 #
-# Path A — journal hint present in abstract citation:
-#   Scores by author(+2) + year(+2) + journal Jaccard(+3/+1.5) + title Jaccard(+≤1).
-#   Resolves when best ≥ 4.0 AND gap ≥ 2.0.  Strict because the journal
-#   contributes 3 points, making the winner unambiguous.
+# Path A — the abstract cites an author and a year:
+#   Scores by author(+2) + year(+2) + title Jaccard(+≤1).
+#   Resolves when best ≥ 4.0 AND gap ≥ 2.0, so only an exact author-and-year hit
+#   with no rival within 2 points can win.
 #
-# Path B — no journal hint, but all candidates share same author+year:
+# Path B — all candidates share one author+year:
 #   Falls back to title-Jaccard relative threshold (best > 0.05, best ≥ second×1.5).
 #   That threshold is a tiebreak, not evidence, and it fires precisely where Path A
 #   declined, so run_for_doi never lets it END the row (see _HELD_ONLY_METHODS).
 
 _STOP_SURNAMES = {"and", "van", "von", "der", "den", "del", "the", "for"}
-
-# Journal-hint lookahead: applied only to "_bare"-style matches from
-# extract_author_year_patterns() (the ones found inside a literal enclosing
-# parenthetical in the source text, e.g. "(Antle, 2010, American Journal of
-# Agricultural Economics)"). "_paren"-style matches already consumed their own
-# closing paren as part of the year, so there's no outer paren left to inspect.
-_JOURNAL_LOOKAHEAD = 120
-_JOURNAL_TAIL_RE = re.compile(r"^\s*,\s*([A-Z][A-Za-z\s&:]+?)\s*\)")
 
 # ── Title-pattern resolver ─────────────────────────────────────────────────────
 # Patterns that extract the original study name from a replication paper's title.
@@ -160,22 +151,24 @@ def _study_count_stated(title_r: str, abstract_r: str) -> bool:
     """True when the title or abstract states a plausible study count (2 ≤ N < 1900).
 
     The count may be digits or a spelled-out numeral from two to twelve.
+
+    Every match of every pattern is inspected, not just the first: a pattern whose
+    first hit is a year ("replications of 2019 studies") used to shadow a real count
+    the same pattern matched later in the same text ("replications of three studies").
     """
     for text in (title_r or "", abstract_r or ""):
         for pattern in _STUDY_COUNT_RES:
-            m = pattern.search(text)
-            if not m:
-                continue
-            raw = (m.group(1) or "").lower()
-            if raw in _COUNT_WORDS:
-                n = _COUNT_WORDS[raw]
-            else:
-                try:
-                    n = int(raw)
-                except (ValueError, TypeError):
-                    continue
-            if _COUNT_N_MIN <= n < _COUNT_N_MAX:
-                return True
+            for m in pattern.finditer(text):
+                raw = (m.group(1) or "").lower()
+                if raw in _COUNT_WORDS:
+                    n = _COUNT_WORDS[raw]
+                else:
+                    try:
+                        n = int(raw)
+                    except (ValueError, TypeError):
+                        continue
+                if _COUNT_N_MIN <= n < _COUNT_N_MAX:
+                    return True
     return False
 
 
@@ -215,10 +208,9 @@ def _resolve_by_title_pattern(
     Try to resolve the original study by matching the replication paper's title
     against candidate titles using Jaccard similarity.
 
-    Returns:
-      - dict with resolved=True when a single confident match exists
-      - dict with resolved=False when the match is not confident enough
-      - None when no pattern matches or no candidates score above minimum threshold
+    Returns the resolver dict when a single confident match exists, else None.
+    The caller only asks whether this rung resolved, so "no pattern in the title",
+    "no candidate close enough" and "close but not confident" are one answer.
     """
     target = _extract_title_target(study_r)
     if not target or not candidates:
@@ -234,30 +226,25 @@ def _resolve_by_title_pattern(
     best_score = jaccard_similarity(best.get("title", ""), target)
     sec_score  = jaccard_similarity(scored[1].get("title", ""), target) if len(scored) > 1 else 0.0
 
-    if best_score < 0.3:
+    if best_score < 0.4 or best_score < sec_score * 1.5:
         return None
 
-    base = _unresolved("needs_fulltext")
-
-    if best_score >= 0.4 and best_score >= sec_score * 1.5:
-        log.info("[%s] title_pattern resolved: %s (score=%.3f target=%r)",
-                 doi_r, best.get("doi"), best_score, target)
-        return {
-            **base,
-            "resolved":          True,
-            "resolution_method": "title_pattern_match",
-            "resolved_doi_o":    best.get("doi", ""),
-            "resolved_title_o":  best.get("title", ""),
-            "resolved_year_o":   best.get("year"),
-            "resolved_author_o": best.get("first_author", ""),
-            "resolution_score":  round(best_score, 4),
-        }
-
-    return base
+    log.info("[%s] title_pattern resolved: %s (score=%.3f target=%r)",
+             doi_r, best.get("doi"), best_score, target)
+    return {
+        **_unresolved("needs_fulltext"),
+        "resolved":          True,
+        "resolution_method": "title_pattern_match",
+        "resolved_doi_o":    best.get("doi", ""),
+        "resolved_title_o":  best.get("title", ""),
+        "resolved_year_o":   best.get("year"),
+        "resolved_author_o": best.get("first_author", ""),
+        "resolution_score":  round(best_score, 4),
+    }
 
 
 def _extract_cit_contexts(text: str) -> list[dict]:
-    """Return list of {surnames, year, journal, raw} from all author-year citations.
+    """Return list of {surnames, year, raw} from all author-year citations.
 
     Citation detection delegates to shared.openalex_client.extract_author_year_patterns(),
     which — unlike the old local-only _CITATION_RE — also catches narrative citations
@@ -282,73 +269,8 @@ def _extract_cit_contexts(text: str) -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
-
-        journal = ""
-        if match["pattern"].endswith("_bare"):
-            tail = text[match["end"]: match["end"] + _JOURNAL_LOOKAHEAD]
-            jm = _JOURNAL_TAIL_RE.match(tail)
-            if jm:
-                journal = jm.group(1).strip().rstrip(",;.:")
-
-        results.append({"surnames": surnames, "year": year, "journal": journal, "raw": raw})
+        results.append({"surnames": surnames, "year": year, "raw": raw})
     return results
-
-
-def _journal_token_sim(a: str, b: str) -> float:
-    if not a or not b:
-        return 0.0
-    ta = {t.lower() for t in re.findall(r"\b\w{2,}\b", a)}
-    tb = {t.lower() for t in re.findall(r"\b\w{2,}\b", b)}
-    if not ta or not tb:
-        return 0.0
-    return len(ta & tb) / len(ta | tb)
-
-
-def _fetch_journal_cached(doi: str) -> str:
-    """Return the journal display name for a DOI from OpenAlex. Result cached.
-
-    Only an ANSWER is cached. The request used to be wrapped in a bare `except:
-    journal = ""` whose result was then written to disk, so a single timeout or a
-    429 permanently taught this DOI that it has no journal — and the journal is
-    worth +3.0 in `_resolve_rule_based`'s citation scoring, the largest single term
-    there. One blip therefore demoted the deterministic path for that original
-    forever, on every later run and every row that cited it.
-
-    It also goes through `_oa_get` rather than its own `requests.get`, so it takes a
-    slot in the shared OpenAlex reservation queue, sends the Bearer key, rotates on a
-    drained key and raises OpenAlexQuotaExhausted like every other OpenAlex call.
-    Bypassing all of that made it the one caller that could not be rate-limited or
-    accounted for.
-    """
-    doi = clean_doi(doi)
-    if not doi:
-        return ""
-    cache_path = OA_CACHE_DIR / f"journal_{cache_key(doi)}.json"
-    if cache_path.exists():
-        try:
-            return json.loads(cache_path.read_text(encoding="utf-8")).get("journal", "")
-        except Exception:
-            pass
-
-    data = _oa_get("https://api.openalex.org/works",
-                   {"filter": f"doi:{doi}",
-                    "select": "id,primary_location",
-                    "mailto": RESEARCHER_EMAIL})
-    if data is None:
-        # No answer. Not "no journal" — nothing is written, and the next run asks again.
-        log.debug("[%s] journal lookup got no response — not cached", doi)
-        return ""
-
-    journal = ""
-    if data.get("results"):
-        loc = (data["results"][0].get("primary_location") or {})
-        src = (loc.get("source") or {})
-        journal = (src.get("display_name") or "").strip()
-    # A DOI OpenAlex does not index, or indexes without a source, genuinely has no
-    # journal name to offer: that IS the answer, and caching "" saves re-asking.
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(json.dumps({"journal": journal}), encoding="utf-8")
-    return journal
 
 
 def _resolve_rule_based(
@@ -390,9 +312,8 @@ def _resolve_rule_based(
 
     decoded    = html.unescape(abstract_r or "")
     citations  = [c for c in _extract_cit_contexts(decoded) if c["year"] <= year_r]
-    has_journal = any(cit["journal"] for cit in citations)
 
-    # ── Path A: citation scoring (author + year + optional journal) ───────────
+    # ── Path A: citation scoring (author + year) ──────────────────────────────
     if citations:
         scored: list[dict] = []
         for cand in candidates:
@@ -422,17 +343,6 @@ def _resolve_rule_based(
                            "cand_doi": cand_doi, "cand_title": cand_title,
                            "cand_year": cand_year, "cand_snames": cand_snames})
 
-        # Enrich with journal info when a journal hint is present
-        if has_journal:
-            for entry in scored:
-                cit = entry["citation"]
-                if not cit.get("journal") or not entry["cand_doi"]:
-                    continue
-                cand_journal = _fetch_journal_cached(entry["cand_doi"])
-                if cand_journal:
-                    jsim = _journal_token_sim(cit["journal"], cand_journal)
-                    entry["base_score"] += 3.0 if jsim >= 0.6 else (1.5 if jsim >= 0.3 else 0.0)
-
         for entry in scored:
             entry["total"] = round(
                 entry["base_score"] + jaccard_similarity(entry["cand_title"], decoded), 4)
@@ -456,8 +366,8 @@ def _resolve_rule_based(
                         "resolution_score":  round(min(best["total"] / 8.0, 1.0), 4)}
 
     # ── Path B: same-author/year cluster — title Jaccard relative threshold ───
-    # Fires when all candidates share one surname and one year but no journal hint
-    # was present (or Path A's strict threshold was not met).
+    # Fires when all candidates share one surname and one year and Path A's strict
+    # threshold was not met.
     surnames = {(c.get("first_author") or "").lower().split()[-1] for c in candidates if c.get("first_author")}
     years    = {c.get("year") for c in candidates}
     if len(surnames) == 1 and len(years) == 1:
@@ -507,21 +417,6 @@ _OA_PASSTHROUGH = [
     "pathway_source", "validation_status",
 ]
 
-# Columns to pull from FLoRA sheet (renamed with flora_ prefix)
-_FLORA_COLS = {
-    "ref_r"            : "flora_ref_r",
-    "url_r"            : "flora_url_r",
-    "abstract_r"       : "flora_abstract_r",
-    "ref_o"            : "flora_ref_o",
-    "doi_o"            : "flora_doi_o",
-    "study_o"          : "flora_study_o",
-    "outcome"          : "flora_outcome",
-    "outcome_quote"    : "flora_outcome_quote",
-    "out_quote_source" : "flora_out_quote_source",
-    "prep_notes"       : "flora_prep_notes",
-    "validation_status": "flora_validation_status",
-}
-
 
 def clear_pipeline_caches(doi_r: str) -> list[str]:
     """
@@ -532,8 +427,7 @@ def clear_pipeline_caches(doi_r: str) -> list[str]:
     ("reftarget"), the outcome coding ("outcome"), the OpenAlex candidate pool and the
     parsed full text — plus the GROBID section cache. --force that leaves any of these
     behind does not force a re-decision, it just re-runs the stages around the cached
-    answer. "match_type" and "multi" are legacy cleanup: the stages that wrote them are
-    gone, and the globs stay only to sweep entries older checkouts left on disk.
+    answer.
 
     Returns a list of the filenames that were actually deleted.
     """
@@ -542,7 +436,7 @@ def clear_pipeline_caches(doi_r: str) -> list[str]:
     # stage vs full text, different candidate lists) — all of them go, or a re-run
     # reads back the answer this call was meant to discard.
     deleted: list[str] = []
-    for prefix in ("llm", "match_type", "classify", "reftarget", "outcome", "multi"):
+    for prefix in ("llm", "classify", "reftarget", "outcome"):
         deleted += clear_content_keys(LLM_CACHE_DIR, prefix, doi_r)
     deleted += clear_content_keys(OA_CACHE_DIR, "candidates", doi_r)
     targets = [GROBID_CACHE_DIR / f"{key}.json",
@@ -580,20 +474,6 @@ def _write_parse_cache(doi_r: str, parse_results: dict) -> None:
         write_json(out_file, parse_results, indent=2)
     except Exception as exc:
         log.debug("[%s] _write_parse_cache failed: %s", doi_r, exc)
-
-
-def _flora_row(doi_r: str, flora_df: pd.DataFrame) -> dict:
-    """Return FLoRA sheet fields for *doi_r* (prefixed with flora_)."""
-    out = {v: "" for v in _FLORA_COLS.values()}
-    if flora_df is None or flora_df.empty:
-        return out
-    matches = flora_df[flora_df["doi_r"].apply(clean_doi) == clean_doi(doi_r)]
-    if matches.empty:
-        return out
-    row = matches.iloc[0]
-    for src, dst in _FLORA_COLS.items():
-        out[dst] = str(row.get(src, "") or "")
-    return out
 
 
 def _cands_row(doi_r: str, cands_df: pd.DataFrame) -> dict:
@@ -773,7 +653,6 @@ def _as_target(resolution: dict) -> dict:
 
 
 def run_for_doi(doi_r:              str,
-                flora_df:           Optional[pd.DataFrame] = None,
                 cands_df:           Optional[pd.DataFrame] = None,
                 force:              bool = False,
                 no_llm:             bool = False,
@@ -793,7 +672,7 @@ def run_for_doi(doi_r:              str,
 
     The ladder runs cheapest-first and returns at the first stage that resolves, so
     full-text acquisition is a last resort rather than the normal path:
-      1.   Load FLoRA sheet + input-row data for this DOI
+      1.   Load the input-row data for this DOI
       2.   Re-query OpenAlex for candidate originals (from referenced_works)
       2.5  Title-pattern resolver ("A Replication of X" vs the candidate titles)
       3.   Rule-based resolver (citation context, same-author/year title overlap,
@@ -819,7 +698,6 @@ def run_for_doi(doi_r:              str,
             log.info("[%s] Force rerun — cleared caches: %s", doi_r, ", ".join(deleted))
 
     # ── Stage 1: base data ───────────────────────────────────────────────────
-    flora  = _flora_row(doi_r,  flora_df)
     cands_row = _cands_row(doi_r, cands_df)
 
     study_r   = cands_row.get("study_r",   "")
@@ -849,7 +727,7 @@ def run_for_doi(doi_r:              str,
     # Every exit from here on assembles the same output from the same base data;
     # only the resolution (and, past the PDF stage, the pdf/grobid/sections blocks)
     # differ, so bind the four constant arguments once.
-    emit = partial(_build_output, doi_r, flora, cands_row, candidates)
+    emit = partial(_build_output, doi_r, cands_row, candidates)
 
     # A deterministic stage may only END the row when the paper's own text rules out a
     # second target; otherwise its pick is WITHHELD — until a call that can enumerate
@@ -1114,17 +992,10 @@ def run_for_doi(doi_r:              str,
     # empty sections and the LLM is asked to name an original from nothing — which
     # is exactly how a confident, fabricated doi_o gets produced. Stop here instead.
     #
-    # A content-free XML result is no document: every OpenAlex XML result cached
-    # before 2026-08 was an empty shell, and because a shell is truthy this guard
-    # waved it through and the row was stamped llm_fulltext with no full text behind
-    # it. openalex_xml_has_content() is what "we have a document" means here.
-    if oa_xml_content and not openalex_xml_has_content(oa_xml_content):
-        log.warning("[%s] OpenAlex XML is content-free (no sections, no references) "
-                    "— treating it as no document", doi_r)
-        oa_xml_content = None
-        if pdf.get("pdf_source") == "openalex_xml":
-            pdf = {**pdf, "pdf_source": "none"}
-
+    # A content-free XML result never gets this far: openalex_xml_has_content() is
+    # applied inside shared/pdf_sources.py, both to a fresh fetch and to a cache read,
+    # so acquire_pdf hands back either a document or None. There is no second check
+    # here.
     if pdf_path is None and not oa_xml_content:
         log.info("[%s] no document acquired (%s) — writing target_pending",
                  doi_r, pdf.get("pdf_source", "none"))
@@ -1241,7 +1112,6 @@ def run_for_doi(doi_r:              str,
 # ── Output builder ────────────────────────────────────────────────────────────
 
 def _build_output(doi_r:     str,
-                  flora:     dict,
                   cands_row: dict,
                   candidates: list[dict],
                   resolution: dict,
@@ -1254,9 +1124,6 @@ def _build_output(doi_r:     str,
     return {
         # ── Input ─────────────────────────────────────────────────────────────
         "doi_r"                 : doi_r,
-
-        # ── FLoRA sheet ───────────────────────────────────────────────────────
-        **flora,
 
         # ── openalex_candidates pass-through ──────────────────────────────────
         **{c: cands_row.get(c, "") for c in _OA_PASSTHROUGH},
