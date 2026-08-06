@@ -579,7 +579,7 @@ _MOCK_OUTCOME = {
 
 def _mock_target(key: str, doi: str, title: str, author: str, year: int,
                  **over) -> dict:
-    """One entry of identify_targets_with_llm's validated target list.
+    """One entry of resolve_targets_and_outcomes's validated target list.
 
     The record is the mapped @key: the DOI comes from it, never from the model."""
     target = {"key": key, "match_certain": True, "target_as_named": title,
@@ -2725,7 +2725,7 @@ class TestSamePaperStudiesCollapse:
 
 
 # ── The per-target adapter (WP1) ─────────────────────────────────────────────
-# identify_targets_with_llm answers "which originals does this paper re-test?" over
+# resolve_targets_and_outcomes answers "which originals does this paper re-test?" over
 # a keyed namespace. When it names targets without accepting one of them as THE
 # link, _resolve_and_code writes one row per confirmed target rather than one link
 # for the first and silence for the rest.

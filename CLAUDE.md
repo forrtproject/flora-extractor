@@ -66,7 +66,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 | ---- | ------- |
 | `shared/openalex_client.py` | OpenAlex API wrapper + `find_all_candidates()` (Stage 3 logic) |
 | `shared/openalex_keys.py`   | OpenAlex key rotation, shared by all stages |
-| `shared/llm_client.py`      | Gemini/OpenAI/OpenRouter calls — one model per call site, named explicitly, with no fallback to another provider — JSON parsing; `classify_replication()` (front-door screen, called by Stage 2's expensive tier), `cached_classification()` (read-only cache door, for the handoff), `screen_gate()`, `screen_voters()`, `identify_targets_with_llm()` (the one target call behind the abstract, reference-list and full-text rungs), `screen_references_with_llm()` (reference-list target pick) |
+| `shared/llm_client.py`      | Gemini/OpenAI/OpenRouter calls — one model per call site, named explicitly, with no fallback to another provider — JSON parsing; `classify_replication()` (front-door screen, called by Stage 2's expensive tier), `cached_classification()` (read-only cache door, for the handoff), `screen_gate()`, `screen_voters()`, `resolve_targets_and_outcomes()` (the one call behind the abstract, reference-list and full-text rungs — target AND outcome), `screen_references_with_llm()` (reference-list target pick) |
 | `shared/target_keys.py`     | `assign_target_keys()` — one deduplicated `@smith2009` namespace over a paper's candidates and references, plus the key → record map |
 | `shared/token_usage.py`     | Per-day/provider/model token recording (`cache/token_usage.json`) + the OpenAI daily budget check |
 | `shared/rate_limit.py`      | `throttle(service, interval)` — one reservation queue per remote service, so N worker threads share one rate rather than each sleeping its own |
@@ -201,24 +201,51 @@ acquisition + full-text LLM. `llm_title_search` is provisional (~50% precision):
 in `RESOLVED_LINK_METHODS`, never outcome-coded, never imported, set aside for human
 confirmation.
 
-**One target prompt for the three LLM rungs.** `build_target_prompt()` serves the
-abstract, reference-list and full-text stages; only the evidence blocks differ, never
-the task or the acceptance rule. Candidates and references are one deduplicated
-`@smith2009` namespace (`assign_target_keys()` in `shared/target_keys.py`), so a work
-in both lists is offered once and a re-fetched list cannot renumber a cached pick onto
-another paper. `identify_targets_with_llm()` makes the call: it validates every key
-against that call's key_map (invented key → unmatched target, repeated key keeps the
-first), takes `doi_o` from the mapped record rather than from the model, keeps the
-mapped record on each target, and reports `stated_count` / `unidentified_count` so a
-shortfall lands in `link_evidence`. A target is accepted only when the model marks it
-`match_certain`, and `replication_study_numbers` gives `study_r` — which study of the
-REPLICATION re-tests this original.
+**A rung ends the row only when it resolved AND settled the outcome**
+(`OUTCOME_DESCENT` in `link_original.py`, not settable — it changes what a row is CODED
+AS). A rung that accepted a link but could not settle its verdict CARRIES that
+resolution and the ladder keeps descending, towards the closing sections that state it;
+"settled" is `outcome_is_settled()` in `shared/schema.py` (replication: `outcome` not
+`cannot_be_determined`; reproduction: neither axis unsettled). A carried resolution
+outranks a withheld rule pick at every no-answer exit — `--no-pdf`, no document, no
+context, an incomplete screen, a full-text provider failure — so an outage below an
+accepted link no longer writes `target_pending` over it. When the full-text rung does
+answer, its reading replaces the carried one, except that a later UNSETTLED outcome
+never overwrites an earlier settled one (`_union_targets`, tracked in `outcome_stage`).
+`EXTRACT_LADDER_VERSION` records what the ladder was when a row was written; nothing
+reads it yet.
+
+**One prompt per vocabulary for the three LLM rungs, asking BOTH questions.**
+`build_target_outcome_prompt()` (replication) and `build_repro_target_outcome_prompt()`
+(reproduction) serve the abstract, reference-list and full-text stages; only the
+evidence blocks differ, never the task or the acceptance rule. Each target the model
+lists carries its own outcome, coded from the same reading: the two judgments are
+separate, so a target the model is sure of may carry an outcome the evidence does not
+settle. Candidates and references are one deduplicated `@smith2009` namespace
+(`assign_target_keys()` in `shared/target_keys.py`), so a work in both lists is offered
+once and a re-fetched list cannot renumber a cached pick onto another paper.
+`resolve_targets_and_outcomes()` makes the call: it validates every key against that
+call's key_map (invented key → unmatched target, repeated key keeps the first), takes
+`doi_o` from the mapped record rather than from the model, keeps the mapped record on
+each target, and reports `stated_count` / `unidentified_count` so a shortfall lands in
+`link_evidence`. A target is accepted only when the model marks it `match_certain`, and
+`replication_study_numbers` gives `study_r` — which study of the REPLICATION re-tests
+this original. The outcome half goes through `normalise_outcome_block()` in
+`shared/schema.py`, the same normaliser the standalone coder uses, so an
+out-of-vocabulary verdict lands as `cannot_be_determined` rather than on a row.
+`record_type_check` is asked only when the closing sections were sent — it is a
+judgment about the methods, and a rung that read no body has not seen them. The cache
+key names the rung (`abstract` | `reftarget` | `fulltext`) and the record type; its
+prefix is `targetoutcome`, and the old `llm`/`reftarget` entries stay on disk unread
+because the question changed.
 
 **The per-target adapter.** A ladder that named targets without accepting one as THE
 link goes to `_per_target_rows()`, which writes one row per original PAPER: resolve the
 key through its record, collapse several studies of one original into one row, guard,
-apply `--resolved-only`, then code the outcome once per original through
-`extract_outcome`. Ranks are renumbered after the drops. Unmatched targets get no row;
+apply `--resolved-only`, then write each target's own outcome — the one the call that
+named it coded — falling back to `extract_outcome` only where the row carries none.
+Merging two studies of one original merges their axes too (`_aggregate_axes()`).
+Ranks are renumbered after the drops. Unmatched targets get no row;
 the shortfall is reported in `link_evidence`. Because the ladder returns at its first
 success, `may_stop_at_a_rule()` in `link_original.py` withholds a deterministic pick
 whenever the paper's own text does not rule out a second target. The pick is withheld
@@ -229,17 +256,27 @@ nothing or named the same work. A provider failure is not that answer, so it doe
 restore. `original_match_type`, `original_match_confidence` and `n_originals` are
 observations, settled after the guard's demotions and `--resolved-only`'s drops.
 
-**Two outcome prompts, one per vocabulary.** `build_outcome_prompt()` (replication)
-and `build_repro_outcome_prompt()` (reproduction) each serve both passes: supplying the
-full-text passage selects the full-text pass, which adds the PAPER TEXT block and asks
-for `record_type_check`. A reproduction is coded on two independent axes —
+**The standalone outcome coder is for links no LLM chose.** `build_outcome_prompt()`
+(replication) and `build_repro_outcome_prompt()` (reproduction), called by
+`extract/code_outcome.py`, code the rows a deterministic rule resolved — where nothing
+has read the paper and checked the original. The original is therefore given as
+evidence to CHECK, with the link evidence that produced it, and the model answers
+`target_check` (this_original · other_original · no_original · unclear) alongside
+`record_type_check`. There is ONE call, over every passage the row has: the abstract,
+and — when a document was acquired — two named blocks, INTRODUCTION and DISCUSSION /
+CONCLUSION, the latter carrying a provenance line (`PROVENANCE_LABEL` in
+`shared/prompts.py`). A reproduction is coded on two independent axes —
 `outcome_computation` (computationally reproducible · computational issues · technical
 failure · not checked) and `outcome_robustness` (robust · robustness challenges · not
 checked), each with `cannot_be_determined` as its own escape and its own quote and
-quote source — and its `outcome` is the two settled values joined. Escalation is
-per axis: either axis unresolved reads the full text, and that call replaces both.
-`record_type_check == "neither"` sets `not_a_replication`; naming the other vocabulary
-re-codes the row once under the other prompt and corrects `type`.
+quote source — and its `outcome` is the two settled values joined.
+`record_type_check == "neither"` and `target_check == "no_original"` both set
+`not_a_replication`; `other_original` drops `link_confidence` to low and says so in
+`link_evidence`; naming the other vocabulary re-codes the row once under the other
+prompt and corrects `type`. That recode also fires from the combined call's per-target
+`record_type_check`. There is no full-text escalation any more: it could not fire,
+because a row resolved from the abstract never acquired a document. Reading on for an
+unsettled verdict is the ladder's job — see `OUTCOME_DESCENT` below.
 
 **Outcome coding runs only on a resolved link** (`_outcome_without_coding()` gates on
 `RESOLVED_LINK_METHODS`); unresolved rows are written `pending`, except
@@ -434,7 +471,7 @@ Constants are **not env vars anywhere** — see code-style rule 8. Every model i
 `LINKING_EFFORT` and `CURATED_SOURCES` are in `shared/config.py` — one place
 that answers "what graded this row"; `PRESCREEN_MIN_ABSTRACT_CHARS` in
 `shared/prescreen.py`;
-`OUTCOME_FULLTEXT_ESCALATION` in `extract/code_outcome.py`; the dry run's price list in
+`OUTCOME_DESCENT` in `extract/link_original.py`; the dry run's price list in
 `filter/engine/tiers.py`; `SNAPSHOT_POOL_COMPRESSION` in `search/snapshot_scan.py`.
 
 Gemini quota is per project, not per key — extra `GEMINI_API_KEY_N` slots buy failover,

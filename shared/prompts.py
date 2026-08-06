@@ -264,7 +264,7 @@ def _target_line(entry: dict) -> str:
 
 
 def rendered_reference_entries(entries: list[dict]) -> list[dict]:
-    """The entries build_target_prompt renders under REFERENCE LIST.
+    """The entries the combined prompts render under REFERENCE LIST.
 
     A work that is also a candidate is shown once, in the candidate block, and
     assign_target_keys has already dropped the entries with neither a title nor a DOI.
@@ -412,7 +412,7 @@ def build_repro_target_outcome_prompt(study_r:      str,
 
 # ── L4 — front-door replication screen ───────────────────────────────────────
 # Question 1 only. The target pick that used to sit beside it is now
-# build_target_prompt above, shared with the abstract and full-text stages.
+# the combined target+outcome prompts above, shared with every LLM rung.
 
 _CLASSIFY_PROMPT = """You are screening papers for a database of replication and reproduction studies.
 

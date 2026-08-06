@@ -181,7 +181,7 @@ provenance appended after it — plus:
 | `outcome` | string | Replication outcome — see below |
 | `outcome_phrase` | string | Verbatim phrase from paper describing outcome |
 | `outcome_confidence` | string | `high` \| `medium` \| `low` |
-| `out_quote_source` | string | Where the outcome quote came from: `abstract` \| `title` \| `fulltext`. `fulltext` appears only on results escalated to the fulltext LLM pass. |
+| `out_quote_source` | string | Where the outcome quote came from: `title` \| `abstract` \| `introduction` \| `discussion`, or two of them joined by ` \| ` matching the quote. The blocks are named separately in the prompt, so a quote is attributable to the section it came from. `fulltext` is the legacy value, written while the outcome call was sent one undifferentiated body block; stored rows still carry it. |
 | `outcome_reasoning` | string | LLM chain-of-thought for the outcome decision |
 | `outcome_llm_model` | string | Model that coded the outcome. Can differ from `link_llm_model` within one run — the outcome step fails over to another provider when the primary's quota runs out. `keyword` on `--no-llm` rule-based rows; blank when no outcome verdict was made (`pending`, `api_error`) |
 | `type` | string | `replication` \| `reproduction` \| empty. Decided by the front-door screen (a `both` classification is recorded as `replication`, since such a paper collects new data), falling back to Stage 2's `filter_status`. **Empty** when a screen ran and neither decided — the screen proceeded without a qualifying vote on a row Stage 2 left at `needs_review`; such a row is coded on the replication vocabulary but carries no type and is not imported. When **no screen ran at all** (`--no-llm`) and Stage 2 named no vocabulary, `_record_type()` in `extract/run_extract.py` falls back to `replication` rather than leaving the field empty. Also selects the outcome vocabulary — a reproduction is coded on the computation/robustness grid |
@@ -266,7 +266,7 @@ already on disk.
 | ------ | ------ |
 | `outcome_computation` | `computationally reproducible` \| `computational issues` \| `technical failure` \| `not checked` \| `cannot_be_determined` (`schema.COMPUTATION_OUTCOME_VALUES`) |
 | `outcome_computational_quote` | verbatim passage proving the computation verdict |
-| `out_quote_computational_source` | `title` \| `abstract` \| `fulltext`, or two joined by ` \| ` matching the quote |
+| `out_quote_computational_source` | as `out_quote_source` above |
 | `outcome_robustness` | `robust` \| `robustness challenges` \| `not checked` \| `cannot_be_determined` (`schema.ROBUSTNESS_OUTCOME_VALUES`) |
 | `outcome_robustness_quote` | verbatim passage proving the robustness verdict |
 | `out_quote_robust_source` | as `out_quote_computational_source` |
@@ -274,6 +274,12 @@ already on disk.
 `technical failure` is the reproduction defeated by the materials — no data, no code,
 an unrunnable workflow — the case the 3×3 grid could only record as a numerical
 disagreement that was never observed. All six columns are empty on a replication row.
+
+Where several studies of one original are merged onto a row, each axis is settled over
+its members by `_aggregate_axes()` in `extract/run_extract.py`: one settled value
+carries the axis, two settled values that disagree become `computational issues` /
+`robustness challenges` — the disagreement IS the finding — and the quotes and their
+sources are joined with ` | ` in matching order.
 
 `pending` and `api_error` are **pipeline-state markers**, not outcomes — they record
 where a row sits in the pipeline.

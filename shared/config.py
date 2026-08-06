@@ -176,7 +176,7 @@ PRESCREEN_MODEL_2 = "mistralai/mistral-small-24b-instruct-2501"
 SCREENING_MODEL_1 = "gemini-3.5-flash-lite"
 SCREENING_MODEL_2 = "gpt-5.4-mini"
 
-# Linking (identify_targets_with_llm) — WHICH original does this paper re-test? One
+# Linking (resolve_targets_and_outcomes) — WHICH original does this paper re-test? One
 # model for all three rungs: the abstract, the reference list and the full text ask
 # the same question of different evidence.
 #
