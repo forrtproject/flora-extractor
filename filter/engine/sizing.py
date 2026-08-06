@@ -41,7 +41,12 @@ FREE_TIER_MB = 500              # Supabase free tier database size
 # rows a campaign writes. Both tables are per-BATCH, so they round to nothing;
 # they are counted anyway so "total" means total.
 ITEMS_PER_CLAIM = 1000
-AUDIT_ROWS_PER_CLAIM = 2        # the claim, and the release_claim that ends it
+# The claim, and the release_claim that ends it. An UPPER BOUND: a claim whose run
+# is killed writes only the first and expires instead of being released, so the
+# projection runs slightly high. Left at 2 deliberately — the true rate is however
+# often a run dies, which nothing measures, and over-estimating the smallest term
+# in the total is the safe direction for a free-tier-or-not decision.
+AUDIT_ROWS_PER_CLAIM = 2
 
 SYNTHETIC_N = 1000              # synthetic rows measured per table
 
