@@ -11,6 +11,10 @@ Acquisition order:
   7. SerpAPI / Google Scholar      (consumes quota, last resort)
   8. Playwright headless Chromium  (bypasses JS-rendered paywalls)
 
+Tier 0 (OpenAlex GROBID XML) sits above all of these: when it returns a result with
+content, that IS the document and the download tiers are skipped. A tier that comes
+back empty is timestamped and not re-probed for PDF_RETRY_AFTER_DAYS.
+
 Tier 8 requires a one-time setup:
     pip install playwright
     playwright install chromium
@@ -25,6 +29,7 @@ import gzip
 import json
 import re
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -58,6 +63,73 @@ _OPENALEX_RATE_SEC        = 0.1
 # endpoints. Built per request so a key rotated out mid-run is not still in use here.
 def _oa_request_headers() -> dict:
     return {**oa_headers(), "Accept": "application/json"}
+
+
+# ── Retry delays for tiers that came back empty ───────────────────────────────
+# Whether a document can be had changes on the scale of WEEKS — a paper gets deposited
+# in a repository, a publisher opens its archive, OpenAlex finishes parsing a PDF — not
+# between two runs of the pipeline. data/target_pending.csv is reopened by every Stage 3
+# run and almost none of its rows have a document, so each run re-paid the whole
+# eleven-tier waterfall: uncached failed downloads, landing-page scrapes, a headless
+# Chromium launch per row, and a metered OpenAlex content request.
+#
+# A recorded failure is a RETRY DELAY, never a verdict: the tier is re-probed once the
+# delay lapses, and nothing is ever recorded as definitive. Two things are therefore
+# never recorded — a tier skipped for a missing API key or a missing package (a key
+# added tomorrow must take effect tomorrow), and any outcome of a tier that did produce
+# a document.
+PDF_RETRY_AFTER_DAYS    = 14
+OA_XML_RETRY_AFTER_DAYS = 14
+
+# Playwright reasons that mean "this machine cannot run the tier", not "no PDF exists".
+_PLAYWRIGHT_SKIP_REASONS = {"playwright_not_installed", "no_doi"}
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _retry_log_path(directory: Path, key_source: str) -> Path:
+    """One file per DOI/work holding {slot: iso timestamp} — not one per (row, tier)."""
+    return directory / f"retry_{cache_key(key_source)}.json"
+
+
+def _read_retry_log(path: Path) -> dict:
+    """The recorded failure timestamps, or {} when there are none or the file is bad.
+
+    Any failure to read degrades to "probe everything": this cache only ever suppresses
+    work, so losing it costs money, while crashing on it costs the run.
+    """
+    try:
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {str(k): str(v) for k, v in data.items()}
+    except Exception as e:
+        log.debug("Retry log unreadable (%s): %s", path, e)
+    return {}
+
+
+def _retry_suppressed(entries: dict, slot: str, after_days: float) -> bool:
+    """True when *slot* failed less than *after_days* ago, so it is not re-probed yet."""
+    stamp = entries.get(slot)
+    if not stamp:
+        return False
+    try:
+        when = datetime.fromisoformat(str(stamp))
+    except Exception:
+        return False           # unparseable stamp → re-probe
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - when) < timedelta(days=after_days)
+
+
+def _write_retry_log(path: Path, entries: dict) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(entries, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        log.debug("Retry log write failed (%s): %s", path, e)
 
 
 # ── Unpaywall ─────────────────────────────────────────────────────────────────
@@ -443,6 +515,18 @@ def get_openalex_fulltext(openalex_id: str) -> "dict | None":
             log.warning("OpenAlex XML cache for %s is a content-free shell — "
                         "ignoring it and re-fetching", oa_id)
 
+    # A content-free answer is still never cached AS a success — but re-asking on every
+    # run re-paid the metered download every run. The last content-free fetch is
+    # timestamped instead, and within the delay the tier answers "no usable XML" without
+    # a request; after it, the download runs again and content that appeared meanwhile
+    # is picked up.
+    retry_path = _retry_log_path(OA_XML_CACHE_DIR, oa_id)
+    retries    = _read_retry_log(retry_path)
+    if _retry_suppressed(retries, "content_free", OA_XML_RETRY_AFTER_DAYS):
+        log.debug("OpenAlex XML for %s was content-free less than %d days ago — "
+                  "not re-fetching yet", oa_id, OA_XML_RETRY_AFTER_DAYS)
+        return None
+
     if not OPENALEX_API_KEYS:
         log.info("No OpenAlex API key — skipping the GROBID-XML tier for %s", oa_id)
         return None
@@ -495,6 +579,7 @@ def get_openalex_fulltext(openalex_id: str) -> "dict | None":
         log.warning("OpenAlex reported grobid_xml for %s but the parsed result is "
                     "empty (no sections, no references) — treating it as no document",
                     oa_id)
+        _write_retry_log(retry_path, {**retries, "content_free": _now_iso()})
         return None
 
     # Step 4 — cache
@@ -503,6 +588,12 @@ def get_openalex_fulltext(openalex_id: str) -> "dict | None":
         cache_file.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
     except Exception as e:
         log.debug("OpenAlex XML cache write failed: %s", e)
+    if retries:
+        # Content arrived; the delay that was holding the re-fetch back has done its job.
+        try:
+            retry_path.unlink(missing_ok=True)
+        except Exception as e:
+            log.debug("Retry log delete failed (%s): %s", retry_path, e)
 
     log.info("OpenAlex XML acquired for %s (%d refs)", oa_id,
              len(sections.get("references", [])))
@@ -885,6 +976,17 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
     all_tried: list[str] = []
     oa_xml    = None
 
+    # Per-DOI record of which tiers came back empty, and when (PDF_RETRY_AFTER_DAYS).
+    retry_path = _retry_log_path(PDF_CACHE_DIR, doi_r) if doi_r else None
+    retries    = _read_retry_log(retry_path) if retry_path is not None else {}
+    failures: dict[str, str] = {}
+
+    def _held(tier: str) -> bool:
+        return _retry_suppressed(retries, tier, PDF_RETRY_AFTER_DAYS)
+
+    def _failed(tier: str) -> None:
+        failures[tier] = _now_iso()
+
     def _try(url: str, label: str) -> bool:
         nonlocal dl, pdf_url, pdf_src
         all_tried.append(url)
@@ -895,77 +997,114 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
         log.debug("  %s failed (%s): %s", label, dl.get("reason"), url)
         return False
 
+    def _result() -> dict:
+        if retry_path is not None:
+            # An XML with content is a document too: if its cache is later lost,
+            # the download tiers must be probeable again, not held for two weeks.
+            if dl["success"] or pdf_src == "openalex_xml":
+                try:
+                    retry_path.unlink(missing_ok=True)
+                except Exception as e:
+                    log.debug("Retry log delete failed (%s): %s", retry_path, e)
+            elif failures:
+                _write_retry_log(retry_path, {**retries, **failures})
+        return {
+            "pdf_url"       : pdf_url,
+            "pdf_source"    : pdf_src if dl["success"] else (pdf_src or "none"),
+            "pdf_path"      : str(dl["path"]) if dl.get("path") else None,
+            "pdf_ok"        : dl["success"],
+            "pdf_url_tried" : all_tried,
+            "openalex_xml"  : oa_xml,
+        }
+
     # Tier 0 — OpenAlex GROBID XML (structured content, no PDF file needed)
+    # A result with content IS the document: link_original parses it exactly as it
+    # parses a downloaded PDF, so running the ten download tiers underneath it buys
+    # nothing and costs the whole waterfall.
     if openalex_id:
         oa_xml = get_openalex_fulltext(openalex_id)
-        if oa_xml:
-            log.info("  [%s] OpenAlex XML acquired (source=openalex_xml)", doi_r)
+        if oa_xml and openalex_xml_has_content(oa_xml):
+            log.info("  [%s] OpenAlex XML acquired (source=openalex_xml) — "
+                     "skipping the download tiers", doi_r)
             pdf_src = "openalex_xml"
+            return _result()
+        oa_xml = None
 
-    # Tier 1 — arXiv direct (before any API calls)
+    # Tier 1 — arXiv direct (before any API calls; the URL is a DOI pattern, so a
+    # non-arXiv DOI is not a tier failure — there was nothing to ask.)
     arxiv = get_arxiv_pdf_url(doi_r, title)
-    if arxiv and _try(arxiv, "arxiv"):
-        pass
+    if arxiv and not _held("arxiv"):
+        if not _try(arxiv, "arxiv"):
+            _failed("arxiv")
 
     # Tier 2 — OSF preprint
-    if not dl["success"]:
+    if not dl["success"] and not _held("osf"):
         osf = get_osf_pdf_url(doi_r)
-        if osf and _try(osf, "osf"):
-            pass
+        if osf and not _try(osf, "osf"):
+            _failed("osf")
 
     # Tier 3 — OpenAlex OA URL
-    if not dl["success"]:
+    if not dl["success"] and not _held("openalex_oa"):
         oa_url = get_openalex_oa_url(doi_r)
-        if oa_url and _try(oa_url, "openalex_oa"):
-            pass
+        if not (oa_url and _try(oa_url, "openalex_oa")):
+            _failed("openalex_oa")
 
     # Tier 4 — Unpaywall direct PDFs
     # Every other tier is guarded by `if not dl["success"]`; this one was not, so a
     # DOI already served by arXiv/OSF/OpenAlex still cost an Unpaywall round-trip.
     # Tier 8 is the only other consumer of uw_landing/uw_direct and it sits inside
     # an `if not dl["success"]` block, so the empty list is never reached.
-    uw_all     = get_all_unpaywall_pdf_urls(doi_r) if not dl["success"] else []
+    need_unpaywall = (not dl["success"]
+                      and not (_held("unpaywall_pdf") and _held("landing")))
+    uw_all     = get_all_unpaywall_pdf_urls(doi_r) if need_unpaywall else []
     uw_direct  = [u for u in uw_all if u["type"] == "pdf"]
     uw_landing = [u for u in uw_all if u["type"] == "landing"]
 
-    if not dl["success"]:
-        for cand in uw_direct:
-            if _try(cand["url"], "unpaywall_pdf"):
-                break
+    if not dl["success"] and not _held("unpaywall_pdf"):
+        if not any(_try(cand["url"], "unpaywall_pdf") for cand in uw_direct):
+            _failed("unpaywall_pdf")
 
     # Tier 5 — SemanticScholar
-    if not dl["success"]:
+    if not dl["success"] and not _held("semanticscholar"):
         ss = get_semanticscholar_pdf_url(doi_r)
-        if ss:
-            _try(ss, "semanticscholar")
+        if not (ss and _try(ss, "semanticscholar")):
+            _failed("semanticscholar")
 
     # Tier 6 — CORE
-    if not dl["success"]:
+    if not dl["success"] and not _held("core"):
         core = get_core_pdf_url(doi_r)
-        if core:
-            _try(core, "core")
+        if not (core and _try(core, "core")):
+            _failed("core")
 
     # Tier 7 — Europe PMC
-    if not dl["success"]:
+    if not dl["success"] and not _held("europepmc"):
         epmc = get_europepmc_pdf_url(doi_r)
-        if epmc:
-            _try(epmc, "europepmc")
+        if not (epmc and _try(epmc, "europepmc")):
+            _failed("europepmc")
 
     # Tier 8 — Scrape Unpaywall landing pages
-    if not dl["success"]:
+    if not dl["success"] and not _held("landing"):
+        won = False
         for cand in uw_landing:
             scraped = scrape_pdf_from_landing_page(cand["url"])
             if scraped and _try(scraped, f"landing_{cand['host'] or 'repo'}"):
+                won = True
                 break
+        if not won:
+            _failed("landing")
 
     # Tier 9 — SerpAPI (quota-limited, last HTTP resort before browser)
-    if not dl["success"]:
-        serp = get_serpapi_pdf_url(doi_r, title)
-        if serp:
-            _try(serp, "serpapi")
+    # No key is a SKIP, not a failure: a key added tomorrow must be used tomorrow.
+    if not dl["success"] and not _held("serpapi"):
+        if not SERPAPI_KEYS:
+            log.debug("  [%s] no SerpAPI key — tier skipped, not recorded", doi_r)
+        else:
+            serp = get_serpapi_pdf_url(doi_r, title)
+            if not (serp and _try(serp, "serpapi")):
+                _failed("serpapi")
 
     # Tier 10 — Playwright headless Chromium
-    if not dl["success"]:
+    if not dl["success"] and not _held("playwright"):
         log.info("  [%s] All HTTP tiers failed — trying Playwright headless", doi_r)
         pw_result = get_pdf_via_playwright(doi_r)
         if pw_result["success"]:
@@ -973,12 +1112,7 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
             pdf_src = "playwright"
             dl      = pw_result
             all_tried.append(pdf_url)
+        elif pw_result.get("reason") not in _PLAYWRIGHT_SKIP_REASONS:
+            _failed("playwright")
 
-    return {
-        "pdf_url"       : pdf_url,
-        "pdf_source"    : pdf_src if dl["success"] else (pdf_src or "none"),
-        "pdf_path"      : str(dl["path"]) if dl.get("path") else None,
-        "pdf_ok"        : dl["success"],
-        "pdf_url_tried" : all_tried,
-        "openalex_xml"  : oa_xml,
-    }
+    return _result()

@@ -36,6 +36,7 @@ from filter.engine.diagnostics import diagnose, render_text
 from filter.engine.export import (
     ALIASES_FILENAME, SPEC_DIR, StaleBundleError, check_release_binding, export_pile,
 )
+from filter.engine.handoff import HANDOFF_CSV, HANDOFF_UNSCREENED_CSV
 from filter.engine.overlay import OverlayError, chunk_paths, worklist
 from filter.engine.pool_reader import iter_pool_batches, overlay_manifest_hash
 from filter.engine.release import read_release, releases_dir, routing_release, write_release
@@ -438,6 +439,8 @@ def cmd_reconcile(args) -> int:
 def cmd_handoff(args) -> int:
     from filter.engine.handoff import decisions, write_handoff
 
+    out_csv = Path(args.out) if args.out else Path(
+        HANDOFF_UNSCREENED_CSV if args.as_routed else HANDOFF_CSV)
     con = open_store(args.store, read_only=True)
     release_id = _resolve_release(con, args.release)
     try:
@@ -474,7 +477,7 @@ def cmd_handoff(args) -> int:
 
     try:
         manifest = write_handoff(
-            con, args.pool, Path(args.out), release_id, drop=drop,
+            con, args.pool, out_csv, release_id, drop=drop,
             screen=screen, decided=decided,
             specs=load_specs(args.spec_dir),
             spec_dir=args.spec_dir,
@@ -488,7 +491,8 @@ def cmd_handoff(args) -> int:
         raise SystemExit(str(exc))
     con.close()
 
-    print(f"{manifest['rows']:,} row(s) -> {args.out}   (Stage 3 input)")
+    label = "Stage 3 input" if manifest["screened_only"] else "as routed, UNSCREENED"
+    print(f"{manifest['rows']:,} row(s) -> {out_csv}   ({label})")
     for pile, count in manifest["rows_per_pile"].items():
         print(f"  {pile:<18} {count:,}")
     print(f"  dropped by a live tier verdict {manifest['dropped_by_tier_verdict']:,}; "
@@ -496,6 +500,10 @@ def cmd_handoff(args) -> int:
     print(f"  skipped, never screened {manifest['skipped_unscreened']:,}"
           + ("" if manifest["screened_only"] else "   (--as-routed: verdicts "
              "applied, but an unscreened row still travels)"))
+    if not manifest["screened_only"] and not args.out:
+        print(f"  --as-routed writes {HANDOFF_UNSCREENED_CSV}, not {HANDOFF_CSV}: rows "
+              "here can carry a blank screen verdict, and Stage 3 writes those "
+              "target_pending. Point --filtered-csv at this file to run it anyway.")
     print(f"  release {manifest['release_id']}")
     print(f"  sha256  {manifest['sha256']}")
     return 0
@@ -539,6 +547,50 @@ def cmd_status(args) -> int:
     print("")
     for tier in (TIER_EXPENSIVE, TIER_CHEAP):
         _print_incomplete(client, tier, indent=f"{tier}: ")
+    return 0
+
+
+def cmd_release_claim(args) -> int:
+    """List open claims, or end one by id.
+
+    The listing exists because a stranded claim is otherwise invisible: nothing
+    else in the CLI names the claims that hold works back. Ending one calls the
+    same `engine_release_claim` RPC a finishing run calls — one release
+    semantics, not two.
+    """
+    from filter.engine.claims import (ClaimsClient, ClaimsNotConfigured,
+                                      is_expired)
+
+    try:
+        client = ClaimsClient()
+    except ClaimsNotConfigured as exc:
+        raise SystemExit(f"{exc}. Claims live in the state authority, so there is "
+                         "nothing to list or release without it.")
+
+    if not args.claim:
+        claims = client.active_claims(release_id=args.release)
+        if not claims:
+            print("no active claims.")
+            return 0
+        print(f"{len(claims)} active claim(s):\n")
+        for claim in claims:
+            marker = "  EXPIRED" if is_expired(claim) else ""
+            print(f"{claim['id']}  {claim.get('tier', '?'):<17}"
+                  f" items {client.claim_item_count(claim['id']):>7,}"
+                  f"  created {claim.get('created_at', '?')}"
+                  f"  expires {claim.get('expires_at', '?')}{marker}")
+        print("\nAn EXPIRED claim already blocks nothing — releasing it only tidies "
+              "the record.\nEnd one with: python -m filter.engine release-claim "
+              "--claim <id> [--status failed] --yes")
+        return 0
+
+    if not args.yes:
+        raise SystemExit(
+            f"about to end claim {args.claim} as '{args.status}'. Its verdicts are "
+            "permanent and are not touched; only the hold on its works ends. "
+            "Re-run with --yes.")
+    client.release_claim(args.claim, args.status)
+    print(f"claim {args.claim} ended as '{args.status}'; its works are claimable again.")
     return 0
 
 
@@ -648,7 +700,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     handoff = sub.add_parser(
         "handoff", help="Write the screen piles as Stage 3's filtered.csv.")
-    handoff.add_argument("--out", default="data/filtered.csv")
+    handoff.add_argument(
+        "--out", default=None,
+        help=f"Output CSV. Default: {HANDOFF_CSV} for the screened handoff, "
+             f"{HANDOFF_UNSCREENED_CSV} with --as-routed.")
     handoff.add_argument("--pool", type=Path, default=SNAPSHOT_POOL_DIR)
     handoff.add_argument("--store", type=Path, default=DEFAULT_STORE_PATH)
     handoff.add_argument("--release", default=None,
@@ -659,7 +714,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--as-routed", action="store_true",
         help="Export the piles as the rules routed them, applying whatever tier "
              "verdicts exist. The default exports only rows a live tier run "
-             "reached a verdict on.")
+             f"reached a verdict on. Writes {HANDOFF_UNSCREENED_CSV} unless --out "
+             "says otherwise: an as-routed file carries blank screen columns and "
+             "must not take the screened handoff's name.")
     _add_overlay_flags(handoff, "It must match the one the release was routed under.")
     handoff.set_defaults(func=cmd_handoff)
 
@@ -671,6 +728,21 @@ def build_parser() -> argparse.ArgumentParser:
     worklist_cmd.add_argument("--release", default=None,
                               help="Release to read (default: the store's only one).")
     worklist_cmd.set_defaults(func=cmd_worklist)
+
+    release_claim = sub.add_parser(
+        "release-claim",
+        help="List open claims; end one that a dead run left holding its works.")
+    release_claim.add_argument(
+        "--claim", default=None,
+        help="Claim id to end. Without it, the open claims are listed.")
+    release_claim.add_argument(
+        "--status", default="failed", choices=("failed", "cancelled", "complete"),
+        help="How the claim ended (default: failed — a run that did not finish).")
+    release_claim.add_argument("--yes", action="store_true",
+                               help="Confirm ending the named claim.")
+    release_claim.add_argument("--release", default=None,
+                               help="Restrict the listing to one release id.")
+    release_claim.set_defaults(func=cmd_release_claim)
 
     status = sub.add_parser("status", help="Releases on disk and their pile counts.")
     status.add_argument("--store", type=Path, default=DEFAULT_STORE_PATH)

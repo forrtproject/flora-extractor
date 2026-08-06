@@ -6,8 +6,10 @@ between rules is what diagnostics measure. Two things are engine policy rather
 than spec: an unclaimed row is `pending/no_filter_matched` (a rule that does not
 fire has said nothing, not "keep"), and a row routed to a screening tier whose
 abstract is empty is downgraded to `pending/no_text` — absence of evidence must
-not convert into a proceed. Discards are unaffected: structural rules do not
-read the abstract.
+not convert into a proceed. Discards get no such downgrade, so a live discard
+that reads the abstract has to refuse an empty one itself: `validate_spec()`
+requires `"abstract_missing": false` on any non-shadow discard whose match tree
+uses `abstract_regex` or `text_regex`.
 
 Shadow specs are evaluated (`eval_all()`) but never win a pile; store.py records
 their evaluations so an unmeasured rule can be measured before it is trusted.

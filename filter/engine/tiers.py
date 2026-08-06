@@ -77,7 +77,8 @@ from shared.config import (ENGINE_CACHE_DIR, ENGINE_TIER_HF_UPLOAD,
                            ENGINE_TIER_WORKERS, FLORA_HF_COMMIT_BATCH,
                            FLORA_POOL_REPO, PRESCREEN_MODEL_1, PRESCREEN_MODEL_2,
                            SCREENING_MODEL_1, SCREENING_MODEL_2, SNAPSHOT_POOL_DIR)
-from shared.llm_client import classify_replication, screen_gate, screen_voters
+from shared.llm_client import (SCREEN_EVIDENCE_SEP, classify_replication,
+                               screen_gate, screen_voters)
 from shared.prescreen import prescreen_bypass, prescreen_vote, prescreen_voters
 from shared.token_usage import TokenBudgetExhausted, check_openai_budget
 from shared.utils import clean_doi
@@ -353,6 +354,20 @@ def _write_response(blob: dict) -> tuple[str, Path]:
     return response_hash, path
 
 
+def _remote_response_path(path: Path) -> str:
+    """Where one blob lives on Hugging Face: `responses/<first two hex>/<hash>.json`.
+
+    Sharded on the hash's first two characters for FILE COUNT, the same reason
+    every cache part in `shared/cache_sync.py` is: Hugging Face asks for fewer
+    than 10k entries per folder, and one expensive-pile screen writes ~9,300
+    blobs. On-disk layout is unchanged — `RESPONSES_DIR` stays flat, and the
+    reconciler finds a blob by hash there, never on the remote — so this is
+    write-side only. Blobs uploaded flat before this stay where they are: nothing
+    reads the remote path back, so the two layouts coexist.
+    """
+    return f"responses/{path.stem[:2]}/{path.name}"
+
+
 def _hf_upload_target() -> Optional[str]:
     """The repo response blobs go to, or None when this run does not push.
 
@@ -432,7 +447,8 @@ class _ResponseUploader:
             hf.HfApi(token=os.getenv("HF_TOKEN")).create_commit(
                 repo_id=repo, repo_type="dataset",
                 operations=[hf.CommitOperationAdd(
-                    path_in_repo=f"responses/{path.name}", path_or_fileobj=str(path))
+                    path_in_repo=_remote_response_path(path),
+                    path_or_fileobj=str(path))
                     for _, path in batch],
                 commit_message=f"engine tier responses ({len(batch)} blob(s))")
         except Exception as exc:  # noqa: BLE001 — network boundary
@@ -1096,13 +1112,20 @@ def _expensive_judge(work: Work) -> tuple[str, list[dict]]:
     models = [part or UNKNOWN_MODEL
               for part in str(screen.get("llm_model") or "").split("+")]
 
+    # A screen served from a cache entry written before the votes carried their own
+    # quote holds one quote only, in `llm_evidence`, and it is the FIRST voter's. A
+    # current entry's `llm_evidence` is the joined pair, which is not a quote and must
+    # not be filed as one, so the fallback applies only while no separator is in it.
+    joined = str(screen.get("llm_evidence") or "")
+    legacy_quote = "" if SCREEN_EVIDENCE_SEP in joined else joined
+
     votes: list[dict] = []
     for index, vote in enumerate(votes_raw):
         votes.append({
             "model": models[index] if index < len(models) else UNKNOWN_MODEL,
             "verdict": vote.get("classification", ""),
             "confidence": "confident" if vote.get("confident") else "unconfident",
-            "quote": screen.get("llm_evidence", "") if index == 0 else "",
+            "quote": str(vote.get("evidence") or (legacy_quote if index == 0 else "")),
             "blob": {"tier": TIER_EXPENSIVE, "work_id": work.work_id,
                      "vote": vote, "gate": gate, "screen": {
                          k: screen.get(k) for k in
@@ -1150,7 +1173,10 @@ def _batch(con, client: ClaimsClient, release_id: str, tier: str,
     """The works this run will send: the pile, minus what is claimed or decided.
 
     Asked before the claim so the common case is a clean claim rather than a
-    rejected one; the check that makes claiming SAFE is inside the RPC. A dry run
+    rejected one; the check that makes claiming SAFE is inside the RPC. "Claimed"
+    means an active claim whose lease has not run out — a run killed before its
+    completion path stops holding its works `CLAIM_TTL_HOURS` after it took them,
+    so it cannot exclude them from every future batch. A dry run
     subtracts nothing it would need the server for — it is allowed to run against
     no state authority at all, and a size estimate that quietly excluded another
     run's batch would answer a question nobody asked.

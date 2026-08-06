@@ -29,8 +29,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import json
+
 from .grobid import run_grobid
-from .config import log
+from .config import PARSE_CACHE_DIR, log
+from .utils import cache_key
 
 PARSE_METHODS: list[str] = ["openalex_xml", "pdfminer", "grobid", "docpluck", "opendataloader", "markitdown"]  # docling excluded (heavy deps)
 
@@ -532,6 +535,40 @@ def parse_result_is_empty(results: "dict[str, dict] | None") -> bool:
         return True
     return max((score_parse_result(r) for r in results.values()
                 if isinstance(r, dict)), default=0) <= 0
+
+
+def read_parse_cache(doi_r: str, cache_dir: "Path | None" = None) -> "dict | None":
+    """Return the cached parse_all() results for *doi_r*, or None on a miss.
+
+    *cache_dir* defaults to PARSE_CACHE_DIR; each caller passes its own module-level
+    copy so the directory stays patchable where the caller lives.
+
+    Lives here rather than in either caller because both the ladder
+    (`extract/link_original.py`, Stage 6) and `extract/run_extract.py` read the same
+    files, and run_extract imports link_original — a reader in either module would
+    have had to be duplicated.
+
+    An all-empty cache counts as a miss: it is what a PDF-less run wrote, and reading
+    it back would pin the paper to abstract-only coding forever (audit B4).
+
+    So does a cache carrying a transient failure (a method that never got an answer,
+    e.g. reference extraction while the provider was down). Such a file should no
+    longer be written at all, but the ones written before that was true are on disk,
+    and reading them back keeps the outage as this paper's permanent answer about its
+    own references. Treating them as a miss re-parses the document — which is what
+    heals them, since the re-parse is only cached once every method has answered.
+    """
+    cache_file = (cache_dir or PARSE_CACHE_DIR) / f"parse_{cache_key(doi_r)}.json"
+    if not cache_file.exists():
+        return None
+    try:
+        with cache_file.open(encoding="utf-8") as fh:
+            results = json.load(fh)
+    except Exception:
+        return None
+    if parse_result_is_empty(results) or parse_result_has_transient_failure(results):
+        return None
+    return results
 
 
 # ── Orchestrator ─────────────────────────────────────────────────────────────

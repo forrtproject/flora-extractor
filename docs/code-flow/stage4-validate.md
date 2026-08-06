@@ -10,8 +10,7 @@ The web app is a **read-only monitoring dashboard**. It does not write to any pi
 validate/app.py
     │
     ├── create_app()
-    │       register exactly three blueprints (dashboard, check, batch) —
-    │           batch only when FLORA_READONLY is unset
+    │       register exactly two blueprints (dashboard, check)
     │       /            → redirect to the dashboard
     │       /pipeline    → 301 to the dashboard
     │       /set-name    → session-based reviewer name
@@ -28,19 +27,15 @@ validate/app.py
     │       GET /api/dashboard/supabase-drilldown   → paginated drilldown table
     │       (plus the set/analysis/download endpoints — `@dashboard_bp.route` is the list)
     │
-    ├── Blueprint: check_bp (routes/check.py)
-    │       GET /check                          → filter/inspect extracted rows, download subsets
-    │
-    └── Blueprint: batch_bp (routes/batch.py)   — skipped when FLORA_READONLY=1
-            GET /batch                          → batch disambiguation for multiple-match papers
-            plus /api/batch/* (stats, candidates, result, export, refresh, run, stop)
+    └── Blueprint: check_bp (routes/check.py)
+            GET /check                          → filter/inspect extracted rows, download subsets
 ```
 
-`validate/routes/` contains exactly three modules — `dashboard.py`, `check.py`,
-`batch.py` — and all three are registered. There is no disambiguation blueprint and
-no unregistered leftovers; `FLORA_READONLY=1` skips `batch` because it pulls in the
-heavy PDF dependencies (pdfminer, pymupdf, playwright), which is what makes read-only
-hosting possible.
+`validate/routes/` contains exactly two modules — `dashboard.py` and `check.py` —
+and both are registered unconditionally. The former `batch.py` blueprint (batch
+disambiguation, `/api/batch/*`) is parked on the `wip/batch-blueprint` branch: its
+POST endpoints could trigger live extraction spend with no authentication, and
+whether the UI is still needed at all is an open question recorded there.
 
 ## Supabase integration flow
 

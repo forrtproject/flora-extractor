@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from filter.engine.spec import bundle_hash, load_specs, re2_error, validate_spec
+from filter.engine.workids import alias_release
 
 SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
 
@@ -128,6 +129,31 @@ def test_a_discard_without_measured_evidence_is_rejected_unless_it_is_shadow():
     assert any("heuristic evidence may not discard" in e for e in validate_spec(guessed))
 
 
+def test_a_live_discard_that_reads_content_must_declare_the_abstract_guard():
+    """A row with an empty abstract has said nothing, and `no_text` downgrades
+    screening piles only — so a discard reading `abstract_regex`/`text_regex` has
+    to refuse the empty row itself, in the spec, where a reviewer can see it."""
+    measured = [{"level": "trusted", "rationale": "structural"}]
+    live = _valid_spec(pile="discard", precedence=900, measured=measured)
+    assert any("abstract_missing" in e and "example" in e
+               for e in validate_spec(live))
+
+    guarded = {**live, "match": {**live["match"], "abstract_missing": False}}
+    assert validate_spec(guarded) == []
+
+    # A nested content read counts, and so does the wrong value of the guard.
+    nested = {**live, "match": {"abstract_missing": False,
+                                "any_of": [{"abstract_regex": "^x"}]}}
+    assert validate_spec(nested) == []
+    assert any("abstract_missing" in e for e in validate_spec(
+        {**nested, "match": {**nested["match"], "abstract_missing": True}}))
+
+    # Shadow discards delete nothing, and non-discard piles are downgraded to
+    # pending/no_text by the engine, so neither needs the declaration.
+    assert validate_spec({**live, "shadow": True}) == []
+    assert validate_spec(_valid_spec()) == []
+
+
 def test_pending_is_not_a_legal_spec_pile():
     errors = validate_spec(_valid_spec(pile="pending"))
     assert any("'pending' is never a spec target" in e for e in errors)
@@ -174,7 +200,7 @@ def test_the_pyre_regex_key_is_rejected_outside_a_decomposed_match():
     assert any("unknown key 'pyre_regex'" in e for e in validate_spec(nested))
 
 
-def test_bundle_hash_follows_file_bytes_and_not_load_order(tmp_path):
+def test_bundle_hash_follows_spec_content_and_not_load_order(tmp_path):
     first, second = tmp_path / "one", tmp_path / "two"
     first.mkdir()
     second.mkdir()
@@ -186,8 +212,44 @@ def test_bundle_hash_follows_file_bytes_and_not_load_order(tmp_path):
     (second / "a.json").write_text(a)
     assert bundle_hash(first) == bundle_hash(second)
 
-    (second / "a.json").write_text(a + "\n")
+    (second / "a.json").write_text(json.dumps(_valid_spec(id="a", precedence=17)))
     assert bundle_hash(first) != bundle_hash(second)
+
+
+def test_reformatting_a_spec_does_not_mint_a_new_bundle_hash(tmp_path):
+    """Byte-different, JSON-equal files hash the same: indentation, key order and a
+    trailing newline are layout, and reformatting a spec must not invalidate every
+    stored release when no rule changed."""
+    first, second = tmp_path / "one", tmp_path / "two"
+    first.mkdir()
+    second.mkdir()
+    spec = _valid_spec(id="a", match={"text_regex": r"\bre[- ]?analys(is|ed)\b"})
+    compact = json.dumps(spec, sort_keys=True, separators=(",", ":"))
+    pretty = json.dumps(dict(reversed(list(spec.items()))), indent=4) + "\n"
+    assert compact.encode() != pretty.encode()
+    (first / "a.json").write_text(compact)
+    (second / "a.json").write_text(pretty)
+
+    conventions = json.dumps({"piles": {"discard": {"exported": True}}})
+    (first / "conventions.json").write_text(conventions)
+    (second / "conventions.json").write_text(conventions.replace(": ", ":  ") + "\n\n")
+
+    assert bundle_hash(first) == bundle_hash(second)
+
+    # The pattern itself is content, not layout: a character of it still moves the hash.
+    (second / "a.json").write_text(
+        pretty.replace(r"re[- ]?analys", r"re[- ]?analyz"))
+    assert bundle_hash(first) != bundle_hash(second)
+
+
+def test_alias_release_is_canonical_over_json_too(tmp_path):
+    a, b = tmp_path / "a.json", tmp_path / "b.json"
+    a.write_text('{"version":1,"aliases":{"W2":"W1"}}')
+    b.write_text('{\n  "aliases": {\n    "W2": "W1"\n  },\n  "version": 1\n}\n')
+    assert alias_release(a) == alias_release(b)
+
+    b.write_text('{"version":1,"aliases":{"W3":"W1"}}')
+    assert alias_release(a) != alias_release(b)
 
 
 def test_the_bundle_hash_binds_the_conventions_that_name_the_piles(tmp_path):

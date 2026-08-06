@@ -433,6 +433,14 @@ class TestMayStopAtARule:
             "We report replications of 28 classic studies, following Smith (2009).",
             2020) is False
 
+    def test_a_spelled_out_count_may_not_stop(self):
+        """Abstracts write small counts in words at least as often as in digits, and
+        two originals is already one too many for a deterministic rung to settle."""
+        assert link_original.may_stop_at_a_rule(
+            "A replication study",
+            "We replicate two classic studies, starting from Smith (2009).",
+            2020) is False
+
     def test_a_year_is_not_a_study_count(self):
         assert link_original.may_stop_at_a_rule(
             "Replication of 2019 findings",
@@ -554,6 +562,16 @@ class TestGateInTheLadder:
                             year=2011)]))
         assert row["resolution_method"] != "title_pattern_match"
         assert row["n_targets"] == 1
+
+    def test_a_withheld_pick_is_not_restored_when_the_one_target_is_unmatchable(self):
+        """An enumerator named ONE target the key map could not match to a record.
+        We cannot show it is the held work, so restoring would overrule the call on
+        no evidence — the pick is dropped, not written at rule confidence."""
+        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS,
+                        llm_answer=_answer(targets=[_gate_target(
+                            "", "Some stated original", match_certain=False,
+                            record=None)]))
+        assert row["resolution_method"] != "title_pattern_match"
 
     def test_a_withheld_pick_is_not_restored_when_two_targets_were_found(self):
         row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS,
@@ -728,6 +746,76 @@ class TestTheRichestAnswerSurvives:
         assert row["n_targets"] == 2
 
 
+_LONE_CAND  = [{"title": "Time flies from left to right", "year": 2010,
+                "first_author": "Smith", "all_authors": ["Smith"],
+                "doi": "10.9/orig", "openalex_id": "W9"}]
+
+# Two candidates sharing one surname and one year: Path A cannot break the tie (both
+# score author+year alike, so the gap stays under 2.0) and Path B's title overlap does.
+_SAME_AUTHOR_CANDS = _LONE_CAND + [
+    {"title": "Wombat physiology in captivity", "year": 2010,
+     "first_author": "Smith", "all_authors": ["Smith"],
+     "doi": "10.9/other", "openalex_id": "W8"}]
+
+_ONE_PAIR_TITLED = "We re-tested Smith (2010): time flies from left to right."
+
+
+class TestWeakRulePicksAreOnlyHeld:
+    """The lone-candidate branch and Path B carry no semantic check — the first accepts
+    whatever the re-query left standing, the second breaks on a ≥0.05 token overlap the
+    tie Path A refused. 28 of the 29 rule links in data/extracted.csv came from the
+    first. An abstract citing exactly one author-year that is NOT the target passes
+    may_stop_at_a_rule, so ending the row there links the paper to whatever it cited."""
+
+    def test_a_lone_candidate_does_not_end_the_row(self):
+        """may_stop is true (one pair, no count) and the pick is still held: the
+        abstract LLM runs, and only then is the pick restored at the exit."""
+        row = _run_gate("An unrelated title", _ONE_PAIR, _LONE_CAND)
+        assert row["resolution_method"] == "single_candidate_after_requery"
+        assert row["resolved_doi_o"] == "10.9/orig"
+        # Restored, not returned at the rule: the reasoning of the call that declined
+        # to contradict it travels with the row.
+        assert "no second target" in row["llm_reasoning"]
+
+    def test_the_abstract_llm_overrules_a_lone_candidate(self):
+        row = _run_gate("An unrelated title", _ONE_PAIR, _LONE_CAND,
+                        abstract_answer=_answer(
+                            resolved=True, resolution_method="llm_gemini",
+                            resolved_doi_o="10.9/other",
+                            resolved_title_o="A different original",
+                            targets=[_gate_target("10.9/other",
+                                                  "A different original")]))
+        assert row["resolution_method"] == "llm_gemini"
+        assert row["resolved_doi_o"] == "10.9/other"
+
+    def test_a_lone_candidate_confirmed_by_one_target_keeps_the_rule_method(self):
+        row = _run_gate("An unrelated title", _ONE_PAIR, _LONE_CAND,
+                        abstract_answer=_answer(targets=[_gate_target(
+                            "10.9/orig", "Time flies from left to right")]))
+        assert row["resolution_method"] == "single_candidate_after_requery"
+        assert row["resolved_doi_o"] == "10.9/orig"
+
+    def test_a_lone_candidate_still_ends_the_row_under_no_llm(self):
+        """--no-llm runs nothing that could enumerate, so holding would only buy a PDF
+        download per rule-resolved row."""
+        row = _run_gate("An unrelated title", _ONE_PAIR, _LONE_CAND, no_llm=True)
+        assert row["resolution_method"] == "single_candidate_after_requery"
+        assert row["pdf_source"] == "none"
+
+    def test_path_b_does_not_end_the_row(self):
+        row = _run_gate("An unrelated title", _ONE_PAIR_TITLED, _SAME_AUTHOR_CANDS)
+        assert row["resolution_method"] == "same_author_year_title_overlap"
+        assert row["resolved_doi_o"] == "10.9/orig"
+        assert "no second target" in row["llm_reasoning"]
+
+    def test_path_b_is_overruled_when_the_llm_names_another_work(self):
+        row = _run_gate("An unrelated title", _ONE_PAIR_TITLED, _SAME_AUTHOR_CANDS,
+                        abstract_answer=_answer(targets=[_gate_target(
+                            "10.9/other", "Wombat physiology in captivity")]))
+        assert row["resolution_method"] != "same_author_year_title_overlap"
+        assert row["n_targets"] == 1
+
+
 def test_targets_found_at_the_reference_rung_survive_a_no_document_exit():
     """Stage 4.5 can name several targets and decline a single link. The list used to
     die with the stage, so the row was written target_pending with nothing on it."""
@@ -787,3 +875,37 @@ class TestJournalLookupCachesOnlyAnswers:
              patch.object(link_original, "_oa_get", return_value={"results": []}):
             assert link_original._fetch_journal_cached("10.1/x") == ""
         assert len(list(tmp_path.glob("journal_*.json"))) == 1
+
+
+class TestLadderReadsTheParseCache:
+    """Stage 6 wrote the parse cache and never read it: every run re-ran all six
+    parsers over a document whose parse was already on disk."""
+
+    # What is on disk, and what a fresh parse_all would return — different winners, so
+    # the row's parse_method says which one the ladder used.
+    _CACHED = {"markitdown": {"source": "markitdown", "abstract": "cached abstract",
+                              "intro": "cached intro", "references": [{"title": "r"}],
+                              "raw_text": "body", "error": None}}
+    _FRESH  = {"pdfminer": {"source": "pdfminer", "abstract": "", "intro": "fresh intro",
+                            "references": [], "raw_text": "body", "error": None}}
+
+    def _cache(self, tmp_path, monkeypatch, results):
+        from shared.utils import cache_key
+        monkeypatch.setattr(link_original, "PARSE_CACHE_DIR", tmp_path)
+        (tmp_path / f"parse_{cache_key('10.1/rep')}.json").write_text(
+            json.dumps(results), encoding="utf-8")
+
+    def test_a_cache_hit_skips_the_six_parsers(self, tmp_path, monkeypatch):
+        self._cache(tmp_path, monkeypatch, self._CACHED)
+        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS, parse=self._FRESH)
+        assert row["parse_method"] == "markitdown"
+        assert "cached intro" in row["grobid_intro"]
+
+    def test_an_empty_cache_is_still_a_miss(self, tmp_path, monkeypatch):
+        """An all-empty parse is what a PDF-less run wrote; reading it back would pin
+        the paper to abstract-only coding forever (audit B4)."""
+        self._cache(tmp_path, monkeypatch,
+                    {"markitdown": {"source": "markitdown", "abstract": "", "intro": "",
+                                    "references": [], "raw_text": "", "error": None}})
+        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS, parse=self._FRESH)
+        assert row["parse_method"] == "pdfminer"

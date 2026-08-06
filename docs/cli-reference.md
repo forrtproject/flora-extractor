@@ -56,7 +56,7 @@ reordering one never invalidates another's progress:
 
 | Pathway | # | Source | Key needed | Measured hit rate |
 | ------- | - | ------ | ---------- | ----------------- |
-| bulk | 1 | OpenAlex batch | — | ~0% (this corpus was discovered via OpenAlex) |
+| bulk | 1 | OpenAlex batch — **opt-in**, `--include-openalex` | — | 0/200 measured (this corpus was discovered via OpenAlex, and the live API's abstracts come from the same deposit stream the snapshot did) |
 | bulk | 2 | **Europe PMC batch** | — | **47.7%** |
 | targeted | 3 | OSF registrations (`10.17605` only) | `OSF_TOKEN` for private records | recovers a registration template, not an abstract |
 | targeted | 4 | Semantic Scholar batch | `S2_API_KEY` | 8.5% here, 14.5% corpus-wide |
@@ -67,6 +67,10 @@ Bulk goes first and over everything, because a batched keyless request answers
 about `EPMC_BATCH_SIZE` DOIs at once; targeted sees only what bulk left without
 text, because those calls are one per DOI or bought with a key, an entitlement or
 a weekly quota.
+
+OpenAlex is not in the default bulk run. `--include-openalex` (or `--source
+openalex`) turns it on, and it is worth turning on only when the snapshot is old
+enough that deposits made since it was cut are plausible.
 
 Rates for sources 2, 4 and 5 come from one 960-DOI sample (2026-07-29) of never-tried
 rows drawn across the corpus's dominant prefixes. Europe PMC leads because 69% of
@@ -311,6 +315,10 @@ python -m filter.engine reconcile
 
 # Releases on disk and the pile counts each of them routed
 python -m filter.engine status
+
+# Claims still holding works, and how to end one a dead run left behind
+python -m filter.engine release-claim
+python -m filter.engine release-claim --claim <id> --status failed --yes
 ```
 
 | Command | What it does |
@@ -322,7 +330,8 @@ python -m filter.engine status
 | `screen` | Runs one LLM tier (`--tier screen_cheap\|screen_expensive`) over that pile. **Dry run by default**: it prints the row count, the token-length distribution of the abstracts it would send and `N rows → tier X ≈ $Y`, and claims, fetches and spends nothing. `--run` claims the batch through the Supabase claims RPC *before* the first voter is asked, records one permanent verdict row per vote, and completes the claim; a claim conflict refuses without spending anything, and an exhausted token budget fails the claim and stops with the verdicts already written intact. |
 | `reconcile` | Sweeps verdict rows an EARLIER run left `response_pending_upload` — the flag off, no token, a commit that 429'd — matches them to the blobs in `cache/engine/responses/` by response hash, commits those in `FLORA_HF_COMMIT_BATCH`-sized commits and marks only what a commit accepted. **Dry run by default**; `--run` acts. A pending row whose blob has been deleted is reported, not fatal. Refuses outright when Hugging Face is unconfigured (`ENGINE_TIER_HF_UPLOAD` off, no `FLORA_POOL_REPO`, no `HF_TOKEN`) rather than sweeping nothing. |
 | `worklist` | Exports the release's `pending/no_text` rows (joined back to the pool for doi/title/year) as the worklist `filter.engine.backfill` reads. |
-| `handoff` | Writes the two screen piles — `screen_expensive` first, then `screen_cheap` — as the file Stage 3 reads, in `ENGINE_EXPORTED_COLS` order, with a live `screen_expensive` record type written into `filter_status` and its full verdict into `SCREEN_COLS` (Stage 3 reads that instead of screening). **Only rows a live `screen_expensive` run reached a verdict on travel** — a cheap-tier verdict can drop a row but never admit one: a discarded work is left out and counted as `dropped_by_tier_verdict`, a work no live run decided (never screened, or still short of a second vote) is left out and counted as `skipped_unscreened`. `--as-routed` exports the piles as routed instead, applying whatever verdicts exist. Unlike `export`, its manifest is rewritable: the handoff is a materialized view Stage 3 re-reads, not an immutable artifact. |
+| `handoff` | Writes the two screen piles — `screen_expensive` first, then `screen_cheap` — as the file Stage 3 reads, in `ENGINE_EXPORTED_COLS` order, with a live `screen_expensive` record type written into `filter_status` and its full verdict into `SCREEN_COLS` (Stage 3 reads that instead of screening). **Only rows a live `screen_expensive` run reached a verdict on travel** — a cheap-tier verdict can drop a row but never admit one: a discarded work is left out and counted as `dropped_by_tier_verdict`, a work no live run decided (never screened, or still short of a second vote) is left out and counted as `skipped_unscreened`. `--as-routed` exports the piles as routed instead, applying whatever verdicts exist, and writes `data/filtered-unscreened.csv` rather than the screened contract's `data/filtered.csv` (`--out` overrides either). Unlike `export`, its manifest is rewritable: the handoff is a materialized view Stage 3 re-reads, not an immutable artifact. |
+| `release-claim` | With no arguments, lists every claim still `active` — id, tier, item count, when it was taken, when its lease runs out, and whether it has already expired. `--claim <id> --yes` ends one through the same `engine_release_claim` RPC a finishing run calls (`--status failed` by default; `cancelled` / `complete` also accepted), which frees its works. Verdicts are untouched. Rarely needed: a claim expires by itself `CLAIM_TTL_HOURS` (6) after it is taken, so this is for freeing works sooner than that. |
 | `status` | Every release found beside the store, with its creation time and pile counts. |
 
 **The text overlay loads itself.** `route`, `export`, `screen` and `handoff` read
@@ -382,6 +391,12 @@ screened-only would write an empty file and the command refuses instead of doing
 that quietly. It refuses too, like `export`, when the spec bundle, alias file or
 overlay has moved since the release was routed.
 
+**The two modes write different files.** The screened handoff defaults to
+`data/filtered.csv`, `--as-routed` to `data/filtered-unscreened.csv`, and `--out`
+wins in either mode. The columns are identical, so the name is the only thing that
+distinguishes a file whose every row was screened from one whose verdicts may be
+blank — and Stage 3 reads `data/filtered.csv` by default.
+
 ### Engine modules with their own entry points
 
 Three engine modules are run directly rather than as `filter.engine` subcommands.
@@ -391,9 +406,10 @@ Each has `--help`; the one-liners are their own `description=`:
 # Fill a text overlay for the routing worklist's no_text rows (#146 M3). Dry-run by default.
 python -m filter.engine.backfill --worklist W [--overlay-dir D] [--run] [--freeze]
 
-# Two pathways. Bulk is batched, keyless and unquota'd (OpenAlex + Europe PMC), so
-# it is affordable over a wide worklist; targeted is the gated sources (OSF,
-# Semantic Scholar, CrossRef, then Scopus) over the rows bulk left without text.
+# Two pathways. Bulk is batched, keyless and unquota'd (Europe PMC; OpenAlex is
+# opt-in via --include-openalex), so it is affordable over a wide worklist;
+# targeted is the gated sources (OSF, Semantic Scholar, CrossRef, then Scopus)
+# over the rows bulk left without text.
 python -m filter.engine.backfill --worklist wide.parquet --run --phase bulk
 python -m filter.engine.backfill --worklist no_text.parquet --run --phase targeted
 
@@ -768,7 +784,6 @@ python -c "import shutil; shutil.rmtree('cache/llm', ignore_errors=True)"
 | `/` | Redirects to `/dashboard` |
 | `/dashboard` | 6-tab monitoring dashboard — see [dashboard-guide.md](dashboard-guide.md) |
 | `/check` | Search/filter/download across any stage — see [check-page.md](check-page.md) |
-| `/batch` | Batch disambiguation for multiple-match papers (not registered when `FLORA_READONLY=1`) |
 | `/pipeline` | Redirects to `/dashboard` |
 | `/api/dashboard/csv-stats` | Pipeline stats JSON (3-tier cascade: stats.json → Parquet → CSV) |
 | `/api/dashboard/download` | Download a full stage CSV (`?stage=candidates\|filtered\|extracted\|extracted-test`) |

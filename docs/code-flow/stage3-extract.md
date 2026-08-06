@@ -184,6 +184,18 @@ row. A false positive on the gate costs one LLM call; a false negative silently 
 N-1 originals. Project names are not a signal: Many Labs is many labs replicating
 **one** original, and a Registered Replication Report likewise.
 
+**Two of the three rule methods are held whatever the gate says.**
+`_HELD_ONLY_METHODS` in `link_original.py` — `single_candidate_after_requery` and
+`same_author_year_title_overlap` — may never END the ladder, even for a paper whose
+own text names exactly one target. Neither carries a semantic check: the lone-candidate
+branch accepts whatever survived the re-query, and the title-overlap branch breaks on a
+≥ 0.05 token overlap a tie that Path A's citation score refused to break. Their picks
+are held until something that can enumerate targets confirms or contradicts them — the
+abstract LLM when the abstract carries an author-year pattern, the reference-list pick
+otherwise — and restored at the exits listed above when nothing enumerating ever spoke.
+`citation_context_match` and `title_pattern_match` are the two that can still end a row
+outright, and only when the gate lets them.
+
 A later rung can also settle on ONE original for a paper an earlier successful call
 already saw two in — its reference list was simply shorter. The ladder keeps the answer
 with the most `match_certain` targets, and emits the union rather than the single link,
@@ -201,7 +213,7 @@ caller with no verdict — the batch tools — lets the screen vote there).
 | 1 | Base data | always — FLoRA sheet row + candidate pass-through fields | (not a resolver) |
 | 2 | OpenAlex candidate re-query | always — builds the candidate pool from `referenced_works` | (not a resolver) |
 | 2.5 | Title-pattern resolver | the title matches "A Replication of X" and one candidate matches that target by Jaccard (≥ 0.4, and ≥ 1.5× the runner-up) | `title_pattern_match` |
-| 3 | Rule-based resolver | the abstract carries an author-year citation matching a candidate, or exactly one candidate came back | `citation_context_match`, `same_author_year_title_overlap`, `single_candidate_after_requery` |
+| 3 | Rule-based resolver | the abstract carries an author-year citation matching a candidate, or exactly one candidate came back | `citation_context_match`; `same_author_year_title_overlap` and `single_candidate_after_requery` **held only** — never terminal, see above |
 | 4 | Abstract LLM | the abstract carries author-year patterns and there are candidates to choose from | `llm_cited_candidates` |
 | 4.5 | Reference-list target pick | there are referenced works (OpenAlex, or OpenCitations as fallback) | `llm_references` |
 | 4.6 | Pre-PDF title search | the screen agreed at high confidence that this is a replication and named a target it could not match to any reference | `llm_title_search` (**provisional**) |
@@ -366,9 +378,28 @@ wording, with nothing to bump by hand.
 | `cache/llm/reftarget_*.json` | reference-list target picks |
 | `cache/llm/llm_*.json` | abstract-level and full-text identification |
 | `cache/llm/outcome_*.json` | outcome verdicts, including escalations |
-| `cache/parse/parse_*.json` | per-method parse results |
+| `cache/parse/parse_*.json` | per-method parse results — read by the ladder before it parses, and by `_best_fulltext_from_cache` |
+| `cache/pdfs/retry_*.json` | per-DOI `{tier: timestamp}` — which acquisition tiers came back empty and when |
+| `cache/openalex_xml/retry_*.json` | per-work timestamp of the last content-free GROBID-XML fetch |
 
 Declines are cached; API failures are not.
+
+**Acquisition retry delays.** `data/target_pending.csv` is reopened by every run and
+almost none of its rows have a document, so each run used to re-pay the whole
+eleven-tier waterfall: uncached failed downloads, landing-page scrapes, a headless
+Chromium launch per row, and the metered OpenAlex content request. A tier that comes
+back empty is now timestamped and not re-probed for `PDF_RETRY_AFTER_DAYS` (14, in
+`shared/pdf_sources.py`); the content-free XML answer gets the same delay
+(`OA_XML_RETRY_AFTER_DAYS`). This is a retry delay, never a verdict — the tier is asked
+again once it lapses, and a tier skipped for a missing API key or a missing package is
+not recorded at all, so a key added tomorrow takes effect tomorrow. A successful
+acquisition clears the record.
+
+**Tier 0 short-circuits the rest.** When the OpenAlex GROBID XML comes back with
+content, that IS the document — the parsers read it exactly as they read a downloaded
+PDF — so tiers 1–10 are skipped. Such a row has `pdf_source = openalex_xml`, no
+`pdf_path` and `pdf_ok = false`, which is what it already had whenever the downloads
+failed.
 
 ## Post-run quarantine (`extract/sanity_check.py`)
 

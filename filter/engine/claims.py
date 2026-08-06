@@ -9,7 +9,9 @@ PostgREST, `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` from the environment (the sam
 two variables — they are not re-declared in `shared/config.py`), and paged reads
 with a deterministic sort key.
 
-Deployment: `db/migrations/0001_engine_baseline.sql` must have been run. Claiming
+Deployment: `db/migrations/0001_engine_baseline.sql` through
+`0004_claim_expiry.sql` must have been run — 0004 adds the claim lease this
+module sends, and without it every claim here is refused by name. Claiming
 goes through the server-side `engine_claim_batch` RPC — one transaction that
 verifies the release, checks conflicts and inserts, never select-then-insert from
 here (#146 §4).
@@ -29,8 +31,15 @@ Interface for the M4 tier runners:
 A run that dies mid-batch leaves an `active` claim: end it `failed` and re-claim
 what it did not reach. Never re-claim under a live claim — the RPC rejects the
 whole batch, by design.
+
+A claim is also a LEASE. A run killed outright (SIGKILL, a lost host) never
+reaches its completion path, and an `active` claim with no end blocks its works
+from every later batch. So a claim carries `expires_at = now + CLAIM_TTL_HOURS`;
+once that passes it blocks nothing, in the RPC and in `claimed_work_ids()` alike.
+`python -m filter.engine release-claim` ends one on demand without waiting.
 """
 
+import datetime
 import os
 from typing import Any, Iterable, Optional
 
@@ -58,6 +67,21 @@ RESPONSE_STATES = (UPLOADED, PENDING_UPLOAD)
 # work now rule-discarded, or a superseded expensive-tier verdict.
 SUPERSESSION_KINDS = ("reroute", "verdict", "withdrawal")
 
+# How long a claim holds its works before it stops blocking them (migration 0004).
+# HOURS, not minutes: an LLM tier run over a full batch is measured in hours, and a
+# lease that expired under a working run would let a second run buy the same rows.
+# Six is comfortably longer than any run measured so far and short enough that a
+# host lost overnight is claimable again by morning. Killing the lease entirely is
+# not an option the client offers — that is the bug this constant exists to fix.
+CLAIM_TTL_HOURS = 6
+
+# What an un-migrated database says when the claim RPC is called with the lease
+# argument (PostgREST cannot resolve the function) or when a read filters on the
+# column. Recognised by substring because the two failures arrive as different
+# status codes and neither is distinguishable from any other 400 by code alone.
+_MISSING_EXPIRY_MARKERS = ("expires_at", "PGRST202")
+MIGRATION_0004 = "db/migrations/0004_claim_expiry.sql"
+
 
 class ClaimsError(RuntimeError):
     """Any failure talking to the state authority."""
@@ -76,6 +100,23 @@ class UnknownRelease(ClaimsError):
     RPC raises it with `foreign_key_violation`, which PostgREST returns as 409 —
     the same status as a claim conflict — so it is recognised by its message.
     """
+
+
+class ClaimExpiryUnsupported(ClaimsError):
+    """The database predates migration 0004: `engine_claims` has no lease column.
+
+    Its own class because the fix is one named script and nothing else: the RPC
+    cannot be called without the lease argument from here, and claiming without a
+    lease is the failure this code exists to prevent — so it refuses loudly rather
+    than falling back to an immortal claim.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(
+            f"the state authority has no claim expiry: {detail}. Run "
+            f"{MIGRATION_0004} in the Supabase SQL editor, then re-run. Until it "
+            "is applied, a claim whose run is killed holds its works forever and "
+            "every later batch silently skips them.")
 
 
 class ClaimConflict(ClaimsError):
@@ -127,6 +168,9 @@ class ClaimsClient:
             body = resp.text or ""
             if "unknown_release" in body:
                 raise UnknownRelease(body.strip())
+            if _missing_expiry(body):
+                raise ClaimExpiryUnsupported(f"{path} → HTTP {resp.status_code}: "
+                                             f"{body.strip()}")
             # The RPC raises unique_violation for a conflict, which PostgREST
             # returns as 409; the message prefix keeps it distinguishable from a
             # plain duplicate-key error on some other table.
@@ -156,7 +200,11 @@ class ClaimsClient:
             })
             resp = requests.get(url, headers=headers, params=params, timeout=self.timeout)
             if resp.status_code >= 400:
-                raise ClaimsError(f"{table} → HTTP {resp.status_code}: {resp.text.strip()}")
+                body = resp.text or ""
+                if _missing_expiry(body):
+                    raise ClaimExpiryUnsupported(
+                        f"{table} → HTTP {resp.status_code}: {body.strip()}")
+                raise ClaimsError(f"{table} → HTTP {resp.status_code}: {body.strip()}")
             page = resp.json()
             rows.extend(page)
             if len(page) < _PAGE_SIZE:
@@ -188,10 +236,17 @@ class ClaimsClient:
         """Claim *items* — `(work_id, pile)` pairs — for *tier*. Returns the claim id.
 
         One server-side transaction (`engine_claim_batch`). Rejection is
-        all-or-nothing: if any work is already held by an active claim of the same
-        tier, `ClaimConflict` is raised and NOTHING is claimed. Different tiers may
-        hold the same work concurrently, and `measurement` claims conflict with
-        nothing (issue #146 §8 decision 4, implementer default).
+        all-or-nothing: if any work is already held by an UNEXPIRED active claim of
+        the same tier, `ClaimConflict` is raised and NOTHING is claimed. Different
+        tiers may hold the same work concurrently, and `measurement` claims conflict
+        with nothing (issue #146 §8 decision 4, implementer default).
+
+        The claim is a LEASE: it stops blocking its works `CLAIM_TTL_HOURS` after
+        it is taken, whether or not anything ended it. The expiry is computed here
+        and sent, so what a run holds and for how long is decided by the code that
+        spends, not by a server default. A database without the lease column
+        refuses the call (`ClaimExpiryUnsupported`, naming the migration) rather
+        than taking a claim nothing can release.
         """
         if tier not in TIERS:
             raise ValueError(f"unknown tier: {tier} (expected one of {TIERS})")
@@ -203,6 +258,7 @@ class ClaimsClient:
             "p_tier": tier,
             "p_items": payload_items,
             "p_meta": meta or {},
+            "p_expires_at": _lease_end(),
         })
         return _scalar(result)
 
@@ -229,7 +285,7 @@ class ClaimsClient:
         claim with `meta.mode == "live"`, and that is the only place that fact is
         written down).
         """
-        params: dict = {"select": "id,release_id,tier,status,created_at,meta"}
+        params: dict = {"select": "id,release_id,tier,status,created_at,expires_at,meta"}
         if release_id:
             params["release_id"] = f"eq.{release_id}"
         if tier:
@@ -239,23 +295,54 @@ class ClaimsClient:
         return self._get_paged("engine_claims", params, order="created_at.asc,id.asc")
 
     def active_claims(self, release_id: Optional[str] = None) -> list[dict]:
-        """Every active claim, optionally restricted to one release."""
+        """Every claim whose status is `active`, optionally restricted to one release.
+
+        Expired ones are INCLUDED: an expired claim blocks nothing, but it is
+        exactly what an operator asking "what is still open?" needs to see and end
+        (`python -m filter.engine release-claim`). What must ignore expiry is the
+        subtraction path, and that is `claimed_work_ids()` below.
+        """
         return self.claims(release_id=release_id, status="active")
 
     def claimed_work_ids(self, release_id: str, tier: str) -> set[int]:
-        """Work ids currently held by an active claim of *tier* in *release_id*.
+        """Work ids held by an active, UNEXPIRED claim of *tier* in *release_id*.
 
         What a runner asks before it builds a batch, so the common case is a clean
         claim rather than a rejected one. It is NOT the check that makes claiming
         safe — that check is inside the RPC, under a lock.
+
+        Expired claims are filtered out here for the same reason the RPC ignores
+        them: a run killed without ending its claim would otherwise subtract its
+        works from every later batch forever, and nothing would say so.
         """
         rows = self._get_paged("engine_claim_items", {
-            "select": "work_id,claim_id,engine_claims!inner(release_id,tier,status)",
+            "select": "work_id,claim_id,"
+                      "engine_claims!inner(release_id,tier,status,expires_at)",
             "engine_claims.status": "eq.active",
             "engine_claims.tier": f"eq.{tier}",
             "engine_claims.release_id": f"eq.{release_id}",
+            "engine_claims.expires_at": f"gt.{_now_iso()}",
         }, order="work_id.asc,claim_id.asc")
         return {int(r["work_id"]) for r in rows}
+
+    def claim_item_count(self, claim_id: str) -> int:
+        """How many works one claim holds, counted by the server.
+
+        A count rather than the rows: a claim can hold tens of thousands of items
+        and `release-claim` only needs to say how big the thing it is about to end
+        is. PostgREST reports it in `Content-Range` when asked for `count=exact`.
+        """
+        resp = requests.get(
+            f"{self.url}/rest/v1/engine_claim_items",
+            headers=self._headers({"Range-Unit": "items", "Range": "0-0",
+                                   "Prefer": "count=exact"}),
+            params={"select": "work_id", "claim_id": f"eq.{claim_id}"},
+            timeout=self.timeout)
+        if resp.status_code >= 400:
+            raise ClaimsError(f"engine_claim_items → HTTP {resp.status_code}: "
+                              f"{resp.text.strip()}")
+        total = (resp.headers.get("Content-Range") or "").split("/")[-1]
+        return int(total) if total.isdigit() else 0
 
     # ── verdicts ─────────────────────────────────────────────────────────────
 
@@ -307,8 +394,8 @@ class ClaimsClient:
         row order is not time order.
 
         `quote` is selected for the same kind of reason one step further on: it is
-        the first voter's justifying passage, and the handoff writes it onto the row
-        Stage 3 reads (`screen_evidence`), so a set-aside row still names the
+        that voter's justifying passage, and the handoff joins the pair's quotes onto
+        the row Stage 3 reads (`screen_evidence`), so a set-aside row still names the
         evidence the screen acted on.
         """
         rows = self._get_paged("engine_verdicts", {
@@ -392,6 +479,43 @@ class ClaimsClient:
         }
         result = self._post("engine_supersessions", row, prefer="return=representation")
         return _first(result)["id"]
+
+
+def _now_iso() -> str:
+    """Now, UTC, as PostgREST wants it in a filter value."""
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _lease_end() -> str:
+    """When a claim taken now stops blocking its works."""
+    return (datetime.datetime.now(datetime.timezone.utc)
+            + datetime.timedelta(hours=CLAIM_TTL_HOURS)).isoformat()
+
+
+def _missing_expiry(body: str) -> bool:
+    """Does this error body say the database predates migration 0004?
+
+    Two shapes: PostgREST cannot resolve `engine_claim_batch` with the lease
+    argument (`PGRST202`), or a read filtered on a column that is not there (the
+    message names `expires_at`).
+    """
+    return any(marker in body for marker in _MISSING_EXPIRY_MARKERS)
+
+
+def is_expired(claim: dict, now: Optional[datetime.datetime] = None) -> bool:
+    """Has this claim's lease run out? A claim with no lease never expires.
+
+    A missing `expires_at` means a row written before migration 0004 back-filled
+    the column, which the migration does — so this is a display-time courtesy, not
+    a path the engine claims under.
+    """
+    raw = claim.get("expires_at")
+    if not raw:
+        return False
+    stamp = datetime.datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=datetime.timezone.utc)
+    return stamp <= (now or datetime.datetime.now(datetime.timezone.utc))
 
 
 def _tier_of(path: str, body: str) -> str:

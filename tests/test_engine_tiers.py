@@ -516,6 +516,28 @@ def test_blobs_are_committed_in_batches_not_one_commit_each(con, pool, monkeypat
     assert len(marked) == 24
 
 
+def test_blobs_land_in_a_sharded_remote_folder(con, pool, monkeypatch):
+    """A full expensive-pile screen is ~9,300 blobs and Hugging Face asks for fewer
+    than 10k entries per folder, so the remote path is sharded on the hash's first
+    two characters. The on-disk layout stays flat."""
+    hub = _FakeHub()
+    hub.install(monkeypatch)
+    client = _client([])
+
+    patcher, _ = _cheap_votes("no", "no")
+    with patcher:
+        tiers.run_screen_cheap(con, client, RELEASE, pool_dir=pool, run=True)
+
+    committed = [name for commit in hub.commits for name in commit]
+    assert committed
+    for name in committed:
+        prefix, filename = name.removeprefix("responses/").split("/")
+        assert filename.endswith(".json") and filename.startswith(prefix)
+        assert len(prefix) == 2
+        # The blob itself is still flat on disk, where the reconciler looks for it.
+        assert (tiers.RESPONSES_DIR / filename).is_file()
+
+
 def test_a_failed_commit_never_says_uploaded(con, pool, monkeypatch):
     hub = _FakeHub(fail=True)
     hub.install(monkeypatch)
@@ -823,6 +845,36 @@ def test_screened_only_without_supabase_refuses(monkeypatch, tmp_path, capsys):
     assert "--as-routed" in str(exc.value)
 
 
+@pytest.mark.parametrize("out", [None, "elsewhere.csv"],
+                         ids=["default", "--out wins"])
+def test_as_routed_writes_its_own_file_not_the_screened_one(monkeypatch, tmp_path, out):
+    """The two modes write the same columns, so only the name says whether every row
+    in the file was screened. An as-routed run must not take the screened name."""
+    from filter.engine import cli
+    from filter.engine.claims import ClaimsNotConfigured
+
+    monkeypatch.setattr("filter.engine.claims.ClaimsClient",
+                        MagicMock(side_effect=ClaimsNotConfigured("SUPABASE_URL unset")))
+    monkeypatch.setattr(cli, "open_store", MagicMock())
+    monkeypatch.setattr(cli, "_resolve_release", lambda con, release: RELEASE)
+    monkeypatch.setattr(cli, "read_release", lambda release_id, cache_dir=None: {})
+    written: list = []
+    monkeypatch.setattr(
+        "filter.engine.handoff.write_handoff",
+        lambda con, pool, out_csv, release, **kw: written.append(out_csv) or {
+            "rows": 0, "rows_per_pile": {}, "dropped_by_tier_verdict": 0,
+            "typed_by_tier_verdict": 0, "skipped_unscreened": 0,
+            "screened_only": False, "release_id": RELEASE, "sha256": "0" * 8})
+
+    args = argparse.Namespace(store=tmp_path / "engine.duckdb", release=None,
+                              as_routed=True, out=out, pool=tmp_path,
+                              spec_dir=tmp_path, overlay=None, no_overlay=True,
+                              from_year=None, to_year=None)
+    assert cli.cmd_handoff(args) == 0
+    assert written == [Path(out or handoff_mod.HANDOFF_UNSCREENED_CSV)]
+    assert written[0] != Path(handoff_mod.HANDOFF_CSV)
+
+
 # ---------------------------------------------------------------------------
 # Stage 3's contract
 # ---------------------------------------------------------------------------
@@ -866,7 +918,7 @@ def test_the_screen_verdict_travels_to_stage_three_intact(con, pool, tmp_path,
         {"work_id": 11, "verdict": "replication", "model": voter1,
          "confidence": "confident", "quote": "we conducted a direct replication"},
         {"work_id": 11, "verdict": "both", "model": voter2,
-         "confidence": "unconfident"},
+         "confidence": "unconfident", "quote": "a partial re-analysis | study 2"},
     ])
     # The two descriptive fields the verdict table does not hold come from the
     # classify cache, which is content-complete and so provably this row's answer.
@@ -880,7 +932,11 @@ def test_the_screen_verdict_travels_to_stage_three_intact(con, pool, tmp_path,
     assert row["screen_verdict"] == "proceed"
     assert row["screen_record_type"] == "replication"
     assert row["screen_categories"] == "clearly_declared|other"
-    assert row["screen_evidence"] == "we conducted a direct replication"
+    # Both voters' quotes, attributed and " || "-joined: the gate is the pair's
+    # decision, and a quote may itself contain the "|" screen_votes joins on.
+    assert row["screen_evidence"] == (
+        f"{voter1}: we conducted a direct replication || "
+        f"{voter2}: a partial re-analysis | study 2")
     assert row["screen_votes"] == (f"{voter1}=replication/confident|"
                                    f"{voter2}=both/unconfident")
     # The type reaches Stage 3's paper-type field too.

@@ -1089,9 +1089,9 @@ class TestMergeMultiRow:
 # ── The gate's study-count bound ──────────────────────────────────────────────
 
 class TestStudyCountBound:
-    """3 ≤ N < 1900 — a captured year is not a study count. The count no longer
-    routes a row anywhere; it decides whether a deterministic ladder stage may END
-    the row (see link_original.may_stop_at_a_rule)."""
+    """2 ≤ N < 1900, in digits or spelled out — a captured year is not a study count.
+    The count no longer routes a row anywhere; it decides whether a deterministic
+    ladder stage may END the row (see link_original.may_stop_at_a_rule)."""
 
     def test_year_in_title_is_not_a_count(self):
         assert not link_original._study_count_stated("Replication of 2019 findings", "")
@@ -1107,8 +1107,17 @@ class TestStudyCountBound:
         assert link_original._study_count_stated(
             "A paper", "We replicated 28 classic studies across many labs.")
 
-    def test_a_count_below_the_minimum_is_not_stated(self):
-        assert not link_original._study_count_stated("Replication of 2 studies", "")
+    def test_two_is_a_count(self):
+        """Two originals is already one too many for a deterministic rung to settle,
+        so the minimum is 2 — in digits and spelled out alike."""
+        assert link_original._study_count_stated("Replication of 2 studies", "")
+        assert link_original._study_count_stated(
+            "A paper", "We replicate two classic studies.")
+        assert link_original._study_count_stated(
+            "A paper", "We report replications of three published findings.")
+
+    def test_one_is_not_a_count(self):
+        assert not link_original._study_count_stated("Replication of 1 study", "")
 
     def test_a_project_name_alone_is_not_a_count(self):
         """Many labs replicating ONE original is one target — the old rule read the

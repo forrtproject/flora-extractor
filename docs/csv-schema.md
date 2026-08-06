@@ -73,7 +73,7 @@ The screen verdict (`SCREEN_COLS` in `shared/schema.py`):
 | `screen_record_type` | string | `replication` \| `reproduction`, the screen's own answer (`both` already mapped to `replication`); blank when neither voter gave a qualifying label |
 | `screen_categories` | string | **Multi-valued**, \|-joined union of both voters' category labels. Blank when the classify cache the handoff read it from is not on that machine — it is descriptive and nothing decides on it |
 | `screen_votes` | string | \|-joined `<model>=<classification>/<confident\|unconfident>`, in call order. The per-voter detail Stage 3's pre-PDF title-search rung is gated on (both voters qualifying AND confident), which no summary of the gate preserves |
-| `screen_evidence` | string | The first voter's justifying quote |
+| `screen_evidence` | string | **Multi-valued**, every voter's justifying quote as `<model>: <quote>` segments joined by ` \|\| `, in call order. A quote is a verbatim sentence and may contain `\|`, so the separator is the doubled pipe `screen_votes` cannot contain. A voter that quoted nothing contributes no segment |
 | `screen_reasoning` | string | `<provider>: <reasoning>` per voter, ` \| `-joined. From the same cache as `screen_categories`, and blank on the same terms |
 
 The screen runs **once**, in Stage 2's `screen_expensive` tier, and Stage 3 reads

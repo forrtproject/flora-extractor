@@ -11,6 +11,7 @@ policy, machine-read by the export) and the `specs` CLI command (which prints th
 shipped bundle and nothing else).
 """
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -283,8 +284,12 @@ def test_route_then_export_runs_end_to_end_and_then_refuses_a_touched_bundle(
     assert list(_exported(out).columns) == ENGINE_EXPORTED_COLS
 
     # Editing the policy after routing invalidates the export, not just the specs.
-    (spec_dir / "conventions.json").write_text(
-        (spec_dir / "conventions.json").read_text() + "\n")
+    # It has to be a change of CONTENT: the bundle hash is canonical over parsed
+    # JSON, so appending a newline is deliberately not a new bundle.
+    conventions = spec_dir / "conventions.json"
+    policy = json.loads(conventions.read_text())
+    policy["piles"]["discard"]["filter_status"] = "renamed_by_the_test"
+    conventions.write_text(json.dumps(policy))
     with pytest.raises(SystemExit, match="routed under a different bundle"):
         cli.main(common + ["export", "--pile", "discard", "--out",
                            str(tmp_path / "stale.csv"), "--pool", str(pool),

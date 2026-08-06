@@ -21,18 +21,12 @@ def create_app(test_config: dict | None = None) -> Flask:
     if test_config:
         app.config.update(test_config)
 
-    # FLORA_READONLY=1 skips pipeline blueprints that require heavy deps
-    # (pdfminer, pymupdf, playwright). Used for read-only hosting deployments.
-    readonly = os.getenv("FLORA_READONLY", "").lower() in ("1", "true", "yes")
-
+    # The batch blueprint (unauthenticated endpoints that could trigger live
+    # extraction spend) is parked on the wip/batch-blueprint branch.
     from validate.routes.dashboard import dashboard_bp
     from validate.routes.check import check_bp
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(check_bp)
-
-    if not readonly:
-        from validate.routes.batch import batch_bp
-        app.register_blueprint(batch_bp)
 
     @app.route("/pdf/<path:filename>")
     def serve_pdf(filename: str):
