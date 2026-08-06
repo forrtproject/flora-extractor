@@ -206,10 +206,9 @@ def _resolve_by_title_pattern(
     Try to resolve the original study by matching the replication paper's title
     against candidate titles using Jaccard similarity.
 
-    Returns:
-      - dict with resolved=True when a single confident match exists
-      - dict with resolved=False when the match is not confident enough
-      - None when no pattern matches or no candidates score above minimum threshold
+    Returns the resolver dict when a single confident match exists, else None.
+    The caller only asks whether this rung resolved, so "no pattern in the title",
+    "no candidate close enough" and "close but not confident" are one answer.
     """
     target = _extract_title_target(study_r)
     if not target or not candidates:
@@ -225,26 +224,21 @@ def _resolve_by_title_pattern(
     best_score = jaccard_similarity(best.get("title", ""), target)
     sec_score  = jaccard_similarity(scored[1].get("title", ""), target) if len(scored) > 1 else 0.0
 
-    if best_score < 0.3:
+    if best_score < 0.4 or best_score < sec_score * 1.5:
         return None
 
-    base = _unresolved("needs_fulltext")
-
-    if best_score >= 0.4 and best_score >= sec_score * 1.5:
-        log.info("[%s] title_pattern resolved: %s (score=%.3f target=%r)",
-                 doi_r, best.get("doi"), best_score, target)
-        return {
-            **base,
-            "resolved":          True,
-            "resolution_method": "title_pattern_match",
-            "resolved_doi_o":    best.get("doi", ""),
-            "resolved_title_o":  best.get("title", ""),
-            "resolved_year_o":   best.get("year"),
-            "resolved_author_o": best.get("first_author", ""),
-            "resolution_score":  round(best_score, 4),
-        }
-
-    return base
+    log.info("[%s] title_pattern resolved: %s (score=%.3f target=%r)",
+             doi_r, best.get("doi"), best_score, target)
+    return {
+        **_unresolved("needs_fulltext"),
+        "resolved":          True,
+        "resolution_method": "title_pattern_match",
+        "resolved_doi_o":    best.get("doi", ""),
+        "resolved_title_o":  best.get("title", ""),
+        "resolved_year_o":   best.get("year"),
+        "resolved_author_o": best.get("first_author", ""),
+        "resolution_score":  round(best_score, 4),
+    }
 
 
 def _extract_cit_contexts(text: str) -> list[dict]:
