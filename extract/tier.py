@@ -247,14 +247,19 @@ def _judge(work: Work) -> tuple[str, list[dict]]:
 
     token_counter.set_stage("extract_tier")
     row = pd.Series(work.row)
+    # The same pre-step the CSV runner does: a pool row admitted on its OpenAlex
+    # id may carry a repository URL instead of a DOI, and everything below keys
+    # on the DOI. The resolved value lands in the row, so the payload's input
+    # snapshot records what the ladder actually ran with.
+    row, doi_r = rx._resolve_missing_doi(row, work.doi)
     observed: dict = {}
-    rows = rx._process_row(row, work.doi, no_llm=False, no_pdf=False,
+    rows = rx._process_row(row, doi_r, no_llm=False, no_pdf=False,
                            no_reproductions=False, resolved_only=False,
                            recalibrate_outcomes=False, screen_here=False,
                            observed=observed)
     final = [rx._finalise_row(r) for r in rows]
 
-    payload = result_payload(work.row, work.doi, final, observed)
+    payload = result_payload(row.to_dict(), doi_r, final, observed)
     verdict = _verdict_for(final, observed)
     result_row = {
         "verdict": verdict,
@@ -487,16 +492,27 @@ def _decide(rows: list[dict]) -> dict:
             "row": latest, "record_type": "", "votes": []}
 
 
-def settled_work_ids(client: ClaimsClient) -> set[int]:
-    """Works whose latest current-generation result row SETTLES them — the checkpoint.
+def settled_work_ids(client: ClaimsClient, mode: str = "live") -> set[int]:
+    """Works whose latest current-generation *mode* result row SETTLES them.
 
     `target_pending` and `api_error` are excluded on purpose: they are the two
     endings a re-run is meant to redo (`UNSETTLING_VERDICTS`).
-    """
-    from filter.engine.tiers import checkpoint_decisions
 
-    return {work for work, decision in checkpoint_decisions(client, TIER_EXTRACT).items()
-            if decision.get("settles")}
+    The mode filter is what makes the sandbox promotable: a validation-mode
+    shadow verdict must NOT settle the live worklist, or the work never gets the
+    live verdict the export reads and silently vanishes from `extracted.csv`.
+    Re-running it live is the promotion, and it is near-free on cached calls —
+    but only if the worklist still offers the work.
+    """
+    from filter.engine.tiers import _by_work
+
+    claims = client.claims(tier=TIER_EXTRACT)
+    generations = {c["id"]: (c.get("meta") or {}).get("generation") for c in claims}
+    in_mode = {c["id"] for c in claims
+               if ((c.get("meta") or {}).get("mode") or "live") == mode}
+    rows = [r for r in client.verdicts(TIER_EXTRACT) if r.get("claim_id") in in_mode]
+    return {work for work, rows_ in _by_work(TIER_EXTRACT, rows, generations).items()
+            if _decide(rows_).get("settles")}
 
 
 # ---------------------------------------------------------------------------
@@ -507,6 +523,7 @@ def settled_work_ids(client: ClaimsClient) -> set[int]:
 def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
                   release_id: str, *, only: Optional[Iterable[int]] = None,
                   limit: Optional[int] = None,
+                  mode: str = "live",
                   spec_dir: Path = SPEC_DIR,
                   overlay_dir: Optional[Path] = None,
                   aliases: Optional[dict[int, int]] = None,
@@ -548,7 +565,7 @@ def extract_works(con, client: Optional[ClaimsClient], pool_dir: Path,
     if client is not None:
         drop, screen = decisions(client)
         held = (client.claimed_work_ids(release_id, TIER_EXTRACT)
-                | (settled_work_ids(client) - reopen))
+                | (settled_work_ids(client, mode) - reopen))
 
     flora = _flora_skip_dois(data_dir)
     validated_ids, validated_dois = _load_validated_skip(data_dir / VALIDATED_SKIP_NAME)
@@ -819,7 +836,7 @@ def run_extract_tier(con, client: Optional[ClaimsClient], release_id: str, *,
     campaign costs, not what its first 200 rows cost.
     """
     works = extract_works(con, client, pool_dir, release_id, only=only, limit=limit,
-                          spec_dir=spec_dir, overlay_dir=overlay_dir,
+                          mode=mode, spec_dir=spec_dir, overlay_dir=overlay_dir,
                           aliases=aliases, record=record, redo=redo)
     if not run:
         print(render_estimate(estimate(works)))
@@ -857,7 +874,7 @@ def run_extract_tier(con, client: Optional[ClaimsClient], release_id: str, *,
             break
         remaining = None if limit is None else limit - done
         works = extract_works(con, client, pool_dir, release_id, only=only,
-                              limit=remaining, spec_dir=spec_dir,
+                              limit=remaining, mode=mode, spec_dir=spec_dir,
                               overlay_dir=overlay_dir, aliases=aliases,
                               record=record, redo=redo)
 

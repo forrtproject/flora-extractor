@@ -225,7 +225,7 @@ def _run_worklist(monkeypatch, *, rows, screen, drop=frozenset(),
     monkeypatch.setattr(tier_mod, "iter_export_rows",
                         lambda *a, **k: iter(rows))
     monkeypatch.setattr(tier_mod, "decisions", lambda c: (set(drop), screen))
-    monkeypatch.setattr(tier_mod, "settled_work_ids", lambda c: set(settled))
+    monkeypatch.setattr(tier_mod, "settled_work_ids", lambda c, mode="live": set(settled))
     monkeypatch.setattr(tier_mod, "screen_columns", lambda row, decision: {})
     monkeypatch.setattr(tier_mod, "_flora_skip_dois", lambda d: set())
     monkeypatch.setattr(tier_mod, "_load_validated_skip", lambda p: (set(), set()))
@@ -267,7 +267,7 @@ def test_the_flora_and_validation_skip_lists_are_honoured(monkeypatch):
                         lambda *a, **k: iter(_export_rows(1, 2, 3)))
     monkeypatch.setattr(tier_mod, "decisions",
                         lambda c: (set(), {1: _PROCEED, 2: _PROCEED, 3: _PROCEED}))
-    monkeypatch.setattr(tier_mod, "settled_work_ids", lambda c: set())
+    monkeypatch.setattr(tier_mod, "settled_work_ids", lambda c, mode="live": set())
     monkeypatch.setattr(tier_mod, "screen_columns", lambda row, decision: {})
     monkeypatch.setattr(tier_mod, "_flora_skip_dois", lambda d: {"10.1000/w1"})
     monkeypatch.setattr(tier_mod, "_load_validated_skip",
@@ -371,3 +371,26 @@ def test_the_measured_rung_reach_sums_to_one():
     """The shares are a distribution over where a row stops, so they must partition
     the rows. Measured off data/extracted.csv; re-measured from run reports."""
     assert sum(tier_mod.EXTRACT_RUNG_REACH.values()) == pytest.approx(1.0, abs=0.001)
+
+
+def test_validation_verdicts_do_not_settle_the_live_worklist():
+    """A shadow run must leave its works claimable live — that IS the promotion path."""
+    from unittest.mock import MagicMock, patch
+    import extract.tier as tier_mod
+
+    live_claim = {"id": "c-live", "meta": {"mode": "live",
+                                          "generation": tier_mod.extract_generation()}}
+    val_claim = {"id": "c-val", "meta": {"mode": "validation",
+                                         "generation": tier_mod.extract_generation()}}
+    rows = [
+        {"claim_id": "c-live", "work_id": 1, "verdict": "resolved",
+         "created_at": "2026-08-06T00:00:00Z", "id": "v1"},
+        {"claim_id": "c-val", "work_id": 2, "verdict": "resolved",
+         "created_at": "2026-08-06T00:00:00Z", "id": "v2"},
+    ]
+    client = MagicMock()
+    client.claims.return_value = [live_claim, val_claim]
+    client.verdicts.return_value = rows
+
+    assert tier_mod.settled_work_ids(client, "live") == {1}
+    assert tier_mod.settled_work_ids(client, "validation") == {2}

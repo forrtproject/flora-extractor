@@ -2304,6 +2304,34 @@ def _should_skip(row: pd.Series, row_key: str, doi_r_clean: str,
     return None
 
 
+def _resolve_missing_doi(row: pd.Series, doi_r: str) -> "tuple[pd.Series, str]":
+    """A DOI for a row that arrived without one, resolved from its URL.
+
+    Pool rows are admitted on their OpenAlex id, and 416 of the 2026-08-05
+    handoff's 1,614 rows carry no DOI — repository handles and working-paper URLs
+    instead. Everything below (candidate lookups, PDF acquisition, the caches, the
+    self-link guard) keys on the DOI, so a resolvable one is worth one lookup
+    before the row is processed. Both runners go through here: the CSV runner
+    (`_run_row`) and the extract tier's judge, which otherwise skipped it and sent
+    blank-DOI rows down the whole ladder.
+    """
+    if doi_r:
+        return row, doi_r
+    url_r = str(row.get("url_r", "") or "").strip()
+    if not url_r:
+        return row, doi_r
+    from shared.openalex_client import resolve_doi_from_url
+    resolved = resolve_doi_from_url(url_r)
+    if resolved:
+        log.info("[url:%s] resolved DOI %s — using for extraction", url_r[:60], resolved)
+        row = row.copy()
+        row["doi_r"] = resolved
+        return row, resolved
+    log.info("[url:%s] could not resolve DOI — will extract from URL/abstract only",
+             url_r[:60])
+    return row, doi_r
+
+
 def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
                  no_reproductions: bool,
                  resolved_only: bool, recalibrate_outcomes: bool,
@@ -2556,21 +2584,7 @@ def run_extract(no_llm: bool = False,
             return
         row_key = _extract_row_key(row)
 
-        # If DOI is missing, try to resolve one from the URL before processing.
-        # This lets I4R / Replication Network rows participate in the full pipeline.
-        doi_r = doi_r_clean
-        if not doi_r:
-            url_r = str(row.get("url_r", "") or "").strip()
-            if url_r:
-                from shared.openalex_client import resolve_doi_from_url
-                resolved = resolve_doi_from_url(url_r)
-                if resolved:
-                    log.info("[url:%s] resolved DOI %s — using for extraction", url_r[:60], resolved)
-                    doi_r = resolved
-                    row = row.copy()
-                    row["doi_r"] = doi_r
-                else:
-                    log.info("[url:%s] could not resolve DOI — will extract from URL/abstract only", url_r[:60])
+        row, doi_r = _resolve_missing_doi(row, doi_r_clean)
 
         result_rows = _process_row(
             row, doi_r, no_llm=no_llm, no_pdf=no_pdf,
