@@ -14,6 +14,7 @@ path is monkeypatched into tmp_path.
 import json
 import sys
 import types
+from pathlib import Path
 
 import pandas as pd
 import pyarrow as pa
@@ -748,6 +749,176 @@ def test_rescanning_a_partition_overwrites_its_pool_file(snap_env):
 
     assert len(list(pool.glob("*.parquet"))) == 1
     assert len(pd.read_parquet(pool)) == len(first) == 4
+
+
+# ---------------------------------------------------------------------------
+# Pool fingerprint (the release id's pool input)
+# ---------------------------------------------------------------------------
+
+
+def _pool_with(dirpath, files: dict[str, list[dict]]):
+    """A pool directory holding *files*: {name -> records}."""
+    dirpath.mkdir(parents=True, exist_ok=True)
+    for name, records in files.items():
+        _write_parquet(dirpath / name, records)
+    return dirpath
+
+
+def test_pool_fingerprint_moves_with_size_rows_membership_and_the_gate(tmp_path,
+                                                                      monkeypatch):
+    """Everything the fingerprint claims about a pool must be able to move it: the
+    bytes of a file, the rows inside it, which files are there, and the gate the
+    rows were admitted under."""
+    pool = _pool_with(tmp_path / "pool", {"part-2019-01-01-a.parquet": _POOL_RECORDS})
+    baseline = ss.pool_fingerprint(pool)
+    assert baseline and baseline != ss.pool_fingerprint(tmp_path / "empty")
+
+    # Same row count, more bytes.
+    _write_parquet(pool / "part-2019-01-01-a.parquet",
+                   [dict(r, title=r["title"] + " " * 500) for r in _POOL_RECORDS])
+    bigger = ss.pool_fingerprint(pool)
+    assert bigger != baseline
+
+    # Fewer rows in the same file.
+    _write_parquet(pool / "part-2019-01-01-a.parquet", _POOL_RECORDS[:2])
+    shorter = ss.pool_fingerprint(pool)
+    assert shorter not in (baseline, bigger)
+
+    # A file added, then removed again.
+    _write_parquet(pool / "part-2019-01-02-b.parquet", _POOL_RECORDS[:2])
+    with_two = ss.pool_fingerprint(pool)
+    assert with_two != shorter
+    (pool / "part-2019-01-02-b.parquet").unlink()
+    assert ss.pool_fingerprint(pool) == shorter
+
+    # The gate the surviving rows were admitted under, as the sidecar records it.
+    ss.write_pool_provenance(pool, "gate-one", 1, "test")
+    stamped = ss.pool_fingerprint(pool)
+    assert stamped != shorter, "an unstamped pool and a gated one are not the same pool"
+    ss.write_pool_provenance(pool, "gate-two", 1, "test")
+    assert ss.pool_fingerprint(pool) != stamped
+
+
+def test_pool_fingerprint_does_not_depend_on_directory_order(tmp_path, monkeypatch):
+    """Files are hashed sorted by name, so the order the filesystem happens to list
+    them in cannot mint a new release id for an unchanged pool."""
+    pool = _pool_with(tmp_path / "pool", {"part-2019-01-01-a.parquet": _POOL_RECORDS,
+                                          "part-2019-01-02-b.parquet": _POOL_RECORDS[:2],
+                                          "part-2020-01-01-c.parquet": _POOL_RECORDS[:1]})
+    forwards = ss.pool_fingerprint(pool)
+
+    real_glob = Path.glob
+    monkeypatch.setattr(Path, "glob",
+                        lambda self, pat: reversed(list(real_glob(self, pat))))
+    assert ss.pool_fingerprint(pool) == forwards
+
+
+def test_no_pool_is_no_fingerprint(tmp_path):
+    """A missing or empty pool directory yields None — an empty file list must never
+    hash into a real-looking digest, which is exactly the ledger bug this replaced."""
+    assert ss.pool_fingerprint(tmp_path / "missing") is None
+    (tmp_path / "empty").mkdir()
+    assert ss.pool_fingerprint(tmp_path / "empty") is None
+
+
+def test_the_recorded_gate_is_hashed_not_this_checkout_s(tmp_path, monkeypatch, caplog):
+    """A shared pool must fingerprint the same on every machine that reads it: the
+    gate in the payload is the one the pool's rows were ADMITTED under, which the
+    sidecar records, never the one the local checkout happens to compute."""
+    pool = _pool_with(tmp_path / "pool", {"part-2019-01-01-a.parquet": _POOL_RECORDS})
+    ss.write_pool_provenance(pool, "gate-of-the-scanner", 1, "pull:me/pool")
+
+    here = ss.pool_fingerprint(pool)
+    with caplog.at_level("WARNING"):
+        monkeypatch.setattr(ss, "search_gate_fingerprint", lambda: "a-quite-different-gate")
+        there = ss.pool_fingerprint(pool)
+
+    assert there == here, "the release id must not move with the reader's own gate"
+    assert "DIFFERENT search gate" in caplog.text, "and the difference must be visible"
+
+
+def test_an_unstamped_pool_does_not_borrow_the_local_gate(tmp_path, monkeypatch, caplog):
+    """Every pool that exists today is unstamped. It still routes — refusing would
+    strand all of them — but its gate goes into the payload as UNKNOWN: attributing
+    it to this checkout is the precise mislabelling the gate was included to stop."""
+    pool = _pool_with(tmp_path / "pool", {"part-2019-01-01-a.parquet": _POOL_RECORDS})
+
+    with caplog.at_level("WARNING"):
+        unstamped = ss.pool_fingerprint(pool)
+    assert unstamped and "--stamp-pool" in caplog.text
+
+    # Not the local gate's value, and it does not move when the local gate does.
+    monkeypatch.setattr(ss, "search_gate_fingerprint", lambda: "some-other-checkout")
+    assert ss.pool_fingerprint(pool) == unstamped
+    monkeypatch.undo()
+    ss.write_pool_provenance(pool, ss.search_gate_fingerprint(), 1, "stamp:local")
+    assert ss.pool_fingerprint(pool) != unstamped, \
+        "'unknown gate' and 'this gate' must be different claims"
+
+
+def test_a_pool_short_of_its_expected_file_count_has_no_fingerprint(tmp_path, caplog):
+    """An interrupted pull leaves valid parquet files that are a fraction of the
+    corpus. Fingerprinting them would let routing checkpoint that fraction as a
+    definitive release, so a short pool is unfingerprintable, not merely noted."""
+    pool = _pool_with(tmp_path / "pool", {"part-2019-01-01-a.parquet": _POOL_RECORDS,
+                                          "part-2019-01-02-b.parquet": _POOL_RECORDS})
+    ss.write_pool_provenance(pool, "gate-x", 5, "pull:me/pool")
+
+    with caplog.at_level("ERROR"):
+        assert ss.pool_fingerprint(pool) is None
+    assert "PARTIAL" in caplog.text and "2 parquet file(s) present, 5 expected" in caplog.text
+
+    # More files than expected is not a short pool (a --years pull into a fuller one).
+    ss.write_pool_provenance(pool, "gate-x", 1, "pull:me/pool")
+    assert ss.pool_fingerprint(pool)
+
+
+def test_a_scan_stamps_the_pool_it_wrote(snap_env):
+    """The scan is the one place that knows the gate authoritatively — it just
+    applied it — so it records it beside the pool rather than leaving the pool to be
+    described by whatever checkout reads it next."""
+    parquet = _write_parquet(snap_env.tmp / "part_0000.parquet", _POOL_RECORDS)
+    pool = snap_env.tmp / "pool"
+
+    ss.scan_snapshot(files=[parquet], survivor_pool=pool)
+
+    record = ss.read_pool_provenance(pool)
+    assert record["search_gate_fingerprint"] == ss.search_gate_fingerprint()
+    assert record["expected_files"] == 1 and record["source"] == "scan"
+
+    # The sidecar must be invisible to both ways a pool is read: the `*.parquet`
+    # glob every reader in the project uses, and whole-directory dataset discovery
+    # (which is why the name is underscore-prefixed).
+    assert ss.POOL_PROVENANCE not in {p.name for p in pool.glob("*.parquet")}
+    assert len(pd.read_parquet(pool)) == 4
+
+
+def test_stamping_refuses_to_guess_the_gate(snap_env, monkeypatch):
+    """A wrong stamp is worse than none: it would make a mislabelled release id look
+    authoritative. With no ledger to read the gate from, stamping refuses and says
+    where the value can be got."""
+    pool = _pool_with(snap_env.tmp / "pool", {"part-2019-01-01-a.parquet": _POOL_RECORDS})
+    assert not snap_env.ledger.exists()
+
+    with pytest.raises(RuntimeError, match="will not guess"):
+        ss.stamp_pool(pool)
+    assert ss.read_pool_provenance(pool) is None
+
+    # Explicitly given — the value from the remote pool_manifest.json.
+    ss.stamp_pool(pool, gate="theirs-abc")
+    assert ss.read_pool_provenance(pool) == {
+        "search_gate_fingerprint": "theirs-abc", "expected_files": 1,
+        "source": "stamp:manual", "recorded_at": ss.read_pool_provenance(pool)["recorded_at"]}
+
+    # A ledger that names a gate is authority enough on a machine that scanned.
+    ss.save_ledger({"snapshot_date": "", ss._GATE_KEY: "ledger-gate", "files": {}})
+    ss.stamp_pool(pool)
+    assert ss.read_pool_provenance(pool)["search_gate_fingerprint"] == "ledger-gate"
+
+    # And an empty pool is nothing to stamp.
+    (snap_env.tmp / "bare").mkdir()
+    with pytest.raises(RuntimeError, match="nothing to stamp"):
+        ss.stamp_pool(snap_env.tmp / "bare")
 
 
 # ---------------------------------------------------------------------------

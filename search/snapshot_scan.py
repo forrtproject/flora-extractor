@@ -29,6 +29,14 @@ every downstream decision is a local re-run over the pool rather than a 13-21 ho
 rescan. Only a change to the gate itself (``_TOKEN_GATE`` or ``CONCEPT_IDS``) is
 expensive after this — see ``search_gate_fingerprint``.
 
+Beside the parquet sits ``_pool_provenance.json`` (``POOL_PROVENANCE``): the search
+gate the pool's rows were ADMITTED under, the file count that completes the pool,
+and where both came from. It is what ``pool_fingerprint`` hashes into a Stage 2
+release id, so a pool shared between machines is named by its own gate rather than
+by whichever checkout reads it, and an interrupted transfer is visibly short
+instead of fingerprintable. Written by this scan and by ``pool_sync --pull``; an
+older pool is stamped in place with ``--stamp-pool``.
+
 Pool columns (``_POOL_SCHEMA``): the identity/metadata needed to rebuild a
 candidate row without the snapshot — ``id``, ``doi``, ``title``,
 ``display_name``, ``publication_year``, ``type``, plus ``authorships``,
@@ -253,6 +261,150 @@ def ledger_hash(ledger: dict) -> str:
     files = ledger.get("files", {}) or {}
     parts = [f"{url}\t{(files.get(url) or {}).get('content_length')}" for url in sorted(files)]
     return _fingerprint(parts)
+
+
+# The pool's provenance sidecar. Deliberately NOT `part-*.parquet` and not even
+# `*.parquet`, because every pool reader in the project globs `*.parquet` over this
+# same directory (pool_reader, store, overlay, diagnostics, dashboard_cache,
+# pool_sync, the analysis scripts) — a sidecar those globs could see would be fed
+# to pyarrow as pool data. The leading underscore covers the OTHER way a pool gets
+# read: pyarrow/pandas dataset discovery (`pd.read_parquet(pool_dir)`, as the live
+# test and any ad-hoc look do) ignores `_`- and `.`-prefixed entries, so the whole
+# directory still opens as one dataset.
+POOL_PROVENANCE = "_pool_provenance.json"
+
+
+def read_pool_provenance(pool_dir: Optional[Path] = None) -> Optional[dict]:
+    """The pool's provenance sidecar, or None when the pool is unstamped.
+
+    A sidecar that exists but cannot be read is a hard error rather than "no
+    sidecar": it is the only record of which gate the pool's rows were admitted
+    under, and treating a damaged one as absence is exactly the silent
+    substitution the sidecar exists to prevent.
+    """
+    pool_dir = SNAPSHOT_POOL_DIR if pool_dir is None else Path(pool_dir)
+    path = pool_dir / POOL_PROVENANCE
+    if not path.exists():
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            record = json.load(f)
+    except Exception as exc:  # noqa: BLE001 — unreadable local state, reported not guessed
+        raise RuntimeError(
+            f"The pool provenance sidecar at {path} exists but cannot be read ({exc}). "
+            "It names the search gate this pool's rows were admitted under, so this run "
+            "will not guess. Restore it, or delete it and re-stamp with "
+            "`python -m search.snapshot_scan --stamp-pool`.") from exc
+    if not isinstance(record, dict):
+        raise RuntimeError(f"The pool provenance sidecar at {path} is not a JSON object.")
+    return record
+
+
+def write_pool_provenance(pool_dir: Path, gate: Optional[str], expected_files: int,
+                          source: str) -> Path:
+    """Record what a pool is: its gate, how many parquet files complete it, whence.
+
+    *gate* is the fingerprint the pool's rows were ADMITTED under — from the local
+    ledger for a scan, from the remote manifest's ``stage_a_fingerprint`` for a
+    pull. It is never ``search_gate_fingerprint()`` "because that is what this
+    checkout computes"; a checkout's gate says nothing about rows it did not admit.
+    """
+    pool_dir.mkdir(parents=True, exist_ok=True)
+    record = {
+        "search_gate_fingerprint": gate,
+        "expected_files": int(expected_files),
+        "source": source,
+        "recorded_at": datetime.datetime.now(
+            datetime.timezone.utc).isoformat(timespec="seconds"),
+    }
+    path = pool_dir / POOL_PROVENANCE
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=1)
+    tmp.replace(path)
+    return path
+
+
+def pool_fingerprint(pool_dir: Optional[Path] = None) -> Optional[str]:
+    """Stable hash of the survivor POOL — the artifact downstream stages consume.
+
+    The ledger records one machine's scan; a pool obtained through
+    ``pool_sync --pull`` has no ledger at all, so ``ledger_hash`` cannot name what
+    a routing run read. This hashes the pool directory instead: the search gate the
+    rows were ADMITTED under — read from the provenance sidecar, never from this
+    checkout — plus every parquet as ``(filename, size_bytes, num_rows)`` sorted by
+    name, so the value does not move with directory order. Row counts come from the
+    parquet footer, which costs about 0.4 s over the real 2,232-file pool — cheap
+    enough to recompute per route, and cheaper than a cache that can drift.
+
+    Three states the sidecar decides:
+
+    * **absent** — the gate enters the payload as ``null``. Not the local gate: a
+      pool pulled from a differently-gated repo would then be silently attributed
+      to this checkout, which is the mislabelling the gate was included to prevent.
+      ``null`` collides with no real fingerprint, so stamping the pool later mints
+      a new release id rather than retroactively re-describing an old one. Routing
+      is still possible, because refusing would strand every pool in existence.
+    * **short file count** — fewer parquet files than the sidecar says complete
+      this pool: returns ``None`` (the caller routes under ``unmanifested``) rather
+      than fingerprinting an interrupted transfer as though it were a pool.
+    * **another gate** — legitimate (sharing a pool is the point) and reported, and
+      the RECORDED gate is what is hashed, so the same pool fingerprints the same
+      on every checkout.
+
+    Known limitation, accepted deliberately: size and row count do not determine
+    file CONTENTS, so a parquet rewritten to the same size with the same number of
+    rows fingerprints unchanged. Hashing 7.6 GB of pool content on every route is
+    not worth that case, and this is already strictly stronger than the
+    ``content_length``-only ledger hash it replaced.
+
+    Returns ``None`` when there is no pool (missing or empty directory): an empty
+    file list must not hash into a real-looking digest.
+    """
+    pool_dir = SNAPSHOT_POOL_DIR if pool_dir is None else Path(pool_dir)
+    files = sorted(pool_dir.glob("*.parquet")) if pool_dir.is_dir() else []
+    if not files:
+        return None
+
+    provenance = read_pool_provenance(pool_dir)
+    gate: Optional[str] = None
+    if provenance is None:
+        log.warning(
+            "The pool at %s carries no %s, so the release id cannot say which search "
+            "gate admitted its rows — it will record the gate as UNKNOWN rather than "
+            "assume this checkout's (%s). Stamp it with `python -m search.snapshot_scan "
+            "--stamp-pool` (it reads the local ledger) or `--stamp-pool --gate <fingerprint>`.",
+            pool_dir, POOL_PROVENANCE, search_gate_fingerprint()[:12])
+    else:
+        expected = provenance.get("expected_files")
+        if isinstance(expected, int) and len(files) < expected:
+            log.error(
+                "The pool at %s looks PARTIAL: %d parquet file(s) present, %d expected "
+                "by %s (source %s). Routing it would checkpoint a fraction of the corpus "
+                "as a definitive release, so it has no fingerprint. Complete it with "
+                "`python -m search.pool_sync --pull` (it resumes) or, if this subset is "
+                "deliberate, re-stamp with `python -m search.snapshot_scan --stamp-pool`.",
+                pool_dir, len(files), expected, POOL_PROVENANCE,
+                provenance.get("source") or "?")
+            return None
+        gate = provenance.get("search_gate_fingerprint") or None
+        if gate is None:
+            log.warning("The %s at %s records no search gate — the release id will say "
+                        "UNKNOWN.", POOL_PROVENANCE, pool_dir)
+        elif gate != search_gate_fingerprint():
+            log.warning(
+                "The pool at %s was admitted under a DIFFERENT search gate (pool %s, this "
+                "checkout %s, source %s). That is legitimate — sharing a pool is the point "
+                "— and the release id names the POOL's gate, not this checkout's.",
+                pool_dir, str(gate)[:12], search_gate_fingerprint()[:12],
+                provenance.get("source") or "?")
+
+    payload = {
+        "search_gate_fingerprint": gate,
+        "files": [[p.name, p.stat().st_size, pq.ParquetFile(p).metadata.num_rows]
+                  for p in files],
+    }
+    return _fingerprint([json.dumps(payload, sort_keys=True, separators=(",", ":"))])
 
 
 def load_ledger() -> dict:
@@ -827,6 +979,13 @@ def scan_snapshot(max_files: Optional[int] = None,
              counters["gate_concept"], counters["admitted"], counters["no_abstract"])
 
     if survivor_pool is not None:
+        # Stamped here because a scan is the one place that knows the gate its rows
+        # were admitted under authoritatively — it just applied it. The count is
+        # whatever this scan leaves complete; a later resumed scan raises it.
+        if survivor_pool.exists():
+            write_pool_provenance(
+                survivor_pool, ledger_gate_fingerprint(ledger) or search_gate_fingerprint(),
+                len(list(survivor_pool.glob("*.parquet"))), "scan")
         log.info("Snapshot survivor pool: %d rows, %.1f MB at %s (gate=%s)",
                  counters["pooled"], _pool_size_bytes(survivor_pool) / 1e6, survivor_pool,
                  search_gate_fingerprint()[:12])
@@ -916,8 +1075,16 @@ def scan_status(pool_dir: Optional[Path] = None) -> dict:
     eta_seconds = remaining_bytes / bytes_per_sec if bytes_per_sec > 0 and total_bytes else None
 
     pool_files = sorted(pool_dir.glob("*.parquet")) if pool_dir.exists() else []
+    try:
+        provenance = read_pool_provenance(pool_dir) or {}
+    except RuntimeError as exc:  # a damaged sidecar is a finding, not a crashed status
+        log.warning("%s", exc)
+        provenance = {}
 
     return {
+        "pool_gate": provenance.get("search_gate_fingerprint") or "",
+        "pool_expected_files": provenance.get("expected_files"),
+        "pool_provenance_source": provenance.get("source") or "",
         "files_done": len(done),
         "files_total": len(all_files),
         "files_in_flight": in_flight,
@@ -960,6 +1127,11 @@ def _print_status(status: dict) -> None:
     print(f"  rows admitted                         {status['rows_kept']:,}")
     print(f"  survivor pool                         {status['pool_files']:,} file(s), "
           f"{status['pool_bytes'] / 1e9:,.2f} GB  ({status['pool_dir']})")
+    expected = status["pool_expected_files"]
+    print(f"  pool provenance                       "
+          + (f"gate {status['pool_gate'][:12] or '—'}, {expected:,} file(s) expected "
+             f"({status['pool_provenance_source'] or '?'})" if expected is not None
+             else f"unstamped — run --stamp-pool to record which gate admitted these rows"))
     if status["files_in_flight"]:
         print(f"  file(s) mid-scan                      {len(status['files_in_flight'])} "
               f"({'/'.join(status['files_in_flight'][0].split('/')[-2:])})")
@@ -977,19 +1149,81 @@ def _print_status(status: dict) -> None:
     print(f"  this checkout                         {search_gate_fingerprint()[:12]}\n")
 
 
+def stamp_pool(pool_dir: Optional[Path] = None, gate: Optional[str] = None) -> dict:
+    """Write the provenance sidecar for a pool that already exists on disk.
+
+    Every pool created before the sidecar existed is unstamped, and re-scanning or
+    re-pulling one to stamp it costs hours. The gate comes from the local ledger, or
+    from *gate* given explicitly (``"local"`` means "I confirm this checkout's gate
+    admitted these rows"). With neither, this REFUSES: guessing the gate is the
+    failure the sidecar exists to prevent, and a wrong stamp is worse than none.
+    """
+    pool_dir = SNAPSHOT_POOL_DIR if pool_dir is None else Path(pool_dir)
+    files = sorted(pool_dir.glob("*.parquet")) if pool_dir.is_dir() else []
+    if not files:
+        raise RuntimeError(f"No pool parquet files under {pool_dir} — nothing to stamp.")
+
+    if gate == "local":
+        value, source = search_gate_fingerprint(), "stamp:local"
+    elif gate:
+        value, source = gate, "stamp:manual"
+    else:
+        # `load_ledger()` MANUFACTURES a fresh ledger carrying this checkout's gate
+        # when there is no file — reading that would be exactly the guess this
+        # refuses. Only a ledger that exists is an account of a scan.
+        value = ledger_gate_fingerprint(load_ledger()) if _LEDGER_PATH.exists() else None
+        source = "stamp:ledger"
+        if not value:
+            raise RuntimeError(
+                f"There is no scan ledger at {_LEDGER_PATH} naming a search gate, so this "
+                f"machine cannot say which gate admitted the rows in {pool_dir} — and it "
+                "will not guess. Pass the fingerprint explicitly: for a pulled pool it is "
+                "`stage_a_fingerprint` in the repo's pool_manifest.json "
+                "(--gate <fingerprint>); for a pool this checkout scanned itself, "
+                "--gate local.")
+
+    path = write_pool_provenance(pool_dir, value, len(files), source)
+    log.info("Stamped %s: gate %s (%s), %d file(s) expected", path, str(value)[:12],
+             source, len(files))
+    return {"path": str(path), "search_gate_fingerprint": value, "source": source,
+            "expected_files": len(files)}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Read-only progress report for the OpenAlex snapshot scan. Safe to "
                     "run at any time, including against a scan in flight — it reads the "
                     "ledger, the cached manifest and the pool directory, and writes "
                     "nothing. The scan itself is started from "
-                    "`python -m search.run_search --scan`.")
+                    "`python -m search.run_search --scan`. The one exception is "
+                    "--stamp-pool, which writes the pool's provenance sidecar.")
     parser.add_argument("--status", action="store_true",
-                        help="Print progress (the only action; implied when no flag is given).")
+                        help="Print progress (the default action).")
     parser.add_argument("--json", action="store_true", help="Emit the status as JSON.")
     parser.add_argument("--pool-dir", metavar="PATH", default=None,
                         help=f"Survivor pool directory (default: {SNAPSHOT_POOL_DIR}).")
+    parser.add_argument("--stamp-pool", action="store_true",
+                        help=f"Write {POOL_PROVENANCE} for an existing pool (the gate its "
+                             "rows were admitted under + the file count that completes "
+                             "it), without re-scanning or re-pulling. Uses the local "
+                             "ledger's gate; refuses when there is none unless --gate says.")
+    parser.add_argument("--gate", metavar="FINGERPRINT", default=None,
+                        help="--stamp-pool only: the search-gate fingerprint the pool's "
+                             "rows were admitted under (for a pulled pool: "
+                             "stage_a_fingerprint from the repo's pool_manifest.json), or "
+                             "the literal 'local' to claim this checkout's gate.")
     args = parser.parse_args()
+
+    if args.gate and not args.stamp_pool:
+        parser.error("--gate applies to --stamp-pool only")
+    if args.stamp_pool:
+        try:
+            record = stamp_pool(Path(args.pool_dir) if args.pool_dir else None, args.gate)
+        except RuntimeError as exc:  # an operator instruction, not a stack trace
+            raise SystemExit(str(exc))
+        print(f"Stamped {record['path']}: gate {str(record['search_gate_fingerprint'])[:12]} "
+              f"({record['source']}), {record['expected_files']} file(s)")
+        return
 
     status = scan_status(Path(args.pool_dir) if args.pool_dir else None)
     if args.json:

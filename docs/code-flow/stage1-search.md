@@ -164,7 +164,18 @@ python -m search.pool_sync --push / --pull        # the ~2-3 GB survivor pool it
 `pool_manifest.json` at the repo root records the search gate, snapshot date and
 ledger the pool was scanned under; pushing over a pool scanned under a *different*
 gate fingerprint is refused, because the mixture would be complete under neither
-gate and nothing downstream could tell. Runbook for the full scan:
+gate and nothing downstream could tell.
+
+Locally, the same facts live in `_pool_provenance.json` **inside the pool
+directory** — written by the scan (which knows the gate it just applied) and by
+`--pull` (from the remote manifest, the only authority for a pool this machine did
+not scan). It holds the gate fingerprint, the file count that completes the pool
+and where both came from, and it is what the Stage 2 release id hashes: the gate
+in a release id is the pool's, so a shared pool fingerprints the same everywhere,
+and a pool short of its file count is an interrupted transfer that gets no
+fingerprint at all. A pool from before the sidecar existed can be stamped in place
+with `python -m search.snapshot_scan --stamp-pool` (ledger, or `--gate` given
+explicitly — it never guesses). Runbook for the full scan:
 [aws-snapshot-scan.md](../aws-snapshot-scan.md).
 
 ---

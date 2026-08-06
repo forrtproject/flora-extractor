@@ -436,14 +436,24 @@ consequence is a required <code>route</code> re-run over 5.1M rows before Stage 
 lost — they are read across releases within a generation.</p>
 </div>
 
-<div class="item sev-high">
-<p><strong>W2 · A missing ledger silently produces a real-looking pool provenance hash.</strong></p>
-<p><code>pool_manifest_hash</code> falls back to the honest string <code>"unmanifested"</code> only on an
-<em>exception</em>. A missing <code>cache/snapshot/ledger.json</code> does not raise — it yields a fresh empty ledger,
-whose hash is the SHA-256 of the empty string. That is the actual state on this machine: the four newest releases all
-carry <code>e3b0c442…</code>. Two consequences: a push from here would advertise <code>ledger_files: 0</code>, and since
-<code>ledger_hash</code> covers only URL and content-length, <strong>the gate fingerprint is not part of the release id
-at all</strong> — a pool pulled from a differently-gated repo would route under an identically-shaped release.</p>
+<div class="item sev-low">
+<p><strong>W2 · Four stored releases record provenance that names nothing.</strong>
+<span class="tag t-green">cause fixed</span></p>
+<p>The release id's pool input used to be a hash of the scan <em>ledger</em> — one machine's account of a scan — rather
+than of the pool that routing actually consumes. A machine that obtained the pool by pulling has no ledger, and a
+missing ledger did not raise; it yielded an empty one, whose hash is the SHA-256 of the empty string. Four of the six
+stored releases still carry that value, <code>e3b0c442…</code>.</p>
+<p>The cause is fixed: the release now hashes the pool directory itself — every parquet file's name, size and row count,
+read from the footers (0.15 s over the real 2,232-file pool), plus the search gate those rows were <em>admitted</em>
+under, which the pool carries in a <code>_pool_provenance.json</code> sidecar written by the scan and by
+<code>pool_sync --pull</code>. Hashing the reading checkout's own gate would have re-created the mislabelling in
+another form, so the recorded value is the one that counts and a pool shared between machines fingerprints
+identically on both. The sidecar also names the file count that completes the pool, so an interrupted pull is
+<code>unmanifested</code> rather than a plausible hash of a fraction of the corpus; every pool that predates it —
+including the local one — routes with its gate recorded as explicitly unknown and a loud warning naming
+<code>--stamp-pool</code>. The scan ledger goes back to being purely a resume artifact, and the pushed remote manifest
+keeps its frozen format so pools already on Hugging Face still compare equal. <strong>The stale ids remain on disk
+until the next route re-mints them</strong>, which is the only reason this is still listed.</p>
 </div>
 
 <div class="item sev-med">
@@ -525,20 +535,16 @@ hash is what stops that from becoming staleness.</li>
 <!-- ============================================================ -->
 <h2 id="next">7 · Remaining work</h2>
 
-<h3>Before the pipeline runs again, in this order</h3>
+<h3>Before the pipeline runs again</h3>
 <ol>
-<li><strong>Settle the pool provenance first</strong> (W2) — before paying for a route, not after. A route run today
-would mint <em>another</em> release whose pool-manifest input is the hash of nothing, which is how the existing four
-came to carry <code>e3b0c442…</code>. At minimum make an absent ledger say <code>unmanifested</code> rather than
-hashing an empty dict; the larger question is whether the gate fingerprint belongs in the release id, which today it
-does not. If the decision is to proceed regardless, record explicitly that the new release is knowingly
-unmanifested.</li>
-<li><strong>Then re-route and re-hand-off</strong> (W1). <code>route</code> over the 5.1M-row pool, then
+<li><strong>Re-route and re-hand-off</strong> (W1). <code>route</code> over the 5.1M-row pool, then
 <code>screen --tier screen_expensive --run</code>, then <code>handoff</code>. Existing verdicts survive the new release
 — they are read across releases within a generation — so the cost is the routing pass, not the screening. Until this
-runs, Stage 3 has no valid input.</li>
-<li><strong>Decide the fate of <code>/batch</code></strong> (W5). It is the one open defect where the current safety
-rests on a missing file rather than on a control.</li>
+runs, Stage 3 has no valid input. The pool-provenance definition was deliberately corrected <em>before</em> this route
+rather than after (W2): the route is what mints release ids, so folding the change in costs nothing, while deferring it
+would have meant a second 5.1M-row pass.</li>
+<li><strong>Decide the fate of <code>/batch</code></strong> (W5). It is the open defect where the current safety rests
+on a missing file rather than on a control.</li>
 </ol>
 
 <h3>Open design questions, with the decision that is actually blocked</h3>

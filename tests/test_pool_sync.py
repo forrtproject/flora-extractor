@@ -12,6 +12,7 @@ store, so a push followed by a pull is a genuine round trip.
 """
 
 import json
+import shutil
 import sys
 import types
 from pathlib import Path
@@ -253,6 +254,25 @@ def test_push_records_the_gate_the_pool_was_scanned_under(tmp_path, monkeypatch)
     assert manifest["ledger_hash"] == ss.ledger_hash(ss.load_ledger())
 
 
+def test_the_remote_manifest_format_still_comes_from_the_ledger(tmp_path, monkeypatch):
+    """Regression: the release id stopped using `ledger_hash` and fingerprints the
+    pool directory instead. The REMOTE manifest must not have moved with it — pools
+    already pushed under these key names and values have to keep comparing equal, so
+    `ledger_hash` still hashes the ledger and ignores what is in the pool dir."""
+    pool = _pool(tmp_path, {"part-2019-01-01-part_0000.parquet": 10})
+    manifest = ps.pool_manifest()
+
+    assert set(manifest) == {"stage_a_fingerprint", "snapshot_date", "ledger_files",
+                             "ledger_records", "ledger_kept", "ledger_hash"}
+    assert manifest["stage_a_fingerprint"] == ss.search_gate_fingerprint()
+    assert manifest["ledger_hash"] == ss.ledger_hash(ss.load_ledger())
+
+    # Changing the pool on disk changes nothing in the manifest: it describes the scan.
+    (pool / "part-2019-01-01-part_0000.parquet").write_bytes(b"y" * 999)
+    (pool / "part-2020-01-01-part_0000.parquet").write_bytes(b"z" * 5)
+    assert ps.pool_manifest() == manifest
+
+
 def test_push_refuses_to_mix_two_search_gates(tmp_path, monkeypatch):
     """A pool half-scanned under each of two gates is complete under neither, and
     nothing downstream could see it — so this is the case that refuses."""
@@ -346,6 +366,46 @@ def test_pull_still_downloads_when_the_manifest_cannot_be_read(tmp_path, monkeyp
 
     assert n == 1
     assert "Could not read" in caplog.text
+
+
+def test_pull_records_the_remote_s_gate_and_file_count_beside_the_pool(tmp_path,
+                                                                       monkeypatch):
+    """For a pulled pool the REMOTE manifest is the only authority on which gate
+    admitted these rows — this machine has no ledger — and the file count is what
+    lets an interrupted pull be seen as partial instead of fingerprinted as whole."""
+    pool = tmp_path / "pool"
+    _fake_hub(monkeypatch, {"2019/part-2019-01-01-part_0000.parquet": 6,
+                            "2020/part-2020-01-01-part_0000.parquet": 8},
+              store=_remote_manifest("theirs"))
+
+    ps.pull_pool(pool, repo="me/pool")
+
+    assert ss.read_pool_provenance(pool) == {
+        "search_gate_fingerprint": "theirs", "expected_files": 2,
+        "source": "pull:me/pool",
+        "recorded_at": ss.read_pool_provenance(pool)["recorded_at"]}
+
+    # The sidecar goes down BEFORE the files, for the same reason the push writes its
+    # manifest first: what an interrupted pull leaves must be visibly short. (The
+    # fake's "parquet" is filler bytes, so this counts files rather than
+    # fingerprinting; `pool_fingerprint`'s own short-count behaviour is tested in
+    # tests/test_snapshot_scan.py.)
+    monkeypatch.setattr(ps, "_download_pool_files",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("connection reset")))
+    shutil.rmtree(pool)
+    with pytest.raises(RuntimeError, match="connection reset"):
+        ps.pull_pool(pool, repo="me/pool")
+    assert ss.read_pool_provenance(pool)["expected_files"] == 2
+    assert list(pool.glob("*.parquet")) == [], "interrupted: short, and it says so"
+
+
+def test_pull_dry_run_writes_no_sidecar(tmp_path, monkeypatch):
+    """A dry run reports; it must not leave a claim about a pool it did not fetch."""
+    pool = tmp_path / "pool"
+    _fake_hub(monkeypatch, {"2019/part-2019-01-01-part_0000.parquet": 6})
+
+    assert ps.pull_pool(pool, repo="me/pool", dry_run=True) == 1
+    assert ss.read_pool_provenance(pool) is None
 
 
 def test_auth_hint_names_the_token_only_for_auth_failures(monkeypatch):

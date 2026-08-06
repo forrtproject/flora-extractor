@@ -140,10 +140,32 @@ change to the search gate itself costs the full scan.
 python -m search.run_search --scan --survivor-pool cache/snapshot_pool
 
 # How far along is a running scan? Read-only, safe to run concurrently with it:
-# files/bytes/records consumed vs the manifest, rows kept, recent throughput, ETA.
+# files/bytes/records consumed vs the manifest, rows kept, recent throughput, ETA,
+# and the pool's provenance (below).
 python -m search.snapshot_scan --status
 python -m search.snapshot_scan --status --json
+
+# Stamp an existing pool that predates the sidecar, without re-scanning or
+# re-pulling. The gate comes from the local ledger; with no ledger it REFUSES
+# rather than guess, and the fingerprint must be given:
+python -m search.snapshot_scan --stamp-pool
+python -m search.snapshot_scan --stamp-pool --gate <fingerprint>   # from the remote manifest
+python -m search.snapshot_scan --stamp-pool --gate local           # "this checkout scanned it"
 ```
+
+**The pool's provenance sidecar** — `_pool_provenance.json`, written beside the
+parquet by the scan and by `pool_sync --pull`, and readable in `--status`. It
+records the search-gate fingerprint the pool's rows were **admitted** under, the
+file count that completes the pool, and where the value came from (`scan`,
+`pull:<repo>`, `stamp:…`). Two things depend on it, both in the routing release
+id (`filter.engine route`): the gate hashed into the id is the pool's, not the
+reading checkout's, so a shared pool fingerprints identically everywhere; and a
+pool with fewer files than the sidecar expects is an interrupted transfer, which
+routes under `unmanifested` instead of being fingerprinted as though complete. An
+**unstamped** pool still routes — refusing would strand every pool that exists —
+but its gate enters the id as *unknown* and every run says so loudly. The name is
+underscore-prefixed so neither the `*.parquet` globs nor pyarrow's dataset
+discovery ever sees it.
 
 There is no sample or pilot mode. To scan a few partitions for a look, run the
 same command against a scratch state directory — `FLORA_CACHE_DIR=/tmp/flora-sample
@@ -205,7 +227,11 @@ snapshot date and ledger the pool was scanned under. Pushing over a pool scanned
 under a **different** gate fingerprint is refused (`--force` overrides) — the
 mixture would be complete under neither gate and nothing downstream could tell.
 Pulling one only warns: taking a colleague's pool is legitimate, doing so
-unknowingly is not.
+unknowingly is not. A pull also copies that fingerprint into the local
+`_pool_provenance.json` — for a pulled pool the remote manifest is the only
+authority on which gate admitted these rows — and records how many files complete
+the pull *before* fetching any, so an interrupted transfer is visibly short rather
+than fingerprintable.
 
 The prebuilt-`candidates.csv` build commands (`--build-candidates`,
 `--push-build`, `--pull-build`) belonged to the admission-gated Stage 1 and are
@@ -336,7 +362,7 @@ python -m filter.engine status
 | Command | What it does |
 | ------- | ------------ |
 | `specs` | Lists the loaded bundle (id, pile, precedence, shadow, measurement levels), the bundle hash, the engine version and the export schema version. Fails loudly if any spec is invalid. |
-| `route` | Computes the routing release id from its six inputs, records the release, and streams the pool through the bundle into the store. Idempotent per release: re-running replaces that release's rows rather than duplicating them. |
+| `route` | Computes the routing release id from its six inputs, records the release, and streams the pool through the bundle into the store. Idempotent per release: re-running replaces that release's rows rather than duplicating them. The pool is fingerprinted again after the pass and the routing is rolled back if it moved — the reader re-reads the directory, so a file that arrives mid-route would otherwise be consumed by a release id that does not name it. |
 | `diagnose` | Routes the pool with and without `--spec` and reports rows moved per (pile without → pile with), overlap against every other rule (exclusive hits vs already-covered), a seeded readable sample, the holdout state and the spec's `measured` evidence. |
 | `export` | Writes one pile as `FILTERED_COLS` + `ENGINE_EXPORT_COLS`, `utf-8-sig`, plus `<out>.manifest.json` (release, pile, rows, sha256). `--pile pending` is refused, an existing manifest is never overwritten, and an export is refused outright when the spec bundle or alias file has changed since the release was routed — re-run `route` rather than looking for an override flag. `--pile needs_human` additionally prints the size of the queue it just wrote. |
 | `screen` | Runs one LLM tier (`--tier screen_cheap\|screen_expensive`) over that pile. **Dry run by default**: it prints the row count, the token-length distribution of the abstracts it would send and `N rows → tier X ≈ $Y`, and claims, fetches and spends nothing. `--run` claims the batch through the Supabase claims RPC *before* the first voter is asked, records one permanent verdict row per vote, and completes the claim; a claim conflict refuses without spending anything, and an exhausted token budget fails the claim and stops with the verdicts already written intact. |
@@ -358,8 +384,17 @@ saying which text it read. The overlay folds into the release id, so `export`,
 defaults to `cache/engine/engine.duckdb` and is **disposable** — deleting it costs
 a `route` and nothing else, because routing is a pure function of pool, specs,
 aliases and engine version. `route` takes the pool's provenance from
-`--pool-manifest-hash`, else the local snapshot ledger, else the literal
-`unmanifested` (an honest "unknown", not a claim about which pool this was).
+`--pool-manifest-hash`, else a fingerprint of the pool directory itself — the
+search gate its rows were admitted under, read from `_pool_provenance.json` and
+never from the local checkout, plus every parquet's name, size and footer row
+count. (Size and row count do not determine file *contents*; hashing 7.6 GB per
+route is not worth the case of a parquet rewritten to exactly the same size and
+row count, and this is already stronger than the `content_length`-only ledger
+hash it replaced.) A pool it cannot fingerprint — no parquet there, an unreadable
+directory, or fewer files than the sidecar says complete it — routes under the
+literal `unmanifested`, an honest "unknown" rather than a claim about which pool
+this was; since routing reads the pool, that value is an anomaly worth
+investigating, not a routine fallback.
 
 **`screen` modes.** `screen_cheap` runs in `validation` mode by default: its votes
 are recorded and its would-be discards are reported against the piles the rules

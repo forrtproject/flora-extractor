@@ -14,11 +14,13 @@ precedence, the shadow contract and the `no_text` downgrade are properties of
 asserted once, in the policy table of `tests/test_engine_spec.py`.
 """
 
+import argparse
 import json
 import unicodedata
 from pathlib import Path
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from filter.engine.backends import eval_spec_batch, eval_spec_rows, match_evidence
@@ -26,7 +28,8 @@ from filter.engine.release import read_release, routing_release, write_release
 from filter.engine.route import eval_all, route_batch
 from filter.engine.spec import FilterSpec, load_specs
 from filter.engine.workids import load_aliases, resolve, work_id
-from search.snapshot_scan import _POOL_SCHEMA
+from filter.engine import cli
+from search.snapshot_scan import _POOL_SCHEMA, pool_fingerprint, write_pool_provenance
 from tests import engine_bundle
 
 SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
@@ -373,6 +376,69 @@ def test_routing_release_is_stable_under_key_order_and_moves_with_any_input():
     for key in _INPUTS:
         changed = dict(_INPUTS, **{key: "changed"})
         assert routing_release(**changed) != baseline
+
+
+def test_the_release_names_the_pool_it_routed_and_says_so_when_it_cannot(tmp_path):
+    """The pool input is a fingerprint of the POOL, not of one machine's scan ledger
+    — a pulled pool has no ledger, and hashing that empty ledger gave every such
+    machine the same precise-looking hash of nothing. An unfingerprintable pool
+    says `unmanifested` instead."""
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    pq.write_table(pa.table({"work_id": pa.array([1, 2], pa.int64())}),
+                   pool / "part-2019-01-01-a.parquet")
+
+    assert cli._pool_manifest_hash(None, pool) == pool_fingerprint(pool)
+    assert cli._pool_manifest_hash(None, tmp_path / "missing") == cli.UNMANIFESTED
+    assert cli._pool_manifest_hash("given-by-hand", pool) == "given-by-hand"
+
+    # A pool short of the file count its provenance sidecar says completes it is an
+    # interrupted transfer, not a pool: it must not be named by a release id.
+    write_pool_provenance(pool, "some-gate", 4, "pull:me/pool")
+    assert cli._pool_manifest_hash(None, pool) == cli.UNMANIFESTED
+
+
+def test_route_refuses_to_store_a_release_whose_pool_moved_under_it(tmp_path,
+                                                                    monkeypatch):
+    """The fingerprint is taken before the pool is read and the reader re-globs the
+    directory, so a file arriving mid-route is consumed but not named by the release
+    id. The route re-checks afterwards and rolls the routing back rather than
+    committing a release that describes a pool that no longer exists."""
+    from filter.engine.store import open_store
+    from tests import engine_bundle
+
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    pq.write_table(pa.Table.from_pylist(engine_bundle.POOL_ROWS, schema=_POOL_SCHEMA),
+                   pool / "part-2019-01-01-a.parquet")
+    store = tmp_path / "engine.duckdb"
+    monkeypatch.setattr(cli, "load_specs", lambda spec_dir: engine_bundle.specs())
+    monkeypatch.setattr(cli, "load_aliases", lambda path: {})
+    monkeypatch.setattr(cli, "bundle_hash", lambda spec_dir: "bundle-x")
+    monkeypatch.setattr(cli, "alias_release", lambda path: "alias-x")
+    monkeypatch.setattr(cli, "_register_release", lambda release_id, cache_dir: True)
+    args = argparse.Namespace(spec_dir=tmp_path, pool=pool, store=store,
+                              pool_manifest_hash=None, overlay=None, no_overlay=True)
+
+    real_build = cli.build_routing
+
+    def build_then_grow(*a, **kwargs):
+        counters = real_build(*a, **kwargs)
+        pq.write_table(pa.Table.from_pylist(engine_bundle.POOL_ROWS[:1],
+                                            schema=_POOL_SCHEMA),
+                       pool / "part-2019-01-02-b.parquet")
+        return counters
+
+    monkeypatch.setattr(cli, "build_routing", build_then_grow)
+
+    with pytest.raises(SystemExit, match="CHANGED while it was being routed"):
+        cli.cmd_route(args)
+
+    con = open_store(store, read_only=True)
+    assert con.execute("SELECT count(*) FROM routing").fetchone()[0] == 0, \
+        "the rolled-back routing must not survive"
+    con.close()
+    assert not list((tmp_path / "releases").glob("*.json")), "and no release record"
 
 
 def test_a_written_release_round_trips_with_its_id_and_timestamp(tmp_path):

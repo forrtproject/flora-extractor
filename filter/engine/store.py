@@ -162,6 +162,24 @@ def build_routing(con: duckdb.DuckDBPyConnection, pool_dir: Path,
             "files": len(files)}
 
 
+def drop_release(con: duckdb.DuckDBPyConnection, release_id: str) -> None:
+    """Remove every routing and evaluation row of *release_id*, in one transaction.
+
+    `build_routing` commits on its own, so a caller that discovers AFTER the build
+    that the release must not exist — the pool moved under it — needs a way to undo
+    a committed build. Nothing else deletes a release: a superseded one is simply
+    never read again.
+    """
+    con.execute("BEGIN TRANSACTION")
+    try:
+        con.execute("DELETE FROM routing WHERE release_id = ?", [release_id])
+        con.execute("DELETE FROM evaluations WHERE release_id = ?", [release_id])
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+
+
 def _iter_pool(files: list[Path], batch_size: int):
     for path in files:
         yield from pq.ParquetFile(path).iter_batches(batch_size=batch_size)

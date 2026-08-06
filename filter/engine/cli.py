@@ -5,10 +5,16 @@ routing, it only supplies paths and prints. The one judgement it does make is
 what a routing release is made of, because the six release inputs come from six
 different places and assembling them is not a module's job.
 
-A pool with no readable ledger routes under `pool_manifest_hash = "unmanifested"`
-rather than failing: the release id then honestly says the pool's provenance was
-unknown, which is a different claim from "the pool was the one in the ledger" and
-must not be silently substituted for it.
+`pool_manifest_hash` is a fingerprint of the POOL DIRECTORY — the search gate its
+rows were admitted under (read from the pool's provenance sidecar, never from this
+checkout), plus every parquet's name, size and row count
+(`search.snapshot_scan.pool_fingerprint`). A pool that cannot be fingerprinted at
+all — none there, unreadable, or fewer files than its sidecar says complete it —
+routes under `pool_manifest_hash = "unmanifested"` rather than failing: the
+release id then honestly says the pool's provenance was unknown, which is a
+different claim from naming a pool and must not be silently substituted for it.
+The fingerprint is taken again after the routing pass, because the reader re-reads
+the directory and a release id must name the pool that was actually consumed.
 
 The text overlay is read from `OVERLAY_DIR` whenever that directory holds chunks,
 because an overlay nobody passed is how a live rule comes to match nothing at
@@ -32,8 +38,8 @@ from filter.engine.pool_reader import iter_pool_batches, overlay_manifest_hash
 from filter.engine.release import read_release, releases_dir, routing_release, write_release
 from filter.engine.spec import bundle_hash, load_specs
 from filter.engine.store import (
-    DEFAULT_STORE_PATH, StoreUnavailable, build_routing, open_store, pile_counts,
-    releases, sample_pile,
+    DEFAULT_STORE_PATH, StoreUnavailable, build_routing, drop_release, open_store,
+    pile_counts, releases, sample_pile,
 )
 from filter.engine.workids import alias_release, load_aliases
 from shared.config import OVERLAY_DIR, SNAPSHOT_POOL_DIR
@@ -48,13 +54,24 @@ def schema_version() -> str:
         ",".join(ENGINE_EXPORTED_COLS).encode("utf-8")).hexdigest()[:12]
 
 
-def _pool_manifest_hash(given: Optional[str]) -> str:
+def _pool_manifest_hash(given: Optional[str], pool_dir: Optional[Path] = None) -> str:
+    """The pool's identity for the release id: a hash of the pool directory itself.
+
+    `UNMANIFESTED` here is a genuine anomaly, not a routine fallback — routing
+    reads the pool, so a run that could not fingerprint one either found no pool,
+    found a partial one (fewer files than its provenance sidecar says complete it),
+    or could not read it. It is never returned for a pool that was read whole: an
+    unreadable pool raises inside `pool_fingerprint`, and an absent or partial one
+    returns None; neither can come back as a real-looking hash.
+    """
     if given:
         return given
     try:
-        from search.pool_sync import pool_manifest
-        return pool_manifest().get("ledger_hash") or UNMANIFESTED
-    except Exception:
+        from search.snapshot_scan import pool_fingerprint
+        return pool_fingerprint(pool_dir) or UNMANIFESTED
+    except Exception as exc:  # noqa: BLE001 — boundary: a pool we cannot read is unnamed
+        print(f"  WARNING: the pool at {pool_dir} could not be fingerprinted ({exc}); "
+              f"this release records its provenance as '{UNMANIFESTED}'.")
         return UNMANIFESTED
 
 
@@ -137,7 +154,7 @@ def cmd_route(args) -> int:
         # An overlay dir holding chunks but no frozen manifest raises: routing
         # must not bind a release id to bytes nobody named.
         inputs = _release_inputs(args.spec_dir,
-                                 _pool_manifest_hash(args.pool_manifest_hash),
+                                 _pool_manifest_hash(args.pool_manifest_hash, args.pool),
                                  overlay_dir)
     except OverlayError as exc:
         raise SystemExit(str(exc))
@@ -148,6 +165,24 @@ def cmd_route(args) -> int:
     counters = build_routing(con, args.pool, specs, release_id, aliases=aliases,
                              batches=iter_pool_batches(args.pool, overlay_dir,
                                                        aliases=aliases))
+    # The fingerprint was taken before the pool was read, and the reader re-globs the
+    # directory: a file added, removed or rewritten in between is consumed by the
+    # routing but not named by the release id. Re-fingerprinting costs ~0.4 s over the
+    # real 2,232-file pool, so it is taken again here and the routing rows are dropped
+    # if it moved. The rows are already committed (build_routing is one transaction of
+    # its own), so this rolls them back explicitly and writes no release record —
+    # nothing downstream may find a release whose id names a pool that is gone.
+    if not args.pool_manifest_hash:
+        after = _pool_manifest_hash(None, args.pool)
+        if after != inputs["pool_manifest_hash"]:
+            drop_release(con, release_id)
+            con.close()
+            raise SystemExit(
+                f"The pool at {args.pool} CHANGED while it was being routed "
+                f"(fingerprint {inputs['pool_manifest_hash'][:12]} before, {after[:12]} "
+                "after). The release id names the pool as it was at the start, so this "
+                "routing has been rolled back rather than stored under an id that "
+                "describes something else. Re-run `route` once the pool is settled.")
     # Only now: the release record is the claim that this release is routed, and
     # a build that raised must not leave that claim behind. The record lives
     # beside the store it describes, so a store pointed somewhere else does not
@@ -156,8 +191,10 @@ def cmd_route(args) -> int:
 
     print(f"release {release_id}")
     _register_release(release_id, args.store.parent)
+    provenance = inputs["pool_manifest_hash"]
     print(f"  pool {args.pool} — {counters['files']} file(s), "
-          f"{counters['pool_rows']:,} pool row(s) -> {counters['rows']:,} work(s)")
+          f"{counters['pool_rows']:,} pool row(s) -> {counters['rows']:,} work(s), "
+          f"provenance {provenance if provenance == UNMANIFESTED else provenance[:12]}")
     _print_overlay(overlay_dir, indent="  ")
     for pile, count in sorted(pile_counts(con, release_id).items()):
         print(f"  {pile:<18} {count:,}")
@@ -461,8 +498,9 @@ def build_parser() -> argparse.ArgumentParser:
     route.add_argument("--pool", type=Path, default=SNAPSHOT_POOL_DIR)
     route.add_argument("--store", type=Path, default=DEFAULT_STORE_PATH)
     route.add_argument("--pool-manifest-hash", default=None,
-                       help="Pool provenance for the release id (default: the local "
-                            "ledger's hash, else 'unmanifested').")
+                       help="Pool provenance for the release id (default: a fingerprint "
+                            "of the pool directory — gate, file sizes and row counts — "
+                            "else 'unmanifested').")
     _add_overlay_flags(route, "The frozen manifest hash enters the release id.")
     route.set_defaults(func=cmd_route)
 

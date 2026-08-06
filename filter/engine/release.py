@@ -6,8 +6,9 @@ move a row between piles is in there, so two runs with the same id are the same
 routing and a changed input mints a new one instead of silently overwriting.
 
 `overlay_hash` is None until M3 (text overlays) and `pool_manifest_hash` comes
-from `search.pool_sync.pool_manifest()`; both are named parameters now so a later
-milestone adds a value, not a field.
+from `search.snapshot_scan.pool_fingerprint()` — the gate the pool's rows were
+admitted under plus every pool parquet's name, size and row count; both are named
+parameters now so a later milestone adds a value, not a field.
 """
 
 import hashlib

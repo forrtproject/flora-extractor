@@ -59,6 +59,7 @@ from search.snapshot_scan import (
     ledger_hash,
     load_ledger,
     search_gate_fingerprint,
+    write_pool_provenance,
 )
 
 _POOL_MANIFEST = "pool_manifest.json"
@@ -312,6 +313,12 @@ def pull_pool(pool_dir: Path, repo: Optional[str] = None,
     cached. Files already present at the remote's size are skipped, and the rest
     are fetched several at a time (see ``_download_pool_files``). Returns the
     number of files downloaded (or, under *dry_run*, that would be).
+
+    Writes the local provenance sidecar (``snapshot_scan.POOL_PROVENANCE``) from the
+    REMOTE manifest: for a pulled pool, the remote's ``stage_a_fingerprint`` is the
+    authority on which gate admitted these rows, and nothing local is. Without it
+    every routing run on this machine would attribute the pool to whatever gate this
+    checkout happens to compute.
     """
     import huggingface_hub as hf  # pipeline-only: read-only deployments never install it
 
@@ -354,6 +361,18 @@ def pull_pool(pool_dir: Path, repo: Optional[str] = None,
         else:
             wanted.append(remote_file)
 
+    if not dry_run:
+        # Sidecar FIRST, for the same reason the push writes its manifest first: it
+        # is the claim about what completes this pool, and an interrupted pull must
+        # leave a pool that can be SEEN to be short rather than one that fingerprints
+        # as whole. The expected count is every file that will be here when this pull
+        # finishes — the ones already local plus the ones selected — so a --years pull
+        # into an existing pool does not shrink the claim.
+        expected = {p.name for p in pool_dir.glob("*.parquet")}
+        expected |= {f.rsplit("/", 1)[-1] for f in remote_files}
+        write_pool_provenance(
+            pool_dir, (remote_manifest or {}).get("stage_a_fingerprint") or None,
+            len(expected), f"pull:{repo_id}")
     if not dry_run and wanted:
         _download_pool_files(hf, repo_id, token, pool_dir, wanted, skipped)
 
