@@ -416,3 +416,38 @@ def test_a_correction_naming_no_stored_row_is_reported_not_guessed():
     assert report["unmatched"] == ["deadbeef"] and report["works"] == 0
     client.claim.assert_not_called()
     client.record_verdict.assert_not_called()
+
+
+def test_the_export_refreshes_the_dashboard_mirror_for_the_file_it_wrote(tmp_path,
+                                                                        monkeypatch):
+    """Stage 4 reads a parquet mirror, and every runner refreshes the stage it wrote.
+    That used to be the CSV runner's last act; the writer is this module now."""
+    import extract.export as mod
+
+    out = tmp_path / "extracted.csv"
+    monkeypatch.setattr("shared.dashboard_cache._STAGE_CSV",
+                        {"extracted": out, "extracted-test": tmp_path / "other.csv"})
+    called: list[str] = []
+    monkeypatch.setattr("shared.dashboard_cache.refresh",
+                        lambda stage: called.append(stage))
+
+    mod._refresh_dashboard(out)
+    assert called == ["extracted"]
+
+    # A render to a path the dashboard has never heard of is not a stage it displays.
+    mod._refresh_dashboard(tmp_path / "scratch.csv")
+    assert called == ["extracted"]
+
+
+def test_a_failing_dashboard_refresh_does_not_fail_the_export(tmp_path, monkeypatch):
+    """The rows are already published; a stale mirror is not worth losing that over."""
+    import extract.export as mod
+
+    out = tmp_path / "extracted.csv"
+    monkeypatch.setattr("shared.dashboard_cache._STAGE_CSV", {"extracted": out})
+
+    def _boom(stage):
+        raise RuntimeError("parquet engine missing")
+
+    monkeypatch.setattr("shared.dashboard_cache.refresh", _boom)
+    mod._refresh_dashboard(out)   # no raise

@@ -301,7 +301,32 @@ def main(argv: Optional[list[str]] = None) -> int:
     written = write(report, args.out)
     for name, count in written.items():
         print(f"  {count:>6,} row(s) → {name}")
+
+    # The writer refreshes Stage 4's mirror, as every runner does (CLAUDE.md,
+    # `shared/dashboard_cache.py`). This used to be the CSV runner's last act; it
+    # belongs to whoever writes the file, and that is now this.
+    _refresh_dashboard(args.out)
     return 0
+
+
+def _refresh_dashboard(out_csv: Path) -> None:
+    """Rebuild the dashboard's parquet mirror for the CSV just written.
+
+    Only for the two paths the dashboard knows about — a render to some other path is
+    not a stage it displays, and refreshing "extracted" after writing elsewhere would
+    describe a file this run did not touch. A failure here must not fail an export
+    that has already published its rows.
+    """
+    from shared.dashboard_cache import _STAGE_CSV, refresh
+
+    stage = next((name for name, path in _STAGE_CSV.items()
+                  if Path(path).resolve() == Path(out_csv).resolve()), "")
+    if not stage:
+        return
+    try:
+        refresh(stage)
+    except Exception as exc:   # noqa: BLE001 — the CSV is already written
+        print(f"  (dashboard mirror not refreshed: {exc})")
 
 
 if __name__ == "__main__":
