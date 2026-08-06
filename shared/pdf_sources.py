@@ -13,7 +13,9 @@ Acquisition order:
 
 Tier 0 (OpenAlex GROBID XML) sits above all of these: when it returns a result with
 content, that IS the document and the download tiers are skipped. A tier that comes
-back empty is timestamped and not re-probed for PDF_RETRY_AFTER_DAYS.
+back empty is timestamped and not re-probed for PDF_RETRY_AFTER_DAYS; so is a single
+URL the server answered 404/410 for, which holds that URL back without holding back
+the other URLs its tier offers.
 
 Tier 8 requires a one-time setup:
     pip install playwright
@@ -963,6 +965,32 @@ def get_pdf_via_playwright(doi: str, min_bytes: int = 5_000) -> dict:
 
 # ── Download helper ───────────────────────────────────────────────────────────
 
+# HTTP statuses that are EVIDENCE OF ABSENCE for this URL: the server answered, and
+# its answer was that there is no document here. Nothing else qualifies — a timeout, a
+# connection error, a 429 and every 5xx are the server failing to answer, and a 401/403
+# is a refusal to serve a document that does exist. Recording one of those would
+# checkpoint a transient failure as a definitive miss.
+_PERMANENT_HTTP_STATUS = {404, 410}
+
+
+def _url_failure_path(url: str) -> Path:
+    """The record of a permanently dead URL. Prefixed so it cannot collide with a DOI."""
+    return _retry_log_path(PDF_CACHE_DIR, f"url:{url}")
+
+
+def _url_is_gone(url: str) -> bool:
+    """True when this URL answered "no document here" less than the window ago.
+
+    The per-tier record in acquire_pdf holds a whole tier back for a DOI; this holds one
+    dead URL back, so the OTHER URLs a tier offers are still tried. Both are retry
+    delays on the same PDF_RETRY_AFTER_DAYS window, never verdicts: the file only ever
+    holds statuses from _PERMANENT_HTTP_STATUS, so any live stamp in it suppresses.
+    """
+    entries = _read_retry_log(_url_failure_path(url))
+    return any(_retry_suppressed(entries, slot, PDF_RETRY_AFTER_DAYS)
+               for slot in entries)
+
+
 def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES) -> dict:
     """
     Download a PDF and save to PDF_CACHE_DIR.
@@ -978,6 +1006,11 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES) -> di
     have     = cached_pdf(doi or url, min_bytes)
     if have is not None:
         return {"success": True, "path": have, "source": "cache", "reason": ""}
+
+    if _url_is_gone(url):
+        log.debug("  URL answered gone less than %d days ago — not re-fetching: %s",
+                  PDF_RETRY_AFTER_DAYS, url)
+        return {"success": False, "path": None, "source": "", "reason": "url_gone"}
 
     try:
         r = requests.get(
@@ -995,6 +1028,11 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES) -> di
             timeout=60,
             stream=True,
         )
+        if r.status_code in _PERMANENT_HTTP_STATUS:
+            _write_retry_log(_url_failure_path(url),
+                             {f"http_{r.status_code}": _now_iso()})
+            return {"success": False, "path": None, "source": "",
+                    "reason": f"http_{r.status_code}"}
         r.raise_for_status()
         content = b"".join(r.iter_content(chunk_size=65_536))
 
@@ -1004,6 +1042,10 @@ def download_pdf(url: str, doi: str = "", min_bytes: int = _MIN_PDF_BYTES) -> di
             return {"success": False, "path": None, "source": "", "reason": "file_too_small"}
 
         pdf_path.write_bytes(content)
+        try:                     # the URL serves a document after all
+            _url_failure_path(url).unlink(missing_ok=True)
+        except Exception as e:
+            log.debug("URL failure record delete failed (%s): %s", url, e)
         return {"success": True, "path": pdf_path, "source": "download", "reason": ""}
 
     except Exception as e:

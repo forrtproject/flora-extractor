@@ -204,6 +204,79 @@ def test_an_unreadable_record_probes_everything():
     mocks["get_core_pdf_url"].assert_called_once()
 
 
+# ── The per-URL record of a dead URL ──────────────────────────────────────────
+
+class _Resp:
+    def __init__(self, status: int, body: bytes = b""):
+        self.status_code = status
+        self._body = body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def iter_content(self, chunk_size=0):
+        yield self._body
+
+
+def _url_record(url: str) -> dict:
+    path = ps._url_failure_path(url)
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+@pytest.mark.parametrize("status", [404, 410])
+def test_a_url_that_answered_gone_is_not_re_fetched(status):
+    """download_pdf cached only successes, so a permanently dead URL was re-fetched
+    once per tier retry window."""
+    url = f"https://example.org/dead-{status}.pdf"
+    with patch.object(ps.requests, "get", return_value=_Resp(status)) as get:
+        first = ps.download_pdf(url, doi=f"10.1/gone{status}")
+    assert first["reason"] == f"http_{status}"
+    assert list(_url_record(url)) == [f"http_{status}"]
+
+    with patch.object(ps.requests, "get") as get2:
+        second = ps.download_pdf(url, doi=f"10.1/gone{status}")
+    assert second["reason"] == "url_gone"
+    get2.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", [
+    _Resp(503), _Resp(429), _Resp(403),
+])
+def test_a_transient_or_refused_response_is_not_recorded(failure):
+    """A server that failed to answer, or refused to serve a document that exists, is
+    not evidence of absence — recording it would checkpoint it as a definitive miss."""
+    url = f"https://example.org/soft-{failure.status_code}.pdf"
+    with patch.object(ps.requests, "get", return_value=failure):
+        ps.download_pdf(url, doi="10.1/soft")
+    assert _url_record(url) == {}
+
+    with patch.object(ps.requests, "get", return_value=failure) as get2:
+        ps.download_pdf(url, doi="10.1/soft")
+    get2.assert_called_once()
+
+
+def test_a_connection_error_is_not_recorded():
+    url = "https://example.org/timeout.pdf"
+    with patch.object(ps.requests, "get", side_effect=OSError("timed out")):
+        out = ps.download_pdf(url, doi="10.1/timeout")
+    assert out["success"] is False
+    assert _url_record(url) == {}
+
+
+def test_a_dead_url_is_re_fetched_once_the_window_lapses():
+    """The record is a retry delay on the same window as the per-tier one."""
+    url = "https://example.org/lapsed.pdf"
+    ps._write_retry_log(ps._url_failure_path(url),
+                        {"http_404": _ago(ps.PDF_RETRY_AFTER_DAYS + 1)})
+    with patch.object(ps.requests, "get",
+                      return_value=_Resp(200, b"%PDF-1.4" + b"x" * 10_000)) as get:
+        out = ps.download_pdf(url, doi="10.1/lapsed")
+    get.assert_called_once()
+    assert out["success"] is True
+    assert _url_record(url) == {}          # the URL serves a document after all
+
+
 # ── The PDF already on disk ───────────────────────────────────────────────────
 
 def _save_pdf(doi: str) -> None:
