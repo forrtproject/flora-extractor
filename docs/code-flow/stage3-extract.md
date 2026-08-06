@@ -387,7 +387,8 @@ wording, with nothing to bump by hand.
 | `cache/llm/llm_*.json` | abstract-level and full-text identification |
 | `cache/llm/outcome_*.json` | outcome verdicts, including escalations |
 | `cache/parse/parse_*.json` | per-method parse results — read by the ladder before it parses, and by `_best_fulltext_from_cache` |
-| `cache/pdfs/retry_*.json` | per-DOI `{tier: timestamp}` — which acquisition tiers came back empty and when |
+| `cache/pdfs/pdfsrc_*.json` | per-DOI `{source, url}` — which tier really supplied the saved PDF, replayed by `acquire_pdf`'s up-front on-disk check |
+| `cache/pdfs/retry_*.json` | per-DOI `{tier: timestamp}` — which acquisition tiers came back empty and when. The same file shape keyed on `url:<URL>` holds back one URL the server answered 404/410 for |
 | `cache/openalex_xml/retry_*.json` | per-work timestamp of the last content-free GROBID-XML fetch |
 
 Declines are cached; API failures are not.
@@ -401,7 +402,13 @@ back empty is now timestamped and not re-probed for `PDF_RETRY_AFTER_DAYS` (14, 
 (`OA_XML_RETRY_AFTER_DAYS`). This is a retry delay, never a verdict — the tier is asked
 again once it lapses, and a tier skipped for a missing API key or a missing package is
 not recorded at all, so a key added tomorrow takes effect tomorrow. A successful
-acquisition clears the record.
+acquisition clears the record. A single URL the server answered **404 or 410** for
+gets its own record on the same window, which holds back that URL without holding
+back the other URLs its tier offers; nothing else qualifies, because a timeout, a
+429, a 5xx and a 401/403 are all the server failing to say "there is no document
+here". And a row whose PDF is already on disk skips the waterfall outright,
+reporting the tier recorded beside the file rather than whichever tier re-derived a
+URL first.
 
 **Tier 0 short-circuits the rest.** When the OpenAlex GROBID XML comes back with
 content, that IS the document — the parsers read it exactly as they read a downloaded

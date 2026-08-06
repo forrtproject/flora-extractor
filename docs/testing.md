@@ -24,7 +24,7 @@ first (`pip install pytest-cov`) if you want `--cov=. --cov-report=html`.
 
 ## Test layout
 
-50 test modules directly under `tests/`, plus 3 under `tests/live/`. The naming is
+53 test modules directly under `tests/`, plus 3 under `tests/live/`. The naming is
 one module per seam: `test_engine_*.py` for the Stage 2 filter engine,
 `test_snapshot_scan.py` / `test_pool_sync.py` / `test_fetch_abstracts.py` for
 Stage 1, `test_extract.py` and its neighbours for Stage 3, `test_validate.py` for
@@ -34,7 +34,7 @@ copied listing goes stale the first time a module is added.
 There is no `pytest.ini`, `pyproject.toml` or `setup.cfg`, and no custom markers.
 Selection is by path, `-k`, and the `skipif` guard on the live tests.
 
-As of **2026-08-06**, `python -m pytest tests/ -q --co` collects **1,348 tests** in
+As of **2026-08-06**, `python -m pytest tests/ -q --co` collects **1,380 tests** in
 under a second. A collection count far below that means an import is failing,
 not that tests were deleted.
 
@@ -48,16 +48,19 @@ Never make live API calls in unit tests. Use `unittest.mock.patch`:
 from unittest.mock import patch
 
 def test_classify_replication():
-    with patch("shared.llm_client.call_gemini") as mock:
+    with patch("shared.llm_client.call_model") as mock:
         mock.return_value = ({"classification": "replication", "confident": True,
                               "categories": ["clearly_declared"],
-                              "evidence_quote": "", "reasoning": ""}, None)
+                              "evidence_quote": "", "reasoning": ""},
+                             "google", None)
         vote = llm._classify_once("prompt", SCREENING_MODEL_1, SCREENING_EFFORT_1)
     assert vote["classification"] == "replication"
 ```
 
-`_classify_once(prompt, model, effort)` takes no provider: the provider follows the
-model id through `call_model`, and the vote is labelled with whichever one served it.
+**Patch `call_model`, not `call_gemini`.** `_classify_once(prompt, model, effort)`
+takes no provider: the provider follows the model id through `provider_for()` inside
+`call_model`, and the vote is labelled with whichever one served it. Patching a
+single provider function misses the dispatch and does not intercept the call.
 
 ### Schema tests
 
@@ -134,9 +137,5 @@ None. `tests/test_analysis_overlap.py` and the `tests/test_apa_resolver.py` case
 that read the gitignored `data/` CSVs (`candidates.csv`, `filtered.csv`,
 `all_replications.csv`) went with the overlap analysis and the retired Stage 1
 corpus. Every test now builds the files it reads under `tmp_path`, so the suite runs
-on a fresh checkout with an empty `data/`.
-
-One known failure as of 2026-08-06:
-`tests/test_extract.py::TestRunExtract::test_rows_are_streamed_in_chunks_abstract_bearing_ones_first`
-asserts an exact row order across chunk boundaries and does not get it. It fails on
-`main` too — do not read it as a regression from whatever you just changed.
+on a fresh checkout with an empty `data/`. As of **2026-08-06** the suite is green:
+1,374 passed, 6 skipped, nothing failing or xfailing.

@@ -74,7 +74,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 | `shared/prescreen.py`       | What the cheap discard-only tier ASKS: `hard_signal()`, `prescreen_bypass()`, `prescreen_voters()`, `prescreen_vote()` (the public seam). The gate and the run loop are Stage 2's, in `filter/engine/tiers.py`; the tier is dormant (its specs are all shadow) |
 | `shared/cache.py`           | Cache helpers; `content_key()` builds the content-complete LLM cache key |
 | `shared/row_key.py`         | Row identity: `row_keys()` / `primary_key()` (doi → oa: → url: → title:) |
-| `shared/pdf_sources.py`     | Multi-tier PDF acquisition waterfall |
+| `shared/pdf_sources.py`     | Multi-tier PDF acquisition waterfall. An up-front on-disk check replays the tier that really supplied a cached PDF (`pdfsrc_<key>.json`) instead of crediting whichever tier happened to re-derive a URL first. Two 14-day retry DELAYS, never verdicts, keep the waterfall from re-probing what already answered: one per (DOI, tier) when a tier came back empty, one per URL the server answered 404/410 for |
 | `shared/pdf_parsing.py`     | Six PDF parse methods; `parse_all()`, `best_parse_result()` scoring |
 | `shared/grobid.py`          | GROBID reference extraction |
 | `shared/disambiguation.py`  | Two string helpers only: `jaccard_similarity()` (used by `link_original.py` and `doi_verify.py`) and `is_umbrella_paper()`. The same-author/year resolvers it was named for are gone; nothing here decides a candidate any more |
@@ -119,7 +119,10 @@ Never change a column name without updating `schema.py` and notifying all teams.
   is a contradiction. There is no landing-page HTML substitute for a document any
   more, and a content-free OpenAlex XML result (`openalex_xml_has_content()` in
   `shared/pdf_sources.py`) is no document either: it ends the row at
-  `no_fulltext_available` and is never cached as a success.
+  `no_fulltext_available` and is never cached as a success. That guard lives in
+  `pdf_sources` alone now — `get_openalex_fulltext` neither returns nor caches a
+  shell, and `acquire_pdf` never lets one out as a document, so the duplicate
+  demotion in `run_for_doi` is gone.
 
 ## Stage 3 — Front Door and Resolution
 
