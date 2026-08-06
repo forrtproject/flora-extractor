@@ -687,16 +687,23 @@ def _claim(client: ClaimsClient, release_id: str, tier: str,
 
 def run_tier(spec: TierSpec, client: ClaimsClient, release_id: str,
              works: list[Work], *, mode: str, batch_label: str, run: bool,
-             cache_dir: Optional[Path] = None) -> dict:
+             cache_dir: Optional[Path] = None,
+             on_claim: Optional[Callable[[str], None]] = None) -> dict:
     """Claim *works* for *spec*'s tier, judge each one, record its verdicts, complete.
 
     `spec.judge` returns `(outcome, votes)`: the tier's decision for the work and
     one dict per voter vote, each carrying `model`, `verdict`, `blob` and
-    optionally `confidence` / `quote`. Everything else — the claim, the blob
-    ordering, the budget, the failure path — is the same for every tier and lives
-    here. This is the entry point a tier defined outside `filter/engine` calls:
-    it takes a spec and a list of `Work`, and needs nothing from the routing store
-    to run them.
+    optionally `confidence` / `quote` / `cost` / `payload`. Everything else — the
+    claim, the blob ordering, the budget, the failure path — is the same for every
+    tier and lives here. This is the entry point a tier defined outside
+    `filter/engine` calls: it takes a spec and a list of `Work`, and needs nothing
+    from the routing store to run them.
+
+    *on_claim* is called with the claim id the moment the batch is claimed, before
+    the first work is judged. It exists for a tier whose batch outlives its lease and
+    therefore has to renew it (`extract/tier.py`): the claim is taken here, so the id
+    is not knowable to the caller until this function returns, which is too late to
+    start a heartbeat.
     """
     if mode not in MODES:
         raise ValueError(f"unknown mode: {mode} (expected one of {MODES})")
@@ -722,6 +729,8 @@ def run_tier(spec: TierSpec, client: ClaimsClient, release_id: str,
             f"refusing to run tier {tier}: {exc}. Another run holds some of these "
             f"works. End that claim (or wait for it) and re-run — the batch is "
             f"rejected whole, so nothing here was claimed or spent.")
+    if on_claim is not None:
+        on_claim(claim_id)
 
     report = {"tier": tier, "mode": mode, "dry_run": False, "estimate": est,
               "claim_id": claim_id, "release_id": release_id, "batch": batch_label,
@@ -746,13 +755,19 @@ def run_tier(spec: TierSpec, client: ClaimsClient, release_id: str,
         outcome, votes = spec.judge(work)
         for vote in votes:
             response_hash, path = _write_response(vote["blob"])
+            # `cost` and `payload` are sent only when a vote carries them: the two
+            # screens carry neither, and `payload` in particular must not be sent to
+            # a database that predates migration 0005 by a tier that has no use for
+            # the column (`ClaimsClient.record_verdict`).
+            extra = {key: vote[key] for key in ("cost", "payload") if key in vote}
             client.record_verdict(
                 claim_id=claim_id, work_id=work.work_id, tier=tier,
                 verdict=vote["verdict"], model=vote.get("model", ""),
                 prompt_hash=vote.get("prompt_hash", ""),
                 confidence=vote.get("confidence", ""),
                 quote=vote.get("quote", ""),
-                response_hash=response_hash, response_state=PENDING_UPLOAD)
+                response_hash=response_hash, response_state=PENDING_UPLOAD,
+                **extra)
             uploader.add(response_hash, path)
             with counters:
                 report["verdicts"] += 1

@@ -1965,9 +1965,45 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
     return rows
 
 
+def _observe_link(observed: "dict | None", link: dict) -> None:
+    """Record what the ladder did with this row, for a caller that keeps a report.
+
+    Everything here is already on the row or in the log; what it is not is
+    *addressable*. The extract tier stores one result row per work in the state
+    authority and its payload has to be self-sufficient — rebuildable with no
+    network, no cache and no pool — and these are the facts about the RUN, as opposed
+    to about the original, that the written rows do not carry: which rung answered,
+    whether it accepted a single link, how many targets it named and how many it could
+    not identify.
+
+    An out-parameter rather than a return value because every producer below already
+    returns the rows it wrote, and threading a second value through all of them would
+    change five signatures to serve one caller. `None` — every caller but the tier —
+    records nothing.
+    """
+    if observed is None:
+        return
+    observed.update({
+        "link_method": _map_method(str(link.get("resolution_method", "") or "")),
+        "target_stage": str(link.get("target_stage", "") or ""),
+        "resolved": bool(link.get("resolved", False)),
+        "n_targets": int(link.get("n_targets") or 0),
+        "stated_count": link.get("stated_count"),
+        "unidentified_count": int(link.get("unidentified_count") or 0),
+        "link_llm_model": str(link.get("llm_model", "") or ""),
+        "pdf_source": str(link.get("pdf_source", "") or ""),
+        "parse_method": str(link.get("parse_method", "") or ""),
+        "link_evidence": str(link.get("llm_evidence", "") or ""),
+        "grobid_discussion": bool(link.get("grobid_discussion")),
+        "discussion_provenance": str(link.get("discussion_provenance", "") or ""),
+        "error": str(link.get("llm_error", "") or ""),
+    })
+
+
 def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
                       no_llm: bool, no_pdf: bool, resolved_only: bool,
-                      recalibrate_outcomes: bool) -> list[dict]:
+                      recalibrate_outcomes: bool,
+                      observed: "dict | None" = None) -> list[dict]:
     """Run the resolution ladder for one row and code the outcome of what it found.
 
     The order is deliberate: resolve, merge, guard, --resolved-only, and only THEN
@@ -1984,6 +2020,7 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
     link = run_for_doi(doi_r, cands_df=_build_cands_df(row),
                        no_llm=no_llm, no_pdf=no_pdf, classification=screen,
                        record_type=_record_type(row, screen))
+    _observe_link(observed, link)
 
     if link.get("targets") and not link.get("resolved"):
         n_targets = int(link.get("n_targets") or 0)
@@ -2270,7 +2307,8 @@ def _should_skip(row: pd.Series, row_key: str, doi_r_clean: str,
 def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
                  no_reproductions: bool,
                  resolved_only: bool, recalibrate_outcomes: bool,
-                 screen_here: bool = False) -> list[dict]:
+                 screen_here: bool = False,
+                 observed: "dict | None" = None) -> list[dict]:
     """Every row the pipeline writes for one filtered.csv row.
 
     Front door, then the resolution ladder — there is no router in front of it any
@@ -2278,7 +2316,21 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
     something a cheaper call predicts from the abstract. An empty list means the row
     is not written at all — either a flag suppressed it or --resolved-only discarded
     it.
+
+    *observed* is an optional dict this fills in with what the RUN did — which rung
+    answered, whether it accepted a single link, how many targets it named, what
+    stopped it. Nothing here reads it and `None` records nothing; it exists because
+    `extract/tier.py` stores one result row per work and its payload has to say what
+    happened, not only what was written (`_observe_link`).
     """
+    if observed is not None:
+        # An exit that never reaches the ladder still has to say so, so the fields
+        # exist before the first `return` rather than only where one is filled in.
+        observed.setdefault("link_method", "")
+        observed.setdefault("target_stage", "")
+        observed.setdefault("resolved", False)
+        observed.setdefault("n_targets", 0)
+        observed.setdefault("error", "")
     # Ahead of the front door: a run that is not coding reproductions should not pay
     # to screen them either. The type this reads is Stage 2's, the only one there is
     # before the screen speaks.
@@ -2340,7 +2392,7 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
         return _resolve_and_code(
             doi_r, row, screen=screen, no_llm=no_llm, no_pdf=no_pdf,
             resolved_only=resolved_only,
-            recalibrate_outcomes=recalibrate_outcomes)
+            recalibrate_outcomes=recalibrate_outcomes, observed=observed)
     except (OpenAlexQuotaExhausted, TokenBudgetExhausted):
         # Not a per-row failure: the row was never examined, and writing it as
         # api_error would bury the reason the rest of the run stops too.
@@ -2349,6 +2401,8 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
         # log.exception, not log.error: the message alone does not say which call
         # raised, and the traceback is the only thing that does.
         log.exception("[%s] extraction failed: %s", doi_r, e)
+        if observed is not None:
+            observed["error"] = f"{type(e).__name__}: {e}"
         # The screen already ran and was paid for — the row keeps the type and the
         # categories it bought, and the exception is written onto the row rather
         # than only into a log that will not outlive the run.

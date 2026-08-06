@@ -28,7 +28,7 @@ step — sharing a cache key so the second pass was free but the logic was writt
 twice. It runs here only. What Stage 3 needs is therefore written onto the row
 (`SCREEN_COLS` in `shared/schema.py`): the gate outcome, the record type, the
 category union, the evidence, and each voter's classification and confidence,
-which the pre-PDF title-search rung is gated on. `_screen_columns()` below is
+which the pre-PDF title-search rung is gated on. `screen_columns()` below is
 the whole translation.
 
 **A row travels on a verdict, not on a routing decision — and only on the
@@ -120,7 +120,7 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
     two-voter front door runs here and nowhere else now, so Stage 3 has to be able
     to read what it said rather than ask again: the record type, the category
     union, the evidence, and the per-voter classification/confidence its title-
-    search rung is gated on. `_screen_columns()` is the whole translation.
+    search rung is gated on. `screen_columns()` is the whole translation.
     """
     check_release_binding(spec_dir, release_id, expect_bundle_hash,
                           expect_alias_release, overlay_dir, expect_overlay_hash)
@@ -145,7 +145,7 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
             continue
         decision = screen.get(work)
         if decision:
-            row.update(_screen_columns(row, decision))
+            row.update(screen_columns(row, decision))
             if decision.get("record_type"):
                 row["filter_status"] = decision["record_type"]
                 row["filter_method"] = "screen"
@@ -172,7 +172,7 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
     return manifest
 
 
-def _screen_columns(row: dict, decision: dict) -> dict:
+def screen_columns(row: dict, decision: dict) -> dict:
     """`SCREEN_COLS` for one row, from one expensive-tier decision.
 
     Two sources, and which fact comes from which is the point. The **verdict rows**
