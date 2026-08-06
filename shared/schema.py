@@ -201,6 +201,17 @@ VALIDATE_ADDED_COLS = [
 VALIDATED_COLS = EXTRACTED_COLS + VALIDATE_ADDED_COLS
 
 # ── Valid values for categorical columns ─────────────────────────────────────
+#
+# These sets are enforced, not documentation. tests/test_schema_roundtrip.py holds
+# the checked-in samples in misc/ against FILTER_STATUS_VALUES,
+# FILTER_CONFIDENCE_VALUES, ORIGINAL_MATCH_TYPE_VALUES, DOI_VERIFICATION_VALUES,
+# TYPE_VALUES and SOURCE_VALUES; LINK_METHOD_VALUES and RESOLVED_LINK_METHODS are
+# held against every method the pipeline can emit by
+# tests/test_link_method_contract.py; OUTCOME_VALUES is what extract/audit_extracted
+# checks stored rows against. A set nothing checks belongs in a comment, not here —
+# VALIDATION_STATUS_VALUES was removed for that reason (Stage 4 writes no CSV, and
+# the `validation_status` strings this repo actually reads are the FLoRA entry
+# sheet's, a different vocabulary).
 
 FILTER_STATUS_VALUES = {"replication", "reproduction", "false_positive", "needs_review"}
 
@@ -213,6 +224,14 @@ ORIGINAL_MATCH_TYPE_VALUES = {"single_original", "multiple_match", "multiple_ori
 # kept distinct because their reliability differs sharply (e.g.
 # single_candidate_after_requery auto-accepts a lone candidate at score 1.0 with no
 # semantic check). These are the methods the validation import takes.
+#
+# single_candidate_after_requery and same_author_year_title_overlap are HELD-ONLY:
+# _HELD_ONLY_METHODS in extract/link_original.py stops either from ending the ladder
+# while a call that can enumerate targets is still available. The pick is parked and
+# restored only when nothing that could enumerate contradicted it — nothing enumerating
+# spoke at all, or the one call that did named at most one original and it is the same
+# work. So a row carrying either value on disk is one an enumerating call confirmed or
+# never got to make, never one that overrode an LLM.
 RESOLVED_LINK_METHODS = {
     "citation_context_match",
     "same_author_year_title_overlap",
@@ -448,8 +467,6 @@ def outcome_categories_for(record_type: str) -> set:
 # qualifying vote and Stage 2 left the row at needs_review, nothing has said what the
 # paper is, and the pipeline records that rather than defaulting to replication.
 TYPE_VALUES = {"replication", "reproduction"}
-
-VALIDATION_STATUS_VALUES = {"confirmed", "rejected", "pending", "needs_review"}
 
 # Sources actually produced by the pipeline. #46: bob_reed / i4r were advertised
 # here but their fetchers (search/external_lists.py) are never called, so no such

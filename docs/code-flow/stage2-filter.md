@@ -96,7 +96,9 @@ to the `filter_status` / `filter_confidence` an exported row carries (`discard` 
 `needs_human` → `needs_review` low; `pending` is not exported). Both screen piles set
 `vocabulary_names_status`, so a row there takes the winning rule's `vocabulary` as its
 status and falls back to `needs_review` when the rule names none.
-The four `replication-claim-*` tiers, the only `screen_expensive` rules, name none by design — an
+The six `screen_expensive` rules — the five `replication-claim-*` tiers
+(`cited-title` 760, `title-strong` 750, `title-broad` 740, `text` 730, `residual`
+710) and `osf-registration-completed` (936) — all name none by design: an
 admission to the two-voter screen is a request for attention, not the verdict the
 screen exists to produce — so their rows export `needs_review`/high. The three cheap
 rules (`replication-signal`, `replication-probe`, `reproduction-signal`) do name

@@ -231,6 +231,11 @@ than the directory it replaced.
 `cache/engine/responses` is the one cache not shared here — `filter/engine/tiers.py`
 already pushes those blobs as each tier run decides a work.
 
+`--repo` points `cache_sync` at a dataset repo other than `FLORA_POOL_REPO`.
+The abstract store has its own migration CLI: `python -m shared.abstract_store
+--migrate` converts the old file-per-key cache into `cache/abstracts.sqlite`
+(`--cache-dir` for a cache directory other than the configured one).
+
 A pulled entry is safe to trust because the keys are **content-complete**:
 `content_key()` folds the prompt version and the model into the key, and model ids
 are constants rather than per-machine env, so a differing checkout misses instead
@@ -326,7 +331,7 @@ python -m filter.engine release-claim --claim <id> --status failed --yes
 | `specs` | Lists the loaded bundle (id, pile, precedence, shadow, measurement levels), the bundle hash, the engine version and the export schema version. Fails loudly if any spec is invalid. |
 | `route` | Computes the routing release id from its six inputs, records the release, and streams the pool through the bundle into the store. Idempotent per release: re-running replaces that release's rows rather than duplicating them. The pool is fingerprinted again after the pass and the routing is rolled back if it moved — the reader re-reads the directory, so a file that arrives mid-route would otherwise be consumed by a release id that does not name it. |
 | `diagnose` | Routes the pool with and without `--spec` and reports rows moved per (pile without → pile with), overlap against every other rule (exclusive hits vs already-covered), a seeded readable sample, the holdout state and the spec's `measured` evidence. |
-| `export` | Writes one pile as `FILTERED_COLS` + `ENGINE_EXPORT_COLS`, `utf-8-sig`, plus `<out>.manifest.json` (release, pile, rows, sha256). `--pile pending` is refused, an existing manifest is never overwritten, and an export is refused outright when the spec bundle or alias file has changed since the release was routed — re-run `route` rather than looking for an override flag. `--pile needs_human` additionally prints the size of the queue it just wrote. |
+| `export` | Writes one pile in `ENGINE_EXPORTED_COLS` order — `FILTERED_COLS` + `ENGINE_EXPORT_COLS` + `SCREEN_COLS`, the last six blank because `export` applies no tier verdicts. Writing them blank rather than omitting them is what lets Stage 3 accept an exported pile at all: its startup check refuses any input whose header lacks `screen_verdict`, and every row then reads as unscreened and is written `target_pending`. `utf-8-sig`, plus `<out>.manifest.json` (release, pile, rows, sha256). `--pile pending` is refused, an existing manifest is never overwritten, and an export is refused outright when the spec bundle or alias file has changed since the release was routed — re-run `route` rather than looking for an override flag. `--pile needs_human` additionally prints the size of the queue it just wrote. |
 | `screen` | Runs one LLM tier (`--tier screen_cheap\|screen_expensive`) over that pile. **Dry run by default**: it prints the row count, the token-length distribution of the abstracts it would send and `N rows → tier X ≈ $Y`, and claims, fetches and spends nothing. `--run` claims the batch through the Supabase claims RPC *before* the first voter is asked, records one permanent verdict row per vote, and completes the claim; a claim conflict refuses without spending anything, and an exhausted token budget fails the claim and stops with the verdicts already written intact. |
 | `reconcile` | Sweeps verdict rows an EARLIER run left `response_pending_upload` — the flag off, no token, a commit that 429'd — matches them to the blobs in `cache/engine/responses/` by response hash, commits those in `FLORA_HF_COMMIT_BATCH`-sized commits and marks only what a commit accepted. **Dry run by default**; `--run` acts. A pending row whose blob has been deleted is reported, not fatal. Refuses outright when Hugging Face is unconfigured (`ENGINE_TIER_HF_UPLOAD` off, no `FLORA_POOL_REPO`, no `HF_TOKEN`) rather than sweeping nothing. |
 | `worklist` | Exports the release's `pending/no_text` rows (joined back to the pool for doi/title/year) as the worklist `filter.engine.backfill` reads. |
@@ -342,6 +347,10 @@ DIR` points at another overlay, `--no-overlay` runs against the bare pool, and
 each command prints one line — `overlay: <dir> (hash <12>)` or `overlay: none` —
 saying which text it read. The overlay folds into the release id, so `export`,
 `handoff` and `screen` refuse a release routed under a different overlay.
+
+`--from-year` and `--to-year` both exist on `export` and `handoff` — the examples
+above only ever show the lower bound. `release-claim` takes `--release <id>` to
+restrict its listing to one release.
 
 `--spec-dir` (before the subcommand) points at a different bundle; `--store`
 defaults to `cache/engine/engine.duckdb` and is **disposable** — deleting it costs
@@ -405,6 +414,8 @@ Each has `--help`; the one-liners are their own `description=`:
 ```bash
 # Fill a text overlay for the routing worklist's no_text rows (#146 M3). Dry-run by default.
 python -m filter.engine.backfill --worklist W [--overlay-dir D] [--run] [--freeze]
+#   also: --phase, --limit, --source, --batch-size, --scopus-limit,
+#         --include-openalex, --dry-run
 
 # Two pathways. Bulk is batched, keyless and unquota'd (Europe PMC; OpenAlex is
 # opt-in via --include-openalex), so it is affordable over a wide worklist;
@@ -416,10 +427,12 @@ python -m filter.engine.backfill --worklist no_text.parquet --run --phase target
 # Reconcile a routing change against the validation tables (#146 M5).
 # Writes lineage records only — never a validation row. Dry-run by default.
 python -m filter.engine.supersede --old <release> --new <release> [--run] [--reason …]
+#   also: --actor (defaults to $USER), --store
 
 # Postgres sizing for the engine state tables (#146 §8 decision 1): measures the
 # bytes one claimed row and one verdict actually cost.
-python -m filter.engine.sizing
+python -m filter.engine.sizing [--rows N] [--verdict-rate R] [--json]
+#   defaults: --rows 5146160 --verdict-rate 0.1
 ```
 
 ---
@@ -463,8 +476,10 @@ error, not a reason to fall back to the fixture). It must carry the screen verdi
 Stage 2's `screen_expensive` tier produced — `screen_verdict` and the rest of
 `SCREEN_COLS` — because Stage 3 does not screen. A file with no `screen_verdict`
 column is refused at startup, naming the two commands that fix it; a row whose
-value is blank (an `--as-routed` handoff) is written `target_pending`. Ask for the
-screen to run here with `--screen-here`.  
+value is blank (an `--as-routed` handoff) is written `target_pending`. Two flags
+exempt the run from that refusal (`_require_screen_verdicts()` returns early for
+both): `--screen-here`, which asks for the screen to run here, and `--no-llm`,
+which screens nothing by design.  
 **Output:** `data/extracted.csv` (or `data/extracted-test.csv` with `--extracted-test`)
 
 The examples above are a selection, not the flag list. For the complete, current set
@@ -476,6 +491,14 @@ python -m extract.run_extract --help
 
 (the `argparse` block at the bottom of `extract/run_extract.py` is its source). The
 sections below explain the flags whose behaviour is not obvious from one help line.
+
+The row filters and cost switches the examples above leave out, all real flags:
+`--from-year` / `--to-year`, `--source S`, `--doi-r D`, `--resolved-only` (drop rows
+the ladder did not resolve), `--no-pdf` (stop the ladder before PDF acquisition),
+`--outcome-only`, `--no-reproductions` / `--only-reproductions`,
+`--predicted-outcome`, `--recalibrate-outcomes`. Each row filter is a per-row
+predicate applied chunk by chunk, so like `--limit` it bounds spend, not how much
+of the input is read.
 
 ### Two flags that do not mean what they look like
 
@@ -574,6 +597,9 @@ python -m analysis.build_validated_skip            # dry run: prints the counts
 python -m analysis.build_validated_skip --apply    # writes data/validated_skip.csv
 ```
 
+`--out` writes somewhere other than `data/validated_skip.csv`; `--dry-run` is the
+explicit spelling of the default.
+
 Stage 3 then reads `data/validated_skip.csv` (`shared/flora_skip.load_validated_skip()`)
 and skips a row whose OpenAlex work id **or** cleaned `doi_r` is in it — two
 identifiers because a legacy record may carry only one of them, and so may a pool row.
@@ -586,8 +612,8 @@ separately from the FLoRA skips; pass `--no-skip-validated` to extract them anyw
 # Promote all test rows to production
 python -m extract.promote_test --all
 
-# Promote a single DOI
-python -m extract.promote_test --doi 10.1234/example
+# Promote named DOIs (--doi is repeatable)
+python -m extract.promote_test --doi 10.1234/example --doi 10.1234/other
 
 # Preview without writing
 python -m extract.promote_test --all --dry-run
@@ -615,16 +641,30 @@ python -m extract.sanity_check --report-only
 python -m extract.sanity_check --deep
 ```
 
-Rows land in the **first** bucket they match: `screen_disagreement` →
-`screen_disagreement.csv` (historical rows only — the front door no longer emits that
-value); `outcome == not_a_replication` and non-article `doi_r` →
-`not_a_replication.csv`; self-links → `unresolved_self_links.csv`;
-`doi_o_verification == mismatch` → `unresolved_doi_mismatch.csv`; `llm_title_search`
-→ `provisional_title_search.csv`; `target_pending` → `target_pending.csv`;
-`link_method == prescreen_discard` → `prescreen_discard.csv` (ahead of the outcome rule,
-so the cheap pre-screen's discards never mix into the validated screen's file); and with
-`--deep`, fabricated `doi_o` → `fabricated_original_doi.csv`. `cannot_be_determined`
-rows stay in `extracted.csv`.
+Rows land in the **first** bucket they match, and the order is load-bearing — the
+`link_method` rules come first and the outcome rule last of the discard buckets,
+because where a row stands in the pipeline decides which file it belongs in. The
+list below is `rules` in `extract/sanity_check.py`, in order:
+
+| # | Condition | Destination |
+| - | --------- | ----------- |
+| 1 | `link_method == screen_disagreement` | `screen_disagreement.csv` (historical rows only — the front door no longer emits the value) |
+| 2 | non-article `doi_r` (figshare data record, peer-review object) | `not_a_replication.csv` |
+| 3 | `link_method == llm_title_search` | `provisional_title_search.csv` |
+| 4 | `link_method == target_pending` | `target_pending.csv` |
+| 5 | `link_method == prescreen_discard` | `prescreen_discard.csv` — ahead of the outcome rule, so the cheap pre-screen's discards never mix into the validated screen's file |
+| 6 | `outcome == not_a_replication` | `not_a_replication.csv` |
+| 7 | `link_method == api_error` | `api_error.csv` |
+| 8 | `link_method == no_original_found` | `no_original_found.csv` |
+| 9 | `doi_o` non-blank and equal to `doi_r` | `unresolved_self_links.csv` |
+| 10 | `doi_o_verification == mismatch` | `unresolved_doi_mismatch.csv` |
+
+With `--deep`, a fabricated `doi_o` additionally goes to
+`fabricated_original_doi.csv`. `cannot_be_determined` rows stay in `extracted.csv`.
+
+The order matters in cases that are easy to get backwards: a `llm_title_search` row
+whose `doi_o_verification` is `mismatch` lands in `provisional_title_search.csv`
+(rule 3), not in `unresolved_doi_mismatch.csv`.
 
 ### Parse-cache cleanup
 
@@ -635,6 +675,31 @@ resulting empty cache then masked the real parse on any later run that did get t
 ```bash
 python -m extract.clean_parse_cache          # dry run: count and report
 python -m extract.clean_parse_cache --apply  # delete them
+```
+
+### Pre-validation audit
+
+Read-only. Checks `extracted.csv` for rows that are not ready for a validator —
+non-canonical `outcome` values (against `schema.OUTCOME_VALUES`), a `no_doi` row
+with no `oa_work_id_o` to show, and the rest.
+
+```bash
+python -m extract.audit_extracted                       # audit data/extracted.csv
+python -m extract.audit_extracted --input data/extracted-test.csv
+python -m extract.audit_extracted --report data/pre_validation_audit.csv
+python -m extract.audit_extracted --doi 10.1234/example  # repeatable
+```
+
+### Backfilling authors
+
+Fills `authors_o` / `ref_o` retroactively from OpenAlex on rows that resolved before
+those columns were written.
+
+```bash
+python -m extract.backfill_authors                   # dry run
+python -m extract.backfill_authors --apply
+python -m extract.backfill_authors --extracted-test
+python -m extract.backfill_authors --doi 10.1234/example   # repeatable
 ```
 
 ### DOI verification audit
@@ -677,7 +742,11 @@ python -m validate.app
 # → http://localhost:5001
 ```
 
-The app is read-only — it displays pipeline stats and pulls validation data from Supabase. No writes to local files.
+The app is read-only with respect to the pipeline: it displays pipeline stats and
+pulls validation data from Supabase, and no route writes to any pipeline artifact.
+It is not literally write-free — `/api/dashboard/download` copies the requested CSV
+into `data/dashboard/download/` before streaming it, and `/set-name` stores the
+reviewer's name in the Flask session.
 
 ---
 
@@ -692,10 +761,11 @@ replaces it is specified in `analysis/gold/README.md` and not yet implemented.
 # Rule analysis — audit filter rules and extraction link methods
 # (writes analysis/rule_improvement_opportunities.csv)
 python -m analysis.rule_analysis
-
-# APA reference resolver
-python -m analysis.apa_resolver
 ```
+
+`analysis/apa_resolver.py` is a library, not a command — it defines `resolve_all()`
+and `run_apa_resolution()` and has no `__main__` block, so `python -m
+analysis.apa_resolver` does nothing. Import it.
 
 **Outputs:** CSV and Markdown files in `analysis/` (see [code-flow/analysis.md](code-flow/analysis.md) for what each file means)
 
@@ -730,6 +800,9 @@ python -m tools.recalibrate_outcomes --tail 50 --dry-run
 
 # Process only first N uncertain rows (for testing a prompt change)
 python -m tools.recalibrate_outcomes --limit 10 --dry-run
+
+# Also: --input / --output (other CSVs), --reprocess-all, --fulltext,
+#       --refresh-cbd (redo the cannot_be_determined rows), --doi
 
 # Drop superseded preprint versions (keep highest _v, or the version-less DOI) — issue #17
 python -m tools.dedup_preprint_versions --input data/extracted.csv            # dry-run
@@ -782,11 +855,15 @@ python -c "import shutil; shutil.rmtree('cache/llm', ignore_errors=True)"
 | Route | Description |
 | ----- | ----------- |
 | `/` | Redirects to `/dashboard` |
-| `/dashboard` | 6-tab monitoring dashboard — see [dashboard-guide.md](dashboard-guide.md) |
+| `/dashboard` | Monitoring dashboard: five fixed tabs (Search, Filter, Extract, Extract-Test, Supabase) plus one per set-aside file — see [dashboard-guide.md](dashboard-guide.md) |
 | `/check` | Search/filter/download across any stage — see [check-page.md](check-page.md) |
 | `/pipeline` | Redirects to `/dashboard` |
 | `/api/dashboard/csv-stats` | Pipeline stats JSON (3-tier cascade: stats.json → Parquet → CSV) |
-| `/api/dashboard/download` | Download a full stage CSV (`?stage=candidates\|filtered\|extracted\|extracted-test`) |
+| `/api/dashboard/download` | Download a full stage CSV (`?stage=filtered\|extracted\|extracted-test`; anything else is a 400). Copies the file to `data/dashboard/download/<stage>_<date>.csv` before streaming it |
+| `/api/dashboard/set-stats`, `/set-rows`, `/set-download` | Per-set-aside-file stats, rows and CSV download |
+| `/api/dashboard/supabase-analytics`, `/supabase-confusion` | Validation analytics and the human/LLM confusion matrix |
+| `/pdf/<filename>` | Serves a cached PDF from `cache/pdfs/` |
+| `/set-name` | Stores the reviewer's name in the session |
 | `/api/check/search` | Filtered/paginated rows as JSON |
 | `/api/check/download` | Filtered rows as CSV attachment |
 | `/api/dashboard/supabase-stats` | Supabase validation KPIs |

@@ -20,7 +20,9 @@ pool. Every row passes DOI verification and
 of every invocation — on normal completion and on Ctrl-C.
 
 The whole stage is organised around spending the cheap calls first. The classification
-screen discards 58% of the rows that reach it, the resolution ladder returns at the
+screen discards before anything is spent on a row — 89% of the adjudicated hard
+negatives in the v3.2 gate sweep, with zero settled misses; there is no measured
+discard rate over a production pile, so do not quote one. The resolution ladder returns at the
 first rung that resolves, and the outcome LLM — the most expensive call, because it can
 escalate to 8,000 characters of full text — runs only on a row that already has a
 confirmed original.
@@ -30,7 +32,8 @@ confirmed original.
 ```
 run_extract.py
     │
-    ├── load filtered.csv, apply --year / --source / --doi-r / --predicted-outcome filters
+    ├── load filtered.csv, apply --from-year / --to-year / --source / --doi-r /
+    │       --predicted-outcome filters
     ├── skip DOIs already in FLoRA (entry sheet + flora.csv) unless --no-skip-flora-validated
     ├── skip works already in the validation tables (data/validated_skip.csv) unless --no-skip-validated
     ├── skip false_positive rows (Stage 2 already rejected them)
@@ -126,8 +129,10 @@ array of `categories` from an 11-value enum, `evidence_quote`, `reasoning`:
 | 1 | Gemini | `SCREENING_MODEL_1` |
 | 2 | OpenAI, or OpenRouter when the id contains `/` | `SCREENING_MODEL_2` (default `gpt-5.4-mini`) |
 
-Under `--screen-here`, `run_extract` refuses to start without `GEMINI_API_KEY` and
-whichever of `OPENAI_API_KEY` / `OPENROUTER_API_KEY` voter 2 needs, because with
+Under `--screen-here`, `run_extract` refuses to start without the key each voter's
+model needs. Which keys those are follows the model ids through `provider_for()`,
+not a hardcoded pair: with today's defaults it is `GEMINI_API_KEY` for voter 1 and
+whichever of `OPENAI_API_KEY` / `OPENROUTER_API_KEY` voter 2 needs. Because with
 one provider every row returns a single vote, which is not a verdict. An ordinary
 run calls neither voter and needs neither key. Voter 2 sits
 outside the Google lineage on purpose: its errors overlap little with voter 1's.
@@ -141,7 +146,8 @@ qualifying answer is a real split, and it goes down the ladder rather than termi
 There is no `screen_disagreement` outcome any more.
 
 The screen also sets `record_type` (both voters agreeing on a qualifying label wins; a
-`both` answer or a split falls back to voter 1's, and `both` maps to `replication`) and
+`both` answer or a split falls back to the FIRST QUALIFYING voter's — not voter 1's,
+since a non-qualifying voter 1 is skipped — and `both` maps to `replication`) and
 `screen_categories` (the union of both voters' categories, `|`-joined in enum order).
 
 A screen that did not get both votes is an API failure, not a verdict: it is returned
@@ -224,7 +230,7 @@ or abstract contains a parseable `(Author, Year)` citation. Many abstracts — c
 and life-sciences ones especially — carry none, so for those papers the ladder starts
 at 4.5.
 
-**Rungs 4, 4.5 and 7 are one prompt.** `build_target_prompt()` asks the same question
+**Rungs 4, 4.5 and 5 are one prompt.** `build_target_prompt()` asks the same question
 at all three — which previously published study or studies does this paper re-test —
 and only the evidence blocks differ: the abstract stage sends the abstract and the
 candidates, 4.5 adds the reference list, the full-text stage adds the PDF abstract's
@@ -300,6 +306,7 @@ outcome against, so no outcome LLM runs:
 | ------------- | ----------------- |
 | in `RESOLVED_LINK_METHODS` | coded by `extract_outcome()` |
 | `not_a_replication` | `not_a_replication` — the screen's verdict *is* the outcome |
+| `prescreen_discard` | `not_a_replication` at `low` confidence — the cheap tier's verdict, kept out of the validated screen's file |
 | `api_error` | `api_error` |
 | `llm_title_search` | `cannot_be_determined` (provisional link, outcome deferred) |
 | `target_pending`, `no_original_found`, and the historical `screen_disagreement` | `pending`, with the reason in `outcome_reasoning` |
@@ -319,7 +326,8 @@ extract_outcome(doi_r, abstract_r, fulltext, title_r, record_type=…)
     │   background prose about OTHER studies' outcomes misfires the patterns
     │
     └── otherwise → _llm_outcome():
-            abstract pass (LINKING_MODEL, OpenAI preferred on retry)
+            abstract pass (OUTCOME_MODEL; retries go to the SAME model,
+                           there is no provider fallback)
             └── leaves the verdict unsettled (a reproduction: EITHER axis at
                 cannot_be_determined), or there is no abstract, and parsed fulltext
                 exists → second call over the paper's DISCUSSION AND CONCLUSION
@@ -379,7 +387,8 @@ wording, with nothing to bump by hand.
 | `cache/llm/llm_*.json` | abstract-level and full-text identification |
 | `cache/llm/outcome_*.json` | outcome verdicts, including escalations |
 | `cache/parse/parse_*.json` | per-method parse results — read by the ladder before it parses, and by `_best_fulltext_from_cache` |
-| `cache/pdfs/retry_*.json` | per-DOI `{tier: timestamp}` — which acquisition tiers came back empty and when |
+| `cache/pdfs/pdfsrc_*.json` | per-DOI `{source, url}` — which tier really supplied the saved PDF, replayed by `acquire_pdf`'s up-front on-disk check |
+| `cache/pdfs/retry_*.json` | per-DOI `{tier: timestamp}` — which acquisition tiers came back empty and when. The same file shape keyed on `url:<URL>` holds back one URL the server answered 404/410 for |
 | `cache/openalex_xml/retry_*.json` | per-work timestamp of the last content-free GROBID-XML fetch |
 
 Declines are cached; API failures are not.
@@ -393,7 +402,13 @@ back empty is now timestamped and not re-probed for `PDF_RETRY_AFTER_DAYS` (14, 
 (`OA_XML_RETRY_AFTER_DAYS`). This is a retry delay, never a verdict — the tier is asked
 again once it lapses, and a tier skipped for a missing API key or a missing package is
 not recorded at all, so a key added tomorrow takes effect tomorrow. A successful
-acquisition clears the record.
+acquisition clears the record. A single URL the server answered **404 or 410** for
+gets its own record on the same window, which holds back that URL without holding
+back the other URLs its tier offers; nothing else qualifies, because a timeout, a
+429, a 5xx and a 401/403 are all the server failing to say "there is no document
+here". And a row whose PDF is already on disk skips the waterfall outright,
+reporting the tier recorded beside the file rather than whichever tier re-derived a
+URL first.
 
 **Tier 0 short-circuits the rest.** When the OpenAlex GROBID XML comes back with
 content, that IS the document — the parsers read it exactly as they read a downloaded
@@ -469,7 +484,7 @@ python -m extract.promote_test --all --dry-run # preview
 | `classify_replication()` | `shared/llm_client.py` | Two-model front-door vote |
 | `screen_references_with_llm()` | `shared/llm_client.py` | Rung 4.5: threads the verdict in, delegates the pick |
 | `run_for_doi()` | `extract/link_original.py` | The resolution ladder |
-| `identify_targets_with_llm()` | `shared/llm_client.py` | The merged target prompt: rungs 4, 4.5 and 7 |
+| `identify_targets_with_llm()` | `shared/llm_client.py` | The merged target prompt: the three LLM rungs (4 abstract, 4.5 reference-list, 5 full-text) |
 | `assign_target_keys()` | `shared/target_keys.py` | One `@key` namespace over candidates + references |
 | `extract_outcome()` | `extract/code_outcome.py` | Outcome coding |
 | `find_all_candidates()` | `shared/openalex_client.py` | Candidate search |

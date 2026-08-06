@@ -14,7 +14,7 @@ denominator or do not quote the figure.
 
 Where an entry is marked **historical** or **superseded**, the number was measured on
 the retired `filtered.csv` of the **2026-07** production run and does not describe the
-current pipeline. Last reviewed against the code on **2026-08-04**.
+current pipeline. Last reviewed against the code on **2026-08-06**.
 
 ---
 
@@ -53,29 +53,24 @@ architecture before treating the accepted set as complete.
 
 ---
 
-## (b) Exclusion-pattern misfires
+## (b) Exclusion-pattern misfires — **superseded**
 
-The `TECHNICAL_OBJECT` and `TECHNICAL_VERB` patterns — now the specs
-[`technical-object`](../filter/spec/technical-object.json) and
-[`technical-verb`](../filter/spec/technical-verb.json) —
-match phrases such as *"replicated the analysis code of Smith (2019)"*. Some of these
-are genuinely **in-scope computational reproductions**, which the pipeline treats as
-in-scope. The patterns are kept because they
-buy specificity: they drop the large volume of molecular-biology and pure-software
-"replication" noise.
+**Superseded by rule book v2.** This entry described the `technical-object` /
+`technical-verb` exclusion patterns and the `exclusion-rescue` spec that outranked
+them. None of the three ships any more: rule book v2 is a **whitelist**, so nothing
+is screened unless a positive rule admits it, and there are no exclusion or rescue
+rules for a misfire to happen in. The archived patterns and the evidence behind them
+are in [`filter/spec/rule_ideas.md`](../filter/spec/rule_ideas.md).
 
-The narrow overlap is rescued rather than lost. The `exclusion-rescue` spec
-outranks the exclusion band: when an exclusion pattern fires but the text also
-carries a replication phrase **and** an author-year citation, the row routes to
-`screen_cheap` instead of being discarded, and so still reaches a screening tier.
-Rows where the exclusion fires without both signals are discarded at high
-confidence and never reach a screen.
+The concern the entry named did not go away, it changed shape. Under a whitelist the
+loss is not a wrongly-fired exclusion but a paper no admission rule claims: an
+in-scope computational reproduction that names its target in prose alone, with none
+of the admission vocabulary in its title or abstract, routes to `pending` and is
+never screened.
 
-**Revisit obligation:** the rescue requires a *parseable* author-year citation, so
-an in-scope reproduction that names its target in prose alone is still dropped —
-and a discard is the one rule-terminal state, with nothing standing between it and
-the paper never being seen again. Measure how much that costs before treating the
-technical-exclusion bucket as clean.
+**Revisit obligation:** measure how many in-scope reproductions the admission rules
+fail to claim, over the `pending/no_filter_matched` pile of a current release. That
+is the whitelist's version of this cost, and it is unmeasured.
 
 ---
 
@@ -137,11 +132,10 @@ So the searches for 2012–2026 **did run** — their checkpoints are simply gon
 `cache/` is gitignored and prunable, and a cleared checkpoint leaves the fetched
 rows in `candidates.csv` with nothing left to attribute them.
 
-**Consequence:** the dashboard's *Yield per Search Phrase* table, and
-`phrase_yield()` behind it, describe **only what the surviving checkpoints can
-account for**. Treat a low coverage % or a `no checkpoint` badge as *missing
-provenance*, not missing data. `candidates.csv` is the authority on what was
-fetched.
+**Consequence at the time:** the dashboard's *Yield per Search Phrase* table, and
+`phrase_yield()` behind it, described **only what the surviving checkpoints could
+account for**. Both are gone with the API-harvest Stage 1 — there is no
+`phrase_yield` anywhere in the tree and no such dashboard table.
 
 What is still genuinely true from the checkpoints that do survive:
 
@@ -149,18 +143,24 @@ What is still genuinely true from the checkpoints that do survive:
   and never resumed — `_get_page` raises `StopIteration` when OpenAlex returns
   `Retry-After > 600` (quota exhausted), saves the cursor, and nothing resumes it.
 - `data/candidates.csv` was last written **2026-07-12** while cursors ran on
-  **07-14**, so some fetched pages were never merged. `python -m
-  search.run_search --harvest-only` merges cached pages without new API calls.
+  **07-14**, so some fetched pages were never merged. The `--harvest-only` flag that
+  merged cached pages without new API calls went with the harvest sources;
+  `search/run_search.py` now takes four flags and none of them is it.
 
-**Revisit obligation:** completeness for 2012–2021 cannot be established from the
-cache. Re-running the year range is the only way to confirm it, and is cheap where
-the request parameters match a cached page (`_get_page` keys its cache on the exact
-param set, so identical phrase + year granularity replays for free; a different
-year granularity does not hit the cache and re-spends quota).
+**Revisit obligation: discharged.** Completeness for 2012–2021 could not be
+established from the cache, and the snapshot scan replaced the question rather than
+answering it.
 
 ---
 
-## (f) Three Stage-1 "phrases" are not phrases (issue #68)
+## (f) Three Stage-1 "phrases" are not phrases (issue #68) — **superseded**
+
+**Superseded 2026-08-03, same reason as (e).** Stage 1 issues no phrase queries any
+more: the snapshot scan reads the whole corpus locally and applies the token/stem
+search gate to it, so OpenAlex's stopword handling decides nothing. The module named
+below, `search/openalex_search.py`, no longer exists — `search/` holds
+`run_search.py`, `snapshot_scan.py`, `pool_sync.py` and `fetch_abstracts.py`. The
+measurement is kept as the record of why the phrase set could not be trusted.
 
 OpenAlex strips stopwords before matching, so a quoted phrase whose only content
 word is a single term collapses to that one-word query. Verified 2026-07-22 by
@@ -175,10 +175,9 @@ The degenerate ones are `replication of`, `reproducibility of` and
 standing in for high-precision phrases, which inflates Stage 1 volume and pushes
 the precision burden entirely onto Stage 2.
 
-**Revisit obligation:** decide whether to keep them as deliberate broad recall
-(and say so in the technical report) or replace them with genuine
-multi-content-word phrases. Do not extend `openalex_search._OA_STOPWORDS` on
-intuition — `we`, `not`, `did` and `could` were each measured *not* to be dropped.
+**Revisit obligation: discharged** by the move to the snapshot scan. Nothing chooses
+phrases any more; what bounds recall now is the search gate's token/stem vocabulary,
+which is entry (a).
 
 ## (g) The cheap pre-screen trades a measured property for money (issue #130)
 
@@ -204,9 +203,12 @@ larger run of the same design would fix them:
 recorded, discard not acted on — over fresh rows and count how often it would discard a
 row the validated screen went on to keep. That quantity is the real cost, it is
 measurable in the thousands without any gold labels, and it is the only number that
-should decide this. Re-check the economics at the same time: measured over
-`data/filtered.csv` on 2026-08-02, 49,800 of 2,581,092 rows reach Stage 3, so the whole
-screening bill is ~$87 and this tier nets ~$30 of it.
+should decide this. Re-check the economics at the same time. The figures on record are
+**historical**: measured on 2026-08-02 over the retired pre-engine `filtered.csv`,
+49,800 of 2,581,092 rows reached Stage 3, making the whole screening bill ~$87 with
+this tier netting ~$30 of it. That file is gone; the engine handoff of 2026-08-05 is
+1,614 rows (`data/filtered.csv.manifest.json`), so both the bill and the saving have
+to be re-derived from a current release before either number is quoted.
 
 ---
 

@@ -47,13 +47,13 @@ only, so an exported row's `pending_reason` is always empty.
 | --- | --- |
 | `spec.py` | `FilterSpec` (frozen dataclass mirroring the JSON), `load_specs(spec_dir) -> list[FilterSpec]` (validated, sorted by precedence desc, ids unique), `bundle_hash(spec_dir: Path) -> str` (sha256 over the bundle directory's (filename, canonical JSON) pairs in name order, **including `conventions.json`** — see "The bundle a release is bound to"), `canonical_json_digest(path) -> bytes` (the one place a bundle input becomes bytes to hash: the parsed JSON re-serialised with sorted keys and no layout), `validate_spec(dict) -> list[str]` (error strings), `re2_error(pattern) -> str | None` — RE2's own complaint about a pattern it cannot run (lookaround, backreferences, conditionals, `\G`, atomic groups, possessive quantifiers), asked of pyarrow at spec load so it names the file rather than crashing a routing run. |
 | `backends.py` | The one evaluator: `eval_spec_batch(spec, batch: pa.RecordBatch) -> pa.BooleanArray` (pyarrow compute). `eval_spec_rows(spec, rows: list[dict]) -> list[bool]` is the row-shaped entry point onto it — it builds a batch of the readable columns and calls `eval_spec_batch()`, so an analysis script and a routing run cannot read a spec differently. `match_evidence(spec, batch) -> list[str]` reports WHERE each matched row matched, for `filter_evidence`. |
-| `route.py` | `route_batch(specs, batch) -> pa.Table` with columns `work_id (int64), pile (str), pending_reason (str), rule_id (str), precedence (int32), matched_rules (list<str>)`; `matched_rules` holds every non-shadow match (overlap diagnostics need the full cross-product), shadow matches are recorded separately in evaluations. |
+| `route.py` | `route_batch(specs, batch, aliases=None, evals=None) -> pa.Table` — the seven columns of `ROUTING_SCHEMA`: `work_id (int64), pile (str), pending_reason (str), rule_id (str), precedence (int32), matched_rules (list<str>), evidence (str)`; `matched_rules` holds every non-shadow match (overlap diagnostics need the full cross-product), shadow matches are recorded separately in evaluations. |
 | `workids.py` | `work_id(openalex_id: str) -> int` (`https://openalex.org/W123` → `123`); `load_aliases(path) -> dict[int, int]` from `filter/spec/aliases.json` (old_id → canonical_id, empty to start); `alias_release(path) -> str` (the alias file's `canonical_json_digest()`, for the same reason the bundle hash is canonical). |
 | `release.py` | `routing_release(pool_manifest_hash, overlay_hash, bundle_hash, engine_version, alias_release, schema_version) -> str` (sha256 of the canonical JSON); `write_release(...)`/`read_release(...)` under `cache/engine/releases/<id>.json`. Overlay hash is `None` until M3 (text overlays); pool manifest hash comes from `--pool-manifest-hash`, else `search.snapshot_scan.pool_fingerprint(pool_dir)` — a hash over the search gate the pool's rows were admitted under (read from the pool's `_pool_provenance.json`, never from the local checkout, so a shared pool fingerprints identically on every machine) plus every pool parquet as `(filename, size_bytes, num_rows)`, read from the footer. It names the POOL, which is what routing consumes, rather than one machine's scan ledger, which a pulled pool does not have; a directory with no parquet in it, or one holding fewer files than its sidecar says complete it, gives `unmanifested:<12 hex>` (a genuine anomaly — you cannot route a pool you do not have whole), never a hash of nothing; the suffix hashes the parquet names and sizes so two different unfingerprintable pools do not mint one release id and share its claims and verdicts, and the visible prefix keeps it from reading as provenance. `route` re-computes it after the routing pass and rolls the build back if it moved. |
-| `store.py` | Local DuckDB acceleration cache (gitignored, disposable): `open_store(path)`, `build_routing(store, pool_dir, specs, release_id)` (streams pool parquet through `route_batch`, persists `routing` and `evaluations(work_id, spec_id, spec_hash, matched)` incl. shadow specs), `pile_counts(store, release_id)`, `sample_pile(con, release_id, pile, n=20, seed=17)`, `drop_release(con, release_id)` (the one thing that deletes a release, for the caller that learns only after the build that it must not exist — the pool moved under it). `routing` is keyed `PRIMARY KEY (release_id, work_id)` and inserts `ON CONFLICT DO NOTHING`: a pool holding both a merged id and its canonical id holds two rows for ONE work, and first-writer-wins is what keeps that one routed work and one exported row. A build is one transaction — the delete and every insert commit together — so an interrupted run leaves the release absent or as its previous complete build, never half-replaced. Deleting the DB loses nothing: everything rebuilds from pool + specs. |
+| `store.py` | Local DuckDB acceleration cache (gitignored, disposable): `open_store(path)`, `build_routing(con, pool_dir, specs, release_id, aliases=None, batch_size=50_000, batches=None)` (streams pool parquet through `route_batch`, persists `routing` and `evaluations(release_id, work_id, spec_id, spec_hash, matched)` incl. shadow specs; `batches` is the M3 overlay seam — `pool_reader.iter_pool_batches()` is passed in through it), `pile_counts(store, release_id)`, `sample_pile(con, release_id, pile, n=20, seed=17)`, `drop_release(con, release_id)` (the one thing that deletes a release, for the caller that learns only after the build that it must not exist — the pool moved under it). `routing` is keyed `PRIMARY KEY (release_id, work_id)` and inserts `ON CONFLICT DO NOTHING`: a pool holding both a merged id and its canonical id holds two rows for ONE work, and first-writer-wins is what keeps that one routed work and one exported row. A build is one transaction — the delete and every insert commit together — so an interrupted run leaves the release absent or as its previous complete build, never half-replaced. Deleting the DB loses nothing: everything rebuilds from pool + specs. |
 | `diagnostics.py` | `diagnose(pool_dir, spec_dir, spec_id, *, baseline_dir=None, sample_n=20, seed=17) -> dict` — routes the pool twice, with and without the spec (the baseline bundle defaults to the same directory minus the spec). The §3 rule-diagnostics function: rows moved per (source pile → destination pile); overlap/agreement matrix vs every other rule (exclusive hits vs covered); a readable random sample (n≈20, seeded) of moved rows; holdout effect (reads `filter/spec/holdout.json`; reports `"holdout": "not_constructed"` until decision #146-2 lands); for discard specs, whether a `measured` entry exists (else the spec must be shadow). Renders JSON + a human-readable text block. |
-| `export.py` | `export_pile(con, pool_dir, pile, out_csv, release_id, from_year=None, to_year=None, conventions=None, specs=None, aliases=None, spec_dir=SPEC_DIR, expect_bundle_hash=None, expect_alias_release=None, overlay_dir=None, expect_overlay_hash=UNCHECKED, created_at="")` — writes the Stage 3 contract: `FILTERED_COLS` + `ENGINE_EXPORT_COLS` (see below), `utf-8-sig`, `filter_status`/`filter_method`/`filter_evidence`/`filter_confidence` derived via the conventions mapping. Also `export_manifest(...)`: a JSON naming release id, pile, row count, and content hash next to the CSV (immutable once written). |
-| `cli.py` / `__main__.py` | `python -m filter.engine specs\|route\|diagnose\|export\|screen\|reconcile\|handoff\|worklist\|release-claim\|status`. The subcommand list is `cli.py`'s `add_parser` calls; `--help` is authoritative, `docs/cli-reference.md` is the prose. Two flags cut across the subcommands: `--release <id>` (on `export`, `screen`, `handoff` and `worklist`) names which release to read, defaulting to the store's only one and refusing when the store holds several — a re-route must never be resolved silently; `diagnose --sample N` (default 20) sets how many seeded example rows the diagnosis prints. |
+| `export.py` | `export_pile(con, pool_dir, pile, out_csv, release_id, from_year=None, to_year=None, conventions=None, specs=None, aliases=None, spec_dir=SPEC_DIR, expect_bundle_hash=None, expect_alias_release=None, overlay_dir=None, expect_overlay_hash=UNCHECKED, created_at="")` — writes the Stage 3 contract: `ENGINE_EXPORTED_COLS` = `FILTERED_COLS` + `ENGINE_EXPORT_COLS` (see below) + `SCREEN_COLS`, the last six blank because `export` applies no tier verdicts; writing them blank rather than omitting them is what lets Stage 3 accept an exported pile at all. Written through `write_rows_tmp()`, the one atomic CSV writer this module shares with `handoff.py`, so an interrupted export leaves the previous file rather than half of a new one. `utf-8-sig`, `filter_status`/`filter_method`/`filter_evidence`/`filter_confidence` derived via the conventions mapping. Also `export_manifest(...)`: a JSON naming release id, pile, row count, and content hash next to the CSV (immutable once written). |
+| `cli.py` / `__main__.py` | `python -m filter.engine specs\|route\|diagnose\|export\|screen\|reconcile\|handoff\|worklist\|release-claim\|status`. The subcommand list is `cli.py`'s `add_parser` calls; `--help` is authoritative, `docs/cli-reference.md` is the prose. Two flags cut across the subcommands: `--release <id>` (on `export`, `screen`, `handoff`, `worklist` and `release-claim`) names which release to read, defaulting to the store's only one and refusing when the store holds several — a re-route must never be resolved silently; `diagnose --sample N` (default 20) sets how many seeded example rows the diagnosis prints. |
 
 `ENGINE_VERSION` lives in `filter/engine/__init__.py` and is bumped whenever routing
 behavior changes without a spec change.
@@ -113,8 +113,8 @@ is the one thing RE2-through-pyarrow cannot report. That locator decides nothing
 where the two engines read a span differently it finds none, and the evidence
 string names the condition instead of a phrase.
 
-Text is folded and NFC-normalised where it becomes matchable (`_normalize_array()`
-in `BatchContext`): every Unicode space separator to a plain space, the zero-width
+Text is folded and NFC-normalised where it becomes matchable
+(`_normalize_array()` in `backends.py`, called from `BatchContext.__init__`): every Unicode space separator to a plain space, the zero-width
 space and BOM away. That is why the bundle needs no decomposed-Unicode twin of its
 multilingual stem arm, and why an abstract using U+00A0 as its word separator
 still matches a spec's literal space. `pc.utf8_normalize` is not used: on pyarrow
@@ -213,13 +213,36 @@ Match semantics:
   membership of bare concept ids in the row's `concepts` (both URL-form JSON and
   bare forms).
 - `abstract_missing: true` matches rows with empty/null `abstract_text`.
+- A pattern RE2 cannot run cannot ship. There is no escape hatch: the retired
+  `pyre_regex` key, which recorded a lookaround original next to its RE2
+  decomposition, is now an unknown-key error, and the original belongs in
+  [`rule_ideas.md`](../filter/spec/rule_ideas.md) beside the arms that replaced it.
 - `pile` must be one of the four routable piles; `pending` is never a spec target.
 - `vocabulary` (`"replication"` / `"reproduction"` / null) feeds the status mapping.
-- A `discard` spec with no `measured` entry fails validation unless `shadow` is true.
+
+A LIVE (`shadow: false`) `discard` spec has three extra validation rules, all in
+`validate_spec()`:
+
+1. It needs at least one `measured` entry.
+2. At least one of those entries must be at an **autonomous** level
+   (`human`, `downstream`, `trusted`, or `llm:<model>`) — heuristic-only evidence
+   may not discard.
+3. If it reads `abstract_regex` or `text_regex`, it must carry
+   `"abstract_missing": false` at the top level of its match. A row with no text
+   has said nothing, and an empty string is not evidence for deleting the work.
+
+`shadow: true` lifts all three.
+
+The full accepted key sets, from `spec.py`: top level `id, description, match,
+pile, vocabulary, precedence, shadow, measured`; inside a match `doi_prefix,
+doi_regex, title_regex, abstract_regex, text_regex, fields, abstract_missing,
+any_of, all_of, none_of`; inside
+`fields` `type, publication_year, concept_ids`; inside a `measured` entry
+`level, precision, n, sample, date, owner, rationale`.
 
 ## The shipped bundle (rule book v2)
 
-Nine specs, designed in `redesign/rulebook_v2.html` and measured there. The book
+Sixteen specs, designed in `redesign/rulebook_v2.html` and measured there. The book
 is a **whitelist**: nothing is screened unless a positive rule admits it, so
 there are no exclusion or rescue rules. The nineteen specs it replaced
 — the six vocabulary exclusions, the two rescues, the four phrase/stem rules and
@@ -229,11 +252,15 @@ evidence in [`filter/spec/rule_ideas.md`](../filter/spec/rule_ideas.md).
 | spec | pile | prec. | shadow | content |
 | --- | --- | --- | --- | --- |
 | `not-a-paper-doi` | discard | 960 | | `/reviews/`\|`/decisions/` paths · terminal `.suppl` |
-| `deposit-registrant` | discard | 958 | | 10 deposit-only registrants (figshare dropped, D1) |
+| `deposit-registrant` | discard | 958 | | 11 deposit-only registrants. Figshare proper (10.6084) is not among them — D1 took it off the prefix list, and it has its own title-gated rule below |
+| `figshare-attachment` | discard | 956 | | figshare (10.6084) DOIs whose title marks the object as an attachment to a paper rather than the paper |
 | `not-a-paper-title` | discard | 955 | | the start-anchored genre-plus-parent title pattern |
 | `not-a-report-type` | discard | 940 | | `type ∈ {component, database, dataset, software, supplementary-materials}` — not a report of a study |
-| `replication-claim-cited-title` | screen_expensive | 760 | | a claim arm in the TITLE **and** an author-year citation in the title — the only live admission |
-| `replication-claim-title` | screen_expensive | 750 | ✓ | any claim arm in the title |
+| `osf-registration-completed` | screen_expensive | 936 | | admission on the OSF registration TEMPLATE (registrant 10.17605) |
+| `osf-registration-protocol` | discard | 935 | | the discard twin: an OSF registration whose template marks it a protocol, not a completed study |
+| `replication-claim-cited-title` | screen_expensive | 760 | | a claim arm in the TITLE **and** an author-year citation in the title — the narrowest of the three live admissions |
+| `replication-claim-title-strong` | screen_expensive | 750 | | the two title arms that measure as high-precision on their own |
+| `replication-claim-title-broad` | screen_expensive | 740 | ✓ | the other ten arms of the twelve-arm title family |
 | `replication-claim-text` | screen_expensive | 730 | ✓ | the 8 strong claim arms anywhere in title+abstract |
 | `replication-claim-residual` | screen_expensive | 710 | ✓ | the 4 measured-weak arms: fail/attempt · aim/set out · success* · the negation matrix |
 | `not-a-study-type` | discard | 500 | | `type ∈ {grant, libguides, paratext, peer-review, standard}` — a crosswalk that can be wrong about a real paper |
@@ -372,7 +399,7 @@ recovered abstract text, layered over the pool at read time.
 | --- | --- |
 | `pool_reader.py` | `iter_pool_batches(pool_dir, overlay_dir=None, batch_size=50_000, aliases=None)` — the engine's single input path: pool batches with overlay text written over the pool's `abstract_text`, empty or not. `overlay_manifest_hash(overlay_dir) -> str \| None` (defined in `overlay.py`, re-exported here so the input path is one import). The overlay is loaded once as a `work_id -> text` dict and applied per batch; with no overlay the stream is `iter_batches()` untouched. |
 | `overlay.py` | `worklist(con, release_id, pool_dir, out_path, aliases=None) -> int` (the `pending_reason='no_text'` rows joined to the pool for doi/title/year); `write_chunk()`, `load_overlay()`, `overlay_work_ids()`; `validate(overlay_dir) -> list[str]`; `freeze(overlay_dir, pool_manifest_hash=None) -> dict`; `overlay_manifest_hash()`, `read_manifest()`. |
-| `backfill.py` | `python -m filter.engine.backfill --worklist F [--overlay-dir D] [--run] [--phase all\|bulk\|targeted] [--limit N] [--source S] [--freeze]` — the six abstract sources over a worklist in two pathways (bulk, then targeted), results appended as an overlay chunk. `--overlay-dir` defaults to `OVERLAY_DIR`, the same directory the engine's commands read. |
+| `backfill.py` | `python -m filter.engine.backfill --worklist F [--overlay-dir D] [--run] [--phase all\|bulk\|targeted] [--limit N] [--source S] [--batch-size N] [--scopus-limit N] [--include-openalex] [--dry-run] [--freeze]` — the six abstract sources. `--phase bulk` with no `--source` runs Europe PMC alone and says so in one line, because OpenAlex is bulk-shaped but opt-in. over a worklist in two pathways (bulk, then targeted), results appended as an overlay chunk. `--overlay-dir` defaults to `OVERLAY_DIR`, the same directory the engine's commands read. |
 
 **An overlay row wins, present pool text or not.** Every overlay row was written
 deliberately by a backfill this project ran, against a worklist this project
@@ -467,8 +494,8 @@ time, so the phase writes it as the FIRST LINE of the recovered text
 under it — a median 5,268 characters that OSF keeps out of `description`. Two
 specs read that line: `osf-registration-completed` (936) admits a post-completion
 template on its own, and an `Open-Ended Registration` carrying the replication
-stem; `osf-registration-protocol` (935, shadow) discards the rest, which is the
-preregistration vocabulary. Both sit above the 700s admission band because for
+stem; `osf-registration-protocol` (935, live) discards the rest, which is the
+preregistration vocabulary. Both outrank the admission rules in the 700s because for
 these rows the template line is a better statement of what the record is than
 any phrase in the responses text — a preregistration says "we will replicate
 Smith (2009)" and means it has not happened yet. The phase runs first in the

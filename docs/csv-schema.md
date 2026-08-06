@@ -183,7 +183,7 @@ provenance appended after it — plus:
 | `outcome_confidence` | string | `high` \| `medium` \| `low` |
 | `out_quote_source` | string | Where the outcome quote came from: `abstract` \| `title` \| `fulltext`. `fulltext` appears only on results escalated to the fulltext LLM pass. |
 | `outcome_reasoning` | string | LLM chain-of-thought for the outcome decision |
-| `outcome_llm_model` | string | Model that coded the outcome. Can differ from `link_llm_model` within one run — the outcome step fails over to another provider when the primary's quota runs out. `keyword` on `--no-llm` rule-based rows; blank when no outcome verdict was made (`pending`, `api_error`) |
+| `outcome_llm_model` | string | Model that coded the outcome — always `OUTCOME_MODEL`, which is its own call site's constant and can differ from `LINKING_MODEL` even though the two are the same string today. There is **no provider fallback**: `_call_outcome_model()` retries the same model three times and then records the failure, so a value here is never a substitute model an evaluation does not cover. `keyword` on `--no-llm` rule-based rows; blank when no outcome verdict was made (`pending`, `api_error`) |
 | `type` | string | `replication` \| `reproduction` \| empty. Decided by the front-door screen (a `both` classification is recorded as `replication`, since such a paper collects new data), falling back to Stage 2's `filter_status`. **Empty** when a screen ran and neither decided — the screen proceeded without a qualifying vote on a row Stage 2 left at `needs_review`; such a row is coded on the replication vocabulary but carries no type and is not imported. When **no screen ran at all** (`--no-llm`) and Stage 2 named no vocabulary, `_record_type()` in `extract/run_extract.py` falls back to `replication` rather than leaving the field empty. Also selects the outcome vocabulary — a reproduction is coded on the computation/robustness grid |
 | `original_rank` | int | 1 for single-original; 1, 2, 3… for multi-original |
 | `n_originals` | int | Total number of originals for this paper |
@@ -196,8 +196,8 @@ sharply, so a consumer has to be able to tell them apart.
 | Value | Meaning |
 | ----- | ------- |
 | `citation_context_match` | Rule-based: a parenthetical `(Author, Year, Journal)` citation in the abstract scored a single candidate above threshold with a clear gap over the runner-up |
-| `same_author_year_title_overlap` | Rule-based: all candidates share one author + year; chosen by title-Jaccard overlap with abstract/title |
-| `single_candidate_after_requery` | Rule-based: exactly one OpenAlex candidate remained after re-query, auto-accepted at score 1.0 with **no semantic check** (weakest of the rule-based methods) |
+| `same_author_year_title_overlap` | Rule-based: all candidates share one author + year; chosen by title-Jaccard overlap with abstract/title. **Held-only**, like `single_candidate_after_requery` below — it breaks on a ≥0.05 token overlap a tie the citation resolver refused to break |
+| `single_candidate_after_requery` | Rule-based: exactly one OpenAlex candidate remained after re-query, auto-accepted at score 1.0 with **no semantic check** (weakest of the rule-based methods). **Held-only**: it is one of `_HELD_ONLY_METHODS` in `extract/link_original.py`, so it may never END the ladder while a call that can enumerate targets is still available. The pick is parked and the ladder keeps going; it is restored — and only then written as the row's `link_method` — when nothing that could enumerate targets contradicted it, i.e. either nothing enumerating ever spoke (`--no-llm`, `--no-pdf`, no document, no context) or the one call that did named at most one original and that original is the same work (`_agrees_with_held()`). Two named targets, a different work, or a target that cannot be identity-checked all discard the pick. A provider failure is not an answer, so it leaves the pick withheld and the row `target_pending` for a re-run. Under `--no-llm` nothing can enumerate at all and the rule stops immediately |
 | `title_pattern_match` | Rule-based: the replication title (e.g. "A Replication of X") named the original, matched to a candidate by title Jaccard |
 | `grobid_ref_match` | Rule-based: a GROBID-parsed reference matched a candidate by DOI or author+year. The resolver behind it (`shared/disambiguation.resolve_by_grobid_refs`) is not wired into `run_for_doi`, so only stored rows carry this value |
 | `llm_cited_candidates` | LLM chose the original from candidates found by matching an author-year citation in the abstract against the paper's references |
@@ -295,7 +295,9 @@ where a row sits in the pipeline.
 > categories that the pipeline could not emit until the rule-alignment pass.
 > `uninformative` had been retired into `OUTCOME_LEGACY_VALUES` and folded into
 > `cannot_be_determined`, which merged a property of the paper with a limit of our
-> extraction; it is a live category again, and `OUTCOME_LEGACY_VALUES` is now empty.
+> extraction; it is a live category again, and no longer in `OUTCOME_LEGACY_VALUES`.
+> That set is not empty — it now holds the nine strings of the retired 3×3
+> reproduction grid, for rows already on disk.
 
 ---
 

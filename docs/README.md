@@ -1,8 +1,8 @@
 # FLoRA Extractor — Documentation
 
-**This page is the documentation index.** It is the only one — `README.md` and
-`CLAUDE.md` each carry a single pointer here rather than a list of their own, so a
-new document is added in one place and cannot go missing from a second.
+**This page is the documentation index** for the guides and references below.
+`README.md` and `CLAUDE.md` point here rather than keeping lists of their own, so a
+new guide is added in one place and cannot go missing from a second.
 
 ## Quick links
 
@@ -12,7 +12,7 @@ new document is added in one place and cannot go missing from a second.
 | [setup.md](setup.md) | Installation, environment variables, running the pipeline |
 | [cli-reference.md](cli-reference.md) | All CLI commands with flags for every stage |
 | [filter-engine.md](filter-engine.md) | Stage 2's declarative routing engine (issue #146) |
-| [cleanup-worklist.md](cleanup-worklist.md) | Dead code, docs drift and refactors noticed 2026-08-06, for a dedicated cleanup pass |
+| [cleanup-worklist.md](cleanup-worklist.md) | Completion record for the 2026-08-06 cleanup round: what was done, skipped, or is pending a maintainer decision |
 | [aws-snapshot-scan.md](aws-snapshot-scan.md) | Runbook: the full OpenAlex snapshot scan on EC2, published to Hugging Face |
 | [parquet-cache.md](parquet-cache.md) | The dashboard's parquet cache |
 | [csv-schema.md](csv-schema.md) | Column definitions for the pipeline CSVs |
@@ -33,4 +33,8 @@ Detailed code flows for each pipeline stage:
 | [code-flow/stage3-extract.md](code-flow/stage3-extract.md) | Stage 3: Original study linking + outcome extraction |
 | [code-flow/stage4-validate.md](code-flow/stage4-validate.md) | Stage 4: Monitoring web app + Supabase integration |
 | [code-flow/pdf-pipeline.md](code-flow/pdf-pipeline.md) | PDF acquisition waterfall + parse scoring |
-| [code-flow/analysis.md](code-flow/analysis.md) | Analysis scripts: gap analysis, rule analysis, APA resolver |
+| [code-flow/analysis.md](code-flow/analysis.md) | Analysis scripts: rule analysis, APA resolver (the gap/overlap analysis is retired) |
+
+Not indexed above, because they are records rather than references:
+`docs/archive/` (superseded design docs), `docs/tasks/` (dated handover notes) and
+`docs/superpowers/specs/`.
