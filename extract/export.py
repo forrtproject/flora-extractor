@@ -31,6 +31,19 @@ row lands in the same set-aside CSV whichever hand wrote it.
 **The mode filter is the claim's, not the row's.** A `validation`-mode run records
 real verdicts that must not reach the live file, and where that is written down is
 `claim.meta.mode` — the same place the screens keep it.
+
+**This is the only writer of `data/extracted.csv`.** Nothing appends to it any more:
+the CSV runner that used to stream rows into it is gone (parked on `wip/csv-runner`),
+`extract/sanity_check.py` reports rather than moves, and the two retroactive tools
+correct the verdicts instead of the file. Each render writes the whole file, sorted by
+`(work_id, original_rank)`, through a temp file and one rename.
+
+The file currently tracked in git is the OLD pipeline's — 285 rows written row by row
+in append order, before this module existed. The first live export will therefore
+replace it whole, in one large diff: every row re-ordered, and only the works the
+extract tier has verdicts for. That diff is expected and is not a data loss; the
+previous contents stay in git history, and `--check` shows the difference before
+anything is written.
 """
 
 import argparse

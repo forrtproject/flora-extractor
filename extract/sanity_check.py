@@ -168,9 +168,8 @@ _BUCKET_FILES = tuple(
 def _norm(df: pd.DataFrame) -> pd.DataFrame:
     """Schema-normalise a frame: every column present, no NaN, bare-integer years.
 
-    Every to_csv in this module writes a frame that came through here, so this is
-    where the float-year artifact ("2018.0", #140) is kept out of the set-aside CSVs
-    — whether it arrived from an older row on disk or from a float-typed read.
+    The frame this pass counts comes through here, so a legacy "2018.0" (#140) or a
+    float-typed read cannot make a row look different from what it is.
     """
     for c in EXTRACTED_COLS:
         if c not in df.columns:
