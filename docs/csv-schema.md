@@ -295,7 +295,9 @@ where a row sits in the pipeline.
 > categories that the pipeline could not emit until the rule-alignment pass.
 > `uninformative` had been retired into `OUTCOME_LEGACY_VALUES` and folded into
 > `cannot_be_determined`, which merged a property of the paper with a limit of our
-> extraction; it is a live category again, and `OUTCOME_LEGACY_VALUES` is now empty.
+> extraction; it is a live category again, and no longer in `OUTCOME_LEGACY_VALUES`.
+> That set is not empty — it now holds the nine strings of the retired 3×3
+> reproduction grid, for rows already on disk.
 
 ---
 

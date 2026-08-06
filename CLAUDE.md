@@ -92,7 +92,7 @@ never been independently validated. Discuss shared changes with all stage teams.
 
 | Stage | Files |
 | ----- | ----- |
-| `search/` | `run_search.py` (the Stage 1 entry point: `--scan` runs the ledger-backed snapshot scan (sample scans use a scratch `FLORA_CACHE_DIR`); a bare invocation never starts a 400 GB scan), `snapshot_scan.py` (the bulk-parquet scan: **the search gate** → the survivor pool; also `pool_fingerprint()`, the pool's identity in a Stage 2 release id, and the `_pool_provenance.json` sidecar it reads — the gate the pool's rows were ADMITTED under and the file count that completes it, written by the scan and by `--pull`, stamped onto an older pool with `--stamp-pool`), `pool_sync.py` (share the pool through a private HF dataset repo: `--push` / `--pull`), `fetch_abstracts.py` (the six abstract-source phase runners — a library now, whose one consumer is `filter/engine/backfill.py`). Stage 1 searches and does not filter: the non-snapshot discovery sources were retired to `wip/api-harvest-sources` (PR #158) because nothing downstream read `data/candidates.csv` |
+| `search/` | `run_search.py` (the Stage 1 entry point: `--scan` runs the ledger-backed snapshot scan (sample scans use a scratch `FLORA_CACHE_DIR`); a bare invocation never starts a 725 GB scan), `snapshot_scan.py` (the bulk-parquet scan: **the search gate** → the survivor pool; also `pool_fingerprint()`, the pool's identity in a Stage 2 release id, and the `_pool_provenance.json` sidecar it reads — the gate the pool's rows were ADMITTED under and the file count that completes it, written by the scan and by `--pull`, stamped onto an older pool with `--stamp-pool`), `pool_sync.py` (share the pool through a private HF dataset repo: `--push` / `--pull`), `fetch_abstracts.py` (the six abstract-source phase runners — a library now, whose one consumer is `filter/engine/backfill.py`). Stage 1 searches and does not filter: the non-snapshot discovery sources were retired to `wip/api-harvest-sources` (PR #158) because nothing downstream read `data/candidates.csv` |
 | `filter/` | `phrase_detection.py` — the token/stem vocabulary the **search gate** is built from. It is Stage 1's only keyword logic; Stage 2 does not call it. The old `rule_filter.py`/`run_filter.py` path is retired (#146) |
 | `filter/engine/` | The issue #146 filter engine, which IS Stage 2: declarative JSON specs in `filter/spec/` routed by precedence into piles (`discard` / `screen_expensive` / `screen_cheap` / `needs_human` / `pending`) over the survivor pool; claimed, budget-gated LLM tiers; `handoff` writes Stage 3's input. Rules route and discard; only LLMs admit. Design: [`docs/filter-engine.md`](docs/filter-engine.md); policy (precedence, pile→status mapping, measurement levels): `filter/spec/CONVENTIONS.md`. CLI: `python -m filter.engine specs\|route\|diagnose\|worklist\|screen\|export\|reconcile\|handoff\|release-claim\|status` |
 | `db/migrations/` | The engine's Postgres state authority (claims, permanent verdicts, audit, validation lineage) — SQL the maintainer runs in Supabase |
@@ -361,10 +361,18 @@ must never cache the empty one.
 
 ## Large Files
 
-filtered.csv is written by Stage 2's handoff and has reached multiple GB, so Stage 3
-reads it in 50k-row chunks (`_CHUNK_ROWS` in `extract/run_extract.py`) and never holds
-more than one chunk in memory; the CLI row filters are per-row predicates applied
-chunk by chunk. Resume state is the other direction and is NOT chunked:
+**The big artifact is the survivor pool, not a CSV.** The pool is a few GB of parquet
+and is shared through Hugging Face; the OpenAlex snapshot it is scanned out of is
+725 GB. Nothing in `data/` is close to that: the engine handoff on disk is 1,614 rows
+(`data/filtered.csv.manifest.json`) and `data/extracted.csv` is about 1 MB.
+
+The multi-GB `filtered.csv` this section was written for is the RETIRED pre-engine
+file — the DVC-tracked `filtered.zip` still holds it at 1.7 GB. Stage 3 still reads
+its input in 50k-row chunks (`_CHUNK_ROWS` in `extract/run_extract.py`) and never
+holds more than one chunk in memory, and the CLI row filters are still per-row
+predicates applied chunk by chunk. That costs nothing at the current size and is what
+lets the input grow again without a rewrite. Resume state is the other direction and
+is NOT chunked:
 `_load_extracted_rows()` reads the whole output CSV into a DataFrame in one go, plus
 the settled set-aside CSVs, and partitions the rows by `row_key()` (`shared/row_key.py`:
 doi → `oa:` → `url:` → `title:`). The sidecar index files and their `--rebuild-index`

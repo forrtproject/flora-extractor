@@ -94,11 +94,18 @@ If the shared-drive CSVs are available, you can skip Stages 1–2:
 
 ### Large data files (DVC + Cloudflare R2)
 
-`filtered.csv` (~4.3 GB) is far too large for git or the free GitHub LFS tier.
-(The survivor pool is shared separately, through Hugging Face — see
-[cli-reference.md](cli-reference.md).) It is stored **zipped** in a Cloudflare R2 bucket and
-versioned with [DVC](https://dvc.org); only the small `data/*.zip.dvc` pointer files
-are committed to git. The unzipped CSVs are gitignored working copies.
+This is for the two RETIRED pre-engine corpora, `candidates.csv` and the old
+`filtered.csv`, which were far too large for git or the free GitHub LFS tier — the
+DVC pointers hold them zipped at 1.67 GB and 1.68 GB (`data/candidates.zip.dvc`,
+`data/filtered.zip.dvc`). Neither is written any more: Stage 1's corpus is the
+survivor pool (shared through Hugging Face — see
+[cli-reference.md](cli-reference.md)) and the current `data/filtered.csv` is Stage 2's
+handoff at a couple of thousand rows. Set this up only if you need the historical
+corpora.
+
+They are stored **zipped** in a Cloudflare R2 bucket and versioned with
+[DVC](https://dvc.org); only the small `data/*.zip.dvc` pointer files are committed
+to git. The unzipped CSVs are gitignored working copies.
 
 One-time setup — put R2 credentials (from an R2 "Object Read & Write" API token) in
 `.dvc/config.local`, which is gitignored so secrets never reach git:
