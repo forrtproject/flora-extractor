@@ -549,6 +549,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     sources = select_sources(args.source, args.phase, args.include_openalex)
 
+    # The bulk pathway used to be two sources. It is Europe PMC alone unless
+    # OpenAlex is asked for, and a script written against the old default would
+    # otherwise do half the pass without saying so.
+    if args.phase in ("all", "bulk") and "openalex" not in sources:
+        print("note: the bulk pathway is Europe PMC only — OpenAlex is opt-in "
+              "(--include-openalex, or --source openalex).")
+
     if not args.run:
         estimates, rows, dropped = estimate_worklist(args.worklist, sources,
                                                      args.limit)
