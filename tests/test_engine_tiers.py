@@ -501,8 +501,8 @@ def test_blobs_are_committed_in_batches_not_one_commit_each(con, pool, monkeypat
 
     patcher, _ = _cheap_votes("no", "no")
     with patcher:
-        tiers._run_tier(con, client, RELEASE, tiers.TIER_CHEAP, works,
-                        tiers._cheap_judge, mode="validation", batch_label="b", run=True)
+        tiers.run_tier(tiers.SCREEN_CHEAP, client, RELEASE, works,
+                       mode="validation", batch_label="b", run=True)
 
     committed = [name for commit in hub.commits for name in commit]
     assert len(committed) == 24
@@ -568,9 +568,8 @@ def test_the_pool_loses_no_verdict_and_double_counts_none(con, pool, monkeypatch
 
     patcher, _ = _cheap_votes("no", "no")
     with patcher:
-        report = tiers._run_tier(con, client, RELEASE, tiers.TIER_CHEAP, works,
-                                 tiers._cheap_judge, mode="validation",
-                                 batch_label="b", run=True)
+        report = tiers.run_tier(tiers.SCREEN_CHEAP, client, RELEASE, works,
+                                mode="validation", batch_label="b", run=True)
 
     recorded = [c[1] for c in calls if c[0] == "record_verdict"]
     assert report["decided"] == 40
@@ -607,9 +606,8 @@ def test_an_exhausted_budget_fails_the_claim_and_keeps_what_was_decided(con, poo
     patcher, _ = _cheap_votes("no", "no")
     with patcher, patch.object(tiers, "check_openai_budget", budget):
         with pytest.raises(TokenBudgetExhausted):
-            tiers._run_tier(con, client, RELEASE, tiers.TIER_CHEAP, works,
-                            tiers._cheap_judge, mode="validation", batch_label="b",
-                            run=True)
+            tiers.run_tier(tiers.SCREEN_CHEAP, client, RELEASE, works,
+                           mode="validation", batch_label="b", run=True)
 
     assert ("release_claim", ("claim-1", "failed")) in calls
     assert ("release_claim", ("claim-1", "complete")) not in calls
@@ -1484,3 +1482,75 @@ def test_reconcile_dry_run_commits_nothing_and_marks_nothing(tmp_path):
     api.assert_not_called()
     client.mark_uploaded.assert_not_called()
     assert "DRY RUN" in tiers.render_reconcile(report)
+
+
+# ---------------------------------------------------------------------------
+# The tier registry
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def foreign_tier(monkeypatch):
+    """A tier defined the way a tier outside `filter/engine` would define one.
+
+    The seam the registry exists for: `run_tier()` and the checkpoint readers must
+    work off nothing but the spec — no screen models, no classify prompt, no pile
+    in the routing store, and no import of the package the tier lives in. Its own
+    prices, its own generation, its own decision rule, its own worker count and
+    lease.
+    """
+    monkeypatch.setitem(tiers._TIER_SPECS, "outside", tiers.TierSpec(
+        name="outside",
+        judge=lambda work: ("done", [{"model": "m-outside", "verdict": "done",
+                                      "blob": {"work_id": work.work_id}}]),
+        decide=lambda rows: {"outcome": "done" if rows else tiers.INCOMPLETE,
+                             "record_type": "", "votes": []},
+        generation=lambda: "gen-outside",
+        accepts_legacy=lambda rows: False,
+        estimate=lambda works: {"tier": "outside", "rows": len(works)},
+        render_estimate=lambda est: f"outside: {est['rows']} row(s)",
+        workers=2, ttl_seconds=90, batch_size=1))
+    return tiers._TIER_SPECS["outside"]
+
+
+def test_a_tier_from_outside_the_engine_runs_on_the_shared_spine(foreign_tier):
+    calls: list = []
+    client = _client(calls)
+    works = [tiers.Work(90 + i, f"10.9/w{i}", f"T{i}", "text", "outside")
+             for i in range(3)]
+
+    report = tiers.run_tier(foreign_tier, client, RELEASE, works, mode="live",
+                            batch_label="b", run=True)
+
+    assert report["tier"] == "outside" and report["decided"] == 3
+    assert report["outcomes"] == {"done": 3}
+    assert report["workers"] == 2                      # the spec's, not the default
+    _, args, kwargs = calls[0]
+    assert args[1] == "outside"
+    assert kwargs["meta"]["generation"] == "gen-outside"
+    assert kwargs["ttl_seconds"] == 90
+
+
+def test_a_foreign_tier_dry_run_prices_itself(foreign_tier, capsys):
+    """No shared price table to be missing from: the spec brings its own."""
+    report = tiers.run_tier(foreign_tier, MagicMock(), RELEASE, [], mode="live",
+                            batch_label="b", run=False)
+    assert report["dry_run"] and capsys.readouterr().out == "outside: 0 row(s)\n"
+
+
+def test_the_checkpoint_readers_use_the_spec_of_the_tier_they_are_asked_about(
+        foreign_tier):
+    client = MagicMock()
+    client.claims.return_value = [{"id": "c1", "tier": "outside",
+                                   "meta": {"generation": "gen-outside"}}]
+    client.verdicts.return_value = [{"claim_id": "c1", "work_id": 91,
+                                     "verdict": "done", "model": "m-outside"}]
+    assert tiers.decided_work_ids(client, "outside") == {91}
+    assert tiers.incomplete_work_ids(client, "outside") == set()
+
+
+def test_an_unregistered_tier_is_named_rather_than_judged_by_the_expensive_rule():
+    """The old dispatch was `_cheap_decision if tier == cheap else _expensive`, so
+    an unknown name silently got the expensive tier's rule applied to its rows."""
+    with pytest.raises(ValueError, match="unknown tier: nope"):
+        tiers.tier_spec("nope")

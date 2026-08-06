@@ -2,7 +2,7 @@
 
 A `screen --tier screen_expensive --run` that ran with no `GEMINI_API_KEY` got one
 vote per work instead of two. `classify_replication()` refuses to cache an
-incomplete screen, so nothing was checkpointed locally — but `_run_tier` had
+incomplete screen, so nothing was checkpointed locally — but `run_tier` had
 already written the one vote it got as a permanent verdict row, and
 `decided_work_ids()` treats ANY verdict row as this tier's checkpoint. Those works
 are therefore excluded from every future run while `screen_gate()` returns None for
@@ -11,7 +11,7 @@ never be checkpointed as a definitive miss.
 
 Verdicts are permanent by design (append-only trigger, migration 0001), so the
 repair is additive: re-screen exactly those works and record the votes through the
-same claim → judge → `record_verdict` path a normal run uses (`_run_tier` with
+same claim → judge → `record_verdict` path a normal run uses (`run_tier` with
 `_expensive_judge`), so nothing here is a second way of writing a verdict. The one
 extra step is `supersede_verdict()`: the orphan vote is pointed at the new vote
 from the same model, so the gate reads the two votes of one complete screen rather
@@ -34,8 +34,8 @@ from filter.engine.claims import ClaimsClient
 from filter.engine.export import ALIASES_FILENAME, SPEC_DIR
 from filter.engine.store import DEFAULT_STORE_PATH, open_store, releases
 from filter.engine.tiers import (TIER_EXPENSIVE, Work, _expensive_decision,
-                                 _expensive_judge, _run_tier, estimate,
-                                 pile_works, render_estimate)
+                                 estimate, pile_works, render_estimate, run_tier,
+                                 tier_spec)
 from filter.engine.workids import load_aliases
 from shared import token_usage
 from shared.config import SNAPSHOT_POOL_DIR
@@ -144,8 +144,8 @@ def main(argv: Optional[list[str]] = None) -> int:
           f"({args.tier}, both voters)")
 
     before = copy.deepcopy(token_usage.usage())
-    report = _run_tier(con, client, release_id, args.tier, works, _expensive_judge,
-                       mode="live", batch_label=args.batch_label, run=True)
+    report = run_tier(tier_spec(args.tier), client, release_id, works,
+                      mode="live", batch_label=args.batch_label, run=True)
     print(f"\nclaim {report['claim_id']}  —  {report['decided']:,} work(s) decided, "
           f"{report['verdicts']:,} verdict(s) recorded")
     for outcome, count in sorted(report["outcomes"].items()):
