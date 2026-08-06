@@ -78,6 +78,7 @@ import argparse
 import time
 from collections import Counter
 from pathlib import Path
+from typing import Mapping, Optional
 
 import pandas as pd
 import requests
@@ -89,6 +90,86 @@ from shared.schema import (EXTRACTED_COLS, RESOLVED_LINK_METHODS,
 from shared.doi_verify import fetch_doi_metadata
 from shared.row_key import primary_key
 from shared.utils import bare_work_id, clean_doi, csv_lock, non_article_doi, non_article_type
+
+# The demotion note, and the cap that keeps a long link_evidence from growing without
+# bound when the same row is demoted on successive passes.
+_DEMOTION_NOTE = "demoted by sanity_check: resolved link_method with no doi_o; "
+_EVIDENCE_CAP = 2000
+
+
+def demote_malformed(row: Mapping) -> Optional[dict]:
+    """The field changes that turn a malformed row into a `target_pending` one, or None.
+
+    A resolved link_method with no doi_o claims a target it cannot name. It is a
+    malformed row rather than a finding, so it is rewritten BEFORE it is bucketed and
+    filed as what it is. Returned as a change set rather than applied in place because
+    two callers need it: this module, which rewrites the frame it read off disk, and
+    `extract/export.py`, which renders the same decision out of a stored verdict payload
+    and must reach the same file.
+    """
+    if (str(row.get("link_method", "") or "") in RESOLVED_LINK_METHODS
+            and not clean_doi(str(row.get("doi_o", "") or ""))):
+        return {"link_method": "target_pending",
+                "link_evidence": (_DEMOTION_NOTE
+                                  + str(row.get("link_evidence", "") or ""))[:_EVIDENCE_CAP]}
+    return None
+
+
+def classify_row(row: Mapping) -> Optional[str]:
+    """The quarantine BUCKET one row belongs in, or None to leave it in extracted.csv.
+
+    The whole rule list, in order, as a pure function of one row — no frame, no disk,
+    no network. First match wins, which is what makes a row land in exactly one
+    set-aside file; `SET_ASIDE_DESTINATIONS` in `shared/schema.py` maps the name to
+    that file.
+
+    Pure and per-row because the partition has two producers now. `run_sanity_check`
+    applies it to a frame read back off disk; `extract/export.py` applies it to rows it
+    is about to write for the first time, so that a row reaches the same file whether
+    it was quarantined after the fact or routed there on the way out. A second copy of
+    the rules would be two answers to "where does this row belong".
+
+    The link_method rules come first and the outcome rule last of the discard buckets:
+    WHERE a row stands in the pipeline decides which file it belongs in, and what its
+    outcome column happens to say is a fact about that file's contents, not about its
+    identity.
+
+    The two `--deep` buckets (`non_article_type`, `fabricated_doi_o`) are not here:
+    each needs a network lookup, so they are not a property of the row.
+    """
+    method = str(row.get("link_method", "") or "")
+    doi_o = clean_doi(str(row.get("doi_o", "") or ""))
+    doi_r = str(row.get("doi_r", "") or "")
+    if method == "screen_disagreement":
+        return "screen_disagreement"
+    if non_article_doi(doi_r):
+        return "non_article"
+    if method == "llm_title_search":
+        return "title_search_provisional"
+    if method == "target_pending":
+        return "target_pending"
+    if method == "prescreen_discard":
+        return "prescreen_discard"
+    if str(row.get("outcome", "") or "") == "not_a_replication":
+        return "not_a_replication"
+    if method == "api_error":
+        return "api_error"
+    if method == "no_original_found":
+        return "no_original_found"
+    if doi_o and doi_o == clean_doi(doi_r):
+        return "self_link"
+    if str(row.get("doi_o_verification", "") or "") == "mismatch":
+        return "doi_mismatch"
+    return None
+
+
+# The order `classify_row` decides in, paired with the file each bucket lands in.
+# Reported in this order too, so the printed report reads like the rule list.
+_BUCKET_FILES = tuple(
+    (name, SET_ASIDE_DESTINATIONS[name]) for name in (
+        "screen_disagreement", "non_article", "title_search_provisional",
+        "target_pending", "prescreen_discard", "not_a_replication", "api_error",
+        "no_original_found", "self_link", "doi_mismatch"))
 
 
 def _norm(df: pd.DataFrame) -> pd.DataFrame:
@@ -285,6 +366,7 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
     # survives — see _rewrite_without.
     as_read = df.copy()
     n_before = len(df)
+    # The two cleaned DOI series the --deep block below still needs a whole column of.
     doi_o = df["doi_o"].map(clean_doi)
     doi_r = df["doi_r"].map(clean_doi)
 
@@ -294,70 +376,23 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
     # _load_extracted_rows to force re-processing, which silently DELETED every one
     # whose paper is no longer in filtered.csv (76 rows on 2026-08-05); filing them
     # keeps them on disk and lets a re-run redo the ones still in the pile.
-    malformed = df["link_method"].isin(RESOLVED_LINK_METHODS) & (doi_o == "")
-    if malformed.any():
-        df.loc[malformed, "link_method"] = "target_pending"
-        df.loc[malformed, "link_evidence"] = (
-            "demoted by sanity_check: resolved link_method with no doi_o; "
-            + df.loc[malformed, "link_evidence"].fillna("")).str.slice(0, 2000)
+    for i in df.index:
+        change = demote_malformed(df.loc[i])
+        for key, value in (change or {}).items():
+            df.at[i, key] = value
 
-    # (bucket name, destination file, row mask) — first match wins per row.
-    # The link_method rules come first, and the outcome rule last of the discard
-    # buckets: WHERE a row stands in the pipeline decides which file it belongs in,
-    # and what its outcome column happens to say is a fact about that file's contents,
-    # not about its identity. not_a_replication.csv is read as "the pipeline settled
-    # that this paper replicates nothing"; a row that never got a link has settled
-    # nothing, whatever verdict was written beside it.
-    rules = [
-        # Disagreement first: a disagreement row whose outcome happened to be coded
-        # not_a_replication used to win the outcome rule and land in that file,
-        # biasing any precision computed over it (audit B6).
-        ("screen_disagreement", "screen_disagreement.csv",
-         df["link_method"] == "screen_disagreement"),
-        # figshare data records / peer-review objects: Stage-2 false positives (#17)
-        # that predate the DOI exclusion — today the filter engine's
-        # `deposit-doi-prefixes` and `non-article-doi` specs discard them before
-        # Stage 3 ever sees them. The replication record itself is bogus,
-        # so this is a permanent discard and outranks the unresolved states — a re-run
-        # has nothing to gain by retrying it. Routed to the not_a_replication bucket.
-        ("non_article", "not_a_replication.csv", df["doi_r"].map(lambda d: bool(non_article_doi(d)))),
-        # Provisional: the target was matched against the whole literature by title
-        # search rather than picked from a candidate list, at ~50% measured precision,
-        # and the failure is invisible to doi_o_verification — the DOI really is the
-        # named paper, it just is not this paper's target. Set aside for confirmation.
-        ("title_search_provisional", "provisional_title_search.csv",
-         df["link_method"] == "llm_title_search"),
-        # Unresolved before the outcome buckets: the abstract pass can answer
-        # not_a_replication on a row whose link was never resolved (or was demoted by
-        # _guard_original_link), and such a row is awaiting a target, not a finding.
-        ("target_pending", "target_pending.csv", df["link_method"] == "target_pending"),
-        # Before the outcome rule, and in its own file: the cheap pre-screen writes
-        # outcome=not_a_replication, but it is a weaker instrument than the validated
-        # pair and mixing its discards into not_a_replication.csv would corrupt any
-        # precision computed over the screen. Excluded from DB import either way.
-        ("prescreen_discard", "prescreen_discard.csv",
-         df["link_method"] == "prescreen_discard"),
-        ("not_a_replication", "not_a_replication.csv", df["outcome"] == "not_a_replication"),
-        # extracted.csv holds validation-ready rows only, so the two states that are
-        # neither a finding nor a pending target leave it as well. They are separated
-        # because a re-run treats them differently: api_error is a transient failure
-        # the next run must retry (its rows carry no verdict at all — the catch-all in
-        # run_extract drops even the screen's), while no_original_found is a settled
-        # LLM verdict that a re-run would only pay to reproduce.
-        ("api_error", "api_error.csv", df["link_method"] == "api_error"),
-        ("no_original_found", "no_original_found.csv",
-         df["link_method"] == "no_original_found"),
-        ("self_link", "unresolved_self_links.csv", (doi_o != "") & (doi_o == doi_r)),
-        ("doi_mismatch", "unresolved_doi_mismatch.csv", df["doi_o_verification"] == "mismatch"),
-    ]
+    # One bucket per row, by the shared rule list (`classify_row` above). Every row
+    # matches at most one, so a row is never double-counted or duplicated across files.
+    bucket = (df.apply(classify_row, axis=1) if not df.empty
+              else pd.Series([], dtype=object, index=df.index))
 
     moved: dict[str, int] = {}
     claimed = pd.Series(False, index=df.index)
     # destination file → keys filed there this pass, so a screening set-aside file can
     # be purged of a paper that has since been decided somewhere else.
     refiled: dict[str, set] = {}
-    for name, fname, mask in rules:
-        mask = mask & ~claimed
+    for name, fname in _BUCKET_FILES:
+        mask = bucket == name
         moved[name] = _quarantine(df, mask, out_dir / fname) if move else int(mask.sum())
         if mask.any():
             refiled.setdefault(fname, set()).update(df[mask].apply(_dedup_key, axis=1))
