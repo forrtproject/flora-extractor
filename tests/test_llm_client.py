@@ -269,7 +269,11 @@ def test_the_row_names_whoever_actually_decided_it(monkeypatch, tmp_path, target
         assert out["screen_classification"] == "none"
         assert out["record_type"] == ""
         assert out["llm_model"] == f"{llm.SCREENING_MODEL_1}+mistralai/ministral-14b-2512"
-        assert out["llm_evidence"] == "q"
+        # Both voters' quotes, attributed: a discard is the pair's decision, so the
+        # row carries the pair's evidence rather than the first voter's alone.
+        assert out["llm_evidence"] == (f"{llm.SCREENING_MODEL_1}: q || "
+                                       "mistralai/ministral-14b-2512: q")
+        assert [v["evidence"] for v in out["votes"]] == ["q", "q"]
         assert "gemini: r" in out["llm_reasoning"] and "openrouter: r" in out["llm_reasoning"]
 
 
@@ -1460,6 +1464,66 @@ def test_openrouter_retries_three_times_like_openai(monkeypatch):
     with patch("openai.OpenAI", return_value=fake_client):
         result, err = llm.call_openrouter("prompt", model="v/m")
     assert result is None and "transient 503" in err
+
+
+def test_gemini_retries_three_times_like_the_other_providers(monkeypatch):
+    """Gemini retried twice at a flat 3s where OpenAI and OpenRouter make three
+    attempts at 1s/2s — the same transient outage decided a row differently
+    depending on which provider the model id routed to. Key rotation is a separate
+    axis: a 429 is not transient on this key, so it moves on without spending the
+    retries."""
+    _flex_env(monkeypatch, use_flex=False, keys=("k1", "k2"))
+    sleeps: list = []
+    monkeypatch.setattr(llm.time, "sleep", lambda s: sleeps.append(s))
+    urls: list = []
+
+    def post(url, json=None, timeout=None):
+        urls.append(url)
+        if "k1" in url:                     # quota gone — next key, no retries here
+            r = _gemini_ok()
+            r.status_code = 429
+            return r
+        if len(urls) < 4:                   # two transient failures on the good key
+            r = _gemini_ok()
+            r.status_code = 503
+            return r
+        return _gemini_ok()
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    assert llm.call_gemini("prompt", model="m") == ({"ok": True}, "")
+    assert len(urls) == 4                   # 1 quota refusal + 3 attempts on key 2
+    assert sleeps == [1, 2]
+
+
+def test_every_provider_sends_the_same_output_cap(monkeypatch):
+    """The cap decides what a model is ABLE to answer, so the same prompt must not
+    get a different ceiling for being served by Gemini rather than OpenAI."""
+    _flex_env(monkeypatch, use_flex=False, keys=("k1",))
+    monkeypatch.setattr(llm, "OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(llm, "OPENAI_USE_FLEX", False)
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "or-test")
+    monkeypatch.setattr(llm.token_usage, "check_openai_budget", lambda: None)
+    posts: list = []
+    monkeypatch.setattr(llm.requests, "post",
+                        lambda url, json=None, timeout=None: (posts.append(dict(json)),
+                                                              _gemini_ok())[1])
+
+    kwargs: list = []
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.side_effect = \
+        lambda **kw: (kwargs.append(kw), _resp('{"ok": true}'))[1]
+
+    llm.call_gemini("prompt", model="m")
+    llm.call_gemini_with_pdf("prompt", b"%PDF-1.4")
+    llm.call_gemini_with_images("prompt", _IMGS)
+    with patch("openai.OpenAI", return_value=fake_client):
+        llm.call_openai("prompt", model="m")
+        llm.call_openrouter("prompt", model="v/m")
+
+    cap = llm.JSON_MAX_OUTPUT_TOKENS
+    assert [p["generationConfig"]["maxOutputTokens"] for p in posts] == [cap] * 3
+    assert kwargs[0]["max_completion_tokens"] == cap
+    assert kwargs[1]["max_tokens"] == cap
 
 
 # ── A block is not an answer about the document ──────────────────────────────

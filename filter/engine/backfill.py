@@ -11,22 +11,26 @@ results land in an overlay chunk instead of being merged back into a CSV.
 **Two pathways, run as two phases.** The sources do not cost the same thing, so
 they are not spent on the same rows:
 
-  bulk      OpenAlex + Europe PMC. Batched, keyless, unquota'd — one request
-            answers about EPMC_BATCH_SIZE / OA_BATCH_SIZE identifiers, so this
-            pathway can be pointed at every missing-abstract row there is, and it
-            goes FIRST so the expensive pathway never asks about a row it
-            already answered.
+  bulk      Europe PMC (and, opt-in, OpenAlex). Batched, keyless, unquota'd —
+            one request answers about EPMC_BATCH_SIZE / OA_BATCH_SIZE
+            identifiers — and it goes FIRST so the expensive pathway never asks
+            about a row it already answered.
   targeted  OSF, then Semantic Scholar, then CrossRef, then Scopus last. Each is
             gated by a key, an entitlement, a weekly quota, or one call per DOI.
-            It sees only the rows the bulk pathway left without text — and only
-            for the worklist it was given, which is the release's `no_text` rows
-            rather than the pool.
+            It sees only the rows the bulk pathway left without text.
 
 `--phase bulk` and `--phase targeted` are what make that a workflow rather than
-just an ordering: run the bulk phase over a wide worklist (the whole pool's
-missing text, which costs nothing but time), then the targeted phase over the
-narrow worklist that actually needs routing. `--phase all`, the default, does
-both over the one worklist given.
+just an ordering: the bulk phase costs nothing but time, so it can be run over a
+wider worklist than the targeted one. `--phase all`, the default, does both over
+the one worklist given.
+
+**The worklist is not the pool.** The only shipped producer is
+`filter/engine/overlay.py:worklist()`, and it emits exactly the routing rows with
+`pending_reason = 'no_text'` — screen-pile winners whose abstract is empty, a few
+thousand rows. The pool's ~347k missing abstracts are not in it: most of them are
+`no_filter_matched`, which no rule claimed and no backfill is asked about. A
+pool-wide worklist would have to be built by hand, and the numbers in this file's
+memory and quota reasoning are about that hypothetical, not about a normal run.
 
 Sharing the cache is deliberate. A DOI Stage 1 already asked Europe PMC about is
 answered from the abstract store here for free, and a miss recorded here is a
@@ -46,8 +50,8 @@ targeted phase whose targets are not narrowed by what bulk found.
 
 **Dry-run is the default.** Issue #146 §6: a backfill over the pool needs
 per-source quota estimates BEFORE fetching — Scopus alone is a ~10k/week ceiling
-against a worklist that can hold a million rows. `--run` is the only thing that
-spends anything.
+against a worklist that can hold hundreds of thousands of rows. `--run` is the
+only thing that spends anything.
 
     python -m filter.engine.backfill --worklist wl.parquet          # standard overlay dir
     python -m filter.engine.backfill --worklist wide.parquet --run --phase bulk
@@ -97,21 +101,31 @@ NAMESPACES = {
 SOURCE_ORDER = ("osf", "openalex", "epmc", "s2", "crossref", "scopus")
 
 # The two pathways, in the order calls are SPENT (see fetch_abstracts' module
-# docstring). Bulk is batched, keyless and unquota'd, so it is affordable over
-# every missing-abstract row and runs first; targeted is per-item or gated, so it
-# only ever sees what bulk left unresolved. Scopus is last within targeted: an
-# ELSEVIER_API_KEY, an IP-bound entitlement and a ~10k/week quota.
-BULK_SOURCES = ("openalex", "epmc")
+# docstring). Bulk is batched, keyless and unquota'd, so it runs first over the
+# whole worklist; targeted is per-item or gated, so it only ever sees what bulk
+# left unresolved. Scopus is last within targeted: an ELSEVIER_API_KEY, an
+# IP-bound entitlement and a ~10k/week quota.
+#
+# OpenAlex is bulk-SHAPED but opt-in (`--include-openalex`, or naming it in
+# `--source`): its measured yield on this corpus is 0 of 200, because the corpus
+# was discovered via OpenAlex and the live API's abstracts come from the same
+# deposit stream the snapshot did (search/fetch_abstracts.py). It pays only when
+# the snapshot is old enough that post-snapshot deposits are plausible.
+BULK_SOURCES = ("epmc",)
+OPT_IN_SOURCES = ("openalex",)
+ALL_BULK_SOURCES = OPT_IN_SOURCES + BULK_SOURCES
 TARGETED_SOURCES = ("osf", "s2", "crossref", "scopus")
-RUN_ORDER = BULK_SOURCES + TARGETED_SOURCES
+RUN_ORDER = ALL_BULK_SOURCES + TARGETED_SOURCES
+DEFAULT_SOURCES = tuple(s for s in RUN_ORDER if s not in OPT_IN_SOURCES)
 PHASES = ("all", "bulk", "targeted")
 
-# Actionable worklist rows held in memory at once. The bulk pathway is pointed at
-# the whole pool's missing text — millions of rows — and both the worklist and the
-# abstracts recovered from it used to be materialised whole, which is gigabytes of
-# RSS for a run whose per-row work is independent. One slice is fetched and written
-# to its own overlay chunk before the next is read, so the run's memory is a
-# property of this constant and not of the worklist's size. 100k rows is a few
+# Actionable worklist rows held in memory at once. A shipped worklist is a few
+# thousand `no_text` rows, but a hand-built wide one can be hundreds of thousands,
+# and both the worklist and the abstracts recovered from it used to be materialised
+# whole, which is gigabytes of RSS for a run whose per-row work is independent.
+# One slice is fetched and written to its own overlay chunk before the next is
+# read, so the run's memory is a property of this constant and not of the
+# worklist's size. 100k rows is a few
 # hundred MB of recovered text at worst and still amortises every batched source's
 # request size (the largest, OpenAlex, is a 50-DOI batch).
 BATCH_ROWS = 100_000
@@ -128,7 +142,7 @@ def _row_batches(worklist_path: Path, limit: Optional[int] = None,
 
     Yields `(rows, n_dataset_dropped)` per slice, streaming the parquet rather
     than materialising it. The slice is the unit the whole run works in — fetched,
-    then written to its own overlay chunk — so a pool-wide `--phase bulk` costs
+    then written to its own overlay chunk — so a wide `--phase bulk` costs
     one slice of memory instead of the worklist plus every recovered abstract in
     it. Nothing about the ANSWER depends on the slicing: each row's sources, its
     checkpoint and its cache entry are per-identifier.
@@ -196,7 +210,7 @@ def estimate(rows: list[dict], sources=RUN_ORDER) -> list[dict]:
     for source in sources:
         estimates.append(dict(_source_shape(source),
                               source=source,
-                              phase="bulk" if source in BULK_SOURCES else "targeted",
+                              phase="bulk" if source in ALL_BULK_SOURCES else "targeted",
                               targets=len(_targets(source, rows, done, found))))
         estimates[-1]["requests"] = _requests(estimates[-1])
     return estimates
@@ -222,7 +236,7 @@ def estimate_worklist(worklist_path: Path, sources=RUN_ORDER,
     estimates = []
     for source in sources:
         estimates.append(dict(_source_shape(source), source=source,
-                              phase="bulk" if source in BULK_SOURCES else "targeted",
+                              phase="bulk" if source in ALL_BULK_SOURCES else "targeted",
                               targets=totals[source]))
         estimates[-1]["requests"] = _requests(estimates[-1])
     return estimates, rows, dropped
@@ -338,7 +352,7 @@ def _resolved(row: dict) -> Optional[tuple[str, str]]:
     return None
 
 
-def run(worklist_path: Path, overlay_dir: Path, sources=RUN_ORDER,
+def run(worklist_path: Path, overlay_dir: Path, sources=DEFAULT_SOURCES,
         phase: str = "all", limit: Optional[int] = None,
         scopus_limit: int = SCOPUS_DEFAULT_LIMIT,
         batch_size: int = BATCH_ROWS) -> dict:
@@ -357,7 +371,7 @@ def run(worklist_path: Path, overlay_dir: Path, sources=RUN_ORDER,
     work into a second chunk (which `validate()` would refuse).
 
     Run in slices of *batch_size* actionable rows, each fetched and then written to
-    its own overlay chunk, so a pool-wide worklist costs one slice of memory rather
+    its own overlay chunk, so a wide worklist costs one slice of memory rather
     than the whole file (`BATCH_ROWS`). The slicing is also a second resumption
     point: a run killed halfway has already written the chunks for the slices it
     finished.
@@ -382,7 +396,7 @@ def run(worklist_path: Path, overlay_dir: Path, sources=RUN_ORDER,
                  f", {dropped} dataset DOI(s) dropped" if dropped else "")
 
         if phase in ("all", "bulk"):
-            for source in (s for s in BULK_SOURCES if s in sources):
+            for source in (s for s in ALL_BULK_SOURCES if s in sources):
                 _run_source(source, rows, done, found, scopus_left)
 
         if phase in ("all", "targeted"):
@@ -517,17 +531,27 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Only the first N actionable worklist rows (pilots).")
     parser.add_argument("--source", action="append", choices=RUN_ORDER,
                         help="Restrict to one source (repeatable).")
+    parser.add_argument("--include-openalex", action="store_true",
+                        help="Also ask OpenAlex, which is off by default. Its "
+                             "measured yield on this corpus is 0 of 200: the pool "
+                             "was discovered via OpenAlex, and the live API serves "
+                             "abstracts from the same deposit stream the snapshot "
+                             "did, so it re-asks for text the snapshot already "
+                             "showed to be absent. It pays only when the snapshot "
+                             "is old enough that deposits made since it was cut are "
+                             "plausible. Naming `--source openalex` opts in too.")
     parser.add_argument("--phase", choices=PHASES, default="all",
                         help="Which pathway to spend. `bulk` is the batched, "
-                             f"keyless sources ({', '.join(BULK_SOURCES)}) and is "
-                             "cheap enough for a pool-wide worklist; `targeted` is "
+                             f"keyless sources ({', '.join(BULK_SOURCES)}, plus "
+                             f"{', '.join(OPT_IN_SOURCES)} when asked for) and is "
+                             "cheap enough for a wide worklist; `targeted` is "
                              f"the gated ones ({', '.join(TARGETED_SOURCES)}) over "
                              "the rows bulk left without text. Default all: both, "
                              "over the one worklist given.")
     parser.add_argument("--batch-size", type=int, default=BATCH_ROWS, metavar="N",
                         help="Worklist rows held in memory at once; each batch is "
                              "fetched and written to its own overlay chunk. Default "
-                             f"{BATCH_ROWS:,} — a pool-wide worklist streams, so the "
+                             f"{BATCH_ROWS:,} — a wide worklist streams, so the "
                              "run's memory is this number of rows and their recovered "
                              "text, not the worklist's size.")
     parser.add_argument("--scopus-limit", type=int, default=SCOPUS_DEFAULT_LIMIT,
@@ -538,13 +562,26 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def select_sources(source: Optional[list[str]], phase: str,
+                   include_openalex: bool) -> tuple[str, ...]:
+    """The sources a run with these arguments spends, in RUN_ORDER.
+
+    An opt-in source is in only when it was asked for — by `--include-openalex`
+    or by being named in `--source`, which is as explicit a request as the flag
+    and would otherwise select nothing.
+    """
+    wanted = set(source or ())
+    return tuple(s for s in RUN_ORDER
+                 if (not wanted or s in wanted)
+                 and (s not in OPT_IN_SOURCES or include_openalex or s in wanted)
+                 and (phase == "all"
+                      or s in (ALL_BULK_SOURCES if phase == "bulk"
+                               else TARGETED_SOURCES)))
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    sources = tuple(s for s in RUN_ORDER
-                    if (not args.source or s in args.source)
-                    and (args.phase == "all"
-                         or s in (BULK_SOURCES if args.phase == "bulk"
-                                  else TARGETED_SOURCES)))
+    sources = select_sources(args.source, args.phase, args.include_openalex)
 
     if not args.run:
         estimates, rows, dropped = estimate_worklist(args.worklist, sources,

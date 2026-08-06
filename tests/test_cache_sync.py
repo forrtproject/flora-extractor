@@ -70,6 +70,25 @@ def test_push_skips_shards_the_remote_already_holds(_isolated_cache, monkeypatch
     assert [p for commit in calls2["commits"] for p in commit] == [cs._MANIFEST]
 
 
+def test_a_push_records_its_shards_as_already_pulled(_isolated_cache, monkeypatch):
+    """A shard this machine just uploaded is a shard it holds, so the next --pull
+    must not download it back. Without this the pushing machine re-downloaded
+    everything it had just authored."""
+    _llm_entry(_isolated_cache, "a.json", "A")
+    calls = _fake_hub(monkeypatch, {})
+    cs.push_cache([cs.PARTS["llm"]])
+
+    shard = cs.PARTS["llm"].shard_of("a.json")
+    remote = cs._remote_shard(cs.PARTS["llm"], shard)
+    manifest = _manifest(calls)
+    assert cs._load_pull_state()[remote] == manifest["parts"]["llm"][shard]
+
+    # The pull that follows therefore downloads nothing.
+    calls2 = _fake_hub(monkeypatch, {}, store=dict(calls["remote"]))
+    assert cs.pull_cache([cs.PARTS["llm"]]) == 0
+    assert calls2.get("downloaded", []) == [cs._MANIFEST]
+
+
 def test_push_refuses_to_replace_a_shard_with_a_smaller_one(_isolated_cache,
                                                             monkeypatch):
     """The transfer unit is the whole shard, so a machine holding a subset of one

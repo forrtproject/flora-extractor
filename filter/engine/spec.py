@@ -1,9 +1,11 @@
 """Filter spec format v1 — load, validate, hash.
 
-One JSON file per filter under `filter/spec/`; the file's content hash is its
-version, so `bundle_hash()` is whitespace-sensitive on purpose: an edit that
-changes nothing but formatting still mints a new routing release, which is
-cheaper than trying to define "meaningful" change.
+One JSON file per filter under `filter/spec/`; the bundle's hash is its version.
+The hash is taken over each file's PARSED JSON re-serialised canonically
+(`canonical_json_digest()`), not over its bytes, so reindenting a spec or
+reordering its keys does not mint a new routing release and invalidate every
+stored one. A change to any value — including a regex, where every character is
+significant and is preserved exactly by the reserialisation — still does.
 
 Regexes must be ones RE2 can run. The engine has one evaluator, pyarrow compute
 (`backends.py`), and pyarrow's matcher is RE2: a lookaround or backreference
@@ -307,7 +309,34 @@ def validate_spec(raw: dict) -> list[str]:
                      and _is_autonomous(e["level"]) for e in measured):
             errors.append(f"{label}: heuristic evidence may not discard "
                           "autonomously — measure it or set shadow: true")
+        content_key = _content_key_used(raw.get("match"))
+        if content_key and (raw.get("match") or {}).get("abstract_missing") is not False:
+            errors.append(
+                f"{label}: a live discard that reads the abstract ({content_key}) "
+                "must carry \"abstract_missing\": false at the top level of its "
+                "match — a row with no text has said nothing, and an empty string "
+                "is not evidence for deleting the work")
     return errors
+
+
+def _content_key_used(raw: Any) -> Optional[str]:
+    """The first abstract-reading key anywhere in *raw*'s match tree, or None.
+
+    `text_regex` counts: it matches over title + "\\n" + abstract
+    (`backends.py`), so a rule written against "text" reads the abstract whether
+    its author meant to or not.
+    """
+    if not isinstance(raw, dict):
+        return None
+    for key in ("abstract_regex", "text_regex"):
+        if raw.get(key) is not None:
+            return key
+    for nested_key in _NESTED_KEYS:
+        for block in raw.get(nested_key) or ():
+            found = _content_key_used(block)
+            if found:
+                return found
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -349,18 +378,43 @@ def load_specs(spec_dir: Path) -> list[FilterSpec]:
     return sorted(specs, key=lambda s: (-s.precedence, s.id))
 
 
-def bundle_hash(spec_dir: Path) -> str:
-    """sha256 over the (filename, bytes) pairs of the bundle, order-independent.
+def canonical_json_digest(path: Path) -> bytes:
+    """sha256 of *path*'s JSON content, canonically re-serialised.
 
-    Covers the spec files AND `POLICY_FILES`: the bundle is everything that
-    decides what a row is routed to and what that pile is then called. A missing
-    policy file hashes as absent rather than raising, so a bundle directory in a
-    test is still hashable.
+    The one place a bundle input is turned into bytes to hash: `bundle_hash()`
+    for the specs and policy files, `workids.alias_release()` for the alias map.
+    Sorting the keys and dropping the layout means formatting a file — indent,
+    key order, trailing newline — does not invalidate a stored release, while
+    any change to a value still does. String values, regexes included, are
+    reproduced character for character, so what a spec MATCHES is untouched.
+
+    An absent file digests as empty, so a bundle directory in a test is still
+    hashable. A file that is not valid JSON is an error naming the file: the
+    hash cannot describe content it could not read.
+    """
+    if not path.exists():
+        return hashlib.sha256(b"").digest()
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path.name}: invalid JSON, cannot hash it: {exc}") from exc
+    payload = json.dumps(obj, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).digest()
+
+
+def bundle_hash(spec_dir: Path) -> str:
+    """sha256 over the (filename, canonical JSON) pairs of the bundle.
+
+    Files are hashed in name order, so the result does not depend on the order
+    the directory lists them. Covers the spec files AND `POLICY_FILES`: the
+    bundle is everything that decides what a row is routed to and what that pile
+    is then called.
     """
     digest = hashlib.sha256()
-    for path in _spec_files(spec_dir) + [spec_dir / name for name in POLICY_FILES]:
+    for path in _spec_files(spec_dir) + sorted(
+            (spec_dir / name for name in POLICY_FILES), key=lambda p: p.name):
         digest.update(path.name.encode("utf-8"))
         digest.update(b"\0")
-        digest.update(hashlib.sha256(
-            path.read_bytes() if path.exists() else b"").digest())
+        digest.update(canonical_json_digest(path))
     return digest.hexdigest()

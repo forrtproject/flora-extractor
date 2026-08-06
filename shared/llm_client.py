@@ -45,12 +45,22 @@ from .prompts import (
 from .target_keys import assign_target_keys
 from .utils import clean_doi
 
-# Output cap for the JSON-returning chat calls. It was 1024, which on a reasoning
-# model (gpt-5-mini) also has to cover hidden reasoning tokens — while the outcome
-# prompts ask for a quote of up to ~1200 characters, ~300 tokens of visible output
-# before any other field. A truncated response is not valid JSON, so it was
-# indistinguishable from a parse failure and got retried rather than reported;
-# both call sites now log it explicitly.
+# Output cap for EVERY call in this module — the three chat entry points and the two
+# Gemini document calls. It was 1024, which on a reasoning model (gpt-5-mini) also has
+# to cover hidden reasoning tokens — while the outcome prompts ask for a quote of up to
+# ~1200 characters, ~300 tokens of visible output before any other field. A truncated
+# response is not valid JSON, so it was indistinguishable from a parse failure and got
+# retried rather than reported; every call site now logs it explicitly.
+#
+# One value for all providers, because the cap decides what the model is ABLE to answer:
+# Gemini sent 8192 here while OpenAI and OpenRouter sent 4096, so the same screening
+# prompt had a different ceiling depending on which voter's id it carried. 4096 is the
+# value both metered providers have always run at, and it is what the answers on disk
+# need: the longest response in 813 cached answers is 1,723 characters, ~430 tokens.
+# The cap is a ceiling, not a spend — a call is billed for the tokens it actually
+# produces — so raising it is cheap if a reasoning budget ever pushes a real call into
+# it. Truncation is loud when it happens: it is logged and returned as an error, and
+# never cached.
 JSON_MAX_OUTPUT_TOKENS = 4096
 
 # Sampling temperature is deliberately not set on any provider. gpt-5-mini accepts
@@ -247,8 +257,9 @@ def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL, *,
     call site, so a Gemini id and an OpenAI id under the same constant think alike.
 
     Rotates through all keys in GEMINI_API_KEYS when a 429 (quota exhausted)
-    is returned — useful when running on multiple free-tier projects.
-    Retries once on transient 500/503 within each key.
+    is returned — useful when running on multiple free-tier projects. Quota
+    exhaustion moves to the next key immediately; a transient failure gets the same
+    3 attempts with 1s/2s backoff the other two providers make, on the same key.
 
     Returns (result_dict_or_None, error_description).
     """
@@ -264,7 +275,7 @@ def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL, *,
             # pinning it here would make Gemini-coded and OpenAI-coded rows differ
             # by sampling policy as well as by model.
             "responseMimeType": "application/json",
-            "maxOutputTokens" : 8192,
+            "maxOutputTokens" : JSON_MAX_OUTPUT_TOKENS,
             # Note: thinkingConfig is intentionally omitted.
             # Setting thinkingBudget:0 while also using responseMimeType:
             # application/json causes gemini-3-flash-preview to return a
@@ -288,16 +299,19 @@ def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL, *,
                f":generateContent?key={api_key}")
         key_label = f"key {key_idx + 1}/{len(GEMINI_API_KEYS)}"
 
-        for attempt in range(2):
+        # 3 attempts with 1s/2s backoff, the same shape call_openai and call_openrouter
+        # run. Key rotation is a separate axis: quota exhaustion is not transient on
+        # this key, so it leaves the loop rather than spending its retries.
+        for attempt in range(3):
             try:
                 _throttle("gemini")
                 r = _gemini_post(url, payload, key_idx, 90)
 
                 if r.status_code == 429:
                     last_error = f"quota exhausted on {key_label} (429)"
-                    print(f"  [Gemini] {key_label} quota exhausted (429) — "
-                          f"{'trying next key' if key_idx + 1 < len(GEMINI_API_KEYS) else 'no more keys'}")
-                    log.warning("Gemini quota exhausted on %s", key_label)
+                    log.warning("Gemini quota exhausted on %s — %s", key_label,
+                                "trying next key"
+                                if key_idx + 1 < len(GEMINI_API_KEYS) else "no more keys")
                     break   # break inner retry loop → next key
 
                 if r.status_code == 404:
@@ -309,20 +323,20 @@ def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL, *,
                     )
                     return None, f"model not found: {model}"
 
-                if r.status_code in (500, 503) and attempt == 0:
+                if r.status_code in (500, 503) and attempt < 2:
                     last_error = f"HTTP {r.status_code} on {key_label} (retrying)"
                     log.debug("Gemini transient %s on %s, retrying…", r.status_code, key_label)
-                    time.sleep(3)
+                    time.sleep(2 ** attempt)  # 1s, 2s
                     continue
 
                 if r.status_code != 200:
                     last_error = f"HTTP {r.status_code} on {key_label}: {r.text[:200]}"
-                    print(f"  [Gemini] {key_label} HTTP {r.status_code}: {r.text[:400]}")
-                    log.warning("Gemini HTTP %s for %s model=%s", r.status_code, key_label, model)
-                    if attempt == 0:
-                        time.sleep(3)
+                    log.warning("Gemini HTTP %s for %s model=%s: %.200s",
+                                r.status_code, key_label, model, r.text)
+                    if attempt < 2:
+                        time.sleep(2 ** attempt)  # 1s, 2s
                         continue
-                    break   # non-retryable error on this key → try next
+                    break   # attempts spent on this key → try the next one
 
                 body = r.json()
                 # Recorded before any early return: a 200 was served and billed
@@ -335,7 +349,8 @@ def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL, *,
                 if not body.get("candidates"):
                     blocked = body.get("promptFeedback", {}).get("blockReason", "unknown")
                     last_error = f"no candidates on {key_label} — blockReason={blocked}"
-                    print(f"  [Gemini] {key_label} no candidates — blockReason={blocked}")
+                    log.warning("Gemini returned no candidates on %s — blockReason=%s",
+                                key_label, blocked)
                     return None, last_error
 
                 if body["candidates"][0].get("finishReason") == "MAX_TOKENS":
@@ -353,16 +368,15 @@ def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL, *,
                     return result, ""
 
                 last_error = f"non-JSON response on {key_label}: {text[:150]}"
-                print(f"  [Gemini] {key_label} non-JSON response: {text[:200]}")
-                log.warning("Gemini returned non-JSON: %.200s", text)
+                log.warning("Gemini returned non-JSON on %s: %.200s", key_label, text)
                 return None, last_error
 
             except Exception as e:
                 last_error = f"exception on {key_label} attempt {attempt+1}: {e}"
-                print(f"  [Gemini] {key_label} exception (attempt {attempt+1}): {e}")
-                log.warning("Gemini call failed on %s (attempt %d): %s", key_label, attempt + 1, e)
-                if attempt == 0:
-                    time.sleep(3)
+                log.warning("Gemini call failed on %s (attempt %d/3): %s",
+                            key_label, attempt + 1, e)
+                if attempt < 2:
+                    time.sleep(2 ** attempt)  # 1s, 2s
 
     return None, last_error
 
@@ -914,7 +928,7 @@ def call_gemini_with_images(prompt: str,
         "contents"       : [{"parts": parts}],
         "generationConfig": {
             "responseMimeType": "application/json",
-            "maxOutputTokens" : 4096,
+            "maxOutputTokens" : JSON_MAX_OUTPUT_TOKENS,
         },
     }
 
@@ -922,27 +936,35 @@ def call_gemini_with_images(prompt: str,
     for key_idx, api_key in enumerate(GEMINI_API_KEYS):
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
                f":generateContent?key={api_key}")
-        try:
-            _throttle("gemini")
-            r = _gemini_post(url, payload, key_idx, 120)
-            if r.status_code == 429:
-                last_error = f"quota exhausted on key {key_idx + 1} (429)"
-                continue
-            if r.status_code != 200:
-                last_error = f"HTTP {r.status_code} on key {key_idx + 1}"
-                log.warning("Gemini image call HTTP %s", r.status_code)
-                continue
-            body = r.json()
-            _record_tokens("gemini", model, *_gemini_usage(body))
-            blocked = _gemini_block_reason(body)
-            if blocked:
-                return None, blocked
-            text = body["candidates"][0]["content"]["parts"][0]["text"]
-            result = _parse_llm_json(text)
-            return result, ("" if result else "response was not valid JSON")
-        except Exception as e:
-            last_error = f"exception on key {key_idx + 1}: {e}"
-            log.warning("Gemini image call failed: %s", e)
+        for attempt in range(3):
+            try:
+                _throttle("gemini")
+                r = _gemini_post(url, payload, key_idx, 120)
+                if r.status_code == 429:
+                    last_error = f"quota exhausted on key {key_idx + 1} (429)"
+                    break
+                if r.status_code != 200:
+                    last_error = f"HTTP {r.status_code} on key {key_idx + 1}"
+                    log.warning("Gemini image call HTTP %s (attempt %d/3)",
+                                r.status_code, attempt + 1)
+                    if attempt < 2:
+                        time.sleep(2 ** attempt)  # 1s, 2s
+                        continue
+                    break
+                body = r.json()
+                _record_tokens("gemini", model, *_gemini_usage(body))
+                blocked = _gemini_block_reason(body)
+                if blocked:
+                    return None, blocked
+                text = body["candidates"][0]["content"]["parts"][0]["text"]
+                result = _parse_llm_json(text)
+                return result, ("" if result else "response was not valid JSON")
+            except Exception as e:
+                last_error = f"exception on key {key_idx + 1}: {e}"
+                log.warning("Gemini image call failed (key %d, attempt %d/3): %s",
+                            key_idx + 1, attempt + 1, e)
+                if attempt < 2:
+                    time.sleep(2 ** attempt)  # 1s, 2s
 
     return None, last_error
 
@@ -979,7 +1001,7 @@ def call_gemini_with_pdf(prompt: str,
         }],
         "generationConfig": {
             "responseMimeType": "application/json",
-            "maxOutputTokens" : 4096,
+            "maxOutputTokens" : JSON_MAX_OUTPUT_TOKENS,
             "mediaResolution" : "MEDIA_RESOLUTION_LOW",
         },
     }
@@ -988,22 +1010,22 @@ def call_gemini_with_pdf(prompt: str,
     for key_idx, api_key in enumerate(GEMINI_API_KEYS):
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
                f":generateContent?key={api_key}")
-        for attempt in range(2):
+        for attempt in range(3):
             try:
                 _throttle("gemini")
                 r = _gemini_post(url, payload, key_idx, 45)
                 if r.status_code == 429:
                     last_error = f"quota exhausted on key {key_idx + 1} (429)"
                     break
-                if r.status_code in (500, 503) and attempt == 0:
+                if r.status_code in (500, 503) and attempt < 2:
                     last_error = f"HTTP {r.status_code} on key {key_idx + 1}"
-                    time.sleep(3)
+                    time.sleep(2 ** attempt)  # 1s, 2s
                     continue
                 if r.status_code != 200:
                     last_error = f"HTTP {r.status_code} on key {key_idx + 1}"
                     log.warning("Gemini PDF call HTTP %s on key %d", r.status_code, key_idx + 1)
-                    if attempt == 0:
-                        time.sleep(3)
+                    if attempt < 2:
+                        time.sleep(2 ** attempt)  # 1s, 2s
                         continue
                     break
                 body = r.json()
@@ -1016,10 +1038,10 @@ def call_gemini_with_pdf(prompt: str,
                 return result, ("" if result else "response was not valid JSON")
             except Exception as e:
                 last_error = f"exception on key {key_idx + 1}: {e}"
-                log.warning("Gemini PDF call failed (key %d, attempt %d): %s",
+                log.warning("Gemini PDF call failed (key %d, attempt %d/3): %s",
                             key_idx + 1, attempt + 1, e)
-                if attempt == 0:
-                    time.sleep(3)
+                if attempt < 2:
+                    time.sleep(2 ** attempt)  # 1s, 2s
 
     return None, last_error
 
@@ -1217,6 +1239,35 @@ def _screen_categories(votes: list[dict]) -> list[str]:
     return [c for c in SCREEN_CATEGORIES if c in seen]
 
 
+# A quote is a verbatim sentence from a title or abstract and may contain "|", so the
+# single pipe `screen_votes` joins on is not a safe separator for one.
+SCREEN_EVIDENCE_SEP = " || "
+
+
+def format_screen_evidence(votes: list[dict]) -> str:
+    """Every voter's justifying quote, in call order, as `<model>: <quote>` segments.
+
+    Both quotes travel rather than the first voter's alone: the gate is a decision of
+    the pair, and half the evidence is not something a reviewer can act on. The model
+    prefix is there because this string is read by a human validator with no other
+    attribution beside it.
+
+    The vote dicts reach here from two places that name the same field differently — a
+    fresh `classify_replication()` vote carries `evidence`, a vote rebuilt from the
+    verdict rows carries `quote` — so both names are read. A vote with no quote
+    contributes no segment; a legacy cached screen, whose votes predate the per-vote
+    quote, therefore yields the empty string rather than a row of bare prefixes.
+    """
+    parts = []
+    for vote in votes:
+        quote = str(vote.get("quote") or vote.get("evidence") or "").strip()
+        if not quote:
+            continue
+        model = str(vote.get("model") or "").strip()
+        parts.append(f"{model}: {quote}" if model else quote)
+    return SCREEN_EVIDENCE_SEP.join(parts)
+
+
 # Declared cache equivalences for the classify key (issue #171). The declaration is a
 # statement about ONE pair of voters: the equivalence holds only while the screen is
 # still asking exactly the models and efforts whose answers are on disk. The equivalent
@@ -1332,12 +1383,16 @@ def classify_replication(doi_r: str, study_r: str, abstract_r: str) -> dict:
 
     # Keep the individual votes: the gate's decision is not reviewable without
     # knowing who said what.
+    # The quote and the model ride along per vote: the evidence a reviewer reads is
+    # one line per voter, and neither `llm_evidence` nor a "+"-joined model string can
+    # be split back into whose quote was whose.
     out["votes"] = [{k: v[k] for k in
-                     ("provider", "classification", "confident", "categories", "reasoning")}
+                     ("provider", "model", "classification", "confident", "categories",
+                      "evidence", "reasoning")}
                     for v in votes]
     out["llm_source"] = "+".join(v["provider"] for v in votes)
     out["llm_model"]  = "+".join(v["model"] for v in votes)
-    out["llm_evidence"]  = votes[0]["evidence"] if votes else ""
+    out["llm_evidence"]  = format_screen_evidence(votes)
     out["llm_reasoning"] = " | ".join(f"{v['provider']}: {v['reasoning']}" for v in votes)
 
     # A missing vote is an API failure, not a verdict. Reporting it as a normal

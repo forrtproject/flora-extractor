@@ -73,7 +73,8 @@ SCREEN_COLS = [
     "screen_votes",        # str — |-joined <model>=<classification>/<confident|
                            #       unconfident>, in call order. The vote detail the
                            #       gate and the title-search rung are computed from
-    "screen_evidence",     # str — the first voter's justifying quote
+    "screen_evidence",     # str — every voter's justifying quote, "<model>: <quote>"
+                           #       segments joined by " || " (a quote may contain "|")
     "screen_reasoning",    # str — "<provider>: <reasoning>" per voter, " | "-joined
 ]
 

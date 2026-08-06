@@ -326,3 +326,55 @@ class TestGetOpenAlexFulltext:
             assert result["sections"]["intro"] == "cached intro"
         finally:
             cache_file.unlink(missing_ok=True)
+
+
+# The XML OpenAlex serves for a work it parsed to nothing: valid TEI, no body text,
+# no bibliography. openalex_xml_has_content() calls it no document.
+EMPTY_TEI = ("""<?xml version="1.0" encoding="UTF-8"?>"""
+             """<TEI xmlns="http://www.tei-c.org/ns/1.0"><text><body></body></text></TEI>""")
+
+
+class TestContentFreeRetryDelay:
+    """A content-free answer is still never cached AS a success — but re-asking on
+    every run re-paid the metered download (100x a filter query) on every run. The
+    last content-free fetch is timestamped, and the tier stays quiet until it lapses."""
+
+    @pytest.fixture(autouse=True)
+    def _xml_cache_in_tmp(self, tmp_path, monkeypatch):
+        import shared.pdf_sources as ps
+        monkeypatch.setattr(ps, "OA_XML_CACHE_DIR", tmp_path)
+
+    def _retry_path(self, oa_id: str) -> Path:
+        import shared.pdf_sources as ps
+        from shared.utils import cache_key
+        return ps.OA_XML_CACHE_DIR / f"retry_{cache_key(oa_id)}.json"
+
+    def test_a_content_free_fetch_is_recorded_and_not_repeated(self):
+        with patch("shared.pdf_sources.requests.get",
+                   side_effect=[_meta_response(), _xml_response(EMPTY_TEI)]) as first:
+            assert get_openalex_fulltext("W55501") is None
+        assert first.call_count == 2
+        assert "content_free" in json.loads(
+            self._retry_path("W55501").read_text(encoding="utf-8"))
+
+        # Nothing was cached as a success, and the second run costs no request at all.
+        with patch("shared.pdf_sources.requests.get") as again:
+            assert get_openalex_fulltext("W55501") is None
+        again.assert_not_called()
+
+    def test_the_delay_lapses_and_the_work_is_re_fetched(self):
+        """Content that appeared meanwhile is still picked up — the record is a delay,
+        not a verdict."""
+        import shared.pdf_sources as ps
+        from datetime import datetime, timedelta, timezone
+        stale = (datetime.now(timezone.utc)
+                 - timedelta(days=ps.OA_XML_RETRY_AFTER_DAYS + 1)).isoformat()
+        self._retry_path("W55502").write_text(json.dumps({"content_free": stale}),
+                                              encoding="utf-8")
+
+        with patch("shared.pdf_sources.requests.get",
+                   side_effect=[_meta_response(), _xml_response(GROBID_TEI)]):
+            result = get_openalex_fulltext("W55502")
+        assert result["sections"]["references"]
+        # Content arrived: the delay that held the re-fetch back is gone.
+        assert not self._retry_path("W55502").exists()

@@ -103,6 +103,9 @@ _MANIFEST = "cache/cache_manifest.json"
 # Where a pull records the shards it has already unpacked, so a repeat pull is a
 # manifest read and nothing else. Deleting it (or --force) makes the next pull
 # re-extract everything, which is how a locally deleted cache is refilled.
+# A push writes it too (`_record_pushed`): a shard this machine just uploaded is
+# a shard it holds, and leaving the pre-push digest there made the pusher
+# re-download its own work.
 _PULL_STATE = CACHE_DIR / ".cache_sync_pulled.json"
 
 class Part:
@@ -207,6 +210,10 @@ def _shards_of(part: Part) -> dict[str, list[Path]]:
     if part.sqlite or not part.directory.exists():
         return shards
     for path in part.directory.glob(part.pattern):
+        # retry_*.json are per-machine acquisition-delay records, not answers:
+        # another machine's failed probe must not suppress this one's.
+        if path.name.startswith("retry_"):
+            continue
         if path.is_file() and not path.name.endswith(".tmp"):
             shards.setdefault(part.shard_of(path.name), []).append(path)
     for files in shards.values():
@@ -469,6 +476,7 @@ def push_cache(parts: list[Part], repo: Optional[str] = None,
         if uploads:
             upload_batched(api, hf, repo_id, list(uploads), "Cache push",
                            FLORA_HF_COMMIT_BATCH)
+        _record_pushed(parts, hashes)
         merged = {**known, **hashes}
         upload_batched(api, hf, repo_id,
                        [(_MANIFEST,
@@ -480,6 +488,24 @@ def push_cache(parts: list[Part], repo: Optional[str] = None,
              " (dry run)" if dry_run else "", len(uploads),
              " + the abstract store" if abstracts_sent else "", repo_id)
     return len(uploads) + (1 if abstracts_sent else 0)
+
+
+def _record_pushed(parts: list[Part], hashes: dict[str, dict[str, str]]) -> None:
+    """Record the shards this push just published as already pulled.
+
+    The pull state answers "does this machine already hold what the remote shard
+    contains?", and after a push the answer is yes by construction — the remote
+    shard IS this machine's files. Without this the pushing machine keeps the
+    pre-push digest and re-downloads, on its next `--pull`, every shard it just
+    authored. Pull-state entries name the remote path, so a shard whose digest
+    did not change is recorded too: the state may simply never have held it.
+    """
+    state = _load_pull_state()
+    for part in parts:
+        for shard, digest in (hashes.get(part.name) or {}).items():
+            if not part.sqlite:
+                state[_remote_shard(part, shard)] = digest
+    _save_pull_state(state)
 
 
 def _load_pull_state() -> dict[str, str]:

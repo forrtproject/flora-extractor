@@ -108,9 +108,11 @@ def read_worklist(path: Path) -> list[dict]:
 def iter_worklist(path: Path, batch_size: int = 50_000):
     """The worklist at *path* as plain dicts, one parquet batch at a time.
 
-    The same rows `read_worklist()` returns, without holding them all: a pool-wide
-    `no_text` worklist runs to millions of rows, and `to_pylist()` over the whole
-    file is the shape that made a bulk backfill a multi-GB process.
+    The same rows `read_worklist()` returns, without holding them all. A `no_text`
+    worklist is a few thousand rows — it is capped by what the rules claimed, and
+    the pool's millions of textless works are `no_filter_matched`, which nothing
+    puts on a worklist — but a hand-built wide one is not, and `to_pylist()` over
+    the whole file is the shape that made a bulk backfill a multi-GB process.
     """
     for batch in pq.ParquetFile(path).iter_batches(batch_size=batch_size):
         yield from batch.to_pylist()

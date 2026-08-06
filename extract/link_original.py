@@ -1,17 +1,21 @@
 """
-link_original.py — Single-DOI orchestration of the full disambiguation pipeline.
+link_original.py — Single-DOI orchestration of Stage 3's resolution ladder.
 
 Public API:
-    run_for_doi(doi_r, flora_df, cands_df, force=False) → dict
+    run_for_doi(doi_r, flora_df=None, cands_df=None, force=False,
+                no_llm=False, no_pdf=False, classification=None) → dict
 
-The returned dict contains all columns the web app and QMD export need,
-clearly prefixed by source:
-  flora_*        — from FLoRA entry sheet
-  (no prefix)    — from openalex_candidates.csv (pass-through columns)
+The returned dict is flat and its keys are grouped by the stage that produced them
+(`_build_output` at the bottom of this file is the one place they are assembled).
+`extract/run_extract.py` is the only consumer:
+  doi_r          — the replication's DOI, as passed in
+  flora_*        — the FLoRA entry sheet row for this DOI, when one was supplied
+  (no prefix)    — pass-through of the input row (`_OA_PASSTHROUGH`)
+  n_candidates / all_candidates_json — the OpenAlex re-query
   pdf_*          — PDF acquisition step
-  grobid_*       — GROBID step
-  resolved_*     — final resolved original study
-  llm_*          — LLM step
+  grobid_*       — parsing step (the name predates parse_all's six parsers)
+  resolution_* / resolved_* / targets / target_stage — what the ladder settled on
+  llm_*          — attribution of whichever call produced the resolution
 """
 from __future__ import annotations
 
@@ -35,6 +39,7 @@ from shared.pdf_parsing import (
     parse_all as _parse_all,
     best_parse_result as _best_parse_shared,
     parse_result_is_empty,
+    read_parse_cache,
 )
 from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_opencitations_references, fetch_referenced_works_metadata, _oa_get, _search_crossref_by_title, _search_openalex_by_title
 from shared.prompts import (
@@ -56,7 +61,8 @@ from shared.utils import cache_key, clean_doi
 #
 # Path B — no journal hint, but all candidates share same author+year:
 #   Falls back to title-Jaccard relative threshold (best > 0.05, best ≥ second×1.5).
-#   Same logic as the old resolve_same_author_year() in shared/disambiguation.py.
+#   That threshold is a tiebreak, not evidence, and it fires precisely where Path A
+#   declined, so run_for_doi never lets it END the row (see _HELD_ONLY_METHODS).
 
 _STOP_SURNAMES = {"and", "van", "von", "der", "den", "del", "the", "for"}
 
@@ -115,41 +121,59 @@ _COUNT_ADJ  = (r"(?:\s+(?:original|independent|published|classic|contemporary|di
                r"|previous|key|prior)(?:\s+and\s+\w+)?)*")
 _COUNT_NOUN = r"(?:studi(?:es)?|findings?|papers?)"
 
+# Abstracts state small counts in words at least as often as in digits ("we replicate
+# two classic studies"), and a digits-only pattern read those as no count at all.
+_COUNT_WORDS: dict[str, int] = {
+    "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+}
+_COUNT_NUM = rf"(?:\d+|(?:{'|'.join(_COUNT_WORDS)})\b)"
+
 # Each pattern must capture the count of studies in group 1.
 _STUDY_COUNT_RES: tuple[re.Pattern, ...] = (
-    # "replications of 28 classic studies"  /  "replication of 10 studies"
+    # "replications of 28 classic studies"  /  "replication of two studies"
     re.compile(
-        rf"\breplicat(?:ion|ions?)\s+of\s+(\d+){_COUNT_ADJ}\s+{_COUNT_NOUN}\b",
+        rf"\breplicat(?:ion|ions?)\s+of\s+({_COUNT_NUM}){_COUNT_ADJ}\s+{_COUNT_NOUN}\b",
         re.IGNORECASE,
     ),
-    # "replicated 28 original findings"  /  "replicating 10 classic studies"
+    # "replicated 28 original findings"  /  "replicating ten classic studies"
     re.compile(
-        rf"\b(?:replicated?|replicating)\s+(?:a\s+total\s+of\s+)?(\d+){_COUNT_ADJ}"
+        rf"\b(?:replicated?|replicating)\s+(?:a\s+total\s+of\s+)?({_COUNT_NUM}){_COUNT_ADJ}"
         rf"\s+{_COUNT_NOUN}\b",
         re.IGNORECASE,
     ),
-    # "28 classic and contemporary findings"  /  "27 independent studies"
+    # "28 classic and contemporary findings"  /  "three independent studies"
     re.compile(
-        rf"\b(\d+)\s+(?:original|independent|published|classic|contemporary|distinct)"
+        rf"\b({_COUNT_NUM})\s+(?:original|independent|published|classic|contemporary|distinct)"
         rf"(?:\s+and\s+\w+(?:\s+\w+)?)?\s+{_COUNT_NOUN}\b",
         re.IGNORECASE,
     ),
 )
 
-_COUNT_N_MIN, _COUNT_N_MAX = 3, 1900   # ≥1900 is a year, not a study count
+# 2 is a count: "we replicate two classic studies" is two originals, and the gate must
+# withhold the pick there exactly as it does for 28. The upper bound guards digits
+# only — "replications of 2019 studies" is a year — and no spelled-out word can hit it.
+_COUNT_N_MIN, _COUNT_N_MAX = 2, 1900
 
 
 def _study_count_stated(title_r: str, abstract_r: str) -> bool:
-    """True when the title or abstract states a plausible study count (3 ≤ N < 1900)."""
+    """True when the title or abstract states a plausible study count (2 ≤ N < 1900).
+
+    The count may be digits or a spelled-out numeral from two to twelve.
+    """
     for text in (title_r or "", abstract_r or ""):
         for pattern in _STUDY_COUNT_RES:
             m = pattern.search(text)
             if not m:
                 continue
-            try:
-                n = int(m.group(1))
-            except (IndexError, ValueError, TypeError):
-                continue
+            raw = (m.group(1) or "").lower()
+            if raw in _COUNT_WORDS:
+                n = _COUNT_WORDS[raw]
+            else:
+                try:
+                    n = int(raw)
+                except (ValueError, TypeError):
+                    continue
             if _COUNT_N_MIN <= n < _COUNT_N_MAX:
                 return True
     return False
@@ -345,7 +369,12 @@ def _resolve_rule_based(
         base["resolution_method"] = "no_candidates_found"
         return base
 
-    # Single unambiguous candidate
+    # Single unambiguous candidate. This branch applies NO semantic check — it accepts
+    # whatever the re-query left standing, at score 1.0 — and it is where 28 of the 29
+    # rule-resolved rows in data/extracted.csv came from. An abstract that cites exactly
+    # one author-year which is not the target ("following the design of Fiedler (2011),
+    # we replicated…") passes may_stop_at_a_rule and would end the row on that citation.
+    # So run_for_doi only ever HOLDS this pick (see _HELD_ONLY_METHODS).
     if len(candidates) == 1:
         c = candidates[0]
         if is_umbrella_paper(c.get("title", "")):
@@ -454,7 +483,20 @@ def _resolve_rule_based(
     return base
 
 
-# Columns to pass through from openalex_candidates.csv (no renaming). Only columns
+# The two rule methods that may never END the ladder, however unambiguous the paper's
+# own text looks. Neither carries a semantic check the way Path A's citation score and
+# the title-pattern rung do: the lone-candidate branch accepts what is left after the
+# re-query, and Path B breaks a tie Path A refused to break on a ≥0.05 token overlap.
+# run_for_doi holds them instead, so a call that can enumerate targets gets to confirm
+# or contradict: the abstract LLM whenever the abstract carries an author-year pattern,
+# the reference-list pick otherwise. When nothing enumerating ever speaks the pick is
+# restored at the exit (`_exit`, and the post-full-text restore), so no resolution is
+# lost — the row costs one extra cached LLM call, and possibly a PDF, to get there.
+_HELD_ONLY_METHODS = frozenset({"single_candidate_after_requery",
+                                "same_author_year_title_overlap"})
+
+
+# Columns to pass through from the input row (no renaming). Only columns
 # some consumer actually reads — the output dict is not a place to park a field
 # nothing downstream looks at.
 _OA_PASSTHROUGH = [
@@ -485,12 +527,13 @@ def clear_pipeline_caches(doi_r: str) -> list[str]:
     """
     Delete all intermediate caches for *doi_r* except the PDF file itself.
 
-    Cleared: every content-keyed cache the pipeline writes for this DOI — the
-    identification LLM, the match-type classification, both halves of the screen,
-    the outcome coding, the multi-original call, the OpenAlex candidate pool, the
-    parsed full text — plus the GROBID section cache. --force that leaves any of
-    these behind does not force a re-decision, it just re-runs the stages around
-    the cached answer.
+    Cleared: every content-keyed cache the pipeline writes for this DOI — the target
+    calls ("llm"), the screen ("classify"), the reference-list target pick
+    ("reftarget"), the outcome coding ("outcome"), the OpenAlex candidate pool and the
+    parsed full text — plus the GROBID section cache. --force that leaves any of these
+    behind does not force a re-decision, it just re-runs the stages around the cached
+    answer. "match_type" and "multi" are legacy cleanup: the stages that wrote them are
+    gone, and the globs stay only to sweep entries older checkouts left on disk.
 
     Returns a list of the filenames that were actually deleted.
     """
@@ -742,24 +785,28 @@ def run_for_doi(doi_r:              str,
     force=True clears all intermediate caches (LLM, GROBID, OpenAlex candidates)
     before running, but keeps the cached PDF so the download step is skipped.
 
-    classification is the Q1 verdict from classify_replication(). Stage 3 votes at
-    its front door and passes the verdict in, so Stage 4.5 picks the target without
-    voting again; a caller without a verdict leaves it None and the screen votes.
+    classification is the "is this a replication at all" verdict from
+    classify_replication(). That screen belongs to Stage 2: run_extract reads the
+    verdict off the input row and passes it in, so Stage 4.5 picks the target without
+    voting again. A caller with no verdict (a batch tool, or run_extract's explicit
+    --screen-here opt-in) leaves it None and the screen votes inside Stage 4.5.
 
     The ladder runs cheapest-first and returns at the first stage that resolves, so
     full-text acquisition is a last resort rather than the normal path:
-      1.   Load FLoRA sheet + openalex_candidates data for this DOI
+      1.   Load FLoRA sheet + input-row data for this DOI
       2.   Re-query OpenAlex for candidate originals (from referenced_works)
       2.5  Title-pattern resolver ("A Replication of X" vs the candidate titles)
-      3.   Rule-based resolver (citation context, same-author/year title overlap)
+      3.   Rule-based resolver (citation context, same-author/year title overlap,
+           lone candidate) — the last two are only ever held, never terminal
       4.   Abstract-level LLM over the candidates, when the abstract cites anyone
-      4.5  Reference-list target pick, which also carries the Q1 screen verdict:
-           an incomplete screen exits as target_pending/api_error, a confident
-           "not a replication" exits without a PDF, a disagreement is set aside
+      4.5  Reference-list target pick, which also carries the screen verdict:
+           an incomplete screen exits as target_pending/api_error, and a "discard"
+           exits without a PDF as not_a_replication
       4.6  Title search on a target the screen named but could not match to a
-           reference — gated on a high-confidence screen, written as provisional
-      5.   PDF acquisition (7 sources); no document → target_pending
-      6.   parse_all over six parsers, richest result wins
+           reference — gated on both voters qualifying AND confident, provisional
+      5.   PDF acquisition (eleven tiers, 0–10 in acquire_pdf); no document →
+           target_pending
+      6.   parse cache, else parse_all over six parsers; richest result wins
       7.   Full-text LLM identification
 
     Returns a flat dict with all output columns.
@@ -810,6 +857,9 @@ def run_for_doi(doi_r:              str,
     # pick stands: every exit below goes through _exit(), which restores it.
     # --no-llm has nothing that could ever enumerate, so withholding there buys no
     # information and costs a PDF download per rule-resolved row: the rule may stop.
+    # The gate is necessary but not sufficient: the two rule methods in
+    # _HELD_ONLY_METHODS are held whatever it says, because they carry no semantic
+    # check at all — only Path A's citation score and the title-pattern rung may stop.
     may_stop = no_llm or may_stop_at_a_rule(study_r, abstract_r, year_r)
     held: dict = {}          # a deterministic pick the gate withheld
     seen: dict = {}          # the richest target answer any stage produced
@@ -905,7 +955,12 @@ def run_for_doi(doi_r:              str,
     if stage3["resolved"]:
         log.info("[%s] Resolved rule-based (%s): %s", doi_r,
                  stage3["resolution_method"], stage3["resolved_title_o"])
-        if may_stop:
+        # A _HELD_ONLY_METHODS pick never ends the row while an enumerating call can
+        # still run. Under --no-llm none can, and holding there would only buy a PDF
+        # download per rule-resolved row, so the rule stops exactly as before.
+        may_stop_here = no_llm or (
+            may_stop and stage3["resolution_method"] not in _HELD_ONLY_METHODS)
+        if may_stop_here:
             return emit(stage3, {}, {}, {})
         held = held or stage3
         log.info("[%s] gate: %s withheld — the paper's text does not rule out a second "
@@ -1073,8 +1128,16 @@ def run_for_doi(doi_r:              str,
         return _exit(_unresolved("no_fulltext_available"), pdf)
 
     # ── Stage 6: Parse all — pick richest result to send to LLM ─────────────
-    parse_results  = _parse_all(doi_r, pdf_path, oa_xml=oa_xml_content, no_llm=no_llm)
-    _write_parse_cache(doi_r, parse_results)
+    # The parse cache was write-only here: every run re-ran all six parsers over a
+    # document whose parse was already on disk, and the only reader was run_extract.
+    # A hit is the same dict this call would have produced (an empty or transient-
+    # failure cache reads as a miss — read_parse_cache's job).
+    parse_results = read_parse_cache(doi_r, PARSE_CACHE_DIR)
+    if parse_results is None:
+        parse_results = _parse_all(doi_r, pdf_path, oa_xml=oa_xml_content, no_llm=no_llm)
+        _write_parse_cache(doi_r, parse_results)
+    else:
+        log.debug("[%s] parse cache hit — six parsers skipped", doi_r)
 
     for method, r in parse_results.items():
         log.debug("[%s]   parse:%s refs=%d abstract=%d intro=%d error=%s",

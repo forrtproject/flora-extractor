@@ -5,12 +5,14 @@ mapping, paged reads, the client-side response_state rule, and the sizing
 arithmetic. The SQL in db/migrations/0001_engine_baseline.sql is not exercised
 here — there is no Postgres in CI.
 """
+import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from filter.engine import sizing
-from filter.engine.claims import (PENDING_UPLOAD, UPLOADED, ClaimConflict,
+from filter.engine.claims import (CLAIM_TTL_HOURS, PENDING_UPLOAD, UPLOADED,
+                                  ClaimConflict, ClaimExpiryUnsupported,
                                   ClaimsClient, ClaimsNotConfigured)
 
 
@@ -46,13 +48,19 @@ def test_claim_posts_rpc_payload_and_returns_uuid():
     assert got == claim_id
     url, = post.call_args.args
     assert url.endswith("/rest/v1/rpc/engine_claim_batch")
-    assert post.call_args.kwargs["json"] == {
+    sent = post.call_args.kwargs["json"]
+    lease = sent.pop("p_expires_at")
+    assert sent == {
         "p_release_id": "rel-abc",
         "p_tier": "screen_expensive",
         "p_items": [{"work_id": 2001, "pile": "screen_expensive"},
                     {"work_id": 2002, "pile": "screen_cheap"}],
         "p_meta": {"batch": "wave-1"},
     }
+    # The claim is a lease: hours ahead, because an LLM run takes hours.
+    ahead = datetime.datetime.fromisoformat(lease) - datetime.datetime.now(
+        datetime.timezone.utc)
+    assert 0 < ahead.total_seconds() <= CLAIM_TTL_HOURS * 3600 + 5
 
 
 def test_conflict_maps_to_claim_conflict():
@@ -87,6 +95,38 @@ def test_claimed_work_ids_pages_with_deterministic_order():
     assert get.call_args_list[1].kwargs["headers"]["Range"] == "1000-1999"
 
 
+def test_subtraction_ignores_expired_claims():
+    """A killed run's claim must stop holding its works — W3.
+
+    The filter is server-side, so what is asserted is that the query asks for
+    unexpired claims at all: without it a stranded claim subtracts its works from
+    every later batch forever.
+    """
+    with patch("filter.engine.claims.requests.get",
+               return_value=_response(200, [])) as get:
+        _client().claimed_work_ids("rel-abc", "screen_expensive")
+
+    params = get.call_args.kwargs["params"]
+    assert params["engine_claims.status"] == "eq.active"
+    cutoff = params["engine_claims.expires_at"]
+    assert cutoff.startswith("gt.")
+    # The cutoff is now, so a lease that has run out is on the excluded side.
+    asked = datetime.datetime.fromisoformat(cutoff[3:])
+    assert abs((asked - datetime.datetime.now(datetime.timezone.utc)).total_seconds()) < 5
+
+
+def test_unmigrated_database_names_the_migration():
+    """Migration 0004 must be run first, and the failure has to say so."""
+    body = ('{"code":"PGRST202","message":"Could not find the function '
+            'public.engine_claim_batch(p_expires_at, p_items, ...)"}')
+    with patch("filter.engine.claims.requests.post",
+               return_value=_response(404, None, body)):
+        with pytest.raises(ClaimExpiryUnsupported) as excinfo:
+            _client().claim("rel-abc", "screen_expensive", [(1, "screen_expensive")])
+
+    assert "0004_claim_expiry.sql" in str(excinfo.value)
+
+
 def test_record_verdict_enforces_response_state():
     """§4 ordering: 'uploaded' means the blob is on HF and has a hash naming it."""
     client = _client()
@@ -104,6 +144,30 @@ def test_record_verdict_enforces_response_state():
     assert vid == "v-1"
     assert post.call_args.kwargs["json"]["response_state"] == PENDING_UPLOAD
     assert post.call_args.kwargs["json"]["response_hash"] is None
+
+
+def test_release_claim_cli_uses_the_run_completion_path(capsys):
+    """`release-claim` ends a claim through the same RPC a finishing run calls."""
+    from filter.engine.cli import main
+
+    client = MagicMock()
+    client.active_claims.return_value = [
+        {"id": "c-1", "tier": "screen_expensive", "status": "active",
+         "created_at": "2026-08-01T00:00:00+00:00",
+         "expires_at": "2026-08-01T06:00:00+00:00"}]
+    client.claim_item_count.return_value = 500
+
+    with patch("filter.engine.claims.ClaimsClient", return_value=client):
+        assert main(["release-claim"]) == 0
+        listing = capsys.readouterr().out
+        # Without --yes nothing is ended.
+        with pytest.raises(SystemExit):
+            main(["release-claim", "--claim", "c-1"])
+        client.release_claim.assert_not_called()
+        assert main(["release-claim", "--claim", "c-1", "--yes"]) == 0
+
+    assert "c-1" in listing and "EXPIRED" in listing and "500" in listing
+    client.release_claim.assert_called_once_with("c-1", "failed")
 
 
 def test_sizing_is_deterministic_and_scales_linearly():

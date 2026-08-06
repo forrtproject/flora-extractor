@@ -375,10 +375,11 @@ def test_the_bulk_pathway_is_exhausted_before_any_gated_source_is_asked(
     backfill.run(wl_osf, tmp_path / "ov")
 
     order = [name for name, _ in calls]
-    assert order[:2] == list(backfill.BULK_SOURCES)
+    bulk = len(backfill.BULK_SOURCES)
+    assert order[:bulk] == list(backfill.BULK_SOURCES)
     # One name per source, in the order calls were spent: the whole bulk pathway,
     # then the targeted one, with Scopus last.
-    assert sorted(set(order[2:])) == sorted(backfill.TARGETED_SOURCES)
+    assert sorted(set(order[bulk:])) == sorted(backfill.TARGETED_SOURCES)
     assert order[-1] == "scopus"
 
 
@@ -394,6 +395,27 @@ def test_the_targeted_pathway_only_sees_rows_bulk_left_without_text(
     assert [arg for name, arg in calls if name == "scopus"] == ["10.1234/two"]
     assert [arg for name, arg in calls if name == "s2"] == [["10.1234/two"]]
     assert result["by_source"] == {"epmc": 1}
+
+
+def test_openalex_is_opt_in(wl, isolated_cache, tmp_path, monkeypatch):
+    """0 of 200 on this corpus — the pool was discovered via OpenAlex and the live
+    API serves abstracts from the same deposit stream — so it is not spent unless
+    it is asked for."""
+    assert backfill.select_sources(None, "all", False) == backfill.DEFAULT_SOURCES
+    assert "openalex" not in backfill.select_sources(None, "bulk", False)
+    assert "openalex" in backfill.select_sources(None, "bulk", True)
+    # Naming it is as explicit as the flag, and must not select nothing.
+    assert backfill.select_sources(["openalex"], "all", False) == ("openalex",)
+
+    calls: list = []
+    _trace(monkeypatch, calls)
+    backfill.run(wl, tmp_path / "ov", phase="bulk")
+    assert "openalex" not in {name for name, _ in calls}
+
+    calls.clear()
+    backfill.run(wl, tmp_path / "ov2", phase="bulk",
+                 sources=backfill.ALL_BULK_SOURCES)
+    assert "openalex" in {name for name, _ in calls}
 
 
 def test_a_phase_restricts_the_run_to_one_pathway(wl, isolated_cache, tmp_path,

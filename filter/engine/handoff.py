@@ -42,7 +42,10 @@ Stage 3 a row nothing has screened, now that Stage 3 does not screen.
 applying whatever verdicts exist — and it is the only mode in which the piles
 hand off without Supabase, because with no claims client there are no verdicts
 and screened-only would legitimately export nothing. Its rows can reach Stage 3
-with no screen verdict at all, and Stage 3 has a defined answer for that.
+with no screen verdict at all, and Stage 3 has a defined answer for that. It
+writes its own default name (`HANDOFF_UNSCREENED_CSV`) for that reason: the two
+files have the same columns, so only the name distinguishes a screened handoff
+from one whose verdicts are blank.
 
 Absence is accounted for either way: the manifest's `dropped_by_tier_verdict`
 and `skipped_unscreened` are different facts about the same missing row, and
@@ -71,6 +74,14 @@ from shared.schema import ENGINE_EXPORTED_COLS
 
 # The order Stage 3 meets the piles in.
 HANDOFF_PILES = ("screen_expensive", "screen_cheap")
+
+# One default name per contract, because the two files are not interchangeable.
+# `data/filtered.csv` is Stage 3's input and every row in it carries a screen verdict.
+# An `--as-routed` file carries the same columns with the verdict blank, so under the
+# screened name it reads as a screened handoff and Stage 3 would work through rows
+# nothing has judged, writing every one of them `target_pending`.
+HANDOFF_CSV = "data/filtered.csv"
+HANDOFF_UNSCREENED_CSV = "data/filtered-unscreened.csv"
 
 
 def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
@@ -166,7 +177,9 @@ def _screen_columns(row: dict, decision: dict) -> dict:
     Two sources, and which fact comes from which is the point. The **verdict rows**
     are the authority: the gate outcome, the record type, and each voter's
     classification, confidence and quote are permanent evidence in Postgres, and
-    everything Stage 3 DECIDES with is read from there.
+    everything Stage 3 DECIDES with is read from there. `screen_evidence` carries
+    BOTH voters' quotes (`format_screen_evidence()`), because the gate is the pair's
+    decision and one quote out of two is not reviewable.
 
     The category union and the voters' reasoning are not in that table — it is lean
     on purpose, and the full response lives in the blob — so they are read from the
@@ -175,7 +188,7 @@ def _screen_columns(row: dict, decision: dict) -> dict:
     checkout without the cache writes those two columns blank rather than paying
     for them again; nothing downstream decides on either.
     """
-    from shared.llm_client import cached_classification
+    from shared.llm_client import cached_classification, format_screen_evidence
 
     votes = decision.get("votes") or []
     # One probe per exported row, which is the floor: every row is a different
@@ -193,7 +206,9 @@ def _screen_columns(row: dict, decision: dict) -> dict:
         "screen_votes": "|".join(
             f"{v.get('model', '')}={v.get('classification', '')}/"
             f"{'confident' if v.get('confident') else 'unconfident'}" for v in votes),
-        "screen_evidence": next((v["quote"] for v in votes if v.get("quote")), ""),
+        # Both voters' quotes, `<model>: <quote>` segments joined by " || " — the pair
+        # decided the row, so the row carries the pair's evidence.
+        "screen_evidence": format_screen_evidence(votes),
         "screen_reasoning": str(detail.get("llm_reasoning") or ""),
     }
 

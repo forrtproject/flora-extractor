@@ -68,7 +68,24 @@ its pile with no verdict, which is a missing verdict rather than a `pending`
 row.
 
 `no_text` is engine policy, not a spec: absence of evidence must not convert
-into a proceed. The discards are unaffected — none of them reads the abstract.
+into a proceed. It downgrades a screening pile only, so a discard that reads
+content has to refuse an empty abstract itself — see the next section.
+
+## Reading content in a discard
+
+**A live discard whose match tree uses `abstract_regex` or `text_regex` must
+carry `"abstract_missing": false` at the top level of its `match`.**
+`validate_spec()` refuses the bundle otherwise, naming the spec and the key. A
+row whose abstract is empty has said nothing, and a pattern that happens not to
+match an empty string is an accident of the regex rather than a decision: the
+guard makes the decision explicit and keeps it true when the pattern is edited.
+Shadow discards are exempt — they delete nothing.
+
+**`text_regex` matches over title + `"\n"` + abstract** (`_match_batch()` in
+`filter/engine/backends.py`). This is invisible from the spec JSON, and it means
+two things: a "text" rule reads the title too, so a phrase in a title alone fires
+it; and a `text_regex` rule is an abstract-reading rule for the guard above, even
+on a row where only the title could ever have matched.
 
 ## Measurement levels
 

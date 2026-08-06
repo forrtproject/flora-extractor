@@ -20,7 +20,7 @@ Two consumers need the FLoRA list and must agree:
 
 It lives in `shared/` rather than in run_extract so a hand-off can import it without
 pulling in the extraction stack (pymupdf, pdfminer, openai, …), which a lean
-FLORA_READONLY environment may not have installed.
+read-only hosting environment may not have installed.
 """
 import re
 from pathlib import Path

@@ -54,6 +54,7 @@ from shared.pdf_parsing import (
     parse_all as _parse_all,
     parse_result_has_transient_failure,
     parse_result_is_empty,
+    read_parse_cache as _read_parse_cache_shared,
     score_parse_result,
 )
 from shared.row_key import primary_key
@@ -625,29 +626,12 @@ def _has_document(doi_r: str, link: dict) -> bool:
 
 
 def _read_parse_cache(doi_r: str) -> "dict | None":
-    """Return the cached parse_all results for doi_r, or None on a miss.
+    """The cached parse_all results for doi_r, or None on a miss.
 
-    An all-empty cache counts as a miss: it is what a PDF-less run wrote, and reading
-    it back would pin the paper to abstract-only coding forever (audit B4).
-
-    So does a cache carrying a transient failure (a method that never got an answer,
-    e.g. reference extraction while the provider was down). Such a file should no
-    longer be written at all, but the ones written before that was true are on disk,
-    and reading them back keeps the outage as this paper's permanent answer about its
-    own references. Treating them as a miss re-parses the document — which is what
-    heals them, since the re-parse is only cached once every method has answered.
+    The reader itself lives in shared/pdf_parsing.py: the ladder reads the same files
+    before it parses (link_original Stage 6), and it cannot import this module.
     """
-    cache_file = PARSE_CACHE_DIR / f"parse_{cache_key(doi_r)}.json"
-    if not cache_file.exists():
-        return None
-    try:
-        with cache_file.open(encoding="utf-8") as fh:
-            results = json.load(fh)
-    except Exception:
-        return None
-    if parse_result_is_empty(results) or parse_result_has_transient_failure(results):
-        return None
-    return results
+    return _read_parse_cache_shared(doi_r, PARSE_CACHE_DIR)
 
 
 def _save_parse_cache(doi_r: str) -> None:
@@ -2365,7 +2349,9 @@ def run_extract(no_llm: bool = False,
     screen_here         — run the front-door screen in Stage 3 for rows whose input row
                            carries no verdict. The verdict normally arrives on the row from
                            Stage 2's screen_expensive tier; this is the explicit fallback for
-                           an --as-routed handoff or a hand-made CSV. Off by default: without
+                           inputs the engine cannot screen — a hand-made or legacy CSV — and
+                           for an --as-routed export, though the engine CAN screen those
+                           itself. Off by default: without
                            it such a row is written target_pending rather than silently
                            re-screened.
     recalibrate_outcomes — run the full outcome pipeline (PDF download + LLM) even when --no-pdf
@@ -2759,9 +2745,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--rescreen", action="store_true",
         help="REOPEN the rows a previous run set aside on a screen verdict — "
-             "data/not_a_replication.csv, data/screen_disagreement.csv and "
-             "data/prescreen_discard.csv — so a NEW Stage 2 screening generation can "
-             "re-admit them. This is the ONLY way back: an ordinary (resuming) run "
+             "data/not_a_replication.csv, plus the two historical files "
+             "data/screen_disagreement.csv and data/prescreen_discard.csv (nothing "
+             "writes either any more: there is no screen_disagreement state, and "
+             "Stage 2's cheap tier now discards at the handoff, so those values "
+             "exist only on rows already on disk) — so a NEW Stage 2 screening "
+             "generation can re-admit them. This is the ONLY way back: an ordinary (resuming) run "
              "treats every key in those files as settled and skips the paper. It "
              "reopens, it does not re-screen: the screen is Stage 2's, so a reopened "
              "paper reappears only if the current generation's handoff carries it "
@@ -2772,8 +2761,12 @@ if __name__ == "__main__":
         "--screen-here", action="store_true",
         help="Run the front-door screen in Stage 3 for input rows that carry no "
              "screen verdict. The verdict normally arrives on the row from Stage 2's "
-             "screen_expensive tier; this is the explicit fallback for an --as-routed "
-             "handoff or a hand-made CSV. Without it, a row with no verdict is written "
+             "screen_expensive tier, so this is for the inputs Stage 2 cannot "
+             "answer for: a hand-made or legacy CSV, or rows from outside the "
+             "engine's pool. An --as-routed handoff "
+             "(data/filtered-unscreened.csv) also carries blank verdicts, but "
+             "Stage 2 can screen those itself — re-running its tier is the cheaper "
+             "and claimed route. Without this flag, a row with no verdict is written "
              "target_pending and an input file with no screen_verdict column at all is "
              "refused — a silent re-screen in two places is what this flag replaced.",
     )

@@ -45,22 +45,26 @@ only, so an exported row's `pending_reason` is always empty.
 
 | Module | Contract |
 | --- | --- |
-| `spec.py` | `FilterSpec` (frozen dataclass mirroring the JSON), `load_specs(spec_dir) -> list[FilterSpec]` (validated, sorted by precedence desc, ids unique), `bundle_hash(spec_dir: Path) -> str` (sha256 over the bundle directory's (filename, bytes) pairs, order-independent, **including `conventions.json`** — see "The bundle a release is bound to"), `validate_spec(dict) -> list[str]` (error strings), `re2_error(pattern) -> str | None` — RE2's own complaint about a pattern it cannot run (lookaround, backreferences, conditionals, `\G`, atomic groups, possessive quantifiers), asked of pyarrow at spec load so it names the file rather than crashing a routing run. |
+| `spec.py` | `FilterSpec` (frozen dataclass mirroring the JSON), `load_specs(spec_dir) -> list[FilterSpec]` (validated, sorted by precedence desc, ids unique), `bundle_hash(spec_dir: Path) -> str` (sha256 over the bundle directory's (filename, canonical JSON) pairs in name order, **including `conventions.json`** — see "The bundle a release is bound to"), `canonical_json_digest(path) -> bytes` (the one place a bundle input becomes bytes to hash: the parsed JSON re-serialised with sorted keys and no layout), `validate_spec(dict) -> list[str]` (error strings), `re2_error(pattern) -> str | None` — RE2's own complaint about a pattern it cannot run (lookaround, backreferences, conditionals, `\G`, atomic groups, possessive quantifiers), asked of pyarrow at spec load so it names the file rather than crashing a routing run. |
 | `backends.py` | The one evaluator: `eval_spec_batch(spec, batch: pa.RecordBatch) -> pa.BooleanArray` (pyarrow compute). `eval_spec_rows(spec, rows: list[dict]) -> list[bool]` is the row-shaped entry point onto it — it builds a batch of the readable columns and calls `eval_spec_batch()`, so an analysis script and a routing run cannot read a spec differently. `match_evidence(spec, batch) -> list[str]` reports WHERE each matched row matched, for `filter_evidence`. |
 | `route.py` | `route_batch(specs, batch) -> pa.Table` with columns `work_id (int64), pile (str), pending_reason (str), rule_id (str), precedence (int32), matched_rules (list<str>)`; `matched_rules` holds every non-shadow match (overlap diagnostics need the full cross-product), shadow matches are recorded separately in evaluations. |
-| `workids.py` | `work_id(openalex_id: str) -> int` (`https://openalex.org/W123` → `123`); `load_aliases(path) -> dict[int, int]` from `filter/spec/aliases.json` (old_id → canonical_id, empty to start); `alias_release(path) -> str` (file hash). |
+| `workids.py` | `work_id(openalex_id: str) -> int` (`https://openalex.org/W123` → `123`); `load_aliases(path) -> dict[int, int]` from `filter/spec/aliases.json` (old_id → canonical_id, empty to start); `alias_release(path) -> str` (the alias file's `canonical_json_digest()`, for the same reason the bundle hash is canonical). |
 | `release.py` | `routing_release(pool_manifest_hash, overlay_hash, bundle_hash, engine_version, alias_release, schema_version) -> str` (sha256 of the canonical JSON); `write_release(...)`/`read_release(...)` under `cache/engine/releases/<id>.json`. Overlay hash is `None` until M3 (text overlays); pool manifest hash comes from `--pool-manifest-hash`, else `search.snapshot_scan.pool_fingerprint(pool_dir)` — a hash over the search gate the pool's rows were admitted under (read from the pool's `_pool_provenance.json`, never from the local checkout, so a shared pool fingerprints identically on every machine) plus every pool parquet as `(filename, size_bytes, num_rows)`, read from the footer. It names the POOL, which is what routing consumes, rather than one machine's scan ledger, which a pulled pool does not have; a directory with no parquet in it, or one holding fewer files than its sidecar says complete it, gives `unmanifested:<12 hex>` (a genuine anomaly — you cannot route a pool you do not have whole), never a hash of nothing; the suffix hashes the parquet names and sizes so two different unfingerprintable pools do not mint one release id and share its claims and verdicts, and the visible prefix keeps it from reading as provenance. `route` re-computes it after the routing pass and rolls the build back if it moved. |
 | `store.py` | Local DuckDB acceleration cache (gitignored, disposable): `open_store(path)`, `build_routing(store, pool_dir, specs, release_id)` (streams pool parquet through `route_batch`, persists `routing` and `evaluations(work_id, spec_id, spec_hash, matched)` incl. shadow specs), `pile_counts(store, release_id)`, `sample_pile(con, release_id, pile, n=20, seed=17)`, `drop_release(con, release_id)` (the one thing that deletes a release, for the caller that learns only after the build that it must not exist — the pool moved under it). `routing` is keyed `PRIMARY KEY (release_id, work_id)` and inserts `ON CONFLICT DO NOTHING`: a pool holding both a merged id and its canonical id holds two rows for ONE work, and first-writer-wins is what keeps that one routed work and one exported row. A build is one transaction — the delete and every insert commit together — so an interrupted run leaves the release absent or as its previous complete build, never half-replaced. Deleting the DB loses nothing: everything rebuilds from pool + specs. |
 | `diagnostics.py` | `diagnose(pool_dir, spec_dir, spec_id, *, baseline_dir=None, sample_n=20, seed=17) -> dict` — routes the pool twice, with and without the spec (the baseline bundle defaults to the same directory minus the spec). The §3 rule-diagnostics function: rows moved per (source pile → destination pile); overlap/agreement matrix vs every other rule (exclusive hits vs covered); a readable random sample (n≈20, seeded) of moved rows; holdout effect (reads `filter/spec/holdout.json`; reports `"holdout": "not_constructed"` until decision #146-2 lands); for discard specs, whether a `measured` entry exists (else the spec must be shadow). Renders JSON + a human-readable text block. |
 | `export.py` | `export_pile(con, pool_dir, pile, out_csv, release_id, from_year=None, to_year=None, conventions=None, specs=None, aliases=None, spec_dir=SPEC_DIR, expect_bundle_hash=None, expect_alias_release=None, overlay_dir=None, expect_overlay_hash=UNCHECKED, created_at="")` — writes the Stage 3 contract: `FILTERED_COLS` + `ENGINE_EXPORT_COLS` (see below), `utf-8-sig`, `filter_status`/`filter_method`/`filter_evidence`/`filter_confidence` derived via the conventions mapping. Also `export_manifest(...)`: a JSON naming release id, pile, row count, and content hash next to the CSV (immutable once written). |
-| `cli.py` / `__main__.py` | `python -m filter.engine specs\|route\|diagnose\|export\|screen\|reconcile\|handoff\|worklist\|status`. The subcommand list is `cli.py`'s `add_parser` calls; `--help` is authoritative, `docs/cli-reference.md` is the prose. Two flags cut across the subcommands: `--release <id>` (on `export`, `screen`, `handoff` and `worklist`) names which release to read, defaulting to the store's only one and refusing when the store holds several — a re-route must never be resolved silently; `diagnose --sample N` (default 20) sets how many seeded example rows the diagnosis prints. |
+| `cli.py` / `__main__.py` | `python -m filter.engine specs\|route\|diagnose\|export\|screen\|reconcile\|handoff\|worklist\|release-claim\|status`. The subcommand list is `cli.py`'s `add_parser` calls; `--help` is authoritative, `docs/cli-reference.md` is the prose. Two flags cut across the subcommands: `--release <id>` (on `export`, `screen`, `handoff` and `worklist`) names which release to read, defaulting to the store's only one and refusing when the store holds several — a re-route must never be resolved silently; `diagnose --sample N` (default 20) sets how many seeded example rows the diagnosis prints. |
 
 `ENGINE_VERSION` lives in `filter/engine/__init__.py` and is bumped whenever routing
 behavior changes without a spec change.
 
 ### The bundle a release is bound to
 
-`bundle_hash()` covers the spec files **and `conventions.json`**. The engine routes
+`bundle_hash()` covers the spec files **and `conventions.json`**, and it hashes each
+file's parsed JSON re-serialised canonically rather than its bytes: reindenting a
+spec or reordering its keys is not a new bundle, while a change to any value —
+including one character of a regex, which the reserialisation reproduces exactly —
+still is. `alias_release` is canonical over JSON in the same way. The engine routes
 a row into a pile; the conventions decide what that pile is *called* in an export
 (`filter_status`, `filter_confidence`, whether the winning rule's `vocabulary`
 names the status). A release that bound only the specs could be exported under a
@@ -289,7 +293,10 @@ what cannot be recomputed: which works were pinned before spend, what came back,
 what humans said, and an audit trail of both. Deployed as one migration the
 maintainer runs — `db/migrations/0001_engine_baseline.sql`, idempotent, no DROP.
 (`0003_claim_release_message.sql` re-states the claim RPC with a corrected
-rejection message; a database created from today's `0001` already has it.)
+rejection message; a database created from today's `0001` already has it.
+`0004_claim_expiry.sql` adds the claim lease described below and must be run
+before any checkout that sends one — the client refuses to claim without it and
+names the file.)
 
 | table | role |
 | --- | --- |
@@ -320,6 +327,16 @@ the claim and re-claims the remainder as a new claim. A wrong answer is correcte
 the *verdict* level (`superseded_by`), never by editing the claim, which is a record
 of what was spent.
 
+**A claim is a lease.** A run killed outright never reaches its completion path, so
+every claim also carries `expires_at = now + CLAIM_TTL_HOURS` (6 hours, a plain
+constant in `filter/engine/claims.py` — LLM tier runs are measured in hours). Once
+the lease passes, the claim blocks nothing: the RPC's conflict check and
+`claimed_work_ids()` both require `expires_at > now()`. The status is untouched and
+so are the verdicts — expiry frees works, it never retracts evidence.
+`python -m filter.engine release-claim` lists open claims with their item counts and
+leases, and `--claim <id> [--status failed] --yes` ends one immediately through the
+same `engine_release_claim` RPC a finishing run calls.
+
 **Permanence is enforced by the database.** Triggers reject every DELETE on
 `engine_verdicts` / `engine_human_labels` / `engine_audit`, and every UPDATE except
 `superseded_by`, `response_state`, and a write-once fill of `response_hash` (the
@@ -329,9 +346,11 @@ rewrite is not evidence.
 **Client:** `filter/engine/claims.py` — `ClaimsClient` (house PostgREST style, the
 same `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` `shared/supabase_client.py` reads).
 `register_release` · `claim` · `release_claim` · `record_verdict` ·
-`supersede_verdict` · `active_claims` · `claimed_work_ids`. An unset `SUPABASE_URL`
-raises `ClaimsNotConfigured` at construction: the engine must not silently run
-unclaimed. A conflict raises `ClaimConflict` naming the tier.
+`supersede_verdict` · `active_claims` · `claimed_work_ids` · `claim_item_count`. An
+unset `SUPABASE_URL` raises `ClaimsNotConfigured` at construction: the engine must
+not silently run unclaimed. A conflict raises `ClaimConflict` naming the tier, and a
+database without the claim lease raises `ClaimExpiryUnsupported` naming
+`db/migrations/0004_claim_expiry.sql`.
 
 **Sizing** (`python -m filter.engine.sizing --rows 5146160 --verdict-rate 0.1`,
 #146 §8 decision 1): 130 B per claim_item, 543 B per verdict, measured over
@@ -409,8 +428,14 @@ argument names them:
 
 | Pathway | Sources | Shape | Which rows |
 | --- | --- | --- | --- |
-| `bulk` | OpenAlex → Europe PMC | batched, keyless, unquota'd; one request answers about `OA_BATCH_SIZE` / `EPMC_BATCH_SIZE` identifiers | every worklist row, and affordable over a pool-wide worklist |
+| `bulk` | Europe PMC (OpenAlex opt-in) | batched, keyless, unquota'd; one request answers about `EPMC_BATCH_SIZE` / `OA_BATCH_SIZE` identifiers | every worklist row, and cheap enough for a worklist much wider than a release's `no_text` rows |
 | `targeted` | OSF → Semantic Scholar → CrossRef → Scopus | one call per DOI, or gated by a key, an IP-bound entitlement or a ~10k/week quota | only the rows bulk left without text, on the worklist that matters |
+
+OpenAlex is in the bulk pathway's shape but not in its default run: it needs
+`--include-openalex` (or `--source openalex`). Measured yield on this corpus is 0
+of 200 — the pool was discovered via OpenAlex and the live API's abstracts come
+from the same deposit stream the snapshot did — so it pays only against a
+snapshot old enough for post-snapshot deposits to be plausible.
 
 `--phase all` (the default) runs both over the one worklist. Running them
 separately is what the split buys: a wide `--phase bulk` pass fills the shared
@@ -604,7 +629,9 @@ expensive one: a live cheap discard applies only to a work the expensive tier ha
 no verdict for. `--as-routed` exports the piles as routed
 with whatever verdicts exist, and is the only mode available without Supabase;
 asked for screened-only with no claims client the command refuses rather than
-writing an empty file.
+writing an empty file. It writes `data/filtered-unscreened.csv` by default —
+`data/filtered.csv` is the screened contract's name, and the two files have the
+same columns, so only the name says whether every row in it was judged.
 
 **What the row carries.** Because the screen does not run again downstream, the
 handoff writes its answer onto the row: `screen_verdict`, `screen_record_type`,
@@ -612,7 +639,9 @@ handoff writes its answer onto the row: `screen_verdict`, `screen_record_type`,
 (`SCREEN_COLS`, `shared/schema.py`). `screen_votes` is the one that is not a
 summary — Stage 3's pre-PDF title-search rung fires only when both voters gave a
 qualifying answer AND stood behind it, and that cannot be recovered from a record
-type. An `--as-routed` row can carry them blank; Stage 3 writes such a row
+type. `screen_evidence` carries BOTH voters' quotes, as `<model>: <quote>` segments
+joined by ` || ` (a quote may contain a single `|`), because the gate is the pair's
+decision. An `--as-routed` row can carry them blank; Stage 3 writes such a row
 `target_pending` rather than screening it, and refuses an input file whose header
 lacks the columns entirely (`--screen-here` is the explicit way to screen in
 Stage 3 anyway).

@@ -7,10 +7,11 @@ twice under two ids across releases. `filter/spec/aliases.json` is flat
 mean the file needs re-flattening, not that the resolver needs a loop.
 """
 
-import hashlib
 import json
 import re
 from pathlib import Path
+
+from filter.engine.spec import canonical_json_digest
 
 _ID_RE = re.compile(r"^(?:https?://openalex\.org/)?[Ww]?(\d+)$")
 
@@ -33,8 +34,15 @@ def load_aliases(path: Path) -> dict[int, int]:
 
 
 def alias_release(path: Path) -> str:
-    """sha256 of the alias file's bytes — one of the routing release inputs."""
-    return hashlib.sha256(path.read_bytes() if path.exists() else b"").hexdigest()
+    """sha256 of the alias file's JSON content — a routing release input.
+
+    Canonical over the parsed JSON for the same reason the spec bundle is
+    (`canonical_json_digest()` in `spec.py`): reformatting the file must not
+    invalidate every stored release. Note this canonicalises LAYOUT only — the
+    same alias written `"W123"` in one revision and `"123"` in the next is two
+    different releases, even though `load_aliases()` reads them identically.
+    """
+    return canonical_json_digest(path).hex()
 
 
 def resolve(work_id: int, aliases: dict[int, int]) -> int:

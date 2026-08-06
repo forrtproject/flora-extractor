@@ -12,6 +12,7 @@ new document is added in one place and cannot go missing from a second.
 | [setup.md](setup.md) | Installation, environment variables, running the pipeline |
 | [cli-reference.md](cli-reference.md) | All CLI commands with flags for every stage |
 | [filter-engine.md](filter-engine.md) | Stage 2's declarative routing engine (issue #146) |
+| [cleanup-worklist.md](cleanup-worklist.md) | Dead code, docs drift and refactors noticed 2026-08-06, for a dedicated cleanup pass |
 | [aws-snapshot-scan.md](aws-snapshot-scan.md) | Runbook: the full OpenAlex snapshot scan on EC2, published to Hugging Face |
 | [parquet-cache.md](parquet-cache.md) | The dashboard's parquet cache |
 | [csv-schema.md](csv-schema.md) | Column definitions for the pipeline CSVs |
