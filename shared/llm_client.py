@@ -19,7 +19,6 @@ import base64
 import json
 import re
 import time
-from pathlib import Path
 from typing import Optional
 
 import requests
