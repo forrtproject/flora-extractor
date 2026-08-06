@@ -405,7 +405,7 @@ class TestStoredEvidenceMatchesThePrompt:
         candidates = [{"doi": "10.5/c", "title": "Ref 0", "year": 2000,
                        "first_author": "A"}]
         out = link_original._build_output(
-            "10.1/rep", {}, {}, candidates, {}, {}, {}, {"references": refs})
+            "10.1/rep", {}, candidates, {}, {}, {}, {"references": refs})
         assert len(json.loads(out["grobid_refs_json"])) == 25
         assert out["n_references_sent"] == 39
 

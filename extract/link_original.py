@@ -2,14 +2,13 @@
 link_original.py — Single-DOI orchestration of Stage 3's resolution ladder.
 
 Public API:
-    run_for_doi(doi_r, flora_df=None, cands_df=None, force=False,
+    run_for_doi(doi_r, cands_df=None, force=False,
                 no_llm=False, no_pdf=False, classification=None) → dict
 
 The returned dict is flat and its keys are grouped by the stage that produced them
 (`_build_output` at the bottom of this file is the one place they are assembled).
 `extract/run_extract.py` is the only consumer:
   doi_r          — the replication's DOI, as passed in
-  flora_*        — the FLoRA entry sheet row for this DOI, when one was supplied
   (no prefix)    — pass-through of the input row (`_OA_PASSTHROUGH`)
   n_candidates / all_candidates_json — the OpenAlex re-query
   pdf_*          — PDF acquisition step
@@ -507,21 +506,6 @@ _OA_PASSTHROUGH = [
     "pathway_source", "validation_status",
 ]
 
-# Columns to pull from FLoRA sheet (renamed with flora_ prefix)
-_FLORA_COLS = {
-    "ref_r"            : "flora_ref_r",
-    "url_r"            : "flora_url_r",
-    "abstract_r"       : "flora_abstract_r",
-    "ref_o"            : "flora_ref_o",
-    "doi_o"            : "flora_doi_o",
-    "study_o"          : "flora_study_o",
-    "outcome"          : "flora_outcome",
-    "outcome_quote"    : "flora_outcome_quote",
-    "out_quote_source" : "flora_out_quote_source",
-    "prep_notes"       : "flora_prep_notes",
-    "validation_status": "flora_validation_status",
-}
-
 
 def clear_pipeline_caches(doi_r: str) -> list[str]:
     """
@@ -579,20 +563,6 @@ def _write_parse_cache(doi_r: str, parse_results: dict) -> None:
         write_json(out_file, parse_results, indent=2)
     except Exception as exc:
         log.debug("[%s] _write_parse_cache failed: %s", doi_r, exc)
-
-
-def _flora_row(doi_r: str, flora_df: pd.DataFrame) -> dict:
-    """Return FLoRA sheet fields for *doi_r* (prefixed with flora_)."""
-    out = {v: "" for v in _FLORA_COLS.values()}
-    if flora_df is None or flora_df.empty:
-        return out
-    matches = flora_df[flora_df["doi_r"].apply(clean_doi) == clean_doi(doi_r)]
-    if matches.empty:
-        return out
-    row = matches.iloc[0]
-    for src, dst in _FLORA_COLS.items():
-        out[dst] = str(row.get(src, "") or "")
-    return out
 
 
 def _cands_row(doi_r: str, cands_df: pd.DataFrame) -> dict:
@@ -772,7 +742,6 @@ def _as_target(resolution: dict) -> dict:
 
 
 def run_for_doi(doi_r:              str,
-                flora_df:           Optional[pd.DataFrame] = None,
                 cands_df:           Optional[pd.DataFrame] = None,
                 force:              bool = False,
                 no_llm:             bool = False,
@@ -792,7 +761,7 @@ def run_for_doi(doi_r:              str,
 
     The ladder runs cheapest-first and returns at the first stage that resolves, so
     full-text acquisition is a last resort rather than the normal path:
-      1.   Load FLoRA sheet + input-row data for this DOI
+      1.   Load the input-row data for this DOI
       2.   Re-query OpenAlex for candidate originals (from referenced_works)
       2.5  Title-pattern resolver ("A Replication of X" vs the candidate titles)
       3.   Rule-based resolver (citation context, same-author/year title overlap,
@@ -818,7 +787,6 @@ def run_for_doi(doi_r:              str,
             log.info("[%s] Force rerun — cleared caches: %s", doi_r, ", ".join(deleted))
 
     # ── Stage 1: base data ───────────────────────────────────────────────────
-    flora  = _flora_row(doi_r,  flora_df)
     cands_row = _cands_row(doi_r, cands_df)
 
     study_r   = cands_row.get("study_r",   "")
@@ -848,7 +816,7 @@ def run_for_doi(doi_r:              str,
     # Every exit from here on assembles the same output from the same base data;
     # only the resolution (and, past the PDF stage, the pdf/grobid/sections blocks)
     # differ, so bind the four constant arguments once.
-    emit = partial(_build_output, doi_r, flora, cands_row, candidates)
+    emit = partial(_build_output, doi_r, cands_row, candidates)
 
     # A deterministic stage may only END the row when the paper's own text rules out a
     # second target; otherwise its pick is WITHHELD — until a call that can enumerate
@@ -1240,7 +1208,6 @@ def run_for_doi(doi_r:              str,
 # ── Output builder ────────────────────────────────────────────────────────────
 
 def _build_output(doi_r:     str,
-                  flora:     dict,
                   cands_row: dict,
                   candidates: list[dict],
                   resolution: dict,
@@ -1253,9 +1220,6 @@ def _build_output(doi_r:     str,
     return {
         # ── Input ─────────────────────────────────────────────────────────────
         "doi_r"                 : doi_r,
-
-        # ── FLoRA sheet ───────────────────────────────────────────────────────
-        **flora,
 
         # ── openalex_candidates pass-through ──────────────────────────────────
         **{c: cands_row.get(c, "") for c in _OA_PASSTHROUGH},
