@@ -1495,6 +1495,32 @@ def test_gemini_retries_three_times_like_the_other_providers(monkeypatch):
     assert sleeps == [1, 2]
 
 
+@pytest.mark.parametrize("call_site", [
+    lambda: llm.call_gemini("prompt", model="m"),
+    lambda: llm.call_gemini_with_pdf("prompt", b"%PDF-1.4"),
+    lambda: llm.call_gemini_with_images("prompt", _IMGS),
+], ids=["text", "pdf", "images"])
+def test_a_missing_model_ends_every_gemini_call_at_once(monkeypatch, call_site):
+    """404 is the one status no other key and no retry can answer, so all three call
+    sites leave immediately rather than spending six requests to say so."""
+    _flex_env(monkeypatch, use_flex=False, keys=("k1", "k2"))
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    posts: list = []
+
+    def post(url, json=None, timeout=None):
+        posts.append(url)
+        r = MagicMock()
+        r.status_code = 404
+        r.text = "not found"
+        r.json.return_value = {"error": {"message": "model not found"}}
+        return r
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    result, err = call_site()
+    assert result is None and "model not found" in err
+    assert len(posts) == 1
+
+
 def test_every_provider_sends_the_same_output_cap(monkeypatch):
     """The cap decides what a model is ABLE to answer, so the same prompt must not
     get a different ceiling for being served by Gemini rather than OpenAI."""
