@@ -53,6 +53,17 @@ Neither runner touches the routing table. A live `screen_cheap` discard is appli
 where the rows leave the engine (`handoff.py`), because routing is derived data —
 recomputed from pool and specs — and a decision written into it would be erased by
 the next `route` run.
+
+**What is generic and what is a tier's own.** The five properties above are the
+generic spine: `run_tier()` runs them, and the checkpoint readers
+(`decided_work_ids`, `incomplete_work_ids`, `tier_decisions`) read them back. What
+differs between tiers — the question asked, how its answers add up to a decision,
+what a verdict's generation is, what a run of it costs — is a `TierSpec`, one
+frozen record per tier in `_TIER_SPECS`. The two screen tiers register theirs at
+the bottom of this file; a tier defined in another package registers its own with
+`register_tier()` and calls `run_tier()` with it, without this module knowing
+anything about it. Nothing here may import a stage package to find a tier — the
+dependency runs the other way, or `filter/engine` and `extract` import each other.
 """
 
 import datetime
@@ -64,6 +75,7 @@ import statistics
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
@@ -168,24 +180,37 @@ def screening_generation(tier: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
-def _generation_current(tier: str, generation: Optional[str],
-                        rows: list[dict]) -> bool:
-    """Whether one claim's verdicts still answer the question this tier asks.
+def _screen_accepts_legacy(tier: str, rows: list[dict]) -> bool:
+    """Whether verdict rows written before `meta.generation` existed still count.
 
-    A recorded generation answers it exactly. Its absence means the row predates
-    the field: the prompt it was asked under is not recoverable, but the model
-    pair is the dominant determinant of what it said and IS recorded, so a legacy
-    row asked of today's models is grandfathered in. Everything else is ignored —
-    the work is claimable again and no longer steers the handoff.
+    The prompt such a row was asked under is not recoverable, but the model pair is
+    the dominant determinant of what it said and IS recorded, so a legacy row asked
+    of today's models is grandfathered in. This is the SCREEN tiers' rule, which is
+    why it hangs off their specs rather than off `_generation_current`: it is only
+    sound because the two screens have always recorded a model per vote, and a tier
+    with no such history has no legacy to grandfather.
     """
-    if generation:
-        return generation == screening_generation(tier)
     # An expensive-tier placeholder row records the "+"-joined pair rather than
     # one voter, which is why this splits before comparing.
     recorded = {part for row in rows
                 for part in str(row.get("model") or "").split("+")
                 if part not in _NON_MODEL_MARKERS}
     return recorded <= set(_tier_models(tier))
+
+
+def _generation_current(tier: str, generation: Optional[str],
+                        rows: list[dict]) -> bool:
+    """Whether one claim's verdicts still answer the question this tier asks.
+
+    A recorded generation answers it exactly. Its absence means the row predates
+    the field, and what to do about that is the tier's own call
+    (`TierSpec.accepts_legacy`). Everything else is ignored — the work is claimable
+    again and no longer steers the handoff.
+    """
+    spec = tier_spec(tier)
+    if generation:
+        return generation == spec.generation()
+    return spec.accepts_legacy(rows)
 
 
 @dataclass(frozen=True)
@@ -205,6 +230,72 @@ class Work:
     abstract: str
     pile: str
     source: str = ""
+
+
+@dataclass(frozen=True)
+class TierSpec:
+    """One tier, as everything generic in this file needs to see it.
+
+    Every field is the answer to a question `run_tier()` or a checkpoint reader
+    would otherwise have had to answer with `if tier == …`:
+
+    * `judge` — ask the tier's question about one work, and return
+      `(outcome, votes)`. The one call that spends.
+    * `decide` — one work's stored verdict rows as that tier's decision,
+      `{"outcome", "record_type", "votes"}`. The read side of `judge`, and
+      deliberately a separate function: the decision is recomputed from the
+      evidence every time it is read, so a stored summary cannot disagree with the
+      votes it summarises.
+    * `generation` — what a verdict was produced BY, in one hash, read at CALL time
+      so a changed model constant is seen without a re-import.
+    * `accepts_legacy` — whether verdict rows that predate `meta.generation` still
+      count for this tier.
+    * `estimate` / `render_estimate` — the dry run (§6). A tier brings its own
+      prices; there is no shared price table for a runner to look a tier up in.
+    * `workers` / `ttl_seconds` / `batch_size` — `None` means "the deployment-wide
+      default": `ENGINE_TIER_WORKERS`, the claims client's `CLAIM_TTL_HOURS` lease,
+      and `FLORA_HF_COMMIT_BATCH`. Read at call time for the same reason as
+      `generation`. A tier whose unit of work is a PDF rather than an abstract
+      wants its own numbers; the two screens want the defaults.
+    """
+    name: str
+    judge: Callable[[Work], tuple[str, list[dict]]]
+    decide: Callable[[list[dict]], dict]
+    generation: Callable[[], str]
+    accepts_legacy: Callable[[list[dict]], bool]
+    estimate: Callable[[list[Work]], dict]
+    render_estimate: Callable[[dict], str]
+    workers: Optional[int] = None
+    ttl_seconds: Optional[int] = None
+    batch_size: Optional[int] = None
+
+
+# Every tier `run_tier()` can be asked about by NAME — which is what the CLI, the
+# handoff and the checkpoint readers have. A tier defined in another package adds
+# itself here at import time; this module never reaches out to find one.
+_TIER_SPECS: dict[str, TierSpec] = {}
+
+
+def register_tier(spec: TierSpec) -> TierSpec:
+    """Make *spec* findable by name, and return it so a module can bind it.
+
+    Registering twice under one name is a programming error, not a reload: two
+    specs for one tier means two answers to "what did this verdict mean", and the
+    verdict rows on the server cannot say which was in force.
+    """
+    if spec.name in _TIER_SPECS and _TIER_SPECS[spec.name] is not spec:
+        raise ValueError(f"tier {spec.name} is already registered")
+    _TIER_SPECS[spec.name] = spec
+    return spec
+
+
+def tier_spec(name: str) -> TierSpec:
+    """The registered tier called *name*."""
+    try:
+        return _TIER_SPECS[name]
+    except KeyError:
+        raise ValueError(f"unknown tier: {name} "
+                         f"(registered: {sorted(_TIER_SPECS)})") from None
 
 
 # ---------------------------------------------------------------------------
@@ -559,7 +650,8 @@ def render_reconcile(report: dict) -> str:
 
 def _claim(client: ClaimsClient, release_id: str, tier: str,
            items: list[tuple[int, str]], meta: dict,
-           cache_dir: Optional[Path] = None) -> str:
+           cache_dir: Optional[Path] = None,
+           ttl_seconds: Optional[int] = None) -> str:
     """Claim *items*, registering the release once if the server has never seen it.
 
     `route` registers the release it writes, but best-effort — routing must stay
@@ -570,7 +662,8 @@ def _claim(client: ClaimsClient, release_id: str, tier: str,
     the registration did not take, and looping would only spend the operator's time.
     """
     try:
-        return client.claim(release_id, tier, items, meta=meta)
+        return client.claim(release_id, tier, items, meta=meta,
+                            ttl_seconds=ttl_seconds)
     except UnknownRelease:
         pass
     try:
@@ -589,25 +682,28 @@ def _claim(client: ClaimsClient, release_id: str, tier: str,
             f"and registering it failed: {exc}. Nothing was claimed or spent. "
             "Fix the Supabase credentials (SUPABASE_SERVICE_KEY must be allowed "
             "to insert into engine_releases) and re-run.")
-    return client.claim(release_id, tier, items, meta=meta)
+    return client.claim(release_id, tier, items, meta=meta, ttl_seconds=ttl_seconds)
 
 
-def _run_tier(con, client: ClaimsClient, release_id: str, tier: str,
-              works: list[Work], judge: Callable[[Work], tuple[str, list[dict]]],
-              *, mode: str, batch_label: str, run: bool,
-              cache_dir: Optional[Path] = None) -> dict:
-    """Claim *works* for *tier*, judge each one, record its verdicts, complete.
+def run_tier(spec: TierSpec, client: ClaimsClient, release_id: str,
+             works: list[Work], *, mode: str, batch_label: str, run: bool,
+             cache_dir: Optional[Path] = None) -> dict:
+    """Claim *works* for *spec*'s tier, judge each one, record its verdicts, complete.
 
-    *judge* returns `(outcome, votes)`: the tier's decision for the work and one
-    dict per voter vote, each carrying `model`, `verdict`, `blob` and optionally
-    `confidence` / `quote`. Everything else — the claim, the blob ordering, the
-    budget, the failure path — is the same for both tiers and lives here.
+    `spec.judge` returns `(outcome, votes)`: the tier's decision for the work and
+    one dict per voter vote, each carrying `model`, `verdict`, `blob` and
+    optionally `confidence` / `quote`. Everything else — the claim, the blob
+    ordering, the budget, the failure path — is the same for every tier and lives
+    here. This is the entry point a tier defined outside `filter/engine` calls:
+    it takes a spec and a list of `Work`, and needs nothing from the routing store
+    to run them.
     """
     if mode not in MODES:
         raise ValueError(f"unknown mode: {mode} (expected one of {MODES})")
-    est = estimate(works, tier)
+    tier = spec.name
+    est = spec.estimate(works)
     if not run:
-        print(render_estimate(est))
+        print(spec.render_estimate(est))
         return {"tier": tier, "mode": mode, "dry_run": True, "estimate": est,
                 "claim_id": None, "decided": 0, "outcomes": {}}
 
@@ -616,10 +712,11 @@ def _run_tier(con, client: ClaimsClient, release_id: str, tier: str,
                          "every work in it already has a verdict")
 
     meta = {"batch": batch_label, "mode": mode, "engine_tier": tier,
-            "generation": screening_generation(tier)}
+            "generation": spec.generation()}
     try:
         claim_id = _claim(client, release_id, tier,
-                          [(w.work_id, w.pile) for w in works], meta, cache_dir)
+                          [(w.work_id, w.pile) for w in works], meta, cache_dir,
+                          spec.ttl_seconds)
     except ClaimConflict as exc:
         raise SystemExit(
             f"refusing to run tier {tier}: {exc}. Another run holds some of these "
@@ -628,9 +725,10 @@ def _run_tier(con, client: ClaimsClient, release_id: str, tier: str,
 
     report = {"tier": tier, "mode": mode, "dry_run": False, "estimate": est,
               "claim_id": claim_id, "release_id": release_id, "batch": batch_label,
-              "decided": 0, "outcomes": {}, "discarded_work_ids": [],
-              "by_pile": {}, "verdicts": 0, "workers": max(1, ENGINE_TIER_WORKERS)}
-    uploader = _ResponseUploader(client)
+              "decided": 0, "outcomes": {}, "discarded_work_ids": [], "by_pile": {},
+              "verdicts": 0,
+              "workers": max(1, spec.workers or ENGINE_TIER_WORKERS)}
+    uploader = _ResponseUploader(client, batch_size=spec.batch_size)
     counters = threading.Lock()
     stop = threading.Event()
 
@@ -645,7 +743,7 @@ def _run_tier(con, client: ClaimsClient, release_id: str, tier: str,
         if stop.is_set():
             return
         check_openai_budget()
-        outcome, votes = judge(work)
+        outcome, votes = spec.judge(work)
         for vote in votes:
             response_hash, path = _write_response(vote["blob"])
             client.record_verdict(
@@ -752,11 +850,6 @@ def _by_work(tier: str, rows: list[dict],
     return by_work
 
 
-def _tier_decision(tier: str, rows: list[dict]) -> dict:
-    """One work's verdict rows as that tier's decision — the one dispatch."""
-    return _cheap_decision(rows) if tier == TIER_CHEAP else _expensive_decision(rows)
-
-
 def checkpoint_decisions(client: ClaimsClient, tier: str) -> dict[int, dict]:
     """Every work this tier holds current-generation verdict rows for, decided.
 
@@ -764,9 +857,10 @@ def checkpoint_decisions(client: ClaimsClient, tier: str) -> dict[int, dict]:
     functions below: a work whose rows add up to a decision must not be re-bought,
     and a work whose rows do not must not be treated as if they did.
     """
+    decide = tier_spec(tier).decide
     generations = {c["id"]: (c.get("meta") or {}).get("generation")
                    for c in client.claims(tier=tier)}
-    return {work: _tier_decision(tier, rows)
+    return {work: decide(rows)
             for work, rows in _by_work(tier, client.verdicts(tier), generations).items()}
 
 
@@ -835,9 +929,10 @@ def tier_decisions(client: ClaimsClient, release_id: Optional[str], tier: str,
               if (c.get("meta") or {}).get("mode") == mode]
     if not claims:
         return {}
+    decide = tier_spec(tier).decide
     generations = {c["id"]: (c.get("meta") or {}).get("generation") for c in claims}
     by_work = _by_work(tier, client.verdicts(tier, list(generations)), generations)
-    return {wid: _tier_decision(tier, rows) for wid, rows in by_work.items()}
+    return {wid: decide(rows) for wid, rows in by_work.items()}
 
 
 def _recorded_at(row: dict) -> tuple:
@@ -1051,9 +1146,8 @@ def run_screen_cheap(con, client: ClaimsClient, release_id: str,
     """
     works = _batch(con, client, release_id, TIER_CHEAP, work_ids, limit,
                    pool_dir, overlay_dir, aliases, run)
-    report = _run_tier(con, client, release_id, TIER_CHEAP, works, _cheap_judge,
-                       mode=mode, batch_label=batch_label, run=run,
-                       cache_dir=cache_dir)
+    report = run_tier(SCREEN_CHEAP, client, release_id, works, mode=mode,
+                      batch_label=batch_label, run=run, cache_dir=cache_dir)
     if run and mode == "validation":
         report["revalidation"] = _revalidation(con, release_id,
                                                report["discarded_work_ids"])
@@ -1158,9 +1252,8 @@ def run_screen_expensive(con, client: ClaimsClient, release_id: str,
     """
     works = _batch(con, client, release_id, TIER_EXPENSIVE, work_ids, limit,
                    pool_dir, overlay_dir, aliases, run)
-    return _run_tier(con, client, release_id, TIER_EXPENSIVE, works,
-                     _expensive_judge, mode=mode, batch_label=batch_label, run=run,
-                     cache_dir=cache_dir)
+    return run_tier(SCREEN_EXPENSIVE, client, release_id, works, mode=mode,
+                    batch_label=batch_label, run=run, cache_dir=cache_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -1190,3 +1283,32 @@ def _batch(con, client: ClaimsClient, release_id: str, tier: str,
         only = (only if only is not None else routed) - held
     return pile_works(con, release_id, tier, pool_dir, overlay_dir, aliases,
                       only=only, limit=limit)
+
+
+# ---------------------------------------------------------------------------
+# The two screen tiers, as specs
+# ---------------------------------------------------------------------------
+# At the bottom because a spec names the functions above it. `partial` rather than
+# a lambda so the tier a bound function belongs to is visible in a traceback, and
+# so `estimate()` / `screening_generation()` stay callable by name — the analysis
+# scripts and the tests reach for them directly.
+
+SCREEN_CHEAP = register_tier(TierSpec(
+    name=TIER_CHEAP,
+    judge=_cheap_judge,
+    decide=_cheap_decision,
+    generation=partial(screening_generation, TIER_CHEAP),
+    accepts_legacy=partial(_screen_accepts_legacy, TIER_CHEAP),
+    estimate=partial(estimate, tier=TIER_CHEAP),
+    render_estimate=render_estimate,
+))
+
+SCREEN_EXPENSIVE = register_tier(TierSpec(
+    name=TIER_EXPENSIVE,
+    judge=_expensive_judge,
+    decide=_expensive_decision,
+    generation=partial(screening_generation, TIER_EXPENSIVE),
+    accepts_legacy=partial(_screen_accepts_legacy, TIER_EXPENSIVE),
+    estimate=partial(estimate, tier=TIER_EXPENSIVE),
+    render_estimate=render_estimate,
+))

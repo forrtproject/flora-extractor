@@ -61,7 +61,7 @@ def test_a_dry_run_claims_nothing_and_spends_nothing(monkeypatch, capsys):
     def forbidden(*a, **k):
         raise AssertionError("a dry run must not spend")
 
-    monkeypatch.setattr(repair, "_run_tier", forbidden)
+    monkeypatch.setattr(repair, "run_tier", forbidden)
     monkeypatch.setattr(repair, "_supersede_orphans", forbidden)
 
     assert repair.main(["--release", "rel-a"]) == 0
@@ -69,6 +69,6 @@ def test_a_dry_run_claims_nothing_and_spends_nothing(monkeypatch, capsys):
     assert "2 work(s) with fewer than two verdict rows" in out
     assert "Dry run" in out
 
-    monkeypatch.setattr(repair, "_run_tier", forbidden)
+    monkeypatch.setattr(repair, "run_tier", forbidden)
     with pytest.raises(AssertionError):
         repair.main(["--release", "rel-a", "--run"])
