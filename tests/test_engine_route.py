@@ -471,8 +471,8 @@ def test_route_refuses_to_store_a_release_whose_pool_moved_under_it(tmp_path,
 
 def test_a_written_release_round_trips_with_its_id_and_timestamp(tmp_path):
     release = dict(_INPUTS, created_at="2026-08-04T12:00:00+00:00")
-    path = write_release(release, cache_dir=tmp_path)
     release_id = routing_release(**_INPUTS)
+    path = write_release(release, release_id, cache_dir=tmp_path)
     assert path == tmp_path / "releases" / f"{release_id}.json"
     record = read_release(release_id, cache_dir=tmp_path)
     assert record["release_id"] == release_id

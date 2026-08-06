@@ -244,7 +244,8 @@ def cmd_route(args) -> int:
     # a build that raised must not leave that claim behind. The record lives
     # beside the store it describes, so a store pointed somewhere else does not
     # deposit its releases in the default cache.
-    write_release(dict(inputs, created_at=_now()), cache_dir=args.store.parent)
+    write_release(dict(inputs, created_at=_now()), release_id,
+                  cache_dir=args.store.parent)
 
     print(f"release {release_id}")
     _register_release(release_id, args.store.parent)
