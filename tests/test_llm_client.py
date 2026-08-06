@@ -1347,17 +1347,6 @@ def test_the_replications_own_study_numbers_are_cleaned(monkeypatch, tmp_path):
 
 
 class TestStudyNumberCleaning:
-    def test_prose_forms_reduce_to_a_number(self):
-        from shared.llm_client import _clean_study_number
-        assert _clean_study_number("Study 2") == "2"
-        assert _clean_study_number("Experiment 3a") == "3a"
-        assert _clean_study_number(2) == "2"
-
-    def test_absent_or_unparseable_is_empty(self):
-        from shared.llm_client import _clean_study_number
-        assert _clean_study_number(None) == ""
-        assert _clean_study_number("the main study") == ""
-
     def test_every_named_study_survives_the_answer(self):
         """Splitting on commas alone kept the first number and dropped the rest, so a
         target of two studies was recorded as a target of one."""
@@ -1372,7 +1361,10 @@ class TestStudyNumberCleaning:
         from shared.llm_client import _clean_study_numbers
         assert _clean_study_numbers("Study 1, Experiment 1") == "1"
         assert _clean_study_numbers("Experiment 3a, 3b")     == "3a, 3b"
+        assert _clean_study_numbers("Study 2")               == "2"
+        assert _clean_study_numbers(2)                       == "2"
         assert _clean_study_numbers("the main study")        == ""
+        assert _clean_study_numbers(None)                    == ""
         assert _clean_study_numbers("")                      == ""
 
 

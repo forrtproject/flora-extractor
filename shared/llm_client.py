@@ -1001,21 +1001,10 @@ def call_gemini_with_pdf(prompt: str,
 
 # ── Study-number cleaning ─────────────────────────────────────────────────────
 
-def _clean_study_number(value) -> str:
-    """FLoRA `study_o` for one targeted study: a bare number, or "" if there is none.
-
-    The prompt asks for a number but models answer "Study 2", "Experiment 3a" or 2.
-    Everything but the digits (and a trailing letter, which distinguishes Study 3a
-    from 3b) is dropped, so that rows collapsed onto one original paper join into
-    the codebook's "1, 2" form rather than "Study 1, Experiment 2".
-    """
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    m = re.search(r"\d+[a-z]?", text, re.IGNORECASE)
-    return m.group(0).lower() if m else ""
-
-
+# One study's number inside a part: digits plus an optional trailing letter, which is
+# what distinguishes Study 3a from 3b. Everything else in "Study 2" or "Experiment 3a"
+# is dropped, so a target's studies read as the codebook's "1, 2".
+_STUDY_NUM_RE = re.compile(r"\d+[a-z]?", re.IGNORECASE)
 # How an answer names several studies: "1, 2", "Study 1; Study 4", "2 and 3", "1 & 2".
 _STUDY_SPLIT_RE = re.compile(r"[,;&]|\band\b", re.IGNORECASE)
 # A range, once the leading word is gone: "1-3", "1–3". Two digits at most, so a year
@@ -1040,9 +1029,9 @@ def _clean_study_numbers(value) -> str:
             numbers.extend(str(n) for n in range(int(span.group(1)),
                                                  int(span.group(2)) + 1))
             continue
-        number = _clean_study_number(part)
+        number = _STUDY_NUM_RE.search(part)
         if number:
-            numbers.append(number)
+            numbers.append(number.group(0).lower())
     return ", ".join(dict.fromkeys(numbers))
 
 
