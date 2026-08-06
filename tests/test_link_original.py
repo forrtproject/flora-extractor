@@ -593,33 +593,6 @@ class TestGateRestoresWhenNothingEnumerates:
     When nothing ever does, the pick stands — every one of these exits returned it
     before the gate existed, so dropping it is a lost resolution, not a caution."""
 
-    def test_a_content_free_openalex_xml_is_no_document(self):
-        """All 60 cached OpenAlex XML results were 174-byte shells — every section
-        empty, no references — and a shell is truthy, so the "no document" guard let
-        them through and the row was stamped llm_fulltext with nothing behind it. The
-        shell must end the row at the same exit an absent document does, restore
-        included: grobid_status stays not_attempted, so nothing was parsed or read."""
-        shell = {"source": "openalex_xml", "xml_url": "u",
-                 "sections": {"abstract": "", "intro": "", "methods": "",
-                              "references": []}}
-        # Two candidates and no author-year cue, so no rule fires and the ladder
-        # reaches Stage 5 with nothing resolved and nothing withheld.
-        ambiguous = _GATE_CANDS + [{"title": "Another unrelated paper", "year": 2011,
-                                    "first_author": "Jones", "all_authors": ["Jones"],
-                                    "doi": "10.9/other", "openalex_id": "W8"}]
-        plain = _run_gate("An unrelated title", "An unrelated abstract.", ambiguous,
-                          pdf_ok=False, abstract_answer=_failed_answer(), oa_xml=shell)
-        assert plain["resolution_method"] == "no_fulltext_available"
-
-        row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS, pdf_ok=False,
-                        abstract_answer=_failed_answer(),
-                        oa_xml={"source": "openalex_xml", "xml_url": "u",
-                                "sections": {"abstract": "", "intro": "",
-                                             "methods": "", "references": []}})
-        assert row["resolution_method"] == "title_pattern_match"
-        assert row["grobid_status"] == "not_attempted"
-        assert row["pdf_source"] == "none"
-
     def test_openalex_body_text_reaches_the_llm_instead_of_no_context(self):
         """A parse with body text and nothing else must still be read.
 

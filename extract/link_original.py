@@ -46,7 +46,7 @@ from shared.prompts import (
     _abstract_tail, rendered_reference_entries,
 )
 from shared.target_keys import assign_target_keys
-from shared.pdf_sources import acquire_pdf, openalex_xml_has_content
+from shared.pdf_sources import acquire_pdf
 from shared.utils import cache_key, clean_doi
 
 # ── Unified rule-based resolver (runs before any LLM call) ───────────────────
@@ -992,17 +992,10 @@ def run_for_doi(doi_r:              str,
     # empty sections and the LLM is asked to name an original from nothing — which
     # is exactly how a confident, fabricated doi_o gets produced. Stop here instead.
     #
-    # A content-free XML result is no document: every OpenAlex XML result cached
-    # before 2026-08 was an empty shell, and because a shell is truthy this guard
-    # waved it through and the row was stamped llm_fulltext with no full text behind
-    # it. openalex_xml_has_content() is what "we have a document" means here.
-    if oa_xml_content and not openalex_xml_has_content(oa_xml_content):
-        log.warning("[%s] OpenAlex XML is content-free (no sections, no references) "
-                    "— treating it as no document", doi_r)
-        oa_xml_content = None
-        if pdf.get("pdf_source") == "openalex_xml":
-            pdf = {**pdf, "pdf_source": "none"}
-
+    # A content-free XML result never gets this far: openalex_xml_has_content() is
+    # applied inside shared/pdf_sources.py, both to a fresh fetch and to a cache read,
+    # so acquire_pdf hands back either a document or None. There is no second check
+    # here.
     if pdf_path is None and not oa_xml_content:
         log.info("[%s] no document acquired (%s) — writing target_pending",
                  doi_r, pdf.get("pdf_source", "none"))
