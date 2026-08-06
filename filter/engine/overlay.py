@@ -217,7 +217,16 @@ def validate(overlay_dir: Path) -> list[str]:
 
 
 def overlay_hash(overlay_dir: Path) -> str:
-    """sha256 over the sorted (name, content hash) pairs of the overlay chunks."""
+    """sha256 over the sorted (name, content hash) pairs of the overlay chunks.
+
+    This folds each chunk's hash as its 64-character HEX STRING, where
+    `spec.bundle_hash()` folds raw digest bytes. The two styles stay split on
+    purpose: the value here is persisted — it names every
+    `overlay_manifest-<hash12>.json` on disk, it is what `overlay_manifest.json`
+    points at, and it is one of the six routing-release inputs — so folding raw
+    bytes instead would silently re-identify every frozen overlay and every
+    release id derived from one. A stylistic tidy is not worth that.
+    """
     digest = hashlib.sha256()
     for path in chunk_paths(overlay_dir):
         digest.update(path.name.encode("utf-8"))

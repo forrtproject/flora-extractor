@@ -18,7 +18,9 @@ from typing import Optional
 
 from shared.config import ENGINE_CACHE_DIR
 
-# The exact six inputs, in the order the contract names them.
+# The exact six inputs. The order here is the one the contract names them in and
+# is for a reader only: `_release_id()` sorts the keys before hashing, so
+# reordering this tuple cannot move a release id. Adding or removing a name can.
 RELEASE_INPUTS = ("pool_manifest_hash", "overlay_hash", "bundle_hash",
                   "engine_version", "alias_release", "schema_version")
 
