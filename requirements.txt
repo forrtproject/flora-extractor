@@ -1,6 +1,5 @@
 # FLoRA Extractor — Python Dependencies
 # Install with: pip install -r requirements.txt
-# On Railway, FLORA_READONLY=1 prevents heavy pipeline deps from being imported.
 
 # ── Web / dashboard (Railway uses these) ──────────────────────────────────────
 flask>=3.0.0
@@ -10,7 +9,7 @@ pyarrow>=14.0.0
 requests>=2.31.0
 python-dotenv>=1.0.0
 
-# ── Pipeline only (not used when FLORA_READONLY=1) ────────────────────────────
+# ── Pipeline only (the dashboard deployment does not import these) ────────────
 flask-sqlalchemy>=3.1.0
 openpyxl>=3.1.0
 fpdf2>=2.7.0
