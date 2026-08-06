@@ -1,8 +1,8 @@
 # FLoRA Extractor — Documentation
 
-**This page is the documentation index.** It is the only one — `README.md` and
-`CLAUDE.md` each carry a single pointer here rather than a list of their own, so a
-new document is added in one place and cannot go missing from a second.
+**This page is the documentation index** for the guides and references below.
+`README.md` and `CLAUDE.md` point here rather than keeping lists of their own, so a
+new guide is added in one place and cannot go missing from a second.
 
 ## Quick links
 
