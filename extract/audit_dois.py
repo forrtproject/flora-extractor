@@ -1,24 +1,32 @@
 """
-audit_dois.py — Retroactive DOI verification for extracted.csv.
+audit_dois.py — Retroactive DOI verification for the extracted rows.
 
-Checks every row's doi_o against the metadata it points to (CrossRef/OpenAlex)
-and proposes corrections for hallucinated or missing DOIs. Dry-run by default;
---apply writes corrections (doi_o, pair_id, doi_o_verification, link_evidence,
-link_confidence) back into the CSV.
+Checks every row's doi_o against the metadata it points to (CrossRef/OpenAlex) and
+proposes corrections for hallucinated or missing DOIs. Dry-run by default.
+
+**It reads the exported CSV and writes the stored verdicts.** The rows it audits are
+read from `data/extracted.csv`, which is the readable form of what the extract tier
+concluded; a correction goes back to where that row is rendered FROM — a new result
+verdict superseding the old one (`extract/tier.py:supersede_targets`). Editing the
+CSV would have been undone by the next `python -m extract.export`, which rebuilds
+every row from the stored payload.
+
+So `--apply` is a three-step move, and the third step is the operator's:
+
+    python -m extract.audit_dois            # dry-run report over data/extracted.csv
+    python -m extract.audit_dois --apply    # claim, correct, supersede
+    python -m extract.export                # render the corrected CSV
 
 This is the ONLY tool that re-verifies a row whose verification already settled: a
-resumed run_extract carries such rows forward untouched (each re-verification costs
-up to three OpenAlex free-text searches at 10× a filter query, and the row already
-holds the answer). It re-verifies unsettled rows itself, so the audit's job here is
-the retroactive pass — after a threshold change, a doi_verify fix, or a spot check.
+row's `doi_o_verification` is decided once, inside the tier's judge, and stored
+(each re-verification costs up to three OpenAlex free-text searches at 10× a filter
+query, and the row already holds the answer). The audit's job is the retroactive
+pass — after a threshold change, a doi_verify fix, or a spot check.
 
-Usage:
-    python -m extract.audit_dois                  # dry-run report, every row
-    python -m extract.audit_dois --apply          # write corrections
-    python -m extract.audit_dois --doi 10.x/y     # single row
-    python -m extract.audit_dois --status api_error   # only rows whose verification
-                                                  #   failed last time (repeatable)
-    python -m extract.audit_dois --extracted-test # audit extracted-test.csv
+    python -m extract.audit_dois --doi 10.x/y          # single row
+    python -m extract.audit_dois --status api_error    # only rows whose verification
+                                                       #   failed last time (repeatable)
+    python -m extract.audit_dois --mode validation     # the sandbox render + verdicts
 """
 from __future__ import annotations
 
@@ -32,10 +40,11 @@ from extract.run_extract import _build_ref_o
 from shared.config import DATA_DIR, log
 from shared.doi_verify import keeps_no_doi, verify_and_correct
 from shared.schema import VERIFICATION_SKIP_LINK_METHODS, make_pair_id
-from shared.utils import clean_doi, csv_lock
+from shared.utils import clean_doi
 
-_MAIN_PATH   = DATA_DIR / "extracted.csv"
-_TEST_PATH   = DATA_DIR / "extracted-test.csv"
+# The CSV each mode's export writes, and therefore the file each mode's report reads.
+_MODE_PATHS  = {"live": DATA_DIR / "extracted.csv",
+                "validation": DATA_DIR / "extracted-test.csv"}
 _REPORT_PATH = DATA_DIR / "doi_audit_report.csv"
 
 # The same set run_extract._verify_row skips, from shared/schema.py: the audit must
@@ -45,73 +54,52 @@ _REPORT_PATH = DATA_DIR / "doi_audit_report.csv"
 _SKIP_LINK_METHODS = VERIFICATION_SKIP_LINK_METHODS
 
 
-def _fingerprints(df: pd.DataFrame, cols: list[str]) -> list[str]:
-    """One string per row identifying it by its whole content, in a fixed column order.
+def _patches(original: pd.DataFrame, updated: pd.DataFrame) -> dict[str, dict]:
+    """`pair_id → {column: corrected value}` for every row the audit changed.
 
-    Content, not doi_r: a paper legitimately has one row per original, and the audit
-    corrects particular ones.
-    """
-    return ["\x1f".join(str(v) for v in rec) for rec in df[cols].values]
+    The pair id from the row AS READ, not as corrected: it is the identity the stored
+    target carries, and correcting a doi_o changes the pair id itself — which is one
+    of the columns in the patch.
 
-
-def _apply_updates(csv_path: Path, original: pd.DataFrame, updated: pd.DataFrame) -> int:
-    """Write the audit's corrections into the file's CURRENT contents. Returns rows changed.
-
-    A full-file read-modify-write with up to three OpenAlex searches per row in the
-    middle — hours over extracted.csv — and this is the tool that is meant to run
-    alongside a Stage 3 run. Writing the frame the audit read back over the file
-    deleted every row run_extract had appended meanwhile.
-
-    Holding `csv_lock` across the whole audit would prevent that by blocking the run
-    for those hours instead: run_extract takes the same lock for every row it writes.
-    So the lock is taken only here, and the audit's decisions — the per-row column
-    changes it made — are applied to whatever the file holds now. Appends survive; a
-    row somebody has rewritten in the meantime no longer matches its fingerprint and
-    is left alone, which is the right way round for a correction based on a value that
-    has since changed.
+    A row with no pair id cannot be located in the verdicts and is reported rather
+    than guessed at; a duplicate pair id is the same problem twice and `audit_extracted`
+    already flags it as a blocker.
     """
     cols = list(original.columns)
-    changes: dict[str, list[dict]] = {}
-    for fp, before, after in zip(_fingerprints(original, cols),
-                                 original[cols].values, updated[cols].values):
+    out: dict[str, dict] = {}
+    for pair, before, after in zip(original.get("pair_id", pd.Series(dtype=str)),
+                                   original[cols].values, updated[cols].values):
         diff = {c: str(a) for c, b, a in zip(cols, before, after) if str(b) != str(a)}
-        if diff:
-            changes.setdefault(fp, []).append(diff)
+        pair = str(pair or "").strip()
+        if diff and pair:
+            out.setdefault(pair, {}).update(diff)
+    return out
 
-    if not changes:
-        return 0
 
-    with csv_lock(csv_path):
-        current = pd.read_csv(csv_path, dtype=str, encoding="utf-8-sig").fillna("")
-        if set(current.columns) != set(cols):
-            # A different header is a different file; matching by content would be
-            # guesswork. Say so and change nothing rather than write the stale frame.
-            log.error("%s changed shape during the audit — no corrections applied",
-                      csv_path.name)
-            return 0
-        applied = 0
-        pending = {fp: list(diffs) for fp, diffs in changes.items()}
-        for pos, fp in enumerate(_fingerprints(current, cols)):
-            queued = pending.get(fp)
-            if not queued:
-                continue
-            for col, val in queued.pop(0).items():
-                current.iat[pos, current.columns.get_loc(col)] = val
-            applied += 1
-        current.to_csv(csv_path, index=False, encoding="utf-8-sig",
-                       quoting=1, quotechar='"')
-    missing = sum(len(q) for q in pending.values())
-    if missing:
-        log.warning("%d audited row(s) were no longer in %s at write time — "
-                    "their corrections were not applied", missing, csv_path.name)
-    return applied
+def apply_corrections(patches: dict[str, dict], *, mode: str = "live") -> dict:
+    """Write the audit's corrections into the stored verdicts. Returns the report.
+
+    A thin wrapper over `extract/tier.py:supersede_targets` — it exists so this
+    module's one write path names its own batch, and so the state authority is
+    imported only when something is actually being written.
+    """
+    from filter.engine.claims import ClaimsClient, ClaimsNotConfigured
+    from extract.tier import supersede_targets
+
+    try:
+        client = ClaimsClient()
+    except ClaimsNotConfigured as exc:
+        raise SystemExit(f"{exc}. The rows this corrects live in the state authority, "
+                         "so there is nothing to correct without it.")
+    return supersede_targets(client, patches, batch_label="audit-dois", mode=mode)
 
 
 def audit_file(csv_path: Path,
                apply: bool = False,
                report_path: "Path | None" = None,
                only_doi: "str | None" = None,
-               only_status: "list[str] | None" = None) -> dict:
+               only_status: "list[str] | None" = None,
+               mode: str = "live") -> dict:
     """Audit every row of *csv_path*. Returns per-status counts.
 
     only_status: restrict to rows whose CURRENT doi_o_verification is one of these
@@ -127,9 +115,9 @@ def audit_file(csv_path: Path,
     df = pd.read_csv(csv_path, dtype=str, encoding="utf-8-sig").fillna("")
     if "doi_o_verification" not in df.columns:
         df["doi_o_verification"] = ""
-    # What the file said when the audit read it. --apply re-reads under the lock and
-    # applies the audit's per-row CHANGES to the file's current contents rather than
-    # writing this frame back — see _apply_updates.
+    # What the file said when the audit read it. The corrections are derived by
+    # diffing this against the audited frame, keyed by pair id, and written to the
+    # verdicts the file is rendered from — see _patches / apply_corrections.
     original = df.copy()
 
     only = clean_doi(only_doi) if only_doi else None
@@ -212,37 +200,57 @@ def audit_file(csv_path: Path,
                           "title_o", "evidence"]).to_csv(
         rp, index=False, encoding="utf-8-sig")
 
+    counts["_patches"] = _patches(original, df)
     if apply:
-        _apply_updates(csv_path, original, df)
-        log.info("Applied %d correction(s) to %s",
-                 counts.get("corrected", 0), csv_path.name)
+        written = apply_corrections(counts.pop("_patches"), mode=mode)
+        counts["_applied"] = written
+        log.info("superseded %d result row(s) over %d work(s); claim %s",
+                 written["rows"], written["works"], str(written["claim"])[:12])
+        if written["unmatched"]:
+            log.warning("%d corrected row(s) had no stored verdict to correct — "
+                        "their pair_ids are not in the live payloads: %s",
+                        len(written["unmatched"]), ", ".join(written["unmatched"][:5]))
 
     return dict(counts)
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Audit/fix doi_o values in extracted.csv")
+    ap = argparse.ArgumentParser(
+        description="Audit doi_o values in the exported rows; --apply corrects the "
+                    "verdicts they are rendered from.")
     ap.add_argument("--apply", action="store_true",
-                    help="write corrections into the CSV (default: dry-run)")
+                    help="claim the affected works and write a corrected, superseding "
+                         "result verdict for each (default: dry-run). Render the "
+                         "corrected CSV afterwards with python -m extract.export")
     ap.add_argument("--doi", help="audit a single row by doi_r")
     ap.add_argument("--status", action="append", metavar="VALUE",
                     help=("only rows whose current doi_o_verification is VALUE "
                           "(repeatable; '' means never verified). --status api_error "
                           "re-asks the rows whose verification could not be completed"))
-    ap.add_argument("--extracted-test", action="store_true",
-                    help="audit extracted-test.csv instead of extracted.csv")
+    ap.add_argument("--mode", choices=("live", "validation"), default="live",
+                    help="which export to audit, and whose verdicts --apply corrects: "
+                         "live (data/extracted.csv) or validation "
+                         "(data/extracted-test.csv).")
     args = ap.parse_args()
 
-    path = _TEST_PATH if args.extracted_test else _MAIN_PATH
+    path = _MODE_PATHS[args.mode]
     summary = audit_file(path, apply=args.apply, only_doi=args.doi,
-                         only_status=args.status)
+                         only_status=args.status, mode=args.mode)
+    applied = summary.pop("_applied", None)
+    patches = summary.pop("_patches", {})
 
     print(f"\nDOI audit of {path.name}{' (APPLIED)' if args.apply else ' (dry-run)'}:")
     for status, n in sorted(summary.items()):
         print(f"  {status:<12} {n}")
     print(f"\nReport: {_REPORT_PATH}")
-    if not args.apply:
-        print("Dry-run only — rerun with --apply to write corrections.")
+    if applied is not None:
+        print(f"  {applied['rows']} row(s) over {applied['works']} work(s) superseded")
+        print("  Render the corrected CSV with: python -m extract.export"
+              + ("" if args.mode == "live" else
+                 f" --mode {args.mode} --out {path}"))
+    else:
+        print(f"Dry-run only — {len(patches)} row(s) would be corrected; "
+              "rerun with --apply.")
 
 
 if __name__ == "__main__":
