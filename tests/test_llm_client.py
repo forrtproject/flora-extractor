@@ -478,7 +478,7 @@ def test_flex_follows_the_paid_key_not_its_position(monkeypatch):
 
     monkeypatch.setattr(llm.requests, "post", post)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
-    assert llm.call_gemini("prompt") == ({"ok": True}, "")
+    assert llm.call_gemini("prompt", model="m") == ({"ok": True}, "")
     assert "service_tier" not in posts[0][1]
     assert posts[-1][1]["service_tier"] == "flex"
 
@@ -1347,17 +1347,6 @@ def test_the_replications_own_study_numbers_are_cleaned(monkeypatch, tmp_path):
 
 
 class TestStudyNumberCleaning:
-    def test_prose_forms_reduce_to_a_number(self):
-        from shared.llm_client import _clean_study_number
-        assert _clean_study_number("Study 2") == "2"
-        assert _clean_study_number("Experiment 3a") == "3a"
-        assert _clean_study_number(2) == "2"
-
-    def test_absent_or_unparseable_is_empty(self):
-        from shared.llm_client import _clean_study_number
-        assert _clean_study_number(None) == ""
-        assert _clean_study_number("the main study") == ""
-
     def test_every_named_study_survives_the_answer(self):
         """Splitting on commas alone kept the first number and dropped the rest, so a
         target of two studies was recorded as a target of one."""
@@ -1372,7 +1361,10 @@ class TestStudyNumberCleaning:
         from shared.llm_client import _clean_study_numbers
         assert _clean_study_numbers("Study 1, Experiment 1") == "1"
         assert _clean_study_numbers("Experiment 3a, 3b")     == "3a, 3b"
+        assert _clean_study_numbers("Study 2")               == "2"
+        assert _clean_study_numbers(2)                       == "2"
         assert _clean_study_numbers("the main study")        == ""
+        assert _clean_study_numbers(None)                    == ""
         assert _clean_study_numbers("")                      == ""
 
 
@@ -1493,6 +1485,32 @@ def test_gemini_retries_three_times_like_the_other_providers(monkeypatch):
     assert llm.call_gemini("prompt", model="m") == ({"ok": True}, "")
     assert len(urls) == 4                   # 1 quota refusal + 3 attempts on key 2
     assert sleeps == [1, 2]
+
+
+@pytest.mark.parametrize("call_site", [
+    lambda: llm.call_gemini("prompt", model="m"),
+    lambda: llm.call_gemini_with_pdf("prompt", b"%PDF-1.4"),
+    lambda: llm.call_gemini_with_images("prompt", _IMGS),
+], ids=["text", "pdf", "images"])
+def test_a_missing_model_ends_every_gemini_call_at_once(monkeypatch, call_site):
+    """404 is the one status no other key and no retry can answer, so all three call
+    sites leave immediately rather than spending six requests to say so."""
+    _flex_env(monkeypatch, use_flex=False, keys=("k1", "k2"))
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    posts: list = []
+
+    def post(url, json=None, timeout=None):
+        posts.append(url)
+        r = MagicMock()
+        r.status_code = 404
+        r.text = "not found"
+        r.json.return_value = {"error": {"message": "model not found"}}
+        return r
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    result, err = call_site()
+    assert result is None and "model not found" in err
+    assert len(posts) == 1
 
 
 def test_every_provider_sends_the_same_output_cap(monkeypatch):

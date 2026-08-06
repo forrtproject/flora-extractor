@@ -19,7 +19,6 @@ import base64
 import json
 import re
 import time
-from pathlib import Path
 from typing import Optional
 
 import requests
@@ -246,27 +245,113 @@ def cache_model_id(model: str, effort: str = "") -> str:
     return f"{model}@effort={effort}" if effort else model
 
 
-# ── Gemini (primary) ──────────────────────────────────────────────────────────
+# ── Gemini: one request, over every key ───────────────────────────────────────
+# The three Gemini entry points below (a text prompt, a prompt plus a PDF, a prompt
+# plus rendered page images) differ only in what they SEND and how they READ the
+# answer. Everything between those two — key rotation, retries, the status codes, and
+# charging the call — is one loop, kept here so the three cannot drift apart.
 
-def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL, *,
-                reasoning_effort: str = "") -> tuple[Optional[dict], str]:
-    """
-    Call Gemini via the REST API with responseMimeType=application/json.
+def _gemini_call(payload: dict, model: str, timeout: int,
+                 what: str) -> tuple[Optional[dict], str]:
+    """POST *payload* to *model*, rotating keys and retrying, and return the BODY.
 
-    reasoning_effort is sent as `thinkingLevel` and only when set — it comes from the
-    call site, so a Gemini id and an OpenAI id under the same constant think alike.
+    Key rotation and retry are separate axes. A 429 is quota gone on THIS key, so it
+    moves to the next key immediately rather than spending the retries; a 5xx, a
+    non-200 of any other kind, or an exception is transient and gets 3 attempts at
+    1s/2s backoff on the same key — the same shape call_openai and call_openrouter
+    run. A 404 is permanent on every key, so it ends the call.
 
-    Rotates through all keys in GEMINI_API_KEYS when a 429 (quota exhausted)
-    is returned — useful when running on multiple free-tier projects. Quota
-    exhaustion moves to the next key immediately; a transient failure gets the same
-    3 attempts with 1s/2s backoff the other two providers make, on the same key.
+    Tokens are recorded HERE, before the caller has read anything: a 200 was served
+    and billed whatever it carried, and a truncated or blocked response is the most
+    expensive kind — it ran to the output cap. Returning first would make Gemini's
+    recorded spend an undercount of exactly the calls that cost the most.
 
-    Returns (result_dict_or_None, error_description).
+    *what* names the call in the log lines only. Returns (body_or_None, error).
     """
     if not GEMINI_API_KEYS:
         log.warning("No GEMINI_API_KEY set — skipping Gemini")
         return None, "no API keys configured"
 
+    if GEMINI_USE_FLEX:
+        log.debug("Gemini flex inference enabled on paid keys %s (timeout=%ds)",
+                  sorted(GEMINI_PAID_KEY_SLOTS), GEMINI_FLEX_TIMEOUT)
+
+    last_error = "all keys exhausted"
+    for key_idx, api_key in enumerate(GEMINI_API_KEYS):
+        url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
+               f":generateContent?key={api_key}")
+        key_label = f"key {key_idx + 1}/{len(GEMINI_API_KEYS)}"
+
+        for attempt in range(3):
+            try:
+                _throttle("gemini")
+                r = _gemini_post(url, payload, key_idx, timeout)
+
+                if r.status_code == 429:
+                    last_error = f"quota exhausted on {key_label} (429)"
+                    log.warning("Gemini %s quota exhausted on %s — %s", what, key_label,
+                                "trying next key"
+                                if key_idx + 1 < len(GEMINI_API_KEYS) else "no more keys")
+                    break   # break inner retry loop → next key
+
+                if r.status_code == 404:
+                    # Model not found — changing keys won't help; bail out immediately.
+                    err_msg = r.json().get("error", {}).get("message", r.text[:200])
+                    log.error("Gemini model not found: %s — update the model constant "
+                              "in shared/config.py. API said: %s", model, err_msg)
+                    return None, f"model not found: {model}"
+
+                if r.status_code != 200:
+                    last_error = f"HTTP {r.status_code} on {key_label}: {r.text[:200]}"
+                    log.warning("Gemini %s HTTP %s for %s model=%s: %.200s",
+                                what, r.status_code, key_label, model, r.text)
+                    if attempt < 2:
+                        time.sleep(2 ** attempt)  # 1s, 2s
+                        continue
+                    break   # attempts spent on this key → try the next one
+
+                body = r.json()
+                _record_tokens("gemini", model, *_gemini_usage(body))
+                if key_idx > 0:
+                    log.info("Gemini %s succeeded on %s", what, key_label)
+                return body, ""
+
+            except Exception as e:
+                last_error = f"exception on {key_label} attempt {attempt+1}: {e}"
+                log.warning("Gemini %s failed on %s (attempt %d/3): %s",
+                            what, key_label, attempt + 1, e)
+                if attempt < 2:
+                    time.sleep(2 ** attempt)  # 1s, 2s
+
+    return None, last_error
+
+
+def _gemini_answer_text(body: dict) -> str:
+    """The answer text of a Gemini response body, or "" when it carries none."""
+    candidates = body.get("candidates") or []
+    if not candidates:
+        return ""
+    parts = ((candidates[0].get("content") or {}).get("parts") or [])
+    return str(parts[0].get("text") or "") if parts else ""
+
+
+# ── Gemini: JSON chat calls ───────────────────────────────────────────────────
+
+def call_gemini(prompt: str, model: str, *,
+                reasoning_effort: str = "") -> tuple[Optional[dict], str]:
+    """
+    Call Gemini via the REST API with responseMimeType=application/json.
+
+    model is required, as it is on call_openai and call_openrouter. This is a
+    text-JSON call, reached through call_model(), which always names the model it
+    dispatched on; the default it used to carry was PDF_PARSE_MODEL — the constant
+    for a different question entirely — so it could only ever be reached by mistake.
+
+    reasoning_effort is sent as `thinkingLevel` and only when set — it comes from the
+    call site, so a Gemini id and an OpenAI id under the same constant think alike.
+
+    Returns (result_dict_or_None, error_description).
+    """
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -289,99 +374,30 @@ def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL, *,
         # the heavy model. Safe alongside responseMimeType, unlike thinkingBudget:0.
         payload["generationConfig"]["thinkingLevel"] = reasoning_effort
 
-    if GEMINI_USE_FLEX:
-        log.debug("Gemini flex inference enabled on paid keys %s (timeout=%ds)",
-                  sorted(GEMINI_PAID_KEY_SLOTS), GEMINI_FLEX_TIMEOUT)
+    body, err = _gemini_call(payload, model, 90, "call")
+    if body is None:
+        return None, err
 
-    last_error = "all keys exhausted"
-    for key_idx, api_key in enumerate(GEMINI_API_KEYS):
-        url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
-               f":generateContent?key={api_key}")
-        key_label = f"key {key_idx + 1}/{len(GEMINI_API_KEYS)}"
+    if not body.get("candidates"):
+        blocked = body.get("promptFeedback", {}).get("blockReason", "unknown")
+        log.warning("Gemini returned no candidates — blockReason=%s", blocked)
+        return None, f"no candidates — blockReason={blocked}"
 
-        # 3 attempts with 1s/2s backoff, the same shape call_openai and call_openrouter
-        # run. Key rotation is a separate axis: quota exhaustion is not transient on
-        # this key, so it leaves the loop rather than spending its retries.
-        for attempt in range(3):
-            try:
-                _throttle("gemini")
-                r = _gemini_post(url, payload, key_idx, 90)
+    if body["candidates"][0].get("finishReason") == "MAX_TOKENS":
+        log.warning("Gemini response hit maxOutputTokens and was cut off — "
+                    "the truncated JSON will fail to parse (model=%s)", model)
+        return None, "response truncated at maxOutputTokens"
 
-                if r.status_code == 429:
-                    last_error = f"quota exhausted on {key_label} (429)"
-                    log.warning("Gemini quota exhausted on %s — %s", key_label,
-                                "trying next key"
-                                if key_idx + 1 < len(GEMINI_API_KEYS) else "no more keys")
-                    break   # break inner retry loop → next key
+    text = _gemini_answer_text(body)
+    result = _parse_llm_json(text)
+    if result is not None:
+        return result, ""
 
-                if r.status_code == 404:
-                    # Model not found — changing keys won't help; bail out immediately.
-                    err_msg = r.json().get("error", {}).get("message", r.text[:200])
-                    log.error(
-                        "Gemini model not found: %s — update SCREENING_MODEL_1 or "
-                        "LINKING_MODEL in .env. API said: %s", model, err_msg
-                    )
-                    return None, f"model not found: {model}"
-
-                if r.status_code in (500, 503) and attempt < 2:
-                    last_error = f"HTTP {r.status_code} on {key_label} (retrying)"
-                    log.debug("Gemini transient %s on %s, retrying…", r.status_code, key_label)
-                    time.sleep(2 ** attempt)  # 1s, 2s
-                    continue
-
-                if r.status_code != 200:
-                    last_error = f"HTTP {r.status_code} on {key_label}: {r.text[:200]}"
-                    log.warning("Gemini HTTP %s for %s model=%s: %.200s",
-                                r.status_code, key_label, model, r.text)
-                    if attempt < 2:
-                        time.sleep(2 ** attempt)  # 1s, 2s
-                        continue
-                    break   # attempts spent on this key → try the next one
-
-                body = r.json()
-                # Recorded before any early return: a 200 was served and billed
-                # whatever its content, and a truncated or blocked response is the
-                # MOST expensive kind — it ran to the output cap. Returning first, as
-                # the two branches below used to, made Gemini's recorded spend an
-                # undercount of exactly the calls that cost the most.
-                _record_tokens("gemini", model, *_gemini_usage(body))
-
-                if not body.get("candidates"):
-                    blocked = body.get("promptFeedback", {}).get("blockReason", "unknown")
-                    last_error = f"no candidates on {key_label} — blockReason={blocked}"
-                    log.warning("Gemini returned no candidates on %s — blockReason=%s",
-                                key_label, blocked)
-                    return None, last_error
-
-                if body["candidates"][0].get("finishReason") == "MAX_TOKENS":
-                    last_error = "response truncated at maxOutputTokens"
-                    log.warning("Gemini response hit maxOutputTokens and was cut off — "
-                                "the truncated JSON will fail to parse (model=%s, %s)",
-                                model, key_label)
-                    return None, last_error
-
-                text = body["candidates"][0]["content"]["parts"][0]["text"]
-                result = _parse_llm_json(text)
-                if result is not None:
-                    if key_idx > 0:
-                        log.info("Gemini succeeded on %s", key_label)
-                    return result, ""
-
-                last_error = f"non-JSON response on {key_label}: {text[:150]}"
-                log.warning("Gemini returned non-JSON on %s: %.200s", key_label, text)
-                return None, last_error
-
-            except Exception as e:
-                last_error = f"exception on {key_label} attempt {attempt+1}: {e}"
-                log.warning("Gemini call failed on %s (attempt %d/3): %s",
-                            key_label, attempt + 1, e)
-                if attempt < 2:
-                    time.sleep(2 ** attempt)  # 1s, 2s
-
-    return None, last_error
+    log.warning("Gemini returned non-JSON: %.200s", text)
+    return None, f"non-JSON response: {text[:150]}"
 
 
-# ── OpenAI (fallback) ─────────────────────────────────────────────────────────
+# ── OpenAI direct: JSON chat calls ────────────────────────────────────────────
 # Flex inference, the mirror of the Gemini path above: 50% off standard pricing in
 # exchange for queueing. Flex is an account-level tier rather than a per-key one, so
 # OPENAI_USE_FLEX alone decides it.
@@ -917,9 +933,6 @@ def call_gemini_with_images(prompt: str,
 
     Requires PyMuPDF (fitz) for rendering — callers must catch ImportError.
     """
-    if not GEMINI_API_KEYS:
-        return None, "no API keys configured"
-
     parts: list[dict] = [{"text": prompt}]
     for img in image_b64_list:
         parts.append({"inline_data": {"mime_type": img["mime_type"], "data": img["data"]}})
@@ -932,41 +945,14 @@ def call_gemini_with_images(prompt: str,
         },
     }
 
-    last_error = "all keys exhausted"
-    for key_idx, api_key in enumerate(GEMINI_API_KEYS):
-        url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
-               f":generateContent?key={api_key}")
-        for attempt in range(3):
-            try:
-                _throttle("gemini")
-                r = _gemini_post(url, payload, key_idx, 120)
-                if r.status_code == 429:
-                    last_error = f"quota exhausted on key {key_idx + 1} (429)"
-                    break
-                if r.status_code != 200:
-                    last_error = f"HTTP {r.status_code} on key {key_idx + 1}"
-                    log.warning("Gemini image call HTTP %s (attempt %d/3)",
-                                r.status_code, attempt + 1)
-                    if attempt < 2:
-                        time.sleep(2 ** attempt)  # 1s, 2s
-                        continue
-                    break
-                body = r.json()
-                _record_tokens("gemini", model, *_gemini_usage(body))
-                blocked = _gemini_block_reason(body)
-                if blocked:
-                    return None, blocked
-                text = body["candidates"][0]["content"]["parts"][0]["text"]
-                result = _parse_llm_json(text)
-                return result, ("" if result else "response was not valid JSON")
-            except Exception as e:
-                last_error = f"exception on key {key_idx + 1}: {e}"
-                log.warning("Gemini image call failed (key %d, attempt %d/3): %s",
-                            key_idx + 1, attempt + 1, e)
-                if attempt < 2:
-                    time.sleep(2 ** attempt)  # 1s, 2s
-
-    return None, last_error
+    body, err = _gemini_call(payload, model, 120, "image call")
+    if body is None:
+        return None, err
+    blocked = _gemini_block_reason(body)
+    if blocked:
+        return None, blocked
+    result = _parse_llm_json(_gemini_answer_text(body))
+    return result, ("" if result else "response was not valid JSON")
 
 
 # ── Gemini with inline PDF (for direct PDF reference extraction) ──────────────
@@ -987,9 +973,6 @@ def call_gemini_with_pdf(prompt: str,
     and "no answer came back" are different answers to the question the caller is
     asking, and only the first may be recorded against the document.
     """
-    if not GEMINI_API_KEYS:
-        return None, "no API keys configured"
-
     pdf_b64 = base64.b64encode(pdf_bytes).decode()
 
     payload = {
@@ -1006,63 +989,22 @@ def call_gemini_with_pdf(prompt: str,
         },
     }
 
-    last_error = "all keys exhausted"
-    for key_idx, api_key in enumerate(GEMINI_API_KEYS):
-        url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
-               f":generateContent?key={api_key}")
-        for attempt in range(3):
-            try:
-                _throttle("gemini")
-                r = _gemini_post(url, payload, key_idx, 45)
-                if r.status_code == 429:
-                    last_error = f"quota exhausted on key {key_idx + 1} (429)"
-                    break
-                if r.status_code in (500, 503) and attempt < 2:
-                    last_error = f"HTTP {r.status_code} on key {key_idx + 1}"
-                    time.sleep(2 ** attempt)  # 1s, 2s
-                    continue
-                if r.status_code != 200:
-                    last_error = f"HTTP {r.status_code} on key {key_idx + 1}"
-                    log.warning("Gemini PDF call HTTP %s on key %d", r.status_code, key_idx + 1)
-                    if attempt < 2:
-                        time.sleep(2 ** attempt)  # 1s, 2s
-                        continue
-                    break
-                body = r.json()
-                _record_tokens("gemini", model, *_gemini_usage(body))
-                blocked = _gemini_block_reason(body)
-                if blocked:
-                    return None, blocked
-                text = body["candidates"][0]["content"]["parts"][0]["text"]
-                result = _parse_llm_json(text)
-                return result, ("" if result else "response was not valid JSON")
-            except Exception as e:
-                last_error = f"exception on key {key_idx + 1}: {e}"
-                log.warning("Gemini PDF call failed (key %d, attempt %d/3): %s",
-                            key_idx + 1, attempt + 1, e)
-                if attempt < 2:
-                    time.sleep(2 ** attempt)  # 1s, 2s
-
-    return None, last_error
+    body, err = _gemini_call(payload, model, 45, "PDF call")
+    if body is None:
+        return None, err
+    blocked = _gemini_block_reason(body)
+    if blocked:
+        return None, blocked
+    result = _parse_llm_json(_gemini_answer_text(body))
+    return result, ("" if result else "response was not valid JSON")
 
 
 # ── Study-number cleaning ─────────────────────────────────────────────────────
 
-def _clean_study_number(value) -> str:
-    """FLoRA `study_o` for one targeted study: a bare number, or "" if there is none.
-
-    The prompt asks for a number but models answer "Study 2", "Experiment 3a" or 2.
-    Everything but the digits (and a trailing letter, which distinguishes Study 3a
-    from 3b) is dropped, so that rows collapsed onto one original paper join into
-    the codebook's "1, 2" form rather than "Study 1, Experiment 2".
-    """
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    m = re.search(r"\d+[a-z]?", text, re.IGNORECASE)
-    return m.group(0).lower() if m else ""
-
-
+# One study's number inside a part: digits plus an optional trailing letter, which is
+# what distinguishes Study 3a from 3b. Everything else in "Study 2" or "Experiment 3a"
+# is dropped, so a target's studies read as the codebook's "1, 2".
+_STUDY_NUM_RE = re.compile(r"\d+[a-z]?", re.IGNORECASE)
 # How an answer names several studies: "1, 2", "Study 1; Study 4", "2 and 3", "1 & 2".
 _STUDY_SPLIT_RE = re.compile(r"[,;&]|\band\b", re.IGNORECASE)
 # A range, once the leading word is gone: "1-3", "1–3". Two digits at most, so a year
@@ -1087,9 +1029,9 @@ def _clean_study_numbers(value) -> str:
             numbers.extend(str(n) for n in range(int(span.group(1)),
                                                  int(span.group(2)) + 1))
             continue
-        number = _clean_study_number(part)
+        number = _STUDY_NUM_RE.search(part)
         if number:
-            numbers.append(number)
+            numbers.append(number.group(0).lower())
     return ", ".join(dict.fromkeys(numbers))
 
 
