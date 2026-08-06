@@ -221,7 +221,11 @@ apply `--resolved-only`, then code the outcome once per original through
 `extract_outcome`. Ranks are renumbered after the drops. Unmatched targets get no row;
 the shortfall is reported in `link_evidence`. Because the ladder returns at its first
 success, `may_stop_at_a_rule()` in `link_original.py` withholds a deterministic pick
-whenever the paper's own text does not rule out a second target. The pick is withheld
+whenever the paper's own text does not rule out a second target. That gate is
+necessary but not sufficient: the two methods in `_HELD_ONLY_METHODS`
+(`single_candidate_after_requery`, `same_author_year_title_overlap`) are held
+whatever it says, because neither carries a semantic check — only Path A's citation
+score and the title-pattern rung may stop. The pick is withheld
 only UNTIL something that can enumerate targets speaks: it is restored at every exit
 where nothing did (`--no-pdf`, no document, no context, an incomplete screen — and
 `--no-llm` never withholds at all), and after the full-text call when that call named

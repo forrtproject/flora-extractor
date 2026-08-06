@@ -8,7 +8,8 @@ Used by Stage 3 (`extract/link_original.py`) to obtain full-text content for DOI
 pdf_sources.py: acquire_pdf(doi_r, title="", openalex_id="")
     │
     ├── Tier 0: OpenAlex GROBID XML   — structured content, no PDF file needed;
-    │                                   needs openalex_id. Does NOT stop the waterfall
+    │                                   needs openalex_id. A result WITH content ends
+    │                                   the waterfall — the download tiers never run
     ├── Tier 1: arXiv direct          — before any API call
     ├── Tier 2: OSF preprint
     ├── Tier 3: OpenAlex OA URL
@@ -20,8 +21,11 @@ pdf_sources.py: acquire_pdf(doi_r, title="", openalex_id="")
     ├── Tier 9: SerpAPI               — quota-limited, last HTTP resort
     └── Tier 10: Playwright headless Chromium
 
-Tiers 1–10 stop at the first successful download. Tier 0 is independent: it can
-succeed and a PDF tier still run, so a row may carry both structured XML and a PDF.
+Tiers 1–10 stop at the first successful download. Tier 0 short-circuits the rest:
+a content-bearing XML result IS the document (link_original parses it the same way
+it parses a downloaded PDF), so acquire_pdf returns straight away with
+pdf_source="openalex_xml" and pdf_ok=False — there is no PDF file. A content-free
+XML result is discarded and the download tiers run.
 
 Result cached at: cache/pdfs/{key}.pdf  (PDF_CACHE_DIR in shared/config.py)
 Returns: {pdf_url, pdf_source, pdf_path, pdf_ok, pdf_url_tried, openalex_xml}
@@ -29,6 +33,21 @@ Returns: {pdf_url, pdf_source, pdf_path, pdf_ok, pdf_url_tried, openalex_xml}
 
 The tier list above is the comment structure of `acquire_pdf()` — read the function
 when the order has to be exactly right.
+
+**A tier that came back empty is not re-probed for 14 days.** `acquire_pdf` reads one
+per-DOI file, `cache/pdfs/retry_<key>.json` (`_retry_log_path()`), holding
+`{tier: iso timestamp}` for each tier that produced no document, and skips any tier
+whose stamp is younger than `PDF_RETRY_AFTER_DAYS` (14). The Tier 0 XML fetch keeps
+its own file under the XML cache dir with a `content_free` slot and its own
+`OA_XML_RETRY_AFTER_DAYS` (also 14). Three properties matter:
+
+- A record is a retry DELAY, never a verdict. Nothing is stored as definitive, and an
+  unreadable or unparseable log degrades to "probe everything".
+- Nothing is recorded for a tier that was SKIPPED for a missing API key or a missing
+  package — a key added tomorrow must take effect tomorrow.
+- The whole file is deleted the moment the row obtains a document (a download, or an
+  XML result with content), so a later cache loss re-opens every tier immediately
+  rather than holding them for two weeks.
 
 The tier that supplied the document is written to the row's `pdf_source`, and the
 parser that won the scoring below to `parse_method` — full-text provenance is a
@@ -91,6 +110,8 @@ The winner's `abstract + intro` is fed to the LLM. If the winner has no referenc
 | Cache location | Contents |
 |----------------|----------|
 | `cache/pdfs/{key}.pdf` | Downloaded PDF file |
+| `cache/pdfs/retry_{key}.json` | Per-DOI `{tier: timestamp}` of tiers that came back empty; suppresses re-probing for 14 days, deleted on a later success |
+| `cache/openalex_xml/retry_{key}.json` | Same, one `content_free` slot, for the Tier 0 XML fetch |
 | `cache/parse/parse_{key}.json` | All six parse results (dict by method) |
 | `cache/markdown/{key}.md` | MarkItDown raw markdown output |
 

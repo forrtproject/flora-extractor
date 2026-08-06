@@ -213,6 +213,14 @@ ORIGINAL_MATCH_TYPE_VALUES = {"single_original", "multiple_match", "multiple_ori
 # kept distinct because their reliability differs sharply (e.g.
 # single_candidate_after_requery auto-accepts a lone candidate at score 1.0 with no
 # semantic check). These are the methods the validation import takes.
+#
+# single_candidate_after_requery and same_author_year_title_overlap are HELD-ONLY:
+# _HELD_ONLY_METHODS in extract/link_original.py stops either from ending the ladder
+# while a call that can enumerate targets is still available. The pick is parked and
+# restored only when nothing that could enumerate contradicted it — nothing enumerating
+# spoke at all, or the one call that did named at most one original and it is the same
+# work. So a row carrying either value on disk is one an enumerating call confirmed or
+# never got to make, never one that overrode an LLM.
 RESOLVED_LINK_METHODS = {
     "citation_context_match",
     "same_author_year_title_overlap",
