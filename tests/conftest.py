@@ -99,6 +99,68 @@ def _no_provider_throttle(monkeypatch):
     _rate_limit._next_call_at.clear()
 
 
+# ── The screen verdict a Stage 3 input row carries ───────────────────────────
+# The front-door screen runs in Stage 2, so every filtered.csv Stage 3 accepts has
+# SCREEN_COLS on it (shared/schema.py) and Stage 3 reads its verdict from there. A
+# fixture that omits them is not a Stage 3 input at all — the run refuses it — so
+# these two helpers write the verdict onto a test CSV the way `filter.engine
+# handoff` does.
+
+# Two voters, both saying "replication" confidently: the ordinary proceed.
+SCREEN_PROCEED = {
+    "screen_verdict": "proceed", "record_type": "replication",
+    "categories": ["clearly_declared", "context_transfer"],
+    "votes": [{"provider": "gemini", "classification": "replication",
+               "confident": True},
+              {"provider": "openai", "classification": "replication",
+               "confident": True}],
+    "llm_evidence": "", "llm_reasoning": "",
+}
+
+
+def screen_cells(screen: "dict | None" = None) -> dict:
+    """`SCREEN_COLS` as CSV cells, from a `classify_replication()`-shaped dict.
+
+    `None` writes them all blank — a row that reached Stage 3 with no verdict,
+    which an `--as-routed` handoff can produce.
+    """
+    from shared.schema import SCREEN_COLS
+
+    if screen is None:
+        return {col: "" for col in SCREEN_COLS}
+    votes = screen.get("votes") or []
+    return {
+        "screen_verdict": screen.get("screen_verdict", ""),
+        "screen_record_type": screen.get("record_type", ""),
+        "screen_categories": "|".join(screen.get("categories") or []),
+        # The handoff writes the MODEL here; the tests' voters are named for their
+        # provider, and provider_for() maps those names back to themselves.
+        "screen_votes": "|".join(
+            f"{v.get('model') or v['provider']}={v['classification']}/"
+            f"{'confident' if v['confident'] else 'unconfident'}" for v in votes),
+        "screen_evidence": screen.get("llm_evidence", ""),
+        "screen_reasoning": screen.get("llm_reasoning", ""),
+    }
+
+
+def with_screen(csv_text: str, screen: "dict | None" = SCREEN_PROCEED) -> str:
+    """The same filtered.csv text, with Stage 2's screen verdict on every row."""
+    import csv as _csv
+    import io
+
+    from shared.schema import SCREEN_COLS
+
+    reader = _csv.DictReader(io.StringIO(csv_text))
+    cells = screen_cells(screen)
+    out = io.StringIO()
+    writer = _csv.DictWriter(out, fieldnames=list(reader.fieldnames or []) + SCREEN_COLS,
+                             lineterminator="\n")
+    writer.writeheader()
+    for row in reader:
+        writer.writerow({**row, **cells})
+    return out.getvalue()
+
+
 @pytest.fixture()
 def app():
     test_app = create_app({"TESTING": True, "SECRET_KEY": "test"})

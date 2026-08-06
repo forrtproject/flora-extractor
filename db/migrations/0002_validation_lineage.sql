@@ -5,8 +5,9 @@
 -- create superseding records with lineage." This migration supplies the two halves
 -- of that sentence.
 --
--- 1. record_metadata gains `work_id` + `release_id`, written by extract/csv_to_db.py
---    when a row is pushed for validation. Reconciliation keys on work_id, not DOI:
+-- 1. record_metadata gains `work_id` + `release_id`, written by the validation repo's
+--    import (flora-validation/csv_to_db.py) when a row is pushed for validation.
+--    Reconciliation keys on work_id, not DOI:
 --    a work is the engine's identity (alias-resolved int64), a DOI is a string a
 --    row may lack, share or spell differently. Both columns are NULLABLE because
 --    every row imported before the engine existed has neither — that is the shape
@@ -52,7 +53,7 @@ CREATE INDEX IF NOT EXISTS record_metadata_work_id_idx ON record_metadata (work_
 --                         (engine_verdicts.superseded_by), changing what was sent.
 --
 -- affected_record_ids is text[], not bigint[]: record_id in the validation schema
--- is a uuid string (extract/csv_to_db.py mints `str(uuid.uuid4())`), so a bigint
+-- is a uuid string (the import mints `str(uuid.uuid4())`), so a bigint
 -- array could not hold the ids this column exists to name.
 CREATE TABLE IF NOT EXISTS engine_supersessions (
     id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),

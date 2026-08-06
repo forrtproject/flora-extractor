@@ -25,10 +25,15 @@ OPENAI_API_KEY=...                 # Stage 3's second screen voter (default SCRE
 ```
 
 **Only Stage 3 enforces anything.** `_check_screen_providers()` in
-`extract/run_extract.py` refuses to start unless *both* front-door screen voters have
-their key (that is `GEMINI_API_KEY` plus whichever of `OPENAI_API_KEY` /
-`OPENROUTER_API_KEY` the configured `SCREENING_MODEL_2` needs) — `--no-llm`
-skips the check. Nothing else validates: an unset variable simply takes the default in
+`extract/run_extract.py` refuses to start without the key `OUTCOME_MODEL` needs
+(`OPENAI_API_KEY`, or `OPENROUTER_API_KEY` when the id contains a `/`), because no
+call falls back to another provider and a missing key costs the run every outcome.
+The two screen voters' keys are required only under `--screen-here`: the screen runs
+in Stage 2 now and Stage 3 reads its verdict off the row, so an ordinary run calls
+neither voter. Under the flag the pair is required in full — `GEMINI_API_KEY` plus
+whichever of `OPENAI_API_KEY` / `OPENROUTER_API_KEY` the configured
+`SCREENING_MODEL_2` needs — because one configured provider yields one vote, which
+is an incomplete screen. `--no-llm` skips the check entirely. Nothing else validates: an unset variable simply takes the default in
 `shared/config.py`, so a missing `RESEARCHER_EMAIL` silently falls back to
 `research@example.com`. Check `.env` against `.env.example` rather than relying on an
 error — that file lists every variable the code reads, and marks the values that are
@@ -56,8 +61,10 @@ Run the stages in order. Stage 1 writes the survivor pool (parquet) and Stage 2
 routes it; every stage after that reads the previous stage's CSV output.
 
 ```bash
-# Stage 1 — discover candidate papers (search only; it applies no filters)
-python -m search.run_search
+# Stage 1 — scan the OpenAlex snapshot into the survivor pool (search only; it
+# applies no filters). --scan is required; the scan takes 13-21 hours over 725 GB,
+# so most collaborators pull the pool instead: python -m search.pool_sync --pull
+python -m search.run_search --scan
 
 # Stage 2 — route the survivor pool, screen what the rules could not settle,
 # and write the file Stage 3 reads

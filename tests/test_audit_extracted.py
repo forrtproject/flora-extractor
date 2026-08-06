@@ -1,9 +1,7 @@
-"""Tests for extract/audit_extracted.py and the csv_to_db --audit-report gate.
+"""Tests for extract/audit_extracted.py — the read-only pre-validation audit.
 
-Synthetic DataFrames / CSVs only; the Supabase client is mocked. No live calls.
+Synthetic DataFrames / CSVs only. No live calls.
 """
-from unittest.mock import MagicMock, patch
-
 import pandas as pd
 import pytest
 
@@ -309,78 +307,3 @@ def test_audit_tolerates_a_frame_without_the_optional_columns():
     report = audit_dataframe(df)
     assert {r["check"] for r in report if r["pair_id"] == "pid-clean"} == set()
     assert [r["severity"] for r in report if r["check"] == "doi_o_unverified"] == [BLOCKER]
-
-
-# ── csv_to_db integration ────────────────────────────────────────────────────
-
-class _FakeTable:
-    def __init__(self, name, store):
-        self.name, self.store = name, store
-
-    def select(self, *args):
-        exec_mock = MagicMock()
-        exec_mock.execute.return_value = MagicMock(data=[])  # no existing pair_ids
-        return exec_mock
-
-    def insert(self, payload):
-        self.store.setdefault(self.name, []).append(payload)
-        exec_mock = MagicMock()
-        exec_mock.execute.return_value = MagicMock(data=payload)
-        return exec_mock
-
-
-class _FakeClient:
-    def __init__(self):
-        self.store: dict[str, list] = {}
-
-    def table(self, name):
-        return _FakeTable(name, self.store)
-
-
-def _resolved_row(**overrides) -> dict:
-    row = _clean_row(**overrides)
-    row["filter_status"] = "replication"
-    return row
-
-
-def _run_import(tmp_path, rows, monkeypatch, audit_report=None):
-    import extract.csv_to_db as mod
-    monkeypatch.setenv("SUPABASE_URL", "https://fake.supabase.co")
-    monkeypatch.setenv("SUPABASE_SERVICE_KEY", "fake-key")
-    csv = tmp_path / "extracted.csv"
-    pd.DataFrame(rows).to_csv(csv, index=False, encoding="utf-8-sig")
-    fake = _FakeClient()
-    with patch.object(mod, "create_client", return_value=fake):
-        mod.run_import(csv, audit_report=audit_report)
-    return fake
-
-
-def test_csv_to_db_imports_all_without_audit(tmp_path, monkeypatch):
-    rows = [_resolved_row(pair_id="p1", doi_r="10.1/a"),
-            _resolved_row(pair_id="p2", doi_r="10.1/b")]
-    fake = _run_import(tmp_path, rows, monkeypatch)
-    assert len(fake.store["unvalidated"]) == 2
-
-
-def test_csv_to_db_skips_blocked_pair_id(tmp_path, monkeypatch):
-    rows = [_resolved_row(pair_id="good", doi_r="10.1/a"),
-            _resolved_row(pair_id="blocked", doi_r="10.1/b")]
-    report = tmp_path / "audit.csv"
-    pd.DataFrame([{"pair_id": "blocked", "doi_r": "10.1/b", "check": "self_link",
-                   "severity": BLOCKER, "detail": ""}]).to_csv(
-        report, index=False, encoding="utf-8-sig")
-
-    fake = _run_import(tmp_path, rows, monkeypatch, audit_report=report)
-    imported = {r["doi_r"] for r in fake.store["unvalidated"]}
-    assert imported == {"10.1/a"}
-
-
-def test_csv_to_db_warning_only_report_imports_all(tmp_path, monkeypatch):
-    rows = [_resolved_row(pair_id="p1", doi_r="10.1/a"),
-            _resolved_row(pair_id="p2", doi_r="10.1/b")]
-    report = tmp_path / "audit.csv"
-    pd.DataFrame([{"pair_id": "p1", "doi_r": "10.1/a", "check": "low_link_confidence",
-                   "severity": WARNING, "detail": ""}]).to_csv(
-        report, index=False, encoding="utf-8-sig")
-    fake = _run_import(tmp_path, rows, monkeypatch, audit_report=report)
-    assert len(fake.store["unvalidated"]) == 2

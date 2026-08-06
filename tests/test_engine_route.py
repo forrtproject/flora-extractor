@@ -1,11 +1,12 @@
-"""Wave B: the two backends, routing, work ids and routing releases.
+"""Wave B: the backend, routing, work ids and routing releases.
 
 One test per seam, in two layers that do not overlap.
 
-The BACKEND tests run the shipped bundle, because backend equality is a claim
-about the shipped patterns and nothing else would exercise them: the corpus below
-is crafted so every shipped spec — shadow ones included — claims at least one
-row. They assert what a pattern matches, never where a row is routed.
+The BACKEND tests run the shipped bundle over a corpus crafted so every shipped
+spec — shadow ones included — claims at least one row. They assert what a pattern
+matches, never where a row is routed. There is one evaluator (pyarrow compute),
+so what they pin is that every entry point reaches it: `eval_spec_rows()` is the
+row-shaped door onto `eval_spec_batch()`, not a second implementation.
 
 The ROUTING tests run the synthetic bundle of `tests/engine_bundle.py`, because
 precedence, the shadow contract and the `no_text` downgrade are properties of
@@ -13,19 +14,22 @@ precedence, the shadow contract and the `no_text` downgrade are properties of
 asserted once, in the policy table of `tests/test_engine_spec.py`.
 """
 
+import argparse
 import json
 import unicodedata
 from pathlib import Path
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
-from filter.engine.backends import eval_spec_batch, eval_spec_rows, verify_backends
+from filter.engine.backends import eval_spec_batch, eval_spec_rows, match_evidence
 from filter.engine.release import read_release, routing_release, write_release
 from filter.engine.route import eval_all, route_batch
 from filter.engine.spec import FilterSpec, load_specs
 from filter.engine.workids import load_aliases, resolve, work_id
-from search.snapshot_scan import _POOL_SCHEMA
+from filter.engine import cli
+from search.snapshot_scan import _POOL_SCHEMA, pool_fingerprint, write_pool_provenance
 from tests import engine_bundle
 
 SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
@@ -196,31 +200,30 @@ def specs() -> list:
 # ---------------------------------------------------------------------------
 
 
-def test_the_two_backends_agree_on_the_shipped_bundle_over_the_corpus(specs):
-    table = pa.Table.from_pylist(CORPUS, schema=_POOL_SCHEMA)
-    assert verify_backends(specs, table) == []
+@pytest.mark.parametrize("corpus", ["CORPUS", "UNICODE_CORPUS"])
+def test_the_row_entry_point_is_the_batch_backend(specs, corpus):
+    """`eval_spec_rows()` must be a door onto `eval_spec_batch()`, not a second
+    implementation of it. Asserted over both corpora and every shipped spec —
+    including UNICODE_CORPUS, where a second engine would part company first:
+    accented and non-Latin titles, NFD, and accented surnames in the citation
+    position, `\\w`/`\\b` being Unicode-aware in `re` and ASCII in RE2."""
+    rows = globals()[corpus]
+    batch = _batch(rows)
+    for spec in specs:
+        assert eval_spec_rows(spec, rows) == eval_spec_batch(spec, batch).to_pylist(), spec.id
 
 
-def test_the_two_backends_agree_on_non_ascii_text(specs):
-    """Python `re` is Unicode-aware for `\\w`/`\\b`/IGNORECASE; RE2 — and so pyarrow —
-    is ASCII for `\\w` and `\\b`. `re2_safe()` does not catch that, so the equality has
-    to be demonstrated over text that actually exercises it: accented and non-Latin
-    titles, and accented surnames in the citation position, which is where the cite
-    regex's name atom used to diverge (García et al. (2020) matched `re` only)."""
-    table = pa.Table.from_pylist(UNICODE_CORPUS, schema=_POOL_SCHEMA)
-    assert verify_backends(specs, table) == []
-
-
-def test_an_accented_name_does_not_part_the_backends_inside_an_arm(specs):
-    """`replication-claim-text`'s first arm is written with `\\w+`, which Python `re`
-    reads as Unicode-aware and RE2 as ASCII. An accented word in the gap must give
-    the same answer in both backends."""
+def test_evidence_is_recovered_for_matched_rows_and_never_decides_one(specs):
+    """`match_evidence()` reports WHERE a matched row matched. Every row the
+    backend claims gets a non-empty string, and no row it did not claim is asked."""
+    spec = next(s for s in specs if s.id == "replication-claim-text")
     rows = [_row(title="A replication of the Müller effect",
                  abstract="We successivement répliqué; we thereby replicated the "
                           "original findings of Müller.")]
-    spec = next(s for s in specs if s.id == "replication-claim-text")
+    batch = _batch(rows)
     assert eval_spec_rows(spec, rows) == [True]
-    assert eval_spec_batch(spec, _batch(rows)).to_pylist() == [True]
+    assert eval_spec_batch(spec, batch).to_pylist() == [True]
+    assert all(match_evidence(spec, batch))
 
 
 def test_every_shipped_spec_claims_at_least_one_corpus_row(specs):
@@ -230,9 +233,32 @@ def test_every_shipped_spec_claims_at_least_one_corpus_row(specs):
     assert unexercised == []
 
 
-def test_the_backends_ignore_the_loader_only_pyre_regex():
-    """Both backends read the decomposition, never the loader-only `pyre_regex`.
-    No shipped rule carries the key, so the spec is built here."""
+def test_a_year_that_arrives_as_a_string_is_read_as_a_year(specs):
+    """#27: the pool's parquet gives `publication_year` as an int64, but this entry
+    point is fed hand-built dicts — an analysis script, a CSV read — where the same
+    year is `"2018"`. The strict schema turned that into an ArrowInvalid from inside
+    pyarrow; it is coerced instead, and a value that is no year at all is null."""
+    from filter.engine.backends import rows_to_batch
+
+    batch = rows_to_batch([_row(title="t", abstract="a", year="2018"),
+                           _row(title="t", abstract="a", year=2019.0),
+                           _row(title="t", abstract="a", year="n/a"),
+                           _row(title="t", abstract="a", year=None)])
+    assert batch.column("publication_year").to_pylist() == [2018, 2019, None, None]
+
+    spec = FilterSpec.from_dict({
+        "id": "year-example", "description": "a year filter over string years",
+        "match": {"fields": {"publication_year": [2018]}},
+        "pile": "screen_cheap", "precedence": 250})
+    assert eval_spec_rows(spec, [_row(title="t", abstract="a", year="2018"),
+                                 _row(title="t", abstract="a", year="2020")]) \
+        == [True, False]
+
+
+def test_the_backend_ignores_the_loader_only_pyre_regex():
+    """The evaluator reads the decomposition, never the loader-only `pyre_regex` —
+    which RE2 could not run anyway. No shipped rule carries the key, so the spec
+    is built here."""
     spec = FilterSpec.from_dict({
         "id": "pyre-example",
         "description": "the decomposition is wider than the lookaround original",
@@ -372,6 +398,92 @@ def test_routing_release_is_stable_under_key_order_and_moves_with_any_input():
     for key in _INPUTS:
         changed = dict(_INPUTS, **{key: "changed"})
         assert routing_release(**changed) != baseline
+
+
+def test_the_release_names_the_pool_it_routed_and_says_so_when_it_cannot(tmp_path):
+    """The pool input is a fingerprint of the POOL, not of one machine's scan ledger
+    — a pulled pool has no ledger, and hashing that empty ledger gave every such
+    machine the same precise-looking hash of nothing. An unfingerprintable pool
+    says `unmanifested` instead."""
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    pq.write_table(pa.table({"work_id": pa.array([1, 2], pa.int64())}),
+                   pool / "part-2019-01-01-a.parquet")
+
+    assert cli._pool_manifest_hash(None, pool) == pool_fingerprint(pool)
+    assert cli._pool_manifest_hash(None, tmp_path / "missing").startswith(
+        cli.UNMANIFESTED)
+    assert cli._pool_manifest_hash("given-by-hand", pool) == "given-by-hand"
+
+    # A pool short of the file count its provenance sidecar says completes it is an
+    # interrupted transfer, not a pool: it must not be named by a release id.
+    write_pool_provenance(pool, "some-gate", 4, "pull:me/pool")
+    assert cli._pool_manifest_hash(None, pool).startswith(cli.UNMANIFESTED)
+
+
+def test_two_unfingerprintable_pools_do_not_share_one_release_id(tmp_path):
+    """The collision this closes: every half-pulled pool used to route under the one
+    literal `unmanifested`, so two different pools minted the same release id and
+    shared each other's claims and verdicts. The discriminator separates them, and
+    still reads as "provenance unknown" rather than as a fingerprint."""
+    one, two = tmp_path / "one", tmp_path / "two"
+    for pool, rows in ((one, [1, 2]), (two, [1, 2, 3, 4, 5, 6, 7, 8])):
+        pool.mkdir()
+        pq.write_table(pa.table({"work_id": pa.array(rows, pa.int64())}),
+                       pool / "part-2019-01-01-a.parquet")
+        # Both are interrupted transfers, so neither can be fingerprinted.
+        write_pool_provenance(pool, "some-gate", 4, "pull:me/pool")
+
+    first, second = (cli._pool_manifest_hash(None, one),
+                     cli._pool_manifest_hash(None, two))
+    assert first != second
+    assert first.startswith(cli.UNMANIFESTED + ":")
+    assert cli._pool_manifest_hash(None, one) == first          # stable
+    assert routing_release(**dict(_INPUTS, pool_manifest_hash=first)) \
+        != routing_release(**dict(_INPUTS, pool_manifest_hash=second))
+
+
+def test_route_refuses_to_store_a_release_whose_pool_moved_under_it(tmp_path,
+                                                                    monkeypatch):
+    """The fingerprint is taken before the pool is read and the reader re-globs the
+    directory, so a file arriving mid-route is consumed but not named by the release
+    id. The route re-checks afterwards and rolls the routing back rather than
+    committing a release that describes a pool that no longer exists."""
+    from filter.engine.store import open_store
+    from tests import engine_bundle
+
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    pq.write_table(pa.Table.from_pylist(engine_bundle.POOL_ROWS, schema=_POOL_SCHEMA),
+                   pool / "part-2019-01-01-a.parquet")
+    store = tmp_path / "engine.duckdb"
+    monkeypatch.setattr(cli, "load_specs", lambda spec_dir: engine_bundle.specs())
+    monkeypatch.setattr(cli, "load_aliases", lambda path: {})
+    monkeypatch.setattr(cli, "bundle_hash", lambda spec_dir: "bundle-x")
+    monkeypatch.setattr(cli, "alias_release", lambda path: "alias-x")
+    monkeypatch.setattr(cli, "_register_release", lambda release_id, cache_dir: True)
+    args = argparse.Namespace(spec_dir=tmp_path, pool=pool, store=store,
+                              pool_manifest_hash=None, overlay=None, no_overlay=True)
+
+    real_build = cli.build_routing
+
+    def build_then_grow(*a, **kwargs):
+        counters = real_build(*a, **kwargs)
+        pq.write_table(pa.Table.from_pylist(engine_bundle.POOL_ROWS[:1],
+                                            schema=_POOL_SCHEMA),
+                       pool / "part-2019-01-02-b.parquet")
+        return counters
+
+    monkeypatch.setattr(cli, "build_routing", build_then_grow)
+
+    with pytest.raises(SystemExit, match="CHANGED while it was being routed"):
+        cli.cmd_route(args)
+
+    con = open_store(store, read_only=True)
+    assert con.execute("SELECT count(*) FROM routing").fetchone()[0] == 0, \
+        "the rolled-back routing must not survive"
+    con.close()
+    assert not list((tmp_path / "releases").glob("*.json")), "and no release record"
 
 
 def test_a_written_release_round_trips_with_its_id_and_timestamp(tmp_path):

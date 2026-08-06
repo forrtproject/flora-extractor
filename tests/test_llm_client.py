@@ -11,6 +11,7 @@ import pytest
 
 import shared.llm_client as llm
 from shared import rate_limit
+from shared.cache import write_cache
 
 
 def _resp(content: str):
@@ -314,22 +315,24 @@ def test_categories_are_the_union_of_both_voters_in_enum_order(monkeypatch, tmp_
 # ladder, so the two halves must be separately callable and separately cached — and
 # a threaded-in verdict must never be re-voted.
 
-def _classify(monkeypatch, tmp_path, calls: list, vote=None):
+def _classify(monkeypatch, tmp_path, calls: list, vote=None,
+              model_2: str = "mistralai/ministral-14b-2512"):
+    """Voter 2 defaults to an OpenRouter model, which keeps the voter pair DIFFERENT
+    from the one the classify equivalence is declared for. Tests of that equivalence
+    pass the declared pair's voter 2 instead."""
     monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
-    monkeypatch.setattr(llm, "SCREENING_MODEL_2", "mistralai/ministral-14b-2512")
+    monkeypatch.setattr(llm, "SCREENING_MODEL_2", model_2)
     vote = vote or _v()
 
-    def gemini(prompt, model=None, **kw):
-        calls.append(("gemini", prompt))
-        return dict(vote), None
+    def _voter(name):
+        def call(prompt, model=None, **kw):
+            calls.append((name, prompt))
+            return dict(vote), None
+        return call
 
-    def openrouter(prompt, model="", **kw):
-        calls.append(("openrouter", prompt))
-        return dict(vote), None
-
-    monkeypatch.setattr(llm, "call_gemini", gemini)
-    monkeypatch.setattr(llm, "call_openrouter", openrouter)
+    for name in ("gemini", "openrouter", "openai"):
+        monkeypatch.setattr(llm, f"call_{name}", _voter(name))
     return vote
 
 
@@ -448,7 +451,7 @@ def test_flex_rides_on_the_largest_payload_calls(monkeypatch, call_site, standar
         return _gemini_ok()
 
     monkeypatch.setattr(llm.requests, "post", post)
-    assert call_site() == {"ok": True}
+    assert call_site() == ({"ok": True}, "")
     if use_flex:
         assert posts[0][0]["service_tier"] == "flex"
         assert posts[0][1] == 900   # flex calls can queue — not the 45s standard timeout
@@ -490,7 +493,7 @@ def test_flex_rejection_falls_back_to_standard_tier(monkeypatch):
         return _gemini_ok()
 
     monkeypatch.setattr(llm.requests, "post", post)
-    assert llm.call_gemini_with_pdf("prompt", b"%PDF-1.4") == {"ok": True}
+    assert llm.call_gemini_with_pdf("prompt", b"%PDF-1.4") == ({"ok": True}, "")
     assert len(posts) == 2
     assert "service_tier" not in posts[1][0]
     assert posts[1][1] == 45
@@ -800,9 +803,11 @@ def _classify_key(voter_component: str, prompt: str) -> str:
 
 def test_a_declared_legacy_key_is_migrated_onto_the_current_key(monkeypatch, tmp_path):
     """An entry under the reviewed legacy key answers the call, is re-filed under the
-    current key with provenance, and is left where it is for other checkouts."""
+    current key with provenance, and is left where it is for other checkouts.
+
+    Screened by the pair the equivalence is declared for — it is offered to no other."""
     calls: list = []
-    _classify(monkeypatch, tmp_path, calls)
+    _classify(monkeypatch, tmp_path, calls, model_2="gpt-5.4-mini")
     monkeypatch.setattr(llm, "_CLASSIFY_LEGACY_KEY_PARTS", ("legacy-voters",))
     legacy = _classify_key("legacy-voters", llm.build_classify_prompt("Title", "Abstract"))
     llm.write_cache(tmp_path, legacy, dict(_VERDICT_YES))
@@ -843,7 +848,7 @@ def test_the_registered_equivalences_are_the_two_older_labels(monkeypatch, tmp_p
         "gemini-3.5-flash-lite+gpt-5.4-mini@effort=medium")
 
     calls: list = []
-    _classify(monkeypatch, tmp_path, calls)
+    _classify(monkeypatch, tmp_path, calls, model_2="gpt-5.4-mini")
     prompt = llm.build_classify_prompt("Title", "Abstract")
     for part in llm._CLASSIFY_LEGACY_KEY_PARTS:
         for f in tmp_path.glob("classify_*.json"):
@@ -1365,3 +1370,172 @@ class TestStudyNumberCleaning:
         assert _clean_study_numbers("Experiment 3a, 3b")     == "3a, 3b"
         assert _clean_study_numbers("the main study")        == ""
         assert _clean_study_numbers("")                      == ""
+
+
+# ── Every billed response is recorded, truncated ones above all ───────────────
+# A response cut off at the output cap is the MOST expensive shape a reasoning
+# model produces — it ran to the ceiling. Gemini returned before _record_tokens on
+# both the MAX_TOKENS and the no-candidates branch, and OpenRouter checked the
+# length before recording, so the two providers under-reported exactly the calls
+# that cost the most while OpenAI reported them.
+
+def _gemini_truncated():
+    r = MagicMock()
+    r.status_code = 200
+    r.text = ""
+    r.json.return_value = {
+        "candidates": [{"content": {"parts": [{"text": "{\"partial\""}]},
+                        "finishReason": "MAX_TOKENS"}],
+        "usageMetadata": {"promptTokenCount": 900, "totalTokenCount": 5000},
+    }
+    return r
+
+
+def _gemini_blocked():
+    r = MagicMock()
+    r.status_code = 200
+    r.text = ""
+    r.json.return_value = {
+        "candidates": [],
+        "promptFeedback": {"blockReason": "SAFETY"},
+        "usageMetadata": {"promptTokenCount": 900, "totalTokenCount": 900},
+    }
+    return r
+
+
+@pytest.mark.parametrize("response,expected", [
+    (_gemini_truncated, ("gemini", "m", 900, 4100)),
+    (_gemini_blocked,   ("gemini", "m", 900, 0)),
+], ids=["truncated", "blocked"])
+def test_gemini_records_tokens_on_every_billed_response(monkeypatch, response, expected):
+    _flex_env(monkeypatch, use_flex=False, keys=("k1",))
+    recorded: list = []
+    monkeypatch.setattr(llm, "_record_tokens", lambda *a: recorded.append(a))
+    monkeypatch.setattr(llm.requests, "post",
+                        lambda url, json=None, timeout=None: response())
+    result, err = llm.call_gemini("prompt", model="m")
+    assert result is None and err
+    assert recorded == [expected]
+
+
+def test_openrouter_records_a_truncated_response(monkeypatch):
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "or-test")
+    recorded: list = []
+    monkeypatch.setattr(llm, "_record_tokens", lambda *a: recorded.append(a))
+
+    cut_off = _resp('{"partial"')
+    cut_off.usage = MagicMock(prompt_tokens=900, completion_tokens=4096)
+    cut_off.choices[0].finish_reason = "length"
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = cut_off
+    with patch("openai.OpenAI", return_value=fake_client):
+        result, err = llm.call_openrouter("prompt", model="v/m")
+
+    assert result is None and "truncated" in err
+    assert recorded == [("openrouter", "v/m", 900, 4096)]
+
+
+def test_openrouter_retries_three_times_like_openai(monkeypatch):
+    """OpenRouter had one attempt where OpenAI had three, so a single blip at the
+    provider serving the pre-screen or a screen slot was the row's answer."""
+    monkeypatch.setattr(llm, "OPENROUTER_API_KEY", "or-test")
+    sleeps: list = []
+    monkeypatch.setattr(llm.time, "sleep", lambda s: sleeps.append(s))
+    calls = {"n": 0}
+
+    def create(**kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RuntimeError("transient 503")
+        return _resp('{"ok": true}')
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.side_effect = create
+    with patch("openai.OpenAI", return_value=fake_client):
+        assert llm.call_openrouter("prompt", model="v/m") == ({"ok": True}, "")
+    assert calls["n"] == 3
+    assert sleeps == [1, 2]
+
+    calls["n"] = -10        # never reaches the success branch
+    with patch("openai.OpenAI", return_value=fake_client):
+        result, err = llm.call_openrouter("prompt", model="v/m")
+    assert result is None and "transient 503" in err
+
+
+# ── A block is not an answer about the document ──────────────────────────────
+# The document call sites (shared/grobid.py) cache what they are told, so "Gemini
+# returned nothing" being an ANSWER meant a safety block was recorded, permanently,
+# as "this paper has no reference list".
+
+def _gemini_body(body: dict):
+    r = MagicMock()
+    r.status_code = 200
+    r.json.return_value = body
+    return r
+
+
+@pytest.mark.parametrize("body,why", [
+    ({"promptFeedback": {"blockReason": "SAFETY"}}, "blockReason=SAFETY"),
+    ({}, "blockReason=unknown"),
+    ({"candidates": [{"finishReason": "SAFETY", "content": {"parts": []}}]},
+     "finishReason=SAFETY"),
+], ids=["prompt-blocked", "no-candidates", "candidate-blocked"])
+@pytest.mark.parametrize("call_site", [
+    lambda: llm.call_gemini_with_pdf("prompt", b"%PDF-1.4"),
+    lambda: llm.call_gemini_with_images("prompt", _IMGS),
+], ids=["pdf", "images"])
+def test_a_blocked_document_call_reports_an_error_not_an_empty_answer(
+        monkeypatch, call_site, body, why):
+    _flex_env(monkeypatch, use_flex=False, keys=("k1",))
+    monkeypatch.setattr(llm.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(llm.requests, "post",
+                        lambda url, json=None, timeout=None: _gemini_body(body))
+
+    result, err = call_site()
+    assert result is None
+    assert why in err   # non-empty: grobid raises ReferenceExtractionUnavailable
+
+
+def test_an_empty_reference_list_is_still_an_answer(monkeypatch):
+    """The distinction only works if the model saying "no references here" — a
+    parsed JSON list that happens to be empty — still comes back with no error."""
+    _flex_env(monkeypatch, use_flex=False, keys=("k1",))
+    monkeypatch.setattr(llm.requests, "post", lambda url, json=None, timeout=None:
+                        _gemini_body({"candidates": [{"finishReason": "STOP", "content": {
+                            "parts": [{"text": '{"references": []}'}]}}]}))
+    assert llm.call_gemini_with_pdf("prompt", b"%PDF") == ({"references": []}, "")
+
+
+# ── The classify cache equivalence names ONE voter pair ──────────────────────
+
+def _legacy_keys(monkeypatch, model_2: str, effort_2: str) -> list[str]:
+    monkeypatch.setattr(llm, "SCREENING_MODEL_2", model_2)
+    monkeypatch.setattr(llm, "SCREENING_EFFORT_2", effort_2)
+    return llm._classify_keys("10.1/r", "", "an abstract")[1]
+
+
+def test_the_classify_equivalence_is_offered_only_to_the_pair_it_names(monkeypatch):
+    """Declared equivalences (issue #171) are a statement about one computation. Held
+    unconditionally, a re-screen at a new voter or effort would be served every legacy
+    entry from the OLD pair and re-file it under the new pair's key — a rescreen that
+    completes instantly, costs nothing and changes no verdict."""
+    assert llm._CLASSIFY_EQUIVALENT_VOTER_ID == ("gemini-3.5-flash-lite@effort=minimal"
+                                                 "+gpt-5.4-mini@effort=low")
+
+    offered = _legacy_keys(monkeypatch, "gpt-5.4-mini", "low")
+    assert len(offered) == len(llm._CLASSIFY_LEGACY_KEY_PARTS)
+
+    assert _legacy_keys(monkeypatch, "gpt-5.4-mini", "medium") == []     # effort moved
+    assert _legacy_keys(monkeypatch, "mistralai/ministral-14b-2512", "low") == []  # model moved
+
+
+def test_a_changed_voter_pair_does_not_read_the_old_pairs_verdict(monkeypatch, tmp_path):
+    """The same thing end to end: what the cache actually hands back."""
+    monkeypatch.setattr(llm, "LLM_CACHE_DIR", tmp_path)
+    legacy = _legacy_keys(monkeypatch, "gpt-5.4-mini", "low")
+    write_cache(tmp_path, legacy[0], {"screen_verdict": "discard"})
+
+    assert llm.cached_classification("10.1/r", "", "an abstract")["screen_verdict"] == "discard"
+
+    monkeypatch.setattr(llm, "SCREENING_EFFORT_2", "medium")
+    assert llm.cached_classification("10.1/r", "", "an abstract") is None

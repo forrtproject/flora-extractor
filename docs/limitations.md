@@ -104,7 +104,8 @@ The filter engine no longer decides such a row at all: a work routed to a screen
 pile with no abstract is downgraded to `pending/no_text`, because absence of
 evidence must not convert into a proceed. Text arrives through a **text overlay** —
 `python -m filter.engine worklist` exports the `no_text` rows,
-`python -m filter.engine.backfill` fetches them through Stage 1's five sources, and
+`python -m filter.engine.backfill` fetches them through Stage 1's six sources — a
+cheap bulk pathway over everything, then a gated one over what is still missing — and
 a frozen overlay folds into the release id, so re-routing under it genuinely
 re-decides those rows.
 
@@ -115,7 +116,16 @@ changed.
 
 ---
 
-## (e) Stage 1 cursor checkpoints do not account for what was fetched (issue #68)
+## (e) Stage 1 cursor checkpoints do not account for what was fetched (issue #68) — **superseded**
+
+**Superseded 2026-08-03.** This entry describes the API-harvest Stage 1, whose
+sources are retired to `wip/api-harvest-sources` (PR #158) and whose corpus
+(`data/candidates.csv`) nothing downstream reads. The revisit obligation was
+discharged by a different route than the one below: the full OpenAlex snapshot was
+scanned once — all 510,372,821 records, no cursors and no per-phrase quota — into
+the survivor pool, so completeness for 2012–2021 no longer rests on what a cache of
+result pages can account for. The account below is kept as the record of why the
+old numbers cannot be reconstructed.
 
 `cache/openalex/` holds **45,866 cached result pages** but only **853 cursor
 checkpoints**. The checkpoints account for 1.31M fetched records; the page files
@@ -175,7 +185,7 @@ intuition — `we`, `not`, `did` and `could` were each measured *not* to be drop
 `shared/prescreen.py` is off by default and should stay off until someone decides the
 trade deliberately. `screen_gate()` has a measured *zero* settled misses; a pre-screen
 discard is terminal — the row never reaches the validated screen, never reaches
-`csv_to_db`, never reaches a human — so nothing about the screen's property extends to
+validation, never reaches a human — so nothing about the screen's property extends to
 the tier in front of it.
 
 Two limits of the evidence in `analysis/prescreen_eval/REPORT.md` are structural and no

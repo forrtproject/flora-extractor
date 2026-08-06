@@ -655,15 +655,18 @@ class TestGateRestoresWhenNothingEnumerates:
                         abstract_answer=_failed_answer())
         assert row["resolution_method"] == "title_pattern_match"
 
-    def test_an_incomplete_screen_restores_it_and_keeps_the_error(self):
-        """One surviving vote is a provider outage. Turning it into a lost
-        deterministic resolution is exactly what the error-handling rule forbids."""
+    def test_an_incomplete_screen_does_not_settle_the_pick(self):
+        """The failure is what stopped the reference-list target pick from running, so
+        nothing has earned the right to settle a withheld pick — restoring it here would
+        read "we never asked" as "we asked and nothing contradicted it". Deferring costs
+        one re-run of a free rule; settling an unconfirmed pick during an outage is
+        permanent."""
         row = _run_gate(_GATE_TITLE, _TWO_PAIRS, _GATE_CANDS,
                         abstract_answer=_failed_answer(),
                         screen=_screen_result(
                             resolution_method="llm_refscreen_partial",
                             llm_error="classifier failed: openai"))
-        assert row["resolution_method"] == "title_pattern_match"
+        assert row["resolution_method"] == "llm_refscreen_partial"
         assert row["llm_error"] == "classifier failed: openai"
 
     def test_a_screen_discard_still_wins_over_the_pick(self):
@@ -756,3 +759,31 @@ def test_targets_found_at_the_reference_rung_survive_a_no_document_exit():
     assert row["target_stage"] == "llm_references"
     assert row["unidentified_count"] == 1
     assert row["resolved_study_r"] == "2"
+
+
+class TestJournalLookupCachesOnlyAnswers:
+    """The journal name is worth +3.0 in _resolve_rule_based's citation scoring —
+    the largest single term. Caching "" after an outage disabled that term for the
+    DOI permanently, on every later run."""
+
+    def test_no_response_is_not_cached(self, tmp_path):
+        with patch.object(link_original, "OA_CACHE_DIR", tmp_path), \
+             patch.object(link_original, "_oa_get", return_value=None) as get:
+            assert link_original._fetch_journal_cached("10.1/x") == ""
+        assert list(tmp_path.glob("journal_*.json")) == []
+        assert get.call_count == 1
+
+        # …and the next run asks again rather than reading the outage back.
+        with patch.object(link_original, "OA_CACHE_DIR", tmp_path), \
+             patch.object(link_original, "_oa_get",
+                          return_value={"results": [{"primary_location": {
+                              "source": {"display_name": "Nature"}}}]}):
+            assert link_original._fetch_journal_cached("10.1/x") == "Nature"
+        assert len(list(tmp_path.glob("journal_*.json"))) == 1
+
+    def test_a_work_openalex_does_not_index_is_a_real_empty_answer(self, tmp_path):
+        """OpenAlex answering "no results" IS the answer, so it is cached."""
+        with patch.object(link_original, "OA_CACHE_DIR", tmp_path), \
+             patch.object(link_original, "_oa_get", return_value={"results": []}):
+            assert link_original._fetch_journal_cached("10.1/x") == ""
+        assert len(list(tmp_path.glob("journal_*.json"))) == 1

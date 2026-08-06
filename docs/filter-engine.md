@@ -45,15 +45,15 @@ only, so an exported row's `pending_reason` is always empty.
 
 | Module | Contract |
 | --- | --- |
-| `spec.py` | `FilterSpec` (frozen dataclass mirroring the JSON), `load_specs(spec_dir) -> list[FilterSpec]` (validated, sorted by precedence desc, ids unique), `bundle_hash(spec_dir: Path) -> str` (sha256 over the bundle directory's (filename, bytes) pairs, order-independent, **including `conventions.json`** — see "The bundle a release is bound to"), `validate_spec(dict) -> list[str]` (error strings), RE2-safety check `re2_safe(pattern) -> bool` (rejects lookaround, backreferences, conditionals, `\G`, atomic groups, possessive quantifiers). |
-| `backends.py` | Two evaluators with identical semantics: `eval_spec_rows(spec, rows: list[dict]) -> list[bool]` (Python `re`) and `eval_spec_batch(spec, batch: pa.RecordBatch) -> pa.BooleanArray` (pyarrow compute). `verify_backends(specs, table) -> list[str]` returns per-spec mismatch reports (empty = equal); used by tests and by `python -m filter.engine verify`. |
+| `spec.py` | `FilterSpec` (frozen dataclass mirroring the JSON), `load_specs(spec_dir) -> list[FilterSpec]` (validated, sorted by precedence desc, ids unique), `bundle_hash(spec_dir: Path) -> str` (sha256 over the bundle directory's (filename, bytes) pairs, order-independent, **including `conventions.json`** — see "The bundle a release is bound to"), `validate_spec(dict) -> list[str]` (error strings), `re2_error(pattern) -> str | None` — RE2's own complaint about a pattern it cannot run (lookaround, backreferences, conditionals, `\G`, atomic groups, possessive quantifiers), asked of pyarrow at spec load so it names the file rather than crashing a routing run. |
+| `backends.py` | The one evaluator: `eval_spec_batch(spec, batch: pa.RecordBatch) -> pa.BooleanArray` (pyarrow compute). `eval_spec_rows(spec, rows: list[dict]) -> list[bool]` is the row-shaped entry point onto it — it builds a batch of the readable columns and calls `eval_spec_batch()`, so an analysis script and a routing run cannot read a spec differently. `match_evidence(spec, batch) -> list[str]` reports WHERE each matched row matched, for `filter_evidence`. |
 | `route.py` | `route_batch(specs, batch) -> pa.Table` with columns `work_id (int64), pile (str), pending_reason (str), rule_id (str), precedence (int32), matched_rules (list<str>)`; `matched_rules` holds every non-shadow match (overlap diagnostics need the full cross-product), shadow matches are recorded separately in evaluations. |
 | `workids.py` | `work_id(openalex_id: str) -> int` (`https://openalex.org/W123` → `123`); `load_aliases(path) -> dict[int, int]` from `filter/spec/aliases.json` (old_id → canonical_id, empty to start); `alias_release(path) -> str` (file hash). |
-| `release.py` | `routing_release(pool_manifest_hash, overlay_hash, bundle_hash, engine_version, alias_release, schema_version) -> str` (sha256 of the canonical JSON); `write_release(...)`/`read_release(...)` under `cache/engine/releases/<id>.json`. Overlay hash is `None` until M3 (text overlays); pool manifest hash comes from `search.pool_sync.pool_manifest()`'s ledger hash or `--pool-manifest-hash`. |
-| `store.py` | Local DuckDB acceleration cache (gitignored, disposable): `open_store(path)`, `build_routing(store, pool_dir, specs, release_id)` (streams pool parquet through `route_batch`, persists `routing` and `evaluations(work_id, spec_id, spec_hash, matched)` incl. shadow specs), `pile_counts(store, release_id)`, `sample_pile(con, release_id, pile, n=20, seed=17)`. `routing` is keyed `PRIMARY KEY (release_id, work_id)` and inserts `ON CONFLICT DO NOTHING`: a pool holding both a merged id and its canonical id holds two rows for ONE work, and first-writer-wins is what keeps that one routed work and one exported row. A build is one transaction — the delete and every insert commit together — so an interrupted run leaves the release absent or as its previous complete build, never half-replaced. Deleting the DB loses nothing: everything rebuilds from pool + specs. |
+| `release.py` | `routing_release(pool_manifest_hash, overlay_hash, bundle_hash, engine_version, alias_release, schema_version) -> str` (sha256 of the canonical JSON); `write_release(...)`/`read_release(...)` under `cache/engine/releases/<id>.json`. Overlay hash is `None` until M3 (text overlays); pool manifest hash comes from `--pool-manifest-hash`, else `search.snapshot_scan.pool_fingerprint(pool_dir)` — a hash over the search gate the pool's rows were admitted under (read from the pool's `_pool_provenance.json`, never from the local checkout, so a shared pool fingerprints identically on every machine) plus every pool parquet as `(filename, size_bytes, num_rows)`, read from the footer. It names the POOL, which is what routing consumes, rather than one machine's scan ledger, which a pulled pool does not have; a directory with no parquet in it, or one holding fewer files than its sidecar says complete it, gives `unmanifested:<12 hex>` (a genuine anomaly — you cannot route a pool you do not have whole), never a hash of nothing; the suffix hashes the parquet names and sizes so two different unfingerprintable pools do not mint one release id and share its claims and verdicts, and the visible prefix keeps it from reading as provenance. `route` re-computes it after the routing pass and rolls the build back if it moved. |
+| `store.py` | Local DuckDB acceleration cache (gitignored, disposable): `open_store(path)`, `build_routing(store, pool_dir, specs, release_id)` (streams pool parquet through `route_batch`, persists `routing` and `evaluations(work_id, spec_id, spec_hash, matched)` incl. shadow specs), `pile_counts(store, release_id)`, `sample_pile(con, release_id, pile, n=20, seed=17)`, `drop_release(con, release_id)` (the one thing that deletes a release, for the caller that learns only after the build that it must not exist — the pool moved under it). `routing` is keyed `PRIMARY KEY (release_id, work_id)` and inserts `ON CONFLICT DO NOTHING`: a pool holding both a merged id and its canonical id holds two rows for ONE work, and first-writer-wins is what keeps that one routed work and one exported row. A build is one transaction — the delete and every insert commit together — so an interrupted run leaves the release absent or as its previous complete build, never half-replaced. Deleting the DB loses nothing: everything rebuilds from pool + specs. |
 | `diagnostics.py` | `diagnose(pool_dir, spec_dir, spec_id, *, baseline_dir=None, sample_n=20, seed=17) -> dict` — routes the pool twice, with and without the spec (the baseline bundle defaults to the same directory minus the spec). The §3 rule-diagnostics function: rows moved per (source pile → destination pile); overlap/agreement matrix vs every other rule (exclusive hits vs covered); a readable random sample (n≈20, seeded) of moved rows; holdout effect (reads `filter/spec/holdout.json`; reports `"holdout": "not_constructed"` until decision #146-2 lands); for discard specs, whether a `measured` entry exists (else the spec must be shadow). Renders JSON + a human-readable text block. |
 | `export.py` | `export_pile(con, pool_dir, pile, out_csv, release_id, from_year=None, to_year=None, conventions=None, specs=None, aliases=None, spec_dir=SPEC_DIR, expect_bundle_hash=None, expect_alias_release=None, overlay_dir=None, expect_overlay_hash=UNCHECKED, created_at="")` — writes the Stage 3 contract: `FILTERED_COLS` + `ENGINE_EXPORT_COLS` (see below), `utf-8-sig`, `filter_status`/`filter_method`/`filter_evidence`/`filter_confidence` derived via the conventions mapping. Also `export_manifest(...)`: a JSON naming release id, pile, row count, and content hash next to the CSV (immutable once written). |
-| `cli.py` / `__main__.py` | `python -m filter.engine specs\|verify\|route\|diagnose\|export\|screen\|reconcile\|handoff\|worklist\|status`. The subcommand list is `cli.py`'s `add_parser` calls; `--help` is authoritative, `docs/cli-reference.md` is the prose. |
+| `cli.py` / `__main__.py` | `python -m filter.engine specs\|route\|diagnose\|export\|screen\|reconcile\|handoff\|worklist\|status`. The subcommand list is `cli.py`'s `add_parser` calls; `--help` is authoritative, `docs/cli-reference.md` is the prose. Two flags cut across the subcommands: `--release <id>` (on `export`, `screen`, `handoff` and `worklist`) names which release to read, defaulting to the store's only one and refusing when the store holds several — a re-route must never be resolved silently; `diagnose --sample N` (default 20) sets how many seeded example rows the diagnosis prints. |
 
 `ENGINE_VERSION` lives in `filter/engine/__init__.py` and is bumped whenever routing
 behavior changes without a spec change.
@@ -76,36 +76,51 @@ export refuses outright when either has moved: a CSV labelled with a release id 
 does not match is worse than no CSV. **There is no override flag** — a stale client
 re-runs `route` and exports the new release (issue #146 §4).
 
-### Backend equality and Unicode
+### One regex engine, and what Unicode does to it
 
-`re2_safe()` rejects constructs one backend cannot run, but it does not make the
-two backends' character classes identical. Python `re` reads `\w`, `\b` and
-`IGNORECASE` as Unicode-aware; RE2 — and so pyarrow — reads `\w` and `\b` as
-ASCII. A pattern that is RE2-safe can still match different rows in the two
-engines on non-ASCII text. This is not hypothetical: the retired `phrase-with-cite` rule's author-year cite
-clause used `[\w'’.-]` as its surname atom, and `García et al. (2020)` matched the
-`re` backend only. The fix was an explicit negated class
-(`[^ \t\n\r\f,;:()\[\]]`), which both engines read identically; the pattern is
-archived in `filter/spec/rule_ideas.md`. Live rules still use `\w` — rule B's
-`we (…0-2 words…) replicat(ed)` arm — so the hazard is current, not historical.
+Every spec is evaluated by pyarrow compute, whose matcher is RE2, and by nothing
+else. There used to be a second implementation in Python `re` for row-at-a-time
+callers, kept equal to the first by `re2_safe()` and by a sampling `verify`
+command. The equality was never provable: RE2-safe syntax does not make the two
+engines' character classes identical — `re` reads `\w`, `\b` and `IGNORECASE` as
+Unicode-aware, RE2 reads `\w` and `\b` as ASCII — so a pattern legal in both
+could still claim different rows. Sampling found this in the wild: over 289,141
+pool rows, `reproduction-signal`'s `\bre-?analy[sz](?:is|es|ed|ing|e)\s+of\b`
+matched one row in RE2 that `re` rejected, because the abstract's mojibake `Â`
+sits where the trailing `\b` looks and `re` counts it as a word character. The
+duplicate is deleted rather than defended; `eval_spec_rows()` is now the
+row-shaped entry point onto `eval_spec_batch()`.
 
-Text is NFC-normalised at the one seam per backend where it becomes matchable
-(`_nfc()` and `BatchContext`), which is why the bundle needs no decomposed-Unicode
-twin of its multilingual stem arm. `pc.utf8_normalize` is not used: on pyarrow 25
-it returns its input unchanged for NFC, which would divide the backends on exactly
-those rows.
+The retired `phrase-with-cite` rule is the historical version of the same hazard:
+its surname atom `[\w'’.-]` matched `García et al. (2020)` in `re` only, and was
+replaced by the explicit negated class `[^ \t\n\r\f,;:()\[\]]` (archived in
+`filter/spec/rule_ideas.md`). With one engine the question a `\w` now raises is
+narrower — not "do the two agree" but "does RE2 read this the way the rule
+author meant" — and it is answered by writing the intended class out.
 
-Two limits remain, deliberately. `\s` outside a character class is still
-Unicode-aware in `re` and ASCII in RE2, so text separated by non-breaking or
-ideographic spaces could in principle divide the backends; no shipped pattern has
-been shown to, and chasing it through all ~140 patterns would be a bigger change
-than the risk. And `python -m filter.engine verify` is **sample-based** — the
-first batch of up to `--sample-files` pool files — so it is evidence of equality,
-not proof of it. The standing proof is
-`test_the_two_backends_agree_on_non_ascii_text` in `tests/test_engine_route.py`,
-which runs the whole shipped bundle over a corpus of accented Latin, NFD, CJK,
-Hangul, Cyrillic and fullwidth rows. A new pattern that needs `\w` or `\b` next to
-text that may not be ASCII belongs in that corpus before it ships.
+`re2_error()` is what remains of the safety check, and it is a syntax check, not
+an equality claim: it hands the pattern to RE2 at spec load, so a lookaround or a
+possessive quantifier is a named error against a named file instead of an
+exception partway through a routing run. RE2 rejects more than a hand-written
+scanner of banned constructs could enumerate, which is why the check asks RE2
+itself. Patterns are also `re.compile`d at load, because `match_evidence()` uses
+`re` — to report the SPAN inside a string the backend has already matched, which
+is the one thing RE2-through-pyarrow cannot report. That locator decides nothing:
+where the two engines read a span differently it finds none, and the evidence
+string names the condition instead of a phrase.
+
+Text is folded and NFC-normalised where it becomes matchable (`_normalize_array()`
+in `BatchContext`): every Unicode space separator to a plain space, the zero-width
+space and BOM away. That is why the bundle needs no decomposed-Unicode twin of its
+multilingual stem arm, and why an abstract using U+00A0 as its word separator
+still matches a spec's literal space. `pc.utf8_normalize` is not used: on pyarrow
+25 it returns its input unchanged for NFC.
+
+The standing test is `test_the_row_entry_point_is_the_batch_backend` in
+`tests/test_engine_route.py`, which runs every shipped spec over both corpora —
+including `UNICODE_CORPUS`, accented Latin, NFD, CJK, Hangul, Cyrillic and
+fullwidth. A new pattern that needs `\w` or `\b` next to text that may not be
+ASCII belongs in that corpus before it ships.
 
 ### Provenance columns (`ENGINE_EXPORT_COLS` in `shared/schema.py`)
 
@@ -117,8 +132,8 @@ release_id`. (`matched_rules` is |-joined; match by substring/split like
 contract is untouched.
 
 **They stop here, on purpose.** `EXTRACTED_COLS` excludes `ENGINE_EXPORT_COLS`, so
-Stage 3 does not carry the block into `extracted.csv` and `csv_to_db` does not push
-it. Provenance is **linked, not duplicated**: `extract/csv_to_db.py` writes
+Stage 3 does not carry the block into `extracted.csv` and the validation import does
+not push it. Provenance is **linked, not duplicated**: that import writes
 `record_metadata.work_id` (the int64 id, via `filter/engine/workids.work_id()`),
 and every routing column is recoverable by joining that against the `routing` table
 for a release — the same join `filter/engine/supersede.py` already uses. Widening
@@ -187,7 +202,8 @@ Match semantics:
 - `title_regex` runs over `coalesce(display_name, title)`; `abstract_regex` over
   `abstract_text`; `text_regex` over `title + "\n" + abstract_text`. All regexes
   are **RE2-safe** (no lookaround/backreferences — enforced by `validate_spec`)
-  and case-insensitive by default, so the pyarrow and `re` backends cannot diverge.
+  and case-insensitive by default (`(?i)` is prepended; `re2_error()` rejects at
+  spec load anything RE2 cannot run).
 - `doi_prefix` matches after `clean_doi()`; `fields` is exact membership on pool
   columns (`type`, `publication_year`), except `fields.concept_ids`, which tests
   membership of bare concept ids in the row's `concepts` (both URL-form JSON and
@@ -272,10 +288,12 @@ Routing is derived data; a *claim* and a *verdict* are not. Postgres holds exact
 what cannot be recomputed: which works were pinned before spend, what came back,
 what humans said, and an audit trail of both. Deployed as one migration the
 maintainer runs — `db/migrations/0001_engine_baseline.sql`, idempotent, no DROP.
+(`0003_claim_release_message.sql` re-states the claim RPC with a corrected
+rejection message; a database created from today's `0001` already has it.)
 
 | table | role |
 | --- | --- |
-| `engine_releases` | server-side registry of routing releases (the six-input id + payload). A claim naming an unknown release is REJECTED, so a stale client must re-route before it can spend. |
+| `engine_releases` | server-side registry of routing releases (the six-input id + payload). A claim naming a release with no row here is REJECTED. `route` registers the release it writes (best-effort, so routing still works offline) and the claim path registers it once on demand, so re-routing is never the fix — the missing row is. |
 | `engine_claims` | one claimed batch, one tier (`screen_cheap`/`screen_expensive`/`human`/`measurement`), one status (`active`/`complete`/`cancelled`/`failed`). |
 | `engine_claim_items` | the works, each with the pile it was routed to **at claim time** — pinned evidence that spec edits cannot move. |
 | `engine_verdicts` | permanent tier evidence: verdict, confidence, short quote, model + prompt hash, cost, and the `response_hash` naming the raw blob on HF. |
@@ -335,7 +353,7 @@ recovered abstract text, layered over the pool at read time.
 | --- | --- |
 | `pool_reader.py` | `iter_pool_batches(pool_dir, overlay_dir=None, batch_size=50_000, aliases=None)` — the engine's single input path: pool batches with overlay text written over the pool's `abstract_text`, empty or not. `overlay_manifest_hash(overlay_dir) -> str \| None` (defined in `overlay.py`, re-exported here so the input path is one import). The overlay is loaded once as a `work_id -> text` dict and applied per batch; with no overlay the stream is `iter_batches()` untouched. |
 | `overlay.py` | `worklist(con, release_id, pool_dir, out_path, aliases=None) -> int` (the `pending_reason='no_text'` rows joined to the pool for doi/title/year); `write_chunk()`, `load_overlay()`, `overlay_work_ids()`; `validate(overlay_dir) -> list[str]`; `freeze(overlay_dir, pool_manifest_hash=None) -> dict`; `overlay_manifest_hash()`, `read_manifest()`. |
-| `backfill.py` | `python -m filter.engine.backfill --worklist F [--overlay-dir D] [--run] [--limit N] [--source S] [--freeze]` — the six abstract sources over a worklist (OSF registrations first), results appended as an overlay chunk. `--overlay-dir` defaults to `OVERLAY_DIR`, the same directory the engine's commands read. |
+| `backfill.py` | `python -m filter.engine.backfill --worklist F [--overlay-dir D] [--run] [--phase all\|bulk\|targeted] [--limit N] [--source S] [--freeze]` — the six abstract sources over a worklist in two pathways (bulk, then targeted), results appended as an overlay chunk. `--overlay-dir` defaults to `OVERLAY_DIR`, the same directory the engine's commands read. |
 
 **An overlay row wins, present pool text or not.** Every overlay row was written
 deliberately by a backfill this project ran, against a worklist this project
@@ -377,15 +395,42 @@ commands prints one line, `overlay: <dir> (hash <12>)` or `overlay: none`, so
 which text a run read is in its output rather than in its shell history.
 
 **The backfill reuses Stage 1's fetchers.** `search/fetch_abstracts.py` owns the
-sources, their measured order (OSF → OpenAlex → Europe PMC → S2 → CrossRef →
-Scopus), their batch shapes, their per-identifier rows in the abstract store and their
-per-source checkpoint namespaces; `backfill.py` imports its phase runners rather
-than restating any of it. Only the two ends are new: the worklist comes from the
-routing table, and results land in an overlay chunk instead of a CSV merge. The
-shared cache means a DOI Stage 1 already asked about
-costs nothing here, and a miss recorded here is one Stage 1 will not re-buy.
-Dataset-prefix DOIs are dropped from the worklist — no source has an abstract
-for a deposit.
+sources, their measured order, their batch shapes, their per-identifier rows in
+the abstract store and their per-source checkpoint namespaces; `backfill.py`
+imports its phase runners rather than restating any of it. Only the two ends are
+new: the worklist comes from the routing table, and results land in an overlay
+chunk instead of a CSV merge. The shared cache means a DOI Stage 1 already asked
+about costs nothing here, and a miss recorded here is one Stage 1 will not
+re-buy. Dataset-prefix DOIs are dropped from the worklist — no source has an
+abstract for a deposit.
+
+**Two pathways, because the sources do not cost the same thing.** The `--phase`
+argument names them:
+
+| Pathway | Sources | Shape | Which rows |
+| --- | --- | --- | --- |
+| `bulk` | OpenAlex → Europe PMC | batched, keyless, unquota'd; one request answers about `OA_BATCH_SIZE` / `EPMC_BATCH_SIZE` identifiers | every worklist row, and affordable over a pool-wide worklist |
+| `targeted` | OSF → Semantic Scholar → CrossRef → Scopus | one call per DOI, or gated by a key, an IP-bound entitlement or a ~10k/week quota | only the rows bulk left without text, on the worklist that matters |
+
+`--phase all` (the default) runs both over the one worklist. Running them
+separately is what the split buys: a wide `--phase bulk` pass fills the shared
+abstract store for rows no release needs yet — a miss recorded there is one
+nobody re-buys — and a later `--phase targeted` pass over the release's `no_text`
+worklist spends the gated calls only on what is still missing.
+
+Europe PMC carries the bulk pathway because it has no id-list endpoint but does
+take a boolean query, so `DOI:"a" OR DOI:"b" …` in one form POST to `searchPOST`
+*is* its batch API, with no URL-length ceiling (verified live 2026-08-05: a
+500-DOI, 12.9 kB query answers HTTP 200). A page holding fewer records than the
+response's `hitCount` is refused as a whole batch rather than checkpointed: a
+truncated page says nothing about the DOIs it left out, and a miss is permanent.
+
+The one exception to the narrowing is OSF. Every other source is asked for an
+abstract, and one abstract is as good as another; the OSF phase is asked for the
+registration template line the two `osf-registration-*` specs read, which no
+abstract substitutes for — so its targets are the full worklist's registrant
+DOIs, and `SOURCE_ORDER` (the order a recovered text is ATTRIBUTED in, distinct
+from the order calls are spent in) keeps `osf` first so nothing displaces it.
 
 **The OSF source is the one that recovers a decision rather than an abstract.**
 The registrant `10.17605` covers 25,819 pool rows, 3,016 of them textless, and 21
@@ -446,20 +491,49 @@ handoff in `filter/engine/handoff.py`, two CLI subcommands.
 | Module | Contract |
 | --- | --- |
 | `tiers.py` | `pile_works(con, release_id, pile, pool_dir, …) -> list[Work]` (routing joined to overlay-aware pool text); `estimate(works, tier)` / `render_estimate(est)` (the §6 dry run); `run_screen_cheap(...)` / `run_screen_expensive(con, client, release_id, work_ids=None, *, mode, batch_label, limit, run)`; `tier_decisions(client, release_id, tier, mode="live")` — `release_id=None` reads every release, because a verdict follows the work — and `decided_work_ids(client, tier)` (the checkpoint). Both read only the current SCREENING GENERATION — `screening_generation(tier)`, the hash of the tier's voter pair and its prompt, recorded in each claim's `meta.generation`: change a voter model or the classify prompt and the old verdicts stop settling their works and stop steering the handoff, while rows written before the field are grandfathered on their recorded `model`. |
-| `handoff.py` | `write_handoff(con, pool_dir, out_csv, release_id, *, drop, record_types, decided, …)` — both screen piles in `ENGINE_EXPORTED_COLS` order, `screen_expensive` first; `decided` is a set of work ids for the screened-only export and `None` for as-routed; `decisions(client) -> (drop, record_types, decided)` from the live, current-generation verdict rows of every release (the release scopes the piles, not the evidence). |
+| `handoff.py` | `write_handoff(con, pool_dir, out_csv, release_id, *, drop, screen, decided, …)` — both screen piles in `ENGINE_EXPORTED_COLS` order, `screen_expensive` first; `decided` is a set of work ids for the screened-only export and `None` for as-routed; `decisions(client) -> (drop, screen, decided)` from the live, current-generation verdict rows of every release (the release scopes the piles, not the evidence). `screen` maps a work to what the EXPENSIVE tier decided — outcome, record type, votes — and `_screen_columns()` writes that onto the row as `SCREEN_COLS`. **Only the expensive tier admits**: a cheap verdict contributes to `drop` and to nothing else, because its `proceed` means "on to the expensive screen" and a `prescreen_bypass` means "we did not ask". |
 
 ### The two tiers
 
-- **`screen_cheap`** is `shared/prescreen.py`'s discard-only pair, called through
-  that module — same prompt, same models, same parsing, same "two explicit noes or
-  the row proceeds" rule, and the same three bypasses (`hard_signal`, `short_text`,
-  a curated source) that refuse to let a 3B model end a row. A bypass is recorded
-  as a verdict rather than skipped: deciding not to ask is a decision.
-- **`screen_expensive`** is Stage 3's validated front door — `classify_replication()`
-  plus `screen_gate()` — run over the pile ahead of Stage 3. `pile_works()`
-  reproduces `_row_from_snapshot()`'s `doi_r`/`title_r` mapping exactly, so the
-  tier's call and Stage 3's front-door call share a content cache key and Stage 3
-  replays the verdict for nothing.
+- **`screen_cheap`** asks `shared/prescreen.py`'s question through
+  `prescreen_vote()` — same prompt, same models, same parsing, same three bypasses
+  (`hard_signal`, `short_text`, a curated source) that refuse to let a 3B model end
+  a row — and applies the gate itself, in `_cheap_judge()`: two explicit noes
+  discard, everything else proceeds. A bypass is recorded as a verdict rather than
+  skipped: deciding not to ask is a decision. The tier is **dormant** — see
+  "Activating the cheap tier" below.
+- **`screen_expensive`** is the validated front door — `classify_replication()`
+  plus `screen_gate()`. It runs **here and nowhere else**: Stage 3 used to run the
+  same call as its first step, free on the shared cache key but written twice, and
+  only one of the two copies could be claimed, budget-gated or recorded as
+  evidence. The verdict now travels to Stage 3 on the row (`SCREEN_COLS`), and
+  `pile_works()` still reproduces `_row_from_snapshot()`'s `doi_r`/`title_r`
+  mapping exactly — that identity is what lets the handoff read the category union
+  and the voters' reasoning back out of the classify cache
+  (`cached_classification()`, which can only read).
+
+### Activating the cheap tier
+
+It is wired, tested and unreachable: all three `screen_cheap` specs ship
+`"shadow": true`, so no live row is routed to the pile and `screen --tier
+screen_cheap` finds nothing to claim. That is deliberate — issue #146 §2 requires
+the tier's zero-miss evidence, measured on a post-gate distribution, to be
+re-validated on this one before it discards autonomously.
+
+Waking it is one spec edit plus the measurement, in this order:
+
+1. Drop `"shadow": true` from one of `replication-signal`, `reproduction-signal` or
+   `replication-probe` (`filter/spec/`). Re-`route`; the pile now has rows.
+2. Run the tier in its default `validation` mode (`screen --tier screen_cheap
+   --run`, no `--live`). Both votes are recorded, nothing is discarded, and the run
+   report's `revalidation` block compares what it WOULD have discarded against the
+   piles the rules chose — the re-measurement issue #168 asks for.
+3. Only then `--live`, which is what lets its discards reach the handoff.
+
+Nothing else changes: the prices, the voters, the bypasses, the verdict plumbing
+and the `prescreen_discard` set-aside path are all in place and under test
+(`tests/test_prescreen.py`, `tests/test_engine_tiers.py`). A cheap verdict still
+never admits a row to Stage 3 — it can only drop one.
 
 ### Modes, and where a verdict takes effect
 
@@ -505,14 +579,43 @@ reads: both screen piles, `screen_expensive` first, in `ENGINE_EXPORTED_COLS`
 order, with a live `screen_expensive` record type written into `filter_status`
 (`filter_method = screen`).
 
-A row travels on a verdict, not on a routing decision. Rules route and only LLMs
-admit, so the default export is screened-only: a work a live run discarded is
-left out as `dropped_by_tier_verdict`, and a work no live run settled — never
-screened, or short of the second vote a gate needs — is left out as
-`skipped_unscreened`. The two counts plus `rows` account for every work in the
-piles. `--as-routed` exports the piles as routed with whatever verdicts exist,
-and is the only mode available without Supabase; asked for screened-only with no
-claims client the command refuses rather than writing an empty file.
+A row travels on a verdict, not on a routing decision, and only on the EXPENSIVE
+tier's. Rules route and only the validated pair admits, so the default export is
+screened-only: a work a live run discarded is left out as
+`dropped_by_tier_verdict`, and a work no live `screen_expensive` run settled —
+never screened, screened only by the cheap tier, or short of the second vote a
+gate needs — is left out as `skipped_unscreened`. The two counts plus `rows`
+account for every work in the piles.
+
+**A screen that did not complete is not a decision, on either side.** When a
+voter fails, the vote rows are still written — a call was made and
+`engine_verdicts` is append-only — but they add up to nothing, so the work is
+neither decided nor handed off: `decided_work_ids()` ignores it and the next
+ordinary `screen --run` asks it again, with no flag to remember. Complete means
+two DISTINCT voters answered: a re-run re-asks both, so the voter that already
+answered answers again, and `_answer_rows()` keeps one answer per voter (the
+latest) so a retry cannot stand in for the vote that never arrived. The cheap
+tier reads the same way — it asks voter 2 only after a `no`, so `no` + a failed
+call is incomplete, not a proceed: the missing answer is exactly the second `no`
+that would have discarded. A run that
+leaves works in that state says so (`incomplete screens N`), because a strand
+nobody can see is a strand nobody fixes. And the cheap tier cannot overrule the
+expensive one: a live cheap discard applies only to a work the expensive tier has
+no verdict for. `--as-routed` exports the piles as routed
+with whatever verdicts exist, and is the only mode available without Supabase;
+asked for screened-only with no claims client the command refuses rather than
+writing an empty file.
+
+**What the row carries.** Because the screen does not run again downstream, the
+handoff writes its answer onto the row: `screen_verdict`, `screen_record_type`,
+`screen_categories`, `screen_votes`, `screen_evidence`, `screen_reasoning`
+(`SCREEN_COLS`, `shared/schema.py`). `screen_votes` is the one that is not a
+summary — Stage 3's pre-PDF title-search rung fires only when both voters gave a
+qualifying answer AND stood behind it, and that cannot be recovered from a record
+type. An `--as-routed` row can carry them blank; Stage 3 writes such a row
+`target_pending` rather than screening it, and refuses an input file whose header
+lacks the columns entirely (`--screen-here` is the explicit way to screen in
+Stage 3 anyway).
 
 It reuses `export_pile()`'s row logic
 via `iter_export_rows()` and keeps its release-binding refusal — but its manifest
@@ -539,10 +642,10 @@ changes create superseding records with lineage.* M5 supplies both halves.
 
 ### Lineage flows through Stage 3
 
-`extract/csv_to_db.py` writes two columns into `record_metadata` when it pushes a
-row: `work_id` (the int64 OpenAlex id derived from `openalex_id_r` via
-`filter/engine/workids.work_id`) and `release_id` (from the row's `release_id`
-column, which engine handoff rows carry and legacy `extracted.csv` rows do not).
+Two columns on `record_metadata` carry it: `work_id` (the int64 OpenAlex id derived
+from `openalex_id_r` via `filter/engine/workids.work_id`) and `release_id` (the
+handoff's release). The live import in the `flora-validation` repo does not send
+either yet — see issue #172 — so records pushed so far have null lineage.
 Both are nullable and null on rows imported before the engine — that is the shape of
 the data, not a shim. Reconciliation keys on **work_id, not DOI**: a work is the
 engine's identity, a DOI is a string a row may lack, share, or spell differently.
@@ -563,7 +666,7 @@ affects:
 | `verdict` | an expensive-tier verdict was superseded upstream (`engine_verdicts.superseded_by`) |
 
 `affected_record_ids` is `text[]`, because `record_id` in the validation schema is a
-uuid string minted by `csv_to_db.py`.
+uuid string minted by the validation repo's import.
 
 ### What reconciliation does — and does not — write
 

@@ -161,6 +161,26 @@ def test_crossref_status_mapping_and_mailto(monkeypatch, payload, status_code, e
     assert "mailto=" in captured["url"]
 
 
+@pytest.mark.parametrize("status_code", [401, 403])
+def test_crossref_auth_refusal_is_never_a_recorded_miss(monkeypatch, tmp_path,
+                                                        status_code):
+    """A refused request establishes nothing about whether CrossRef holds an
+    abstract. Every 4xx used to map to "empty", so one bad polite-pool header or a
+    WAF block would have written `__none__` — permanently — for every DOI the phase
+    touched. It is "stop" now, exactly as on the Scopus phase, and nothing at all is
+    checkpointed."""
+    _setup_run(monkeypatch, tmp_path)
+    monkeypatch.setattr(fa._SESSION, "get",
+                        lambda url, timeout=None, **kw: DummyResponse(
+                            {}, status_code=status_code))
+
+    assert fa._fetch_crossref_abstract("10.1/x") == (None, "stop")
+
+    fa._run_item_phase("CrossRef", "doi", ["10.1/a", "10.1/b"], 0,
+                       fa._fetch_crossref_abstract, set(), 1000)
+    assert _checkpoint() == ""
+
+
 def test_crossref_phase_checkpoints_empty_not_transient(monkeypatch, tmp_path):
     """The item-phase runner checkpoints an 'empty' DOI but leaves a 'transient' one
     un-checkpointed so a later run retries it."""
@@ -275,8 +295,31 @@ def test_s2_batch_preserves_request_order_no_id_join_needed(monkeypatch):
                         lambda *a, **k: DummyResponse({}, status_code=500))
     assert fa._fetch_s2_batch(["10.1/a"], "KEY") is None
 
+
+def test_a_short_s2_batch_response_checkpoints_nothing(monkeypatch, caplog):
+    """The join is positional, so a response shorter than the request is not an answer
+    about the ids it left out — and zip() would drop them silently, checkpointing them
+    as definitive misses no later run would revisit. The whole batch is refused, the
+    same rule the EPMC phase applies to a truncated page."""
+    monkeypatch.setattr(fa._SESSION, "post",
+                        lambda *a, **k: DummyResponse([{"abstract": "Found"}]))
+
+    with caplog.at_level("WARNING"):
+        assert fa._fetch_s2_batch(["10.1/a", "10.1/b", "10.1/c"], "KEY") is None
+    assert "not checkpointed" in caplog.text
+
+    # Nor is a longer array, or a body that is not an array at all: in either case the
+    # positions no longer name the DOIs that were asked about.
+    monkeypatch.setattr(fa._SESSION, "post",
+                        lambda *a, **k: DummyResponse([{"abstract": "a"}, None, None]))
+    assert fa._fetch_s2_batch(["10.1/a", "10.1/b"], "KEY") is None
+    monkeypatch.setattr(fa._SESSION, "post",
+                        lambda *a, **k: DummyResponse({"error": "too many ids"}))
+    assert fa._fetch_s2_batch(["10.1/a"], "KEY") is None
+
+
 def _epmc_payload(*records):
-    return {"resultList": {"result": list(records)}}
+    return {"hitCount": len(records), "resultList": {"result": list(records)}}
 
 
 def test_epmc_batch_joins_by_doi_not_by_position(monkeypatch):
@@ -287,8 +330,8 @@ def test_epmc_batch_joins_by_doi_not_by_position(monkeypatch):
         {"doi": "10.1/c", "abstractText": "third"},
         {"doi": "10.1/a", "abstractText": "first"},
     )
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, params=None, timeout=None: DummyResponse(payload))
+    monkeypatch.setattr(fa._SESSION, "post",
+                        lambda url, data=None, timeout=None: DummyResponse(payload))
 
     result = fa._fetch_epmc_batch(["10.1/a", "10.1/b", "10.1/c"])
     assert result == {"10.1/a": "first", "10.1/b": None, "10.1/c": "third"}
@@ -296,36 +339,52 @@ def test_epmc_batch_joins_by_doi_not_by_position(monkeypatch):
     # A persistent 5xx returns None instead, so the caller checkpoints nothing —
     # one transient failure must not poison EPMC_BATCH_SIZE DOIs as permanent misses.
     monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
-    monkeypatch.setattr(fa._SESSION, "get",
-                        lambda url, params=None, timeout=None:
+    monkeypatch.setattr(fa._SESSION, "post",
+                        lambda url, data=None, timeout=None:
                         DummyResponse({}, status_code=503))
     assert fa._fetch_epmc_batch(["10.1/a", "10.1/b"]) is None
 
 
-def test_epmc_batch_requests_core_view_and_quotes_dois(monkeypatch):
-    """resultType=core is REQUIRED — the 'lite' view omits abstractText, so with it
-    every DOI would silently look like a miss. Guard the query shape too."""
+def test_epmc_batch_posts_the_core_view_and_quotes_dois(monkeypatch):
+    """The OR-query IS Europe PMC's batch API — it has no id-list endpoint — and it
+    is sent as a form POST so a big EPMC_BATCH_SIZE cannot overrun a URL. Also:
+    resultType=core is REQUIRED — the 'lite' view omits abstractText, so with it
+    every DOI would silently look like a miss."""
     captured = {}
 
-    def fake_get(url, params=None, timeout=None):
+    def fake_post(url, data=None, timeout=None):
         captured["url"] = url
-        captured["params"] = params
+        captured["data"] = data
         return DummyResponse(_epmc_payload())
 
-    monkeypatch.setattr(fa._SESSION, "get", fake_get)
+    monkeypatch.setattr(fa._SESSION, "post", fake_post)
     fa._fetch_epmc_batch(["10.1/a", "10.1/b"])
 
-    assert "europepmc" in captured["url"]
-    assert captured["params"]["resultType"] == "core"
-    assert captured["params"]["query"] == 'DOI:"10.1/a" OR DOI:"10.1/b"'
+    assert captured["url"].endswith("/searchPOST")
+    assert captured["data"]["resultType"] == "core"
+    assert captured["data"]["query"] == 'DOI:"10.1/a" OR DOI:"10.1/b"'
+    # Page headroom: a DOI can match several records, and the page ceiling is 1000.
+    assert captured["data"]["pageSize"] == 6
+
+
+def test_epmc_truncated_page_is_not_an_answer(monkeypatch):
+    """More matches than the page returned means the response says nothing about the
+    DOIs it left out. Recording those as misses would be permanent, so the whole
+    batch is refused (None) and nothing is checkpointed."""
+    payload = {"hitCount": 9, "resultList": {"result": [
+        {"doi": "10.1/a", "abstractText": "first"}]}}
+    monkeypatch.setattr(fa.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(fa._SESSION, "post",
+                        lambda url, data=None, timeout=None: DummyResponse(payload))
+    assert fa._fetch_epmc_batch(["10.1/a", "10.1/b"]) is None
 
 
 def test_epmc_batch_duplicate_records_keep_first_abstract(monkeypatch):
     """A DOI can match both a preprint and its published record. The first record
     carrying an abstract wins; a later empty one must not overwrite it."""
     monkeypatch.setattr(
-        fa._SESSION, "get",
-        lambda url, params=None, timeout=None: DummyResponse(_epmc_payload(
+        fa._SESSION, "post",
+        lambda url, data=None, timeout=None: DummyResponse(_epmc_payload(
             {"doi": "10.1/a", "abstractText": "the good one"},
             {"doi": "10.1/a", "abstractText": ""})))
     assert fa._fetch_epmc_batch(["10.1/a"])["10.1/a"] == "the good one"

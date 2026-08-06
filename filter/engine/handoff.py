@@ -17,21 +17,32 @@ the strongest signal before the murky residue, without anyone having to sort a
 derived data — the next `route` run recomputes it from pool and specs — so a
 verdict written into it would be erased. A work a live `screen_cheap` run
 discarded is left out of the file; a work a live `screen_expensive` run typed
-carries that type as its `filter_status`, and one it discarded is left out too,
-because that is the same validated gate Stage 3 would apply to it a second time.
+carries that type as its `filter_status`, and one it discarded is left out too.
 Verdicts from a `validation`-mode run change nothing, which is what that mode
 means. The verdicts are read across releases: the release scopes the piles, not
 the evidence, and a work decided before a re-route is still a decided work.
 
-**A row travels on a verdict, not on a routing decision.** The default is
-screened-only: a work the rules routed into a screen pile but no live tier run
-ever decided is NOT exported. Routing says "this deserves an LLM's attention";
-only the LLM says "this reaches Stage 3", and an unscreened row silently
-crossing the handoff would spend Stage 3's budget on a decision the engine never
-made. `--as-routed` restores the older behaviour — export the piles as routed,
+**The expensive screen's answer TRAVELS, because it does not run twice.** The
+two-voter front door used to run in both places — this tier and Stage 3's first
+step — sharing a cache key so the second pass was free but the logic was written
+twice. It runs here only. What Stage 3 needs is therefore written onto the row
+(`SCREEN_COLS` in `shared/schema.py`): the gate outcome, the record type, the
+category union, the evidence, and each voter's classification and confidence,
+which the pre-PDF title-search rung is gated on. `_screen_columns()` below is
+the whole translation.
+
+**A row travels on a verdict, not on a routing decision — and only on the
+expensive tier's.** The default is screened-only: a work the rules routed into a
+screen pile but no live `screen_expensive` run ever decided is NOT exported.
+Routing says "this deserves an LLM's attention"; only the validated pair says
+"this reaches Stage 3". A CHEAP verdict never admits: its `proceed` means "on to
+the expensive screen", and admitting on it — a bypass included — would hand
+Stage 3 a row nothing has screened, now that Stage 3 does not screen.
+`--as-routed` restores the older behaviour — export the piles as routed,
 applying whatever verdicts exist — and it is the only mode in which the piles
 hand off without Supabase, because with no claims client there are no verdicts
-and screened-only would legitimately export nothing.
+and screened-only would legitimately export nothing. Its rows can reach Stage 3
+with no screen verdict at all, and Stage 3 has a defined answer for that.
 
 Absence is accounted for either way: the manifest's `dropped_by_tier_verdict`
 and `skipped_unscreened` are different facts about the same missing row, and
@@ -49,6 +60,7 @@ import csv
 import datetime
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -63,7 +75,7 @@ HANDOFF_PILES = ("screen_expensive", "screen_cheap")
 
 def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
                   drop: Optional[set[int]] = None,
-                  record_types: Optional[dict[int, str]] = None,
+                  screen: Optional[dict[int, dict]] = None,
                   decided: Optional[set[int]] = None,
                   conventions: Optional[dict] = None,
                   specs: Optional[list[FilterSpec]] = None,
@@ -77,24 +89,31 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
                   created_at: str = "") -> dict:
     """Write the two screen piles of *release_id* to *out_csv* for Stage 3.
 
-    *drop* is the set of work ids a live tier run discarded; *record_types* maps a
-    work id to the paper type a live `screen_expensive` run settled on, which
-    becomes its `filter_status`. *decided* is every work id a live tier run
-    reached a verdict on, discards included. All three are read from the verdict
-    rows by `decisions()` — they are passed in so this function stays a pure
-    mapping from (store, pool, decisions) to a file.
+    *drop* is the set of work ids a live tier run discarded; *screen* maps a work
+    id to what a live `screen_expensive` run decided about it — the gate outcome,
+    the record type and the individual votes. *decided* is every work id the
+    EXPENSIVE tier settled. All three are read from the verdict rows by
+    `decisions()` — they are passed in so this function stays a pure mapping from
+    (store, pool, decisions) to a file.
 
     *decided* also chooses the export's contract, because a set and its absence
     say different things. A set (empty included) means SCREENED-ONLY: a pile row
     outside it was never judged, so it is left out and counted as
     `skipped_unscreened`. `None` means AS-ROUTED: every pile row travels except
     the ones a verdict discarded — which is the only thing a caller with no
-    Supabase can ask for.
+    Supabase can ask for, and the one mode in which a row can reach Stage 3 with
+    its `SCREEN_COLS` blank.
+
+    **The screen verdict is written onto the row, not just applied to it.** The
+    two-voter front door runs here and nowhere else now, so Stage 3 has to be able
+    to read what it said rather than ask again: the record type, the category
+    union, the evidence, and the per-voter classification/confidence its title-
+    search rung is gated on. `_screen_columns()` is the whole translation.
     """
     check_release_binding(spec_dir, release_id, expect_bundle_hash,
                           expect_alias_release, overlay_dir, expect_overlay_hash)
     drop = drop or set()
-    record_types = record_types or {}
+    screen = screen or {}
     conventions = conventions or load_conventions()
 
     by_pile: dict[str, list[dict]] = {pile: [] for pile in HANDOFF_PILES}
@@ -112,15 +131,17 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
         if decided is not None and work not in decided:
             unscreened += 1
             continue
-        record_type = record_types.get(work)
-        if record_type:
-            row["filter_status"] = record_type
-            row["filter_method"] = "screen"
-            retyped += 1
+        decision = screen.get(work)
+        if decision:
+            row.update(_screen_columns(row, decision))
+            if decision.get("record_type"):
+                row["filter_status"] = decision["record_type"]
+                row["filter_method"] = "screen"
+                retyped += 1
         by_pile[pile].append(row)
 
     rows = [row for pile in HANDOFF_PILES for row in by_pile[pile]]
-    _write_csv(out_csv, rows)
+    tmp_csv = _write_csv_tmp(out_csv, rows)
     manifest = {
         "release_id": release_id,
         "piles": list(HANDOFF_PILES),
@@ -131,17 +152,54 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
         "screened_only": decided is not None,
         "typed_by_tier_verdict": retyped,
         "csv": Path(out_csv).name,
-        "sha256": hashlib.sha256(Path(out_csv).read_bytes()).hexdigest(),
+        "sha256": hashlib.sha256(tmp_csv.read_bytes()).hexdigest(),
         "created_at": created_at or _now(),
         "columns": ENGINE_EXPORTED_COLS,
     }
-    Path(str(out_csv) + ".manifest.json").write_text(
-        json.dumps(manifest, indent=1, sort_keys=True), encoding="utf-8")
+    _publish(out_csv, tmp_csv, manifest)
     return manifest
 
 
-def decisions(client) -> tuple[set[int], dict[int, str], set[int]]:
-    """`(drop, work id → record type, decided)` from every LIVE tier run.
+def _screen_columns(row: dict, decision: dict) -> dict:
+    """`SCREEN_COLS` for one row, from one expensive-tier decision.
+
+    Two sources, and which fact comes from which is the point. The **verdict rows**
+    are the authority: the gate outcome, the record type, and each voter's
+    classification, confidence and quote are permanent evidence in Postgres, and
+    everything Stage 3 DECIDES with is read from there.
+
+    The category union and the voters' reasoning are not in that table — it is lean
+    on purpose, and the full response lives in the blob — so they are read from the
+    classify cache, which is content-complete and therefore provably the answer
+    this row was screened with. `cached_classification()` cannot call a model, so a
+    checkout without the cache writes those two columns blank rather than paying
+    for them again; nothing downstream decides on either.
+    """
+    from shared.llm_client import cached_classification
+
+    votes = decision.get("votes") or []
+    # One probe per exported row, which is the floor: every row is a different
+    # work, so there is nothing to share between them. The probe costs one stat on
+    # a hit — `read_cache_migrating()` tries the declared legacy keys only after the
+    # current key misses — so the three-key cost falls on unscreened-cache rows
+    # alone, and those are exactly the rows the two columns would be blank for.
+    detail = cached_classification(str(row.get("doi_r") or ""),
+                                   str(row.get("title_r") or ""),
+                                   str(row.get("abstract_r") or "")) or {}
+    return {
+        "screen_verdict": decision.get("outcome", ""),
+        "screen_record_type": decision.get("record_type", ""),
+        "screen_categories": "|".join(detail.get("categories") or []),
+        "screen_votes": "|".join(
+            f"{v.get('model', '')}={v.get('classification', '')}/"
+            f"{'confident' if v.get('confident') else 'unconfident'}" for v in votes),
+        "screen_evidence": next((v["quote"] for v in votes if v.get("quote")), ""),
+        "screen_reasoning": str(detail.get("llm_reasoning") or ""),
+    }
+
+
+def decisions(client) -> tuple[set[int], dict[int, dict], set[int]]:
+    """`(drop, work id → expensive-tier decision, decided)` from every LIVE run.
 
     Reads the permanent verdict rows, not a run report. A `validation`-mode run
     contributes nothing here — its claim says `mode: validation` and this asks
@@ -166,36 +224,102 @@ def decisions(client) -> tuple[set[int], dict[int, str], set[int]]:
     still short of a gate decision reads `incomplete` and belongs with the
     unscreened, not with the proceeds — a half-screened row is exactly the row the
     screened-only handoff exists to hold back.
+
+    **Only the EXPENSIVE tier admits.** A cheap-tier verdict is either a discard
+    (which drops the row here) or a `proceed`, and that proceed means one thing
+    only: on to the expensive screen. Counting it as `decided` would let a row the
+    validated pair has never seen — including a mere `prescreen_bypass`, which is
+    the tier deciding not to ask — cross the screened-only handoff and reach Stage
+    3, where nothing screens it any more. So the cheap tier contributes to *drop*
+    and to nothing else.
     """
     from filter.engine.tiers import (DISCARD, PROCEED, TIER_CHEAP, TIER_EXPENSIVE,
                                      tier_decisions)
 
     drop: set[int] = set()
-    record_types: dict[int, str] = {}
+    screen: dict[int, dict] = {}
     decided: set[int] = set()
-    for tier in (TIER_CHEAP, TIER_EXPENSIVE):
-        # None: every release — see the docstring above.
-        for work, decision in tier_decisions(client, None, tier).items():
-            if decision["outcome"] not in (DISCARD, PROCEED):
-                continue
-            decided.add(work)
-            if decision["outcome"] == DISCARD:
-                drop.add(work)
-            elif tier == TIER_EXPENSIVE and decision.get("record_type"):
-                record_types[work] = decision["record_type"]
-    return drop, record_types, decided
+    # None: every release — see the docstring above.
+    expensive = tier_decisions(client, None, TIER_EXPENSIVE)
+    for work, decision in expensive.items():
+        if decision["outcome"] not in (DISCARD, PROCEED):
+            continue
+        if decision["outcome"] == DISCARD:
+            drop.add(work)
+        decided.add(work)
+        screen[work] = decision
+    for work, decision in tier_decisions(client, None, TIER_CHEAP).items():
+        # The cheap tier may not overrule the expensive one. `write_handoff` checks
+        # the drop set first, so a live cheap discard of a work the validated pair
+        # PASSED would drop it — the precedence inversion the design forbids, in the
+        # one direction where the cheaper, weaker model wins. Any expensive verdict
+        # at all takes the work out of the cheap tier's reach: an expensive discard
+        # already drops it, and an expensive proceed is the answer that governs.
+        if decision["outcome"] == DISCARD and work not in expensive:
+            drop.add(work)
+    return drop, screen, decided
 
 
-def _write_csv(out_csv: Path, rows: list[dict]) -> None:
+def _write_csv_tmp(out_csv: Path, rows: list[dict]) -> Path:
+    """Write the handoff to a sibling temp file and return it, unpublished.
+
+    The handoff is rewritten in place over the file Stage 3 reads, so writing to
+    it directly means an interruption — Ctrl-C, a full disk, a raised binding
+    check — leaves a truncated `filtered.csv` and destroys the previous handoff,
+    which was a working input. Writing beside it and renaming is atomic within a
+    directory, so the file is either the old handoff or the new one and never half
+    of either. The rename is `_publish()`'s, because the manifest has to go with it.
+    """
     out_csv = Path(out_csv)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
-    with out_csv.open("w", newline="", encoding="utf-8-sig") as handle:
-        writer = csv.DictWriter(handle, fieldnames=ENGINE_EXPORTED_COLS,
-                                extrasaction="ignore")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({col: "" if row.get(col) is None else row.get(col)
-                             for col in ENGINE_EXPORTED_COLS})
+    tmp = out_csv.with_name(out_csv.name + ".tmp")
+    try:
+        with tmp.open("w", newline="", encoding="utf-8-sig") as handle:
+            writer = csv.DictWriter(handle, fieldnames=ENGINE_EXPORTED_COLS,
+                                    extrasaction="ignore")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({col: "" if row.get(col) is None else row.get(col)
+                                 for col in ENGINE_EXPORTED_COLS})
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return tmp
+
+
+def _publish(out_csv: Path, tmp_csv: Path, manifest: dict) -> None:
+    """Make the new CSV and its manifest visible — the MANIFEST first.
+
+    Two files, two renames: no filesystem makes the pair atomic, so the question is
+    which intermediate state a crash may leave. The one state that must not exist
+    is a NEW `filtered.csv` that nothing describes, because Stage 3 reads that file
+    by name and does not today verify the manifest — an unbound CSV is not a reader
+    blocked, it is a run whose input has no release id, no row count and no hash
+    behind it.
+
+    So the manifest is published BEFORE the CSV it describes. The only window a
+    crash can leave is a new manifest over the PREVIOUS handoff: a reader that
+    checks sees the sha256 disagree and refuses, and a reader that does not check
+    consumes the previous complete handoff, which was a valid input. Publishing the
+    CSV first inverts exactly that — the new file, unbound — and removing the
+    manifest first (an earlier version of this function) makes the unbound state
+    explicit rather than avoiding it, which only helps a reader that looks.
+
+    Ordering is the half of the guarantee that lives here. The other half is
+    Stage 3 verifying the manifest against the CSV it is about to read; until it
+    does, the guarantee is "never a new unbound file", not "never an unbound file".
+    """
+    out_csv = Path(out_csv)
+    live_manifest = Path(str(out_csv) + ".manifest.json")
+    tmp_manifest = live_manifest.with_name(live_manifest.name + ".tmp")
+    try:
+        tmp_manifest.write_text(json.dumps(manifest, indent=1, sort_keys=True),
+                                encoding="utf-8")
+        os.replace(tmp_manifest, live_manifest)
+        os.replace(tmp_csv, out_csv)
+    finally:
+        tmp_csv.unlink(missing_ok=True)
+        tmp_manifest.unlink(missing_ok=True)
 
 
 def _now() -> str:

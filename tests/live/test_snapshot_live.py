@@ -1,8 +1,10 @@
 """Live check of the OpenAlex parquet snapshot scanner against the real bucket.
 
 Pinned to the smallest partition in the manifest (updated_date=2016-06-24,
-~3.6 MB, 2,439 records) so the run stays seconds long, and to pilot mode so it
-writes only into tmp_path — never the production candidates.csv or ledger.
+~3.6 MB, 2,439 records) so the run stays seconds long. The scan is ledger-backed
+and there is no sample mode any more, so the ledger and the pool are redirected
+into tmp_path here — a live run must never mark a real partition done or write
+into the production pool.
 """
 
 import os
@@ -10,7 +12,7 @@ import os
 import pandas as pd
 import pytest
 
-from shared.schema import CANDIDATES_COLS
+from search import snapshot_scan as ss
 from search.snapshot_scan import fetch_manifest, scan_snapshot
 
 _PARTITION = ("https://openalex.s3.amazonaws.com/data/parquet/works/"
@@ -31,12 +33,14 @@ class TestSnapshotLive:
         assert all(u.startswith("https://openalex.s3.amazonaws.com/") for u in urls)
         assert _PARTITION in urls
 
-    def test_one_partition_yields_survivors_in_schema(self, tmp_path):
-        pilot = tmp_path / "snapshot_pilot.csv"
-        n = scan_snapshot(files=[_PARTITION], pilot_csv=pilot)
+    def test_one_partition_yields_survivors_in_schema(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ss, "_LEDGER_PATH", tmp_path / "ledger.json")
+        pool = tmp_path / "pool"
+
+        n = scan_snapshot(files=[_PARTITION], survivor_pool=pool)
 
         assert n > 0, "the 2016-06-24 partition contains replication papers"
-        df = pd.read_csv(pilot, encoding="utf-8-sig")
-        assert list(df.columns) == CANDIDATES_COLS
+        df = pd.read_parquet(pool)
+        assert list(df.columns) == ss._POOL_SCHEMA.names
         assert len(df) == n
-        assert (df["source"] == "openalex_snapshot").all()
+        assert df[["hit_token_title", "hit_token_abstract", "hit_concept"]].any(axis=1).all()

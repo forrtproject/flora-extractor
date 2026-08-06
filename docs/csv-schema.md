@@ -39,11 +39,12 @@ works a live LLM tier discarded. It is a **materialized view** of the current
 release rather than an immutable export — it is rewritten whenever the release or
 the tier verdicts move, and its `.manifest.json` is rewritten with it.
 
-Columns are `ENGINE_EXPORTED_COLS` = `FILTERED_COLS` + `ENGINE_EXPORT_COLS`: all
-`CANDIDATES_COLS` fields, then the four filter columns below, then the routing
-provenance appended after them. Stage 3 reads by column name, so the appended block
-does not change its contract — but it does **not** carry the block forward: see the
-note under the provenance table.
+Columns are `ENGINE_EXPORTED_COLS` = `FILTERED_COLS` + `ENGINE_EXPORT_COLS` +
+`SCREEN_COLS`: all `CANDIDATES_COLS` fields, then the four filter columns below,
+then the routing provenance, then the screen verdict. Stage 3 reads by column name.
+It does **not** carry the provenance block forward (see the note under that table);
+it does read the screen block, which is the one part of the appended columns that
+is a decision rather than a record.
 
 | Column | Type | Description |
 | ------ | ---- | ----------- |
@@ -63,6 +64,23 @@ Routing provenance (`ENGINE_EXPORT_COLS` in `shared/schema.py`):
 | `matched_rules` | string | \|-joined — match by substring/split, never equality |
 | `pending_reason` | string | Empty on an exported row; on a `pending` row it says **why no decision exists** — see below |
 | `release_id` | string | The routing release the pile came from |
+
+The screen verdict (`SCREEN_COLS` in `shared/schema.py`):
+
+| Column | Type | Description |
+| ------ | ---- | ----------- |
+| `screen_verdict` | string | `proceed` \| `discard`, from `screen_gate()`. **Blank means no verdict exists** — no live `screen_expensive` run settled this work — which only happens on an `--as-routed` handoff, an `export`ed pile or a hand-made CSV |
+| `screen_record_type` | string | `replication` \| `reproduction`, the screen's own answer (`both` already mapped to `replication`); blank when neither voter gave a qualifying label |
+| `screen_categories` | string | **Multi-valued**, \|-joined union of both voters' category labels. Blank when the classify cache the handoff read it from is not on that machine — it is descriptive and nothing decides on it |
+| `screen_votes` | string | \|-joined `<model>=<classification>/<confident\|unconfident>`, in call order. The per-voter detail Stage 3's pre-PDF title-search rung is gated on (both voters qualifying AND confident), which no summary of the gate preserves |
+| `screen_evidence` | string | The first voter's justifying quote |
+| `screen_reasoning` | string | `<provider>: <reasoning>` per voter, ` \| `-joined. From the same cache as `screen_categories`, and blank on the same terms |
+
+The screen runs **once**, in Stage 2's `screen_expensive` tier, and Stage 3 reads
+these columns instead of voting again. An input CSV with no `screen_verdict` column
+at all is refused at startup; a row whose value is blank is written
+`target_pending`. `--screen-here` is the explicit opt-out that runs the screen in
+Stage 3 for rows with no verdict.
 
 **`pending` is a pile; `pending_reason` is why that pile has no decision in it.**
 The two are not the same statement and neither is redundant. A row is in the
@@ -92,9 +110,10 @@ screen piles only, so an exported row's `pending_reason` is always empty.
 > routing state already holds all of it.
 >
 > The join key is **`work_id`** — the int64 OpenAlex id (`filter/engine/workids.py`
-> derives it from `openalex_id_r`). `extract/csv_to_db.py` writes it into
-> `record_metadata.work_id` for every pushed row, so any routing column can be
-> recovered by joining back to the engine's `routing` table for a release.
+> derives it from `openalex_id_r`). It belongs in `record_metadata.work_id` for
+> every pushed row, so any routing column can be recovered by joining back to the
+> engine's `routing` table for a release. (The live import does not send it yet —
+> issue #172.)
 > Reconciliation keys on `work_id` rather than DOI throughout
 > (`filter/engine/supersede.py`), because a work is the engine's identity while a
 > DOI is a string a row may lack, share or spell differently. See
@@ -113,15 +132,15 @@ bundle that lands as: `screen_expensive` → `needs_review` at **high** confiden
 medium confidence. Read `filter/spec/conventions.json` and the specs' `vocabulary`
 fields rather than trusting this paragraph.
 
-Stage 3's front-door screen is the validated decider of "is this a
-replication at all", so when it passes a row, `run_extract` overwrites
+The front-door screen is the validated decider of "is this a
+replication at all", so when it passes a row, the handoff overwrites
 `filter_status` with the screen's paper type (`replication` / `reproduction`) and
 sets `filter_method` to `screen`, recording which call made the call. When the gate
 proceeds without any qualifying vote (unclear/unclear, or an unconfident `none`
 against an unconfident qualifying answer) no call has said what the paper is, so both
 fields keep Stage 2's values and `type` is left empty. Such a row is resolved and
-outcome-coded but stays at `needs_review`, which `csv_to_db` does not import: it waits
-on the check page for a human to say what it is.
+outcome-coded but stays at `needs_review`, which the validation import does not take:
+it waits on the check page for a human to say what it is.
 
 `rule_based`, `llm` and `both` are **historical** `filter_method` values: they were
 written by the retired per-row rule classifier and its LLM escalation. Rows on disk
@@ -155,8 +174,7 @@ provenance appended after it — plus:
 | `link_evidence` | string | Quote or description supporting the link |
 | `link_confidence` | string | `high` \| `medium` \| `low`; downgraded to `low` on DOI mismatch |
 | `link_llm_model` | string | Model that decided the link; blank for rule-based rows. On `llm_references` rows this is the model that picked the reference, not the two classifiers that screened the paper. On `not_a_replication` rows it is the pair of front-door classifiers, joined with `+` (`SCREENING_MODEL_1+SCREENING_MODEL_2`) |
-| `screen_categories` | string | **Multi-valued.** The `\|`-joined union of both front-door voters' category labels, in the prompt's enum order: `clearly_declared`, `self_retest`, `measurement_validation`, `context_transfer`, `incidental_finding`, `initial_validation`, `tool_benchmark`, `builds_on_literature`, `terminology_only`, `about_replication`, `other`. Filter it by substring or by splitting on `\|` — never by equality, since most rows carry two or more values. Written on every screened row, discards included; blank on `--no-llm` rows and on rows written before the v3.2 screen |
-| `prescreen_verdict` | string | What the optional cheap pre-screen did with this row, blank whenever the tier was off (the default) or `--no-llm` was set: `discard`, `proceed`, or `bypass:<reason>` where the reason is `hard_signal:<phrase>`, `short_text` or `curated:<source>`. Written on rows the tier passed through as well as on the ones it ended, so its effect on the corpus is auditable from the CSV rather than only from the discard file |
+| `screen_categories` | string | **Multi-valued.** The `\|`-joined union of both front-door voters' category labels, in the prompt's enum order: `clearly_declared`, `self_retest`, `measurement_validation`, `context_transfer`, `incidental_finding`, `initial_validation`, `tool_benchmark`, `builds_on_literature`, `terminology_only`, `about_replication`, `other`. Filter it by substring or by splitting on `\|` — never by equality, since most rows carry two or more values. Written on every screened row, discards included; blank on rows that arrived with no Stage 2 screen verdict and on rows written before the v3.2 screen. It is copied from the input row's `screen_categories` (`SCREEN_COLS`), which the handoff filled from the classify cache |
 | `doi_o_verification` | string | DOI verification status — see below |
 | `pdf_source` | string | **Full-text provenance.** The acquisition tier that supplied the document the row was coded from: `arxiv`, `osf`, `openalex_oa`, `unpaywall_pdf`, `semanticscholar`, `core`, `europepmc`, `landing_<host>`, `serpapi`, `playwright`, or `openalex_xml` for the OpenAlex GROBID-XML tier, which needs no PDF file. **Blank** when the ladder resolved before Stage 5 or acquired nothing — a `llm_fulltext` row with a blank `pdf_source` is a contradiction and should be treated as unverified |
 | `parse_method` | string | **Full-text provenance.** The parser whose result won `best_parse_result()` and therefore produced the text the LLM read: `openalex_xml`, `pdfminer`, `grobid`, `docpluck`, `opendataloader` or `markitdown`. Blank when nothing was parsed |
@@ -195,7 +213,7 @@ sharply, so a consumer has to be able to tell them apart.
 | `api_error` | Extraction failed after retries, including a front-door screen where **both** classifiers failed |
 
 The enum lives in `shared/schema.py` as `LINK_METHOD_VALUES`. The subset that counts
-as a resolved link — the rows `extract/csv_to_db.py` imports into the validation DB —
+as a resolved link — the rows the validation repo's import takes into the DB —
 is `RESOLVED_LINK_METHODS`: the five rule-based methods plus `llm_cited_candidates`,
 `llm_references` and `llm_fulltext`. Every other value above marks
 a row that is unresolved, quarantined, or a pipeline-state marker, and is never
@@ -209,16 +227,23 @@ Populated automatically before each row is written. The matching thresholds and 
 correction tiers live in `shared/doi_verify.py`; *DOI Verification* in `CLAUDE.md`
 summarises the design.
 
+**Verification happens once.** A resumed Stage 3 run carries a row whose value is one of
+the settled ones below forward exactly as written — the three correction tiers cost up to
+three OpenAlex free-text searches per row, at 10× a filter query, and the row already
+holds the answer. The two unsettled values are `api_error` and a blank, and both are
+verified again on the next run. `python -m extract.audit_dois` is the way to re-verify a
+settled row (`--status api_error` targets just the failed ones).
+
 | Value | Meaning |
 | ----- | ------- |
 | `verified` | CrossRef/OpenAlex metadata matches expected title/year |
 | `corrected` | DOI was wrong or blank; a confident replacement was found and substituted |
-| `mismatch` | Metadata disagrees with expected; no confident replacement; `link_confidence` → `low` |
+| `mismatch` | Metadata disagrees with expected, and a **completed** search for a replacement found none. `doi_o` is dropped and `link_confidence` → `low`, so this value is only ever written when both registries answered — a search that could not be completed is `api_error` instead |
 | `no_doi` | Original has no registered DOI — a book, a chapter, or a pre-DOI-era paper. `doi_o` stays blank and identity hangs off `oa_work_id_o`: `pair_id` is hashed from it and `url_o` becomes `https://openalex.org/<W…>`. Such a row **is** importable for validation when `oa_work_id_o` is set; with `oa_work_id_o` blank there is nothing identifiable to show a validator and `audit_extracted` blocks it |
-| `not_found` | DOI was blank and no match could be found anywhere |
+| `not_found` | DOI was blank and a completed search found no match anywhere |
 | `no_metadata` | DOI is registered but returned no usable metadata |
-| `api_error` | CrossRef and OpenAlex both failed after retries |
-| `skipped` | Row is `target_pending` or `api_error`; nothing to verify |
+| `api_error` | **Verification unavailable.** Either the metadata lookup for `doi_o` failed at both CrossRef and OpenAlex, or the search for a replacement could not be completed at one of them. `doi_o` is left exactly as it was — an unfinished check is never grounds for dropping a DOI — and a later run re-verifies the row |
+| `skipped` | `link_method` is one of `VERIFICATION_SKIP_LINK_METHODS` — `target_pending`, `api_error` or `prescreen_discard`; there is no settled link, so there is nothing to verify |
 
 ### `outcome` values
 
@@ -279,9 +304,13 @@ where a row sits in the pipeline.
 There is **no `data/validated.csv`**. The old SQLite/CSV voting output has been removed.
 Human validation runs in a **separate repo backed by Supabase**.
 
-`extract/csv_to_db.py` pushes resolved `extracted.csv` rows (those with
+The push is **not done from this repo**: `csv_to_db.py` in the
+[`flora-validation`](https://github.com/forrtproject/flora-validation/blob/main/csv_to_db.py)
+repo reads resolved `extracted.csv` rows (those with
 `filter_status ∈ {replication, reproduction}` and a resolved `link_method`) into three
-Supabase tables.
+Supabase tables, in one psycopg2 transaction with `ON CONFLICT (pair_id) DO NOTHING`.
+(An older importer here, `extract/csv_to_db.py`, is parked on the `wip/csv-to-db`
+branch and is not run — see issue #172.)
 
 > **The import needs a schema change in the validation repo before it will run.**
 > `unvalidated` needs `title_r` and `title_o` columns: `study_r` / `study_o` are study

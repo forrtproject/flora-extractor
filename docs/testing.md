@@ -99,7 +99,8 @@ If a test trips the guard, mock at the boundary the code actually calls
 
 ## Tests that need pipeline data
 
-`tests/test_analysis_overlap.py` and one test in `tests/test_apa_resolver.py`
-read the gitignored CSVs in `data/` (`candidates.csv`, `filtered.csv`,
-`all_replications.csv`). They skip when those files are absent, so a fresh
-checkout runs green.
+None. `tests/test_analysis_overlap.py` and the `tests/test_apa_resolver.py` case
+that read the gitignored `data/` CSVs (`candidates.csv`, `filtered.csv`,
+`all_replications.csv`) went with the overlap analysis and the retired Stage 1
+corpus. Every test now builds the files it reads under `tmp_path`, so the suite is
+green on a fresh checkout with an empty `data/`.

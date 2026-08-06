@@ -813,17 +813,17 @@ python -m search.pool_sync --push</pre>
           <table class="docs-table">
             <thead><tr><th style="white-space:nowrap">Flag</th><th>Default</th><th>Description</th></tr></thead>
             <tbody>
-              <tr><td class="col-name">--from-year YYYY</td><td>none</td><td class="col-desc">Only process candidates where <code>year_r ≥ YYYY</code></td></tr>
-              <tr><td class="col-name">--to-year YYYY</td><td>none</td><td class="col-desc">Only process candidates where <code>year_r ≤ YYYY</code></td></tr>
-                            <tr><td class="col-name">--limit N</td><td>none</td><td class="col-desc">Stop after writing N new rows</td></tr>
-              <tr><td class="col-name">--offset N</td><td>none</td><td class="col-desc">Skip the first N unprocessed rows before starting</td></tr>
-              <tr><td class="col-name">--rebuild-index</td><td>off</td><td class="col-desc">Rebuild <code>cache/filtered_index.txt</code> from <code>filtered.csv</code>, then exit</td></tr>
+              <tr><td class="col-name">route</td><td>—</td><td class="col-desc">Route the survivor pool into a release in the store</td></tr>
+              <tr><td class="col-name">screen --tier T</td><td>dry run</td><td class="col-desc">Run an LLM tier over its pile. Nothing is claimed or spent without <code>--run</code></td></tr>
+              <tr><td class="col-name">handoff --out F</td><td>screened only</td><td class="col-desc">Write the screen piles as Stage 3's <code>filtered.csv</code>; <code>--as-routed</code> includes unscreened rows</td></tr>
+              <tr><td class="col-name">--from-year / --to-year</td><td>none</td><td class="col-desc">Bound the handoff by <code>year_r</code></td></tr>
+              <tr><td class="col-name">--limit N</td><td>none</td><td class="col-desc">On <code>screen</code>, stop after N works — how a first live batch stays small</td></tr>
             </tbody>
           </table>
-          <pre class="cli-block" style="margin-top:10px">python -m filter.run_filter                     # full run
-python -m filter.run_filter --from-year 2015    # 2015+ only
-python -m filter.run_filter --limit 1000        # first 1 000 new rows
-python -m filter.run_filter --rebuild-index     # rebuild index from filtered.csv</pre>
+          <pre class="cli-block" style="margin-top:10px">python -m filter.engine route                                  # pool → a release
+python -m filter.engine screen --tier screen_expensive         # dry run: price it
+python -m filter.engine screen --tier screen_expensive --run   # claim and spend
+python -m filter.engine handoff --out data/filtered.csv        # → Stage 3's input</pre>
         </div>
 
         <div class="docs-card">
@@ -919,7 +919,7 @@ python -m filter.run_filter --rebuild-index     # rebuild index from filtered.cs
         <div class="stat-card" style="padding:14px 16px">
           <h3>How it works — data flow <span style="font-weight:400;text-transform:none;letter-spacing:0">· live counts from filtered.csv</span></h3>
           <div class="flow-chart" style="gap:2px">
-            <div class="flow-node-cli">python -m filter.run_filter</div>
+            <div class="flow-node-cli">python -m filter.engine route</div>
             <div class="flow-arrow-down">↓</div>
             <div class="flow-node">
               <div class="flow-node-head">Load + resume</div>

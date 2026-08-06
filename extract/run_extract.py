@@ -16,9 +16,12 @@ together, under the one write lock.
 Usage:
     python -m extract.run_extract
 """
+import csv
+import hashlib
 import json
 import re
 import threading
+from collections import Counter
 from concurrent.futures import (FIRST_COMPLETED, Future, ThreadPoolExecutor,
                                 wait)
 from pathlib import Path
@@ -35,37 +38,48 @@ from shared.config import (
 from shared import token_counter
 from shared.cache import write_json
 from shared.llm_client import (
-    _clean_study_numbers, classify_replication, screen_voters,
+    _clean_study_numbers, classify_replication, provider_for, screen_voters,
 )
 from shared.token_usage import TokenBudgetExhausted
-from shared.openalex_client import OpenAlexQuotaExhausted
+from shared.openalex_client import OpenAlexQuotaExhausted, print_search_summary
 from shared.openalex_client import fetch_openalex_by_doi as _oa_by_doi
 from shared.openalex_client import fetch_openalex_full_metadata as _oa_full_meta
-from shared.openalex_client import _search_crossref_by_title, _search_openalex_by_title
+from shared.openalex_client import (
+    _TitleSearchUnavailable, _search_crossref_by_title, _search_openalex_by_title,
+)
+from shared.pdf_sources import openalex_xml_has_content
 from shared.pdf_parsing import (
     best_parse_result,
     outcome_text,
     parse_all as _parse_all,
+    parse_result_has_transient_failure,
     parse_result_is_empty,
     score_parse_result,
 )
 from shared.row_key import primary_key
 from shared.doi_verify import keeps_no_doi, verify_and_correct
 from shared.schema import (
+    ENGINE_EXPORT_COLS,
     EXTRACTED_COLS,
     LINK_METHOD_VALUES,
     OUTCOME_CATEGORIES,
     RESOLVED_LINK_METHODS,
     SCREEN_SET_ASIDE_FILES as _SCREEN_SET_ASIDE_FILES,
+    SETTLED_SET_ASIDE_FILES as _SETTLED_SET_ASIDE_FILES,
+    VERIFICATION_SKIP_LINK_METHODS,
+    YEAR_COLS,
+    assert_no_float_years,
     make_pair_id,
+    set_aside_dir,
+    year_str,
 )
 from shared.utils import (bare_work_id, cache_key, citation_fragment,
                           clean_citation_title, clean_doi, csv_lock, usable_title)
-# Shared with csv_to_db so extraction and validation skip the same set (see shared/flora_skip.py)
+# Shared with the validation hand-off so extraction and validation skip the same set
+# (see shared/flora_skip.py)
 from shared.flora_skip import (
-    FLORA_VALIDATED_STATUSES,
     VALIDATED_SKIP_NAME,
-    load_flora_skip_dois as _load_flora_skip_dois,
+    default_flora_skip_dois as _default_flora_skip_dois,
     load_validated_skip as _load_validated_skip,
     validated_work_id as _validated_work_id,
 )
@@ -136,12 +150,21 @@ def _build_ref_o(doi_o: str, fallback_author: str = "",
 
     Returns (ref_o, authors_o, bibtex_ref_o).
     """
+    # The two catches below turn a lookup failure into the surname·year fallback,
+    # which is the right answer for a genuinely unfindable original. They must NOT
+    # swallow the signals the API layer raises deliberately: OpenAlexQuotaExhausted
+    # means every later row will fail the same way and the run has to stop
+    # (run_extract's main loop is what stops it), and _TitleSearchUnavailable means
+    # the search never happened. Caught here, both would quietly degrade ref_o on
+    # every remaining row of a run nobody knew had lost its quota.
     meta: dict | None = None
     if doi_o:
         try:
             meta = _oa_full_meta(doi_o)
-        except Exception:
-            pass
+        except (OpenAlexQuotaExhausted, _TitleSearchUnavailable):
+            raise
+        except Exception as exc:
+            log.debug("[ref_o] DOI lookup failed for %s: %s", doi_o, exc)
 
     # Title-based fallback for no_metadata / hallucinated DOIs
     if meta is None and title_o:
@@ -150,8 +173,10 @@ def _build_ref_o(doi_o: str, fallback_author: str = "",
                     or _search_openalex_by_title(title_o, fallback_year))
             if meta:
                 log.debug("[ref_o] title search hit for %r: %s", title_o[:60], meta.get("doi"))
-        except Exception:
-            pass
+        except (OpenAlexQuotaExhausted, _TitleSearchUnavailable):
+            raise
+        except Exception as exc:
+            log.debug("[ref_o] title search failed for %r: %s", title_o[:60], exc)
 
     if not meta:
         surname = str(fallback_author or "").split()[-1] if fallback_author else ""
@@ -289,6 +314,21 @@ def _score_to_confidence(score) -> str:
     return "high" if f >= 0.8 else "medium" if f >= 0.5 else "low"
 
 
+def _match_confidence(result_row: dict) -> str:
+    """`original_match_confidence` for a finished row — one rule for every producer.
+
+    Both halves have to hold: a resolved link_method says the ladder finished, and
+    link_confidence (`_link_confidence`) says the record it finished on is checkable.
+    The single-link path used to write "high" for any resolved method, which promoted
+    exactly the links `_link_confidence` caps at medium — `single_candidate_after_requery`
+    auto-accepts a lone candidate with no semantic check — so the same evidence read as
+    high on one path and low on the other.
+    """
+    return ("high" if (str(result_row.get("link_method", "")) in RESOLVED_LINK_METHODS
+                       and str(result_row.get("link_confidence", "")) == "high")
+            else "low")
+
+
 def _link_confidence(link: dict) -> str:
     """Persisted link_confidence: LLM confidence if present, else derived from score.
 
@@ -318,7 +358,7 @@ def _build_cands_df(row: pd.Series) -> pd.DataFrame:
         "doi_r":                 str(row.get("doi_r", "")),
         "study_r":               str(row.get("title_r", row.get("study_r", ""))),
         "abstract_r":            str(row.get("abstract_r", "")),
-        "year_r":                str(row.get("year_r",    "")),
+        "year_r":                year_str(row.get("year_r")),
         "openalex_id_r":         str(row.get("openalex_id_r", "")),
         "url_r":                 str(row.get("url_r",    "")),
         "author_year_pattern_r": "",
@@ -338,7 +378,7 @@ def _build_bibtex_r(row: "pd.Series | dict") -> str:
     authors = [a.strip() for a in authors_raw.split(";") if a.strip()]
     return build_bibtex(
         authors     = authors,
-        year        = str(row.get("year_r")    or ""),
+        year        = year_str(row.get("year_r")),
         title       = str(row.get("title_r")   or ""),
         journal     = str(row.get("journal_r") or ""),
         doi         = str(row.get("doi_r")     or ""),
@@ -361,7 +401,7 @@ def _record_type(filter_row: pd.Series, screen: "dict | None") -> str:
     nobody has classified is not a replication because replication is the commoner
     answer. Such a row still resolves an original and is still outcome-coded (on the
     replication vocabulary, the more general of the two grids), but it carries no
-    type into the CSV and csv_to_db leaves it for a human.
+    type into the CSV, and the validation import leaves it for a human.
     """
     if screen and screen.get("record_type"):
         return str(screen["record_type"])
@@ -393,6 +433,9 @@ def _base_row(filter_row: pd.Series, match_type: str, match_conf: str,
         # real value explicitly below, so blanking it here is what stops a title
         # surviving into the study identifier.
         "study_r": "",
+        # The input row's year arrives however pandas typed the column it was read
+        # from — a float where anything in that chunk was missing (#140).
+        "year_r": year_str(row.get("year_r")),
         "original_match_type":       match_type,
         "original_match_confidence": match_conf,
         "classify_llm_model":        classify_model,
@@ -443,11 +486,11 @@ def _merge_row(filter_row: pd.Series, link: dict, outcome: dict,
         "pair_id":         make_pair_id(doi_r_clean, doi_o_clean),
         "doi_o":           doi_o_clean,
         "title_o":         str(link.get("resolved_title_o", "") or ""),
-        "year_o":          str(link.get("resolved_year_o",  "") or ""),
+        "year_o":          year_str(link.get("resolved_year_o")),
         **dict(zip(("ref_o", "authors_o", "bibtex_ref_o"), _build_ref_o(
             doi_o_clean,
             str(link.get("resolved_author_o", "") or ""),
-            str(link.get("resolved_year_o",   "") or ""),
+            year_str(link.get("resolved_year_o")),
             str(link.get("resolved_title_o",  "") or ""),
         ))),
         "study_o":         str(link.get("resolved_study_o", "") or ""),
@@ -489,11 +532,11 @@ def _merge_multi_row(filter_row: pd.Series, orig: dict, outcome: dict,
                                         title_o),
         "doi_o":           doi_o_clean,
         "title_o":         title_o,
-        "year_o":          str(orig.get("year",         "") or ""),
+        "year_o":          year_str(orig.get("year")),
         **dict(zip(("ref_o", "authors_o", "bibtex_ref_o"), _build_ref_o(
             doi_o_clean,
             str(orig.get("first_author", "") or ""),
-            str(orig.get("year",         "") or ""),
+            year_str(orig.get("year")),
             title_o,
         ))),
         "study_o":         str(orig.get("study_number", "") or ""),
@@ -544,6 +587,25 @@ def _empty_row(filter_row: pd.Series, match_type: str, match_conf: str,
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _cached_oa_xml(key: str) -> "dict | None":
+    """The cached OpenAlex GROBID-XML result for *key*, or None when it is no document.
+
+    A content-free shell (`openalex_xml_has_content()`) is not a document — the ladder
+    applies that test before it will read one, and so must every reader of the same
+    cache file, or the shell counts as full text here while ending the row at
+    `no_fulltext_available` there.
+    """
+    cache_file = OA_XML_CACHE_DIR / f"oa_xml_{key}.json"
+    if not cache_file.exists():
+        return None
+    try:
+        with cache_file.open(encoding="utf-8") as fh:
+            cached = json.load(fh)
+    except Exception:
+        return None
+    return cached if openalex_xml_has_content(cached) else None
+
+
 def _has_document(doi_r: str, link: dict) -> bool:
     """True when there is something for the parsers to read.
 
@@ -559,7 +621,7 @@ def _has_document(doi_r: str, link: dict) -> bool:
         return True
     key = cache_key(doi_r)
     return ((PDF_CACHE_DIR / f"{key}.pdf").exists()
-            or (OA_XML_CACHE_DIR / f"oa_xml_{key}.json").exists())
+            or _cached_oa_xml(key) is not None)
 
 
 def _read_parse_cache(doi_r: str) -> "dict | None":
@@ -567,6 +629,13 @@ def _read_parse_cache(doi_r: str) -> "dict | None":
 
     An all-empty cache counts as a miss: it is what a PDF-less run wrote, and reading
     it back would pin the paper to abstract-only coding forever (audit B4).
+
+    So does a cache carrying a transient failure (a method that never got an answer,
+    e.g. reference extraction while the provider was down). Such a file should no
+    longer be written at all, but the ones written before that was true are on disk,
+    and reading them back keeps the outage as this paper's permanent answer about its
+    own references. Treating them as a miss re-parses the document — which is what
+    heals them, since the re-parse is only cached once every method has answered.
     """
     cache_file = PARSE_CACHE_DIR / f"parse_{cache_key(doi_r)}.json"
     if not cache_file.exists():
@@ -576,7 +645,9 @@ def _read_parse_cache(doi_r: str) -> "dict | None":
             results = json.load(fh)
     except Exception:
         return None
-    return None if parse_result_is_empty(results) else results
+    if parse_result_is_empty(results) or parse_result_has_transient_failure(results):
+        return None
+    return results
 
 
 def _save_parse_cache(doi_r: str) -> None:
@@ -590,18 +661,17 @@ def _save_parse_cache(doi_r: str) -> None:
     if not pdf_path.exists():
         pdf_path = None  # type: ignore[assignment]
 
-    oa_xml_file = OA_XML_CACHE_DIR / f"oa_xml_{key}.json"
-    oa_xml: dict | None = None
-    if oa_xml_file.exists():
-        try:
-            with oa_xml_file.open(encoding="utf-8") as fh:
-                oa_xml = json.load(fh)
-        except Exception:
-            pass
-
-    results = _parse_all(doi_r, pdf_path, oa_xml=oa_xml)
+    results = _parse_all(doi_r, pdf_path, oa_xml=_cached_oa_xml(key))
     if parse_result_is_empty(results):
         log.debug("[%s] parse produced no text — not caching", doi_r)
+        return
+    if parse_result_has_transient_failure(results):
+        # One method never got an answer (the reference extractor while its provider
+        # was unreachable, say). The others' text is real, but the whole dict is what
+        # goes to disk and what comes back, so caching now would make an outage this
+        # paper's permanent answer about its references. Nothing is cached until every
+        # method has answered; the text costs a re-parse, which is local.
+        log.info("[%s] parse carries a transient failure — not caching", doi_r)
         return
     try:
         write_json(out_file, results, indent=2)
@@ -954,25 +1024,40 @@ def _extract_row_key(row: "dict | pd.Series") -> str:
     return primary_key(row)
 
 
-# Verdicts the classification screen reaches on its own, without ever seeing full text.
-# They are the rows a changed voter pair or prompt would decide differently, so
-# --rescreen reopens exactly these and nothing else.
+# Verdicts a screen reached without ever seeing full text. They are the rows a changed
+# voter pair or prompt would decide differently, so --rescreen reopens exactly these and
+# nothing else. Reopening is all it does: the screen runs in Stage 2, so the paper comes
+# back only if a new screening generation re-admitted it to the handoff.
 SCREEN_SET_ASIDE_METHODS = {"not_a_replication", "screen_disagreement",
-                            # Historical rows only: the cheap tier now runs in Stage 2
-                            # and Stage 3 never writes this method. Kept because rows
-                            # on disk carry it, and --rescreen is what reopens them.
+                            # Historical rows only: the cheap tier runs in Stage 2, where
+                            # its discard drops the row at the handoff instead of writing
+                            # one. Kept because rows on disk carry it, and --rescreen is
+                            # what reopens them.
                             "prescreen_discard"}
 
-# Where sanity_check parks the screen's own verdicts (see extract/sanity_check.py).
-# A resumed run must read them too, or every screened-out paper is screened again.
-# Defined in shared/schema.py because sanity_check purges keys from the same files.
+# Where sanity_check parks rows it moved out of extracted.csv (see extract/sanity_check.py).
+# A resumed run must read them all, or every settled paper sanity_check filed elsewhere
+# is screened, linked and outcome-coded again — and paid for again. SETTLED excludes the
+# two destinations a re-run is meant to redo (target_pending, api_error); SCREEN is the
+# subset --rescreen reopens. Both are defined in shared/schema.py, because sanity_check
+# writes the same files and must purge a key from them when a paper moves on.
 SCREEN_SET_ASIDE_FILES = _SCREEN_SET_ASIDE_FILES
+SETTLED_SET_ASIDE_FILES = _SETTLED_SET_ASIDE_FILES
 
 
-def _screen_set_aside_keys(data_dir) -> set[str]:
-    """Row keys of papers the screen already settled and sanity_check moved out."""
+def _screen_set_aside_keys(data_dir, rescreen: bool = False) -> set[str]:
+    """Row keys of papers already settled and moved out to a set-aside CSV.
+
+    rescreen — drop the abstract-only screening files from the set, so those papers
+        are eligible again. Whether one actually returns is Stage 2's call now: the
+        row has to be in the handoff, which means the current screening generation
+        admitted it. The other set-aside files are settled regardless: no flag
+        reopens a provisional title-search link or a doi mismatch.
+    """
+    files = [f for f in SETTLED_SET_ASIDE_FILES
+             if not (rescreen and f in SCREEN_SET_ASIDE_FILES)]
     keys: set[str] = set()
-    for fname in SCREEN_SET_ASIDE_FILES:
+    for fname in files:
         path = data_dir / fname
         if not path.exists():
             continue
@@ -983,73 +1068,117 @@ def _screen_set_aside_keys(data_dir) -> set[str]:
     return keys
 
 
+def _demote_stale_row(row: dict) -> dict:
+    """A resolved link_method with no doi_o, filed as what it actually is.
+
+    The same demotion sanity_check applies (`link_method` → target_pending, with the
+    reason on the row), so a row that reaches the resume before a sanity_check pass
+    ends up in the same state as one that reaches it after.
+    """
+    row = dict(row)
+    row["link_method"] = "target_pending"
+    prior = str(row.get("link_evidence", "") or "")
+    note = "demoted on resume: resolved link_method with no doi_o"
+    row["link_evidence"] = (f"{note}; {prior}" if prior else note)[:2000]
+    return row
+
+
 def _load_extracted_rows(out_path, rescreen: bool = False
                          ) -> tuple[dict[str, list[dict]], dict[str, list[dict]]]:
     """Partition extracted.csv rows by resolution status for a resuming run.
 
-    Also reads the screen's set-aside CSVs, which hold papers sanity_check moved out
-    of extracted.csv; without them a resume re-screens every paper the screen already
-    settled.
+    Also reads the settled set-aside CSVs, which hold papers sanity_check moved out
+    of extracted.csv; without them a resume redoes every paper that was settled
+    anywhere other than extracted.csv — re-screening it and re-walking the ladder.
 
-    False_positive rows in the existing file are dropped — they should never have
-    been written to extracted.csv and will not be re-written on resume.
+    A stale row (a resolved link_method with no doi_o) is DEMOTED to target_pending
+    and carried, never dropped: see the comment at the demotion.
+
+    Two classes of row are deliberately purged rather than partitioned, and they are
+    the only rows a resume does not put back — everywhere else in this file that
+    claims a resume loses nothing means "nothing except these two":
+
+    * false_positive rows, which should never have been written to extracted.csv;
+    * rows carrying no identifier at all — no DOI, no OpenAlex id, no URL, no title.
+      They cannot be keyed, so they can be neither deduplicated nor resumed, and
+      audit_extracted blocks them from validation anyway.
 
     rescreen — treat the screen's own set-aside verdicts (not_a_replication,
-        screen_disagreement) as unresolved so the current voter pair decides them
-        again. Off by default: a resumed run should reproduce its predecessor's
-        decisions, not silently revisit them.
+        screen_disagreement, prescreen_discard) as unresolved, so a paper an older
+        screening generation ended is eligible for whatever the current one said
+        about it. Off by default: a resumed run should reproduce its predecessor's
+        decisions, not silently revisit them. A reopened paper is returned as
+        `pending`, not withheld: reopening asks for it to be decided again, and if
+        this run never gets to it (it is no longer in filtered.csv) its rows are
+        written back as they stood.
 
     Returns:
         resolved — row_key → list of rows that are fully resolved (link_method != target_pending)
-        pending  — row_key → its rows, where at least one has link_method == target_pending.
-                   The rows come back too because a resume that never sees the key
-                   again (the paper left filtered.csv) has to write them back
-                   unchanged rather than let the rewritten file drop them.
+        pending  — row_key → its rows: at least one is target_pending, or the paper was
+                   demoted/reopened here. The rows come back too because a resume that
+                   never sees the key again (the paper left filtered.csv) has to write
+                   them back unchanged rather than let the rewritten file drop them.
     """
     # An empty list of rows: the paper is settled, so it is skipped, but its row
     # stays in the set-aside CSV rather than being written back to extracted.csv.
-    set_aside_keys = set() if rescreen else _screen_set_aside_keys(Path(out_path).parent)
+    # The set-asides of THIS output file: the test sandbox has its own directory, so a
+    # test run neither reads nor writes production's settled keys.
+    set_aside_keys = _screen_set_aside_keys(set_aside_dir(out_path), rescreen=rescreen)
     if not out_path.exists():
         return {k: [] for k in set_aside_keys}, {}
     df = pd.read_csv(out_path, dtype=str, encoding="utf-8-sig").fillna("")
     # Drop false_positive rows that were incorrectly written in a prior run.
     df = df[df["filter_status"] != "false_positive"]
+    reopened: set[str] = set()
     if rescreen and not df.empty:
-        # Drop the paper, not just the row: the screen decides a whole paper, so a
+        # The paper, not the row: the screen decides a whole paper, so a
         # multi-original paper with one set-aside row is re-screened as a unit.
+        #
+        # Reopened, not removed. Dropping these rows from the frame made --rescreen a
+        # deletion path of its own: a paper the current handoff no longer carries was
+        # never re-processed, so nothing wrote its rows back and they left the file.
+        # Filing them under `pending` reopens the paper — it is not `resolved`, so the
+        # run redoes it — while the carry-back keeps its rows if the run never gets to
+        # it. Reopening defers; it does not delete.
         set_aside = (df["link_method"].isin(SCREEN_SET_ASIDE_METHODS)
                      | df["outcome"].isin(SCREEN_SET_ASIDE_METHODS))
         keys = df.apply(_extract_row_key, axis=1)
-        df = df[~keys.isin(set(keys[set_aside]))]
+        reopened = {k for k in keys[keys.isin(set(keys[set_aside]))] if k}
     resolved: dict[str, list[dict]] = {}
     pending: dict[str, list[dict]] = {}
     for row_key, group in df.groupby(df.apply(_extract_row_key, axis=1), sort=False):
         if not row_key:
             continue  # rows with no DOI, no OA ID, and no title — skip; can't dedup
+        if row_key in reopened:
+            pending[row_key] = group.to_dict("records")
+            continue
         rows = group.to_dict("records")
         # Stale artifact: LLM method written before the no_original_found fix — these
-        # have link_method=llm_fulltext/llm_cited_candidates but an empty doi_o. Drop
-        # them from the resume state so they are re-processed.
+        # have link_method=llm_fulltext/llm_cited_candidates but an empty doi_o. The
+        # row claims a target it cannot name, so it must not stand as resolved.
         #
-        # Dropping is only safe for a paper still in filtered.csv: a key marked pending
-        # is NOT written back, so one whose paper has left the input is deleted from
-        # extracted.csv outright. That is how 76 rows vanished on 2026-08-05, when the
-        # engine handoff shrank the input below the corpus this file was built from.
-        # sanity_check now demotes these to target_pending before they can reach here,
-        # so the filter is a backstop — and a loud one, because a silent deletion is
-        # what made the loss invisible in the first place.
+        # It is DEMOTED rather than dropped. Dropping it deleted it from the file: a
+        # key marked pending was not written back, so a paper that had meanwhile left
+        # filtered.csv lost the row outright — that is how 76 rows vanished on
+        # 2026-08-05, when the engine handoff shrank the input below the corpus this
+        # file was built from. Demotion is what sanity_check already does to these
+        # rows, and it costs a re-run of one paper rather than a row nobody can get
+        # back. It also makes the resume's guarantee absolute: every row the file held
+        # at the start is still in it at the end, whatever happens in between.
         stale = [r for r in rows
                  if r.get("link_method") in {"llm_fulltext", "llm_cited_candidates"}
                  and not r.get("doi_o", "").strip()]
-        rows = [r for r in rows if r not in stale]
         if stale:
             log.warning("[%s] %d row(s) with a resolved link_method but no doi_o "
-                        "dropped from the resume state — they are re-processed only "
-                        "if the paper is still in filtered.csv", row_key, len(stale))
-        if not rows:
-            # Every row was a stale artifact: the key is unresolved, and there is
-            # nothing worth carrying forward if the paper never comes back.
-            pending[row_key] = []
+                        "demoted to target_pending — the paper is re-processed, and "
+                        "the rows are carried forward if it has left filtered.csv",
+                        row_key, len(stale))
+            rows = [_demote_stale_row(r) if r in stale else r for r in rows]
+            # The paper, not the row: a key with one stale row and one good one is
+            # unresolved as a whole. Filing it under `resolved` would mark the paper
+            # done and never ask for it again — while `pending` both re-processes the
+            # paper and writes its rows back if it has left filtered.csv.
+            pending[row_key] = rows
             continue
         is_pending = any(r.get("link_method") == "target_pending" for r in rows)
         if is_pending:
@@ -1140,6 +1269,13 @@ def _guard_original_link(row: dict) -> dict:
         try:
             meta = (_search_crossref_by_title(title_o, year_o)
                     or _search_openalex_by_title(title_o, year_o))
+        except (OpenAlexQuotaExhausted, _TitleSearchUnavailable):
+            # Deliberate signals, not failures to absorb. Swallowed, they make this
+            # guard read "no DOI exists for this title" from a search that never
+            # ran — and step 3 below then writes no_doi (or target_pending) on a row
+            # whose link was resolved, permanently, because nothing re-runs a row
+            # that got a verdict. Let them reach the run loop.
+            raise
         except Exception as exc:
             meta = None
             log.debug("[%s] doi_o title-recovery failed: %s", doi_r, exc)
@@ -1185,7 +1321,7 @@ def _verify_row(row: dict) -> dict:
     link_confidence on mismatch, and appends the verification note to
     link_evidence.
     """
-    if row.get("link_method") in {"target_pending", "api_error", "prescreen_discard"}:
+    if row.get("link_method") in VERIFICATION_SKIP_LINK_METHODS:
         row["doi_o_verification"] = "skipped"
         return row
 
@@ -1215,7 +1351,11 @@ def _verify_row(row: dict) -> dict:
         row["bibtex_ref_o"] = new_bibtex
     if v["doi_o_verification"] == "mismatch":
         # The DOI is registered but demonstrably describes a DIFFERENT paper, and
-        # verify_and_correct found no better candidate. Keeping it sends validators
+        # verify_and_correct found no better candidate IN A COMPLETED SEARCH — a
+        # search that could not reach CrossRef or OpenAlex comes back "api_error"
+        # instead and never reaches this branch, because a registry being down is
+        # not evidence that no better candidate exists and must not cost the row its
+        # DOI. Keeping it sends validators
         # to the wrong original and yields a confidently wrong url_o, which is worse
         # than no link at all. Drop the DOI and everything derived from it; the
         # title/author/year claim is retained so the row can still be reviewed.
@@ -1253,22 +1393,130 @@ def _fill_work_ids(row: dict) -> dict:
     return row
 
 
-def _finalise_row(result_row: dict) -> dict:
-    """Verify doi_o, fill the work ids, and make the row's text safe to write.
+def _sanitise_row(result_row: dict) -> dict:
+    """Make a row's text safe to write. Free — no API call.
 
-    Split out of _append_row because it is the part that calls APIs: two lookups per
-    row, which the workers must make on their own time rather than while holding the
-    write lock the whole pool queues on.
+    This is the last point every written row passes through, so it is where the
+    assertion that no float year escapes belongs (#140). The row builders normalise
+    with year_str(); a raise here means a new write path bypassed them.
     """
-    result_row = _fill_work_ids(_verify_row(result_row))
-
-    # Sanitize row data to handle problematic characters
     for key, val in result_row.items():
         if isinstance(val, str):
             # Replace control characters and problematic whitespace
             # but preserve newlines within fields (they'll be quoted)
             result_row[key] = val.replace('\x00', '').replace('\r', ' ')
+    assert_no_float_years(result_row)
     return result_row
+
+
+def _finalise_row(result_row: dict) -> dict:
+    """Verify doi_o, fill the work ids, and make the row's text safe to write.
+
+    Split out of the write because it is the part that calls APIs: two lookups per
+    row, which the workers must make on their own time rather than while holding the
+    write lock the whole pool queues on.
+    """
+    return _sanitise_row(_fill_work_ids(_verify_row(result_row)))
+
+
+# doi_o_verification values that settle the question. Everything else — "api_error"
+# (CrossRef/OpenAlex never answered) and a blank (a row written before the column, or
+# before this run's verification reached it) — is asked again on the next run, which
+# is the whole point of distinguishing an outage from an answer.
+SETTLED_VERIFICATIONS = frozenset({
+    "verified", "corrected", "mismatch", "no_doi", "not_found", "no_metadata",
+    "skipped",
+})
+
+
+def _needs_verification(row: dict) -> bool:
+    """True when this row's doi_o verification has not settled yet."""
+    return str(row.get("doi_o_verification", "") or "").strip() not in SETTLED_VERIFICATIONS
+
+
+def _finalise_carried_row(result_row: dict) -> dict:
+    """Finalise a row a resume is carrying forward unchanged from extracted.csv.
+
+    Verification is the expensive half of _finalise_row: verify_and_correct issues up
+    to three OpenAlex free-text searches, each billed at 10× a filter query, and a
+    resume re-ran them for EVERY resolved row on EVERY restart — the dominant OpenAlex
+    line of a long run, spent to re-derive an answer the row already carries.
+
+    So a settled verification is trusted and only the free half runs: the control-char
+    strip, the year assertion, and the work-id fill (single-entity DOI lookups, free
+    and cached, and blank only where the last run could not fill them). "api_error" and
+    a blank are not settled and are re-verified here — that retry is what makes it safe
+    to skip the rest. `python -m extract.audit_dois` re-verifies everything on demand.
+    """
+    # A carried row comes off disk, not out of this run's builders, so its years are
+    # whatever an older checkout wrote — data/extracted.csv was backfilled but
+    # --out-path/--extracted-test targets and collaborators' files were not. #140's
+    # assertion is there to catch a NEW float-producing code path; firing it on legacy
+    # data would abort the resume with the output already truncated to its header.
+    # So: normalise here, then let _sanitise_row assert as usual — one assertion site,
+    # still loud for every row this run builds itself.
+    for col in YEAR_COLS:
+        if col in result_row:
+            result_row[col] = year_str(result_row[col])
+    if _needs_verification(result_row):
+        return _finalise_row(result_row)
+    return _sanitise_row(_fill_work_ids(result_row))
+
+
+def _carried_row_as_written(result_row: dict) -> dict:
+    """The last-resort form of a carried row: what it already said on disk.
+
+    No API call and no assertion — it is used only when finalisation failed, and the
+    alternative to writing the row is losing it from a file already truncated to its
+    header. The year normalisation and the control-char strip are kept because they
+    are what makes the text writable at all.
+    """
+    for col in YEAR_COLS:
+        if col in result_row:
+            result_row[col] = year_str(result_row[col])
+    for key, val in result_row.items():
+        if isinstance(val, str):
+            result_row[key] = val.replace("\x00", "").replace("\r", " ")
+    return result_row
+
+
+def _restore_carried_rows(out_path, carried: "list[dict]") -> int:
+    """Write back every carried row that is not on disk yet. Returns how many.
+
+    The recovery path of the resume prologue: the output has been truncated to its
+    header, so a carried row the loop did not get written is a row lost. It is decided
+    against what the FILE holds rather than against the loop's own counter, because an
+    interrupt can land between the append flushing and the counter incrementing — and
+    then the counter says the row is missing when it is already there. Writing it a
+    second time would be a duplicate row that every later resume preserves and
+    audit_extracted flags as a BLOCKER, so it is the file, not the counter, that is
+    asked.
+
+    Rows are matched by resume key, counted: a paper with three originals has three
+    rows under one key, and only the ones missing from the file are restored.
+    """
+    try:
+        with csv_lock(out_path):
+            on_disk = pd.read_csv(out_path, dtype=str, encoding="utf-8-sig").fillna("")
+        written_keys = Counter(on_disk.apply(_extract_row_key, axis=1)) \
+            if not on_disk.empty else Counter()
+    except Exception as exc:
+        # An unreadable output tells us nothing about what is in it; restoring every
+        # row risks duplicates, and restoring none risks losing them all. Duplicates
+        # are repairable, a deleted row whose paper has left filtered.csv is not.
+        log.warning("could not read %s while restoring carried rows (%s) — "
+                    "restoring all of them", out_path, exc)
+        written_keys = Counter()
+
+    restored = 0
+    for result_row in carried:
+        key = _extract_row_key(result_row)
+        if written_keys[key] > 0:
+            written_keys[key] -= 1
+            continue
+        _write_row(out_path, _carried_row_as_written(result_row))
+        restored += 1
+    return restored
 
 
 def _require_input_csv(filtered_path: Path) -> None:
@@ -1290,6 +1538,138 @@ def _require_input_csv(filtered_path: Path) -> None:
     )
 
 
+def _file_sha256(path: Path) -> str:
+    """sha256 of a file's bytes, read in blocks so a large CSV is never held whole."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _verify_input_manifest(filtered_path: Path) -> None:
+    """Refuse an input CSV its own manifest does not describe.
+
+    Stage 2's handoff publishes the manifest BEFORE the CSV it describes
+    (`filter/engine/handoff.py:_publish`), so the one state a crash can leave is a
+    new manifest over the PREVIOUS handoff — a torn or superseded publish. That
+    ordering only buys anything if the reader looks, and this is the reader looking:
+    the CSV's bytes and its header must be the ones the manifest names, or the run
+    stops before it spends a provider bill on an input nobody can identify later.
+
+    Whether ABSENCE is a disagreement depends on the file, and the file says which it
+    is: a handoff writes the engine's provenance columns (`ENGINE_EXPORT_COLS` —
+    release_id, route_rule, the rest), and nothing else does. A header carrying them
+    claims to have come from a release, so it has to name which one: a missing
+    manifest there is a refusal, because that file is only ever produced by a handoff
+    and its manifest going missing means something went wrong — including the case
+    this whole check exists for, where deleting the manifest of a torn publish would
+    otherwise downgrade a detectable mismatch to a shrug.
+
+    A header without them is misc/sample_filtered.csv, a hand-made CSV, an `export`ed
+    pile or a fixture, and a missing manifest warns and proceeds — refusing those
+    would break real workflows to prevent nothing.
+
+    The discriminator is the CONTENT rather than the path (`data/filtered.csv`, or
+    whether --filtered-csv was passed) because provenance travels with the artifact:
+    a handoff published elsewhere with `--out` is still bound, a copy of one is still
+    bound, and naming the default path explicitly cannot buy leniency. It reads the
+    marker from `ENGINE_EXPORT_COLS` rather than from a literal, so a column renamed
+    in the schema cannot silently turn the requirement off.
+
+    An unreadable manifest IS a disagreement, and refuses: a file that cannot be parsed
+    says nothing about the CSV, and treating "I cannot read the description" as "there
+    is no description" is how a torn write passes for a hand-made input — the same
+    reasoning the scan ledger and the pool provenance sidecar follow on this branch.
+
+    The hash is over the whole CSV, which costs ~0.1 s per 300 MB warm (measured;
+    a cold read dominates it). filtered.csv is 2.6 MB today, so the check is free at
+    startup and stays affordable well past any size this input is heading for.
+    """
+    with open(filtered_path, encoding="utf-8-sig", newline="") as handle:
+        header = next(csv.reader(handle), [])
+    from_a_handoff = bool(set(header) & set(ENGINE_EXPORT_COLS))
+
+    manifest_path = Path(str(filtered_path) + ".manifest.json")
+    if not manifest_path.exists():
+        if from_a_handoff:
+            raise RuntimeError(
+                f"{filtered_path} carries the engine's provenance columns, so the "
+                f"engine wrote it — but {manifest_path.name} is not there, so nothing "
+                "says which release it names or whether it is complete.\n"
+                "Both producers publish the pair: `handoff` writes Stage 3's input, "
+                "`export` writes a single pile. A missing manifest means the publish "
+                "was interrupted, or the CSV was copied away from it by hand.\n"
+                "Re-publish it (whichever wrote it):\n"
+                f"  python -m filter.engine handoff --out {filtered_path}\n"
+                f"  python -m filter.engine export --pile PILE --out {filtered_path}"
+            )
+        log.warning("%s has no manifest (%s) — cannot verify this input came from a "
+                    "handoff; proceeding", filtered_path.name, manifest_path.name)
+        return
+
+    def _refuse(problem: str) -> None:
+        raise RuntimeError(
+            f"{filtered_path} does not match its manifest {manifest_path.name}: "
+            f"{problem}\n"
+            "That is a torn or superseded handoff — the manifest was published and "
+            "the CSV it describes was not (or was replaced since).\n"
+            "Re-publish the pair: python -m filter.engine handoff --out "
+            f"{filtered_path}"
+        )
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        expected_sha = str(manifest["sha256"])
+        expected_cols = list(manifest["columns"])
+    except Exception as exc:
+        _refuse(f"the manifest could not be read ({exc})")
+
+    actual_sha = _file_sha256(filtered_path)
+    if actual_sha != expected_sha:
+        _refuse(f"sha256 is {actual_sha[:16]}…, manifest says {expected_sha[:16]}… "
+                f"(manifest describes {manifest.get('rows', '?')} rows from release "
+                f"{str(manifest.get('release_id', '?'))[:12]}…)")
+
+    if header != expected_cols:
+        missing = [c for c in expected_cols if c not in header]
+        extra = [c for c in header if c not in expected_cols]
+        detail = (f"missing {missing}, unexpected {extra}" if (missing or extra)
+                  else "same columns in a different order")
+        _refuse(f"header does not match the manifest's columns — {detail}")
+
+
+def _require_screen_verdicts(filtered_path: Path, no_llm: bool,
+                             screen_here: bool) -> None:
+    """Refuse an input CSV that cannot carry a screen verdict at all.
+
+    The front-door screen moved to Stage 2, so `screen_verdict` is part of the
+    input contract (`SCREEN_COLS` in shared/schema.py). A file whose HEADER lacks
+    the column is not an input this run can screen or trust — every row would be
+    written target_pending — and saying so once, at startup, is better than a
+    million rows saying it one at a time. A blank value on a present column is a
+    different case: that is one unscreened row among screened ones, and it is
+    answered per row.
+
+    Neither --no-llm (which screens nothing by design) nor --screen-here (which
+    asks for the screen to run here) is refused.
+    """
+    if no_llm or screen_here:
+        return
+    with open(filtered_path, encoding="utf-8-sig", newline="") as handle:
+        header = next(csv.reader(handle), [])
+    if "screen_verdict" in header:
+        return
+    raise RuntimeError(
+        f"{filtered_path} carries no screen_verdict column, so no row in it has "
+        "been through the front-door screen — which runs in Stage 2 now, not here.\n"
+        "Screen the pile and re-write the handoff:\n"
+        "  python -m filter.engine screen --tier screen_expensive --run\n"
+        "  python -m filter.engine handoff --out data/filtered.csv\n"
+        "Or pass --screen-here to screen these rows in Stage 3 instead."
+    )
+
+
 def _write_header(out_path) -> None:
     """Create the output CSV with its header — the run's ONLY mode='w' write.
 
@@ -1303,10 +1683,47 @@ def _write_header(out_path) -> None:
     stale file in place, looking like the fresh result.
     """
     with csv_lock(out_path):
-        pd.DataFrame(columns=list(EXTRACTED_COLS)).to_csv(
-            out_path, mode="w", index=False, encoding="utf-8-sig",
-            quoting=1, quotechar='"',
-        )
+        _write_header_unlocked(out_path)
+
+
+def _write_header_unlocked(out_path) -> None:
+    """The truncating write itself, for a caller that already holds the file's lock.
+
+    Exists because the resume has to READ the file and truncate it without another
+    writer getting in between (see _load_and_truncate), and filelock's locks are per
+    open-file-description: taking the same lock twice in one process would block for
+    good.
+    """
+    pd.DataFrame(columns=list(EXTRACTED_COLS)).to_csv(
+        out_path, mode="w", index=False, encoding="utf-8-sig",
+        quoting=1, quotechar='"',
+    )
+
+
+def _load_and_truncate(out_path, rescreen: bool = False
+                       ) -> tuple[dict[str, list[dict]], dict[str, list[dict]]]:
+    """Read the resume state and truncate the file to its header, under ONE lock.
+
+    Unlocked, the two steps are a race that deletes rows nobody can recover: a
+    concurrent run appends a row after this one has read the file, the truncation then
+    wipes it, and it is in neither `resolved` nor `pending`, so nothing writes it
+    back — _restore_carried_rows cannot restore a row it never saw.
+
+    The lock covers the read and the truncation and nothing else. It is deliberately
+    NOT held across the prologue's re-verification, which issues OpenAlex searches and
+    runs for minutes: run_extract takes this same lock for every row it appends, so
+    holding it that long would stall a concurrent run — the trade sanity_check and
+    audit_dois avoid by merging at the end rather than locking throughout. Here the
+    locked section is one CSV read, so it is measured in seconds and the merge is
+    unnecessary.
+
+    _load_extracted_rows takes no lock of its own (its other reads are of the
+    set-aside CSVs, which are different files), so nesting is safe.
+    """
+    with csv_lock(out_path):
+        resolved, pending = _load_extracted_rows(out_path, rescreen=rescreen)
+        _write_header_unlocked(out_path)
+    return resolved, pending
 
 
 def _write_row(out_path, result_row: dict) -> None:
@@ -1332,11 +1749,6 @@ def _write_row(out_path, result_row: dict) -> None:
         raise
 
 
-def _append_row(out_path, result_row: dict) -> None:
-    """Finalise one result row and stream it to the output CSV."""
-    _write_row(out_path, _finalise_row(result_row))
-
-
 # Read at call time, so a run picks up the keys config actually loaded.
 _SCREEN_KEYS = {
     "GEMINI_API_KEY":     lambda: GEMINI_API_KEYS[0] if GEMINI_API_KEYS else "",
@@ -1345,24 +1757,30 @@ _SCREEN_KEYS = {
 }
 
 
-def _check_screen_providers(no_llm: bool) -> None:
+def _check_screen_providers(no_llm: bool, screen_here: bool = False) -> None:
     """Refuse to start when a stage of the run has no key to reach its model.
 
-    The screen decides whether a paper is a replication at all by voting two
-    providers against each other. With one provider configured every screened row
-    returns a single vote, which the pipeline can only treat as an incomplete
-    screen — the whole run would produce target_pending rows and discard nothing.
+    OUTCOME_MODEL's key is always needed: no call falls back to a provider the run
+    can still reach, so a key it is missing costs it every outcome, and finding
+    that out at startup is cheaper than finding it out row by row. The "/" in a
+    model id is what names OpenRouter, here as everywhere.
 
-    Which key each voter needs comes from screen_voters(), the single place the pair
-    is configured — so a changed voter changes the required key with it. OUTCOME_MODEL
-    is checked the same way and by the same "/" convention: no call falls back to a
-    provider the run can still reach, so a key it is missing costs it every outcome,
-    and finding that out at startup is cheaper than finding it out row by row.
+    The two SCREEN voters' keys are needed only under --screen-here. The screen
+    runs in Stage 2 now and Stage 3 reads its verdict off the row, so an ordinary
+    run calls neither voter and demanding their keys would refuse runs that need
+    nothing from them. Under the flag the pair is required in full: with one
+    provider configured every screened row returns a single vote, which can only be
+    treated as an incomplete screen, and the run would produce target_pending rows
+    and discard nothing. Which key each voter needs comes from screen_voters(), the
+    single place the pair is configured, so a changed voter changes the required
+    key with it.
     """
     if no_llm:
         return
     outcome_key = "OPENROUTER_API_KEY" if "/" in OUTCOME_MODEL else "OPENAI_API_KEY"
-    needed = {env for _, _, env, _ in screen_voters()} | {outcome_key}
+    needed = {outcome_key}
+    if screen_here:
+        needed |= {env for _, _, env, _ in screen_voters()}
     missing = sorted(env for env in needed if not _SCREEN_KEYS[env]())
     if missing:
         raise RuntimeError(
@@ -1497,13 +1915,7 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
         result_row["n_originals"]   = len(rows)
         result_row["original_match_type"] = ("multiple_original" if len(rows) > 1
                                              else "single_original")
-        # Both halves have to hold: a resolved method says the ladder finished, and
-        # link_confidence says the record it finished on is checkable. A row whose
-        # link is low-confidence must not advertise a high-confidence match.
-        result_row["original_match_confidence"] = (
-            "high" if (str(result_row.get("link_method", "")) in RESOLVED_LINK_METHODS
-                       and str(result_row.get("link_confidence", "")) == "high")
-            else "low")
+        result_row["original_match_confidence"] = _match_confidence(result_row)
     return rows
 
 
@@ -1541,13 +1953,14 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
                                         "none could be matched to a record")
             return [] if resolved_only else [pending]
 
-    # original_match_confidence is now an observation about the answer, not a
-    # prediction made before it: high when the ladder settled on one original, low
-    # when the row is written without one.
+    # original_match_confidence is an observation about the answer, not a prediction
+    # made before it, and it is settled AFTER the guard by the same `_match_confidence`
+    # rule the per-target path uses — the value passed into _merge_row here is only a
+    # placeholder the line below overwrites.
     result_row = _guard_original_link(
-        _merge_row(row, link, {}, "single_original",
-                   "high" if link.get("resolved") else "low", 1, 1, "",
+        _merge_row(row, link, {}, "single_original", "low", 1, 1, "",
                    screen=screen))
+    result_row["original_match_confidence"] = _match_confidence(result_row)
     link_method = str(result_row.get("link_method", ""))
     if resolved_only and link_method in _NO_LINK_METHODS:
         log.debug("[%s] --resolved-only: skipping %s row", doi_r, link_method)
@@ -1563,22 +1976,63 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
     return [_apply_outcome(result_row, outcome)]
 
 
-def _prescreen_row(filter_row: pd.Series, pre: dict) -> dict:
-    """The row to write when the cheap pre-screen ends the paper before the screen votes.
+def _screen_from_row(filter_row: pd.Series) -> "dict | None":
+    """The screen's verdict as `classify_replication()` shaped it, from the CSV.
 
-    Deliberately NOT built through _front_door_row: that function speaks the validated
-    screen's vocabulary (votes, categories, record_type) and a pre-screen answer has
-    none of it. What this row must carry instead is who ended it — the paper is never
-    seen again by the screen or by a human, so the models and their answers are the
-    whole audit trail.
+    The two-voter front door runs in Stage 2 (`filter/engine/tiers.py`), and its
+    answer arrives on the row in `SCREEN_COLS`. This rebuilds the dict the rest of
+    Stage 3 already speaks, so nothing below this line knows the screen moved:
+    `_record_type()` reads `record_type`, `_front_door_row()` reads
+    `screen_verdict` and the votes, `screen_references_with_llm()` reads
+    `screen_classification` to decide whether to pick a target at all, and the
+    pre-PDF title-search rung reads each voter's classification AND confidence.
+
+    Returns None when the row carries no verdict — a blank `screen_verdict` — which
+    is a different statement from a verdict of "proceed" and is answered separately
+    by the caller.
+
+    `screen_votes` is `<model>=<classification>/<confident|unconfident>`, |-joined
+    in call order. The model, not the provider, because the model is what the
+    verdict rows record and what the generation is keyed on; the provider is
+    derived from it for the evidence strings a reviewer reads.
     """
-    link = {"resolution_method": "prescreen_discard",
-            "llm_evidence": pre.get("evidence", ""),
-            "llm_model": pre.get("models", ""),
-            "llm_reasoning": pre.get("evidence", "")}
-    return _merge_row(filter_row, link,
-                      _outcome_without_coding("prescreen_discard", link),
-                      "single_original", "low", 1, 1)
+    verdict = str(filter_row.get("screen_verdict", "") or "").strip()
+    if not verdict:
+        return None
+
+    votes: list[dict] = []
+    for part in str(filter_row.get("screen_votes", "") or "").split("|"):
+        if "=" not in part:
+            continue
+        model, _, answer = part.partition("=")
+        classification, _, confidence = answer.rpartition("/")
+        votes.append({
+            "provider":       provider_for(model.strip()),
+            "model":          model.strip(),
+            "classification": classification.strip().lower(),
+            "confident":      confidence.strip() == "confident",
+            "categories":     [],
+            "reasoning":      "",
+        })
+
+    record_type = str(filter_row.get("screen_record_type", "") or "").strip()
+    labels = {v["classification"] for v in votes}
+    categories = [c for c in str(filter_row.get("screen_categories", "") or "").split("|")
+                  if c]
+    return {
+        "resolution_method": "llm_refscreen_declined",
+        "screen_verdict": verdict,
+        "screen_classification": (record_type or
+                                  (labels.pop() if len(labels) == 1 else "unclear")),
+        "record_type": record_type,
+        "categories": categories,
+        "votes": votes,
+        "llm_source": "+".join(v["provider"] for v in votes),
+        "llm_model": "+".join(v["model"] for v in votes),
+        "llm_evidence": str(filter_row.get("screen_evidence", "") or ""),
+        "llm_reasoning": str(filter_row.get("screen_reasoning", "") or ""),
+        "llm_prompt": "", "llm_error": "",
+    }
 
 
 def _front_door_row(filter_row: pd.Series, screen: dict) -> "dict | None":
@@ -1749,7 +2203,12 @@ def _should_skip(row: pd.Series, row_key: str, doi_r_clean: str,
     # Exception: --doi-r targets are always processed (explicit re-run request).
     if row_key and row_key in resolved_main and doi_r_clean not in doi_r_targets:
         return "already in extracted.csv"
-    # False positives are excluded from Stage 3 — only replications and reproductions proceed.
+    # `false_positive` is the discard pile's filter_status (filter/spec/conventions.json),
+    # and `filter.engine handoff` exports only the two screen piles — so the input a
+    # production run reads cannot contain one. It is still checked because the input is
+    # whatever --filtered-csv names: `filter.engine export` will write the discard pile
+    # to a CSV, and the legacy filtered.csv files predating the engine carry the value
+    # too. Extracting a known discard is expensive and lands in the validation queue.
     if row.get("filter_status") == "false_positive":
         return "false_positive"
     if only_reproductions and str(row.get("filter_status", "")).strip().lower() != "reproduction":
@@ -1759,7 +2218,8 @@ def _should_skip(row: pd.Series, row_key: str, doi_r_clean: str,
 
 def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
                  no_reproductions: bool,
-                 resolved_only: bool, recalibrate_outcomes: bool) -> list[dict]:
+                 resolved_only: bool, recalibrate_outcomes: bool,
+                 screen_here: bool = False) -> list[dict]:
     """Every row the pipeline writes for one filtered.csv row.
 
     Front door, then the resolution ladder — there is no router in front of it any
@@ -1783,16 +2243,34 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
     # expensive tier.
 
     # ── Front door: is this a replication at all? ────────────────────────
-    # 58% of the rows that reach the classification screen are discarded there.
-    # Asking first costs nothing — the two votes were already being made — and
-    # spares those rows the heavy-model match-type call, the resolution ladder,
-    # PDF acquisition and outcome coding. The verdict is threaded into
-    # run_for_doi so Stage 4.5 picks a target without voting again.
-    screen = None
-    if not no_llm:
+    # READ, not asked. The two-voter screen is Stage 2's `screen_expensive` tier and
+    # its verdict arrives on the row (SCREEN_COLS). It used to run here too, on the
+    # same cache key — free on the second pass, but two copies of one decision, and
+    # only one of them could be claimed, budget-gated or recorded as evidence.
+    #
+    # 58% of screened rows are discarded, and the handoff leaves those out entirely,
+    # so most rows arriving here read "proceed". The verdict is still threaded into
+    # run_for_doi, where Stage 4.5 picks a target without voting.
+    screen = _screen_from_row(row)
+    if screen is None and screen_here and not no_llm:
+        # --screen-here: the explicit fallback, for an --as-routed handoff or a
+        # hand-made CSV. Never implicit — a silent re-screen is what this move
+        # removed.
         token_counter.set_stage("extract_refscreen")
         screen = classify_replication(doi_r, str(row.get("title_r", "") or ""),
                                       str(row.get("abstract_r", "")))
+    if screen is None and not no_llm:
+        # The row carries no verdict and none was asked for. It is not extractable:
+        # nothing has said this is a replication, and guessing is what the screen
+        # exists to stop. target_pending, because a re-run after Stage 2 has
+        # screened the work decides it — the same ending an incomplete screen gets.
+        log.info("[%s] no screen verdict on the input row — writing target_pending "
+                 "(screen it in Stage 2, or pass --screen-here)", doi_r)
+        return [_empty_row(row, "single_original", "low",
+                           link_method="target_pending",
+                           error="no screen verdict: the row carries no "
+                                 "screen_verdict column value")]
+    if screen is not None:
         done = _front_door_row(row, screen)
         if done is not None:
             log.info("[%s] front-door screen: %s", doi_r, done["link_method"])
@@ -1802,7 +2280,7 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
         # qualifying vote (unclear/unclear, or an unconfident none against an
         # unconfident qualifying answer) said nothing, and the row keeps whatever
         # Stage 2 left — a needs_review row stays needs_review, waits for a human
-        # on the check page, and is not imported by csv_to_db.
+        # on the check page, and is not pushed for validation.
         if screen.get("record_type"):
             row["filter_status"] = screen["record_type"]
             row["filter_method"] = "screen"   # the screen decided the type
@@ -1845,9 +2323,15 @@ def run_extract(no_llm: bool = False,
                 doi_r_filter: "list[str] | None" = None,
                 recalibrate_outcomes: bool = False,
                 rescreen: bool = False,
-                filtered_csv: "Path | str | None" = None) -> pd.DataFrame:
+                screen_here: bool = False,
+                filtered_csv: "Path | str | None" = None) -> None:
     """
     Run Stage 3 and stream results to data/extracted.csv.
+
+    Returns nothing: every row is written the moment it is finished, and the output
+    CSV is the run's only result. It used to also accumulate every written row in
+    memory and hand back a DataFrame of them — a second copy of a file that reaches
+    millions of rows, which no caller read.
 
     no_llm              — skip all LLM calls (rule-based only).
     limit               — process only the first N non-false-positive rows.
@@ -1856,7 +2340,8 @@ def run_extract(no_llm: bool = False,
     only_reproductions  — process ONLY filter_status=reproduction rows; others are
                           skipped entirely (not written at all).
     skip_flora_validated — skip DOIs already in FLoRA: validated entry-sheet rows
-                           (FLORA_VALIDATED_STATUSES) plus every row in flora.csv.
+                           (shared.flora_skip.FLORA_VALIDATED_STATUSES) plus every
+                           row in flora.csv.
                            ON by default; disable with --no-skip-flora-validated.
     skip_validated      — skip works already in the Supabase validation tables, read
                           from the static data/validated_skip.csv (work id or DOI).
@@ -1871,9 +2356,18 @@ def run_extract(no_llm: bool = False,
                            Use with --no-llm --no-pdf for a fast rule-based-only pass, then
                            run again without them for the LLM pass on the remaining rows.
     rescreen            — reopen the rows a previous run set aside on the classification screen's
-                           own verdict (not_a_replication, screen_disagreement) so the current
-                           voter pair decides them again. Without it those rows are carried
-                           forward untouched, which freezes an old pair's verdicts in place.
+                           own verdict (not_a_replication, screen_disagreement, prescreen_discard)
+                           so a NEW Stage 2 screening generation can re-admit them. Without it
+                           those rows are carried forward untouched, which freezes an old pair's
+                           verdicts in place. It reopens; it does not re-screen — the screen is
+                           Stage 2's, so the row comes back only if the current generation's
+                           handoff carries it.
+    screen_here         — run the front-door screen in Stage 3 for rows whose input row
+                           carries no verdict. The verdict normally arrives on the row from
+                           Stage 2's screen_expensive tier; this is the explicit fallback for
+                           an --as-routed handoff or a hand-made CSV. Off by default: without
+                           it such a row is written target_pending rather than silently
+                           re-screened.
     recalibrate_outcomes — run the full outcome pipeline (PDF download + LLM) even when --no-pdf
                            or --no-llm are set. Only the outcome step is affected; link resolution
                            still respects those flags. Useful for a fast --no-llm --no-pdf pass
@@ -1882,17 +2376,18 @@ def run_extract(no_llm: bool = False,
                            handoff writes; pass misc/sample_filtered.csv explicitly to
                            run against the fixture.
     """
-    _check_screen_providers(no_llm)
+    _check_screen_providers(no_llm, screen_here)
 
     filtered_path = Path(filtered_csv) if filtered_csv else DATA_DIR / "filtered.csv"
     _require_input_csv(filtered_path)
+    _verify_input_manifest(filtered_path)
+    _require_screen_verdicts(filtered_path, no_llm, screen_here)
 
     flora_skip: set[str] = set()
     if skip_flora_validated:
-        flora_skip = _load_flora_skip_dois(
-            DATA_DIR / "FLoRA entry sheet - replication list.csv",
-            DATA_DIR / "flora.csv",
-        )
+        # Through the shared helper, so Stage 3 and the validation hand-off cannot end
+        # up reading two different files — the filenames live in shared/flora_skip.py.
+        flora_skip = _default_flora_skip_dois(DATA_DIR)
 
     # The frozen legacy set in the Supabase validation tables, materialised once into
     # a committed CSV (analysis/build_validated_skip.py) so a run needs no database.
@@ -1905,7 +2400,7 @@ def run_extract(no_llm: bool = False,
         out_path = prod_path
     test_mode = (str(out_path.resolve()) != str(prod_path.resolve()))
 
-    output_rows: list[dict] = []
+    written = 0
     processed = 0
 
     # In test mode: always load the production CSV to identify which DOIs to skip
@@ -1919,35 +2414,8 @@ def run_extract(no_llm: bool = False,
             len(resolved_main),
         )
 
-    # Resuming is the default: a run that re-decided rows it had already paid for
-    # would be the expensive accident, so it takes --fresh to ask for one.
     resolved_rows: dict[str, list[dict]] = {}
     pending_rows: dict[str, list[dict]] = {}
-    if fresh:
-        log.warning("--fresh: %s is overwritten now and every row re-extracted",
-                    out_path.name)
-        # Truncate before any row work, not at the first row written: a --fresh run
-        # that skips every row must still leave a fresh (empty) file behind.
-        _write_header(out_path)
-    else:
-        resolved_rows, pending_rows = _load_extracted_rows(out_path, rescreen=rescreen)
-        n_resolved_rows = sum(len(v) for v in resolved_rows.values())
-        log.info(
-            "resuming: %d DOIs already resolved (%d rows), %d pending re-processing",
-            len(resolved_rows), n_resolved_rows, len(pending_rows),
-        )
-        # Write the header and ALL resolved rows to the output file immediately,
-        # before processing any pending rows: resolved work is committed up front,
-        # not interleaved with slow PDF/LLM calls. The header goes down even when
-        # there are no resolved rows at all, so that nothing written later can be
-        # the write that truncates the file.
-        _write_header(out_path)
-        for rows in resolved_rows.values():
-            for result_row in rows:
-                _append_row(out_path, result_row)
-                output_rows.append(result_row)
-        log.info("resuming: wrote %d resolved rows to %s (safe to interrupt)",
-                 len(output_rows), out_path.name)
 
     doi_r_targets = {clean_doi(d) for d in (doi_r_filter or [])}
     flora_skip_count = 0
@@ -1976,6 +2444,7 @@ def run_extract(no_llm: bool = False,
         cancellations, so a run that is ending still drains and the rows already in
         flight finish and write what they were paid for.
         """
+        nonlocal written
         if stop.is_set():
             return
         row_key = _extract_row_key(row)
@@ -1999,7 +2468,7 @@ def run_extract(no_llm: bool = False,
         result_rows = _process_row(
             row, doi_r, no_llm=no_llm, no_pdf=no_pdf,
             no_reproductions=no_reproductions, resolved_only=resolved_only,
-            recalibrate_outcomes=recalibrate_outcomes)
+            recalibrate_outcomes=recalibrate_outcomes, screen_here=screen_here)
 
         # Self-links and unrecoverable doi_o are already rejected by
         # _guard_original_link at each producer, ahead of outcome coding.
@@ -2020,8 +2489,8 @@ def run_extract(no_llm: bool = False,
             for result_row in kept:
                 _write_row(out_path, result_row)
                 handled_keys.add(_extract_row_key(result_row))
-                output_rows.append(result_row)
-                log.info("Streamed %d rows → %s", len(output_rows), out_path.name)
+                written += 1
+                log.info("Streamed %d rows → %s", written, out_path.name)
 
     def _reap(done) -> None:
         for future in done:
@@ -2033,9 +2502,75 @@ def run_extract(no_llm: bool = False,
                 failures.append(exc)
 
     futures: set[Future] = set()
-    pool = (ThreadPoolExecutor(max_workers=workers, thread_name_prefix="extract")
-            if workers > 1 else None)
+    pool: "ThreadPoolExecutor | None" = None
+
+    # ONE try/finally over BOTH halves of the run — the resume prologue that puts the
+    # file's own rows back, and the processing loop. The prologue is slow (it
+    # re-verifies every unsettled doi_o_verification against OpenAlex, minutes on a
+    # long file), and it used to sit outside this block: an interrupt there unwound
+    # past the `finally` that writes the pending rows back, and since the file had
+    # already been truncated to its header, every target_pending row was deleted —
+    # unrecoverably for any paper that had meanwhile left filtered.csv. The guarantee
+    # this shape buys: an interrupt at ANY point leaves the output holding every row
+    # it held when the run started — bar the two classes _load_extracted_rows purges
+    # on purpose and names in its docstring (false_positive rows, and rows carrying no
+    # identifier at all).
     try:
+        # Resuming is the default: a run that re-decided rows it had already paid for
+        # would be the expensive accident, so it takes --fresh to ask for one.
+        if fresh:
+            log.warning("--fresh: %s is overwritten now and every row re-extracted",
+                        out_path.name)
+            # Truncate before any row work, not at the first row written: a --fresh run
+            # that skips every row must still leave a fresh (empty) file behind.
+            _write_header(out_path)
+        else:
+            # Read and truncate together, under one lock: an append landing between
+            # the two would be wiped by the truncation and known to nobody. The
+            # header goes down even when there are no resolved rows at all, so that
+            # nothing written later can be the write that truncates the file.
+            resolved_rows, pending_rows = _load_and_truncate(out_path, rescreen=rescreen)
+            n_resolved_rows = sum(len(v) for v in resolved_rows.values())
+            log.info(
+                "resuming: %d DOIs already resolved (%d rows), %d pending re-processing",
+                len(resolved_rows), n_resolved_rows, len(pending_rows),
+            )
+            # The resolved rows go back immediately, before any pending row is
+            # processed: work already paid for is committed up front, not interleaved
+            # with slow PDF/LLM calls.
+            reverified = 0
+            carried = [row for rows in resolved_rows.values() for row in rows]
+            try:
+                for result_row in carried:
+                    if _needs_verification(result_row):
+                        reverified += 1
+                    # The output has already been truncated to its header, so every row
+                    # not written here is a row LOST. Nothing about a carried row — an
+                    # OpenAlex outage in the re-verification, a quota exhaustion, a legacy
+                    # value no builder would produce — may cost the run rows it already
+                    # had: it is written as it stood on disk instead.
+                    try:
+                        result_row = _finalise_carried_row(result_row)
+                    except Exception as exc:
+                        log.warning("carried row %s could not be finalised (%s) — writing "
+                                    "it back unchanged", result_row.get("doi_r", ""), exc)
+                        result_row = _carried_row_as_written(result_row)
+                    _write_row(out_path, result_row)
+                    written += 1
+            except BaseException:
+                # Ctrl-C (or anything else) in the middle of the carry loop would leave
+                # the rest of the file's own rows on the floor. Put them back before
+                # unwinding — measured against what the file actually holds, not
+                # against a counter, so the row the interrupt landed inside is neither
+                # lost nor written twice.
+                written += _restore_carried_rows(out_path, carried)
+                raise
+            log.info("resuming: wrote %d resolved rows to %s (safe to interrupt); "
+                     "%d re-verified (unsettled doi_o_verification), %d trusted as written",
+                     written, out_path.name, reverified, written - reverified)
+
+        if workers > 1:
+            pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="extract")
         for row in _iter_filtered_rows(filtered_path, from_year, to_year,
                                        predicted_outcome, source, doi_r_filter):
             if stop.is_set():
@@ -2082,14 +2617,19 @@ def run_extract(no_llm: bool = False,
         # because it has left filtered.csv, or was skipped, or the run stopped before
         # reaching it — has to be written back or it is deleted. In the `finally` so
         # a Ctrl-C or a budget stop preserves it too.
+        #
+        # Through _carried_row_as_written, for the same reason the carry loop uses it:
+        # these rows come off disk rather than out of this run's builders, so a legacy
+        # "2018.0" year is normalised (never asserted on — an old value must not abort
+        # the write-back of a row the file already held).
         carried_back = 0
         with write_lock:
             for key, rows in pending_rows.items():
                 if key in handled_keys:
                     continue
                 for result_row in rows:
-                    _write_row(out_path, result_row)
-                    output_rows.append(result_row)
+                    _write_row(out_path, _carried_row_as_written(result_row))
+                    written += 1
                     carried_back += 1
         if carried_back:
             log.info("carried %d unprocessed pending row(s) forward unchanged into %s",
@@ -2102,14 +2642,14 @@ def run_extract(no_llm: bool = False,
                     if isinstance(exc, (TokenBudgetExhausted, OpenAlexQuotaExhausted))),
                    failures[0])
 
-    log.info("Stage 3 complete: %d rows → %s", len(output_rows), out_path)
+    log.info("Stage 3 complete: %d rows → %s", written, out_path)
 
     # Print summary
     print("\n" + "=" * 70)
     print("STAGE 3 SUMMARY")
     print("=" * 70)
     print(f"  Rows processed:           {processed}")
-    print(f"  Rows output:              {len(output_rows)}")
+    print(f"  Rows output:              {written}")
     print(f"  Flora-validated skipped:  {flora_skip_count}")
     if skip_flora_validated:
         print(f"    (from 'FLoRA entry sheet - replication list.csv' + flora.csv)")
@@ -2119,9 +2659,6 @@ def run_extract(no_llm: bool = False,
     if limit:
         print(f"  Limit reached:            {processed >= limit}")
     print("=" * 70 + "\n")
-
-    out_df = pd.DataFrame(output_rows)
-    return out_df.reindex(columns=EXTRACTED_COLS, fill_value="")
 
 
 def run_outcome_only(no_llm: bool = False,
@@ -2221,15 +2758,24 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--rescreen", action="store_true",
-        help="Also re-process rows a previous run "
-             "settled from the abstract alone — the classification screen's verdicts "
-             "(not_a_replication, screen_disagreement) and the optional cheap "
-             "pre-screen's discards (prescreen_discard) — so a changed voter pair, "
-             "prompt or bypass list decides them again. This is the ONLY way back: an "
-             "ordinary (resuming) run treats every key in data/not_a_replication.csv, "
-             "data/screen_disagreement.csv and data/prescreen_discard.csv as settled and "
-             "skips the paper. Historical prescreen_discard rows are reopened the "
-             "same way.",
+        help="REOPEN the rows a previous run set aside on a screen verdict — "
+             "data/not_a_replication.csv, data/screen_disagreement.csv and "
+             "data/prescreen_discard.csv — so a NEW Stage 2 screening generation can "
+             "re-admit them. This is the ONLY way back: an ordinary (resuming) run "
+             "treats every key in those files as settled and skips the paper. It "
+             "reopens, it does not re-screen: the screen is Stage 2's, so a reopened "
+             "paper reappears only if the current generation's handoff carries it "
+             "(change a voter model or the classify prompt, re-run 'filter.engine "
+             "screen --tier screen_expensive --run', then 'handoff').",
+    )
+    parser.add_argument(
+        "--screen-here", action="store_true",
+        help="Run the front-door screen in Stage 3 for input rows that carry no "
+             "screen verdict. The verdict normally arrives on the row from Stage 2's "
+             "screen_expensive tier; this is the explicit fallback for an --as-routed "
+             "handoff or a hand-made CSV. Without it, a row with no verdict is written "
+             "target_pending and an input file with no screen_verdict column at all is "
+             "refused — a silent re-screen in two places is what this flag replaced.",
     )
     parser.add_argument(
         "--resolved-only", action="store_true",
@@ -2327,6 +2873,7 @@ if __name__ == "__main__":
                 doi_r_filter=doi_r_list,
                 recalibrate_outcomes=args.recalibrate_outcomes,
                 rescreen=args.rescreen,
+                screen_here=args.screen_here,
                 filtered_csv=args.filtered_csv,
             )
     except (OpenAlexQuotaExhausted, TokenBudgetExhausted) as exc:
@@ -2335,6 +2882,10 @@ if __name__ == "__main__":
                   "an ordinary run resumes from them.")
     finally:
         token_counter.print_summary()
+        # The other metered API. Printed next to the tokens because it is the same
+        # question — what did this run spend — and free-text searches are the only
+        # OpenAlex call shape expensive enough to notice.
+        print_search_summary()
         # Sanity pass over whatever was written — runs on normal completion AND on
         # Ctrl-C. Skipped for the outcome-only mode (different output file).
         if not args.outcome_only:

@@ -1,0 +1,18 @@
+{
+ "filtered_rows": 2581092,
+ "wanted_dois": 23210,
+ "found_in_filtered": 22799,
+ "positives": {
+  "kept": 7505,
+  "dropped_no_title": 8,
+  "dropped_no_abstract": 250,
+  "dropped_abstract_under_min": 1010,
+  "min_abstract_chars": 200
+ },
+ "negatives": {
+  "kept": 1333,
+  "cap": 5000,
+  "skipped_not_reaching_stage3": 12919,
+  "dropped_abstract_under_min": 78
+ }
+}

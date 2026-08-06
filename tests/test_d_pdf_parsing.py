@@ -225,7 +225,7 @@ class TestDirectRefsCacheIdentity:
         from shared import grobid
         with patch.object(grobid, "GROBID_CACHE_DIR", tmp_path), \
              patch("shared.llm_client.call_gemini_with_pdf",
-                   return_value=self._REFS) as call:
+                   return_value=(self._REFS, "")) as call:
             grobid._extract_refs_via_pdf_direct("10.1/x", pdf)
         return call
 
@@ -300,3 +300,65 @@ class TestNumericReferenceTitles:
         """REGRESSION: requiring a lowercase character before the sentence period cut
         no title at "… of HIV." and let the journal name into it."""
         assert "Attitudes toward HIV" in [r["title"] for r in self._refs()]
+
+
+class TestReferenceExtractionOutageIsNotZeroReferences:
+    """`call_gemini_with_pdf` used to return None for both "the model found no
+    references" and "the model was never reached". The second then became
+    `grobid_status: success` with n_refs 0 — a finding — which run_extract's parse
+    cache then froze onto the paper for good."""
+
+    def test_provider_failure_raises_rather_than_returning_no_refs(self, tmp_path):
+        from shared import grobid
+        pdf = _fake_pdf(tmp_path)
+        with patch.object(grobid, "GROBID_CACHE_DIR", tmp_path), \
+             patch("shared.llm_client.call_gemini_with_pdf",
+                   return_value=(None, "quota exhausted on key 1 (429)")):
+            with pytest.raises(grobid.ReferenceExtractionUnavailable):
+                grobid._extract_refs_via_pdf_direct("10.1/x", pdf)
+        # …and nothing was written, so a later run asks again.
+        assert list(tmp_path.glob("*_direct_refs_*.json")) == []
+
+    def test_a_model_that_answered_with_nothing_is_still_an_answer(self, tmp_path):
+        from shared import grobid
+        pdf = _fake_pdf(tmp_path)
+        with patch.object(grobid, "GROBID_CACHE_DIR", tmp_path), \
+             patch("shared.llm_client.call_gemini_with_pdf",
+                   return_value=({"references": []}, "")):
+            assert grobid._extract_refs_via_pdf_direct("10.1/x", pdf) == []
+
+    def test_run_grobid_reports_refs_unavailable_and_parse_grobid_errors(self, tmp_path):
+        from shared import grobid
+        pdf = _fake_pdf(tmp_path)
+        sections = {"abstract": "An abstract.", "intro": "", "methods": "",
+                    "references": []}
+        with patch.object(grobid, "parse_pdf_sections", return_value=sections), \
+             patch.object(grobid, "_extract_refs_via_grobid", return_value=[]), \
+             patch.object(grobid, "_extract_refs_via_pdf_direct",
+                          side_effect=grobid.ReferenceExtractionUnavailable("down")), \
+             patch.object(grobid, "_extract_refs_via_pdf_images") as images:
+            out = grobid.run_grobid("10.1/x", pdf)
+            # The image rung is a fallback for a document the direct rung READ, not
+            # for a request that never arrived.
+            images.assert_not_called()
+        assert out["grobid_status"] == "refs_unavailable"
+
+        with patch("shared.pdf_parsing.run_grobid", return_value=out):
+            result = parse_grobid("10.1/x", pdf)
+        assert result["error"] == "refs_unavailable"
+        assert result["references"] == []
+
+
+def test_a_transient_failure_is_recognised_by_its_error_not_its_method():
+    """What makes a parse uncacheable is the error VALUE, so any method reporting one
+    — a new caller, or a new failure mode of an existing one — is covered without
+    anything else knowing about it."""
+    from shared.pdf_parsing import parse_result_has_transient_failure as transient
+
+    ok = {"source": "pdfminer", "raw_text": "text", "references": [], "error": None}
+    settled = {"source": "grobid", "raw_text": "", "references": [], "error": "no_pdf"}
+    outage = {"source": "markitdown", "raw_text": "", "references": [],
+              "error": "refs_unavailable"}
+
+    assert not transient({"pdfminer": ok, "grobid": settled})
+    assert transient({"pdfminer": ok, "markitdown": outage})

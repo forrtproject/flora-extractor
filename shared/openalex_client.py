@@ -10,6 +10,7 @@ Public API:
 """
 import json
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -224,12 +225,41 @@ class OpenAlexQuotaExhausted(RuntimeError):
     """
 
 
+# Free-text `search` queries are billed at 10× a filter query (see the cost table in
+# CLAUDE.md), so a run's OpenAlex bill is dominated by how many of them it issues.
+# Counted here rather than at each call site because every one of them goes through
+# _oa_get, and the count is per logical query, not per retry or key rotation.
+_search_queries = 0
+_search_lock = threading.Lock()
+
+
+def search_query_count() -> int:
+    """How many free-text OpenAlex `search` queries this process has issued."""
+    return _search_queries
+
+
+def print_search_summary() -> None:
+    """Print the run's free-text OpenAlex search count (its dominant OpenAlex cost)."""
+    n = search_query_count()
+    if not n:
+        print("OpenAlex free-text searches: none issued.")
+        return
+    print(f"OpenAlex free-text searches: {n:,} "
+          f"(billed ~10x a filter query — see CLAUDE.md cost table)\n")
+
+
 def _oa_get(url: str, params: dict | None = None) -> Optional[dict]:
     """GET from OpenAlex with rate limiting, 429 retry, and error handling.
 
     Raises OpenAlexQuotaExhausted when the 429 is a budget refusal — see that
     class. Transient 429s are still retried on the schedule below.
     """
+    # Both shapes of free-text query: the `search` param and a `<field>.search:`
+    # filter (the title search uses the latter).
+    if params and ("search" in params or ".search:" in str(params.get("filter", ""))):
+        global _search_queries
+        with _search_lock:
+            _search_queries += 1
     _RETRY_DELAYS = [5, 15, 30]  # seconds to wait after 1st, 2nd, 3rd 429
     attempt = 0
     # Not a for-loop over attempts: rotating to a fresh key is not a retry of a
@@ -609,12 +639,16 @@ def _fetch_crossref_full_meta(doi: str) -> Optional[dict]:
     (book chapters, older papers, DataCite DOIs).
     """
     try:
+        # Before the request, not after it: the throttle is a reservation for the
+        # call about to go out (shared/rate_limit.py). Charging the wait afterwards
+        # spaced the caller's NEXT action — which is often no CrossRef call at all —
+        # while letting this one fire the instant the previous one returned.
+        throttle("crossref", CROSSREF_RATE_SEC)
         r = requests.get(
             f"https://api.crossref.org/works/{doi}",
             headers={"User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})"},
             timeout=20,
         )
-        throttle("crossref", CROSSREF_RATE_SEC)
         if r.status_code == 404:
             return None
         r.raise_for_status()
@@ -683,9 +717,10 @@ def _fetch_doi_org_full_meta(doi: str) -> Optional[dict]:
         if delay:
             time.sleep(delay)
         try:
+            # Reserved before the request it spaces — see _fetch_crossref_full_meta.
+            throttle("crossref", CROSSREF_RATE_SEC)
             r = requests.get(f"https://doi.org/{doi}", headers=headers,
                              timeout=20, allow_redirects=True)
-            throttle("crossref", CROSSREF_RATE_SEC)
             if r.status_code == 404:
                 return None
             if 400 <= r.status_code < 500 and r.status_code != 429:
@@ -789,13 +824,14 @@ def _search_crossref_by_title(title: str, year: str = "") -> Optional[dict]:
 
 def _search_crossref_by_title_live(title: str, year: str = "") -> Optional[dict]:
     try:
+        # Reserved before the request it spaces — see _fetch_crossref_full_meta.
+        throttle("crossref", CROSSREF_RATE_SEC)
         r = requests.get(
             "https://api.crossref.org/works",
             params={"query.title": title, "rows": 5, "select": "DOI,title,author,issued,published-print,published,published-online,created,container-title,volume,issue,page"},
             headers={"User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})"},
             timeout=20,
         )
-        throttle("crossref", CROSSREF_RATE_SEC)
         r.raise_for_status()
         items = r.json().get("message", {}).get("items") or []
     except Exception as exc:

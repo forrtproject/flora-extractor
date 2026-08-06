@@ -1,8 +1,7 @@
 """What the `replication-claim` family matches and what it does not.
 
 Patterns only — where a claimed row is routed is asserted in the policy table of
-`tests/test_engine_spec.py`. `_matches()` asserts the two backends agree on every
-string it is given; `tests/test_spec_vocabulary.py` imports these helpers.
+`tests/test_engine_spec.py`. `tests/test_spec_vocabulary.py` imports these helpers.
 
 The twelve arms are spread over four tiers that differ only in how much they ask
 for, so an arm is exercised through `_matches_family()` — does ANY tier claim this
@@ -12,12 +11,10 @@ string — and the narrowing each tier adds is asserted separately.
 import json
 from pathlib import Path
 
-import pyarrow as pa
 import pytest
 
-from filter.engine.backends import eval_spec_batch, eval_spec_rows
+from filter.engine.backends import eval_spec_rows
 from filter.engine.spec import load_specs
-from search.snapshot_scan import _POOL_SCHEMA
 
 SPEC_DIR = Path(__file__).resolve().parent.parent / "filter" / "spec"
 
@@ -58,13 +55,9 @@ def _matches_family(specs: list, row: dict) -> bool:
 
 
 def _matches(specs: list, spec_id: str, row: dict) -> bool:
-    """Whether *spec_id* claims *row*, asserted equal in both backends."""
+    """Whether *spec_id* claims *row*, through the engine's one evaluator."""
     spec = next(s for s in specs if s.id == spec_id)
-    by_row = eval_spec_rows(spec, [row])[0]
-    batch = pa.Table.from_pylist([row], schema=_POOL_SCHEMA).to_batches()[0]
-    by_batch = eval_spec_batch(spec, batch).to_pylist()[0]
-    assert by_row == by_batch, f"{spec_id}: backends disagree on {row['title']!r}"
-    return bool(by_row)
+    return bool(eval_spec_rows(spec, [row])[0])
 
 
 # ---------------------------------------------------------------------------

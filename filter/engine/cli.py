@@ -5,10 +5,19 @@ routing, it only supplies paths and prints. The one judgement it does make is
 what a routing release is made of, because the six release inputs come from six
 different places and assembling them is not a module's job.
 
-A pool with no readable ledger routes under `pool_manifest_hash = "unmanifested"`
-rather than failing: the release id then honestly says the pool's provenance was
-unknown, which is a different claim from "the pool was the one in the ledger" and
-must not be silently substituted for it.
+`pool_manifest_hash` is a fingerprint of the POOL DIRECTORY — the search gate its
+rows were admitted under (read from the pool's provenance sidecar, never from this
+checkout), plus every parquet's name, size and row count
+(`search.snapshot_scan.pool_fingerprint`). A pool that cannot be fingerprinted at
+all — none there, unreadable, or fewer files than its sidecar says complete it —
+routes under `pool_manifest_hash = "unmanifested:<discriminator>"` rather than
+failing: the release id then honestly says the pool's provenance was unknown,
+which is a different claim from naming a pool and must not be silently
+substituted for it. The discriminator is a hash of the parquet names and sizes,
+so two different unfingerprintable pools mint two different release ids instead
+of sharing one release's claims and verdicts.
+The fingerprint is taken again after the routing pass, because the reader re-reads
+the directory and a release id must name the pool that was actually consumed.
 
 The text overlay is read from `OVERLAY_DIR` whenever that directory holds chunks,
 because an overlay nobody passed is how a live rule comes to match nothing at
@@ -22,11 +31,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-import pyarrow as pa
-import pyarrow.parquet as pq
-
 from filter.engine import ENGINE_VERSION
-from filter.engine.backends import verify_backends
 from filter.engine.diagnostics import diagnose, render_text
 from filter.engine.export import (
     ALIASES_FILENAME, SPEC_DIR, StaleBundleError, check_release_binding, export_pile,
@@ -36,8 +41,8 @@ from filter.engine.pool_reader import iter_pool_batches, overlay_manifest_hash
 from filter.engine.release import read_release, releases_dir, routing_release, write_release
 from filter.engine.spec import bundle_hash, load_specs
 from filter.engine.store import (
-    DEFAULT_STORE_PATH, StoreUnavailable, build_routing, open_store, pile_counts,
-    releases, sample_pile,
+    DEFAULT_STORE_PATH, StoreUnavailable, build_routing, drop_release, open_store,
+    pile_counts, releases, sample_pile,
 )
 from filter.engine.workids import alias_release, load_aliases
 from shared.config import OVERLAY_DIR, SNAPSHOT_POOL_DIR
@@ -52,14 +57,78 @@ def schema_version() -> str:
         ",".join(ENGINE_EXPORTED_COLS).encode("utf-8")).hexdigest()[:12]
 
 
-def _pool_manifest_hash(given: Optional[str]) -> str:
+def _unmanifested(pool_dir: Optional[Path]) -> str:
+    """`unmanifested:<12 hex>` — an unfingerprintable pool, told apart from others.
+
+    A release id is the identity claims and verdicts hang off, so two different
+    pools must not mint the same one. The literal `unmanifested` did exactly that:
+    every half-pulled or sidecar-less pool on earth shared one release-id input, so
+    two of them routed into one release and shared each other's claims and
+    verdicts. The discriminator is the cheapest fact that still separates them —
+    each parquet's name and size, which needs no footer read and is available
+    precisely when the real fingerprint is not (a missing sidecar, a partial
+    transfer). It is deliberately NOT a fingerprint: no row counts, no gate, no
+    file contents, and it keeps the `unmanifested` prefix so nothing reads it as
+    provenance. A pool the discriminator cannot be taken over either — an unreadable
+    directory — falls back to the bare literal, which is the one case where two
+    pools may still collide and the one where nothing at all is known about either.
+    """
+    try:
+        files = sorted(Path(pool_dir).glob("*.parquet")) if pool_dir else []
+        parts = "|".join(f"{p.name}:{p.stat().st_size}" for p in files)
+    except OSError:
+        return UNMANIFESTED
+    digest = hashlib.sha256(parts.encode("utf-8")).hexdigest()[:12]
+    return f"{UNMANIFESTED}:{digest}"
+
+
+def _unmanifested(pool_dir: Optional[Path]) -> str:
+    """`unmanifested:<12 hex>` — an unfingerprintable pool, told apart from others.
+
+    A release id is the identity claims and verdicts hang off, so two different
+    pools must not mint the same one. The bare literal `unmanifested` did exactly
+    that: every half-pulled or sidecar-less pool on earth shared one release-id
+    input, so two of them routed into one release and shared each other's claims
+    and verdicts. The discriminator is the cheapest fact that still separates
+    them — each parquet's name and size, which needs no footer read and is
+    available precisely when the real fingerprint is not (a missing sidecar, a
+    partial transfer). It is deliberately NOT a fingerprint: no row counts, no
+    gate, no file contents, and it keeps the `unmanifested` prefix so nothing
+    reads it as provenance. A pool the discriminator itself cannot be taken over —
+    an unreadable directory — falls back to the bare literal, which is the one
+    case where two pools can still collide and the one where nothing whatever is
+    known about either.
+    """
+    try:
+        files = sorted(Path(pool_dir).glob("*.parquet")) if pool_dir else []
+        parts = "|".join(f"{p.name}:{p.stat().st_size}" for p in files)
+    except OSError:
+        return UNMANIFESTED
+    digest = hashlib.sha256(parts.encode("utf-8")).hexdigest()[:12]
+    return f"{UNMANIFESTED}:{digest}"
+
+
+def _pool_manifest_hash(given: Optional[str], pool_dir: Optional[Path] = None) -> str:
+    """The pool's identity for the release id: a hash of the pool directory itself.
+
+    `UNMANIFESTED` here is a genuine anomaly, not a routine fallback — routing
+    reads the pool, so a run that could not fingerprint one either found no pool,
+    found a partial one (fewer files than its provenance sidecar says complete it),
+    or could not read it. It is never returned for a pool that was read whole: an
+    unreadable pool raises inside `pool_fingerprint`, and an absent or partial one
+    returns None; neither can come back as a real-looking hash. What such a pool
+    gets instead is `unmanifested:<discriminator>` — see `_unmanifested()`.
+    """
     if given:
         return given
     try:
-        from search.pool_sync import pool_manifest
-        return pool_manifest().get("ledger_hash") or UNMANIFESTED
-    except Exception:
-        return UNMANIFESTED
+        from search.snapshot_scan import pool_fingerprint
+        return pool_fingerprint(pool_dir) or _unmanifested(pool_dir)
+    except Exception as exc:  # noqa: BLE001 — boundary: a pool we cannot read is unnamed
+        provenance = _unmanifested(pool_dir)
+        print(f"  WARNING: the pool at {pool_dir} could not be fingerprinted ({exc}); "
+              f"this release records its provenance as '{provenance}'.")
+        return provenance
 
 
 def _release_inputs(spec_dir: Path, pool_manifest_hash: str,
@@ -107,18 +176,6 @@ def _print_overlay(overlay_dir: Optional[Path], indent: str = "") -> None:
     print(f"{indent}overlay: {overlay_dir} (hash {digest[:12]})")
 
 
-def _sample_batches(pool_dir: Path, sample_files: int) -> pa.Table:
-    files = sorted(Path(pool_dir).glob("*.parquet"))[:sample_files]
-    if not files:
-        raise SystemExit(f"no parquet files under {pool_dir}")
-    batches = []
-    for path in files:
-        for batch in pq.ParquetFile(path).iter_batches(batch_size=50_000):
-            batches.append(batch)
-            break
-    return pa.Table.from_batches(batches)
-
-
 def _resolve_release(con, given: Optional[str]) -> str:
     if given:
         return given
@@ -146,16 +203,6 @@ def cmd_specs(args) -> int:
     return 0
 
 
-def cmd_verify(args) -> int:
-    specs = load_specs(args.spec_dir)
-    table = _sample_batches(args.pool, args.sample_files)
-    mismatches = verify_backends(specs, table)
-    for line in mismatches[:50]:
-        print(line)
-    print(f"{len(mismatches)} mismatch(es) over {table.num_rows:,} sampled row(s)")
-    return 1 if mismatches else 0
-
-
 def cmd_route(args) -> int:
     specs = load_specs(args.spec_dir)
     overlay_dir = _overlay(args)
@@ -163,7 +210,7 @@ def cmd_route(args) -> int:
         # An overlay dir holding chunks but no frozen manifest raises: routing
         # must not bind a release id to bytes nobody named.
         inputs = _release_inputs(args.spec_dir,
-                                 _pool_manifest_hash(args.pool_manifest_hash),
+                                 _pool_manifest_hash(args.pool_manifest_hash, args.pool),
                                  overlay_dir)
     except OverlayError as exc:
         raise SystemExit(str(exc))
@@ -174,6 +221,24 @@ def cmd_route(args) -> int:
     counters = build_routing(con, args.pool, specs, release_id, aliases=aliases,
                              batches=iter_pool_batches(args.pool, overlay_dir,
                                                        aliases=aliases))
+    # The fingerprint was taken before the pool was read, and the reader re-globs the
+    # directory: a file added, removed or rewritten in between is consumed by the
+    # routing but not named by the release id. Re-fingerprinting costs ~0.4 s over the
+    # real 2,232-file pool, so it is taken again here and the routing rows are dropped
+    # if it moved. The rows are already committed (build_routing is one transaction of
+    # its own), so this rolls them back explicitly and writes no release record —
+    # nothing downstream may find a release whose id names a pool that is gone.
+    if not args.pool_manifest_hash:
+        after = _pool_manifest_hash(None, args.pool)
+        if after != inputs["pool_manifest_hash"]:
+            drop_release(con, release_id)
+            con.close()
+            raise SystemExit(
+                f"The pool at {args.pool} CHANGED while it was being routed "
+                f"(fingerprint {inputs['pool_manifest_hash'][:12]} before, {after[:12]} "
+                "after). The release id names the pool as it was at the start, so this "
+                "routing has been rolled back rather than stored under an id that "
+                "describes something else. Re-run `route` once the pool is settled.")
     # Only now: the release record is the claim that this release is routed, and
     # a build that raised must not leave that claim behind. The record lives
     # beside the store it describes, so a store pointed somewhere else does not
@@ -182,8 +247,10 @@ def cmd_route(args) -> int:
 
     print(f"release {release_id}")
     _register_release(release_id, args.store.parent)
+    provenance = inputs["pool_manifest_hash"]
     print(f"  pool {args.pool} — {counters['files']} file(s), "
-          f"{counters['pool_rows']:,} pool row(s) -> {counters['rows']:,} work(s)")
+          f"{counters['pool_rows']:,} pool row(s) -> {counters['rows']:,} work(s), "
+          f"provenance {provenance if provenance.startswith(UNMANIFESTED) else provenance[:12]}")
     _print_overlay(overlay_dir, indent="  ")
     for pile, count in sorted(pile_counts(con, release_id).items()):
         print(f"  {pile:<18} {count:,}")
@@ -313,6 +380,7 @@ def cmd_screen(args) -> int:
               f"{responses.get('response_pending_upload', 0):,} still on disk only")
     for outcome, count in sorted(report["outcomes"].items()):
         print(f"  {outcome:<12} {count:,}")
+    _print_incomplete(client, args.tier, indent="  ")
     if report.get("revalidation"):
         print(f"  re-validation — {report['revalidation']['discards']:,} discard(s) "
               "this tier would have made, by the pile the rules chose:")
@@ -321,6 +389,28 @@ def cmd_screen(args) -> int:
         print("  Nothing was discarded: validation mode. Re-run with --live once "
               "these numbers have been adjudicated.")
     return 0
+
+
+def _print_incomplete(client, tier: str, indent: str = "") -> None:
+    """How many works this tier has verdict rows for but no decision from.
+
+    The one number that makes a provider outage visible instead of silent. These
+    works are not decided (the next `screen --run` asks them again) and not handed
+    off (a half-screen never reaches Stage 3), so without this line the only trace
+    of a five-minute outage is a run count that does not add up.
+    """
+    if client is None:
+        return
+    from filter.engine.tiers import incomplete_work_ids
+
+    try:
+        pending = incomplete_work_ids(client, tier)
+    except Exception as exc:  # noqa: BLE001 — network boundary; a count is not the run
+        print(f"{indent}incomplete screens: unknown ({exc})")
+        return
+    if pending:
+        print(f"{indent}incomplete screens {len(pending):,}  (verdict rows short of a "
+              "decision — a failed call, not a verdict; the next --run asks again)")
 
 
 def cmd_reconcile(args) -> int:
@@ -363,10 +453,10 @@ def cmd_handoff(args) -> int:
     from filter.engine.claims import ClaimsClient, ClaimsNotConfigured
 
     drop: set[int] = set()
-    record_types: dict[int, str] = {}
+    screen: dict[int, dict] = {}
     decided: Optional[set[int]] = None
     try:
-        drop, record_types, screened = decisions(ClaimsClient())
+        drop, screen, screened = decisions(ClaimsClient())
         decided = None if args.as_routed else screened
     except ClaimsNotConfigured:
         # Without a claims client there are no verdicts, so screened-only would
@@ -385,7 +475,7 @@ def cmd_handoff(args) -> int:
     try:
         manifest = write_handoff(
             con, args.pool, Path(args.out), release_id, drop=drop,
-            record_types=record_types, decided=decided,
+            screen=screen, decided=decided,
             specs=load_specs(args.spec_dir),
             spec_dir=args.spec_dir,
             aliases=load_aliases(args.spec_dir / ALIASES_FILENAME),
@@ -436,6 +526,19 @@ def cmd_status(args) -> int:
         for pile, count in sorted(pile_counts(con, release_id).items()):
             print(f"  {pile:<18} {count:,}")
     con.close()
+
+    # Tier-scoped, so it is reported once rather than per release: a verdict
+    # follows the work, not the release it was routed under.
+    from filter.engine.claims import ClaimsClient, ClaimsNotConfigured
+    from filter.engine.tiers import TIER_CHEAP, TIER_EXPENSIVE
+
+    try:
+        client = ClaimsClient()
+    except ClaimsNotConfigured:
+        return 0
+    print("")
+    for tier in (TIER_EXPENSIVE, TIER_CHEAP):
+        _print_incomplete(client, tier, indent=f"{tier}: ")
     return 0
 
 
@@ -464,7 +567,18 @@ def build_parser() -> argparse.ArgumentParser:
         description=("Route the survivor pool through the declarative filter bundle "
                      "(issue #146). Rules route and discard; only LLM tiers admit."),
         epilog=(f"Default pool: {SNAPSHOT_POOL_DIR} · default spec dir: {SPEC_DIR} · "
-                f"default store: {DEFAULT_STORE_PATH}"))
+                f"default store: {DEFAULT_STORE_PATH}\n\n"
+                "Three engine tools are their own commands rather than "
+                "subcommands, because each is a one-off run outside the routing "
+                "loop:\n"
+                "  python -m filter.engine.backfill --worklist F [--run] [--freeze]\n"
+                "      fetch abstracts for the no_text worklist into a text overlay\n"
+                "  python -m filter.engine.supersede --old R1 --new R2 [--run]\n"
+                "      record lineage where a re-route moved works already sent "
+                "for validation\n"
+                "  python -m filter.engine.sizing [--rows N] [--verdict-rate R]\n"
+                "      estimate how much Postgres the engine's state tables need"),
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--spec-dir", type=Path, default=SPEC_DIR,
                         help="Filter spec bundle directory.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -472,20 +586,13 @@ def build_parser() -> argparse.ArgumentParser:
     specs = sub.add_parser("specs", help="List the loaded bundle and its hash.")
     specs.set_defaults(func=cmd_specs)
 
-    verify = sub.add_parser("verify", help="Check the two backends agree on pool rows.")
-    verify.add_argument("--pool", type=Path, default=SNAPSHOT_POOL_DIR)
-    verify.add_argument("--sample-files", type=int, default=200,
-                        help="Pool files to sample the first batch of (default 200; "
-                             "the oldest partitions are tiny, so a small sample "
-                             "checks almost no rows).")
-    verify.set_defaults(func=cmd_verify)
-
     route = sub.add_parser("route", help="Route the pool into a release in the store.")
     route.add_argument("--pool", type=Path, default=SNAPSHOT_POOL_DIR)
     route.add_argument("--store", type=Path, default=DEFAULT_STORE_PATH)
     route.add_argument("--pool-manifest-hash", default=None,
-                       help="Pool provenance for the release id (default: the local "
-                            "ledger's hash, else 'unmanifested').")
+                       help="Pool provenance for the release id (default: a fingerprint "
+                            "of the pool directory — gate, file sizes and row counts — "
+                            "else 'unmanifested').")
     _add_overlay_flags(route, "The frozen manifest hash enters the release id.")
     route.set_defaults(func=cmd_route)
 

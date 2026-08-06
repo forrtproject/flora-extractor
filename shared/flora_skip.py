@@ -15,9 +15,10 @@ has already done.
 
 Two consumers need the FLoRA list and must agree:
   * Stage 3 (`extract/run_extract.py`) — do not re-extract them.
-  * the validation hand-off (`extract/csv_to_db.py`) — do not re-validate them.
+  * the validation hand-off, which runs from the `flora-validation` repo — do not
+    re-validate them.
 
-It lives in `shared/` rather than in run_extract so csv_to_db can import it without
+It lives in `shared/` rather than in run_extract so a hand-off can import it without
 pulling in the extraction stack (pymupdf, pdfminer, openai, …), which a lean
 FLORA_READONLY environment may not have installed.
 """
@@ -91,24 +92,45 @@ def validated_work_id(value: object) -> Optional[int]:
         return None
 
 
+class SkipListUnreadable(RuntimeError):
+    """A skip list is on disk but could not be read.
+
+    Absent and unreadable are different facts and are answered differently. An ABSENT
+    list is a legitimate state — a lean checkout has no flora.csv, and validated_skip.csv
+    is generated — so it warns, and its absence is visible in the run's skip counts. A
+    list that EXISTS and cannot be parsed is a broken environment, and continuing means
+    skipping nothing: re-paying the provider bill for rows already adjudicated and
+    pushing them into the validation queue a second time. That is silent, expensive and
+    hard to undo, so it stops the run instead.
+    """
+
+
+def _read_skip_csv(path: Path, what: str) -> pd.DataFrame:
+    """*path* as a DataFrame, or raise SkipListUnreadable naming the file and the error."""
+    try:
+        return pd.read_csv(path, dtype=str, encoding="utf-8-sig").fillna("")
+    except Exception as exc:
+        raise SkipListUnreadable(
+            f"{what} exists but could not be read: {path} ({type(exc).__name__}: {exc}). "
+            "Continuing would skip nothing and re-extract and re-import records that "
+            "are already adjudicated — fix or remove the file."
+        ) from exc
+
+
 def load_validated_skip(path=None) -> "tuple[set[int], set[str]]":
     """`(work ids, DOIs)` from the static validated-skip CSV.
 
     A missing file warns and skips nothing — Stage 3 still runs, it just pays again
     for legacy rows — rather than crashing a run over a file the operator has not
-    generated yet.
+    generated yet. A file that is present but unreadable raises (see
+    `SkipListUnreadable`).
     """
     p = Path(path if path is not None else DATA_DIR / VALIDATED_SKIP_NAME)
     if not p.exists():
         log.warning("validated skip list not found at %s — already-validated works "
                     "will NOT be skipped", p)
         return set(), set()
-    try:
-        df = pd.read_csv(p, dtype=str, encoding="utf-8-sig").fillna("")
-    except Exception as exc:
-        log.warning("Could not read %s (%s) — already-validated works not skipped",
-                    p.name, exc)
-        return set(), set()
+    df = _read_skip_csv(p, "the validated skip list")
 
     ids = {wid for wid in (validated_work_id(v) for v in df.get("work_id", []))
            if wid is not None}
@@ -136,8 +158,10 @@ def load_flora_skip_dois(sheet_path=None, flora_path=None) -> set:
     those URLs resolve to (`_osf_doi_keys()`) — FLoRA identifies an OSF record
     that way five times more often than by DOI.
 
-    A missing or unreadable source warns and contributes nothing, so one bad file
-    can never silently disable the entire skip list.
+    A missing source warns and contributes nothing. A source that is present but
+    unreadable raises `SkipListUnreadable`: an empty skip list is indistinguishable
+    from "nothing to skip" downstream, and the cost of that mistake is a re-extracted,
+    re-imported record.
     """
     skip: set = set()
 
@@ -146,39 +170,44 @@ def load_flora_skip_dois(sheet_path=None, flora_path=None) -> set:
         if not p.exists():
             log.warning("FLoRA entry sheet not found at %s — its DOIs will not be skipped", p)
         else:
-            try:
-                df = pd.read_csv(p, dtype=str, encoding="utf-8-sig").fillna("")
-                mask = (df["validation_status"].str.strip().str.lower()
-                        .isin(FLORA_VALIDATED_STATUSES))
-                found = {clean_doi(d) for d in df.loc[mask, "doi_r"] if d}
-                found |= _osf_doi_keys(df.loc[mask])
-                skip |= found
-                log.info("FLoRA entry sheet: %d already-validated DOIs will be skipped",
-                         len(found))
-            except Exception as exc:
-                log.warning("Could not read FLoRA entry sheet (%s) — its DOIs not skipped", exc)
+            df = _read_skip_csv(p, "the FLoRA entry sheet")
+            missing = [c for c in ("validation_status", "doi_r") if c not in df.columns]
+            if missing:
+                raise SkipListUnreadable(
+                    f"the FLoRA entry sheet {p} has no {', '.join(missing)} column — "
+                    "it cannot say which rows are already validated.")
+            mask = (df["validation_status"].str.strip().str.lower()
+                    .isin(FLORA_VALIDATED_STATUSES))
+            found = {clean_doi(d) for d in df.loc[mask, "doi_r"] if d}
+            found |= _osf_doi_keys(df.loc[mask])
+            skip |= found
+            log.info("FLoRA entry sheet: %d already-validated DOIs will be skipped",
+                     len(found))
 
     if flora_path is not None:
         p = Path(flora_path)
         if not p.exists():
             log.warning("flora.csv not found at %s — its DOIs will not be skipped", p)
         else:
-            try:
-                df = pd.read_csv(p, dtype=str, encoding="utf-8-sig").fillna("")
-                found = set()
-                for col in ("doi_r", "alt_identifier_r"):
-                    if col in df.columns:
-                        found |= {clean_doi(d) for d in df[col] if str(d).strip()}
-                found |= _osf_doi_keys(df)
-                skip |= found
-                log.info("flora.csv: %d already-in-FLoRA DOIs will be skipped", len(found))
-            except Exception as exc:
-                log.warning("Could not read flora.csv (%s) — its DOIs not skipped", exc)
+            df = _read_skip_csv(p, "flora.csv")
+            found = set()
+            for col in ("doi_r", "alt_identifier_r"):
+                if col in df.columns:
+                    found |= {clean_doi(d) for d in df[col] if str(d).strip()}
+            found |= _osf_doi_keys(df)
+            skip |= found
+            log.info("flora.csv: %d already-in-FLoRA DOIs will be skipped", len(found))
 
     skip.discard("")
     return skip
 
 
-def default_flora_skip_dois() -> set:
-    """The skip list built from the standard data/ locations."""
-    return load_flora_skip_dois(DATA_DIR / ENTRY_SHEET_NAME, DATA_DIR / FLORA_CSV_NAME)
+def default_flora_skip_dois(data_dir=None) -> set:
+    """The skip list built from the two standard filenames under *data_dir*.
+
+    The one place the two filenames live: both consumers (Stage 3 and the validation
+    hand-off) come through here, so neither can drift onto a different file. Stage 3
+    passes its own DATA_DIR, which a test run can point elsewhere.
+    """
+    base = Path(data_dir) if data_dir is not None else DATA_DIR
+    return load_flora_skip_dois(base / ENTRY_SHEET_NAME, base / FLORA_CSV_NAME)

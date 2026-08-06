@@ -9,6 +9,15 @@ registry of record; OpenAlex fallback) and compare title/year. On mismatch we
 re-resolve the DOI from title+author via CrossRef bibliographic search, with an
 OpenAlex fallback because OpenAlex also indexes DOI-less works (old papers,
 book chapters).
+
+Cost: the three search tiers of verify_and_correct issue up to three OpenAlex
+free-text `search` queries per row, each billed at 10× a filter query. That makes
+this module the dominant OpenAlex line of a long Stage 3 run, which is why
+run_extract does not re-verify a carried-forward row whose verification already
+settled (see _needs_verification there) and why the searches run through
+openalex_client._oa_get, which throttles them, rotates keys, counts them
+(search_query_count()) and raises OpenAlexQuotaExhausted rather than letting an
+unaffordable request read as "no match".
 """
 from __future__ import annotations
 
@@ -20,10 +29,10 @@ import requests
 
 from shared.cache import read_cache, write_cache
 from shared.config import (
-    CROSSREF_RATE_SEC, DOI_VERIFY_CACHE_DIR, OPENALEX_API_KEY, RESEARCHER_EMAIL, log,
+    CROSSREF_RATE_SEC, DOI_VERIFY_CACHE_DIR, RESEARCHER_EMAIL, log,
 )
 from shared.disambiguation import jaccard_similarity
-from shared.openalex_client import author_matches
+from shared.openalex_client import _oa_get, author_matches
 from shared.utils import bare_work_id, cache_key, clean_doi
 
 # Tunable thresholds — starting points, not yet empirically validated.
@@ -43,18 +52,39 @@ _ERRATA_RE = re.compile(
     r"publisher\s+correction)\b", re.IGNORECASE)
 
 
+class _Unverifiable(dict):
+    """A search result that is not a result: no source answered.
+
+    It is FALSY on purpose. Every caller of resolve_doi_by_metadata already writes
+    `if hit:` and does the conservative thing when there is no hit — no provisional
+    DOI, no correction — and that is exactly right for "we could not ask". A caller
+    that must tell an outage from a genuine no-match checks `is UNVERIFIABLE`
+    explicitly, and only verify_and_correct does, because only it turns the answer
+    into a permanent verdict on the row.
+    """
+
+    def __bool__(self) -> bool:
+        return False
+
+
+# The single instance; compare with `is`, never by truthiness or equality.
+UNVERIFIABLE = _Unverifiable(unverifiable=True)
+
+
 def _get_json(url: str, params: dict) -> "tuple[Optional[dict], bool]":
-    """GET with retries. Returns (json, not_found).
+    """GET *CrossRef* with retries. Returns (json, not_found).
 
     (None, True)  → HTTP 404 (a definitive answer, not retried)
     (None, False) → hard failure after all retries
+
+    OpenAlex is NOT called from here: it is metered per request against a daily
+    budget, so its calls go through openalex_client._oa_get, which shares the one
+    reservation queue (`throttle`), rotates through the key module on exhaustion, and
+    raises OpenAlexQuotaExhausted rather than handing this module a None that would
+    read as "no match". This function used to attach the first OpenAlex key by hand
+    (issue #64) and neither throttled nor rotated it.
     """
-    # Send the OpenAlex Bearer key to OpenAlex only. Without it these calls hit the
-    # anonymous 1000/day pool and 429 on every row once it is exhausted; sending it to
-    # CrossRef instead would leak the key to an unrelated host (see issue #64).
     headers = _HEADERS
-    if OPENALEX_API_KEY and "api.openalex.org" in url:
-        headers = {**_HEADERS, "Authorization": f"Bearer {OPENALEX_API_KEY}"}
 
     for delay in _RETRY_DELAYS:
         if delay:
@@ -109,12 +139,19 @@ def _surname(author: str) -> str:
     return author.split()[-1]
 
 
-def _fetch_via_content_negotiation(doi: str) -> Optional[dict]:
+def _fetch_via_content_negotiation(doi: str) -> "tuple[Optional[dict], bool]":
     """GET https://doi.org/{doi} with CSL-JSON content negotiation.
 
     Resolves DOIs registered with any registrar (publisher-direct, DataCite
-    variants not yet indexed by OpenAlex). Returns same shape as fetch_doi_metadata
-    on success, or None if the DOI truly does not resolve.
+    variants not yet indexed by OpenAlex).
+
+    Returns (metadata, answered):
+      (meta, True)  — the DOI resolves, here is what it points to
+      (None, True)  — doi.org answered that it does not resolve (a real absence)
+      (None, False) — doi.org never answered; absence is NOT established
+
+    The second flag is the whole point: "no metadata" and "no answer" are the same
+    None, and fetch_doi_metadata caches the first as `registered: false` forever.
     """
     headers = {**_HEADERS, "Accept": "application/vnd.citationstyles.csl+json"}
     for delay in _RETRY_DELAYS:
@@ -124,9 +161,9 @@ def _fetch_via_content_negotiation(doi: str) -> Optional[dict]:
             r = requests.get(f"https://doi.org/{doi}", headers=headers, timeout=20,
                              allow_redirects=True)
             if r.status_code == 404:
-                return None
+                return None, True
             if 400 <= r.status_code < 500 and r.status_code != 429:
-                return None
+                return None, False
             r.raise_for_status()
             csl = r.json()
             title = csl.get("title") or ""
@@ -141,10 +178,10 @@ def _fetch_via_content_negotiation(doi: str) -> Optional[dict]:
             return {"registered": True, "title": title,
                     "first_author_surname": first_surname,
                     "year": year, "type": str(csl.get("type") or ""),
-                    "source": "content_negotiation"}
+                    "source": "content_negotiation"}, True
         except Exception as exc:
             log.warning("doi_verify content-negotiation %s failed: %s", doi, exc)
-    return None
+    return None, False
 
 
 def fetch_doi_metadata(doi: str) -> Optional[dict]:
@@ -157,7 +194,13 @@ def fetch_doi_metadata(doi: str) -> Optional[dict]:
     ...) and is "" when the source does not report one; see non_article_type().
     """
     doi = clean_doi(doi)
-    key = cache_key(doi + "_doimeta_v2")  # v2: pre-type cache entries lack "type"
+    # v3: the MEANING of a cached `registered: false` changed. Until the outage fix
+    # below, CrossRef's 404 alone was enough to record "not registered" even when
+    # OpenAlex or doi.org never answered, so entries written by that code can assert
+    # an absence no source ever established. The answer may genuinely differ now, so
+    # this is a key change and not a declared equivalence: old entries miss and are
+    # recomputed under the safe logic. (v2 was the pre-"type" schema bump.)
+    key = cache_key(doi + "_doimeta_v3")
     cached = read_cache(DOI_VERIFY_CACHE_DIR, key)
     if cached is not None:
         return cached
@@ -182,10 +225,11 @@ def fetch_doi_metadata(doi: str) -> Optional[dict]:
     # CrossRef 404 does NOT mean unregistered — DataCite DOIs (Zenodo, OSF,
     # figshare) 404 on CrossRef but are indexed by OpenAlex. Hard failures
     # also fall through to OpenAlex.
-    data, _ = _get_json("https://api.openalex.org/works",
-                        {"filter": f"doi:{doi}",
-                         "select": "title,authorships,publication_year,type",
-                         "mailto": RESEARCHER_EMAIL})
+    oa_data = _oa_get("https://api.openalex.org/works",
+                      {"filter": f"doi:{doi}",
+                       "select": "title,authorships,publication_year,type",
+                       "mailto": RESEARCHER_EMAIL})
+    data = oa_data
     if data and data.get("results"):
         w = data["results"][0]
         first = ((w.get("authorships") or [{}])[0].get("author") or {}).get("display_name", "")
@@ -203,10 +247,21 @@ def fetch_doi_metadata(doi: str) -> Optional[dict]:
     if not_found:
         # CrossRef 404 + absent OpenAlex: try DOI content negotiation — resolves
         # ANY registrar (publisher-direct, DataCite variants not yet in OpenAlex).
-        meta = _fetch_via_content_negotiation(doi)
+        meta, cn_answered = _fetch_via_content_negotiation(doi)
         if meta:
             write_cache(DOI_VERIFY_CACHE_DIR, key, meta)
             return meta
+        # "Not registered" is a claim about all three registries at once, so it may
+        # only be cached when all three ANSWERED. CrossRef's 404 alone was being
+        # taken as the answer while OpenAlex was merely unreachable (oa_data None) —
+        # one outage then wrote `registered: false` for a perfectly good DOI, and
+        # every later run read the outage back instead of re-asking. An unproven
+        # absence is an api_error: uncached, and retried next time.
+        if oa_data is None or not cn_answered:
+            log.warning("doi_verify: %s is absent from CrossRef but %s did not "
+                        "answer — not recording it as unregistered", doi,
+                        "OpenAlex" if oa_data is None else "doi.org")
+            return None
         meta = {"registered": False, "title": "", "first_author_surname": "",
                 "year": None, "type": "", "source": "crossref"}
         write_cache(DOI_VERIFY_CACHE_DIR, key, meta)
@@ -269,31 +324,50 @@ def resolve_doi_by_metadata(title: str, author: str, year,
     title_only_gap: last-resort tier for rows whose author/year were inherited
     from a wrong DOI. Accepts the best title match ignoring author/year, but
     only when it clearly dominates the runner-up (≥ TITLE_ONLY_JACCARD and
-    ≥ TITLE_ONLY_GAP × second-best).
+    ≥ TITLE_ONLY_GAP × second-best), and only when BOTH registries answered — a
+    dominance judgement is worth nothing over half a candidate list.
 
-    Returns {"doi", "title", "year", "openalex_id", "source"} or None.
-    "doi" is "" when the work exists only in OpenAlex without a DOI.
+    Returns {"doi", "title", "year", "openalex_id", "source"} on a hit, None when
+    both sources answered and neither had a match, and UNVERIFIABLE (a falsy dict)
+    when a source that could have held the match never answered. "doi" is "" when
+    the work exists only in OpenAlex without a DOI.
+
+    The third case exists because it was previously the second: a partial outage —
+    CrossRef down, OpenAlex reachable but holding nothing — produced an empty hit
+    list, which was cached as {"found": false} and read by verify_and_correct as
+    "no replacement exists", which writes `mismatch`, which DELETES the row's doi_o.
+    An outage must never do that.
     """
     title = (title or "").strip()
     if not title:
         return None
     exclude = clean_doi(exclude_doi or "")
     exclude_title = (exclude_title or "").strip()
+    # v2: the MEANING of a cached `{"found": false}` changed. The pre-UNVERIFIABLE
+    # code cached exactly the poisoned case — CrossRef down, OpenAlex answering
+    # empty — as a definitive "no match exists", which verify_and_correct turns into
+    # `mismatch` and DELETES the row's doi_o. Reading such an entry back would skip
+    # the UNVERIFIABLE path entirely, so the key changes rather than being declared
+    # equivalent: the answer provably may differ. Old entries miss and are recomputed.
     key = cache_key(f"{title}|{author}|{year}|{exclude}|{exclude_title}"
-                    f"|{int(title_only_gap)}_doisearch")
+                    f"|{int(title_only_gap)}_doisearch_v2")
     cached = read_cache(DOI_VERIFY_CACHE_DIR, key)
     if cached is not None:
+        # Under the v2 key a `found: false` was written only when BOTH sources
+        # answered, so it is a real absence.
         return cached if cached.get("found") else None
 
     cr_data, _ = _get_json("https://api.crossref.org/works",
                            {"query.bibliographic": f"{title} {author}".strip(),
                             "rows": 10, "mailto": RESEARCHER_EMAIL})
-    oa_data, _ = _get_json("https://api.openalex.org/works",
-                           {"search": _sanitize_search(title), "per-page": 10,
-                            "select": "id,doi,title,authorships,publication_year",
-                            "mailto": RESEARCHER_EMAIL})
+    # A free-text `search` query, billed at 10× a filter query — _oa_get counts them
+    # (search_query_count()) so the run can report what this ladder cost.
+    oa_data = _oa_get("https://api.openalex.org/works",
+                      {"search": _sanitize_search(title), "per-page": 10,
+                       "select": "id,doi,title,authorships,publication_year",
+                       "mailto": RESEARCHER_EMAIL})
     if cr_data is None and oa_data is None:
-        return None  # outage — don't cache
+        return UNVERIFIABLE  # outage — don't cache
 
     hits: list[dict] = []
     for item in ((cr_data or {}).get("message") or {}).get("items", []):
@@ -349,12 +423,27 @@ def resolve_doi_by_metadata(title: str, author: str, year,
 
     # In title-only mode the strict pass is skipped: with author/year absent it
     # would degenerate to a 0.7 title match without the dominance requirement.
+    #
+    # _score_hit is an ABSOLUTE test — this hit's title, author and year each clear a
+    # threshold against the row's own metadata — so it says the same thing about the
+    # hit whether or not the other registry answered. A missing source can only cost
+    # it a match it never saw, which is the safe direction: the tail below then
+    # reports UNVERIFIABLE rather than "no replacement exists". It therefore runs on a
+    # partial hit list.
     if not title_only_gap:
         for h in hits:
             if _score_hit(h["title"], h["year"], h["surnames"], title, author, year):
                 return _accept(h)
 
-    if title_only_gap and hits:
+    # The title-only tier is RELATIVE: it accepts a hit for beating the runner-up, and
+    # that judgement is only valid over a complete candidate set. With one registry
+    # down, the near-duplicate that would have supplied `second` may simply be in the
+    # list that never arrived, so a hit a complete search would have rejected as
+    # ambiguous gets accepted — cached under a key that records nothing about which
+    # sources answered, and returned as `corrected`, overwriting the row's doi_o with
+    # the wrong original. An incomplete search does not get to make this call: it falls
+    # through to the UNVERIFIABLE tail below.
+    if title_only_gap and hits and cr_data is not None and oa_data is not None:
         scored = sorted(hits, key=lambda h: jaccard_similarity(h["title"], title),
                         reverse=True)
         best   = jaccard_similarity(scored[0]["title"], title)
@@ -362,6 +451,16 @@ def resolve_doi_by_metadata(title: str, author: str, year,
         if best >= TITLE_ONLY_JACCARD and best >= second * TITLE_ONLY_GAP:
             return _accept(scored[0])
 
+    # No accepted hit — but "nothing matched" is only an answer if both sources gave
+    # one. A search that reached one registry and not the other has not established
+    # that the original is unfindable, and caching it would freeze the outage into the
+    # row. Nor has it established that a title-only near-match is unambiguous, so this
+    # is where the withheld dominance accept lands too.
+    if cr_data is None or oa_data is None:
+        log.warning("doi_verify: metadata search for %.60r accepted nothing, and %s did "
+                    "not answer — reporting it as unverifiable rather than absent",
+                    title, "CrossRef" if cr_data is None else "OpenAlex")
+        return UNVERIFIABLE
     write_cache(DOI_VERIFY_CACHE_DIR, key, {"found": False})
     return None
 
@@ -370,12 +469,13 @@ def keeps_no_doi(new_status: str, prior_status: str, oa_work_id_o: str) -> bool:
     """True when a fresh verification result must not overwrite a recorded "no_doi".
 
     verify_and_correct only ever searches for DOIs, so an original that genuinely has
-    none always comes back "not_found". Letting that overwrite "no_doi" would turn a
-    row whose identity is its OpenAlex work id into an audit_extracted blocker. Both
-    _verify_row (run_extract) and audit_dois re-verify the same rows, so the rule
-    lives here rather than in either caller.
+    none always comes back "not_found" — or, when the search could not be completed,
+    "api_error". Letting either overwrite "no_doi" would turn a row whose identity is
+    its OpenAlex work id into an audit_extracted blocker, in the api_error case
+    because of one outage. Both _verify_row (run_extract) and audit_dois re-verify the
+    same rows, so the rule lives here rather than in either caller.
     """
-    return (new_status == "not_found" and prior_status == "no_doi"
+    return (new_status in ("not_found", "api_error") and prior_status == "no_doi"
             and bool(bare_work_id(oa_work_id_o)))
 
 
@@ -405,23 +505,41 @@ def verify_and_correct(doi_o, title_o, author_o, year_o,
         if metadata_matches(meta, title, author_o, year_o):
             return {"doi_o_verification": "verified", "doi_o": doi, "evidence_note": ""}
 
+        # The three search tiers, strictest first. `unverifiable` records whether any
+        # of them failed to get an answer: the tiers below still run (a later one may
+        # find the original outright, which settles the matter), but if none does, the
+        # row must not be told that no replacement exists.
+        unverifiable = False
         repl = resolve_doi_by_metadata(title, author_o, year_o,
                                        exclude_doi=exclude_doi,
                                        exclude_title=exclude_title)
-        if repl is None and _to_year(year_o) and _surname(author_o or ""):
+        unverifiable |= repl is UNVERIFIABLE
+        if not repl and _to_year(year_o) and _surname(author_o or ""):
             # year_o is often inherited from the wrong DOI's metadata, so a
             # year-constrained search can miss the true original. Retry without
             # the year — but only when an author surname can anchor the match.
             repl = resolve_doi_by_metadata(title, author_o, None,
                                            exclude_doi=exclude_doi,
                                            exclude_title=exclude_title)
-        if repl is None:
+            unverifiable |= repl is UNVERIFIABLE
+        if not repl:
             # author_o can be inherited from the wrong DOI too — final tier
             # matches on title alone but requires a clearly dominant hit.
             repl = resolve_doi_by_metadata(title, "", None,
                                            exclude_doi=exclude_doi,
                                            exclude_title=exclude_title,
                                            title_only_gap=True)
+            unverifiable |= repl is UNVERIFIABLE
+        if not repl and unverifiable:
+            # No replacement found, and the search could not be completed. The two
+            # verdicts below this point — `mismatch`, which deletes doi_o and sends
+            # the row to quarantine, and `no_metadata` — both assert that we looked
+            # and found nothing better. We did not look. Keep the DOI and report the
+            # failure the way every other field reports one.
+            return {"doi_o_verification": "api_error", "doi_o": doi,
+                    "evidence_note": ("DOI verification incomplete: the metadata "
+                                      "search could not be completed (CrossRef or "
+                                      "OpenAlex unavailable)")}
         if repl and clean_doi(repl.get("doi", "")) == doi:
             # the search re-found the very same DOI — the DOI is right, the
             # row's year_o/author_o metadata is what disagreed
@@ -448,6 +566,12 @@ def verify_and_correct(doi_o, title_o, author_o, year_o,
     # Blank DOI, title available — try to fill it.
     repl = resolve_doi_by_metadata(title, author_o, year_o, exclude_doi=exclude_doi,
                                    exclude_title=exclude_title)
+    if repl is UNVERIFIABLE:
+        # "not_found" below is a finding about the original — audit_extracted and
+        # the validation import both read it as one. An unanswered search is not one.
+        return {"doi_o_verification": "api_error", "doi_o": "",
+                "evidence_note": ("DOI search incomplete: CrossRef or OpenAlex "
+                                  "unavailable")}
     if repl and repl.get("doi"):
         return {"doi_o_verification": "corrected", "doi_o": repl["doi"],
                 "evidence_note": f"DOI filled from metadata search: {repl['doi']}"}

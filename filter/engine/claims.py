@@ -299,9 +299,21 @@ class ClaimsClient:
         soft-discard branch of `screen_gate()` turns on whether a voter stood
         behind its answer, so a replay without this column would silently under-
         discard rather than fail (`filter/engine/tiers.py:_votes_from_rows`).
+
+        `created_at` is selected because a work can hold several rows from the same
+        VOTER — one screening per claim, and a run retries a work whose screen did
+        not complete. `_answer_rows()` keeps the latest answer per voter, and
+        "latest" is a fact only this column carries: the primary key is a uuid, so
+        row order is not time order.
+
+        `quote` is selected for the same kind of reason one step further on: it is
+        the first voter's justifying passage, and the handoff writes it onto the row
+        Stage 3 reads (`screen_evidence`), so a set-aside row still names the
+        evidence the screen acted on.
         """
         rows = self._get_paged("engine_verdicts", {
-            "select": "id,claim_id,work_id,tier,model,verdict,confidence,response_state",
+            "select": "id,claim_id,work_id,tier,model,verdict,confidence,quote,"
+                      "response_state,created_at",
             "tier": f"eq.{tier}",
             "superseded_by": "is.null",
         }, order="work_id.asc,id.asc")

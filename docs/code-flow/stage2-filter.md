@@ -31,7 +31,7 @@ filter/spec/*.json                       the bundle — one file per rule
 python -m filter.engine route --pool cache/snapshot_pool
     │
     ├── release.py mints a release id from six inputs
-    │       (pool manifest, overlay, bundle, engine version, aliases, schema)
+    │       (pool fingerprint, overlay, bundle, engine version, aliases, schema)
     │
     ├── pool_reader.py streams the pool parquet in batches,
     │       coalescing any text overlay over empty abstract cells

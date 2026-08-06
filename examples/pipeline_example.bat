@@ -229,7 +229,6 @@ echo ===========================================================================
 echo.
 echo To launch the web app:
 echo.
-echo     python -m extract.csv_to_db
 echo     python -m validate.app
 echo.
 echo Then open http://localhost:5001/.  The new tabs (since merge of #21):

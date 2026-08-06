@@ -264,7 +264,8 @@ def test_a_run_writes_an_overlay_chunk_and_a_rerun_resumes_without_refetching(
     result = backfill.run(wl, overlay_dir, sources=("epmc",))
 
     assert result == {"rows": 1, "chunk": str(overlay_dir / "overlay-0000.parquet"),
-                      "by_source": {"epmc": 1}}
+                      "chunks": [str(overlay_dir / "overlay-0000.parquet")],
+                      "dropped": 1, "by_source": {"epmc": 1}}
     written = pq.read_table(overlay_dir / "overlay-0000.parquet").to_pylist()
     assert [(r["work_id"], r["abstract_text"], r["source"]) for r in written] \
         == [(1, "Recovered 10.1234/one", "epmc")]
@@ -275,6 +276,141 @@ def test_a_run_writes_an_overlay_chunk_and_a_rerun_resumes_without_refetching(
     assert calls["epmc"] == 1
     assert again["rows"] == 0 and again["chunk"] == ""
     assert validate(overlay_dir) == []
+
+
+def test_a_wide_worklist_is_run_in_slices_and_never_held_whole(
+        wl, isolated_cache, tmp_path, monkeypatch):
+    """#23: `--phase bulk` is advertised for a pool-wide worklist, which used to
+    mean the whole worklist and every abstract recovered from it in memory at once.
+    It runs in slices now — each fetched and written to its own chunk — and the
+    slicing changes nothing about the answer: the same rows, each written once."""
+    def fake_epmc(dois: list[str]):
+        return {d: f"Recovered {d}" for d in dois}
+
+    monkeypatch.setattr(backfill, "_fetch_epmc_batch", fake_epmc)
+    overlay_dir = tmp_path / "ov"
+    result = backfill.run(wl, overlay_dir, sources=("epmc",), phase="bulk",
+                          batch_size=1)
+
+    # Two actionable rows, one per slice, each in its own chunk — and the dataset
+    # DOI is still dropped rather than fetched.
+    assert result["rows"] == 2
+    assert len(result["chunks"]) == 2
+    written = [r for path in overlay.chunk_paths(overlay_dir)
+               for r in pq.read_table(path).to_pylist()]
+    assert sorted(r["work_id"] for r in written) == [1, 2]
+    assert overlay.validate(overlay_dir) == []
+
+    # The worklist reader itself streams: it never materialises the parquet.
+    monkeypatch.setattr(overlay.pq, "read_table",
+                        lambda *a, **k: pytest.fail("the worklist was read whole"))
+    assert [r["work_id"] for r in overlay.iter_worklist(wl, batch_size=1)] == [1, 2, 3]
+
+
+def test_a_slice_never_writes_a_work_a_previous_slice_already_wrote(
+        wl, isolated_cache, tmp_path, monkeypatch):
+    """The overlay's one hard rule — a work lives in exactly one chunk — is now
+    also a within-run question, because a run writes several chunks."""
+    monkeypatch.setattr(backfill, "_fetch_epmc_batch",
+                        lambda dois: {d: f"Recovered {d}" for d in dois})
+    overlay_dir = tmp_path / "ov"
+    # The same work in both slices: a worklist can repeat a row.
+    path = tmp_path / "repeated.parquet"
+    pq.write_table(pa.Table.from_pylist(
+        [{"work_id": 1, "doi": "10.1234/one", "title": "T1", "year": 2021},
+         {"work_id": 1, "doi": "10.1234/one", "title": "T1", "year": 2021}],
+        schema=overlay.WORKLIST_SCHEMA), path)
+    result = backfill.run(path, overlay_dir, sources=("epmc",), batch_size=1)
+
+    assert result["rows"] == 1
+    assert overlay.validate(overlay_dir) == []
+
+
+# ---------------------------------------------------------------------------
+# The two pathways: cheap bulk first, gated sources only on what is left
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def wl_osf(tmp_path) -> Path:
+    """The worklist plus an OSF registration, whose phase is the one exception to
+    the targeted pathway's narrowing."""
+    path = tmp_path / "worklist-osf.parquet"
+    pq.write_table(pa.Table.from_pylist(
+        [{"work_id": 1, "doi": "10.1234/one", "title": "T1", "year": 2021},
+         {"work_id": 2, "doi": "10.1234/two", "title": "T2", "year": 2022},
+         {"work_id": 4, "doi": "10.17605/osf.io/ab12d", "title": "R", "year": 2023}],
+        schema=overlay.WORKLIST_SCHEMA), path)
+    return path
+
+
+def _trace(monkeypatch, calls: list, epmc_finds=()) -> None:
+    """Record every source's fetch in call order; Europe PMC answers *epmc_finds*."""
+    def _fake(name, result):
+        def fetch(arg, *rest):
+            calls.append((name, arg))
+            return result(arg) if callable(result) else result
+        return fetch
+
+    monkeypatch.setattr(backfill, "_fetch_openalex_batch",
+                        _fake("openalex", lambda ids: {i: None for i in ids}))
+    monkeypatch.setattr(backfill, "_fetch_epmc_batch", _fake(
+        "epmc", lambda dois: {d: (f"Recovered {d}" if d in epmc_finds else None)
+                              for d in dois}))
+    monkeypatch.setattr(backfill, "_fetch_s2_batch",
+                        _fake("s2", lambda dois: {d: None for d in dois}))
+    monkeypatch.setattr(backfill, "_fetch_crossref_abstract", _fake("crossref", (None, "empty")))
+    monkeypatch.setattr(backfill, "_fetch_scopus_abstract", _fake("scopus", (None, "empty")))
+    monkeypatch.setattr(backfill, "_fetch_osf_registration", _fake("osf", (None, "empty")))
+    monkeypatch.setattr(backfill, "S2_API_KEY", "KEY")
+    monkeypatch.setattr(backfill, "ELSEVIER_API_KEY", "KEY")
+
+
+def test_the_bulk_pathway_is_exhausted_before_any_gated_source_is_asked(
+        wl_osf, isolated_cache, tmp_path, monkeypatch):
+    """Every batched, keyless source runs before every per-item or gated one, and
+    Scopus — a key, an IP-bound entitlement and a ~10k/week quota — is last."""
+    calls: list = []
+    _trace(monkeypatch, calls)
+    backfill.run(wl_osf, tmp_path / "ov")
+
+    order = [name for name, _ in calls]
+    assert order[:2] == list(backfill.BULK_SOURCES)
+    # One name per source, in the order calls were spent: the whole bulk pathway,
+    # then the targeted one, with Scopus last.
+    assert sorted(set(order[2:])) == sorted(backfill.TARGETED_SOURCES)
+    assert order[-1] == "scopus"
+
+
+def test_the_targeted_pathway_only_sees_rows_bulk_left_without_text(
+        wl, isolated_cache, tmp_path, monkeypatch):
+    """The whole point of the split: a CrossRef or Scopus call spent on a row Europe
+    PMC already answered buys nothing. The worklist's other DOI is still asked about."""
+    calls: list = []
+    _trace(monkeypatch, calls, epmc_finds={"10.1234/one"})
+    result = backfill.run(wl, tmp_path / "ov")
+
+    assert [arg for name, arg in calls if name == "crossref"] == ["10.1234/two"]
+    assert [arg for name, arg in calls if name == "scopus"] == ["10.1234/two"]
+    assert [arg for name, arg in calls if name == "s2"] == [["10.1234/two"]]
+    assert result["by_source"] == {"epmc": 1}
+
+
+def test_a_phase_restricts_the_run_to_one_pathway(wl, isolated_cache, tmp_path,
+                                                  monkeypatch):
+    """A wide cheap pass and a narrow expensive pass are run over different
+    worklists, so each pathway has to be requestable on its own."""
+    calls: list = []
+    _trace(monkeypatch, calls)
+    backfill.run(wl, tmp_path / "ov", phase="bulk")
+    assert {name for name, _ in calls} == set(backfill.BULK_SOURCES)
+
+    calls.clear()
+    backfill.run(wl, tmp_path / "ov2", phase="targeted")
+    assert {name for name, _ in calls} == {"s2", "crossref", "scopus"}   # no OSF DOI here
+
+    with pytest.raises(ValueError, match="unknown phase"):
+        backfill.run(wl, tmp_path / "ov3", phase="cheap")
 
 
 # ---------------------------------------------------------------------------

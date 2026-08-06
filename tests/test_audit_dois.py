@@ -70,3 +70,46 @@ def test_a_correction_clears_the_stale_work_id(tmp_path):
     df, _ = _run(tmp_path, {}, corrected)
     assert df.at[0, "oa_work_id_o"] == ""
     assert "oa_work_id_o cleared" in df.at[0, "link_evidence"]
+
+
+def test_a_mismatch_blanks_the_doi_as_the_pipeline_does(tmp_path):
+    """run_extract._verify_row drops a mismatched doi_o and everything derived from
+    it. The audit used to leave it in place, so an audited row reached
+    unresolved_doi_mismatch.csv still carrying the discredited DOI."""
+    mismatch = {"doi_o_verification": "mismatch", "doi_o": "10.2/wrong",
+                "evidence_note": "metadata describes a different paper"}
+    df, counts = _run(tmp_path, {"doi_o": "10.2/wrong",
+                                 "doi_o_verification": "verified"}, mismatch)
+    assert counts.get("mismatch") == 1
+    assert df.at[0, "doi_o"] == ""
+    assert df.at[0, "bibtex_ref_o"] == ""
+    assert df.at[0, "oa_work_id_o"] == ""
+    assert df.at[0, "pair_id"] == make_pair_id("10.1/repl", "")
+    assert df.at[0, "link_confidence"] == "low"
+    assert df.at[0, "title_o"] == "Gender Advertisements", \
+        "the title/author/year claim stays, so the row can still be reviewed"
+
+
+def test_a_row_appended_during_the_audit_survives_apply(tmp_path):
+    """Up to three OpenAlex searches per row separate the read from the --apply
+    write, and this is the tool meant to run alongside a Stage 3 run. Writing back
+    the frame it read deleted every row run_extract had appended meanwhile."""
+    csv = tmp_path / "extracted.csv"
+    pd.DataFrame([_ROW]).to_csv(csv, index=False, encoding="utf-8-sig")
+
+    def _append_then_verify(*a, **k):
+        # A concurrent Stage 3 append, landing while the audit is on the network.
+        pd.DataFrame([{**_ROW, "doi_r": "10.1/new", "doi_o": "10.3/o",
+                       "doi_o_verification": "verified"}]).to_csv(
+            csv, mode="a", index=False, header=False, encoding="utf-8")
+        return {"doi_o_verification": "corrected", "doi_o": "10.2/right",
+                "evidence_note": "DOI filled from metadata search"}
+
+    with patch("extract.audit_dois.verify_and_correct", side_effect=_append_then_verify), \
+         patch("extract.audit_dois._build_ref_o", return_value=("r", "a", "b")):
+        audit_file(csv, apply=True, report_path=tmp_path / "report.csv")
+
+    df = pd.read_csv(csv, dtype=str, encoding="utf-8-sig").fillna("")
+    assert list(df["doi_r"]) == ["10.1/repl", "10.1/new"]
+    assert df.at[0, "doi_o"] == "10.2/right", "the correction is applied"
+    assert df.at[1, "doi_o"] == "10.3/o", "the appended row is untouched"

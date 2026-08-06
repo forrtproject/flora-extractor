@@ -13,6 +13,7 @@ to anything.
 """
 
 import argparse
+import hashlib
 import json
 import threading
 from pathlib import Path
@@ -135,7 +136,7 @@ def _client(calls: list) -> MagicMock:
 
 
 def _cheap_votes(*answers):
-    """Patch `shared.prescreen._vote` so voter *i* always answers `answers[i]`.
+    """Patch the tier's voting seam so voter *i* always answers `answers[i]`.
 
     Per voter rather than per call, because the tier's rule is about which VOTER
     said what — a sequence would make "voter 2 was never asked" and "voter 2 said
@@ -150,7 +151,7 @@ def _cheap_votes(*answers):
         index = models.index(model)
         return answers[index] if index < len(answers) else answers[-1]
 
-    return patch("shared.prescreen._vote", side_effect=vote), seen
+    return patch("filter.engine.tiers.prescreen_vote", side_effect=vote), seen
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +166,23 @@ def test_the_pile_reader_attaches_the_pool_text(con, pool):
     assert all(w.title for w in works)
 
 
+def test_the_pile_reader_stops_scanning_once_it_has_every_wanted_work(
+        con, pool, monkeypatch):
+    """A batch of 500 must not cost a scan of 5.1M pool rows. The order is the
+    pool's either way — the scan stops, it does not choose differently."""
+    real = tiers.iter_pool_batches
+    exhausted = []
+
+    def counting(*args, **kwargs):
+        yield from real(*args, **kwargs)
+        exhausted.append(True)
+
+    monkeypatch.setattr(tiers, "iter_pool_batches", counting)
+    works = tiers.pile_works(con, RELEASE, "screen_cheap", pool)
+    assert {w.work_id for w in works} == {21, 22}
+    assert not exhausted
+
+
 # ---------------------------------------------------------------------------
 # The dry run (issue #146 §6)
 # ---------------------------------------------------------------------------
@@ -174,7 +192,7 @@ def test_dry_run_spends_nothing_and_prints_an_estimate(con, pool, capsys):
     """The default. Nothing claimed, no voter asked, and a number to decide on."""
     calls: list = []
     client = _client(calls)
-    with patch("shared.prescreen._vote") as vote:
+    with patch("filter.engine.tiers.prescreen_vote") as vote:
         report = tiers.run_screen_cheap(con, client, RELEASE, pool_dir=pool)
 
     assert report["dry_run"] is True
@@ -302,7 +320,7 @@ def test_a_failed_registration_names_registration_not_re_routing(con, pool):
     client.claim.side_effect = UnknownRelease("unknown_release: rel")
     client.register_release.side_effect = ClaimsError("HTTP 401: no insert rights")
 
-    with patch("shared.prescreen._vote") as vote:
+    with patch("filter.engine.tiers.prescreen_vote") as vote:
         with pytest.raises(SystemExit) as excinfo:
             tiers.run_screen_cheap(con, client, RELEASE, pool_dir=pool, run=True,
                                    cache_dir=pool.parent)
@@ -336,7 +354,7 @@ def test_a_claim_conflict_refuses_without_spending(con, pool):
     calls: list = []
     client = _client(calls)
     client.claim.side_effect = ClaimConflict("screen_cheap", "3 works already held")
-    with patch("shared.prescreen._vote") as vote:
+    with patch("filter.engine.tiers.prescreen_vote") as vote:
         with pytest.raises(SystemExit) as excinfo:
             tiers.run_screen_cheap(con, client, RELEASE, pool_dir=pool, run=True)
 
@@ -379,7 +397,7 @@ def test_a_hard_signal_row_is_never_asked_of_a_small_model(con, pool):
                         "the same population, using the authors' own materials "
                         "and a preregistered analysis plan agreed in advance with "
                         "the original team.", "screen_cheap")
-    with patch("shared.prescreen._vote") as vote:
+    with patch("filter.engine.tiers.prescreen_vote") as vote:
         outcome, votes = tiers._cheap_judge(signal)
 
     assert vote.call_count == 0
@@ -587,12 +605,12 @@ def test_an_exhausted_budget_fails_the_claim_and_keeps_what_was_decided(con, poo
 
 def _handoff(con, pool, tmp_path, client=None, name="filtered.csv",
              screened_only=False):
-    drop, record_types, decided = ((set(), {}, set()) if client is None
-                                   else handoff_mod.decisions(client))
+    drop, screen, decided = ((set(), {}, set()) if client is None
+                             else handoff_mod.decisions(client))
     spec_dir = engine_bundle.write_bundle(tmp_path / "bundle")
     out = tmp_path / name
     manifest = handoff_mod.write_handoff(con, pool, out, RELEASE, drop=drop,
-                                         record_types=record_types,
+                                         screen=screen,
                                          decided=decided if screened_only else None,
                                          specs=engine_bundle.specs(),
                                          spec_dir=spec_dir, created_at="2026-08-04")
@@ -670,19 +688,23 @@ def test_a_verdict_from_an_earlier_release_still_decides_the_handoff(
         con, pool, tmp_path):
     """A verdict follows the WORK: a re-route mints a new release id without
     unasking a voter, and the tier's checkpoint would skip these works anyway."""
-    earlier = _decided_client("screen_cheap", "live",
-                              [{"work_id": 21, "verdict": "no", "model": "m1"},
-                               {"work_id": 21, "verdict": "no", "model": "m2"},
-                               {"work_id": 22, "verdict": "no", "model": "m1"},
-                               {"work_id": 22, "verdict": "yes", "model": "m2"}],
-                              release="rel-before-the-reroute")
+    voter1, voter2 = _voter_models()
+    earlier = _decided_client(
+        "screen_expensive", "live",
+        [{"work_id": 11, "verdict": "none", "model": voter1, "confidence": "confident"},
+         {"work_id": 11, "verdict": "none", "model": voter2, "confidence": "confident"},
+         {"work_id": 12, "verdict": "replication", "model": voter1,
+          "confidence": "confident"},
+         {"work_id": 12, "verdict": "replication", "model": voter2,
+          "confidence": "confident"}],
+        release="rel-before-the-reroute")
     # Scoped to this release the run is invisible — that is the bug being fixed.
-    assert tiers.tier_decisions(earlier, RELEASE, "screen_cheap") == {}
+    assert tiers.tier_decisions(earlier, RELEASE, "screen_expensive") == {}
 
     out, manifest = _handoff(con, pool, tmp_path, earlier, screened_only=True)
 
     assert manifest["dropped_by_tier_verdict"] == 1
-    assert [r["openalex_id_r"] for r in _read(out)] == ["https://openalex.org/W22"]
+    assert [r["openalex_id_r"] for r in _read(out)] == ["https://openalex.org/W12"]
 
 
 def test_a_validation_claim_from_another_release_still_contributes_nothing(
@@ -706,9 +728,20 @@ def _cheap_ran_on_21() -> MagicMock:
                             {"work_id": 21, "verdict": "yes", "model": "m2"}])
 
 
+def _expensive_ran_on_11() -> MagicMock:
+    """One live expensive run that judged W11 and reached nothing else."""
+    voter1, voter2 = _voter_models()
+    return _decided_client(
+        "screen_expensive", "live",
+        [{"work_id": 11, "verdict": "replication", "model": voter1,
+          "confidence": "confident"},
+         {"work_id": 11, "verdict": "replication", "model": voter2,
+          "confidence": "confident"}])
+
+
 def test_an_unscreened_row_does_not_travel_and_is_counted(con, pool, tmp_path):
     """The default: routing says "ask an LLM", and only the LLM's answer admits."""
-    out, manifest = _handoff(con, pool, tmp_path, _cheap_ran_on_21(),
+    out, manifest = _handoff(con, pool, tmp_path, _expensive_ran_on_11(),
                              screened_only=True)
 
     assert manifest["screened_only"] is True
@@ -718,16 +751,40 @@ def test_an_unscreened_row_does_not_travel_and_is_counted(con, pool, tmp_path):
     # rows + the two absences account for every work the piles hold.
     assert manifest["rows"] + manifest["skipped_unscreened"] \
         + manifest["dropped_by_tier_verdict"] == 4
-    assert [r["openalex_id_r"] for r in _read(out)] == ["https://openalex.org/W21"]
+    assert [r["openalex_id_r"] for r in _read(out)] == ["https://openalex.org/W11"]
+
+
+def test_a_cheap_verdict_never_admits_a_row_to_stage_three(con, pool, tmp_path):
+    """The hole this closes: the cheap tier's `proceed` means "on to the expensive
+    screen", and a bypass means "we did not ask". Neither is a screen. Counting
+    either as decided would hand Stage 3 — which does not screen any more — a row
+    the validated pair has never seen."""
+    passed = _decided_client("screen_cheap", "live",
+                             [{"work_id": 21, "verdict": "no", "model": "m1"},
+                              {"work_id": 21, "verdict": "yes", "model": "m2"},
+                              {"work_id": 22, "verdict": tiers.PROCEED,
+                               "model": "prescreen_bypass"}])
+    drop, screen, decided = handoff_mod.decisions(passed)
+    assert (drop, screen, decided) == (set(), {}, set())
+
+    out, manifest = _handoff(con, pool, tmp_path, passed, screened_only=True)
+    assert manifest["rows"] == 0
+    assert manifest["skipped_unscreened"] == 4
+    assert _read(out) == []
 
 
 def test_as_routed_still_exports_the_unscreened_rows(con, pool, tmp_path):
-    out, manifest = _handoff(con, pool, tmp_path, _cheap_ran_on_21())
+    out, manifest = _handoff(con, pool, tmp_path, _expensive_ran_on_11())
 
     assert manifest["screened_only"] is False
     assert manifest["rows"] == 4
     assert manifest["skipped_unscreened"] == 0
     assert "https://openalex.org/W22" in [r["openalex_id_r"] for r in _read(out)]
+    # A row no expensive run settled travels with its screen columns blank, which
+    # is what Stage 3 reads as "nothing has screened this".
+    unscreened = [r for r in _read(out)
+                  if r["openalex_id_r"] == "https://openalex.org/W22"][0]
+    assert unscreened["screen_verdict"] == ""
 
 
 def test_a_single_vote_is_not_a_verdict(con, pool, tmp_path):
@@ -737,11 +794,11 @@ def test_a_single_vote_is_not_a_verdict(con, pool, tmp_path):
         {"work_id": 11, "verdict": "replication", "model": _voter_models()[0],
          "confidence": "confident"},
     ])
-    drop, record_types, decided = handoff_mod.decisions(half)
+    drop, screen, decided = handoff_mod.decisions(half)
 
     assert decided == set()
     assert drop == set()
-    assert record_types == {}
+    assert screen == {}
 
 
 def test_screened_only_without_supabase_refuses(monkeypatch, tmp_path, capsys):
@@ -794,6 +851,130 @@ def test_the_handoff_is_a_file_stage_three_accepts(con, pool, tmp_path):
     read_back = list(_iter_filtered_rows(out))
     assert len(read_back) == 4
     assert all(row["abstract_r"] for row in read_back)
+
+
+def test_the_screen_verdict_travels_to_stage_three_intact(con, pool, tmp_path,
+                                                          monkeypatch):
+    """The move: the screen runs here, so what it decided has to reach Stage 3 on
+    the row. This is the round trip — verdict rows in, `SCREEN_COLS` written, and
+    the dict Stage 3 rebuilds from them, which is what its ladder and its
+    title-search gate read."""
+    from shared import llm_client
+
+    voter1, voter2 = _voter_models()
+    live = _decided_client("screen_expensive", "live", [
+        {"work_id": 11, "verdict": "replication", "model": voter1,
+         "confidence": "confident", "quote": "we conducted a direct replication"},
+        {"work_id": 11, "verdict": "both", "model": voter2,
+         "confidence": "unconfident"},
+    ])
+    # The two descriptive fields the verdict table does not hold come from the
+    # classify cache, which is content-complete and so provably this row's answer.
+    monkeypatch.setattr(
+        llm_client, "cached_classification",
+        lambda doi, title, abstract: {"categories": ["clearly_declared", "other"],
+                                      "llm_reasoning": "gemini: states its design"})
+    out, _ = _handoff(con, pool, tmp_path, live, screened_only=True)
+
+    row = _read(out)[0]
+    assert row["screen_verdict"] == "proceed"
+    assert row["screen_record_type"] == "replication"
+    assert row["screen_categories"] == "clearly_declared|other"
+    assert row["screen_evidence"] == "we conducted a direct replication"
+    assert row["screen_votes"] == (f"{voter1}=replication/confident|"
+                                   f"{voter2}=both/unconfident")
+    # The type reaches Stage 3's paper-type field too.
+    assert (row["filter_status"], row["filter_method"]) == ("replication", "screen")
+
+    import pandas as pd
+
+    from extract.run_extract import _screen_from_row
+    screen = _screen_from_row(pd.Series(row))
+    assert screen["screen_verdict"] == "proceed"
+    assert screen["record_type"] == "replication"
+    assert screen["categories"] == ["clearly_declared", "other"]
+    assert [(v["classification"], v["confident"]) for v in screen["votes"]] == [
+        ("replication", True), ("both", False)]
+
+
+def test_a_missing_classify_cache_costs_two_columns_and_no_money(con, pool, tmp_path,
+                                                                 monkeypatch):
+    """A checkout without the cache must not re-buy the screen at handoff time. The
+    categories and the reasoning are simply blank; nothing downstream decides on
+    either, and the verdict itself is unaffected."""
+    from shared import llm_client
+
+    voter1, voter2 = _voter_models()
+    live = _decided_client("screen_expensive", "live", [
+        {"work_id": 11, "verdict": "replication", "model": voter1,
+         "confidence": "confident"},
+        {"work_id": 11, "verdict": "replication", "model": voter2,
+         "confidence": "confident"},
+    ])
+    called: list = []
+    monkeypatch.setattr(llm_client, "call_model",
+                        lambda *a, **k: called.append(a) or (None, "", "blocked"))
+    monkeypatch.setattr(llm_client, "LLM_CACHE_DIR", tmp_path / "empty-cache")
+    out, _ = _handoff(con, pool, tmp_path, live, screened_only=True)
+
+    row = _read(out)[0]
+    assert (row["screen_categories"], row["screen_reasoning"]) == ("", "")
+    assert row["screen_verdict"] == "proceed"
+    assert called == []
+
+
+def test_a_failed_handoff_write_leaves_the_previous_file_intact(tmp_path):
+    """The handoff is rewritten over the file Stage 3 reads, so it goes through a
+    sibling temp file: a run that dies mid-write must not destroy a working input."""
+    class Unwritable:
+        def __str__(self) -> str:
+            raise RuntimeError("disk full")
+
+    out = tmp_path / "filtered.csv"
+    handoff_mod._publish(
+        out, handoff_mod._write_csv_tmp(
+            out, [{col: "old" for col in ENGINE_EXPORTED_COLS}]), {"rows": 1})
+    before = out.read_bytes()
+
+    with pytest.raises(RuntimeError, match="disk full"):
+        handoff_mod._write_csv_tmp(out, [{**{c: "" for c in ENGINE_EXPORTED_COLS},
+                                          "doi_r": Unwritable()}])
+    assert out.read_bytes() == before
+    assert not (tmp_path / "filtered.csv.tmp").exists()
+
+
+def test_a_crash_between_the_two_renames_never_leaves_an_unbound_csv(
+        con, pool, tmp_path, monkeypatch):
+    """#21: the CSV and its manifest are two files and no filesystem makes the pair
+    atomic, so the ordering decides which half-state exists. Stage 3 reads
+    `filtered.csv` by name without checking the manifest, so the state that must
+    not exist is a NEW csv nothing describes. The manifest goes first: a crash
+    before the CSV rename leaves the PREVIOUS handoff — a valid input — under a
+    manifest whose sha256 visibly disagrees with it."""
+    out, first = _handoff(con, pool, tmp_path)
+    manifest_path = Path(str(out) + ".manifest.json")
+    assert json.loads(manifest_path.read_text())["sha256"] == first["sha256"]
+    previous_csv = out.read_bytes()
+
+    seen: list = []
+    real_replace = handoff_mod.os.replace
+
+    def crash_between(src, dst):
+        seen.append(dst)
+        real_replace(src, dst)
+        if len(seen) == 1:
+            raise RuntimeError("killed between the two renames")
+
+    monkeypatch.setattr(handoff_mod.os, "replace", crash_between)
+    with pytest.raises(RuntimeError, match="killed between"):
+        _handoff(con, pool, tmp_path, _expensive_ran_on_11(), screened_only=True)
+
+    # The manifest moved first; the CSV on disk is still the previous handoff, and
+    # the mismatch is visible to anyone who checks.
+    assert out.read_bytes() == previous_csv
+    published = json.loads(manifest_path.read_text())
+    assert published["sha256"] != first["sha256"]
+    assert published["sha256"] != hashlib.sha256(out.read_bytes()).hexdigest()
 
 
 def test_a_live_expensive_verdict_types_the_row_stage_three_reads(con, pool, tmp_path):
@@ -861,8 +1042,8 @@ def test_the_gate_replayed_from_stored_rows_matches_the_live_votes():
               {"work_id": 11, "model": voter2, "verdict": "replication",
                "confidence": "unconfident"}]
     client = _decided_client("screen_expensive", "live", stored)
-    assert tiers.tier_decisions(client, RELEASE, "screen_expensive") == {
-        11: {"outcome": "discard", "record_type": "replication"}}
+    replayed = tiers.tier_decisions(client, RELEASE, "screen_expensive")[11]
+    assert (replayed["outcome"], replayed["record_type"]) == ("discard", "replication")
 
     # The same votes, both stood behind, are a real split and proceed. Without the
     # confidence column both cases would read as unconfident and both would
@@ -948,6 +1129,226 @@ def test_a_legacy_verdict_counts_when_its_models_are_todays(con, pool, tmp_path)
                             generation=None)
     assert tiers.decided_work_ids(other, "screen_expensive") == set()
     assert handoff_mod.decisions(other) == (set(), {}, set())
+
+
+# ---------------------------------------------------------------------------
+# An incomplete screen is a failure, not a decision (#3)
+# ---------------------------------------------------------------------------
+
+
+def test_an_incomplete_screen_is_not_decided_and_is_asked_again(con, pool):
+    """The strand this closes. One voter 429s, so the work has verdict rows but no
+    gate decision. It must not count as decided — a work skipped by the tier and
+    held back by the handoff is retired by a five-minute outage, and a transient
+    failure is never a definitive miss. The next ordinary run re-claims it, with no
+    flag for an operator to remember."""
+    voter1, voter2 = _voter_models()
+    half = _decided_client("screen_expensive", "live", [
+        {"work_id": 11, "verdict": "replication", "model": voter1,
+         "confidence": "confident"},
+        {"work_id": 11, "verdict": "no_answer", "model": voter2},
+        # W12 was screened whole in the same run and stays decided.
+        {"work_id": 12, "verdict": "replication", "model": voter1,
+         "confidence": "confident"},
+        {"work_id": 12, "verdict": "replication", "model": voter2,
+         "confidence": "confident"},
+    ])
+    assert tiers.decided_work_ids(half, "screen_expensive") == {12}
+    assert tiers.incomplete_work_ids(half, "screen_expensive") == {11}
+
+    # And the batch the next run sends contains it again.
+    half.claimed_work_ids.return_value = set()
+    works = tiers._batch(con, half, RELEASE, "screen_expensive", None, None,
+                         pool, None, None, run=True)
+    assert {w.work_id for w in works} == {11}
+
+
+def test_a_cheap_tier_whose_voters_failed_decided_nothing(con, pool):
+    """Same rule on the discard-only tier: a `no_answer` is the absence of an
+    answer, so neither a pair of them nor a `no` beside one is a decision — the
+    missing answer is precisely the second `no` that would have discarded. Only a
+    voter who declined to say no settles the work, because after a keep voter 2 is
+    never asked."""
+    failed = _decided_client("screen_cheap", "live", [
+        {"work_id": 21, "verdict": "no_answer", "model": "m1"},
+        {"work_id": 21, "verdict": "no_answer", "model": "m2"},
+        {"work_id": 22, "verdict": "no", "model": "m1"},
+        {"work_id": 22, "verdict": "no_answer", "model": "m2"},
+    ])
+    assert tiers.decided_work_ids(failed, "screen_cheap") == set()
+    assert tiers.incomplete_work_ids(failed, "screen_cheap") == {21, 22}
+
+    kept = _decided_client("screen_cheap", "live",
+                           [{"work_id": 21, "verdict": "yes", "model": "m1"}])
+    assert tiers.decided_work_ids(kept, "screen_cheap") == {21}
+
+
+def test_one_voter_answering_twice_is_never_a_second_vote(con, pool):
+    """The retry hole: pooling rows across claims is what makes an incomplete
+    screen claimable again, but a re-run re-asks BOTH voters and the one that
+    already answered answers again from cache. Two rows from one voter must not
+    add up to the two the gate needs, or the work settles on a decision no second
+    voter ever contributed to — and stops being claimable."""
+    voter1, voter2 = _voter_models()
+    retried = _decided_client("screen_expensive", "live", [
+        # Attempt one: voter 1 answered, voter 2 failed.
+        {"work_id": 11, "verdict": "replication", "model": voter1,
+         "confidence": "confident", "created_at": "2026-08-01T10:00:00Z"},
+        {"work_id": 11, "verdict": "no_answer", "model": voter2,
+         "created_at": "2026-08-01T10:00:01Z"},
+        # Attempt two, a new claim: voter 1 answers again, voter 2 fails again.
+        {"work_id": 11, "verdict": "replication", "model": voter1,
+         "confidence": "confident", "created_at": "2026-08-02T10:00:00Z"},
+        {"work_id": 11, "verdict": "no_answer", "model": voter2,
+         "created_at": "2026-08-02T10:00:01Z"},
+    ])
+    assert tiers.decided_work_ids(retried, "screen_expensive") == set()
+    assert tiers.incomplete_work_ids(retried, "screen_expensive") == {11}
+    assert handoff_mod.decisions(retried) == (set(), {}, set())
+
+    # The later answer is the one kept, and it stays in voter 1's call-order slot,
+    # so the record type still breaks a split on the FIRST qualifying voter.
+    rebuilt = tiers._votes_from_rows([
+        {"work_id": 11, "verdict": "reproduction", "model": voter1,
+         "confidence": "confident", "created_at": "2026-08-01T10:00:00Z"},
+        {"work_id": 11, "verdict": "replication", "model": voter1,
+         "confidence": "confident", "created_at": "2026-08-02T10:00:00Z"},
+        {"work_id": 11, "verdict": "reproduction", "model": voter2,
+         "confidence": "confident", "created_at": "2026-08-02T10:00:01Z"},
+    ])
+    assert [(v["model"], v["classification"]) for v in rebuilt] == [
+        (voter1, "replication"), (voter2, "reproduction")]
+    assert tiers._expensive_decision([])["outcome"] == tiers.INCOMPLETE
+
+
+@pytest.mark.parametrize("said,expected", [
+    (["yes"], tiers.PROCEED),                       # voter 2 is never asked
+    (["no", "yes"], tiers.PROCEED),                 # both answered
+    (["no", "no"], tiers.DISCARD),                  # the two explicit noes
+    (["no", "no_answer"], tiers.INCOMPLETE),        # the answer that mattered failed
+    (["no"], tiers.INCOMPLETE),                     # the second call never happened
+    (["no_answer"], tiers.INCOMPLETE),
+    (["no_answer", "no_answer"], tiers.INCOMPLETE),
+])
+def test_the_cheap_tier_only_decides_when_the_missing_answer_could_not_matter(
+        said, expected):
+    """The tier asks voter 2 only after a `no`, so `no` + a failure is exactly the
+    case where the second `no` that would have discarded never arrived. Filing it
+    as a proceed checkpoints a swallowed failure as this tier's decision."""
+    models = ["m1", "m2"]
+    rows = [{"work_id": 21, "verdict": verdict, "model": models[i]}
+            for i, verdict in enumerate(said)]
+    assert tiers._cheap_decision(rows)["outcome"] == expected
+
+
+def test_a_retried_cheap_no_is_one_voter_not_two(con, pool):
+    """The same retry hole on the discard-only tier, where it would DISCARD a row
+    on one voter's answer counted twice."""
+    twice = [{"work_id": 21, "verdict": "no", "model": "m1",
+              "claim_id": "claim-1", "created_at": "2026-08-01T10:00:00Z"},
+             {"work_id": 21, "verdict": "no", "model": "m1",
+              "claim_id": "claim-2", "created_at": "2026-08-02T10:00:00Z"}]
+    assert tiers._cheap_decision(twice)["outcome"] == tiers.INCOMPLETE
+    assert tiers._cheap_decision(
+        twice + [{"work_id": 21, "verdict": "no", "model": "m2",
+                  "claim_id": "claim-2", "created_at": "2026-08-02T10:00:01Z"}]
+    )["outcome"] == tiers.DISCARD
+
+
+def test_unattributed_legacy_votes_count_within_one_claim_and_never_across(con, pool):
+    """A legacy row's blank model says nothing about WHICH voter it is, so it can
+    be neither deduplicated nor pooled: two such rows in one claim are the two
+    voters of one screening, two in different claims are indistinguishable from
+    one voter retried."""
+    one_screening = [
+        {"work_id": 11, "verdict": "replication", "model": "", "claim_id": "c1",
+         "confidence": "confident", "created_at": "2026-08-01T10:00:00Z"},
+        {"work_id": 11, "verdict": "replication", "model": "", "claim_id": "c1",
+         "confidence": "confident", "created_at": "2026-08-01T10:00:01Z"},
+    ]
+    assert tiers._expensive_decision(one_screening)["outcome"] == "proceed"
+    assert [v["model"] for v in tiers._votes_from_rows(one_screening)] \
+        == [tiers.UNKNOWN_MODEL, tiers.UNKNOWN_MODEL]
+
+    two_attempts = [
+        dict(one_screening[0], claim_id="c1"),
+        dict(one_screening[1], claim_id="c2", created_at="2026-08-02T10:00:00Z"),
+    ]
+    assert tiers._expensive_decision(two_attempts)["outcome"] == tiers.INCOMPLETE
+
+
+def test_an_incomplete_screen_is_counted_where_an_operator_sees_it(capsys):
+    """A strand nobody can see is a strand nobody fixes, so `screen` prints it."""
+    from filter.engine import cli
+
+    client = _decided_client("screen_expensive", "live", [
+        {"work_id": 11, "verdict": "replication", "model": _voter_models()[0],
+         "confidence": "confident"},
+    ])
+    cli._print_incomplete(client, "screen_expensive", indent="  ")
+    assert "incomplete screens 1" in capsys.readouterr().out
+
+
+def test_a_failed_expensive_call_records_an_attributable_placeholder(con, pool):
+    """#20: `llm_model` can come back blank, and a blank model is read as a value
+    downstream — sorted out of call order, printed as an empty vote, attributed to
+    a provider by `provider_for('')`. It is recorded as UNKNOWN_MODEL instead."""
+    work = tiers.Work(work_id=11, doi="10.1/x", title="T", abstract="A",
+                      pile="screen_expensive")
+    with patch("filter.engine.tiers.classify_replication",
+               return_value={"screen_verdict": "", "votes": [], "llm_model": "",
+                             "llm_error": "429"}):
+        outcome, votes = tiers._expensive_judge(work)
+
+    assert outcome == tiers.INCOMPLETE
+    assert [v["model"] for v in votes] == [tiers.UNKNOWN_MODEL]
+
+    # And a legacy row that DID store a blank model still votes, unattributed:
+    # its classification and confidence are evidence, only the name is missing.
+    rebuilt = tiers._votes_from_rows(
+        [{"work_id": 11, "verdict": "replication", "model": "",
+          "confidence": "confident"}])
+    assert [(v["model"], v["classification"]) for v in rebuilt] == [
+        (tiers.UNKNOWN_MODEL, "replication")]
+
+
+def test_a_cheap_discard_never_overrules_an_expensive_proceed(con, pool, tmp_path):
+    """#7: `write_handoff` checks the drop set first, so a live cheap discard of a
+    work the validated pair PASSED would drop it — the weaker model overruling the
+    stronger one, which the design forbids in exactly this direction."""
+    voter1, voter2 = _voter_models()
+    both = MagicMock()
+    both.claims.side_effect = lambda release_id=None, tier=None, status=None: [
+        {"id": f"claim-{t}", "release_id": RELEASE, "tier": t,
+         "meta": {"mode": "live", "generation": tiers.screening_generation(t)}}
+        for t in ("screen_cheap", "screen_expensive") if tier in (None, t)]
+    verdicts = {
+        "screen_expensive": [
+            {"claim_id": "claim-screen_expensive", "work_id": 11,
+             "verdict": "replication", "model": voter1, "confidence": "confident"},
+            {"claim_id": "claim-screen_expensive", "work_id": 11,
+             "verdict": "replication", "model": voter2, "confidence": "confident"}],
+        # The same work, discarded by the cheap tier — which may only send a row ON
+        # to the expensive screen, never past its answer.
+        "screen_cheap": [
+            {"claim_id": "claim-screen_cheap", "work_id": 11, "verdict": "no",
+             "model": "m1"},
+            {"claim_id": "claim-screen_cheap", "work_id": 11, "verdict": "no",
+             "model": "m2"},
+            {"claim_id": "claim-screen_cheap", "work_id": 21, "verdict": "no",
+             "model": "m1"},
+            {"claim_id": "claim-screen_cheap", "work_id": 21, "verdict": "no",
+             "model": "m2"}],
+    }
+    both.verdicts.side_effect = lambda t, claim_ids=None: verdicts.get(t, [])
+
+    drop, screen, decided = handoff_mod.decisions(both)
+    # W21 has no expensive verdict, so the cheap discard still applies to it.
+    assert drop == {21}
+    assert decided == {11}
+
+    out, manifest = _handoff(con, pool, tmp_path, both, screened_only=True)
+    assert [r["openalex_id_r"] for r in _read(out)] == ["https://openalex.org/W11"]
 
 
 # ---------------------------------------------------------------------------

@@ -175,8 +175,12 @@ ruled out on the negative side.
 
 Ship the tier, leave `PRESCREEN_ENABLED` off, and do not turn it on for $30.
 
-Before enabling it, run it in **shadow**: record `prescreen_verdict` on every row, act on
+Before enabling it, run it in **shadow**: record the tier's answer on every row, act on
 no discard, and count how often it would have discarded a row the validated screen then
-kept. That is an incremental loss rather than a miss against a gold list, it needs no gold
+kept. (Since this was written the tier moved into Stage 2, and that shadow run is what
+`screen --tier screen_cheap` does by default — `mode="validation"`, whose run report
+compares the discards it would have made against the piles the rules chose. The old
+`PRESCREEN_ENABLED` flag and the per-row `prescreen_verdict` column are gone with the
+Stage 3 half.) That is an incremental loss rather than a miss against a gold list, it needs no gold
 labels, it is measurable in the thousands on the live population, and it is the only
 number that should decide this. Revisit when #129 settles the corpus size.

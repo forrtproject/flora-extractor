@@ -27,8 +27,9 @@ _NOT_CONFIGURED: dict = {"error": "supabase_not_configured"}
 
 # validation_queue.validator_slot values → flat prefix used in dashboard rows.
 # The KEYS are the DB CHECK-constraint values (flora-validation/db_schema.sql:
-# validator_slot IN ('human_1','human_2','llm')) and must match _VALIDATOR_SLOTS in
-# csv_to_db.py. The VALUES are display prefixes only. #50(a): all three now agree.
+# validator_slot IN ('human_1','human_2','llm')) and must match the slots the
+# validation repo's import writes. The VALUES are display prefixes only.
+# #50(a): all three now agree.
 _SLOT_PREFIX: dict[str, str] = {
     "human_1": "val1",
     "human_2": "val2",
@@ -103,7 +104,7 @@ def get_validation_stats() -> dict:
         queue = _get("validation_queue", {"select": "validator_id,is_validated"})
         total_judgements = sum(1 for r in queue if r.get("is_validated"))
         # validator_id is populated by the external validation app, not by this repo's
-        # writer (csv_to_db.py leaves it unset), so this may read 0 until that app runs.
+        # import (which leaves it unset), so this may read 0 until that app runs.
         active_validators = len({r["validator_id"] for r in queue if r.get("validator_id")})
         # completion_rate = filled validator slots / total slots. This is a progress
         # metric, NOT inter-rater agreement (which needs per-record vote comparison the

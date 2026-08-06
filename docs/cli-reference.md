@@ -6,55 +6,69 @@ All commands are run from the project root with `python -m <module>`.
 
 ## Stage 1 — Search
 
+Stage 1 does the OpenAlex snapshot scan and nothing else. The API-harvest sources
+(phrase search, concept search, Semantic Scholar, the discovery engine) are retired
+to `wip/api-harvest-sources`: they wrote `data/candidates.csv`, which nothing
+downstream reads. Stage 2 reads the SURVIVOR POOL, so the pool is what a scan
+produces, and `run_search` is a thin operator front-end over
+`search/snapshot_scan.py`.
+
+`--scan` is **required**. A bare `python -m search.run_search` exits 2 with usage
+rather than start a 725 GB, 13–21 hour read, and the whole parser is four flags:
+
 ```bash
-# Run full search across all sources (appends new results to candidates.csv)
-python -m search.run_search
+# Full corpus scan into the default pool (cache/snapshot_pool, or FLORA_POOL_DIR).
+# Resumable: partitions the ledger already marks done are skipped.
+python -m search.run_search --scan
 
-# Limit to specific year range
-python -m search.run_search --from-year 2020 --to-year 2024
+# Write the pool somewhere else. This is Stage 2's input — a scan that writes no
+# pool produces nothing.
+python -m search.run_search --scan --survivor-pool /mnt/big/pool
 
-# Auto-advance: process one (source, phrase/concept, year) job per call; repeat until exit 2
-python -m search.run_search --auto-advance --from-year 2011 --to-year 2026 --max-per-phrase 200
+# Stop after N snapshot partitions this run
+python -m search.run_search --scan --snapshot-max-files 20
 
-# Harvest cached API pages into candidates.csv without making new API calls
-# (run this first after any crash or cursor deletion to recover orphaned pages)
-python -m search.run_search --harvest-only
-
-# Rebuild candidates index (if CSV was modified outside the pipeline)
-python -m search.run_search --rebuild-index
-
-# Reset all cursors to start fetching from page 1 again
-python -m search.run_search --reset-cursors
+# Scan on even though the ledger was written under a DIFFERENT search gate
+python -m search.run_search --scan --force-gate
 ```
+
+Progress is a separate, read-only command (below), safe against a scan in flight.
 
 ### Backfilling missing abstracts
 
+`search/fetch_abstracts.py` is a library, not a command: it owns the six sources
+and their transient-vs-definitive contract, and its one caller is
+`python -m filter.engine.backfill` (Stage 2), which supplies the worklist and
+writes the recovered text into an overlay chunk. Run the backfill, not this
+module — its CLI is in the Stage 2 section below.
+
 ```bash
-# Full run — resumable; already-tried identifiers are skipped
-python -m search.fetch_abstracts
+# Cheap bulk pathway over a wide worklist: batched, keyless, unquota'd
+python -m filter.engine.backfill --worklist wide.parquet --run --phase bulk
 
-# Count what is missing, by identifier type, without calling any API
-python -m search.fetch_abstracts --dry-run
-
-# Skip the near-zero-yield OpenAlex phase and go straight to the DOI phases
-python -m search.fetch_abstracts --skip-openalex
-
-# Cap the Scopus phase (weekly quota ~10k) and spend it on chosen DOIs first
-python -m search.fetch_abstracts --scopus-limit 9000 --scopus-priority dois.txt
+# Gated pathway, over the rows bulk left without text; Scopus is capped
+python -m filter.engine.backfill --worklist no_text.parquet --run --phase targeted \
+    --scopus-limit 9000
 ```
 
-Phases run cheapest-and-highest-yield first, each with its own checkpoint
-namespace so adding or reordering one never invalidates another's progress:
+The two pathways, each source with its own checkpoint namespace so adding or
+reordering one never invalidates another's progress:
 
-| # | Phase | Key needed | Measured hit rate |
-| - | ----- | ---------- | ----------------- |
-| 1 | OpenAlex batch | — | ~0% (this corpus was discovered via OpenAlex) |
-| 2 | **Europe PMC batch** | — | **47.7%** |
-| 3 | Semantic Scholar batch | `S2_API_KEY` | 8.5% here, 14.5% corpus-wide |
-| 4 | CrossRef by DOI | — | 0.3–0.6% |
-| 5 | Scopus by DOI | `ELSEVIER_API_KEY` | quota-capped fallback |
+| Pathway | # | Source | Key needed | Measured hit rate |
+| ------- | - | ------ | ---------- | ----------------- |
+| bulk | 1 | OpenAlex batch | — | ~0% (this corpus was discovered via OpenAlex) |
+| bulk | 2 | **Europe PMC batch** | — | **47.7%** |
+| targeted | 3 | OSF registrations (`10.17605` only) | `OSF_TOKEN` for private records | recovers a registration template, not an abstract |
+| targeted | 4 | Semantic Scholar batch | `S2_API_KEY` | 8.5% here, 14.5% corpus-wide |
+| targeted | 5 | CrossRef by DOI | — | 0.3–0.6% |
+| targeted | 6 | Scopus by DOI | `ELSEVIER_API_KEY` | quota-capped fallback (~10k/week) |
 
-Rates for phases 2–4 come from one 960-DOI sample (2026-07-29) of never-tried
+Bulk goes first and over everything, because a batched keyless request answers
+about `EPMC_BATCH_SIZE` DOIs at once; targeted sees only what bulk left without
+text, because those calls are one per DOI or bought with a key, an entitlement or
+a weekly quota.
+
+Rates for sources 2, 4 and 5 come from one 960-DOI sample (2026-07-29) of never-tried
 rows drawn across the corpus's dominant prefixes. Europe PMC leads because 69% of
 this corpus's missing abstracts are Elsevier (10.1016) and Springer (10.1007),
 neither of which deposits abstracts to CrossRef — and OpenAlex's abstract index
@@ -66,59 +80,6 @@ every phase — they register data, not articles, so no abstract exists to find.
 They are still counted in the "rows missing abstract" total, and reported
 separately.
 
-### Filtering by source
-
-The `--source` flag restricts which discovery tracks run. It can be repeated.
-
-The accepted values are `_ALL_SOURCES` in `search/run_search.py`:
-
-| Source value | What it searches |
-| --- | --- |
-| `openalex` | The keyword phrases in `SEARCH_PHRASES` (`search/openalex_search.py`) via `title_and_abstract.search` |
-| `openalex_concept` | OpenAlex concept tags (`C12590798` Replication, `C9893847` Reproducibility) |
-| `semantic_scholar` | The same `SEARCH_PHRASES` list, which `search/semantic_scholar_search.py` imports, via S2 bulk search |
-| `openalex_snapshot` | The bulk-parquet snapshot scan (opt-in; see below) |
-| `engine` | Internal engine source (requires `FLORA_USE_ENGINE=1`) |
-
-Default is every source **except** `openalex_snapshot`. `bob_reed` and `i4r` are
-`source` *column* values, not `--source` values: their scrapers live in
-`search/external_lists.py` and are not wired into `run_search` (issue #46).
-
-```bash
-# Phrase-based sources — need the auto-advance loop
-do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2026 --max-per-phrase 10000 --source openalex } until ($LASTEXITCODE -eq 2)
-do { python -m search.run_search --auto-advance --from-year 2011 --to-year 2026 --max-per-phrase 10000 --source semantic_scholar } until ($LASTEXITCODE -eq 2)
-
-# Concept-based source — single run or auto-advance loop (large result sets)
-python -m search.run_search --source openalex_concept --from-year 2011 --to-year 2026
-do { python -m search.run_search --auto-advance --source openalex_concept --from-year 2011 --to-year 2026 --max-per-phrase 10000 } until ($LASTEXITCODE -eq 2)
-```
-
-### Concept ID management
-
-Concept IDs are defined in `CONCEPT_IDS` inside `search/openalex_search.py`. To look up IDs:
-
-```bash
-# Print OpenAlex concepts matching a query (live API call, then exit)
-python -m search.run_search --list-concepts "replication"
-python -m search.run_search --list-concepts "reproducibility"
-```
-
-Current verified IDs (as of 2026-06-23):
-
-- `C12590798` — Replication (statistics) — ~263k works
-- `C9893847` — Reproducibility — ~121k works
-
-### Harvesting the cache separately
-
-The harvest step scans all cached JSON pages and can be slow on large caches. Run it
-on its own after a crash, or when an `--auto-advance` loop stopped on resource
-exhaustion before merging what it had fetched:
-
-```bash
-python -m search.run_search --harvest-only
-```
-
 ### The OpenAlex snapshot scan and its survivor pool
 
 The bulk-parquet scan is Stage 1's main path and takes 13–21 hours over 725 GB.
@@ -128,14 +89,52 @@ rule change is a `filter.engine route` re-run over it rather than a rescan; only
 change to the search gate itself costs the full scan.
 
 ```bash
-# Full snapshot scan, writing the survivor pool
-python -m search.run_search --source openalex_snapshot --survivor-pool cache/snapshot_pool
+# Full snapshot scan, writing the survivor pool. --scan is required: a bare
+# `python -m search.run_search` exits with usage rather than start a 725 GB read.
+python -m search.run_search --scan --survivor-pool cache/snapshot_pool
 
 # How far along is a running scan? Read-only, safe to run concurrently with it:
-# files/bytes/records consumed vs the manifest, rows kept, recent throughput, ETA.
+# files/bytes/records consumed vs the manifest, rows kept, recent throughput, ETA,
+# and the pool's provenance (below).
 python -m search.snapshot_scan --status
 python -m search.snapshot_scan --status --json
+
+# Stamp an existing pool that predates the sidecar, without re-scanning or
+# re-pulling. The gate comes from the local ledger; with no ledger it REFUSES
+# rather than guess, and the fingerprint must be given:
+python -m search.snapshot_scan --stamp-pool
+python -m search.snapshot_scan --stamp-pool --gate <fingerprint>   # from the remote manifest
+python -m search.snapshot_scan --stamp-pool --gate local           # "this checkout scanned it"
 ```
+
+**The pool's provenance sidecar** — `_pool_provenance.json`, written beside the
+parquet by the scan and by `pool_sync --pull`, and readable in `--status`. It
+records the search-gate fingerprint the pool's rows were **admitted** under, the
+file count that completes the pool, and where the value came from (`scan`,
+`pull:<repo>`, `stamp:…`). Two things depend on it, both in the routing release
+id (`filter.engine route`): the gate hashed into the id is the pool's, not the
+reading checkout's, so a shared pool fingerprints identically everywhere; and a
+pool with fewer files than the sidecar expects is an interrupted transfer, which
+routes under `unmanifested` instead of being fingerprinted as though complete. An
+**unstamped** pool still routes — refusing would strand every pool that exists —
+but its gate enters the id as *unknown* and every run says so loudly. The name is
+underscore-prefixed so neither the `*.parquet` globs nor pyarrow's dataset
+discovery ever sees it.
+
+There is no sample or pilot mode. To scan a few partitions for a look, run the
+same command against a scratch state directory — `FLORA_CACHE_DIR=/tmp/flora-sample
+python -m search.run_search --scan --snapshot-max-files 3` moves the ledger and,
+with it, the pool (`FLORA_POOL_DIR` defaults under the cache dir). The retired
+`--snapshot-pilot` wrote real parquet into the production pool while keeping no
+ledger, so the two disagreed about what had been consumed.
+
+A scan whose ledger names a **different** search-gate fingerprint is refused: the
+partitions it marks done were read under the other gate, and the rows that gate
+rejected are in no pool at all, so continuing builds a pool complete under
+neither. Rescan into a fresh pool directory and a fresh ledger, or pass
+`--force-gate` to add to the mixture knowingly. A ledger that exists but cannot
+be parsed is a hard error for the same reason — silently treating it as empty
+orders a 725 GB rescan.
 
 Running the scan on a cloud instance in us-east-1 turns those 13–21 hours into 2–5
 and costs a couple of dollars: see [aws-snapshot-scan.md](aws-snapshot-scan.md) for
@@ -182,7 +181,11 @@ snapshot date and ledger the pool was scanned under. Pushing over a pool scanned
 under a **different** gate fingerprint is refused (`--force` overrides) — the
 mixture would be complete under neither gate and nothing downstream could tell.
 Pulling one only warns: taking a colleague's pool is legitimate, doing so
-unknowingly is not.
+unknowingly is not. A pull also copies that fingerprint into the local
+`_pool_provenance.json` — for a pulled pool the remote manifest is the only
+authority on which gate admitted these rows — and records how many files complete
+the pull *before* fetching any, so an interrupted transfer is visibly short rather
+than fingerprintable.
 
 The prebuilt-`candidates.csv` build commands (`--build-candidates`,
 `--push-build`, `--pull-build`) belonged to the admission-gated Stage 1 and are
@@ -238,8 +241,15 @@ gated source (`scopus`, `s2`, `osf`) that this machine is configured for. Becaus
 the row IS the checkpoint, not importing it is all it takes for this machine to
 fetch the DOI itself. Hits always import.
 
+**Sharing is additive in both directions.** A pull never overwrites a local entry.
+A push refuses when a shard it would replace — or the abstract store, compared on
+row count — holds entries this machine does not, because a shard travels whole and
+a partial cache would otherwise shrink the shared one; the pullers' recorded digest
+would then stop them ever fetching the lost entries again. Pull first, then push.
+`--force` on a push publishes this machine's cache anyway and drops them.
+
 **Output:** `cache/` (and `cache/.cache_sync_pulled.json`, which records the
-shards already unpacked; `--force` re-extracts them)
+shards already unpacked; `--force` on a pull re-extracts them)
 
 ---
 
@@ -267,9 +277,6 @@ The usual order is `route` → `screen` → `handoff`.
 ```bash
 # What the bundle currently says — one line per spec, plus the bundle hash
 python -m filter.engine specs
-
-# Prove the two backends (Python re / pyarrow) agree before trusting a run
-python -m filter.engine verify --pool cache/snapshot_pool --sample-files 3
 
 # Route the pool: mints a release id, writes cache/engine/releases/<id>.json,
 # fills the DuckDB store, prints the pile counts
@@ -309,14 +316,13 @@ python -m filter.engine status
 | Command | What it does |
 | ------- | ------------ |
 | `specs` | Lists the loaded bundle (id, pile, precedence, shadow, measurement levels), the bundle hash, the engine version and the export schema version. Fails loudly if any spec is invalid. |
-| `verify` | Runs both backends over the first batch of up to `--sample-files` pool files and prints every (spec, row) they disagree on. **Exit 1 on any mismatch** — it is meant for CI and for the check before a long run. |
-| `route` | Computes the routing release id from its six inputs, records the release, and streams the pool through the bundle into the store. Idempotent per release: re-running replaces that release's rows rather than duplicating them. |
+| `route` | Computes the routing release id from its six inputs, records the release, and streams the pool through the bundle into the store. Idempotent per release: re-running replaces that release's rows rather than duplicating them. The pool is fingerprinted again after the pass and the routing is rolled back if it moved — the reader re-reads the directory, so a file that arrives mid-route would otherwise be consumed by a release id that does not name it. |
 | `diagnose` | Routes the pool with and without `--spec` and reports rows moved per (pile without → pile with), overlap against every other rule (exclusive hits vs already-covered), a seeded readable sample, the holdout state and the spec's `measured` evidence. |
 | `export` | Writes one pile as `FILTERED_COLS` + `ENGINE_EXPORT_COLS`, `utf-8-sig`, plus `<out>.manifest.json` (release, pile, rows, sha256). `--pile pending` is refused, an existing manifest is never overwritten, and an export is refused outright when the spec bundle or alias file has changed since the release was routed — re-run `route` rather than looking for an override flag. `--pile needs_human` additionally prints the size of the queue it just wrote. |
 | `screen` | Runs one LLM tier (`--tier screen_cheap\|screen_expensive`) over that pile. **Dry run by default**: it prints the row count, the token-length distribution of the abstracts it would send and `N rows → tier X ≈ $Y`, and claims, fetches and spends nothing. `--run` claims the batch through the Supabase claims RPC *before* the first voter is asked, records one permanent verdict row per vote, and completes the claim; a claim conflict refuses without spending anything, and an exhausted token budget fails the claim and stops with the verdicts already written intact. |
 | `reconcile` | Sweeps verdict rows an EARLIER run left `response_pending_upload` — the flag off, no token, a commit that 429'd — matches them to the blobs in `cache/engine/responses/` by response hash, commits those in `FLORA_HF_COMMIT_BATCH`-sized commits and marks only what a commit accepted. **Dry run by default**; `--run` acts. A pending row whose blob has been deleted is reported, not fatal. Refuses outright when Hugging Face is unconfigured (`ENGINE_TIER_HF_UPLOAD` off, no `FLORA_POOL_REPO`, no `HF_TOKEN`) rather than sweeping nothing. |
 | `worklist` | Exports the release's `pending/no_text` rows (joined back to the pool for doi/title/year) as the worklist `filter.engine.backfill` reads. |
-| `handoff` | Writes the two screen piles — `screen_expensive` first, then `screen_cheap` — as the file Stage 3 reads, in `ENGINE_EXPORTED_COLS` order, with a live `screen_expensive` record type written into `filter_status`. **Only rows a live tier run reached a verdict on travel**: a discarded work is left out and counted as `dropped_by_tier_verdict`, a work no live run decided (never screened, or still short of a second vote) is left out and counted as `skipped_unscreened`. `--as-routed` exports the piles as routed instead, applying whatever verdicts exist. Unlike `export`, its manifest is rewritable: the handoff is a materialized view Stage 3 re-reads, not an immutable artifact. |
+| `handoff` | Writes the two screen piles — `screen_expensive` first, then `screen_cheap` — as the file Stage 3 reads, in `ENGINE_EXPORTED_COLS` order, with a live `screen_expensive` record type written into `filter_status` and its full verdict into `SCREEN_COLS` (Stage 3 reads that instead of screening). **Only rows a live `screen_expensive` run reached a verdict on travel** — a cheap-tier verdict can drop a row but never admit one: a discarded work is left out and counted as `dropped_by_tier_verdict`, a work no live run decided (never screened, or still short of a second vote) is left out and counted as `skipped_unscreened`. `--as-routed` exports the piles as routed instead, applying whatever verdicts exist. Unlike `export`, its manifest is rewritable: the handoff is a materialized view Stage 3 re-reads, not an immutable artifact. |
 | `status` | Every release found beside the store, with its creation time and pile counts. |
 
 **The text overlay loads itself.** `route`, `export`, `screen` and `handoff` read
@@ -332,8 +338,27 @@ saying which text it read. The overlay folds into the release id, so `export`,
 defaults to `cache/engine/engine.duckdb` and is **disposable** — deleting it costs
 a `route` and nothing else, because routing is a pure function of pool, specs,
 aliases and engine version. `route` takes the pool's provenance from
-`--pool-manifest-hash`, else the local snapshot ledger, else the literal
-`unmanifested` (an honest "unknown", not a claim about which pool this was).
+`--pool-manifest-hash`, else a fingerprint of the pool directory itself — the
+search gate its rows were admitted under, read from `_pool_provenance.json` and
+never from the local checkout, plus every parquet's name, size and footer row
+count. (Size and row count do not determine file *contents*; hashing 7.6 GB per
+route is not worth the case of a parquet rewritten to exactly the same size and
+row count, and this is already stronger than the `content_length`-only ledger
+hash it replaced.) A pool it cannot fingerprint — no parquet there, an unreadable
+directory, or fewer files than the sidecar says complete it — routes under
+`unmanifested:<12 hex>`, an honest "unknown" rather than a claim about which pool
+this was; since routing reads the pool, that value is an anomaly worth
+investigating, not a routine fallback. The suffix is a hash of the parquet names
+and sizes and exists only so two different unfingerprintable pools do not mint the
+same release id and share each other's claims and verdicts — it is not provenance,
+which is why the `unmanifested` prefix stays visible.
+
+**`--release` and `--sample`.** `export`, `screen`, `handoff` and `worklist` each
+take `--release <id>`: the release to read. Omitted, the store's release is used
+when it holds exactly one and the command refuses when it holds several, so a
+store with a re-route in it never picks one silently. `diagnose --sample N`
+(default 20) is how many seeded example rows the report prints for the rule under
+diagnosis.
 
 **`screen` modes.** `screen_cheap` runs in `validation` mode by default: its votes
 are recorded and its would-be discards are reported against the piles the rules
@@ -348,8 +373,8 @@ because the claim is what stops two runs spending on the same works; a dry run
 needs neither.
 
 **`handoff` exports what was screened.** Routing says a row deserves an LLM's
-attention; only the LLM says it reaches Stage 3. So a row the rules put in a
-screen pile but no live tier run ever decided is held back, and the manifest
+attention; only the validated pair says it reaches Stage 3. So a row the rules put
+in a screen pile but no live `screen_expensive` run ever decided is held back, and the manifest
 accounts for it separately from a discard (`skipped_unscreened` vs
 `dropped_by_tier_verdict`). `--as-routed` is the older behaviour, and the only
 one available without Supabase: with no claims client there are no verdicts, so
@@ -365,6 +390,12 @@ Each has `--help`; the one-liners are their own `description=`:
 ```bash
 # Fill a text overlay for the routing worklist's no_text rows (#146 M3). Dry-run by default.
 python -m filter.engine.backfill --worklist W [--overlay-dir D] [--run] [--freeze]
+
+# Two pathways. Bulk is batched, keyless and unquota'd (OpenAlex + Europe PMC), so
+# it is affordable over a wide worklist; targeted is the gated sources (OSF,
+# Semantic Scholar, CrossRef, then Scopus) over the rows bulk left without text.
+python -m filter.engine.backfill --worklist wide.parquet --run --phase bulk
+python -m filter.engine.backfill --worklist no_text.parquet --run --phase targeted
 
 # Reconcile a routing change against the validation tables (#146 M5).
 # Writes lineage records only — never a validation row. Dry-run by default.
@@ -389,8 +420,11 @@ python -m extract.run_extract --extracted-test
 # Start over: discard extracted.csv and re-extract (and re-pay for) every row
 python -m extract.run_extract --fresh
 
-# Also re-decide rows a previous run set aside on the classification screen
+# Reopen rows a previous run set aside on a screen verdict, for a new Stage 2 generation
 python -m extract.run_extract --rescreen
+
+# Screen rows here when the input carries no verdict (an --as-routed handoff)
+python -m extract.run_extract --screen-here
 
 # Skip LLM calls (rule-based only)
 python -m extract.run_extract --no-llm
@@ -409,7 +443,12 @@ python -m extract.run_extract --filtered-csv misc/sample_filtered.csv
 ```
 
 **Input:** `data/filtered.csv` (Stage 2's handoff writes it; a missing file is an
-error, not a reason to fall back to the fixture)  
+error, not a reason to fall back to the fixture). It must carry the screen verdict
+Stage 2's `screen_expensive` tier produced — `screen_verdict` and the rest of
+`SCREEN_COLS` — because Stage 3 does not screen. A file with no `screen_verdict`
+column is refused at startup, naming the two commands that fix it; a row whose
+value is blank (an `--as-routed` handoff) is written `target_pending`. Ask for the
+screen to run here with `--screen-here`.  
 **Output:** `data/extracted.csv` (or `data/extracted-test.csv` with `--extracted-test`)
 
 The examples above are a selection, not the flag list. For the complete, current set
@@ -437,26 +476,50 @@ file is rewritten from what it already held. `--fresh` skips that pre-load, so t
 previous run's output is discarded rather than added to — in the test sandbox as
 well as in production.
 
-### Re-screening set-aside rows
+### Reopening set-aside rows for a new screening generation
 
 An ordinary run carries every already-resolved row forward untouched, including the rows
-the classification screen decided on its own (`link_method`/`outcome` of
+a screen decided on its own (`link_method`/`outcome` of
 `not_a_replication`, plus the historical `screen_disagreement`). That is right for a resumed run and
 wrong after the screen changes: an old voter pair's verdicts would survive
 indefinitely. `--rescreen` reopens exactly those rows — the whole paper, so a
-multi-original paper is re-screened as a unit — and leaves every other resolved row
-carried forward.
+multi-original paper is reopened as a unit — and leaves every other resolved row
+carried forward. Historical cheap-tier discards (`prescreen_discard`) are reopened by
+the same flag, and this is the only way back: a resume treats a set-aside row as
+settled.
 
-Historical cheap-tier discards (`prescreen_discard`) are reopened by the same flag, and
-this is the only way back: a resume treats a set-aside row as settled.
+**It reopens; it does not re-screen.** The screen is Stage 2's, so a reopened paper
+comes back only if the current SCREENING GENERATION admitted it. The full sequence
+after changing a voter model or the classify prompt is:
 
-Rows `sanity_check` has already moved out to `data/not_a_replication.csv`,
-`data/screen_disagreement.csv` or `data/prescreen_discard.csv` are no longer in
-`extracted.csv`, but a resume reads those files and treats every key in them as settled
-— so without the flag they are skipped, not re-processed. Their verdicts are also pinned by
+```bash
+python -m filter.engine screen --tier screen_expensive --run   # new generation
+python -m filter.engine handoff --out data/filtered.csv
+python -m extract.run_extract --rescreen
+```
+
+The generation is the hash of the voter pair and the prompt, recorded on each
+claim: changing either makes those works claimable again and stops the old verdicts
+steering the handoff, so step 1 really does re-vote and step 2 really does carry a
+different set of rows.
+
+Rows `sanity_check` has moved out of `extracted.csv` are no longer in that file, but a
+resume reads the set-aside CSVs and treats every key in them as settled
+(`SETTLED_SET_ASIDE_FILES` in `shared/schema.py`) — a provisional title-search link, a
+DOI mismatch or a `no_original_found` verdict already paid for a ladder pass and is not
+walked again. Two destinations are excluded and redone by every run, no flag needed:
+`data/target_pending.csv` (re-run decides, by construction) and `data/api_error.csv` (a
+transient provider failure must never be checkpointed as a definitive miss).
+`--rescreen` reopens the three abstract-only files —
+`data/not_a_replication.csv`, `data/screen_disagreement.csv`,
+`data/prescreen_discard.csv` — and nothing else. The set-asides belong to the output
+CSV they were quarantined out of (`set_aside_dir()` in `shared/schema.py`):
+`extracted.csv`'s sit in `data/`, and the `--extracted-test` sandbox writes and reads
+`data/extracted-test-set-aside/`, so a test-run discard cannot settle a paper for the
+production resume. Their verdicts are also pinned by
 the screen cache, but that cache is keyed on the screening prompt's version, both
-voter models and the abstract itself — so changing a voter or the prompt makes a
-re-screen actually re-vote, with nothing to bump by hand.
+voter models and the abstract itself — so changing a voter or the prompt makes
+Stage 2's re-screen actually re-vote, with nothing to bump by hand.
 
 ### Skipping papers already in FLoRA
 
@@ -472,16 +535,9 @@ Statuses still in flight (`help needed`, `on hold`, `awaiting validation`, blank
 **not** skipped — those genuinely need the pipeline. Pass `--no-skip-flora-validated`
 to re-extract everything anyway.
 
-The same skip list gates the validation hand-off, so a paper FLoRA already has cannot
-reach validators even if it is already sitting in `extracted.csv`:
-
-```bash
-python -m extract.csv_to_db --input data/extracted.csv        # gate ON by default
-python -m extract.csv_to_db --no-skip-flora                   # import them anyway
-```
-
-Both stages import it from `shared/flora_skip.py`, so extraction and validation can
-never drift apart.
+The list lives in `shared/flora_skip.py` rather than inside `run_extract`, so the
+validation hand-off in the `flora-validation` repo can read the same contract and a
+paper FLoRA already has cannot reach validators.
 
 A missing or unreadable source logs a warning and contributes nothing, so one bad file
 cannot silently disable the whole skip list.
@@ -533,7 +589,7 @@ Also runnable standalone:
 # Move problem rows to the set-aside CSVs + report integrity flags
 python -m extract.sanity_check
 
-# Check the test sandbox instead
+# Check the test sandbox instead — its set-asides go to data/extracted-test-set-aside/
 python -m extract.sanity_check --input data/extracted-test.csv
 
 # Report only — move nothing
@@ -579,9 +635,21 @@ python -m extract.audit_dois --apply
 # Audit a single DOI
 python -m extract.audit_dois --doi 10.1234/example
 
+# Re-ask only the rows whose verification could not be completed last time
+python -m extract.audit_dois --status api_error --apply
+
 # Audit extracted-test.csv instead
 python -m extract.audit_dois --extracted-test
 ```
+
+A resumed `run_extract` re-verifies only rows whose `doi_o_verification` is `api_error`
+or blank; every settled value is carried forward untouched, because each re-verification
+costs up to three OpenAlex free-text searches (10× a filter query). This tool is
+therefore the only way to re-verify a settled row — after a threshold change in
+`shared/doi_verify.py`, or as a spot check. `--status` is repeatable and accepts `''`
+for rows that were never verified.
+
+Each Stage 3 run prints its free-text OpenAlex search count next to the token summary.
 
 ---
 
@@ -599,11 +667,12 @@ The app is read-only — it displays pipeline stats and pulls validation data fr
 
 ## Analysis
 
-```bash
-# Overlap / recall gap analysis — compares all_replications.csv against candidates.csv
-# Reports genuine gaps (papers in the reference set not found by Stage 1)
-python -m analysis.run_overlap_analysis
+The overlap / recall-gap analysis (`analysis.run_overlap_analysis`) is gone with the
+corpus it read: it compared `all_replications.csv` against `data/candidates.csv`, and
+Stage 1's corpus is the survivor pool now. The per-release recall monitor that
+replaces it is specified in `analysis/gold/README.md` and not yet implemented.
 
+```bash
 # Rule analysis — audit filter rules and extraction link methods
 # (writes analysis/rule_improvement_opportunities.csv)
 python -m analysis.rule_analysis
@@ -616,11 +685,11 @@ python -m analysis.apa_resolver
 
 Key output files:
 
-- `analysis/gap_summary.md` — human-readable recall gap report
-- `analysis/gap_analysis_doi_matched.csv` — gaps where the reference has a DOI
-- `analysis/gap_analysis_url_matched.csv` — gaps where the reference has a URL but no DOI
 - `analysis/rule_improvement_opportunities.csv` — ranked filter/extract improvement suggestions
 - `analysis/extraction_audit.md` — link method and confidence breakdown
+
+The `gap_summary.md` / `gap_analysis_*.csv` outputs belonged to the retired overlap
+analysis and are no longer produced.
 
 ---
 

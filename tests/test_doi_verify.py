@@ -1,5 +1,6 @@
 """Unit tests for shared/doi_verify.py — all HTTP mocked, no live calls."""
-from unittest.mock import MagicMock, patch
+from contextlib import contextmanager
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 import requests
@@ -14,6 +15,22 @@ def _resp(status=200, payload=None):
     else:
         m.raise_for_status.return_value = None
     return m
+
+
+@contextmanager
+def _patch_get(**kw):
+    """One fake requests.get for BOTH modules doi_verify reaches the network through.
+
+    doi_verify calls CrossRef itself; its OpenAlex calls go through
+    openalex_client._oa_get (throttle + key rotation + quota detection), so a fake
+    patched into only one module lets the other issue a live request. The SAME mock
+    object goes into both, so call_args_list still sees every call in order.
+    """
+    m = MagicMock(**kw)
+    with patch("shared.doi_verify.requests.get", m), \
+         patch("shared.openalex_client.requests.get", m), \
+         patch("shared.openalex_client.throttle", lambda *a, **k: None):
+        yield m
 
 
 CROSSREF_WORK = {
@@ -35,7 +52,7 @@ def _isolate_cache(tmp_path, monkeypatch):
 class TestFetchDoiMetadata:
     def test_crossref_hit(self):
         from shared.doi_verify import fetch_doi_metadata
-        with patch("shared.doi_verify.requests.get", return_value=_resp(200, CROSSREF_WORK)) as g:
+        with _patch_get(return_value=_resp(200, CROSSREF_WORK)) as g:
             meta = fetch_doi_metadata("10.1111/psyp.13449")
         assert meta["registered"] is True
         assert meta["title"] == "Emotion word processing in the brain"
@@ -53,7 +70,7 @@ class TestFetchDoiMetadata:
             if "doi.org" in url:
                 return _resp(404)
             return _resp(200, {"results": []})
-        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+        with _patch_get(side_effect=fake_get):
             meta = fetch_doi_metadata("10.9999/does.not.exist")
         assert meta["registered"] is False
 
@@ -74,7 +91,7 @@ class TestFetchDoiMetadata:
             if "doi.org" in url:
                 return _resp(200, csl)
             return _resp(404)
-        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+        with _patch_get(side_effect=fake_get):
             meta = fetch_doi_metadata("10.9999/publisher.direct")
         assert meta["registered"] is True
         assert meta["title"] == "Some Obscure Publisher Article"
@@ -100,7 +117,7 @@ class TestFetchDoiMetadata:
             if "crossref.org" in url:
                 return _resp(crossref_status)
             return _resp(200, oa)
-        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+        with _patch_get(side_effect=fake_get):
             meta = fetch_doi_metadata(doi)
         assert meta["registered"] is True
         assert meta["source"] == "openalex"
@@ -108,7 +125,7 @@ class TestFetchDoiMetadata:
 
     def test_both_apis_down_returns_none(self):
         from shared.doi_verify import fetch_doi_metadata
-        with patch("shared.doi_verify.requests.get", return_value=_resp(500)):
+        with _patch_get(return_value=_resp(500)):
             meta = fetch_doi_metadata("10.1111/psyp.13449")
         assert meta is None
 
@@ -117,7 +134,7 @@ class TestFetchDoiMetadata:
         — and the OpenAlex query has to ask for it."""
         from shared.doi_verify import fetch_doi_metadata
         work = {"message": {**CROSSREF_WORK["message"], "type": "dataset"}}
-        with patch("shared.doi_verify.requests.get", return_value=_resp(200, work)):
+        with _patch_get(return_value=_resp(200, work)):
             meta = fetch_doi_metadata("10.7910/dvn/abcdef")
         assert meta["type"] == "dataset"
 
@@ -129,7 +146,7 @@ class TestFetchDoiMetadata:
         }]}
         def fake_get(url, **kw):
             return _resp(404) if "crossref.org" in url else _resp(200, oa)
-        with patch("shared.doi_verify.requests.get", side_effect=fake_get) as g:
+        with _patch_get(side_effect=fake_get) as g:
             meta = fetch_doi_metadata("10.7554/elife.12345.041")
         assert meta["type"] == "peer-review"   # a non-article object, quarantined later
         oa_call = [c for c in g.call_args_list if "openalex.org" in c.args[0]][0]
@@ -137,7 +154,7 @@ class TestFetchDoiMetadata:
 
     def test_result_is_cached(self):
         from shared.doi_verify import fetch_doi_metadata
-        with patch("shared.doi_verify.requests.get", return_value=_resp(200, CROSSREF_WORK)) as g:
+        with _patch_get(return_value=_resp(200, CROSSREF_WORK)) as g:
             fetch_doi_metadata("10.1111/psyp.13449")
             fetch_doi_metadata("10.1111/psyp.13449")
         assert g.call_count == 1
@@ -188,7 +205,7 @@ OPENALEX_SEARCH_NO_DOI = {
 class TestResolveDoiByMetadata:
     def test_crossref_search_hit(self):
         from shared.doi_verify import resolve_doi_by_metadata
-        with patch("shared.doi_verify.requests.get", return_value=_resp(200, CROSSREF_SEARCH)):
+        with _patch_get(return_value=_resp(200, CROSSREF_SEARCH)):
             hit = resolve_doi_by_metadata("Emotion word processing in the brain", "Schindler", 2019)
         assert hit["doi"] == "10.1111/psyp.13449"
         assert hit["source"] == "crossref"
@@ -199,7 +216,7 @@ class TestResolveDoiByMetadata:
             if "crossref.org" in url:
                 return _resp(200, CROSSREF_SEARCH)
             return _resp(200, {"results": []})
-        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+        with _patch_get(side_effect=fake_get):
             hit = resolve_doi_by_metadata("Completely unrelated paper on fish migration", "Garcia", 2003)
         assert hit is None
 
@@ -209,7 +226,7 @@ class TestResolveDoiByMetadata:
             if "crossref.org" in url:
                 return _resp(200, {"message": {"items": []}})
             return _resp(200, OPENALEX_SEARCH_NO_DOI)
-        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+        with _patch_get(side_effect=fake_get):
             hit = resolve_doi_by_metadata("An obscure book chapter about conformity", "Asch", 1956)
         assert hit is not None
         assert hit["doi"] == ""
@@ -217,7 +234,7 @@ class TestResolveDoiByMetadata:
 
     def test_client_error_4xx_not_retried(self):
         from shared.doi_verify import fetch_doi_metadata
-        with patch("shared.doi_verify.requests.get", return_value=_resp(400)) as g:
+        with _patch_get(return_value=_resp(400)) as g:
             meta = fetch_doi_metadata("10.1111/psyp.13449")
         assert meta is None
         # one call to CrossRef + one to the OpenAlex fallback — no retries on 4xx
@@ -231,7 +248,7 @@ class TestResolveDoiByMetadata:
             if "crossref.org" in url:
                 return _resp(200, {"message": {"items": []}})
             return _resp(200, {"results": []})
-        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+        with _patch_get(side_effect=fake_get):
             resolve_doi_by_metadata("Does ego depletion exist? A replication attempt", "Hagger", 2016)
         oa_params = [p for u, p in calls if "openalex.org" in u]
         assert oa_params, "OpenAlex fallback was not called"
@@ -251,7 +268,7 @@ class TestResolveDoiByMetadata:
             if "crossref.org" in url:
                 return _resp(200, self_hit)
             return _resp(200, {"results": []})
-        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+        with _patch_get(side_effect=fake_get):
             hit = resolve_doi_by_metadata("Reproduction of a neural network analysis",
                                           "Adewale", 2020,
                                           exclude_doi="10.5281/zenodo.18973410")
@@ -278,7 +295,7 @@ class TestResolveDoiByMetadata:
                 return _resp(200, search)
             return _resp(200, {"results": []})
         title_o = "Blunted cardiac reactivity to acute psychological stress predicts low behavioral but not self-reported perseverance"
-        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+        with _patch_get(side_effect=fake_get):
             hit = resolve_doi_by_metadata(title_o, "", None,
                                           exclude_doi="10.1111/psyp.13707",
                                           title_only_gap=True)
@@ -299,7 +316,7 @@ class TestResolveDoiByMetadata:
             if "crossref.org" in url:
                 return _resp(200, search)
             return _resp(200, {"results": []})
-        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+        with _patch_get(side_effect=fake_get):
             hit = resolve_doi_by_metadata(
                 "Daily microbreaks in a self-regulatory resources lens", "Kim", 2022,
                 exclude_doi="10.1037/apl0000891")
@@ -320,7 +337,7 @@ class TestResolveDoiByMetadata:
             if "crossref.org" in url:
                 return _resp(200, search)
             return _resp(200, {"results": []})
-        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+        with _patch_get(side_effect=fake_get):
             hit = resolve_doi_by_metadata(
                 "Sick body, vigilant mind: the biological immune system activates the behavioral immune system",
                 "", None,
@@ -343,7 +360,7 @@ class TestResolveDoiByMetadata:
             if "crossref.org" in url:
                 return _resp(200, search)
             return _resp(200, {"results": []})
-        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+        with _patch_get(side_effect=fake_get):
             hit = resolve_doi_by_metadata(
                 "Collective existential threat mediates White population decline's effect on defensive reactions",
                 "", None, title_only_gap=True)
@@ -368,7 +385,7 @@ class TestResolveDoiByMetadata:
         def fake_get(url, **kw):
             return _resp(200, cr if "crossref.org" in url else oa)
         title_o = "Blunted cardiac reactivity to acute psychological stress predicts low behavioral but not self-reported perseverance"
-        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+        with _patch_get(side_effect=fake_get):
             hit = resolve_doi_by_metadata(title_o, "", None, title_only_gap=True)
         assert hit is not None
         assert hit["doi"] == "10.1111/psyp.13449"
@@ -385,7 +402,7 @@ class TestResolveDoiByMetadata:
             if "crossref.org" in url:
                 return _resp(200, search)
             return _resp(200, {"results": []})
-        with patch("shared.doi_verify.requests.get", side_effect=fake_get):
+        with _patch_get(side_effect=fake_get):
             hit = resolve_doi_by_metadata("Stress reactivity predicts perseverance", "", None,
                                           title_only_gap=True)
         assert hit is None  # two near-equal hits — no dominant winner
@@ -395,7 +412,7 @@ class TestResolveDoiByMetadata:
         empty = {"message": {"items": []}}
         def fake_get(url, **kw):
             return _resp(200, empty if "crossref.org" in url else {"results": []})
-        with patch("shared.doi_verify.requests.get", side_effect=fake_get) as g:
+        with _patch_get(side_effect=fake_get) as g:
             resolve_doi_by_metadata("Some unfindable title here", "Nobody", 1999)
             n_first = g.call_count
             resolve_doi_by_metadata("Some unfindable title here", "Nobody", 1999)
@@ -683,3 +700,251 @@ class TestAuditDois:
                                  only_doi="10.1111/psyp.13707")
         assert vc.call_count == 1
         assert summary["verified"] == 1
+
+
+class TestOutageIsNotAnAnswer:
+    """A partial outage used to be indistinguishable from "nothing matched", and
+    "nothing matched" is what makes verify_and_correct write `mismatch` — which
+    DELETES the row's doi_o and quarantines it. A registry being unreachable must
+    never cost a row its DOI."""
+
+    TITLE, AUTHOR, YEAR = "Emotion word processing in the brain", "Schindler", 2019
+
+    def test_partial_outage_is_unverifiable_and_uncached(self, tmp_path):
+        """CrossRef down, OpenAlex up and holding nothing: the empty hit list was
+        cached as {"found": false}, freezing one outage into every later run."""
+        from shared import doi_verify as dv
+
+        def fake_get(url, **kw):
+            if "crossref.org" in url:
+                raise RuntimeError("CrossRef is down")
+            return _resp(200, {"results": []})
+
+        with patch.object(dv, "DOI_VERIFY_CACHE_DIR", tmp_path), \
+             patch.object(dv.time, "sleep", lambda *_: None), \
+             _patch_get(side_effect=fake_get):
+            hit = dv.resolve_doi_by_metadata(self.TITLE, self.AUTHOR, self.YEAR)
+
+        assert hit is dv.UNVERIFIABLE
+        assert not hit          # falsy, so every `if hit:` caller stays conservative
+        assert list(tmp_path.glob("*.json")) == []
+
+    def test_both_sources_answering_nothing_is_a_real_miss(self, tmp_path):
+        """The other half of the distinction: two answers of "no match" ARE an
+        answer, and stay cached so the search is not re-bought."""
+        from shared import doi_verify as dv
+
+        def fake_get(url, **kw):
+            if "crossref.org" in url:
+                return _resp(200, {"message": {"items": []}})
+            return _resp(200, {"results": []})
+
+        with patch.object(dv, "DOI_VERIFY_CACHE_DIR", tmp_path), \
+             _patch_get(side_effect=fake_get):
+            assert dv.resolve_doi_by_metadata(self.TITLE, self.AUTHOR, self.YEAR) is None
+        assert len(list(tmp_path.glob("*.json"))) == 1
+
+    def test_a_dominance_accept_needs_a_complete_candidate_list(self, tmp_path):
+        """The title-only tier accepts a hit for BEATING the runner-up, so it is only
+        entitled to speak over the hits both registries returned. The near-duplicate
+        that makes the pick ambiguous can be sitting in the list that never arrived —
+        and this accept is written straight into doi_o, pair_id and ref_o."""
+        from shared import doi_verify as dv
+
+        ambiguous = [
+            {"DOI": "10.1000/a", "title": ["Stress reactivity predicts perseverance in adults"],
+             "author": [{"family": "Smith"}], "issued": {"date-parts": [[2019]]}},
+            {"DOI": "10.1000/b", "title": ["Stress reactivity predicts perseverance in students"],
+             "author": [{"family": "Jones"}], "issued": {"date-parts": [[2018]]}},
+        ]
+        title = "Stress reactivity predicts perseverance"
+
+        # CrossRef down; OpenAlex answers with only ONE of the two near-duplicates, so
+        # over the half-list it dominates a runner-up that does not exist.
+        def half_list(url, **kw):
+            if "crossref.org" in url:
+                raise RuntimeError("CrossRef is down")
+            return _resp(200, {"results": [
+                {"id": "https://openalex.org/W1", "doi": "https://doi.org/10.1000/a",
+                 "title": ambiguous[0]["title"][0], "publication_year": 2019,
+                 "authorships": [{"author": {"display_name": "A Smith"}}]}]})
+
+        with patch.object(dv, "DOI_VERIFY_CACHE_DIR", tmp_path), \
+             patch.object(dv.time, "sleep", lambda *_: None), \
+             _patch_get(side_effect=half_list):
+            hit = dv.resolve_doi_by_metadata(title, "", None, title_only_gap=True)
+
+        assert hit is dv.UNVERIFIABLE               # not a correction, not an absence
+        assert list(tmp_path.glob("*.json")) == []  # and nothing was frozen into the cache
+
+        # With both registries answering, the same one-sided list IS a dominant hit.
+        def whole_list(url, **kw):
+            if "crossref.org" in url:
+                return _resp(200, {"message": {"items": [ambiguous[0]]}})
+            return _resp(200, {"results": []})
+
+        with patch.object(dv, "DOI_VERIFY_CACHE_DIR", tmp_path), \
+             patch.object(dv.time, "sleep", lambda *_: None), \
+             _patch_get(side_effect=whole_list):
+            hit = dv.resolve_doi_by_metadata(title, "", None, title_only_gap=True)
+
+        assert hit and hit["doi"] == "10.1000/a"
+
+    def test_an_absolute_match_still_runs_on_a_partial_list(self, tmp_path):
+        """_score_hit tests one hit against the row's own title, author and year, so a
+        missing registry can only cost it a match it never saw — the safe direction.
+        Only the RELATIVE tier needs both sources."""
+        from shared import doi_verify as dv
+
+        def crossref_down(url, **kw):
+            if "crossref.org" in url:
+                raise RuntimeError("CrossRef is down")
+            return _resp(200, {"results": [
+                {"id": "https://openalex.org/W1", "doi": "https://doi.org/10.1000/a",
+                 "title": self.TITLE, "publication_year": self.YEAR,
+                 "authorships": [{"author": {"display_name": "Sebastian Schindler"}}]}]})
+
+        with patch.object(dv, "DOI_VERIFY_CACHE_DIR", tmp_path), \
+             patch.object(dv.time, "sleep", lambda *_: None), \
+             _patch_get(side_effect=crossref_down):
+            hit = dv.resolve_doi_by_metadata(self.TITLE, self.AUTHOR, self.YEAR)
+
+        assert hit and hit["doi"] == "10.1000/a"
+
+    def test_unverifiable_search_keeps_the_doi_instead_of_mismatch(self):
+        from shared import doi_verify as dv
+        registered_elsewhere = {"registered": True, "title": "A different paper",
+                                "first_author_surname": "Other", "year": 2001,
+                                "type": "journal-article", "source": "crossref"}
+        with patch.object(dv, "fetch_doi_metadata", return_value=registered_elsewhere), \
+             patch.object(dv, "resolve_doi_by_metadata", return_value=dv.UNVERIFIABLE):
+            out = dv.verify_and_correct("10.1111/psyp.13449", self.TITLE,
+                                        self.AUTHOR, self.YEAR)
+        assert out["doi_o_verification"] == "api_error"
+        assert out["doi_o"] == "10.1111/psyp.13449"   # NOT dropped
+
+    def test_unverifiable_search_on_a_blank_doi_is_not_not_found(self):
+        from shared import doi_verify as dv
+        with patch.object(dv, "resolve_doi_by_metadata", return_value=dv.UNVERIFIABLE):
+            out = dv.verify_and_correct("", self.TITLE, self.AUTHOR, self.YEAR)
+        assert out["doi_o_verification"] == "api_error"
+
+    def test_unregistered_needs_every_source_to_have_answered(self, tmp_path):
+        """CrossRef 404 says CrossRef has not got it — not that the DOI does not
+        exist. `registered: false` may only be written when OpenAlex and doi.org
+        answered too, and it is never written from an outage."""
+        from shared import doi_verify as dv
+
+        def fake_get(url, **kw):
+            if "crossref.org" in url:
+                return _resp(404, {})
+            raise RuntimeError("OpenAlex is down")
+
+        with patch.object(dv, "DOI_VERIFY_CACHE_DIR", tmp_path), \
+             patch.object(dv.time, "sleep", lambda *_: None), \
+             _patch_get(side_effect=fake_get):
+            assert dv.fetch_doi_metadata("10.9999/nope") is None
+        assert list(tmp_path.glob("*.json")) == []
+
+    def test_unregistered_is_recorded_when_all_three_answered(self, tmp_path):
+        from shared import doi_verify as dv
+
+        def fake_get(url, **kw):
+            if "openalex.org" in url:
+                return _resp(200, {"results": []})
+            return _resp(404, {})       # CrossRef and, below, doi.org
+
+        with patch.object(dv, "DOI_VERIFY_CACHE_DIR", tmp_path), \
+             patch.object(dv.time, "sleep", lambda *_: None), \
+             _patch_get(side_effect=fake_get):
+            meta = dv.fetch_doi_metadata("10.9999/nope")
+        assert meta["registered"] is False
+        assert len(list(tmp_path.glob("*.json"))) == 1
+
+    def test_a_pre_change_no_match_entry_is_not_read_as_an_answer(self, tmp_path):
+        """The old key cached exactly the poisoned case as {"found": false}. Reading
+        one back would skip the UNVERIFIABLE path and let `mismatch` delete a doi_o,
+        so the key carries a version: the stale entry misses and is recomputed."""
+        from shared import doi_verify as dv
+        from shared.cache import write_cache
+        from shared.utils import cache_key
+
+        legacy = cache_key(f"{self.TITLE}|{self.AUTHOR}|{self.YEAR}|||0_doisearch")
+        write_cache(tmp_path, legacy, {"found": False})
+
+        def fake_get(url, **kw):
+            if "crossref.org" in url:
+                raise RuntimeError("CrossRef is down")
+            return _resp(200, {"results": []})
+
+        with patch.object(dv, "DOI_VERIFY_CACHE_DIR", tmp_path), \
+             patch.object(dv.time, "sleep", lambda *_: None), \
+             _patch_get(side_effect=fake_get) as get:
+            hit = dv.resolve_doi_by_metadata(self.TITLE, self.AUTHOR, self.YEAR)
+
+        assert get.called                 # the stale entry did not short-circuit it
+        assert hit is dv.UNVERIFIABLE     # ... and the outage is reported as one
+
+
+# ── the OpenAlex leg goes through the metered client, not raw requests ────────
+
+class TestOpenAlexCallsAreMetered:
+    """OpenAlex bills per request and a free-text `search` costs 10x a filter query
+    (CLAUDE.md cost table). doi_verify used to call it with a hand-attached key: no
+    throttle, no rotation, and a quota refusal read as "no match"."""
+
+    _CR_EMPTY = {"message": {"items": []}}
+
+    def _fake(self, oa_resp):
+        def fake_get(url, **kw):
+            return _resp(200, self._CR_EMPTY) if "crossref.org" in url else oa_resp(url, kw)
+        return fake_get
+
+    def test_the_search_throttles_and_carries_the_key_modules_headers(self):
+        from shared.doi_verify import resolve_doi_by_metadata
+        seen = {}
+
+        def oa(url, kw):
+            seen["headers"] = kw.get("headers")
+            return _resp(200, {"results": []})
+
+        with patch("shared.doi_verify.requests.get", side_effect=self._fake(oa)), \
+             patch("shared.openalex_client.requests.get", side_effect=self._fake(oa)), \
+             patch("shared.openalex_client.oa_headers", return_value={"X-Key": "slot-2"}), \
+             patch("shared.openalex_client.throttle") as thr:
+            resolve_doi_by_metadata("An Original Study", "Smith", 2010)
+
+        thr.assert_called_with("openalex", ANY)
+        assert seen["headers"] == {"X-Key": "slot-2"}
+
+    def test_a_quota_refusal_raises_rather_than_reading_as_no_match(self):
+        """The failure mode this replaces: a 429 swallowed into None, which
+        verify_and_correct would take as "no replacement exists" and act on."""
+        from shared.openalex_client import OpenAlexQuotaExhausted
+        from shared.doi_verify import resolve_doi_by_metadata
+
+        def oa(url, kw):
+            return _resp(429)
+
+        with patch("shared.doi_verify.requests.get", side_effect=self._fake(oa)), \
+             patch("shared.openalex_client.requests.get", side_effect=self._fake(oa)), \
+             patch("shared.openalex_client.throttle"), \
+             patch("shared.openalex_client.is_budget_refusal", return_value=True), \
+             patch("shared.openalex_client.rotate_key", return_value=False):
+            with pytest.raises(OpenAlexQuotaExhausted):
+                resolve_doi_by_metadata("An Original Study", "Smith", 2010)
+
+    def test_free_text_searches_are_counted_for_the_run_summary(self):
+        import shared.openalex_client as oac
+        from shared.doi_verify import resolve_doi_by_metadata
+
+        def oa(url, kw):
+            return _resp(200, {"results": []})
+
+        before = oac.search_query_count()
+        with patch("shared.doi_verify.requests.get", side_effect=self._fake(oa)), \
+             patch("shared.openalex_client.requests.get", side_effect=self._fake(oa)), \
+             patch("shared.openalex_client.throttle"):
+            resolve_doi_by_metadata("An Original Study", "Smith", 2010)
+            resolve_doi_by_metadata("Another Original Study", "Jones", 2011)
+        assert oac.search_query_count() - before == 2

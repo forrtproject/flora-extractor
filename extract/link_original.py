@@ -18,13 +18,11 @@ from __future__ import annotations
 import html
 import json
 import re
-import time
 from functools import partial
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
-import requests
 
 from shared.cache import clear_content_keys, write_json
 from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_CACHE_DIR, RESEARCHER_EMAIL, log
@@ -38,7 +36,7 @@ from shared.pdf_parsing import (
     best_parse_result as _best_parse_shared,
     parse_result_is_empty,
 )
-from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
+from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_opencitations_references, fetch_referenced_works_metadata, _oa_get, _search_crossref_by_title, _search_openalex_by_title
 from shared.prompts import (
     TARGET_INTRO_CHARS, TARGET_METHODS_CHARS,
     _abstract_tail, rendered_reference_entries,
@@ -283,7 +281,21 @@ def _journal_token_sim(a: str, b: str) -> float:
 
 
 def _fetch_journal_cached(doi: str) -> str:
-    """Return the journal display name for a DOI from OpenAlex. Result cached."""
+    """Return the journal display name for a DOI from OpenAlex. Result cached.
+
+    Only an ANSWER is cached. The request used to be wrapped in a bare `except:
+    journal = ""` whose result was then written to disk, so a single timeout or a
+    429 permanently taught this DOI that it has no journal — and the journal is
+    worth +3.0 in `_resolve_rule_based`'s citation scoring, the largest single term
+    there. One blip therefore demoted the deterministic path for that original
+    forever, on every later run and every row that cited it.
+
+    It also goes through `_oa_get` rather than its own `requests.get`, so it takes a
+    slot in the shared OpenAlex reservation queue, sends the Bearer key, rotates on a
+    drained key and raises OpenAlexQuotaExhausted like every other OpenAlex call.
+    Bypassing all of that made it the one caller that could not be rate-limited or
+    accounted for.
+    """
     doi = clean_doi(doi)
     if not doi:
         return ""
@@ -293,27 +305,25 @@ def _fetch_journal_cached(doi: str) -> str:
             return json.loads(cache_path.read_text(encoding="utf-8")).get("journal", "")
         except Exception:
             pass
-    try:
-        r = requests.get(
-            "https://api.openalex.org/works",
-            params={"filter": f"doi:{doi}",
+
+    data = _oa_get("https://api.openalex.org/works",
+                   {"filter": f"doi:{doi}",
                     "select": "id,primary_location",
-                    "mailto": RESEARCHER_EMAIL},
-            headers={"User-Agent": f"FLoRAExtractor/1.0 (mailto:{RESEARCHER_EMAIL})"},
-            timeout=15,
-        )
-        r.raise_for_status()
-        data = r.json()
-        journal = ""
-        if data and data.get("results"):
-            loc = (data["results"][0].get("primary_location") or {})
-            src = (loc.get("source") or {})
-            journal = (src.get("display_name") or "").strip()
-    except Exception:
-        journal = ""
+                    "mailto": RESEARCHER_EMAIL})
+    if data is None:
+        # No answer. Not "no journal" — nothing is written, and the next run asks again.
+        log.debug("[%s] journal lookup got no response — not cached", doi)
+        return ""
+
+    journal = ""
+    if data.get("results"):
+        loc = (data["results"][0].get("primary_location") or {})
+        src = (loc.get("source") or {})
+        journal = (src.get("display_name") or "").strip()
+    # A DOI OpenAlex does not index, or indexes without a source, genuinely has no
+    # journal name to offer: that IS the answer, and caching "" saves re-asking.
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(json.dumps({"journal": journal}), encoding="utf-8")
-    time.sleep(0.12)
     return journal
 
 
@@ -836,12 +846,16 @@ def run_for_doi(doi_r:              str,
               sections: dict = {}) -> dict:
         """An exit with no accepted link — restoring a withheld pick if nothing enumerated.
 
-        --no-llm, --no-pdf, no document, no context and an incomplete screen all end the
-        row without any call that could have found a second target. Before the gate they
-        were unreachable for a rule-resolved paper, because the rule had already
-        returned. Dropping the pick here would turn a provider outage into a lost
-        resolution, which the error-handling rule forbids; whatever the exit had to
-        report travels with the restored row.
+        --no-llm, --no-pdf, no document and no context all end the row without any call
+        that could have found a second target. Before the gate they were unreachable for
+        a rule-resolved paper, because the rule had already returned. Dropping the pick
+        here would turn a configuration choice into a lost resolution, which the
+        error-handling rule forbids; whatever the exit had to report travels with the
+        restored row.
+
+        An incomplete screen is NOT one of these and does not come through here: there
+        the provider failure is what prevented the enumerating call, so the pick stays
+        withheld and a re-run settles it.
         """
         if held and _uncontradicted():
             log.info("[%s] gate: restoring the withheld %s pick — nothing that could "
@@ -967,7 +981,12 @@ def run_for_doi(doi_r:              str,
         if screen["resolution_method"] in {"llm_refscreen_partial", "llm_refscreen_failed"}:
             log.warning("[%s] Reference screen incomplete (%s): %s", doi_r,
                         screen["resolution_method"], screen.get("llm_error", ""))
-            return _exit(screen, {}, {}, ref_sections)
+            # Deliberately NOT through _exit(): the failure is what stopped the
+            # reference-list target pick from running, so nothing here has earned the
+            # right to settle a withheld pick. Restoring would read "we never asked" as
+            # "we asked and nothing contradicted it". The row goes out unresolved and a
+            # re-run does the enumeration once the provider answers.
+            return emit({**screen, **seen}, {}, {}, ref_sections)
 
         # The gate is screen_gate(), defined once in shared/llm_client.py. The full
         # screen dict is the resolution so the discarded row still carries the models

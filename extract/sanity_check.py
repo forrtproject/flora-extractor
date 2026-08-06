@@ -10,7 +10,20 @@ completion AND on Ctrl-C, via the __main__ finally block), and standalone:
     python -m extract.sanity_check --report-only         # move nothing, just report
 
 Rows that do not belong in the resolved set are moved OUT to a dedicated set-aside
-CSV (the same files the dashboard's "set-aside" tab reads), one bucket per problem:
+CSV (the same files the dashboard's "set-aside" tab reads), one bucket per problem.
+The set-asides belong to the CSV being checked (`set_aside_dir()` in shared/schema.py):
+extracted.csv's sit in data/ as they always have, and any other input — the
+--extracted-test sandbox — gets data/<stem>-set-aside/. A resume treats every key in a
+settled set-aside file as settled, so a shared directory let a test-run quarantine
+settle a paper the production run then skipped without ever processing it.
+
+That split is forward-only, so the production set-asides were checked for keys left
+behind by the shared-directory era (2026-08-06): of the 76 keys extracted-test.csv has
+ever held across its git history, exactly one — 10.31234/osf.io/2h59n, in
+fabricated_original_doi.csv — also sits in a production set-aside, and its row is the
+PRODUCTION extracted.csv row (identical bibtex_ref_o/bibtex_ref_r, which the test file's
+copy of that paper never had). Nothing was quarantined out of a test run into a
+production file, so there is nothing to reconcile. Buckets:
 
     screen_disagreement→ screen_disagreement.csv   the two Q1 classifiers disagreed
     non_article        → not_a_replication.csv     doi_r is a figshare data record
@@ -35,8 +48,9 @@ CSV (the same files the dashboard's "set-aside" tab reads), one bucket per probl
                                                     (only with --deep: doi.org 404 check)
 
 What is left in extracted.csv is validation-ready and nothing else: every remaining row
-has a resolved link_method, a doi_o and an outcome. That is the contract csv_to_db reads
-— its own link_method/status filters are a second lock on the same door, not the door.
+has a resolved link_method, a doi_o and an outcome. That is the contract the validation
+import reads — its own link_method/status filters are a second lock on the same door,
+not the door.
 A row that is merely unresolved, errored or malformed lives in a set-aside file, and a
 row demoted here (a resolved link_method with no doi_o) is filed as target_pending.
 
@@ -62,85 +76,171 @@ from __future__ import annotations
 
 import argparse
 import time
+from collections import Counter
 from pathlib import Path
 
 import pandas as pd
 import requests
 
-from shared.config import DATA_DIR, RESEARCHER_EMAIL
-from shared.schema import EXTRACTED_COLS, RESOLVED_LINK_METHODS, SCREEN_SET_ASIDE_FILES
+from shared.config import DATA_DIR, RESEARCHER_EMAIL, log
+from shared.schema import (EXTRACTED_COLS, RESOLVED_LINK_METHODS,
+                           SET_ASIDE_DESTINATIONS, SETTLED_SET_ASIDE_FILES,
+                           YEAR_COLS, set_aside_dir, year_str)
 from shared.doi_verify import fetch_doi_metadata
+from shared.row_key import primary_key
 from shared.utils import bare_work_id, clean_doi, csv_lock, non_article_doi, non_article_type
 
 
 def _norm(df: pd.DataFrame) -> pd.DataFrame:
+    """Schema-normalise a frame: every column present, no NaN, bare-integer years.
+
+    Every to_csv in this module writes a frame that came through here, so this is
+    where the float-year artifact ("2018.0", #140) is kept out of the set-aside CSVs
+    — whether it arrived from an older row on disk or from a float-typed read.
+    """
     for c in EXTRACTED_COLS:
         if c not in df.columns:
             df[c] = ""
-    return df[EXTRACTED_COLS].fillna("")
+    out = df[EXTRACTED_COLS].fillna("")
+    for c in YEAR_COLS:
+        out[c] = out[c].map(year_str)
+    return out
 
 
 def _dedup_key(r) -> str:
-    """Stable identity. openalex_id_r before doi_r so DOI-less rows (whose pair_id all
-    collapse to md5('|')) are not merged into one."""
-    oa = bare_work_id(str(r.get("openalex_id_r", "")))
-    if oa:
-        return f"oa:{oa}"
-    doi = clean_doi(str(r.get("doi_r", "")))
-    return doi if doi else "t:" + str(r.get("title_r", "")).strip().lower()
+    """Row identity — `shared.row_key.primary_key`, the same key run_extract resumes on.
+
+    This used to be its own chain (bare work id first, then DOI, then title), so a
+    paper carrying both identifiers was deduped here under `oa:W…` and read back by
+    `_screen_set_aside_keys` under its DOI: the set-aside file said one thing to the
+    pass that wrote it and another to the run that reads it. One definition now, and
+    the ordering difference costs nothing — a row with no identifier at all still gets
+    no key, and `_quarantine` keeps those rather than collapsing them into one.
+    """
+    return primary_key(r)
 
 
 def _quarantine(df: pd.DataFrame, mask: pd.Series, dest: Path) -> int:
     """Append df[mask] to dest (schema-normalised, deduped), return count moved.
-    Does not modify df — caller drops the moved rows."""
+    Does not modify df — caller drops the moved rows.
+
+    The append is a read-modify-write, so it runs under the destination's own
+    `csv_lock` — two runs (or a run and a hand-invoked `python -m extract.sanity_check`)
+    quarantining into the same file would otherwise each write back what it read and
+    lose the other's rows. One lock, held over one file, never nested inside another:
+    the input CSV's lock is taken and released separately (see run_sanity_check), and
+    filelock's flock-based locks are not reentrant across two handles in one process.
+    """
     move = df[mask].copy()
     if move.empty:
         return 0
-    existing = _norm(pd.read_csv(dest, dtype=str, keep_default_na=False)) \
-        if dest.exists() else pd.DataFrame(columns=EXTRACTED_COLS)
-    for frame in (existing, move):
-        blank = frame["oa_work_id_r"].str.strip() == ""
-        frame.loc[blank, "oa_work_id_r"] = frame.loc[blank, "openalex_id_r"].map(bare_work_id)
-    combined = pd.concat([existing, _norm(move)], ignore_index=True)
-    combined["_k"] = combined.apply(_dedup_key, axis=1)
-    combined = combined.drop_duplicates(subset="_k", keep="last").drop(columns="_k")
-    combined.to_csv(dest, index=False, encoding="utf-8-sig")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with csv_lock(dest):
+        existing = _norm(pd.read_csv(dest, dtype=str, keep_default_na=False)) \
+            if dest.exists() else pd.DataFrame(columns=EXTRACTED_COLS)
+        for frame in (existing, move):
+            blank = frame["oa_work_id_r"].str.strip() == ""
+            frame.loc[blank, "oa_work_id_r"] = frame.loc[blank, "openalex_id_r"].map(bare_work_id)
+        combined = pd.concat([existing, _norm(move)], ignore_index=True)
+        combined["_k"] = combined.apply(_dedup_key, axis=1)
+        # Rows that share "no identifier" are not the same paper, so only keyed rows dedup.
+        dup = (combined["_k"] != "") & combined["_k"].duplicated(keep="last")
+        combined = combined[~dup].drop(columns="_k")
+        combined.to_csv(dest, index=False, encoding="utf-8-sig")
     return len(move)
 
 
-def _purge_stale_screen_keys(refiled: dict[str, set]) -> int:
-    """Drop papers from a screening set-aside file once this pass filed them elsewhere.
+def _fingerprints(df: pd.DataFrame) -> list[str]:
+    """One string per row identifying it by its whole content, in schema order.
+
+    Row identity for the merge below has to be the CONTENT, not the resume key: a
+    paper legitimately has several rows, and the pass quarantines particular ones.
+    Both sides of the comparison come through `_norm`, so the years and the missing
+    columns match on either side of a rewrite.
+    """
+    frame = _norm(df.copy())
+    return ["\x1f".join(str(v) for v in rec) for rec in frame[EXTRACTED_COLS].values]
+
+
+def _rewrite_without(path: Path, removed: pd.DataFrame) -> int:
+    """Re-read the CSV under its lock and drop the rows this pass moved out.
+
+    Read-modify-write with a long gap in the middle: the quarantine rules run over a
+    frame read minutes ago (hours, under --deep, which makes a network call per row),
+    and a concurrent run_extract appends to the same file the whole time. Writing that
+    stale frame back deleted every one of those appends.
+
+    Holding the lock across the whole pass would stop the deletions and stall the run
+    instead — run_extract takes this lock for every row it writes, so a --deep check
+    would block Stage 3 for as long as it runs. So the lock is taken only here, at the
+    end, and the pass's decision is applied to the file's CURRENT contents: drop the
+    rows it decided to move, keep everything else, including whatever arrived while it
+    was thinking.
+
+    Rows are matched by full content and by count, so N identical rows on disk lose
+    exactly the N this pass claimed. A row that has since been REWRITTEN in place no
+    longer matches and is kept — the right way round: it is a row somebody has touched
+    since, and it will be re-examined by the next pass.
+    """
+    wanted = Counter(_fingerprints(removed))
+    with csv_lock(path):
+        current = _norm(pd.read_csv(path, dtype=str, keep_default_na=False))
+        keep = []
+        for fp in _fingerprints(current):
+            if wanted[fp]:
+                wanted[fp] -= 1
+                keep.append(False)
+            else:
+                keep.append(True)
+        current[pd.Series(keep, index=current.index)].to_csv(
+            path, index=False, encoding="utf-8-sig")
+    dropped = sum(1 for k in keep if not k)
+    missing = sum(wanted.values())
+    if missing:
+        log.warning("sanity_check: %d quarantined row(s) were no longer in %s at "
+                    "rewrite time — left alone", missing, path.name)
+    return dropped
+
+
+def _purge_stale_screen_keys(refiled: dict[str, set], out_dir: Path) -> int:
+    """Drop papers from a settled set-aside file once this pass filed them elsewhere.
 
     A resume treats any key in these files as settled (`_load_extracted_rows` in
     run_extract), so a record left behind after the paper moved on strands it. The
     sequence that bites: `--rescreen` reopens a pre-screen discard, the paper is decided
     again and this time comes back `target_pending`, sanity_check files it in
     target_pending.csv — and the old key still sitting in prescreen_discard.csv marks it
-    settled on the next ordinary resume, forever.
+    settled on the next ordinary resume, forever. Every settled destination can strand a
+    paper the same way, not just the screening ones, so all of them are swept.
 
-    Only keys this pass actively re-filed are touched, and only in the OTHER screening
+    Only keys this pass actively re-filed are touched, and only in the OTHER set-aside
     files. Being in a file is not evidence of belonging there — not_a_replication.csv
     also holds the non_article buckets, whose rows carry any link_method — so nothing
     is inferred from a row's verdict.
 
     refiled — destination filename → the dedup keys quarantined there this pass.
+    out_dir — the set-aside directory of the CSV being checked.
     """
     purged = 0
-    for fname in SCREEN_SET_ASIDE_FILES:
-        path = DATA_DIR / fname
+    for fname in SETTLED_SET_ASIDE_FILES:
+        path = out_dir / fname
         if not path.exists():
             continue
-        elsewhere = {k for dest, keys in refiled.items() if dest != fname for k in keys}
+        elsewhere = {k for dest, keys in refiled.items() if dest != fname
+                     for k in keys if k}
         if not elsewhere:
             continue
-        frame = _norm(pd.read_csv(path, dtype=str, keep_default_na=False))
-        if frame.empty:
-            continue
-        stale = frame.apply(_dedup_key, axis=1).isin(elsewhere)
-        if not stale.any():
-            continue
-        purged += int(stale.sum())
-        frame[~stale].to_csv(path, index=False, encoding="utf-8-sig")
+        # Same read-modify-write, same lock as _quarantine — and the same file, so a
+        # concurrent quarantine into it must not interleave with this rewrite.
+        with csv_lock(path):
+            frame = _norm(pd.read_csv(path, dtype=str, keep_default_na=False))
+            if frame.empty:
+                continue
+            stale = frame.apply(_dedup_key, axis=1).isin(elsewhere)
+            if not stale.any():
+                continue
+            purged += int(stale.sum())
+            frame[~stale].to_csv(path, index=False, encoding="utf-8-sig")
     return purged
 
 
@@ -175,8 +275,15 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
     if not path.exists():
         print(f"[sanity] {path} not found — nothing to check.")
         return {}
+    # Set-asides belong to the CSV being checked, not to DATA_DIR: a test-sandbox
+    # quarantine must not settle a paper for the production resume.
+    out_dir = set_aside_dir(path)
 
     df = _norm(pd.read_csv(path, dtype=str, keep_default_na=False))
+    # What the file said when this pass read it. The rewrite at the end drops exactly
+    # these rows from whatever the file holds THEN, so a row appended in between
+    # survives — see _rewrite_without.
+    as_read = df.copy()
     n_before = len(df)
     doi_o = df["doi_o"].map(clean_doi)
     doi_r = df["doi_r"].map(clean_doi)
@@ -251,7 +358,7 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
     refiled: dict[str, set] = {}
     for name, fname, mask in rules:
         mask = mask & ~claimed
-        moved[name] = _quarantine(df, mask, DATA_DIR / fname) if move else int(mask.sum())
+        moved[name] = _quarantine(df, mask, out_dir / fname) if move else int(mask.sum())
         if mask.any():
             refiled.setdefault(fname, set()).update(df[mask].apply(_dedup_key, axis=1))
         claimed |= mask
@@ -267,7 +374,7 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
             if _doi_r_non_study_type(df.at[i, "doi_r"]):
                 by_type.at[i] = True
             time.sleep(0.2)
-        moved["non_article_type"] = _quarantine(df, by_type, DATA_DIR / "not_a_replication.csv") \
+        moved["non_article_type"] = _quarantine(df, by_type, out_dir / "not_a_replication.csv") \
             if move else int(by_type.sum())
         claimed |= by_type
 
@@ -279,17 +386,16 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
             if not _doi_is_registered(df.at[i, "doi_o"]):
                 fab.at[i] = True
             time.sleep(0.2)
-        moved["fabricated_doi_o"] = _quarantine(df, fab, DATA_DIR / "fabricated_original_doi.csv") \
+        moved["fabricated_doi_o"] = _quarantine(df, fab, out_dir / "fabricated_original_doi.csv") \
             if move else int(fab.sum())
         claimed |= fab
 
     if move and claimed.any():
         df = df[~claimed]
-        with csv_lock(path):
-            df.to_csv(path, index=False, encoding="utf-8-sig")
+        _rewrite_without(path, as_read[claimed])
 
     if move:
-        moved["screen_set_aside_purged"] = _purge_stale_screen_keys(refiled)
+        moved["screen_set_aside_purged"] = _purge_stale_screen_keys(refiled, out_dir)
 
     # Report-only signals (never moved).
     yo = pd.to_numeric(df["year_o"], errors="coerce")
@@ -312,17 +418,9 @@ def run_sanity_check(path: "str | Path" = None, move: bool = True,
     print("=" * 70)
     print(f"  rows {n_before} -> {len(df)}")
     print("  -- moved to set-aside CSVs --")
-    dest = {"screen_disagreement": "screen_disagreement.csv",
-            "not_a_replication": "not_a_replication.csv", "non_article": "not_a_replication.csv",
-            "non_article_type": "not_a_replication.csv",
-            "self_link": "unresolved_self_links.csv",
-            "doi_mismatch": "unresolved_doi_mismatch.csv",
-            "title_search_provisional": "provisional_title_search.csv",
-            "target_pending": "target_pending.csv",
-            "api_error": "api_error.csv",
-            "no_original_found": "no_original_found.csv",
-            "prescreen_discard": "prescreen_discard.csv",
-            "fabricated_doi_o": "fabricated_original_doi.csv"}
+    # bucket → file, from shared/schema.py: the same map run_extract's resume reads to
+    # decide what is settled, so a destination cannot exist here and be unknown there.
+    dest = SET_ASIDE_DESTINATIONS
     for name in dest:
         if name in moved:
             print(f"  {name:20s} -> {dest[name]:30s} {moved[name]}")
