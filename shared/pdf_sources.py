@@ -1122,6 +1122,8 @@ def acquire_pdf(doi_r: str, title: str = "", openalex_id: str = "") -> dict:
     # A result with content IS the document: link_original parses it exactly as it
     # parses a downloaded PDF, so running the ten download tiers underneath it buys
     # nothing and costs the whole waterfall.
+    # The AUTHORITATIVE content-free-XML guard: a shell never leaves acquire_pdf as a
+    # document, and get_openalex_fulltext neither returns nor caches one as a success.
     if openalex_id:
         oa_xml = get_openalex_fulltext(openalex_id)
         if oa_xml and openalex_xml_has_content(oa_xml):
