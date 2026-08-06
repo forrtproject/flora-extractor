@@ -200,7 +200,7 @@ Five facts set the bar, and each one moves it in a specific direction.
      *V* is small — a rule with several arms is sampled per arm, and an arm that
      cannot be afforded is an arm that should not discard — not to lower *L*.
    - Set *L* against what the pipeline expects to find, not against *V*. `data/flora.csv`
-     holds 2,504 rows over 1,837 distinct `doi_r`; a single keyword rule silently costing more
+     holds 2,504 rows over 1,838 distinct `doi_r`; a single keyword rule silently costing more
      than a handful of new ones is not a rule anyone would have agreed to.
 5. **Flip `"shadow": false` and add the `measured` entry in the same commit**, so a
    reviewer sees the claim and the promotion together.

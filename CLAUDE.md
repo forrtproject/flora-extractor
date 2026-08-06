@@ -366,8 +366,9 @@ must never cache the empty one.
 
 **The big artifact is the survivor pool, not a CSV.** The pool is a few GB of parquet
 and is shared through Hugging Face; the OpenAlex snapshot it is scanned out of is
-725 GB. Nothing in `data/` is close to that: the engine handoff on disk is 1,614 rows
-(`data/filtered.csv.manifest.json`) and `data/extracted.csv` is about 1 MB.
+725 GB. Nothing in `data/` is close to that: the engine handoff is a few thousand
+rows (its sibling `filtered.csv.manifest.json` names the exact count for the file
+on disk) and `data/extracted.csv` a few hundred KB.
 
 The multi-GB `filtered.csv` this section was written for is the RETIRED pre-engine
 file — the DVC-tracked `filtered.zip` still holds it at 1.7 GB. Stage 3 still reads

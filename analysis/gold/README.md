@@ -27,26 +27,29 @@ One row is **one replication–original pair**: a published replication study an
 one original study it re-tests. A replication that targets several originals appears
 as several rows, which is why the row count exceeds the number of distinct papers.
 
-Measured from the local file on 2026-08-04:
+Measured from the local file on 2026-08-06 (the file was refreshed upstream since
+the 2026-08-04 measurement — two new sources appeared and every row now carries a
+`doi_r`):
 
 | quantity | count |
 | --- | --- |
-| rows (replication–original pairs) | 2,180 |
-| distinct `doi_r` (replication DOIs) | 1,520 |
-| distinct `doi_r` ∪ `alt_identifier_r` | 1,954 |
-| rows with a non-blank `doi_r` | 1,977 (203 rows are identified by title only) |
-| distinct `doi_o` (original DOIs) | 2,016 |
-| rows by `type` | replication 2,171 · reproduction 9 |
-| rows by `source` | replications 1,366 · COS 717 · SCORE 88 · reproductions 9 |
+| rows (replication–original pairs) | 2,504 |
+| distinct `doi_r` (replication DOIs) | 1,838 |
+| distinct `doi_r` ∪ `alt_identifier_r` | 1,955 |
+| rows with a non-blank `doi_r` | 2,504 (none identified by title only) |
+| distinct `doi_o` (original DOIs) | 2,321 |
+| rows by `type` | replication 2,485 · reproduction 19 |
+| rows by `source` | replications 1,518 · COS 716 · openalex 167 · SCORE 88 · reproductions 14 · i4r 1 |
 
 **Identifying columns.** The replication is `doi_r` (primary), `alt_identifier_r` (an alternate
 DOI for the same work, e.g. preprint vs version of record) and `title_r`. The original
 is `doi_o`, with `alt_identifier_o` and `title_o`. All DOIs must pass `clean_doi()`
 (`shared/utils.py`) before comparison — the file mixes bare and URL-form DOIs.
-`title_r` is the fallback identifier for the 203 rows with no `doi_r`; match it fuzzily
-and only as a secondary pass, never as the primary join.
+`title_r` is the fallback identifier for any row with no `doi_r` (none in the current
+copy; earlier copies had hundreds); match it fuzzily and only as a secondary pass,
+never as the primary join.
 
-The copy measured above is sha256 `73210219d4f6d4bc43ab78c4385877ae7bd5dc1a8e7aef2bf8468d63e5fd29e0`.
+The copy measured above is sha256 `0e17cc52ff58d4c209038d91c9dc76faf328a46ee51dfb61a11c39b30282753b`.
 
 **Not gold.** The FLoRA *entry sheet* (`data/flora_entry_sheet.csv`, also present as
 `data/FLoRA entry sheet - replication list.csv`) is not a gold
