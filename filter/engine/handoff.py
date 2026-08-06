@@ -59,7 +59,6 @@ move, and its manifest is rewritten with it. When an immutable copy is wanted,
 `export` is still the command for it.
 """
 
-import csv
 import datetime
 import hashlib
 import json
@@ -68,7 +67,8 @@ from pathlib import Path
 from typing import Optional
 
 from filter.engine.export import (SPEC_DIR, UNCHECKED, check_release_binding,
-                                  iter_export_rows, load_conventions)
+                                  iter_export_rows, load_conventions,
+                                  write_rows_tmp)
 from filter.engine.spec import FilterSpec
 from shared.schema import ENGINE_EXPORTED_COLS
 
@@ -152,7 +152,7 @@ def write_handoff(con, pool_dir: Path, out_csv: Path, release_id: str, *,
         by_pile[pile].append(row)
 
     rows = [row for pile in HANDOFF_PILES for row in by_pile[pile]]
-    tmp_csv = _write_csv_tmp(out_csv, rows)
+    tmp_csv = write_rows_tmp(out_csv, rows)
     manifest = {
         "release_id": release_id,
         "piles": list(HANDOFF_PILES),
@@ -273,33 +273,6 @@ def decisions(client) -> tuple[set[int], dict[int, dict], set[int]]:
         if decision["outcome"] == DISCARD and work not in expensive:
             drop.add(work)
     return drop, screen, decided
-
-
-def _write_csv_tmp(out_csv: Path, rows: list[dict]) -> Path:
-    """Write the handoff to a sibling temp file and return it, unpublished.
-
-    The handoff is rewritten in place over the file Stage 3 reads, so writing to
-    it directly means an interruption — Ctrl-C, a full disk, a raised binding
-    check — leaves a truncated `filtered.csv` and destroys the previous handoff,
-    which was a working input. Writing beside it and renaming is atomic within a
-    directory, so the file is either the old handoff or the new one and never half
-    of either. The rename is `_publish()`'s, because the manifest has to go with it.
-    """
-    out_csv = Path(out_csv)
-    out_csv.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out_csv.with_name(out_csv.name + ".tmp")
-    try:
-        with tmp.open("w", newline="", encoding="utf-8-sig") as handle:
-            writer = csv.DictWriter(handle, fieldnames=ENGINE_EXPORTED_COLS,
-                                    extrasaction="ignore")
-            writer.writeheader()
-            for row in rows:
-                writer.writerow({col: "" if row.get(col) is None else row.get(col)
-                                 for col in ENGINE_EXPORTED_COLS})
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-    return tmp
 
 
 def _publish(out_csv: Path, tmp_csv: Path, manifest: dict) -> None:

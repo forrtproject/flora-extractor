@@ -26,7 +26,7 @@ import pytest
 from filter.engine import handoff as handoff_mod
 from filter.engine import tiers
 from filter.engine.claims import PENDING_UPLOAD, ClaimConflict, UnknownRelease
-from filter.engine.export import export_pile
+from filter.engine.export import export_pile, write_rows_tmp
 from filter.engine.store import build_routing, open_store
 from search.snapshot_scan import _POOL_SCHEMA
 from shared.schema import ENGINE_EXPORTED_COLS, validate_csv_columns
@@ -988,12 +988,12 @@ def test_a_failed_handoff_write_leaves_the_previous_file_intact(tmp_path):
 
     out = tmp_path / "filtered.csv"
     handoff_mod._publish(
-        out, handoff_mod._write_csv_tmp(
+        out, write_rows_tmp(
             out, [{col: "old" for col in ENGINE_EXPORTED_COLS}]), {"rows": 1})
     before = out.read_bytes()
 
     with pytest.raises(RuntimeError, match="disk full"):
-        handoff_mod._write_csv_tmp(out, [{**{c: "" for c in ENGINE_EXPORTED_COLS},
+        write_rows_tmp(out, [{**{c: "" for c in ENGINE_EXPORTED_COLS},
                                           "doi_r": Unwritable()}])
     assert out.read_bytes() == before
     assert not (tmp_path / "filtered.csv.tmp").exists()
