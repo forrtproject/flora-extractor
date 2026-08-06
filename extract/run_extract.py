@@ -57,6 +57,7 @@ from shared.pdf_parsing import (
     read_parse_cache as _read_parse_cache_shared,
     score_parse_result,
 )
+from shared.prompts import OUTCOME_TEXT_CHARS
 from shared.row_key import primary_key
 from shared.doi_verify import keeps_no_doi, verify_and_correct
 from shared.schema import (
@@ -724,10 +725,22 @@ def _apply_outcome(row: dict, outcome: dict) -> dict:
     """Write the outcome fields onto an already-merged result row.
 
     The outcome step is also the first look the pipeline gets at the methods, so it
-    can correct `type`: when the full-text pass reports the other vocabulary the row
-    is re-coded under it, and the record type it was actually coded in is the one the
-    row must carry.
+    can correct `type`: when the model reports the other vocabulary the row is re-coded
+    under it, and the record type it was actually coded in is the one the row must
+    carry.
+
+    target_check is the standalone coder's verdict on the link an earlier stage
+    asserted. "no_original" is a veto, handled where record_type_check == "neither" is
+    (in normalise_outcome_block, which sets not_a_replication). "other_original" is
+    not: the paper does re-test something, just not this — which is a link the row
+    should carry at low confidence with the disagreement written down, for a human to
+    settle, rather than a row silently dropped.
     """
+    if outcome.get("target_check") == "other_original":
+        row["link_confidence"] = "low"
+        note = "target check: text describes re-testing a different original"
+        prior = str(row.get("link_evidence", "") or "")
+        row["link_evidence"] = f"{prior} | {note}" if prior else note
     row.update({
         "outcome":            outcome.get("outcome",            "cannot_be_determined"),
         "outcome_phrase":     outcome.get("outcome_phrase",     ""),
@@ -743,14 +756,18 @@ def _apply_outcome(row: dict, outcome: dict) -> dict:
 
 
 def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False,
-                 screen: "dict | None" = None, *, original: "dict | None" = None,
-                 multi_original: bool = False) -> dict:
-    """The outcome for one (replication, original) pair.
+                 screen: "dict | None" = None, *,
+                 original: "dict | None" = None) -> dict:
+    """The outcome for one (replication, original) pair, coded on its own.
+
+    Only rows whose link no LLM chose reach here — a deterministic rule resolved them,
+    so nothing has read the paper and checked the original. Both passages the parse
+    yielded are sent, each named, together with the evidence the rule matched on: the
+    model checks the link (target_check) as well as coding the verdict.
 
     *original* names the original this call is about — the per-target adapter passes
     one entry per row, where the link carries a whole list; without it the link's own
-    resolved_* fields are the original, as on the single-link path. *multi_original*
-    tells the outcome prompt that the other originals are coded on their own rows.
+    resolved_* fields are the original, as on the single-link path.
     """
     abstract_r = str(row.get("abstract_r", ""))
     title_r    = str(row.get("title_r",    ""))
@@ -759,18 +776,17 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False,
     # receives whichever parser extracted the richest text, not always GROBID —
     # narrowed to the discussion/conclusion, which is where FLoRA's rule says the
     # outcome is stated when the abstract does not state it.
-    fulltext, provenance = _best_fulltext_from_cache(doi_r)
-    if fulltext:
-        fulltext = (f"[{_PROVENANCE_LABEL[provenance]}]\n\n{fulltext}")
-    else:
-        # Fallback: GROBID sections that run_for_doi already extracted. The intro is
-        # in here for want of anything better; it is the section that most often
-        # discusses OTHER studies' replication failures, and the prompt says so.
+    fulltext, provenance, intro = _best_fulltext_from_cache(doi_r)
+    if not fulltext:
+        # Fallback: sections that run_for_doi already extracted. The intro is in here
+        # for want of anything better; it is the section that most often discusses
+        # OTHER studies' replication failures, and the prompt says so.
         fulltext = " ".join(filter(None, (
             str(link.get(key) or "") for key in
             ("grobid_abstract", "grobid_intro", "grobid_methods"))))
-        if fulltext:
-            fulltext = f"[{_PROVENANCE_LABEL['sections']}]\n\n{fulltext}"
+        provenance = "sections" if fulltext else "none"
+    if not intro:
+        intro = str(link.get("grobid_intro") or "")
 
     orig = original or {"title":        link.get("resolved_title_o"),
                         "first_author": link.get("resolved_author_o"),
@@ -781,55 +797,46 @@ def _get_outcome(doi_r: str, row: pd.Series, link: dict, no_llm: bool = False,
         original_authors=str(orig.get("first_author") or ""),
         original_year=str(orig.get("year") or ""),
         record_type=_record_type(row, screen),
-        multi_original=multi_original,
+        intro_text=intro,
+        original_evidence=str(link.get("llm_evidence") or ""),
+        fulltext_provenance=provenance,
     )
 
 
-# Leaves room for the SOURCE label below under code_outcome._FULLTEXT_CAP, which
-# truncates from the front — without the headroom the label would push the last
-# few hundred characters of the discussion past the cap.
-_OUTCOME_TEXT_CHARS = 7600
-
-# Told to the model alongside the text, so it never attributes a quote to a
-# section it was not shown.
-_PROVENANCE_LABEL = {
-    "discussion": "SOURCE: discussion / conclusion section of the paper",
-    "tail":       "SOURCE: closing pages of the paper, before the reference list",
-    "sections":   "SOURCE: abstract, introduction and methods only — the closing "
-                  "sections could not be parsed. Statements about replication "
-                  "failures in an introduction usually concern OTHER studies",
-}
-
-
-def _best_fulltext_from_cache(doi_r: str) -> tuple[str, str]:
-    """The outcome-bearing text for doi_r, as (text, provenance).
+def _best_fulltext_from_cache(doi_r: str) -> tuple[str, str, str]:
+    """The outcome-bearing text for doi_r, as (closing text, provenance, intro).
 
     Reads the parse cache, and takes the raw text of the highest-scoring method
     that actually has raw text — the top-scoring method overall can be GROBID,
     which returns sections and no raw text at all, and falling straight back to
     its abstract + intro discarded a full parse another method had produced.
 
-    `outcome_text()` then narrows that to the discussion/conclusion. Returns
-    ("", "none") on a cache miss or an all-empty cache.
+    `outcome_text()` then narrows that to the discussion/conclusion. The intro is
+    returned beside it rather than folded into it: the two are different evidence and
+    the prompt names them separately, so a quote can be attributed to the right one.
+    Returns ("", "none", "") on a cache miss or an all-empty cache.
     """
     results = _read_parse_cache(doi_r)
     if not results:
-        return "", "none"
+        return "", "none", ""
     ranked = sorted((r for r in results.values() if isinstance(r, dict)),
                     key=score_parse_result, reverse=True)
+    intro = next((str(r.get("intro", "") or "").strip() for r in ranked
+                  if str(r.get("intro", "") or "").strip()), "")
     for result in ranked:
         raw = str(result.get("raw_text", "") or "").strip()
         if raw:
-            return outcome_text(raw, max_chars=_OUTCOME_TEXT_CHARS)
+            text, provenance = outcome_text(raw, max_chars=OUTCOME_TEXT_CHARS)
+            return text, provenance, intro
 
     best = best_parse_result(results)
     if not best:
-        return "", "none"
+        return "", "none", intro
     joined = " ".join(filter(None, [
         str(best.get("abstract", "") or ""),
         str(best.get("intro",    "") or ""),
     ])).strip()
-    return (joined, "sections") if joined else ("", "none")
+    return (joined, "sections", intro) if joined else ("", "none", intro)
 
 
 # Verdicts that say something about the replication result. cannot_be_determined,
@@ -864,6 +871,44 @@ def _aggregate_outcomes(outcomes: list[str]) -> str:
         if fallback in outcomes:
             return fallback
     return "cannot_be_determined"
+
+
+# Which value wins when two studies of one original were coded differently on an axis.
+# Disagreement is itself the finding, and FLoRA's rule for a conflict is the value that
+# records it: a robustness axis that held in one re-analysis and not in another IS a
+# robustness challenge, and numbers that came out in one and not the other ARE
+# computational issues.
+_AXIS_CONFLICT = {"outcome_computation": "computational issues",
+                  "outcome_robustness":  "robustness challenges"}
+
+_AXIS_QUOTES = {"outcome_computation": ("outcome_computational_quote",
+                                        "out_quote_computational_source"),
+                "outcome_robustness":  ("outcome_robustness_quote",
+                                        "out_quote_robust_source")}
+
+
+def _aggregate_axes(members: list[dict]) -> dict:
+    """The reproduction axes for several studies of ONE original, merged.
+
+    Per axis: one settled value carries it, two settled values that disagree become the
+    conflict value in _AXIS_CONFLICT, and an axis nothing settled stays unsettled. The
+    quotes and their sources are joined with " | " in matching order, so a validator can
+    still see which passage supported which member's verdict.
+    """
+    merged: dict = {}
+    for axis, conflict in _AXIS_CONFLICT.items():
+        values = [str(m.get(axis, "") or "") for m in members]
+        settled = [v for v in values if v and v != "cannot_be_determined"]
+        merged[axis] = (conflict if len(set(settled)) > 1
+                        else settled[0] if settled
+                        else next((v for v in values if v), ""))
+        quote_col, source_col = _AXIS_QUOTES[axis]
+        kept = [(str(m.get(quote_col, "") or "").strip(),
+                 str(m.get(source_col, "") or "").strip())
+                for m in members if str(m.get(quote_col, "") or "").strip()]
+        merged[quote_col]  = " | ".join(q for q, _ in kept)
+        merged[source_col] = " | ".join(src for _, src in kept)
+    return merged
 
 
 def _target_entry(target: dict, doi_r: str) -> "dict | None":
@@ -921,6 +966,9 @@ def _target_entry(target: dict, doi_r: str) -> "dict | None":
         # stays high — only the shape rule and a missing DOI demote.
         "confidence":   "high" if doi and not citation_fragment(title) else "low",
         "provisional":  provisional,
+        # The outcome the call that named this target coded for it, in the same
+        # reading. {} when the target came from a producer that codes no outcome.
+        "outcome_block": target.get("outcome_block") or {},
     }
 
 
@@ -977,6 +1025,14 @@ def _collapse_same_paper_originals(originals: list[dict]) -> list[dict]:
             merged["study_r"] = ", ".join(dict.fromkeys(
                 part for m in members
                 for part in str(m.get("study_r", "") or "").split(", ") if part))
+            blocks = [m.get("outcome_block") or {} for m in members]
+            if any(blocks):
+                merged["outcome_block"] = {
+                    **blocks[0],
+                    "outcome": _aggregate_outcomes(
+                        [str(b.get("outcome", "") or "") for b in blocks]),
+                    **_aggregate_axes(blocks),
+                }
             merged["outcome"] = _aggregate_outcomes(
                 [str(m.get("outcome", "") or "") for m in members])
             merged["evidence"] = " ".join(
@@ -1808,6 +1864,10 @@ def _merge_duplicate_originals(rows: list[dict], doi_r: str) -> list[dict]:
                     for part in str(m.get(column, "") or "").split(", ") if part))
             first["outcome"] = _aggregate_outcomes(
                 [str(m.get("outcome", "") or "") for m in members])
+            # The axes are the reproduction half of the same verdict, and leaving the
+            # first member's in place beside an aggregated `outcome` made the row
+            # disagree with itself.
+            first.update(_aggregate_axes(members))
         merged.append(first)
     return merged
 
@@ -1881,10 +1941,12 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
 
         outcome = _outcome_without_coding(method, link)
         if outcome is None:
-            outcome = _get_outcome(doi_r, row, link,
-                                   no_llm=no_llm and not recalibrate_outcomes,
-                                   screen=screen, original=entry,
-                                   multi_original=len(entries) > 1)
+            # The call that named this target coded its outcome in the same reading;
+            # a second call about the same evidence would only cost money to re-answer.
+            outcome = entry.get("outcome_block") or _get_outcome(
+                doi_r, row, link,
+                no_llm=no_llm and not recalibrate_outcomes,
+                screen=screen, original=entry)
         rows.append(_apply_outcome(result_row, outcome))
 
     rows = _merge_duplicate_originals(rows, doi_r)
@@ -1920,7 +1982,8 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
     N-1 originals. A resolved single link takes the merge path below unchanged.
     """
     link = run_for_doi(doi_r, cands_df=_build_cands_df(row),
-                       no_llm=no_llm, no_pdf=no_pdf, classification=screen)
+                       no_llm=no_llm, no_pdf=no_pdf, classification=screen,
+                       record_type=_record_type(row, screen))
 
     if link.get("targets") and not link.get("resolved"):
         n_targets = int(link.get("n_targets") or 0)
@@ -1952,11 +2015,15 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
 
     outcome = _outcome_without_coding(link_method, link)
     if outcome is None:
-        if (not no_pdf or recalibrate_outcomes) and _has_document(doi_r, link):
-            _save_parse_cache(doi_r)
-        outcome = _get_outcome(doi_r, row, link,
-                               no_llm=no_llm and not recalibrate_outcomes,
-                               screen=screen)
+        # An LLM rung that accepted this link coded its outcome in the same reading.
+        # Only a link no LLM chose — a deterministic rule's — is coded on its own.
+        outcome = link.get("outcome_block") or {}
+        if not outcome:
+            if (not no_pdf or recalibrate_outcomes) and _has_document(doi_r, link):
+                _save_parse_cache(doi_r)
+            outcome = _get_outcome(doi_r, row, link,
+                                   no_llm=no_llm and not recalibrate_outcomes,
+                                   screen=screen)
     return [_apply_outcome(result_row, outcome)]
 
 

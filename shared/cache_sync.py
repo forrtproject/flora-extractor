@@ -309,7 +309,8 @@ def cache_manifest(parts: list[Part], shard_hashes: dict[str, dict[str, str]],
         # Informational: the keys already fold these in, so a changed prompt MISSES
         # rather than mis-reads. This is here so a puller can see WHY it missed.
         "prompt_versions": {name: prompt_version(name) for name in (
-            "build_target_prompt", "build_classify_prompt", "build_prescreen_prompt",
+            "build_target_outcome_prompt", "build_repro_target_outcome_prompt",
+            "build_classify_prompt", "build_prescreen_prompt",
             "build_outcome_prompt", "build_repro_outcome_prompt")},
         "capabilities": capabilities(),
         "abstract_sources": sources,

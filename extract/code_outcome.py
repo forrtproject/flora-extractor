@@ -1,16 +1,25 @@
 """
-code_outcome.py — LLM outcome coding for Stage 3.
+code_outcome.py — the STANDALONE outcome coder for Stage 3.
 
-The outcome is decided by an LLM reading the ABSTRACT, and on escalation — when the
-abstract call returns cannot_be_determined, or there is no abstract — by a second call
-reading the paper's DISCUSSION AND CONCLUSION. That order is FLoRA's rule: "We rely on
-what replication authors say in the abstract, or if not stated there, what is written
-in the report (discussion and conclusion sections)."
+Most rows are coded where their target is chosen: `resolve_targets_and_outcomes()`
+asks both questions of one reading, at every LLM rung of the resolution ladder. This
+module codes the rows that call never saw — a deterministic rule resolved the link, so
+no model ever read the paper to find it, and the original reaching this call is an
+assertion an earlier stage made. It is given as evidence to CHECK, with the link
+evidence that produced it, and the model answers `target_check` on it.
 
-The escalation text is selected by `pdf_parsing.outcome_text()`, not taken from the
-front of the parse: an introduction routinely discusses OTHER studies' failures ("X
-failed to replicate in prior work"), and the head of a paper truncated at
-_FULLTEXT_CAP is mostly introduction and methods.
+The call is a single one over whatever text the row has: the abstract, and — when a
+document was acquired — the paper's introduction and its DISCUSSION AND CONCLUSION,
+each named. That order is FLoRA's rule: "We rely on what replication authors say in the
+abstract, or if not stated there, what is written in the report (discussion and
+conclusion sections)." The closing text is selected by `pdf_parsing.outcome_text()`,
+not taken from the front of the parse: an introduction routinely discusses OTHER
+studies' failures ("X failed to replicate in prior work").
+
+There is no full-text escalation here any more. It could not fire: escalating needed a
+parsed document, and a row resolved from the abstract never acquired one. Reading on
+for an unsettled verdict is the ladder's job now — see OUTCOME_DESCENT in
+extract/link_original.py.
 
 The keyword scan is the --no-llm fallback, not a pre-filter. Every outcome the
 pipeline records with an LLM available comes from the LLM, which also applies the
@@ -34,28 +43,19 @@ import time
 from typing import Optional
 
 from shared.config import LLM_CACHE_DIR, OUTCOME_EFFORT, OUTCOME_MODEL, log
-
-# When the abstract-based outcome call returns cannot_be_determined (or there is no
-# abstract) and parsed fulltext is available, escalate to a second, fulltext-based
-# call. Not settable: turning it off changes what a row is CODED AS — the same paper
-# resolves cannot_be_determined instead of success — so it must not vary between the
-# machines writing into one corpus.
-OUTCOME_FULLTEXT_ESCALATION = True
 from shared import token_counter
 from shared.cache import content_key, read_cache, write_cache
 from shared.llm_client import cache_model_id, call_model
 from shared.prompts import (
     build_outcome_prompt, build_repro_outcome_prompt, prompt_version,
 )
-from shared.schema import (
-    COMPUTATION_OUTCOME_VALUES, OUTCOME_CATEGORIES, ROBUSTNESS_OUTCOME_VALUES,
-    derive_reproduction_outcome, outcome_categories_for,
-)
+from shared.schema import EMPTY_OUTCOME_AXES, normalise_outcome_block
 from shared.token_usage import TokenBudgetExhausted
 
-# Truncation caps (chars) for the abstract-based and fulltext-escalation prompts.
+# Truncation caps (chars) for the passages this call sends.
 _ABSTRACT_CAP = 3000
 _FULLTEXT_CAP = 8000
+_INTRO_CAP    = 2000
 
 # ── Sentence splitter helpers ─────────────────────────────────────────────────
 
@@ -165,18 +165,9 @@ _DESCRIPTIVE = re.compile(
     re.IGNORECASE,
 )
 
-# Single source of truth (schema.OUTCOME_CATEGORIES) — includes not_a_replication,
-# which _llm_outcome emits when the full-text pass answers record_type_check="neither".
-_VALID_OUTCOMES = OUTCOME_CATEGORIES
-
 # The empty axis block a replication row carries, and the block a "neither" verdict
 # clears a reproduction row down to.
-_EMPTY_AXES = {
-    "outcome_computation": "", "outcome_computational_quote": "",
-    "out_quote_computational_source": "",
-    "outcome_robustness": "", "outcome_robustness_quote": "",
-    "out_quote_robust_source": "",
-}
+_EMPTY_AXES = EMPTY_OUTCOME_AXES
 
 
 def _failure_match(text: str) -> "re.Match | None":
@@ -267,161 +258,68 @@ def _call_outcome_llm(prompt: str, doi_r: str) -> tuple[Optional[dict], str]:
     return None, ""
 
 
-def _text(value) -> str:
-    """A response field as a string, with JSON null read as absent.
-
-    The prompts no longer spend model attention policing JSON discipline, so the
-    parser repairs what a parser should repair. `null` for a quote or a source is
-    the model saying "none", not a value to stringify as "None".
-    """
-    return "" if value is None else str(value)
-
-
-def _as_bool(value) -> bool:
-    """`confident`, tolerating the string form. Models return "true"/"True" often
-    enough that reading it as a truthy non-empty string — or as False — is a real
-    misreading of a real answer."""
-    if isinstance(value, bool):
-        return value
-    return _text(value).strip().lower() == "true"
-
-
 def _normalise(result: dict, prompt: str, model_used: str,
-               record_type: str = "replication", fulltext_pass: bool = False) -> dict:
-    """The LLM response as the row shape, in the vocabulary *record_type* selects.
+               record_type: str = "replication", has_text: bool = False) -> dict:
+    """The LLM response as the row shape, plus the plumbing the row records.
 
-    record_type_check is asked for on the FULL-TEXT pass only, so its absence on the
-    abstract pass is not a verdict — reading it as one would let a single model end a
-    row on exactly the evidence two validated screen voters already saw.
+    The verdict itself is read by shared.schema.normalise_outcome_block, which the
+    combined target+outcome call uses too — so a verdict means the same thing whichever
+    question asked for it. *has_text* says whether the model was given any of the
+    paper's own body: the two check fields are only asked then, and their absence
+    otherwise is not a verdict.
     """
-    is_repro = str(record_type or "").strip().lower() == "reproduction"
-    rtc = _text(result.get("record_type_check")).strip().lower() if fulltext_pass else ""
-
-    axes = dict(_EMPTY_AXES)
-    if is_repro:
-        computation = _text(result.get("outcome_computation")).strip()
-        robustness = _text(result.get("outcome_robustness")).strip()
-        # An unrecognised axis value is a value the pipeline cannot act on; recording
-        # it as unsettled is honest, recording it verbatim is not.
-        if computation not in COMPUTATION_OUTCOME_VALUES:
-            computation = "cannot_be_determined"
-        if robustness not in ROBUSTNESS_OUTCOME_VALUES:
-            robustness = "cannot_be_determined"
-        axes = {
-            "outcome_computation":            computation,
-            "outcome_computational_quote":    _text(result.get("outcome_computational_quote")),
-            "out_quote_computational_source": _text(result.get("out_quote_computational_source")),
-            "outcome_robustness":             robustness,
-            "outcome_robustness_quote":       _text(result.get("outcome_robustness_quote")),
-            "out_quote_robust_source":        _text(result.get("out_quote_robust_source")),
-        }
-        outcome = derive_reproduction_outcome(computation, robustness)
-        # A reproduction's evidence lives in the two axis quotes; the shared
-        # outcome_phrase would have to be one of them chosen arbitrarily, which is
-        # exactly the one-quote-for-two-judgments problem the axes were split to end.
-        phrase, source = "", ""
-    else:
-        outcome = _text(result.get("outcome", "cannot_be_determined")).lower()
-        # Reproductions use the computation/robustness axes, replications the
-        # success/failure/... enum. Validating against the wrong one would silently
-        # coerce every verdict to cannot_be_determined.
-        if outcome not in outcome_categories_for(record_type):
-            outcome = "cannot_be_determined"
-        phrase = _text(result.get("outcome_phrase"))
-        source = _text(result.get("out_quote_source"))
-
-    # "neither" is the veto the retired is_genuine_attempt used to carry, now earned by
-    # the methods rather than by one model re-deciding the screen's question.
-    if rtc == "neither":
-        outcome = "not_a_replication"
-        axes = dict(_EMPTY_AXES)
-        phrase, source = "", ""
-
     return {
-        "outcome":            outcome,
-        "outcome_phrase":     phrase,
-        "outcome_confidence": "high" if _as_bool(result.get("confident")) else "low",
-        "out_quote_source":   source,
-        "outcome_reasoning":  _text(result.get("outcome_reasoning")),
-        **axes,
-        "record_type_check":  rtc,
-        "llm_model":          model_used,
-        "llm_prompt":         prompt,
-        "llm_response":       json.dumps(result, ensure_ascii=False),
+        **normalise_outcome_block(result, record_type, has_text),
+        "llm_model":    model_used,
+        "llm_prompt":   prompt,
+        "llm_response": json.dumps(result, ensure_ascii=False),
     }
-
-
-def _unsettled(output: dict, is_repro: bool) -> bool:
-    """Whether the abstract pass left something for the full text to settle.
-
-    A reproduction has two axes, and either one unresolved is a reason to read the
-    full text: treating a settled computation verdict beside an unresolved robustness
-    verdict as done would silently record "not checked" as though the paper had been
-    read to the end.
-    """
-    if is_repro:
-        return (output["outcome_computation"] == "cannot_be_determined"
-                or output["outcome_robustness"] == "cannot_be_determined")
-    return output["outcome"] == "cannot_be_determined"
 
 
 def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
                     original_title: str = "", original_authors: str = "",
                     original_year: str = "", record_type: str = "replication",
-                    recoded: bool = False,
-                    multi_original: bool = False) -> tuple[dict, bool]:
+                    recoded: bool = False, intro_text: str = "",
+                    original_evidence: str = "",
+                    fulltext_provenance: str = "") -> tuple[dict, bool]:
     """LLM-based outcome extraction, with whether the result may be cached.
 
-    Two results are deliberately NOT cacheable: api_error after provider exhaustion,
-    and the abstract verdict returned when the full-text escalation itself failed.
-    Both are transient, and a cached one is a definitive miss the pipeline never
-    retries. A recode inherits the cacheability of the call it delegated to — the
-    outer call cannot tell a delegated api_error from a delegated verdict by looking
-    at the dict, and writing one under the original vocabulary's key checkpointed an
-    outage as an answer.
+    One result is NOT cacheable: api_error after provider exhaustion. It is transient,
+    and a cached one is a definitive miss the pipeline never retries. A recode inherits
+    the cacheability of the call it delegated to — the outer call cannot tell a
+    delegated api_error from a delegated verdict by looking at the dict, and writing
+    one under the original vocabulary's key checkpointed an outage as an answer.
 
-    The primary pass reads the abstract. If it leaves the verdict unsettled (or the
-    abstract is empty) and parsed fulltext is available, a second, fulltext-based
-    call is made and its result REPLACES the first — for a reproduction that means
-    both axes, never one axis from each call.
+    One call, over every passage the row has. It answers record_type_check and
+    target_check whenever it was given any of the paper's own text: "neither" and
+    "no_original" veto the row, and naming the other vocabulary re-codes it once under
+    the other prompt — one hop, never a loop, so a call made to fix a mis-typed row is
+    not itself re-typed.
 
-    The full-text pass also answers record_type_check, the first look the pipeline
-    gets at the methods. "neither" vetoes the row; naming the other vocabulary
-    re-codes it once under the other prompt — one hop, never a loop, so a call made
-    to fix a mis-typed row is not itself re-typed.
-
-    One cache entry, keyed on everything the answer depends on: the model, the
-    versions of both prompts that could have produced it, the record type (a
-    reproduction gets a different prompt and a different outcome vocabulary, so it
-    must not read back a replication-coded entry), and every input sent — title,
-    abstract, the original-study block and the fulltext the escalation would read.
-
-    *multi_original* tells the model the paper also re-tests other originals coded on
-    their own rows — it changes the prompt, so it is part of the key, appended only
-    when set. Without it a single-original row and a per-target row for the same
-    (doi_r, original) would collide on one entry and the second would read back the
-    other variant's answer; with it always present, every existing single-original
-    entry would be orphaned instead.
+    One cache entry, keyed on everything the answer depends on: the model, the prompt
+    version, the record type (a reproduction gets a different prompt and a different
+    outcome vocabulary, so it must not read back a replication-coded entry), and every
+    input sent — title, abstract, the original-study block with the evidence that
+    produced it, and both passages of the paper's own text with the provenance the
+    closing one is labelled by.
     """
     abstract_snip = (abstract_r[:_ABSTRACT_CAP] + "…") if len(abstract_r) > _ABSTRACT_CAP else abstract_r
     text_snip     = (fulltext[:_FULLTEXT_CAP] + "…") if len(fulltext) > _FULLTEXT_CAP else fulltext
+    intro_snip    = (intro_text or "")[:_INTRO_CAP]
 
     is_repro = str(record_type or "").strip().lower() == "reproduction"
     build = build_repro_outcome_prompt if is_repro else build_outcome_prompt
     version = prompt_version(
         "build_repro_outcome_prompt" if is_repro else "build_outcome_prompt")
-    # multi_original is APPENDED, and only when it is set: it names a prompt variant
-    # that did not exist before, and a key component that is always present would move
-    # every single-original key and orphan the outcome cache — the most expensive
-    # entries the pipeline holds, because they may carry a full-text escalation.
     key = content_key("outcome", doi_r, cache_model_id(OUTCOME_MODEL, OUTCOME_EFFORT),
                       version, record_type,
                       title_r, abstract_snip,
-                      original_authors, original_year, original_title, text_snip,
-                      *(("multi_original",) if multi_original else ()))
+                      original_authors, original_year, original_title,
+                      original_evidence, intro_snip, fulltext_provenance, text_snip)
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
         cached.setdefault("outcome_reasoning", "")
+        cached.setdefault("target_check", "")
         return cached, True
 
     token_counter.set_stage("extract_outcome")
@@ -435,49 +333,29 @@ def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
                   "outcome_reasoning": "", "llm_model": "", **_EMPTY_AXES}
 
     prompt = build(title_r, abstract_snip, original_authors, original_year,
-                   original_title, multi_original=multi_original)
+                   original_title, text_snip=text_snip, intro_snip=intro_snip,
+                   original_evidence=original_evidence,
+                   text_provenance=fulltext_provenance)
     result, model_used = _call_outcome_llm(prompt, doi_r)
     if not result:
         log.warning("[%s] outcome LLM failed after all retries — marking api_error", doi_r)
         return _api_error, False
 
-    output = _normalise(result, prompt, model_used, record_type)
+    has_text = bool(text_snip or intro_snip)
+    output = _normalise(result, prompt, model_used, record_type, has_text=has_text)
     cacheable = True
 
-    # Escalation: the abstract could not settle it → read the parsed fulltext.
-    if OUTCOME_FULLTEXT_ESCALATION and fulltext and (_unsettled(output, is_repro)
-                                                     or not abstract_r):
-        esc_prompt = build(title_r, abstract_snip, original_authors, original_year,
-                           original_title, text_snip=text_snip,
-                           multi_original=multi_original)
-        esc_result, esc_model = _call_outcome_llm(esc_prompt, doi_r)
-        if not esc_result:
-            # Caching the abstract's cannot_be_determined here would retire the
-            # escalation for good; the fulltext call must stay retryable.
-            log.warning("[%s] outcome fulltext escalation failed — returning the "
-                        "abstract verdict uncached so a re-run retries it", doi_r)
-            return output, False
-        output = _normalise(esc_result, esc_prompt, esc_model, record_type,
-                            fulltext_pass=True)
-        if not output["out_quote_source"] and output["outcome_phrase"]:
-            output["out_quote_source"] = "fulltext"
-        for quote_col, source_col in (
-                ("outcome_computational_quote", "out_quote_computational_source"),
-                ("outcome_robustness_quote",    "out_quote_robust_source")):
-            if output[quote_col] and not output[source_col]:
-                output[source_col] = "fulltext"
-
-        other = "reproduction" if not is_repro else "replication"
-        if not recoded and output["record_type_check"] == other:
-            log.info("[%s] full text says this is a %s, not a %s — re-coding once",
-                     doi_r, other, record_type)
-            output, cacheable = _outcome_result(doi_r, title_r, abstract_r, fulltext,
-                                                original_title=original_title,
-                                                original_authors=original_authors,
-                                                original_year=original_year,
-                                                record_type=other, recoded=True,
-                                                multi_original=multi_original)
-            output = {**output, "record_type": other}
+    other = "reproduction" if not is_repro else "replication"
+    if has_text and not recoded and output["record_type_check"] == other:
+        log.info("[%s] the text says this is a %s, not a %s — re-coding once",
+                 doi_r, other, record_type)
+        output, cacheable = _outcome_result(
+            doi_r, title_r, abstract_r, fulltext,
+            original_title=original_title, original_authors=original_authors,
+            original_year=original_year, record_type=other, recoded=True,
+            intro_text=intro_text, original_evidence=original_evidence,
+            fulltext_provenance=fulltext_provenance)
+        output = {**output, "record_type": other}
 
     if cacheable:
         write_cache(LLM_CACHE_DIR, key, output)
@@ -487,7 +365,8 @@ def _outcome_result(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
 def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
                  original_title: str = "", original_authors: str = "",
                  original_year: str = "", record_type: str = "replication",
-                 multi_original: bool = False) -> dict:
+                 intro_text: str = "", original_evidence: str = "",
+                 fulltext_provenance: str = "") -> dict:
     """The outcome row for *doi_r* — see _outcome_result, whose cacheability flag the
     pipeline has no use for."""
     output, _ = _outcome_result(doi_r, title_r, abstract_r, fulltext,
@@ -495,7 +374,9 @@ def _llm_outcome(doi_r: str, title_r: str, abstract_r: str, fulltext: str,
                                 original_authors=original_authors,
                                 original_year=original_year,
                                 record_type=record_type,
-                                multi_original=multi_original)
+                                intro_text=intro_text,
+                                original_evidence=original_evidence,
+                                fulltext_provenance=fulltext_provenance)
     return output
 
 
@@ -532,11 +413,16 @@ def extract_outcome(doi_r: str,
                     original_authors: str = "",
                     original_year: str = "",
                     record_type: str = "replication",
-                    multi_original: bool = False) -> dict:
+                    intro_text: str = "",
+                    original_evidence: str = "",
+                    fulltext_provenance: str = "") -> dict:
     """Extract the outcome from available text.
 
-    multi_original says the paper re-tests other originals too, each coded on its own
-    row: the prompt then tells the model to judge THIS original only.
+    *fulltext* is the paper's closing sections, *intro_text* its opening ones, and
+    *fulltext_provenance* the label the closing block is introduced by
+    (shared.prompts.PROVENANCE_LABEL). *original_evidence* is what linked this paper to
+    the named original — the model is asked to check the link against the text, and
+    answers target_check.
 
     record_type selects the vocabulary: "reproduction" uses the computation/robustness
     axes, anything else the replication enum. It can also be corrected here — when the
@@ -544,8 +430,9 @@ def extract_outcome(doi_r: str,
     returned dict carries a "record_type" key for the caller to write to `type`.
 
     Returns a dict with keys: outcome, outcome_phrase, outcome_confidence,
-    out_quote_source, outcome_reasoning (empty string for keyword-matched rows) and
-    the six reproduction axis fields (empty on a replication row).
+    out_quote_source, outcome_reasoning (empty string for keyword-matched rows),
+    record_type_check, target_check and the six reproduction axis fields (empty on a
+    replication row).
     """
     _kw_fallback = {"outcome_reasoning": "", "llm_model": "keyword", **_EMPTY_AXES}
 
@@ -562,7 +449,9 @@ def extract_outcome(doi_r: str,
                             original_authors=original_authors,
                             original_year=original_year,
                             record_type="reproduction",
-                            multi_original=multi_original)
+                            intro_text=intro_text,
+                            original_evidence=original_evidence,
+                            fulltext_provenance=fulltext_provenance)
 
     # Keyword fast-path is the NO-LLM fallback only (#70). When the LLM is available
     # every "is this a genuine replication?" decision must be seen by it: on the
@@ -595,4 +484,6 @@ def extract_outcome(doi_r: str,
                         original_authors=original_authors,
                         original_year=original_year,
                         record_type=record_type,
-                        multi_original=multi_original)
+                        intro_text=intro_text,
+                        original_evidence=original_evidence,
+                        fulltext_provenance=fulltext_provenance)

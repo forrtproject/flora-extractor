@@ -12,8 +12,8 @@ Each provider is rate-limited against its own reserved schedule, which holds und
 concurrent callers as well as sequential ones.
 
 Public API:
-    identify_targets_with_llm(doi_r, study_r, abstract_r, candidates,
-                              references, …) → dict
+    resolve_targets_and_outcomes(doi_r, study_r, abstract_r, candidates,
+                                 references, *, rung, …) → dict
 """
 import base64
 import json
@@ -39,9 +39,10 @@ from . import token_counter, token_usage
 from .cache import content_key, read_cache, read_cache_migrating, write_cache
 from .rate_limit import throttle
 from .prompts import (
-    build_classify_prompt, build_target_prompt,
-    prompt_version,
+    build_classify_prompt, build_repro_target_outcome_prompt,
+    build_target_outcome_prompt, prompt_version,
 )
+from .schema import normalise_outcome_block
 from .target_keys import assign_target_keys
 from .utils import clean_doi
 
@@ -636,8 +637,9 @@ def call_model(prompt: str, model: str, *,
 
 # ── Target identification ────────────────────────────────────────────────────
 
-def _validate_targets(raw: list, key_map: dict[str, dict],
-                      prompt: str) -> tuple[list[dict], list[str]]:
+def _validate_targets(raw: list, key_map: dict[str, dict], prompt: str,
+                      record_type: str, has_text: bool
+                      ) -> tuple[list[dict], list[str]]:
     """Check every target the model returned against this call's key namespace.
 
     Nothing the model says about a key is trusted: an invented key is demoted to an
@@ -645,6 +647,10 @@ def _validate_targets(raw: list, key_map: dict[str, dict],
     repeated key keeps only the first entry, and a quote that is not in the text we
     sent is recorded but not grounds for rejection — parsers reflow whitespace and
     ligatures, so a strict quote gate would discard correct picks.
+
+    The outcome half of each entry goes through the same normaliser the standalone
+    coder uses, so an out-of-vocabulary verdict lands as cannot_be_determined rather
+    than reaching a row verbatim.
     """
     sent  = _WS_RE.sub(" ", prompt)
     seen: set[str] = set()
@@ -679,32 +685,44 @@ def _validate_targets(raw: list, key_map: dict[str, dict],
                                str(item.get("replication_study_numbers", "") or "").strip(),
             "evidence_quote":  quote,
             "record":          key_map.get(key) if key else None,
+            # Coded for every target the model listed, key or no key: which entries
+            # become rows is decided downstream, and an outcome for one that does not
+            # is simply discarded there.
+            "outcome_block":   normalise_outcome_block(item, record_type, has_text),
         })
     return targets, notes
 
 
-def identify_targets_with_llm(doi_r:          str,
-                              study_r:        str,
-                              abstract_r:     str,
-                              candidates:     list[dict],
-                              references:     list[dict],
-                              *,
-                              pdf_abstract:   str = "",
-                              intro:          str = "",
-                              methods:        str = "",
-                              cache_prefix:   str = "llm",
-                              abstract_only:  bool = False) -> dict:
-    """Ask which previously published study or studies this paper re-tests.
+def resolve_targets_and_outcomes(doi_r:       str,
+                                 study_r:     str,
+                                 abstract_r:  str,
+                                 candidates:  list[dict],
+                                 references:  list[dict],
+                                 *,
+                                 record_type: str = "replication",
+                                 rung:        str,
+                                 pdf_abstract: str = "",
+                                 intro:       str = "",
+                                 methods:     str = "",
+                                 discussion:  str = "",
+                                 discussion_provenance: str = "") -> dict:
+    """Ask which previously published study or studies this paper re-tests, and what
+    it concluded about each.
 
     One function for all three LLM stages of the resolution ladder; what differs is
     the evidence passed in, not the question. Acceptance is `match_certain` on a key
     that exists in THIS call's namespace — the DOI always comes from the mapped
-    record, never from the model.
+    record, never from the model. The outcome is a separate judgment on the same
+    reading, and it is validated separately: a target the model is sure of may carry
+    an outcome the evidence does not settle.
 
-    cache_prefix names the stage as well as the cache: the abstract stage and the
-    full-text stage share "llm" and are told apart by abstract_only, the reference
-    screen uses "reftarget". Two stages rendering the same prompt for the same paper
-    therefore still cache — and are answerable — separately.
+    *rung* names the stage as well as the cache — "abstract", "reftarget" or
+    "fulltext". Two rungs rendering the same prompt for the same paper therefore
+    still cache, and are answerable, separately.
+
+    *record_type* selects the vocabulary the outcome is coded in, and is part of the
+    key: a reproduction gets a different prompt and a different outcome vocabulary,
+    so it must not read back a replication-coded entry.
 
     LINKING_MODEL answers all three rungs, and only it: a wrong original is worse
     than an unresolved one, so an outage at its provider ends the row at llm_failed
@@ -712,10 +730,16 @@ def identify_targets_with_llm(doi_r:          str,
 
     Every parsed answer is cached, a decline included; provider failures are not.
     """
+    is_repro = str(record_type or "").strip().lower() == "reproduction"
+    build = (build_repro_target_outcome_prompt if is_repro
+             else build_target_outcome_prompt)
+    builder_name = ("build_repro_target_outcome_prompt" if is_repro
+                    else "build_target_outcome_prompt")
     entries, key_map = assign_target_keys(candidates, references)
-    prompt = build_target_prompt(study_r, abstract_r, entries,
-                                 pdf_abstract=pdf_abstract, intro=intro,
-                                 methods=methods)
+    prompt = build(study_r, abstract_r, entries,
+                   pdf_abstract=pdf_abstract, intro=intro, methods=methods,
+                   discussion=discussion,
+                   discussion_provenance=discussion_provenance)
     # The prompt shows the model a key, authors, a year and a title — but the answer
     # is converted to a link through the record that key maps to, and the DOI it
     # carries is not on the page. Two runs whose lists render identically can still
@@ -724,10 +748,14 @@ def identify_targets_with_llm(doi_r:          str,
     # or the cache replays a stale DOI under a prompt that still looks right.
     identities = "|".join(f"{e['key']}:{e.get('doi') or e.get('openalex_id') or ''}"
                           for e in entries)
-    key = content_key(cache_prefix, doi_r or study_r,
-                      prompt_version("build_target_prompt"),
+    # A new prefix on purpose. The old "llm"/"reftarget" entries answered a narrower
+    # question — a target and nothing else — so replaying one under this call would
+    # hand back a resolution with no outcome on it. They stay on disk, unread, and
+    # there is deliberately no declared equivalence: the question changed.
+    key = content_key("targetoutcome", doi_r or study_r,
+                      prompt_version(builder_name),
                       cache_model_id(LINKING_MODEL, LINKING_EFFORT),
-                      abstract_only, identities, prompt)
+                      rung, record_type, identities, prompt)
     cached = read_cache(LLM_CACHE_DIR, key)
     if cached is not None:
         cached.setdefault("llm_source", "cache")
@@ -736,8 +764,7 @@ def identify_targets_with_llm(doi_r:          str,
         cached.setdefault("target_stage", "")
         cached.setdefault("resolved_study_r", "")
         # Future-proofing, not migration: no entry on disk is record-less today,
-        # because adding replication_study_numbers moved
-        # prompt_version("build_target_prompt") and so every key with it. The repair
+        # because every key moved when the prompt became the combined one. The repair
         # stays because the output shape can change again WITHOUT the key changing,
         # and the failure mode is silent — a record-less target is dropped as
         # unmatched, so the row loses an original it had already paid to find. The key
@@ -777,11 +804,16 @@ def identify_targets_with_llm(doi_r:          str,
         "stated_count_unit" : "",
         "multi_target"      : False,
         "target_as_named"   : "",
+        # The accepted link's own outcome, when this call accepted one. The ladder
+        # reads it to decide whether the row is finished, and run_extract writes it
+        # instead of paying for a second call about the same reading.
+        "outcome_block"     : {},
     }
     if not result:
         return base
 
-    targets, notes = _validate_targets(result.get("targets"), key_map, prompt)
+    targets, notes = _validate_targets(result.get("targets"), key_map, prompt,
+                                       record_type, bool(discussion))
 
     try:
         unidentified = max(0, int(result.get("unidentified_count") or 0))
@@ -827,8 +859,8 @@ def identify_targets_with_llm(doi_r:          str,
     # The rung is named whether or not it resolved: a multi-target answer takes its
     # resolution_method from the target count, and the per-target adapter still has to
     # know which stage produced the list to write an honest link_method for the rows.
-    stage = ("llm_references"                          if cache_prefix == "reftarget"
-             else f"llm_cited_candidates_{llm_source}" if abstract_only
+    stage = ("llm_references"                          if rung == "reftarget"
+             else f"llm_cited_candidates_{llm_source}" if rung == "abstract"
              else f"llm_{llm_source}")
 
     if not resolved:
@@ -877,6 +909,7 @@ def identify_targets_with_llm(doi_r:          str,
         "stated_count_unit" : unit,
         "multi_target"      : len(targets) > 1,
         "target_as_named"   : first["target_as_named"] if first else "",
+        "outcome_block"     : (single["outcome_block"] if record else {}),
     }
 
     write_cache(LLM_CACHE_DIR, key, output)
@@ -1427,7 +1460,7 @@ _UNPICKED_TARGET = {
     "resolution_score": 0.0,
     "llm_confidence": "", "target_description": "",
     "targets": [], "multi_target": False, "target_stage": "",
-    "unidentified_count": 0,
+    "unidentified_count": 0, "outcome_block": {},
 }
 
 
@@ -1463,9 +1496,11 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
         # The pick is cached separately from the classification: the two halves are
         # now decided at different points in the pipeline, and one cache holding
         # both would be written before the second half had run.
-        pick = identify_targets_with_llm(doi_r, study_r, abstract_r,
-                                         candidates or [], refs,
-                                         cache_prefix="reftarget")
+        pick = resolve_targets_and_outcomes(doi_r, study_r, abstract_r,
+                                            candidates or [], refs,
+                                            record_type=(out["record_type"]
+                                                         or "replication"),
+                                            rung="reftarget")
         out.update({
             "llm_confidence":     pick["llm_confidence"],
             "target_description": pick["target_as_named"],
@@ -1477,6 +1512,7 @@ def screen_references_with_llm(doi_r: str, study_r: str, abstract_r: str,
             "target_stage":       pick["target_stage"],
             "unidentified_count": pick["unidentified_count"],
             "resolved_study_r":   pick["resolved_study_r"],
+            "outcome_block":      pick["outcome_block"],
         })
         if pick["resolved"]:
             # The link is this call's decision, not Q1's, so the row is attributed to
