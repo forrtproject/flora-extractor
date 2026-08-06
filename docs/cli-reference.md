@@ -779,37 +779,14 @@ analysis and are no longer produced.
 ## Tools
 
 ```bash
-# Recalibrate outcome values in extracted.csv
-# Must be run as a module from the project root (not from inside tools/)
-python -m tools.recalibrate_outcomes
-
-# Only reprocess recently added rows (last N rows of the CSV, which are the newest appended entries)
-python -m tools.recalibrate_outcomes --tail 50
-
-# Only reprocess rows from a given publication year onward
-python -m tools.recalibrate_outcomes --since-year 2022
-
-# Force fresh LLM calls (clears cached outcomes for rows being reprocessed)
-python -m tools.recalibrate_outcomes --tail 50 --clear-cache
-
-# Preview without writing
-python -m tools.recalibrate_outcomes --tail 50 --dry-run
-
-# Process only first N uncertain rows (for testing a prompt change)
-python -m tools.recalibrate_outcomes --limit 10 --dry-run
-
-# Also: --input / --output (other CSVs), --reprocess-all, --fulltext,
-#       --refresh-cbd (redo the cannot_be_determined rows), --doi
-
 # Drop superseded preprint versions (keep highest _v, or the version-less DOI) — issue #17
 python -m tools.dedup_preprint_versions --input data/extracted.csv            # dry-run
 python -m tools.dedup_preprint_versions --input data/extracted.csv --apply
 
-# Backfill oa_work_id_r / oa_work_id_o on rows written before those columns existed.
-# New rows get them from the tier's judge — this is only for old rows.
-python -m tools.backfill_oa_work_ids                                    # dry-run
-python -m tools.backfill_oa_work_ids --apply                            # write
-python -m tools.backfill_oa_work_ids --input data/extracted-test.csv --apply
+# Corrections to stored rows go through superseding verdicts, never a CSV edit:
+#   python -m extract.audit_dois --apply        (doi_o corrections)
+#   python -m extract.backfill_authors          (authors_o / ref_o)
+# and a re-code of outcomes is a re-run: python -m extract.tier --redo <work_ids>
 ```
 
 ---

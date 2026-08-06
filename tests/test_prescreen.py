@@ -163,8 +163,7 @@ def test_stage3_never_runs_the_cheap_tier(tmp_path, monkeypatch):
          patch.object(rx, "run_for_doi", return_value={"resolution_method":
                                                        "target_pending"}):
         out = rx._process_row(row, "10.1/x", no_llm=False, no_pdf=True,
-                              no_reproductions=False, resolved_only=False,
-                              recalibrate_outcomes=False)
+                              no_reproductions=False, resolved_only=False)
 
     call.assert_not_called()
     assert all(r["link_method"] != "prescreen_discard" for r in out)

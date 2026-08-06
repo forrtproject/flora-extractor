@@ -260,7 +260,7 @@ def _judge(work: Work) -> tuple[str, list[dict]]:
     observed: dict = {}
     rows = rx._process_row(row, doi_r, no_llm=False, no_pdf=False,
                            no_reproductions=False, resolved_only=False,
-                           recalibrate_outcomes=False, observed=observed)
+                           observed=observed)
     final = [rx._finalise_row(r) for r in rows]
 
     payload = result_payload(row.to_dict(), doi_r, final, observed)

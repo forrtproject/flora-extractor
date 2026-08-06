@@ -261,9 +261,9 @@ _OTHER_SETS: dict[str, dict] = {
         "file": "cannot_be_determined.csv",
         "why": "The original was linked but the text did not support any outcome verdict — usually a "
                "missing abstract, a paywalled full text, or a genuinely ambiguous result statement. "
-               "These rows STAY in extracted.csv; this file is a view of them, refreshed by "
-               "tools/recalibrate_outcomes.py, not a set-aside the pipeline files rows into.",
-        "action": "Recover the full text, then re-run the outcome step.",
+               "These rows STAY in extracted.csv; this file is a view of them, not a set-aside "
+               "the pipeline files rows into.",
+        "action": "Recover the full text, then re-run the work: extract.tier --redo.",
     },
     "reproductions": {
         "title": "Reproductions (legacy set)",

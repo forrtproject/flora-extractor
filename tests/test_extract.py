@@ -661,7 +661,7 @@ def _run_pipeline(csv_text: str, *, screen_row=SCREEN_PROCEED, screen=None,
         if screen is not None:
             enter(patch.object(run_extract, "_screen_from_row", return_value=screen))
         kwargs = {"no_llm": False, "no_pdf": False, "no_reproductions": False,
-                  "resolved_only": False, "recalibrate_outcomes": False}
+                  "resolved_only": False}
         kwargs.update(process_kwargs)
         for _, row in frame.iterrows():
             doi_r = clean_doi(str(row.get("doi_r", "")))
@@ -1333,8 +1333,7 @@ class TestReferenceStringTargets:
              patch.object(run_extract, "_verify_row", side_effect=lambda r: r):
             rows = run_extract._per_target_rows(row, "10.1/repl", link, None,
                                                 no_llm=True, no_pdf=True,
-                                                resolved_only=False,
-                                                recalibrate_outcomes=False)
+                                                resolved_only=False)
         assert len(rows) == 1
         assert rows[0]["link_confidence"] == "low"
         assert rows[0]["original_match_confidence"] == "low"
@@ -1638,7 +1637,7 @@ class TestMatchConfidenceIsOneRule:
              patch.object(run_extract, "_verify_row", side_effect=lambda r: r):
             rows = run_extract._resolve_and_code(
                 "10.1/repl", row, screen=None, no_llm=True, no_pdf=True,
-                resolved_only=False, recalibrate_outcomes=False)
+                resolved_only=False)
         assert len(rows) == 1
         return rows[0]
 
@@ -1933,8 +1932,7 @@ class TestOutcomeGate:
                           side_effect=AssertionError("must not code an outcome")):
             rows = run_extract._resolve_and_code(
                 "10.1/rep", row, screen=None,
-                no_llm=False, no_pdf=True, resolved_only=False,
-                recalibrate_outcomes=False)
+                no_llm=False, no_pdf=True, resolved_only=False)
 
         assert len(rows) == 1
         assert rows[0]["link_method"] == "target_pending"
@@ -1951,8 +1949,7 @@ class TestOutcomeGate:
                           side_effect=AssertionError("must not code an outcome")):
             rows = run_extract._resolve_and_code(
                 "10.1/rep", row, screen=None,
-                no_llm=False, no_pdf=True, resolved_only=True,
-                recalibrate_outcomes=False)
+                no_llm=False, no_pdf=True, resolved_only=True)
 
         assert rows == []
 
@@ -2316,7 +2313,7 @@ class TestPerTargetAdapter:
                           else _MOCK_OUTCOME) as coder:
             rows = run_extract._resolve_and_code(
                 "10.1/rep", self._ROW, screen=screen, no_llm=False, no_pdf=True,
-                resolved_only=resolved_only, recalibrate_outcomes=False)
+                resolved_only=resolved_only)
         return rows, coder
 
     _TWO = [_mock_target("@smith2009", "10.1/a", "First original", "Smith", 2009),
@@ -2381,7 +2378,7 @@ class TestPerTargetAdapter:
                           side_effect=AssertionError("coded a demoted row")) as coder:
             rows = run_extract._resolve_and_code(
                 "10.1/rep", self._ROW, screen=None, no_llm=True, no_pdf=True,
-                resolved_only=False, recalibrate_outcomes=False)
+                resolved_only=False)
 
         coder.assert_not_called()
         assert rows[0]["link_method"] == "target_pending"
@@ -2500,7 +2497,7 @@ class TestPerTargetAdapter:
                               "evidence_note": ""}):
             rows = run_extract._resolve_and_code(
                 "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
-                resolved_only=False, recalibrate_outcomes=False)
+                resolved_only=False)
 
         assert len(rows) == 1
         assert rows[0]["link_method"] == "same_author_year_title_overlap"
@@ -2526,7 +2523,7 @@ class TestAdapterRowsSettleAfterTheDrops:
              patch.object(run_extract, "extract_outcome", return_value=_MOCK_OUTCOME):
             return run_extract._resolve_and_code(
                 "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
-                resolved_only=resolved_only, recalibrate_outcomes=False)
+                resolved_only=resolved_only)
 
     def test_a_paper_whose_second_target_is_rejected_is_not_multiple_original(self):
         """The match type is the row count, and the row count is only final after the
@@ -2571,7 +2568,7 @@ class TestAdapterRowsSettleAfterTheDrops:
              patch.object(run_extract, "extract_outcome", return_value=_MOCK_OUTCOME):
             rows = run_extract._resolve_and_code(
                 "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
-                resolved_only=False, recalibrate_outcomes=False)
+                resolved_only=False)
 
         assert rows[0]["link_method"] == "llm_title_search"
         assert rows[0]["link_confidence"] == "low"
@@ -2600,7 +2597,7 @@ class TestAdapterRowsSettleAfterTheDrops:
                           side_effect=lambda *a, **k: next(outcomes)):
             rows = run_extract._resolve_and_code(
                 "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
-                resolved_only=False, recalibrate_outcomes=False)
+                resolved_only=False)
 
         assert len(rows) == 1
         assert rows[0]["doi_o"] == "10.9/same"
@@ -2691,8 +2688,7 @@ class TestFulltextProvenanceReachesTheRow:
              patch.object(run_extract, "_verify_row", side_effect=lambda r: r):
             rows = run_extract._per_target_rows(self._ROW, "10.1/rep", link, None,
                                                 no_llm=True, no_pdf=True,
-                                                resolved_only=False,
-                                                recalibrate_outcomes=False)
+                                                resolved_only=False)
         assert len(rows) == 2
         assert all((r["pdf_source"], r["parse_method"])
                    == ("openalex_xml", "openalex_xml") for r in rows)
@@ -2842,7 +2838,7 @@ class TestCarriedOutcomeReachesTheRow:
                           return_value=_MOCK_OUTCOME) as coder:
             rows = run_extract._resolve_and_code(
                 "10.1/rep", self._ROW, screen=None, no_llm=False, no_pdf=True,
-                resolved_only=False, recalibrate_outcomes=False, **over)
+                resolved_only=False, **over)
         return rows, coder
 
     def test_a_targets_own_verdict_is_written_without_a_second_call(self):

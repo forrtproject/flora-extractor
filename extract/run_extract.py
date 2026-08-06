@@ -1309,8 +1309,7 @@ def _merge_duplicate_originals(rows: list[dict], doi_r: str) -> list[dict]:
 
 
 def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | None",
-                     no_llm: bool, no_pdf: bool, resolved_only: bool,
-                     recalibrate_outcomes: bool) -> list[dict]:
+                     no_llm: bool, no_pdf: bool, resolved_only: bool) -> list[dict]:
     """One row per original PAPER the merged target prompt named.
 
     The order is the single-original path's: resolve, merge, guard, --resolved-only,
@@ -1341,7 +1340,7 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
     # Once for the paper, not once per target: the outcome escalation reads the parse
     # cache, and the retired multi path never populated it — which is why its rows
     # were coded from the abstract alone however much full text had been acquired.
-    if (not no_pdf or recalibrate_outcomes) and _has_document(doi_r, link):
+    if not no_pdf and _has_document(doi_r, link):
         _save_parse_cache(doi_r)
 
     # An observation, not a prediction: the row count IS the match type.
@@ -1381,7 +1380,7 @@ def _per_target_rows(row: pd.Series, doi_r: str, link: dict, screen: "dict | Non
             # a second call about the same evidence would only cost money to re-answer.
             outcome = entry.get("outcome_block") or _get_outcome(
                 doi_r, row, link,
-                no_llm=no_llm and not recalibrate_outcomes,
+                no_llm=no_llm,
                 screen=screen, original=entry)
         rows.append(_apply_outcome(result_row, outcome))
 
@@ -1438,7 +1437,6 @@ def _observe_link(observed: "dict | None", link: dict) -> None:
 
 def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
                       no_llm: bool, no_pdf: bool, resolved_only: bool,
-                      recalibrate_outcomes: bool,
                       observed: "dict | None" = None) -> list[dict]:
     """Run the resolution ladder for one row and code the outcome of what it found.
 
@@ -1462,8 +1460,7 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
         n_targets = int(link.get("n_targets") or 0)
         log.info("[%s] target prompt named %d original(s) without a single accepted "
                  "link — writing one row per target", doi_r, n_targets)
-        rows = _per_target_rows(row, doi_r, link, screen, no_llm, no_pdf,
-                                resolved_only, recalibrate_outcomes)
+        rows = _per_target_rows(row, doi_r, link, screen, no_llm, no_pdf, resolved_only)
         if rows:
             return rows
         if link.get("multi_target"):
@@ -1492,10 +1489,10 @@ def _resolve_and_code(doi_r: str, row: pd.Series, screen: "dict | None",
         # Only a link no LLM chose — a deterministic rule's — is coded on its own.
         outcome = link.get("outcome_block") or {}
         if not outcome:
-            if (not no_pdf or recalibrate_outcomes) and _has_document(doi_r, link):
+            if not no_pdf and _has_document(doi_r, link):
                 _save_parse_cache(doi_r)
             outcome = _get_outcome(doi_r, row, link,
-                                   no_llm=no_llm and not recalibrate_outcomes,
+                                   no_llm=no_llm,
                                    screen=screen)
     return [_apply_outcome(result_row, outcome)]
 
@@ -1629,7 +1626,7 @@ def _resolve_missing_doi(row: pd.Series, doi_r: str) -> "tuple[pd.Series, str]":
 
 def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
                  no_reproductions: bool,
-                 resolved_only: bool, recalibrate_outcomes: bool,
+                 resolved_only: bool,
                  observed: "dict | None" = None) -> list[dict]:
     """Every row the pipeline writes for one input row.
 
@@ -1709,7 +1706,7 @@ def _process_row(row: pd.Series, doi_r: str, no_llm: bool, no_pdf: bool,
         return _resolve_and_code(
             doi_r, row, screen=screen, no_llm=no_llm, no_pdf=no_pdf,
             resolved_only=resolved_only,
-            recalibrate_outcomes=recalibrate_outcomes, observed=observed)
+            observed=observed)
     except (OpenAlexQuotaExhausted, TokenBudgetExhausted):
         # Not a per-row failure: the row was never examined, and writing it as
         # api_error would bury the reason the rest of the run stops too.
