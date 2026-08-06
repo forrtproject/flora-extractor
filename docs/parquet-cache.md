@@ -35,7 +35,11 @@ No runner refreshes `filtered`: Stage 2's `python -m filter.engine handoff`
 rewrites `data/filtered.csv` whenever the release or the tier verdicts move, and
 the Parquet copy is refreshed by calling `refresh("filtered")` by hand.
 
-`refresh(stage)` does two things in order:
+`refresh(stage)` does two things in order — except for `pool`, which is
+**stats-only**: the pool is already parquet, so there is no mirror to write, and
+`refresh("pool", pool_dir=…)` calls `update_stats` alone. A stage name that is
+neither `pool` nor one of the three CSV stages logs "unknown stage — skipping" and
+does nothing.
 
 1. **`write_parquet(stage)`** — reads the stage CSV in 50 k-row chunks and writes a Parquet file via `pyarrow.parquet.ParquetWriter` (snappy compression). Writes to a `.tmp.parquet` file first and atomically renames it on success, so a partial write never corrupts the live file.
 
@@ -102,6 +106,9 @@ replication+reproduction subset only, via parquet predicate pushdown.
 | `by_model` | `{family: count}` where family is `gemini`, `gpt`, `qwen`, `other`, or `none` |
 | `by_outcome` | `{outcome: count}` — key set defined by `_OUTCOME_KEYS` constant |
 | `by_doi_verification` | `{status: count}` |
+| `by_type` | `{replication\|reproduction: count}` |
+| `by_outcome_replication` / `by_outcome_reproduction` | `by_outcome` split on `type`. Kept apart because the two record types use different outcome vocabularies, so one merged distribution is meaningless |
+| `by_year` | `{year: count}` from `year_r` |
 
 ---
 

@@ -180,4 +180,4 @@ backfill; its per-source limits are in `shared/config.py`.
 | `search_gate_fingerprint()` | `search/snapshot_scan.py` | Hash of `_TOKEN_GATE` + `CONCEPT_IDS` — the value a rescan is bound to |
 | `scan_status()` / `--status` | `search/snapshot_scan.py` | Read-only progress, safe against a scan in flight |
 | `--stamp-pool` | `search/snapshot_scan.py` | Write `_pool_provenance.json` for a pool that predates it |
-| `push()` / `pull()` | `search/pool_sync.py` | Share the pool through the private HF dataset repo |
+| `push_pool()` / `pull_pool()` | `search/pool_sync.py` | Share the pool through the private HF dataset repo |

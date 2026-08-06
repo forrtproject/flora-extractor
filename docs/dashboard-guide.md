@@ -14,6 +14,11 @@ The monitoring dashboard lives at `http://localhost:5001/dashboard` (start with 
 | Extract-Test | Stage 3 sandbox | `data/extracted-test.csv` |
 | Supabase | Stage 4 | Live Supabase API |
 
+After those five comes one **set-aside** sub-tab per quarantine file, built from
+`SET_ASIDE_DESTINATIONS` in `shared/schema.py` and served by
+`/api/dashboard/set-stats`, `/set-rows` and `/set-download`. The tab strip therefore
+grows when a new set-aside destination is added, with no template change.
+
 Stats are served via a 3-tier cascade (fastest to slowest):
 
 1. `data/dashboard/stats.json` — pre-computed at end of each pipeline run
@@ -121,7 +126,18 @@ current engine that card reads zero.
 
 ### Extract — docs panel
 
-Covers: what Stage 3 does, CLI flags, link pipeline (author\_year → llm\_abstract → llm\_fulltext → target\_pending), 6 PDF parse methods and scoring formula, and all ~25 `extracted.csv` columns grouped into labeled sections.
+Covers: what Stage 3 does, CLI flags, the link pipeline, the 6 PDF parse methods and
+the scoring formula, and 29 of `extracted.csv`'s columns grouped into labeled
+sections. (`EXTRACTED_COLS` is 52 columns, so the panel is a selection.)
+
+**Stale panel copy, same as the Filter panel.** The link pipeline it draws is
+`author_year → llm_abstract → llm_fulltext → target_pending`. Neither `author_year`
+nor `llm_abstract` is a `link_method` value: `author_year_match` survives only as
+`author_year_match_legacy`, and the abstract rung writes `llm_cited_candidates`. The
+live ladder is title-pattern → citation/candidate rule → `llm_cited_candidates` →
+`llm_references` → `llm_title_search` → `llm_fulltext`. Read
+[csv-schema.md](csv-schema.md) for the real vocabulary; the panel is HTML, not code,
+and nothing depends on it.
 
 ---
 
@@ -129,7 +145,9 @@ Covers: what Stage 3 does, CLI flags, link pipeline (author\_year → llm\_abstr
 
 Same layout as Extract tab but reads `extracted-test.csv`. Rows here have not been promoted to production.
 
-Promote via the **Promote** button in the web table or via CLI:
+**There is no Promote button.** The dashboard is read-only — no route promotes a
+row, and the button the docs panel still mentions does not exist. Promotion is the
+CLI:
 
 ```bash
 python -m extract.promote_test --all           # promote everything
