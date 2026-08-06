@@ -659,6 +659,30 @@ already holds. What is invariant, and what the promotion argument actually rests
 **0 of the 1,308 discards is a known FLoRA paper under every one of those three
 counts.**
 
+**PROMOTED 2026-08-05, on a re-adjudication of that one blocking case.** The maintainer
+re-read `pr8a4` whole: its q15 says the write-up is a MOCK one solicited for the ISQ
+blog, its attachment is a pre-analysis plan (`_PAP.docx`), and the past-tense results
+text in q17 is quoted mock prose — the EGAP genre of writing a PAP as a dummy results
+section. Read whole the record is prospective, and q8's "prior to outcome data" agrees
+with it, so the 2026-08-04 "one real study lost" was an over-call. That brings the clean
+sample of 300 to **zero** completed replications, the recall gate passes, and
+CONVENTIONS.md's step-4 stop no longer binds. The match block is unchanged from the
+refused promotion, so the enumeration and the recall gate above still describe exactly
+this population. Narrowing 1 (a results-reporting stand-down regex on the record's own
+text) stays open and unmeasured; it is the path to a tighter discard, not a condition of
+this one.
+
+Two things that did NOT decide it. The record's own structured timing field cannot be
+trusted to catch the class — pr8a4's claimed "Registration prior to researcher access to
+outcome data" was the field that appeared to contradict its content — so no OSF timing
+field is a substitute for reading the text. And the recall gate passing is not a
+substitute for the read either: `flora.csv` is what FLoRA has already found, and a
+Kerner-type record is exactly what is not in it yet.
+
+**D3 is settled for this registrant only.** "Is a planned-but-not-completed replication
+a FLoRA record?" is answered no by the 2026-08-04 ruling for `10.17605` and nowhere
+else; the `aim|set out to replicate` arm elsewhere in the bundle is untouched by it.
+
 One thing the census found that nobody was looking for: the Open-Ended arm's
 `replicat*` marker fires on the OpenAlex **title** in 99% of the 336 rows it admits,
 and what it reaches is almost entirely Reproducibility Project: Psychology
