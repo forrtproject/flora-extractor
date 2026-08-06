@@ -67,7 +67,7 @@ and it is heavier; raise it with the maintainer rather than choosing silently.
 
 ### 1b. The seam that IS right: `filter/engine/handoff.py`
 
-`handoff.decisions(client, release_id)` already returns `(drop, record_types)`
+`handoff.decisions(client, release_id)` already returns `(drop, screen)`
 computed from live verdicts, and `write_handoff()` leaves the dropped works out
 of `data/filtered.csv`. The module docstring is explicit that **live verdicts are
 applied here and not in the routing table**, precisely because routing is derived

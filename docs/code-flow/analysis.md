@@ -71,7 +71,7 @@ Used to fill in missing `doi_o` values when the main pipeline couldn't find the 
 Each is a one-off with its own `--help`, not part of a documented flow:
 `arm_evidence.py`, `build_validated_skip.py` (materialises `data/validated_skip.csv`),
 `citation_gate_analysis.py`, `purge_offpile.py`, `repair_single_vote.py`,
-`rescan_impact_report.py`, `rule_report.py`. There is no shared `data_loader`
+`rule_report.py`. There is no shared `data_loader`
 module any more — each script reads the CSV it needs directly.
 
 ---

@@ -242,7 +242,9 @@ def write_rows_tmp(out_csv: Path, rows: list[dict]) -> Path:
     """
     out_csv = Path(out_csv)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out_csv.with_name(out_csv.name + ".tmp")
+    # Per-process temp name: two concurrent writers of the same target must not
+    # rename each other's half-written inode into place.
+    tmp = out_csv.with_name(f"{out_csv.name}.{os.getpid()}.tmp")
     try:
         with tmp.open("w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.DictWriter(handle, fieldnames=ENGINE_EXPORTED_COLS,

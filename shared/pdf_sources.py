@@ -29,6 +29,7 @@ Public API:
 """
 import gzip
 import json
+import os
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -133,9 +134,17 @@ def _retry_suppressed(entries: dict, slot: str, after_days: float) -> bool:
 def _write_retry_log(path: Path, entries: dict) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(entries, ensure_ascii=False), encoding="utf-8")
+        _atomic_write_text(path, json.dumps(entries, ensure_ascii=False))
     except Exception as e:
         log.debug("Retry log write failed (%s): %s", path, e)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write via a per-process temp file and rename, so a concurrent reader never
+    sees a half-written sidecar (a torn read would degrade to {} and re-buy work)."""
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 # ── The PDF already on disk ───────────────────────────────────────────────────
@@ -185,8 +194,8 @@ def _write_provenance(doi: str, source: str, url: str) -> None:
     path = _provenance_path(doi)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"source": source, "url": url},
-                                   ensure_ascii=False), encoding="utf-8")
+        _atomic_write_text(path, json.dumps({"source": source, "url": url},
+                                            ensure_ascii=False))
     except Exception as e:
         log.debug("PDF provenance write failed (%s): %s", path, e)
 

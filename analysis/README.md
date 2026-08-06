@@ -90,7 +90,6 @@ maintainer's call, not this script's.
 | --- | --- |
 | `apa_resolver.py` | Resolves replications that have no DOI via CrossRef (title + authors + year), with a manual `apa_reference_fallback.csv` tier, and formats APA references. Reads `all_replications.csv`. |
 | `rule_analysis.py` | Audits `extracted.csv` by link method, confidence and missing `doi_o` → `extraction_audit.md`. |
-| `rescan_impact_report.py` | Impact of the 2026-07-08 narrative-citation fix on Stage 3 re-linking. Its filter-gate half was removed with the rule filter it audited (#146) — a rule change is now measured with `python -m filter.engine diagnose`. |
 | `citation_gate_analysis.py` | A pre-#152 measurement of the retired Stage 2 rule filter's author-year cite gate. Kept for its numbers; the code path it measured no longer exists. |
 
 ## What was removed, and why
@@ -113,12 +112,14 @@ gap:
 - **Four 4-byte stub CSVs** (`filter_rules.csv`, `filter_misclassifications.csv`,
   `gap_analysis_fuzzy_title.csv`, `source_contribution.csv`) — a bare BOM each, a
   placeholder rather than a result.
+- **`rescan_impact_report.py`** (2026-08-06). It measured the journal-hint branch
+  of Stage 3's citation scoring, which was deleted in the cleanup round after zero
+  observed firings in production — the script's mock target went with it.
 
 ## Running one
 
 ```bash
 python -m analysis.rule_analysis          # → extraction_audit.md
-python -m analysis.rescan_impact_report
 ```
 
 Inputs come from `shared.config.DATA_DIR`, logging from `shared.config.log`.
