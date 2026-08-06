@@ -24,6 +24,7 @@ what a downstream reader believes it read.
 import csv
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -41,7 +42,6 @@ ALIASES_FILENAME = "aliases.json"
 # that forwards the parameter must forward THIS object: a second sentinel would
 # be "unchecked" to its own module and a mismatch to this one.
 UNCHECKED: object = object()
-_UNCHECKED = UNCHECKED
 
 
 def load_conventions(path: Optional[Path] = None) -> dict:
@@ -58,7 +58,7 @@ def export_pile(con, pool_dir: Path, pile: str, out_csv: Path, release_id: str,
                 expect_bundle_hash: Optional[str] = None,
                 expect_alias_release: Optional[str] = None,
                 overlay_dir: Optional[Path] = None,
-                expect_overlay_hash: object = _UNCHECKED,
+                expect_overlay_hash: object = UNCHECKED,
                 created_at: str = "") -> dict:
     """Write *pile* of *release_id* to *out_csv* and its manifest beside it.
 
@@ -87,7 +87,7 @@ def export_pile(con, pool_dir: Path, pile: str, out_csv: Path, release_id: str,
         conventions=conventions, specs=specs, aliases=aliases, spec_dir=spec_dir,
         overlay_dir=overlay_dir)]
 
-    _write_csv(out_csv, rows)
+    os.replace(write_rows_tmp(out_csv, rows), out_csv)
     return _write_manifest(manifest_path, out_csv, release_id, pile, len(rows),
                            created_at)
 
@@ -161,9 +161,9 @@ def check_release_binding(spec_dir: Path, release_id: str,
                           expect_bundle_hash: Optional[str],
                           expect_alias_release: Optional[str],
                           overlay_dir: Optional[Path] = None,
-                          expect_overlay_hash: object = _UNCHECKED) -> None:
+                          expect_overlay_hash: object = UNCHECKED) -> None:
     mismatches = []
-    if expect_overlay_hash is not _UNCHECKED:
+    if expect_overlay_hash is not UNCHECKED:
         # None is a real expectation here (routed with no overlay), so the
         # unchecked case needs its own sentinel rather than reusing None.
         actual = overlay_manifest_hash(overlay_dir) if overlay_dir else None
@@ -225,15 +225,36 @@ def _export_row(record: dict, routed: dict, policy: dict, prefix: str,
     return row
 
 
-def _write_csv(out_csv: Path, rows: list[dict]) -> None:
+def write_rows_tmp(out_csv: Path, rows: list[dict]) -> Path:
+    """Write *rows* to a sibling temp file of *out_csv* and return it, unpublished.
+
+    The one CSV writer both writing hands share — this module's export and
+    `handoff.py`'s materialized view — because the DictWriter loop was identical
+    and only the publish differed.
+
+    Nothing is written to *out_csv* itself. A run that dies mid-write — Ctrl-C, a
+    full disk, a value whose `str()` raises — leaves the previous file untouched
+    rather than a truncated one, which matters most for the handoff, where the
+    file being overwritten is the input Stage 3 reads. Renaming within a directory
+    is atomic, so the published file is either the old one or the new one and
+    never half of either. The rename belongs to the caller: `export_pile()` has
+    only the CSV to publish, `handoff._publish()` has a manifest to order with it.
+    """
+    out_csv = Path(out_csv)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
-    with out_csv.open("w", newline="", encoding="utf-8-sig") as handle:
-        writer = csv.DictWriter(handle, fieldnames=ENGINE_EXPORTED_COLS,
-                                extrasaction="ignore")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({col: "" if row.get(col) is None else row.get(col)
-                             for col in ENGINE_EXPORTED_COLS})
+    tmp = out_csv.with_name(out_csv.name + ".tmp")
+    try:
+        with tmp.open("w", newline="", encoding="utf-8-sig") as handle:
+            writer = csv.DictWriter(handle, fieldnames=ENGINE_EXPORTED_COLS,
+                                    extrasaction="ignore")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({col: "" if row.get(col) is None else row.get(col)
+                                 for col in ENGINE_EXPORTED_COLS})
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return tmp
 
 
 def _write_manifest(manifest_path: Path, out_csv: Path, release_id: str, pile: str,
