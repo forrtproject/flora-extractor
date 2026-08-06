@@ -193,7 +193,7 @@ _SET_ASIDE_COPY: dict[str, dict] = {
                "screen ever voted. It is a weaker instrument than that screen and its discards "
                "are terminal, so they are kept separate rather than mixed into Not a Replication.",
         "action": "Sample these regularly while the cheap tier is running — nothing else in the "
-                  "pipeline ever looks at them again. --rescreen reopens them.",
+                  "pipeline ever looks at them again.",
     },
     "provisional_title_search.csv": {
         "title": "Provisional Title Search",
@@ -206,22 +206,23 @@ _SET_ASIDE_COPY: dict[str, dict] = {
     "api_error.csv": {
         "title": "API Error",
         "why": "The row carries no verdict at all: a provider or registry call failed after its "
-               "retries. Transient, not settled — a resume reopens these rows and retries them.",
+               "retries. Transient, not settled — the work stays in the extract tier's worklist "
+               "and the next run retries it.",
         "action": "Nothing, unless they persist: then check provider status and quotas.",
     },
     "no_original_found.csv": {
         "title": "No Original Found",
         "why": "The LLM ran with full context and concluded no identifiable original study exists — "
-               "usually a Stage 2 false positive or a self-replication. Settled: a resume will not "
-               "pay to reproduce the verdict.",
+               "usually a Stage 2 false positive or a self-replication. Settled: the tier will not "
+               "pay to reproduce the verdict without --redo.",
         "action": "Sample for genuine originals the model failed to name.",
     },
     "screen_disagreement.csv": {
         "title": "Screen Disagreement",
         "why": "Historical: the two front-door voters split, back when a split ended the row. The "
-               "gate now proceeds on a split, so nothing new lands here — the rows on disk are "
-               "still settled, and --rescreen reopens them.",
-        "action": "Reopen with --rescreen if the voter pair or prompt has changed.",
+               "gate now proceeds on a split, so nothing new lands here.",
+        "action": "Re-screening the works in Stage 2 under a changed voter pair or prompt puts "
+                  "them back in the extract tier's worklist; the next export re-files them.",
     },
     "unresolved_doi_mismatch.csv": {
         "title": "Unresolved DOI Mismatch",

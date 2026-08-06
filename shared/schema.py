@@ -275,7 +275,7 @@ LINK_METHOD_VALUES = RESOLVED_LINK_METHODS | {
     "prescreen_discard",
     # Historical, no longer emitted: the front door's gate has no disagreement
     # terminal state, so a split now proceeds down the ladder. Rows on disk still
-    # carry the value and --rescreen must keep reopening them.
+    # carry the value, and the export still partitions them by it.
     "screen_disagreement",
     "target_pending", "api_error",
 }
@@ -312,11 +312,10 @@ REOPENED_SET_ASIDE_FILES = ("target_pending.csv", "api_error.csv")
 SETTLED_SET_ASIDE_FILES = tuple(sorted(
     set(SET_ASIDE_DESTINATIONS.values()) - set(REOPENED_SET_ASIDE_FILES)))
 
-# The settled files whose verdicts came from the abstract alone, i.e. the ones
-# --rescreen reopens — a changed voter pair or prompt would decide them differently.
-# The screen that produced them is Stage 2's now, so reopening them here is only
-# half the work: the rows come back only if a NEW screening generation re-admitted
-# them to the handoff (see run_extract's --rescreen help).
+# The settled files whose verdicts came from the abstract alone: a changed voter pair
+# or prompt would decide them differently. What reopens such a paper is a new SCREENING
+# GENERATION — it makes the work claimable again in Stage 2, and a fresh PROCEED verdict
+# puts it back in the extract tier's worklist. No flag and no file is involved.
 SCREEN_SET_ASIDE_FILES = ("not_a_replication.csv", "screen_disagreement.csv",
                           "prescreen_discard.csv")
 
@@ -324,13 +323,13 @@ SCREEN_SET_ASIDE_FILES = ("not_a_replication.csv", "screen_disagreement.csv",
 def set_aside_dir(csv_path) -> "Path":
     """The directory holding the set-aside CSVs that belong to *csv_path*.
 
-    Set-asides are part of the state of ONE extraction output, not of the data
-    directory: a resume treats every key in a settled set-aside file as settled, so a
-    row quarantined out of the test sandbox used to settle that paper for the
-    PRODUCTION run, which then skipped a paper it never processed. Production keeps
-    the historical layout (the files sit beside extracted.csv in data/); any other
-    input gets its own `<stem>-set-aside/` directory, so `--extracted-test` writes and
-    reads data/extracted-test-set-aside/.
+    Set-asides are part of the state of ONE rendered output, not of the data
+    directory: they are what the dashboard and the audits read as that file's
+    quarantine, and a sandbox render's rows must not be read as production's.
+    Production keeps the historical layout (the files sit beside extracted.csv in
+    data/); any other output gets its own `<stem>-set-aside/` directory, so
+    `extract.export --mode validation --out data/extracted-test.csv` writes
+    data/extracted-test-set-aside/.
     """
     p = Path(csv_path)
     if p.name == "extracted.csv":
