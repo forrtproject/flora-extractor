@@ -58,17 +58,6 @@ _FIELD_KEYS = frozenset({"type", "publication_year", "concept_ids"})
 _MEASURED_KEYS = frozenset({"level", "precision", "n", "sample", "date",
                             "owner", "rationale"})
 
-# Loader-only extension: a record, not a second evaluation. Two exclusion
-# patterns were originally written with a lookaround that RE2 forbids; the spec
-# carries the RE2 decomposition the engine actually runs, and `pyre_regex`
-# preserves the faithful original next to it so the decomposition's widening can
-# be read off the pair. Nothing evaluates it — `filter/phrase_detection.py`, the
-# last reader, is now the search vocabulary only. Legal ONLY on a match block
-# that is actually decomposed (any_of/all_of/none_of non-empty), and only at the
-# top level of `match` — a flat spec that needs a `pyre_regex` is a spec whose
-# RE2 rewrite was never done.
-PYRE_REGEX_KEY = "pyre_regex"
-
 
 @dataclass(frozen=True)
 class MatchBlock:
@@ -85,7 +74,6 @@ class MatchBlock:
     any_of: tuple["MatchBlock", ...] = ()
     all_of: tuple["MatchBlock", ...] = ()
     none_of: tuple["MatchBlock", ...] = ()
-    pyre_regex: Optional[str] = None
 
     @classmethod
     def from_dict(cls, raw: dict) -> "MatchBlock":
@@ -100,7 +88,6 @@ class MatchBlock:
             any_of=tuple(cls.from_dict(m) for m in (raw.get("any_of") or ())),
             all_of=tuple(cls.from_dict(m) for m in (raw.get("all_of") or ())),
             none_of=tuple(cls.from_dict(m) for m in (raw.get("none_of") or ())),
-            pyre_regex=raw.get(PYRE_REGEX_KEY),
         )
 
 
@@ -164,22 +151,12 @@ def re2_error(pattern: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 
-def _validate_match(raw: Any, path: str, top: bool, errors: list[str]) -> None:
+def _validate_match(raw: Any, path: str, errors: list[str]) -> None:
     if not isinstance(raw, dict):
         errors.append(f"{path}: match must be an object")
         return
-    allowed = _MATCH_KEYS | ({PYRE_REGEX_KEY} if top else set())
-    for key in sorted(set(raw) - allowed):
+    for key in sorted(set(raw) - _MATCH_KEYS):
         errors.append(f"{path}: unknown key {key!r}")
-    if PYRE_REGEX_KEY in raw:
-        if not any(raw.get(k) for k in _NESTED_KEYS):
-            errors.append(
-                f"{path}: {PYRE_REGEX_KEY!r} is only valid on a decomposed match "
-                "(any_of/all_of/none_of)")
-        try:
-            re.compile(raw[PYRE_REGEX_KEY])
-        except (re.error, TypeError) as exc:
-            errors.append(f"{path}.{PYRE_REGEX_KEY}: does not compile ({exc})")
     for key in _REGEX_KEYS:
         value = raw.get(key)
         if value is None:
@@ -222,7 +199,7 @@ def _validate_match(raw: Any, path: str, top: bool, errors: list[str]) -> None:
             errors.append(f"{path}.{key}: must be a list of match objects")
             continue
         for idx, block in enumerate(nested):
-            _validate_match(block, f"{path}.{key}[{idx}]", False, errors)
+            _validate_match(block, f"{path}.{key}[{idx}]", errors)
 
 
 def _validate_measured(entries: Any, path: str, errors: list[str]) -> None:
@@ -296,7 +273,7 @@ def validate_spec(raw: dict) -> list[str]:
     if not isinstance(shadow, bool):
         errors.append(f"{label}.shadow: must be a boolean, got {shadow!r}")
 
-    _validate_match(raw.get("match"), f"{label}.match", True, errors)
+    _validate_match(raw.get("match"), f"{label}.match", errors)
 
     measured = raw.get("measured", [])
     _validate_measured(measured, label, errors)

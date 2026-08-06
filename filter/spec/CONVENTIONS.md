@@ -208,19 +208,19 @@ Five facts set the bar, and each one moves it in a specific direction.
    release; a live rule that starts discarding a known FLoRA paper goes back to
    shadow, and the paper is the bug report.
 
-## `pyre_regex`
+## Lookaround originals
 
-A loader-only extension key inside a `match` object, legal only on a match that
-is decomposed into `any_of`/`all_of`/`none_of`. It holds the original Python
-`re` pattern for a rule whose faithful form needs a lookaround; the decomposition
-next to it is what RE2 (and so pyarrow) evaluates, and nothing evaluates the
-`pyre_regex` form.
+A rule whose faithful pattern needs a lookaround cannot ship that pattern: the
+engine's one evaluator is pyarrow, whose matcher is RE2, and RE2 refuses
+lookaround. What ships is an RE2 decomposition, which is usually wider than the
+original.
 
-No rule in the current bundle uses it; the archived patterns that did are in
-[`rule_ideas.md`](rule_ideas.md), the decomposition and the lookaround original
-side by side, which is what the key is for. `validate_spec()` accepts and checks
-it, so a rule whose faithful form needs a lookaround can record that form next to
-the pattern the engine actually runs.
+There used to be a `pyre_regex` key inside `match` that recorded the original
+next to the decomposition. Nothing ever evaluated it and no shipped rule carried
+it, so the key is gone; the lookaround original of a decomposed rule now goes in
+[`rule_ideas.md`](rule_ideas.md) beside the arms that replaced it, where the
+widening can be read off the pair. A `pyre_regex` key in a spec is now an
+unknown-key error.
 
 ## `aliases.json`
 

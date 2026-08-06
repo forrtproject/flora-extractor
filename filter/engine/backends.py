@@ -11,9 +11,9 @@ rule matches.
 
 Two things the evaluator still depends on. Specs must be regexes RE2 can run
 (`spec.re2_error()` makes an unrunnable one a load-time error rather than a
-mid-route crash); and it reads the DECOMPOSED match, never the loader-only
-`pyre_regex` key — that key is a record of the lookaround original the
-decomposition replaced, evaluated by nothing. Text is folded and NFC-normalised
+mid-route crash), so a rule whose faithful pattern needs a lookaround ships an
+RE2 decomposition and records the original in `filter/spec/rule_ideas.md`, which
+nothing loads. Text is folded and NFC-normalised
 where it becomes matchable (`_normalize_array()`): every Unicode space separator
 to a plain space, the zero-width space and BOM away, so a phrase separated by
 U+00A0 still reads as separated to RE2's ASCII-only `\s`.

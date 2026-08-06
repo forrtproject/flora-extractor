@@ -771,6 +771,33 @@ of screened negatives**.
 
 ---
 
+## 6b · The retired `pyre_regex` key
+
+`pyre_regex` was a loader-only key inside a spec's `match` object, legal only on a
+match decomposed into `any_of`/`all_of`/`none_of`. It held the faithful Python `re`
+pattern for a rule that needs a lookaround, so the widening introduced by the RE2
+decomposition beside it could be read off the pair. `validate_spec()` compiled it
+and checked its placement; nothing else ever read it — the engine's only evaluator
+is pyarrow (RE2), which cannot run a lookaround at all, and
+`filter/phrase_detection.py`, the last consumer outside the engine, is the Stage 1
+search vocabulary now.
+
+No spec in the shipped bundle carried the key, so it was dropped from the loader in
+the 2026-08-06 cleanup. **This file is where a lookaround original goes instead.**
+The two that existed are already here, each next to the arms that replaced it:
+
+- `biological-of` (§1) — `\breplication of <organism>` with a study-noun negative
+  lookahead inside the filler window. Three RE2 arms replace it; the decomposition
+  drops the lookahead and so widens the discard, which is why the rule stayed shadow.
+- `data-availability` (§1) — a same-sentence lookahead tying the material noun to an
+  availability verb. Two RE2 clauses ANDed row-wide replace it, which is wider: they
+  can match the two halves in different sentences.
+
+Recording a lookaround original is still worth doing when a rule is decomposed. It
+just belongs in prose here, not in a key the loader validates and nothing runs.
+
+---
+
 ## 7 · Open items the v2 bundle inherits
 
 - **D2** — `correction to` and `author response` objects sometimes contain a substantive

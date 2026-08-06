@@ -255,23 +255,6 @@ def test_a_year_that_arrives_as_a_string_is_read_as_a_year(specs):
         == [True, False]
 
 
-def test_the_backend_ignores_the_loader_only_pyre_regex():
-    """The evaluator reads the decomposition, never the loader-only `pyre_regex` —
-    which RE2 could not run anyway. No shipped rule carries the key, so the spec
-    is built here."""
-    spec = FilterSpec.from_dict({
-        "id": "pyre-example",
-        "description": "the decomposition is wider than the lookaround original",
-        "match": {"any_of": [{"text_regex": r"\breplication of the original\b"}],
-                  "pyre_regex": r"\breplication of the original(?! study)\b"},
-        "pile": "screen_cheap",
-        "precedence": 250,
-    })
-    rows = [_row(title="Replication of the original study of DNA repair", abstract="")]
-    assert eval_spec_rows(spec, rows) == [True]
-    assert eval_spec_batch(spec, _batch(rows)).to_pylist() == [True]
-
-
 # ---------------------------------------------------------------------------
 # Routing mechanics — synthetic bundle (tests/engine_bundle.py)
 # ---------------------------------------------------------------------------
