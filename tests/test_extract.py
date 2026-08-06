@@ -6,6 +6,7 @@ Run:  python -m pytest tests/test_extract.py -v
 """
 import csv
 import json
+import shutil
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
@@ -703,35 +704,31 @@ class TestRunExtract:
 
         run_extract returns nothing — the output CSV is the run's only result — so the
         assertions read the file it wrote.
+
+        Each call runs in its own mkdtemp directory: DATA_DIR pointed at the shared
+        system temp dir once made concurrent pytest runs on one machine race each
+        other's filtered.csv/extracted.csv.
         """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv",
-                                        delete=False, encoding="utf-8-sig") as f:
-            f.write(filtered_csv)
-            tmp = Path(f.name)
-
-        with patch("extract.run_extract.classify_replication",
-                   return_value=screen or _YES_SCREEN), \
-             patch("extract.run_extract.run_for_doi", return_value=link or _MOCK_LINK), \
-             patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
-             patch("extract.run_extract.verify_and_correct",
-                   side_effect=lambda doi, *a, **k: {"doi_o": doi,
-                                                     "doi_o_verification": "skipped",
-                                                     "evidence_note": ""}), \
-             patch("extract.run_extract._oa_by_doi", return_value=None), \
-             patch("extract.run_extract.DATA_DIR", tmp.parent), \
-             patch("extract.run_extract.BASE_DIR", tmp.parent):
-            filtered_path = tmp.parent / "filtered.csv"
-            if not filtered_path.exists():
-                filtered_path.write_text(
-                    with_screen(tmp.read_text(encoding="utf-8-sig"), screen_row),
-                    encoding="utf-8-sig")
-            from extract.run_extract import run_extract
-            run_extract(**run_kwargs)
-            result = _read_extracted(tmp.parent / "extracted.csv")
-
-        tmp.unlink(missing_ok=True)
-        (tmp.parent / "filtered.csv").unlink(missing_ok=True)
-        (tmp.parent / "extracted.csv").unlink(missing_ok=True)
+        workdir = Path(tempfile.mkdtemp())
+        try:
+            with patch("extract.run_extract.classify_replication",
+                       return_value=screen or _YES_SCREEN), \
+                 patch("extract.run_extract.run_for_doi", return_value=link or _MOCK_LINK), \
+                 patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
+                 patch("extract.run_extract.verify_and_correct",
+                       side_effect=lambda doi, *a, **k: {"doi_o": doi,
+                                                         "doi_o_verification": "skipped",
+                                                         "evidence_note": ""}), \
+                 patch("extract.run_extract._oa_by_doi", return_value=None), \
+                 patch("extract.run_extract.DATA_DIR", workdir), \
+                 patch("extract.run_extract.BASE_DIR", workdir):
+                (workdir / "filtered.csv").write_text(
+                    with_screen(filtered_csv, screen_row), encoding="utf-8-sig")
+                from extract.run_extract import run_extract
+                run_extract(**run_kwargs)
+                result = _read_extracted(workdir / "extracted.csv")
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
         return result
 
     def test_output_has_all_schema_columns(self):
@@ -756,31 +753,25 @@ class TestRunExtract:
             "replication,rule_based,direct replication,high\n"
         )
         mock_ladder = MagicMock(return_value=_MOCK_LINK)
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv",
-                                         delete=False, encoding="utf-8-sig") as f:
-            f.write(csv)
-            tmp = Path(f.name)
-
-        with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
-             patch("extract.run_extract.run_for_doi", mock_ladder), \
-             patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
-             patch("extract.run_extract.verify_and_correct",
-                   side_effect=lambda doi, *a, **k: {"doi_o": doi,
-                                                     "doi_o_verification": "skipped",
-                                                     "evidence_note": ""}), \
-             patch("extract.run_extract._oa_by_doi", return_value=None), \
-             patch("extract.run_extract.DATA_DIR", tmp.parent), \
-             patch("extract.run_extract.BASE_DIR", tmp.parent):
-            fp_path = tmp.parent / "filtered.csv"
-            fp_path.write_text(with_screen(tmp.read_text(encoding="utf-8-sig")),
-                               encoding="utf-8-sig")
-            from extract.run_extract import run_extract
-            run_extract()
-            result = _read_extracted(tmp.parent / "extracted.csv")
-
-        tmp.unlink(missing_ok=True)
-        fp_path.unlink(missing_ok=True)
-        (tmp.parent / "extracted.csv").unlink(missing_ok=True)
+        workdir = Path(tempfile.mkdtemp())
+        try:
+            with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
+                 patch("extract.run_extract.run_for_doi", mock_ladder), \
+                 patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
+                 patch("extract.run_extract.verify_and_correct",
+                       side_effect=lambda doi, *a, **k: {"doi_o": doi,
+                                                         "doi_o_verification": "skipped",
+                                                         "evidence_note": ""}), \
+                 patch("extract.run_extract._oa_by_doi", return_value=None), \
+                 patch("extract.run_extract.DATA_DIR", workdir), \
+                 patch("extract.run_extract.BASE_DIR", workdir):
+                (workdir / "filtered.csv").write_text(with_screen(csv),
+                                                      encoding="utf-8-sig")
+                from extract.run_extract import run_extract
+                run_extract()
+                result = _read_extracted(workdir / "extracted.csv")
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
 
         # false_positive rows are skipped, not written (run_extract.py:1021-1023;
         # they are known non-replications and must not enter extracted.csv / Stage 4).
@@ -849,30 +840,24 @@ class TestRunExtract:
             "false_positive,rule_based,meta-discussion,high\n"
         )
         mock_ladder = MagicMock(return_value=_MOCK_LINK)
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv",
-                                         delete=False, encoding="utf-8-sig") as f:
-            f.write(csv)
-            tmp = Path(f.name)
-
-        with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
-             patch("extract.run_extract.run_for_doi", mock_ladder), \
-             patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
-             patch("extract.run_extract.verify_and_correct",
-                   side_effect=lambda doi, *a, **k: {"doi_o": doi,
-                                                     "doi_o_verification": "skipped",
-                                                     "evidence_note": ""}), \
-             patch("extract.run_extract._oa_by_doi", return_value=None), \
-             patch("extract.run_extract.DATA_DIR", tmp.parent), \
-             patch("extract.run_extract.BASE_DIR", tmp.parent):
-            fp_path = tmp.parent / "filtered.csv"
-            fp_path.write_text(with_screen(tmp.read_text(encoding="utf-8-sig")),
-                               encoding="utf-8-sig")
-            from extract.run_extract import run_extract
-            run_extract()
-
-        tmp.unlink(missing_ok=True)
-        fp_path.unlink(missing_ok=True)
-        (tmp.parent / "extracted.csv").unlink(missing_ok=True)
+        workdir = Path(tempfile.mkdtemp())
+        try:
+            with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
+                 patch("extract.run_extract.run_for_doi", mock_ladder), \
+                 patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
+                 patch("extract.run_extract.verify_and_correct",
+                       side_effect=lambda doi, *a, **k: {"doi_o": doi,
+                                                         "doi_o_verification": "skipped",
+                                                         "evidence_note": ""}), \
+                 patch("extract.run_extract._oa_by_doi", return_value=None), \
+                 patch("extract.run_extract.DATA_DIR", workdir), \
+                 patch("extract.run_extract.BASE_DIR", workdir):
+                (workdir / "filtered.csv").write_text(with_screen(csv),
+                                                      encoding="utf-8-sig")
+                from extract.run_extract import run_extract
+                run_extract()
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
 
         mock_ladder.assert_not_called()
 
@@ -891,33 +876,25 @@ class TestRunExtract:
         )
         result = self._run(csv)  # run_for_doi is mocked to return _MOCK_LINK by default
         # Now run again but force run_for_doi to raise
-        import tempfile
-        from pathlib import Path
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv",
-                                         delete=False, encoding="utf-8-sig") as f:
-            f.write(csv)
-            tmp = Path(f.name)
-
-        with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
-             patch("extract.run_extract.run_for_doi", side_effect=Exception("API timeout")), \
-             patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
-             patch("extract.run_extract.verify_and_correct",
-                   side_effect=lambda doi, *a, **k: {"doi_o": doi,
-                                                     "doi_o_verification": "skipped",
-                                                     "evidence_note": ""}), \
-             patch("extract.run_extract._oa_by_doi", return_value=None), \
-             patch("extract.run_extract.DATA_DIR", tmp.parent), \
-             patch("extract.run_extract.BASE_DIR", tmp.parent):
-            fp_path = tmp.parent / "filtered.csv"
-            fp_path.write_text(with_screen(tmp.read_text(encoding="utf-8-sig")),
-                               encoding="utf-8-sig")
-            from extract.run_extract import run_extract
-            run_extract()
-            result = _read_extracted(tmp.parent / "extracted.csv")
-
-        tmp.unlink(missing_ok=True)
-        fp_path.unlink(missing_ok=True)
-        (tmp.parent / "extracted.csv").unlink(missing_ok=True)
+        workdir = Path(tempfile.mkdtemp())
+        try:
+            with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
+                 patch("extract.run_extract.run_for_doi", side_effect=Exception("API timeout")), \
+                 patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME), \
+                 patch("extract.run_extract.verify_and_correct",
+                       side_effect=lambda doi, *a, **k: {"doi_o": doi,
+                                                         "doi_o_verification": "skipped",
+                                                         "evidence_note": ""}), \
+                 patch("extract.run_extract._oa_by_doi", return_value=None), \
+                 patch("extract.run_extract.DATA_DIR", workdir), \
+                 patch("extract.run_extract.BASE_DIR", workdir):
+                (workdir / "filtered.csv").write_text(with_screen(csv),
+                                                      encoding="utf-8-sig")
+                from extract.run_extract import run_extract
+                run_extract()
+                result = _read_extracted(workdir / "extracted.csv")
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
 
         assert len(result) == 1, "Row must not be dropped on extraction failure"
         written = result.iloc[0]
@@ -939,18 +916,19 @@ class TestRunExtract:
             "10.1000/rep,Rep Paper,Abstract,2020,Jones,J. Psych,,W2,openalex,"
             "replication,rule_based,direct replication,high\n"
         )
-        with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
-             patch("extract.run_extract.run_for_doi", return_value=_MOCK_LINK), \
-             patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME) as mock_eo, \
-             patch("extract.run_extract.DATA_DIR", Path(tempfile.gettempdir())), \
-             patch("extract.run_extract.BASE_DIR", Path(tempfile.gettempdir())):
-            fp = Path(tempfile.gettempdir()) / "filtered.csv"
-            fp.write_text(with_screen(csv), encoding="utf-8-sig")
-            out = Path(tempfile.gettempdir()) / "extracted.csv"
-            from extract.run_extract import run_extract
-            run_extract()
-            fp.unlink(missing_ok=True)
-            out.unlink(missing_ok=True)
+        workdir = Path(tempfile.mkdtemp())
+        try:
+            with patch("extract.run_extract.classify_replication", return_value=_YES_SCREEN), \
+                 patch("extract.run_extract.run_for_doi", return_value=_MOCK_LINK), \
+                 patch("extract.run_extract.extract_outcome", return_value=_MOCK_OUTCOME) as mock_eo, \
+                 patch("extract.run_extract.DATA_DIR", workdir), \
+                 patch("extract.run_extract.BASE_DIR", workdir):
+                (workdir / "filtered.csv").write_text(with_screen(csv),
+                                                      encoding="utf-8-sig")
+                from extract.run_extract import run_extract
+                run_extract()
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
 
         call_kwargs = mock_eo.call_args[1]
         assert call_kwargs.get("original_title") == "The Original Study"
