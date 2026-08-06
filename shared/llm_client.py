@@ -245,7 +245,7 @@ def cache_model_id(model: str, effort: str = "") -> str:
     return f"{model}@effort={effort}" if effort else model
 
 
-# ── Gemini (primary) ──────────────────────────────────────────────────────────
+# ── Gemini: JSON chat calls ───────────────────────────────────────────────────
 
 def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL, *,
                 reasoning_effort: str = "") -> tuple[Optional[dict], str]:
@@ -380,7 +380,7 @@ def call_gemini(prompt: str, model: str = PDF_PARSE_MODEL, *,
     return None, last_error
 
 
-# ── OpenAI (fallback) ─────────────────────────────────────────────────────────
+# ── OpenAI direct: JSON chat calls ────────────────────────────────────────────
 # Flex inference, the mirror of the Gemini path above: 50% off standard pricing in
 # exchange for queueing. Flex is an account-level tier rather than a per-key one, so
 # OPENAI_USE_FLEX alone decides it.
