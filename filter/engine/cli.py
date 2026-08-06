@@ -43,7 +43,7 @@ from filter.engine.release import read_release, releases_dir, routing_release, w
 from filter.engine.spec import bundle_hash, load_specs
 from filter.engine.store import (
     DEFAULT_STORE_PATH, StoreUnavailable, build_routing, drop_release, open_store,
-    pile_counts, releases, sample_pile,
+    pile_counts, releases, resolve_release, sample_pile,
 )
 from filter.engine.workids import alias_release, load_aliases
 from shared.config import OVERLAY_DIR, SNAPSHOT_POOL_DIR
@@ -179,7 +179,7 @@ def _print_overlay(overlay_dir: Optional[Path], indent: str = "") -> None:
 
 def _resolve_release(con, given: Optional[str]) -> str:
     if given:
-        return given
+        return resolve_release(con, given)
     present = releases(con)
     if len(present) == 1:
         return present[0]

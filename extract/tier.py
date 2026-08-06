@@ -86,7 +86,7 @@ from filter.engine.handoff import HANDOFF_PILES, screen_columns, decisions
 from filter.engine.release import read_release
 from filter.engine.spec import load_specs
 from filter.engine.store import (DEFAULT_STORE_PATH, StoreUnavailable, open_store,
-                                 releases)
+                                 releases, resolve_release)
 from filter.engine.tiers import TierSpec, Work, register_tier, run_tier
 from filter.engine.workids import load_aliases
 from shared import token_counter
@@ -978,8 +978,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         con = open_store(args.store, read_only=True)
     except StoreUnavailable as exc:
         raise SystemExit(str(exc))
-    release_id = args.release
-    if not release_id:
+    if args.release:
+        release_id = resolve_release(con, args.release)
+    else:
         present = releases(con)
         if len(present) != 1:
             raise SystemExit(f"the store holds {len(present)} releases — name one "

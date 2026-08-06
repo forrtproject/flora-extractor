@@ -255,3 +255,25 @@ def releases(con: duckdb.DuckDBPyConnection) -> list[str]:
     """Every release the store holds routing for."""
     return [row[0] for row in con.execute(
         "SELECT DISTINCT release_id FROM routing ORDER BY release_id").fetchall()]
+
+
+def resolve_release(con: duckdb.DuckDBPyConnection, given: str) -> str:
+    """*given*, expanded to the full release id the routing table stores.
+
+    `status` displays releases as 12-character prefixes, so a prefix is what an
+    operator has to hand — but the routing query matches the full hash, and a
+    prefix passed through verbatim matches NOTHING: every pile reads as empty,
+    which prices as $0 and is indistinguishable from a genuinely settled pile.
+    An unknown or ambiguous value is therefore an error here, never zero rows.
+    """
+    present = releases(con)
+    if given in present:
+        return given
+    matches = [r for r in present if r.startswith(given)]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise SystemExit(f"no release matches {given!r} — the store holds: "
+                         + ", ".join(r[:12] for r in present))
+    raise SystemExit(f"{given!r} is ambiguous: "
+                     + ", ".join(r[:12] for r in matches))

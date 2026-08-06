@@ -332,3 +332,22 @@ def test_a_missing_store_says_so_rather_than_looking_locked(tmp_path):
         open_store(tmp_path / "nowhere.duckdb", read_only=True)
     with pytest.raises(SystemExit, match="no routing store"):
         cli.main(["status", "--store", str(tmp_path / "nowhere.duckdb")])
+
+
+def test_resolve_release_expands_prefixes_and_refuses_unknown():
+    """status shows 12-char prefixes; a prefix passed verbatim must never read as 0 rows."""
+    import pytest
+    from filter.engine.store import resolve_release
+
+    class _Con:
+        def execute(self, sql, params=None):
+            class _R:
+                def fetchall(self):
+                    return [("a" * 64,), ("b" * 64,)]
+            return _R()
+
+    con = _Con()
+    assert resolve_release(con, "a" * 64) == "a" * 64
+    assert resolve_release(con, "aaaa") == "a" * 64
+    with pytest.raises(SystemExit):
+        resolve_release(con, "ffff")
