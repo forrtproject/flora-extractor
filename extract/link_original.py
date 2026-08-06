@@ -151,22 +151,24 @@ def _study_count_stated(title_r: str, abstract_r: str) -> bool:
     """True when the title or abstract states a plausible study count (2 ≤ N < 1900).
 
     The count may be digits or a spelled-out numeral from two to twelve.
+
+    Every match of every pattern is inspected, not just the first: a pattern whose
+    first hit is a year ("replications of 2019 studies") used to shadow a real count
+    the same pattern matched later in the same text ("replications of three studies").
     """
     for text in (title_r or "", abstract_r or ""):
         for pattern in _STUDY_COUNT_RES:
-            m = pattern.search(text)
-            if not m:
-                continue
-            raw = (m.group(1) or "").lower()
-            if raw in _COUNT_WORDS:
-                n = _COUNT_WORDS[raw]
-            else:
-                try:
-                    n = int(raw)
-                except (ValueError, TypeError):
-                    continue
-            if _COUNT_N_MIN <= n < _COUNT_N_MAX:
-                return True
+            for m in pattern.finditer(text):
+                raw = (m.group(1) or "").lower()
+                if raw in _COUNT_WORDS:
+                    n = _COUNT_WORDS[raw]
+                else:
+                    try:
+                        n = int(raw)
+                    except (ValueError, TypeError):
+                        continue
+                if _COUNT_N_MIN <= n < _COUNT_N_MAX:
+                    return True
     return False
 
 

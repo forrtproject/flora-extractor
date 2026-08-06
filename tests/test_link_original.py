@@ -433,6 +433,14 @@ class TestMayStopAtARule:
             "Replication of 2019 findings",
             "We re-tested the effect reported by Smith (2009).", 2020) is True
 
+    def test_a_year_earlier_in_the_text_does_not_shadow_a_later_count(self):
+        """Both hits come from the same pattern; checking only the first match read
+        the year, decided "no count", and let the rung stop on a multi-target paper."""
+        assert link_original.may_stop_at_a_rule(
+            "Replications of 2019 studies",
+            "We report replications of three studies, starting from Smith (2009).",
+            2020) is False
+
 
 def _answer(**over) -> dict:
     """What identify_targets_with_llm returns. target_stage is what tells an answer
