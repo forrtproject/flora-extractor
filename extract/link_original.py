@@ -532,8 +532,7 @@ def clear_pipeline_caches(doi_r: str) -> list[str]:
     ("reftarget"), the outcome coding ("outcome"), the OpenAlex candidate pool and the
     parsed full text — plus the GROBID section cache. --force that leaves any of these
     behind does not force a re-decision, it just re-runs the stages around the cached
-    answer. "match_type" and "multi" are legacy cleanup: the stages that wrote them are
-    gone, and the globs stay only to sweep entries older checkouts left on disk.
+    answer.
 
     Returns a list of the filenames that were actually deleted.
     """
@@ -542,7 +541,7 @@ def clear_pipeline_caches(doi_r: str) -> list[str]:
     # stage vs full text, different candidate lists) — all of them go, or a re-run
     # reads back the answer this call was meant to discard.
     deleted: list[str] = []
-    for prefix in ("llm", "match_type", "classify", "reftarget", "outcome", "multi"):
+    for prefix in ("llm", "classify", "reftarget", "outcome"):
         deleted += clear_content_keys(LLM_CACHE_DIR, prefix, doi_r)
     deleted += clear_content_keys(OA_CACHE_DIR, "candidates", doi_r)
     targets = [GROBID_CACHE_DIR / f"{key}.json",
