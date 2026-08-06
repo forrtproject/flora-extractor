@@ -28,7 +28,7 @@ from typing import Optional
 import pandas as pd
 
 from shared.cache import clear_content_keys, write_json
-from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_CACHE_DIR, RESEARCHER_EMAIL, log
+from shared.config import GROBID_CACHE_DIR, LLM_CACHE_DIR, OA_CACHE_DIR, PARSE_CACHE_DIR, log
 from shared.disambiguation import is_umbrella_paper, jaccard_similarity
 from shared import token_counter
 from shared.llm_client import (
@@ -40,7 +40,7 @@ from shared.pdf_parsing import (
     parse_result_is_empty,
     read_parse_cache,
 )
-from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_opencitations_references, fetch_referenced_works_metadata, _oa_get, _search_crossref_by_title, _search_openalex_by_title
+from shared.openalex_client import author_matches, extract_author_year_patterns, find_all_candidates, fetch_opencitations_references, fetch_referenced_works_metadata, _search_crossref_by_title, _search_openalex_by_title
 from shared.prompts import (
     TARGET_INTRO_CHARS, TARGET_METHODS_CHARS,
     _abstract_tail, rendered_reference_entries,
@@ -50,28 +50,20 @@ from shared.pdf_sources import acquire_pdf, openalex_xml_has_content
 from shared.utils import cache_key, clean_doi
 
 # ── Unified rule-based resolver (runs before any LLM call) ───────────────────
-# Combines citation-context scoring (journal-qualified) with same-author/year
-# title-Jaccard fallback into a single function so both paths share one code path.
+# Combines citation-context scoring with a same-author/year title-Jaccard fallback
+# into a single function so both paths share one code path.
 #
-# Path A — journal hint present in abstract citation:
-#   Scores by author(+2) + year(+2) + journal Jaccard(+3/+1.5) + title Jaccard(+≤1).
-#   Resolves when best ≥ 4.0 AND gap ≥ 2.0.  Strict because the journal
-#   contributes 3 points, making the winner unambiguous.
+# Path A — the abstract cites an author and a year:
+#   Scores by author(+2) + year(+2) + title Jaccard(+≤1).
+#   Resolves when best ≥ 4.0 AND gap ≥ 2.0, so only an exact author-and-year hit
+#   with no rival within 2 points can win.
 #
-# Path B — no journal hint, but all candidates share same author+year:
+# Path B — all candidates share one author+year:
 #   Falls back to title-Jaccard relative threshold (best > 0.05, best ≥ second×1.5).
 #   That threshold is a tiebreak, not evidence, and it fires precisely where Path A
 #   declined, so run_for_doi never lets it END the row (see _HELD_ONLY_METHODS).
 
 _STOP_SURNAMES = {"and", "van", "von", "der", "den", "del", "the", "for"}
-
-# Journal-hint lookahead: applied only to "_bare"-style matches from
-# extract_author_year_patterns() (the ones found inside a literal enclosing
-# parenthetical in the source text, e.g. "(Antle, 2010, American Journal of
-# Agricultural Economics)"). "_paren"-style matches already consumed their own
-# closing paren as part of the year, so there's no outer paren left to inspect.
-_JOURNAL_LOOKAHEAD = 120
-_JOURNAL_TAIL_RE = re.compile(r"^\s*,\s*([A-Z][A-Za-z\s&:]+?)\s*\)")
 
 # ── Title-pattern resolver ─────────────────────────────────────────────────────
 # Patterns that extract the original study name from a replication paper's title.
@@ -256,7 +248,7 @@ def _resolve_by_title_pattern(
 
 
 def _extract_cit_contexts(text: str) -> list[dict]:
-    """Return list of {surnames, year, journal, raw} from all author-year citations.
+    """Return list of {surnames, year, raw} from all author-year citations.
 
     Citation detection delegates to shared.openalex_client.extract_author_year_patterns(),
     which — unlike the old local-only _CITATION_RE — also catches narrative citations
@@ -281,73 +273,8 @@ def _extract_cit_contexts(text: str) -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
-
-        journal = ""
-        if match["pattern"].endswith("_bare"):
-            tail = text[match["end"]: match["end"] + _JOURNAL_LOOKAHEAD]
-            jm = _JOURNAL_TAIL_RE.match(tail)
-            if jm:
-                journal = jm.group(1).strip().rstrip(",;.:")
-
-        results.append({"surnames": surnames, "year": year, "journal": journal, "raw": raw})
+        results.append({"surnames": surnames, "year": year, "raw": raw})
     return results
-
-
-def _journal_token_sim(a: str, b: str) -> float:
-    if not a or not b:
-        return 0.0
-    ta = {t.lower() for t in re.findall(r"\b\w{2,}\b", a)}
-    tb = {t.lower() for t in re.findall(r"\b\w{2,}\b", b)}
-    if not ta or not tb:
-        return 0.0
-    return len(ta & tb) / len(ta | tb)
-
-
-def _fetch_journal_cached(doi: str) -> str:
-    """Return the journal display name for a DOI from OpenAlex. Result cached.
-
-    Only an ANSWER is cached. The request used to be wrapped in a bare `except:
-    journal = ""` whose result was then written to disk, so a single timeout or a
-    429 permanently taught this DOI that it has no journal — and the journal is
-    worth +3.0 in `_resolve_rule_based`'s citation scoring, the largest single term
-    there. One blip therefore demoted the deterministic path for that original
-    forever, on every later run and every row that cited it.
-
-    It also goes through `_oa_get` rather than its own `requests.get`, so it takes a
-    slot in the shared OpenAlex reservation queue, sends the Bearer key, rotates on a
-    drained key and raises OpenAlexQuotaExhausted like every other OpenAlex call.
-    Bypassing all of that made it the one caller that could not be rate-limited or
-    accounted for.
-    """
-    doi = clean_doi(doi)
-    if not doi:
-        return ""
-    cache_path = OA_CACHE_DIR / f"journal_{cache_key(doi)}.json"
-    if cache_path.exists():
-        try:
-            return json.loads(cache_path.read_text(encoding="utf-8")).get("journal", "")
-        except Exception:
-            pass
-
-    data = _oa_get("https://api.openalex.org/works",
-                   {"filter": f"doi:{doi}",
-                    "select": "id,primary_location",
-                    "mailto": RESEARCHER_EMAIL})
-    if data is None:
-        # No answer. Not "no journal" — nothing is written, and the next run asks again.
-        log.debug("[%s] journal lookup got no response — not cached", doi)
-        return ""
-
-    journal = ""
-    if data.get("results"):
-        loc = (data["results"][0].get("primary_location") or {})
-        src = (loc.get("source") or {})
-        journal = (src.get("display_name") or "").strip()
-    # A DOI OpenAlex does not index, or indexes without a source, genuinely has no
-    # journal name to offer: that IS the answer, and caching "" saves re-asking.
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(json.dumps({"journal": journal}), encoding="utf-8")
-    return journal
 
 
 def _resolve_rule_based(
@@ -389,9 +316,8 @@ def _resolve_rule_based(
 
     decoded    = html.unescape(abstract_r or "")
     citations  = [c for c in _extract_cit_contexts(decoded) if c["year"] <= year_r]
-    has_journal = any(cit["journal"] for cit in citations)
 
-    # ── Path A: citation scoring (author + year + optional journal) ───────────
+    # ── Path A: citation scoring (author + year) ──────────────────────────────
     if citations:
         scored: list[dict] = []
         for cand in candidates:
@@ -421,17 +347,6 @@ def _resolve_rule_based(
                            "cand_doi": cand_doi, "cand_title": cand_title,
                            "cand_year": cand_year, "cand_snames": cand_snames})
 
-        # Enrich with journal info when a journal hint is present
-        if has_journal:
-            for entry in scored:
-                cit = entry["citation"]
-                if not cit.get("journal") or not entry["cand_doi"]:
-                    continue
-                cand_journal = _fetch_journal_cached(entry["cand_doi"])
-                if cand_journal:
-                    jsim = _journal_token_sim(cit["journal"], cand_journal)
-                    entry["base_score"] += 3.0 if jsim >= 0.6 else (1.5 if jsim >= 0.3 else 0.0)
-
         for entry in scored:
             entry["total"] = round(
                 entry["base_score"] + jaccard_similarity(entry["cand_title"], decoded), 4)
@@ -455,8 +370,8 @@ def _resolve_rule_based(
                         "resolution_score":  round(min(best["total"] / 8.0, 1.0), 4)}
 
     # ── Path B: same-author/year cluster — title Jaccard relative threshold ───
-    # Fires when all candidates share one surname and one year but no journal hint
-    # was present (or Path A's strict threshold was not met).
+    # Fires when all candidates share one surname and one year and Path A's strict
+    # threshold was not met.
     surnames = {(c.get("first_author") or "").lower().split()[-1] for c in candidates if c.get("first_author")}
     years    = {c.get("year") for c in candidates}
     if len(surnames) == 1 and len(years) == 1:
