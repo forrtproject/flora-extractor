@@ -53,29 +53,24 @@ architecture before treating the accepted set as complete.
 
 ---
 
-## (b) Exclusion-pattern misfires
+## (b) Exclusion-pattern misfires — **superseded**
 
-The `TECHNICAL_OBJECT` and `TECHNICAL_VERB` patterns — now the specs
-[`technical-object`](../filter/spec/technical-object.json) and
-[`technical-verb`](../filter/spec/technical-verb.json) —
-match phrases such as *"replicated the analysis code of Smith (2019)"*. Some of these
-are genuinely **in-scope computational reproductions**, which the pipeline treats as
-in-scope. The patterns are kept because they
-buy specificity: they drop the large volume of molecular-biology and pure-software
-"replication" noise.
+**Superseded by rule book v2.** This entry described the `technical-object` /
+`technical-verb` exclusion patterns and the `exclusion-rescue` spec that outranked
+them. None of the three ships any more: rule book v2 is a **whitelist**, so nothing
+is screened unless a positive rule admits it, and there are no exclusion or rescue
+rules for a misfire to happen in. The archived patterns and the evidence behind them
+are in [`filter/spec/rule_ideas.md`](../filter/spec/rule_ideas.md).
 
-The narrow overlap is rescued rather than lost. The `exclusion-rescue` spec
-outranks the exclusion band: when an exclusion pattern fires but the text also
-carries a replication phrase **and** an author-year citation, the row routes to
-`screen_cheap` instead of being discarded, and so still reaches a screening tier.
-Rows where the exclusion fires without both signals are discarded at high
-confidence and never reach a screen.
+The concern the entry named did not go away, it changed shape. Under a whitelist the
+loss is not a wrongly-fired exclusion but a paper no admission rule claims: an
+in-scope computational reproduction that names its target in prose alone, with none
+of the admission vocabulary in its title or abstract, routes to `pending` and is
+never screened.
 
-**Revisit obligation:** the rescue requires a *parseable* author-year citation, so
-an in-scope reproduction that names its target in prose alone is still dropped —
-and a discard is the one rule-terminal state, with nothing standing between it and
-the paper never being seen again. Measure how much that costs before treating the
-technical-exclusion bucket as clean.
+**Revisit obligation:** measure how many in-scope reproductions the admission rules
+fail to claim, over the `pending/no_filter_matched` pile of a current release. That
+is the whitelist's version of this cost, and it is unmeasured.
 
 ---
 
